@@ -531,6 +531,7 @@ def generate_weights(emit: CommandStreamEmitter, weights: List[NpuAddressRange],
             emit.cmd1_with_offset(length, weights[core].length)
         elif core < arch.ncores:
             check_alignment(weights[0].address, 16)
+            check_length(weights[0].length, 16)
             emit.cmd1_with_address(addr, weights[0].address)
             emit.cmd1_with_offset(length, 0)
 

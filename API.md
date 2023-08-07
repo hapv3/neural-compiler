@@ -83,6 +83,38 @@ In addition to transforming NPU operations to register commands, Vela also:
 * adds kernel/DMA wait commands if necessary
 * selects the most efficient "block dependency" that controls the NPU pipeline.
 
+#### Payload legality
+
+If the following legality requirements are violated, either a ByteAlignmentError
+or a ByteSizeError will be raised:
+
+#### DMA OP
+
+**Ethos-U55**:
+- DST (destination) and SRC (source) offset must be 16 byte aligned.
+- The (SRC) length must be a multiple of 16 bytes.
+
+**Ethos-U65**:
+- Only (NPU) internal DST and SRC offset must be 16 byte aligned.
+- For an internal DST the length must be a multiple of 16.
+
+#### Feature Maps
+
+- Tile addresses must be aligned to 16 bytes for NpuLayout NHCWB16, or
+aligned to the element size for NpuLayout NHWC.
+- For NpuLayout NHCWB16, height and depth strides must be a positive multiple of
+16 bytes. For NpuLayout NHWC height and width strides must be a
+positive multiple of the element size.
+
+#### Scale/Bias
+
+- Scale and Bias length must be a multiple of 16 bytes.
+
+#### Weights
+
+- Weight offset must be 16 byte aligned.
+- Weight length must be a multiple of 16 bytes.
+
 ### Creating a Driver Payload for the Ethos-U driver
 
 If an Ethos-U driver is used to trigger the execution of the register command
@@ -103,3 +135,5 @@ which is maintained separately from Vela's overall version.
 
 For examples of how to use these APIs, please see the unit tests that are
 bundled with Vela's source code, in module `ethosu.vela.test.extapi`.
+
+
