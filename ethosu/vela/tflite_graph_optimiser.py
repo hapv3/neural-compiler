@@ -1881,6 +1881,130 @@ def replace_pad_by_hw_pad(op: Operation, arch, nng) -> Operation:
     return op
 
 
+def convert_mirror_pad(op: Operation, arch, nng):
+    if op.type != Op.MirrorPad or not op.run_on_npu:
+        return op
+
+    _, (top, bot), (left, right), _ = op.ifm2.values
+    mode = op.attrs["mode"]  # 0 = reflect, 1 = symmetric
+
+    ifm = op.ifm
+    ofm = op.ofm
+    ofm.ops = []
+    elem_size = 2 if ofm.dtype == DataType.int16 else 1
+    n, h, w, c = ifm.shape
+    _, oh, ow, _ = ofm.shape
+    # Force linear format on OFM to allow negative stride multipliers
+    ofm.force_linear_format = True
+
+    # Intermediate ofm needed to store ifm padded with top and bot values as input to the left and right padding
+    intermediate_ofm_tens = Tensor([n, h + top + bot, w, c], ofm.dtype, "intermediate_ofm_tens")
+    intermediate_ofm_tens.quantization = op.outputs[0].quantization.clone()
+    intermediate_ofm_tens.force_linear_format = True
+
+    # If there is no left or right padding, we can write directly to the ofm without an intermediate tensor
+    if not (left or right):
+        intermediate_ofm_tens = ofm
+
+    # Initial op to copy the ifm into the middle of the intermediate ofm
+    avg_pool_init = create_avgpool_nop("init_pool")
+    avg_pool_init.write_shape = Shape4D(n, h, w, c)
+    avg_pool_init.write_offset = Shape4D(0, top, 0, 0)
+    avg_pool_init.read_shapes[0] = Shape4D(n, h, w, c)
+    avg_pool_init.read_offsets[0] = Shape4D(0, 0, 0, 0)
+    avg_pool_init.add_input_tensor(ifm)
+    avg_pool_init.set_output_tensor(intermediate_ofm_tens)
+    avg_pool_init.set_ifm_ofm_shapes()
+    DebugDatabase.add_optimised(op, avg_pool_init)
+
+    # Create pools with negative stride to mirror edges and offset to write at padding positions
+    avg_pool_pad = create_avgpool_nop("pad_pool")
+    for i, pad_amount in enumerate([top, bot, left, right]):
+        # Clear input from previous cloned op
+        avg_pool_pad.inputs = []
+        if not pad_amount:
+            continue
+
+        if i == 0:  # top
+            # Set read and write shape width to full ifm width and height to "top" pad size
+            avg_pool_pad.write_shape = Shape4D(n, top, w, c)
+            avg_pool_pad.read_shapes[0] = Shape4D(n, top, w, c)
+            # Leave read offset as default to read the top chunk of the ifm
+            # For reflect mode, shift height offset down one step to "skip" the edge
+            avg_pool_pad.read_offsets[0] = Shape4D(0, 0, 0, 0) if mode == 1 else Shape4D(0, 1, 0, 0)
+            # Offset the base address of tile 0 to start writing just above the ifm that was copied into the middle of
+            # the ofm and use negative height striding to mirror the above ifm chunk
+            avg_pool_pad.tile_base_offsets_ofm[0] = ((top - 1) * w) * c * elem_size
+        if i == 1:  # bot
+            # Set read and write shape width to full ifm width and height to "bot" pad size
+            avg_pool_pad.write_shape = Shape4D(n, bot, w, c)
+            avg_pool_pad.read_shapes[0] = Shape4D(n, bot, w, c)
+            # Set read offset to read the bottom chunk of the ifm
+            # For reflect mode, shift height offset up one step to "skip" the edge
+            avg_pool_pad.read_offsets[0] = Shape4D(0, h - bot, 0, 0) if mode == 1 else Shape4D(0, h - bot - 1, 0, 0)
+            # Offset the base address of tile 0 to start writing at the very bottom of the ofm and use negative height
+            # striding to mirror the above ifm chunk
+            avg_pool_pad.tile_base_offsets_ofm[0] = (oh - 1) * w * c * elem_size
+        if i == 2:  # left
+            # Set read and write shape height to full intermediate ofm height and width to "left" pad size
+            avg_pool_pad.write_shape = Shape4D(n, h + top + bot, left, c)
+            avg_pool_pad.read_shapes[0] = Shape4D(n, h + top + bot, left, c)
+            # Leave read offset as default to read the leftmost chunk of the intermediate ofm
+            # For reflect mode, shift width offset one step to the right to "skip" the edge
+            avg_pool_pad.read_offsets[0] = Shape4D(0, 0, 0, 0) if mode == 1 else Shape4D(0, 0, 1, 0)
+            # Offset the base address of tile 0 to start writing just left of the intermediate ofm and use negative
+            # width striding to mirror the above ifm chunk
+            avg_pool_pad.tile_base_offsets_ofm[0] = (left - 1) * c * elem_size
+        if i == 3:  # right
+            # Set read and write shape height to full intermediate ofm height and width to "right" pad size
+            avg_pool_pad.write_shape = Shape4D(n, h + top + bot, right, c)
+            avg_pool_pad.read_shapes[0] = Shape4D(n, h + top + bot, right, c)
+            # Set read offset to read the rightmost chunk of the intermediate ofm
+            # For reflect mode, shift width offset one step to the left to "skip" the edge
+            avg_pool_pad.read_offsets[0] = Shape4D(0, 0, w - right, 0) if mode == 1 else Shape4D(0, 0, w - right - 1, 0)
+            # Offset the base address of tile 0 to start writing at the rightmost part of the ofm and use negative
+            # width striding to mirror the above ifm chunk
+            avg_pool_pad.tile_base_offsets_ofm[0] = (ow - 1) * c * elem_size
+
+        # Write offset (0,0,0,0) for all convs
+        avg_pool_pad.write_offset = Shape4D(0, 0, 0, 0)
+
+        if i in [0, 1]:  # negative height stride for top and bot, negative width stride for left and right
+            avg_pool_pad.ofm_stride_multiplier = [1, -1, 1]  # C/H/W
+            # top and bot reads from ifm and writes to intermediate ofm
+            avg_pool_pad.add_input_tensor(ifm)
+            intermediate_ofm_tens.ops.append(avg_pool_pad)
+            avg_pool_pad.outputs = [intermediate_ofm_tens]
+        else:
+            avg_pool_pad.ofm_stride_multiplier = [1, 1, -1]  # C/H/W
+            # left and right reads from intermediate ofm and writes to ofm
+            avg_pool_pad.add_input_tensor(intermediate_ofm_tens)
+            ofm.ops.append(avg_pool_pad)
+            avg_pool_pad.outputs = [ofm]
+
+        avg_pool_pad.set_ifm_ofm_shapes()
+        DebugDatabase.add_optimised(op, avg_pool_pad)
+
+        # Clone operation for next padding direction
+        avg_pool_pad = avg_pool_pad.clone(f"_{i}")
+
+    if left or right:
+        # Copy intermediate ofm into final ofm
+        avg_pool_final_copy = create_avgpool_nop("avg_pool_final_copy")
+        avg_pool_final_copy.write_shape = Shape4D(n, h + top + bot, w, c)
+        avg_pool_final_copy.write_offset = Shape4D(0, 0, left, 0)
+        avg_pool_final_copy.read_shapes[0] = Shape4D(n, h + top + bot, w, c)
+        avg_pool_final_copy.read_offsets[0] = Shape4D(0, 0, 0, 0)
+
+        avg_pool_final_copy.add_input_tensor(intermediate_ofm_tens)
+        ofm.ops.append(avg_pool_final_copy)
+        avg_pool_final_copy.outputs = [ofm]
+        avg_pool_final_copy.set_ifm_ofm_shapes()
+        DebugDatabase.add_optimised(op, avg_pool_final_copy)
+
+    return op
+
+
 def convert_pad(op: Operation, arch, nng):
     """
     Rewrites PAD operator to an average pool that copies the IFM to the OFM
@@ -2899,6 +3023,7 @@ def tflite_optimise_graph(nng, arch, force_symmetric_int_weights):
         convert_mul_max_to_abs_or_lrelu,
         convert_lrelu,
         convert_avg_pool_to_conv2d,
+        convert_mirror_pad,
         fixup_strided_conv,
         convert_hardswish_to_lut,
         rewrite_fully_connected_input,

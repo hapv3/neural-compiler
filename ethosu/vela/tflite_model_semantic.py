@@ -258,6 +258,9 @@ class TFLiteSemantic:
             Op.Transpose: [
                 TFLiteSemantic.constraint_tens_quant_none_check,
             ],
+            Op.MirrorPad: [
+                TFLiteSemantic.constraint_tens_quant_none_check,
+            ],
         }
         return generic_constraints_exclude_list
 

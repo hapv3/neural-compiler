@@ -31,7 +31,6 @@ class RangeSet:
         self.ranges = ranges  # track a list of (start, end) tuples, always in ascending order sorted by start.
 
         if start is not None and start != end:
-            assert start < end
             self.ranges.append((start, end))
 
     def __or__(self, other):

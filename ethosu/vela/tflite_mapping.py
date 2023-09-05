@@ -867,7 +867,11 @@ builtin_operator_map = {
         OptionsSerializer("SquaredDifferenceOptions"),
         TFLITE_IFM_IFM2_INDICES,
     ),
-    BuiltinOperator.MIRROR_PAD: (Op.MirrorPad, OptionsSerializer("MirrorPadOptions", ("mode",)), TFLITE_NO_INDICES),
+    BuiltinOperator.MIRROR_PAD: (
+        Op.MirrorPad,
+        OptionsSerializer("MirrorPadOptions", ("mode",)),
+        TFLITE_IFM_IFM2_INDICES,
+    ),
     BuiltinOperator.ABS: (Op.Abs, OptionsSerializer("AbsOptions"), TFLITE_IFM_INDICES),
     BuiltinOperator.SPLIT_V: (Op.SplitV, OptionsSerializer("SplitVOptions", ("num_splits",)), TFLITE_IFM_INDICES),
     BuiltinOperator.UNIQUE: (

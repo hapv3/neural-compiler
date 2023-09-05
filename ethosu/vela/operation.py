@@ -225,7 +225,7 @@ class Op(Enum):
     Mean = OperatorInfo(indices=NNG_IFM_INDICES)
     Min = OperatorInfo()
     Minimum = OperatorInfo(block_type=NpuBlockType.ElementWise, indices=NNG_IFM_IFM2_INDICES)
-    MirrorPad = OperatorInfo()
+    MirrorPad = OperatorInfo(indices=NNG_IFM_IFM2_INDICES)
     Mul = OperatorInfo(block_type=NpuBlockType.ElementWise, indices=NNG_IFM_IFM2_INDICES)
     Neg = OperatorInfo()
     NonMaxSuppressionV4 = OperatorInfo()
