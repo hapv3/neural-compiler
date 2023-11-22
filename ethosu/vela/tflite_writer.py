@@ -343,8 +343,12 @@ class TFLiteSerialiser:
         Operator.OperatorAddIntermediates(builder, intermediates_offset)
 
         if builtin_opt_offset is not None:
-            Operator.OperatorAddBuiltinOptionsType(builder, opt_serializer.builtin_opt_type)
-            Operator.OperatorAddBuiltinOptions(builder, builtin_opt_offset)
+            if opt_serializer.builtin_opt_type < 127:
+                Operator.OperatorAddBuiltinOptionsType(builder, opt_serializer.builtin_opt_type)
+                Operator.OperatorAddBuiltinOptions(builder, builtin_opt_offset)
+            else:
+                Operator.OperatorAddBuiltinOptions2Type(builder, opt_serializer.builtin_opt_type % 127)
+                Operator.OperatorAddBuiltinOptions2(builder, builtin_opt_offset)
         if custom_opt_offset is not None:
             Operator.OperatorAddCustomOptions(builder, custom_opt_offset)
             Operator.OperatorAddCustomOptionsFormat(builder, opt_serializer.custom_opt_format)

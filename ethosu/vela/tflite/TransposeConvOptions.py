@@ -56,7 +56,14 @@ class TransposeConvOptions(object):
             return self._tab.Get(flatbuffers.number_types.Int8Flags, o + self._tab.Pos)
         return 0
 
-def TransposeConvOptionsStart(builder): builder.StartObject(4)
+    # TransposeConvOptions
+    def QuantizedBiasType(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Int8Flags, o + self._tab.Pos)
+        return 0
+
+def TransposeConvOptionsStart(builder): builder.StartObject(5)
 def Start(builder):
     return TransposeConvOptionsStart(builder)
 def TransposeConvOptionsAddPadding(builder, padding): builder.PrependInt8Slot(0, padding, 0)
@@ -71,6 +78,9 @@ def AddStrideH(builder, strideH):
 def TransposeConvOptionsAddFusedActivationFunction(builder, fusedActivationFunction): builder.PrependInt8Slot(3, fusedActivationFunction, 0)
 def AddFusedActivationFunction(builder, fusedActivationFunction):
     return TransposeConvOptionsAddFusedActivationFunction(builder, fusedActivationFunction)
+def TransposeConvOptionsAddQuantizedBiasType(builder, quantizedBiasType): builder.PrependInt8Slot(4, quantizedBiasType, 0)
+def AddQuantizedBiasType(builder, quantizedBiasType):
+    return TransposeConvOptionsAddQuantizedBiasType(builder, quantizedBiasType)
 def TransposeConvOptionsEnd(builder): return builder.EndObject()
 def End(builder):
     return TransposeConvOptionsEnd(builder)

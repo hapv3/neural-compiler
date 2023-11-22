@@ -55,6 +55,7 @@ from .tflite import DensifyOptions
 from .tflite import DepthToSpaceOptions
 from .tflite import DepthwiseConv2DOptions
 from .tflite import DequantizeOptions
+from .tflite import DilateOptions
 from .tflite import DivOptions
 from .tflite import DynamicUpdateSliceOptions
 from .tflite import EmbeddingLookupSparseOptions
@@ -109,6 +110,7 @@ from .tflite import RangeOptions
 from .tflite import RankOptions
 from .tflite import ReadVariableOptions
 from .tflite import ReducerOptions
+from .tflite import ReduceWindowOptions
 from .tflite import ReshapeOptions
 from .tflite import ResizeBilinearOptions
 from .tflite import ResizeNearestNeighborOptions
@@ -156,6 +158,7 @@ from .tflite import ZerosLikeOptions
 from .tflite.ActivationFunctionType import ActivationFunctionType
 from .tflite.BuiltinOperator import BuiltinOperator
 from .tflite.BuiltinOptions import BuiltinOptions
+from .tflite.BuiltinOptions2 import BuiltinOptions2
 from .tflite.Padding import Padding
 from .tflite.TensorType import TensorType
 
@@ -342,6 +345,9 @@ builtin_options_map = {
     BuiltinOptions.BitcastOptions: BitcastOptions.BitcastOptions,
     BuiltinOptions.BitwiseXorOptions: BitwiseXorOptions.BitwiseXorOptions,
     BuiltinOptions.RightShiftOptions: RightShiftOptions.RightShiftOptions,
+    # BuiltinOptions 2
+    127 + BuiltinOptions2.DilateOptions: DilateOptions.DilateOptions,
+    127 + BuiltinOptions2.ReduceWindowOptions: ReduceWindowOptions.ReduceWindowOptions,
 }
 
 
@@ -559,7 +565,16 @@ builtin_operator_map = {
     BuiltinOperator.CONV_2D: (
         Op.Conv2DBias,
         OptionsSerializer(
-            "Conv2DOptions", ("dilation_h_factor", "dilation_w_factor", fused_act, padding, "stride_h", "stride_w")
+            "Conv2DOptions",
+            (
+                "dilation_h_factor",
+                "dilation_w_factor",
+                fused_act,
+                padding,
+                "stride_h",
+                "stride_w",
+                "quantized_bias_type",
+            ),
         ),
         TFLITE_IFM_WEIGHTS_BIAS_INDICES,
     ),
@@ -582,7 +597,8 @@ builtin_operator_map = {
     BuiltinOperator.FULLY_CONNECTED: (
         Op.FullyConnected,
         OptionsSerializer(
-            "FullyConnectedOptions", ("asymmetric_quantize_inputs", fused_act, "keep_num_dims", "weights_format")
+            "FullyConnectedOptions",
+            ("asymmetric_quantize_inputs", fused_act, "keep_num_dims", "weights_format", "quantized_bias_type"),
         ),
         TFLITE_IFM_WEIGHTS_BIAS_INDICES,
     ),
@@ -791,7 +807,7 @@ builtin_operator_map = {
     BuiltinOperator.SIN: (Op.Sin, None, TFLITE_NO_INDICES),
     BuiltinOperator.TRANSPOSE_CONV: (
         Op.Conv2DBackpropInput,
-        OptionsSerializer("TransposeConvOptions", (padding, "stride_h", "stride_w")),
+        OptionsSerializer("TransposeConvOptions", (padding, "stride_h", "stride_w", fused_act, "quantized_bias_type")),
         TFLITE_CONV2D_BACKPROP_INDICES,
     ),
     BuiltinOperator.SIGN: (Op.Sign, OptionsSerializer("SignOptions"), TFLITE_IFM_INDICES),
@@ -1052,6 +1068,12 @@ builtin_operator_map = {
     BuiltinOperator.RIGHT_SHIFT: (
         Op.RightShift,
         OptionsSerializer("RightShiftOptions"),
+        TFLITE_NO_INDICES,
+    ),
+    BuiltinOperator.DILATE: (Op.Dilate, OptionsSerializer("DilateOptions"), TFLITE_NO_INDICES),
+    BuiltinOperator.REDUCE_WINDOW: (
+        Op.ReduceWindow,
+        OptionsSerializer("ReduceWindowOptions", ("reduce_function",)),
         TFLITE_NO_INDICES,
     ),
     BuiltinOperator.CUSTOM: (Op.Custom, CustomOptionsSerializer(), TFLITE_NO_INDICES),

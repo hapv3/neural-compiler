@@ -337,6 +337,8 @@ class Op(Enum):
     Bitcast = OperatorInfo()
     BitwiseXor = OperatorInfo()
     RightShift = OperatorInfo()
+    Dilate = OperatorInfo()
+    ReduceWindow = OperatorInfo()
 
     @property
     def info(self):

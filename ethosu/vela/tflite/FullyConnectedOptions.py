@@ -56,7 +56,14 @@ class FullyConnectedOptions(object):
             return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
         return False
 
-def FullyConnectedOptionsStart(builder): builder.StartObject(4)
+    # FullyConnectedOptions
+    def QuantizedBiasType(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Int8Flags, o + self._tab.Pos)
+        return 0
+
+def FullyConnectedOptionsStart(builder): builder.StartObject(5)
 def Start(builder):
     return FullyConnectedOptionsStart(builder)
 def FullyConnectedOptionsAddFusedActivationFunction(builder, fusedActivationFunction): builder.PrependInt8Slot(0, fusedActivationFunction, 0)
@@ -71,6 +78,9 @@ def AddKeepNumDims(builder, keepNumDims):
 def FullyConnectedOptionsAddAsymmetricQuantizeInputs(builder, asymmetricQuantizeInputs): builder.PrependBoolSlot(3, asymmetricQuantizeInputs, 0)
 def AddAsymmetricQuantizeInputs(builder, asymmetricQuantizeInputs):
     return FullyConnectedOptionsAddAsymmetricQuantizeInputs(builder, asymmetricQuantizeInputs)
+def FullyConnectedOptionsAddQuantizedBiasType(builder, quantizedBiasType): builder.PrependInt8Slot(4, quantizedBiasType, 0)
+def AddQuantizedBiasType(builder, quantizedBiasType):
+    return FullyConnectedOptionsAddQuantizedBiasType(builder, quantizedBiasType)
 def FullyConnectedOptionsEnd(builder): return builder.EndObject()
 def End(builder):
     return FullyConnectedOptionsEnd(builder)

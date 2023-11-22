@@ -50,8 +50,8 @@ optimised operators against that of the corresponding TensorFlow Lite reference
 kernels (or TensorFlow Lite for Microcontrollers reference kernels in the case
 of the UNIDIRECTIONAL_SEQUENCE_LSTM operator).  The following list indicates
 which version is used for comparison:
-
-* Vela 3.10.0 to current supports TensorFlow 2.14
+* Vela 3.11.0 to current supports TensorFlow 2.15
+* Vela 3.10.0 supports TensorFlow 2.14
 * Vela 3.9.0 supports TensorFlow 2.12
 * Vela 3.8.0 supports TensorFlow 2.11
 * Vela 3.6.0 to 3.7.0 supports TensorFlow 2.10

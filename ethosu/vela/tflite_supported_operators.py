@@ -58,6 +58,7 @@ class TFLiteSupportedOperators:
     depthwise_convolution_ops = set((Op.DepthwiseConv2DBias,))
     transpose_convolution_ops = set((Op.Conv2DBackpropInput,))
     convolution_like_ops = convolution_ops | depthwise_convolution_ops | transpose_convolution_ops
+    conv_depth_fc_op = convolution_ops | depthwise_convolution_ops | set((Op.FullyConnected,))
     max_pooling_ops = Op.op_set(Op.is_maxpool_op)
     avg_pooling_ops = Op.op_set(Op.is_avgpool_op)
     pooling_ops = set((Op.ReduceSum,)) | max_pooling_ops | avg_pooling_ops
@@ -238,7 +239,8 @@ class TFLiteSupportedOperators:
             self.specific_constraints[op_type].append(TFLiteSupportedOperators.constraint_bias_shape)
             self.specific_constraints[op_type].append(TFLiteSupportedOperators.constraint_bias_type)
             self.specific_constraints[op_type].append(TFLiteSupportedOperators.constraint_bias_40bit)
-
+        for op_type in TFLiteSupportedOperators.conv_depth_fc_op:
+            self.specific_constraints[op_type].append(TFLiteSupportedOperators.constraint_no_quantized_bias_type)
         # Transpose Conv specific checks:
         for op_type in TFLiteSupportedOperators.transpose_convolution_ops:
             self.specific_constraints[op_type].append(TFLiteSupportedOperators.constraint_tconv_stride)
@@ -531,6 +533,12 @@ class TFLiteSupportedOperators:
             valid = all(len(bin(value)[2:]) <= 40 for value in bias.values)
             return valid, f"Tensor '{bias.name}' has values larger than 40-bits"
         return True, "Op has no bias tensor, or it fits in 40-bit"
+
+    def constraint_no_quantized_bias_type(op):
+        "Attribute quantized_bias_type must not be set"
+        quantized_bias_type = op.attrs.get("quantized_bias_type", False)
+        valid = quantized_bias_type == 0
+        return valid, f"Op has quantized_bias_type={quantized_bias_type}"
 
     @staticmethod
     def constraint_batch_size(op):

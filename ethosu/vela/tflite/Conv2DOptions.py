@@ -70,7 +70,14 @@ class Conv2DOptions(object):
             return self._tab.Get(flatbuffers.number_types.Int32Flags, o + self._tab.Pos)
         return 1
 
-def Conv2DOptionsStart(builder): builder.StartObject(6)
+    # Conv2DOptions
+    def QuantizedBiasType(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(16))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Int8Flags, o + self._tab.Pos)
+        return 0
+
+def Conv2DOptionsStart(builder): builder.StartObject(7)
 def Start(builder):
     return Conv2DOptionsStart(builder)
 def Conv2DOptionsAddPadding(builder, padding): builder.PrependInt8Slot(0, padding, 0)
@@ -91,6 +98,9 @@ def AddDilationWFactor(builder, dilationWFactor):
 def Conv2DOptionsAddDilationHFactor(builder, dilationHFactor): builder.PrependInt32Slot(5, dilationHFactor, 1)
 def AddDilationHFactor(builder, dilationHFactor):
     return Conv2DOptionsAddDilationHFactor(builder, dilationHFactor)
+def Conv2DOptionsAddQuantizedBiasType(builder, quantizedBiasType): builder.PrependInt8Slot(6, quantizedBiasType, 0)
+def AddQuantizedBiasType(builder, quantizedBiasType):
+    return Conv2DOptionsAddQuantizedBiasType(builder, quantizedBiasType)
 def Conv2DOptionsEnd(builder): return builder.EndObject()
 def End(builder):
     return Conv2DOptionsEnd(builder)
