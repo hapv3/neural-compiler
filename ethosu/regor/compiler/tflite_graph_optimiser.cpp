@@ -1024,6 +1024,75 @@ Operation *TFLiteGraphOptimiser::RemoveTranspose(Graph *const graph, Operation *
             }
         }
 
+        // If the transpose type is not supported (for example it's transposing in the batch dimension), try to
+        // rearrange the IFM and OFM shapes by moving any dimension that is 1 to the left. Then recalculate the
+        // transpose mask to match the new shapes.
+        //
+        // Example 1:
+        // Original, with unsupported permutation vector:
+        // 128x1x8x128 + [1, 2, 0, 3] -> 1x8x128x128
+        // Compact, with supported permutation vector:
+        // 1x128x8x128 + [0, 2, 1, 3] ("NWHC") -> 1x8x128x128
+        //
+        // Example 2:
+        // Original, with unsupported permutation vector:
+        // 1x8x128x32 + [2, 0, 1, 3] -> 128x1x8x32
+        // Compact, with supported permutation vector:
+        // 1x8x128x32 + [0, 2, 1, 3] ("NWHC") -> 1x128x8x32
+        if ( !mainOp && !_arch->SupportsTranspose(OpType::MemoryCopy, transposeType) )
+        {
+            const auto paddedIfmShape = Shape::PadAxes(ifmShape, 4, 1);
+            const auto paddedOfmShape = Shape::PadAxes(ofmShape, 4, 1);
+
+            // Rearrange IFM shape by moving the 1's to the left
+            unsigned newIfmShapeMap[4] = {0, 1, 2, 3};
+            std::stable_sort(std::begin(newIfmShapeMap), std::end(newIfmShapeMap),
+                [&](auto &a, auto &b) {
+                    return (paddedIfmShape[a] == 1 || paddedIfmShape[b] == 1) ? paddedIfmShape[a] < paddedIfmShape[b] : a < b;
+                });
+
+            // Rearrange OFM shape by moving the 1's to the left
+            unsigned newOfmShapeMap[4] = {0, 1, 2, 3};
+            std::stable_sort(std::begin(newOfmShapeMap), std::end(newOfmShapeMap),
+                [&](auto &a, auto &b) {
+                    return (paddedOfmShape[a] == 1 || paddedOfmShape[b] == 1) ? paddedOfmShape[a] < paddedOfmShape[b] : a < b;
+                });
+
+            // Transform the transpose mask to match the rearragned IFM and OFM shapes
+            uint32_t compactMask = 0;
+            for ( int i = 0; i < 4; i++ )
+            {
+                int newOfmIndex = newOfmShapeMap[i];
+                assert(newOfmIndex <= 3);
+                int oldIfmIndex = (mask >> (4 * (3 - newOfmIndex))) & 0xF;
+                int newIfmIndex = newIfmShapeMap[oldIfmIndex];
+                compactMask = (compactMask << 4) | newIfmIndex;
+            }
+
+            // Use the compacted mask if supported
+            TransposeType compactTransposeType = TransposeType(compactMask);
+            if ( _arch->SupportsTranspose(OpType::MemoryCopy, compactTransposeType) )
+            {
+                // Build new IFM shape with the rearranged dimensions
+                std::vector<int> newIfmShape;
+                for ( auto dim : newIfmShapeMap )
+                {
+                    newIfmShape.push_back(paddedIfmShape[dim]);
+                }
+
+                // Build new OFM shape with the rearranged dimensions
+                std::vector<int> newOfmShape;
+                for ( auto dim : newOfmShapeMap )
+                {
+                    newOfmShape.push_back(paddedOfmShape[dim]);
+                }
+
+                ifmShape = Shape::FromVector(newIfmShape);
+                ofmShape = Shape::FromVector(newOfmShape);
+                transposeType = compactTransposeType;
+            }
+        }
+
         if ( !mainOp && _arch->SupportsTranspose(OpType::MemoryCopy, transposeType) )
         {
             // Previous doesn't support transpose -- Add a MemoryCopy so we can fuse transpose to it

@@ -696,6 +696,19 @@ void ConstraintInput8bit(const Operator &op, const SubGraph &subgraph, const Bui
         throw InvalidTfLiteException(constraint, extra, op, subgraph, builtinOperator);
     }
 }
+
+void ConstraintParams32bit(const Operator &op, const SubGraph &subgraph, const BuiltinOperator &builtinOperator, BufferOffsetRef)
+{
+    auto params = TensorFromUsage(regor::TensorUsage::Params, op, builtinOperator, *subgraph.tensors());
+
+    if ( !(params->type() == TensorType::INT32 || params->type() == TensorType::UINT32) )
+    {
+        std::string constraint = "Params must be INT32 or UINT32";
+        std::string extra = fmt::format("Params type={}", EnumNameTensorType(params->type()));
+        throw InvalidTfLiteException(constraint, extra, op, subgraph, builtinOperator);
+    }
+}
+
 void ConstraintArgmaxOutput(const Operator &op, const SubGraph &subgraph, const BuiltinOperator &builtinOperator, BufferOffsetRef)
 {
     auto ofm = TensorFromUsage(regor::TensorUsage::OFM, op, builtinOperator, *subgraph.tensors());
@@ -716,6 +729,22 @@ void ConstraintGatherIndicesInput(const Operator &op, const SubGraph &subgraph, 
     {
         std::string constraint = "IFM2 must be INT16, INT32 or INT64";
         std::string extra = fmt::format("IFM2 type={}", EnumNameTensorType(ifm2->type()));
+        throw InvalidTfLiteException(constraint, extra, op, subgraph, builtinOperator);
+    }
+}
+
+void ConstraintTransposeParamsInput(const Operator &op, const SubGraph &subgraph, const BuiltinOperator &builtinOperator, BufferOffsetRef)
+{
+    auto ifm = TensorFromUsage(regor::TensorUsage::IFM, op, builtinOperator, *subgraph.tensors());
+    auto params = TensorFromUsage(regor::TensorUsage::Params, op, builtinOperator, *subgraph.tensors());
+
+    auto ifmShape = ShapeFromTens(ifm);
+    auto paramsShape = ShapeFromTens(params);
+
+    if ( ifmShape.Size() != paramsShape.Depth() )
+    {
+        std::string constraint = "Permutation vector size must match IFM rank";
+        std::string extra = fmt::format("Params shape={}, IFM shape={}", paramsShape.ToString(), ifmShape.ToString());
         throw InvalidTfLiteException(constraint, extra, op, subgraph, builtinOperator);
     }
 }
@@ -929,6 +958,10 @@ regor::ordered_map<BuiltinOperator, OpCheckVec> GetSpecificConstraints()
     // GatherSpecificChecks
     specificOpConstraints[BuiltinOperator::GATHER].emplace_back(&ConstraintGatherIndicesInput);
     specificOpConstraints[BuiltinOperator::GATHER].emplace_back(&ConstraintMatchingInOutTypes);
+
+    // TransposeSpecificChecks
+    specificOpConstraints[BuiltinOperator::TRANSPOSE].emplace_back(&ConstraintParams32bit);
+    specificOpConstraints[BuiltinOperator::TRANSPOSE].emplace_back(&ConstraintTransposeParamsInput);
 
     return specificOpConstraints;
 }
