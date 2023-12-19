@@ -165,7 +165,7 @@ def print_allocation(lrs, mem_area, mem_type_set, tensor_allocator, sg, actual_m
     ):
         print(
             f"{start_time:10d} - {end_time:10d}: {start_addr:#10x} - {end_addr:#10x}: {size:11d}:"
-            f" {memory_hist[start_time]:12d}: {purpose.display_name():12s}: {name:s}"
+            f" {max(memory_hist[start_time:end_time+1]):12d}: {purpose.display_name():12s}: {name:s}"
         )
 
     alloc_overhead_fraction = (actual_mem_usage_for_alloc - min_mem_usage_for_alloc) / min_mem_usage_for_alloc
