@@ -76,7 +76,7 @@ class LiveRange:
         self.mem_area = MemArea.Sram
 
     def overlaps_ranges(self, other):
-        return max(self.start_time, other.start_time) < min(self.end_time, other.end_time)
+        return max(self.start_time, other.start_time) <= min(self.end_time, other.end_time)
 
     def overlaps_address(self, other):
         # Returns the first pair of tensors in this LiveRange and 'other' which have
