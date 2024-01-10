@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2020-2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2020-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -65,6 +65,7 @@ from .operation import Padding
 from .operation import RoundingMode
 from .register_command_stream_generator import generate_command_stream
 from .register_command_stream_util import BASE_PTR_INDEX_MEM2MEM
+from .register_command_stream_util import to_npu_acc_type
 from .register_command_stream_util import to_npu_kernel
 from .register_command_stream_util import UNARY_ELEMWISE_OPS
 from .shape4d import Shape4D
@@ -545,6 +546,7 @@ def set_common_op_fields(npu_op: NpuBlockOperation, cmd: NpuStripe, arch: Archit
         npu_op.padding = create_padding(cmd, op, npu_op)
         npu_op.kernel = to_npu_kernel(op.kernel)
     npu_op.ifm_upscale = resampling_mode_inv_map[op.ifm_resampling_mode]
+    npu_op.accumulator_type = to_npu_acc_type(op.attrs.get("quantized_bias_type", None))
     return npu_op
 
 

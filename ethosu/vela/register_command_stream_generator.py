@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2020-2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2020-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -31,6 +31,7 @@ import numpy as np
 
 from . import scaling
 from .api import NpuAccelerator
+from .api import NpuAccumulatorType
 from .api import NpuActivation
 from .api import NpuActivationOp
 from .api import NpuAddressRange
@@ -268,6 +269,11 @@ acc_format_map = {
     SHRAMElements.Acc16: acc_format.FP_S5_10.value,
     SHRAMElements.Acc32: acc_format.INT_32BIT.value,
     SHRAMElements.Acc40: acc_format.INT_40BIT.value,
+}
+
+npu_acc_format_map = {
+    NpuAccumulatorType.Int32: acc_format.INT_32BIT.value,
+    NpuAccumulatorType.Int40: acc_format.INT_40BIT.value,
 }
 
 resampling_mode_map = {
@@ -574,7 +580,10 @@ def generate_shram_registers(
     emit.cmd0_with_param(cmd0.NPU_SET_AB_START, arch_block_config.layout.ab_start)
     if has_ifm2(npu_op):
         emit.cmd0_with_param(cmd0.NPU_SET_IFM2_IB_START, arch_block_config.layout.ib_start2)
-    emit.cmd0_with_param(cmd0.NPU_SET_ACC_FORMAT, acc_format_map[arch_block_config.acc_type])
+    if npu_op.accumulator_type != NpuAccumulatorType.Default:
+        emit.cmd0_with_param(cmd0.NPU_SET_ACC_FORMAT, npu_acc_format_map[npu_op.accumulator_type])
+    else:
+        emit.cmd0_with_param(cmd0.NPU_SET_ACC_FORMAT, acc_format_map[arch_block_config.acc_type])
 
 
 def get_block_config_for_npu_op(
