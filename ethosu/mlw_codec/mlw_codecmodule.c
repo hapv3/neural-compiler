@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright 2020-2021, 2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+ * SPDX-FileCopyrightText: Copyright 2020-2021, 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -84,6 +84,7 @@ method_reorder_encode (PyObject *self, PyObject *args)
         NPY_ARRAY_ALIGNED);
     if (input_ndarray_object == NULL)
     {
+        PyErr_SetString(PyExc_ValueError, "Invalid input array");
         return NULL;
     }
 
@@ -137,17 +138,23 @@ method_reorder_encode (PyObject *self, PyObject *args)
         &padded_length,
         verbose);
 
-    PyObject *output_byte_array = PyByteArray_FromStringAndSize((char*)output_buffer, output_length);
-    PyObject *padded_length_obj = Py_BuildValue("i", padded_length);
+    PyObject* ret = NULL;
+    if ( output_length < 0 ) {
+        ret = PyErr_NoMemory();
+    } else {
+        PyObject *output_byte_array = PyByteArray_FromStringAndSize((char*)output_buffer, output_length);
+        PyObject *padded_length_obj = Py_BuildValue("i", padded_length);
+        if ( output_byte_array && padded_length_obj ) {
+            ret = PyTuple_Pack(2, output_byte_array, padded_length_obj);
+        }
+        Py_XDECREF(output_byte_array);
+        Py_XDECREF(padded_length_obj);
+    }
 
     /* Discard the output buffer */
     mlw_free_outbuf(output_buffer);
 
-    PyObject* ret = PyTuple_Pack(2, output_byte_array, padded_length_obj);
-
     Py_DECREF(input_ndarray_object);
-    Py_DECREF(output_byte_array);
-    Py_DECREF(padded_length_obj);
     return ret;
 }
 
@@ -216,7 +223,8 @@ method_encode (PyObject *self, PyObject *args)
 
   int output_length = mlw_encode(input_buffer, (int)input_length, &output_buffer, verbose);
 
-  PyObject *output_byte_array = PyByteArray_FromStringAndSize ((char *) output_buffer, output_length);
+  PyObject *output_byte_array = output_length < 0 ? PyErr_NoMemory() :
+    PyByteArray_FromStringAndSize ((char *) output_buffer, output_length);
 
   /* Discard the temporary input and output buffers.  */
   free (input_buffer);
