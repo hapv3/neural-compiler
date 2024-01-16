@@ -586,15 +586,6 @@ def generate_shram_registers(
         emit.cmd0_with_param(cmd0.NPU_SET_ACC_FORMAT, acc_format_map[arch_block_config.acc_type])
 
 
-def get_block_config_for_npu_op(
-    arch, npu_op: NpuBlockOperation, npu_block_type: NpuBlockType, is_partkernel: bool, ifm_resampling: resampling_mode
-) -> Optional[ArchitectureBlockConfig]:
-    """
-    Given npu_op.block_config, returns a corresponding ArchitectureBlockConfig.
-    Returns None if the block_config does not fit.
-    """
-
-
 def get_arch_block_config(
     npu_op: NpuBlockOperation, block_traversal: NpuBlockTraversal, arch: ArchitectureFeatures
 ) -> ArchitectureBlockConfig:
