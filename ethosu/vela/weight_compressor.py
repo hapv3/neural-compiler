@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2020-2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2020-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -420,7 +420,7 @@ def encode_weight_and_scale_tensor(
 
         # For each core, deinterleave weights/scales from the larger volume
         # and generate separate compressed streams.
-        for core in range(0, min(arch.ncores, full_ofm_depth)):
+        for core in range(0, min(arch.ncores, depth_length)):
 
             core_block_depth = int((ofm_block_depth + arch.ncores - 1 - core) // arch.ncores)
 
