@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2021-2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -148,7 +148,7 @@ transpose_conv_attrs = AttrSerializer(
 )
 transpose_attrs = AttrSerializer("TransposeAttribute", (("perms", is_vec),))
 axis_attrs = AttrSerializer("AxisAttribute", ("axis",))
-reshape_attrs = AttrSerializer("ReshapeAttribute", (("shape", is_vec),))
+reshape_attrs = AttrSerializer("ReshapeAttribute", (("new_shape", is_vec),))
 slice_attrs = AttrSerializer("SliceAttribute", (("start", is_vec), ("size", is_vec)))
 tile_attrs = AttrSerializer("TileAttribute", (("multiplies", is_vec),))
 resize_attrs = AttrSerializer(

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2021-2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -294,7 +294,7 @@ class TosaGraph:
     def check_version(self, tosa_graph):
         version = tosa_graph.Version()
         version_str = f"{version._Major()}.{version._Minor()}.{version._Patch()}"
-        if version_str != "0.80.0":
+        if version_str not in ( "0.80.0", "0.80.1" ):
             print(f"Unsupported TOSA version: {version_str}")
             assert False
 
