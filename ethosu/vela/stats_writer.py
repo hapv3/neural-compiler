@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2020-2022 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2020-2022, 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -365,11 +365,11 @@ def print_performance_metrics(nng, arch, show_cpu_operations=False, verbose_weig
 
     for sg in nng.subgraphs:
         if sg.placement == PassPlacement.Cpu:
-            for op in sg.get_all_ops():
+            for op in sg.get_all_ops_from_passes():
                 if op.type not in ir_only_ops:
                     cpu_operations.append(op)
         elif sg.placement == PassPlacement.Npu:
-            for op in sg.get_all_ops():
+            for op in sg.get_all_ops_from_passes():
                 if op.type not in ir_only_ops:
                     npu_operations.append(op)
 
