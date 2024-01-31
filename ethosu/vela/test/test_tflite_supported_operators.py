@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2020-2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2020-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -542,7 +542,9 @@ def create_strided_slice():
 def test_constraint_stridedslice_stride_values():
     # Unsupported strides
     op = create_strided_slice()
-    op.inputs[3].values = [1, 1, 2, 1]
+    op.inputs[3].values = [1, 2, 2, 1]
+    assert support.is_operator_supported(op)
+    op.inputs[3].values = [2, 1, 1, 1]
     assert not support.is_operator_supported(op)
 
 

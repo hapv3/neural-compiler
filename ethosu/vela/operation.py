@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2020-2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2020-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -511,6 +511,7 @@ class Operation:
         "tile_base_offsets_ifm",
         "tile_base_offsets_ofm",
         "ofm_stride_multiplier",
+        "ifm_stride_multiplier",
     )
 
     def __init__(self, op_type: Op, name: str):
@@ -554,8 +555,9 @@ class Operation:
         self.tile_base_offsets_ifm: List[List[int]] = [[0, 0, 0, 0], [0, 0, 0, 0]]
         # ofm (nhwc)
         self.tile_base_offsets_ofm: List[int] = [0, 0, 0, 0]
-        # For interleaved/sparse outputs - stride is multiplied with the stride factor of the corresponding axis
-        # Order is [C, H, W] - default is no multiplication
+        # Stride is multiplied with the ifm/ofm stride factor of the corresponding axis
+        # Order is [C, H, W]
+        self.ifm_stride_multiplier: List[List[int]] = [[1, 1, 1], [1, 1, 1]]
         self.ofm_stride_multiplier: List[int] = [1, 1, 1]
 
     def clone(self, suffix="_clone"):
@@ -585,6 +587,7 @@ class Operation:
         res.ifm_resampling_mode = self.ifm_resampling_mode
         res.tile_base_offsets_ifm = [_ifm.copy() for _ifm in self.tile_base_offsets_ifm]
         res.tile_base_offsets_ofm = self.tile_base_offsets_ofm.copy()
+        res.ifm_stride_multiplier = [_ifm.copy() for _ifm in self.ifm_stride_multiplier]
         res.ofm_stride_multiplier = self.ofm_stride_multiplier.copy()
 
         return res
@@ -763,6 +766,7 @@ class Operation:
         offset_start = None
         offset_end = None
         axis = None
+        strides_tens = None
         if self.type == Op.Split:
             num_splits = self.attrs.get("num_splits")
             axis_tens = self.inputs[0]
@@ -831,7 +835,7 @@ class Operation:
         else:
             assert False
 
-        return input_tens, outputs, axis, offset_start, offset_end
+        return input_tens, outputs, axis, offset_start, offset_end, strides_tens
 
     def set_activation_lut(self, lut_tensor):
         self.activation = ActivationFunction(Op.LUT)
