@@ -831,10 +831,11 @@ class TFLiteSupportedOperators:
     @staticmethod
     def constraint_mirror_pad_padding_values(op):
         "The number of pad values for each direction must not be larger than the ifm size in that dimension"
+        valid = True
         pad_tensor = op.inputs[1].values
         ifm_shape = op.inputs[0].shape
-        for dim_padding, ifm_dim_shape in enumerate(pad_tensor, ifm_shape):
-            if any(dim_padding > ifm_dim_shape):
+        for dim_padding, ifm_dim_shape in zip(pad_tensor, ifm_shape):
+            if any([pad_val > ifm_dim_shape for pad_val in dim_padding]):
                 valid = False
         return valid, f"IFM shape: {ifm_shape}, number of padding values per dimension: {pad_tensor}"
 
