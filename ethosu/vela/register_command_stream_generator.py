@@ -1095,7 +1095,9 @@ def generate_command_stream(
         # Generate the actual NPU_OP command
         generate_operation_code(emit, npu_op)
         if add_to_debug_db is not None:
-            add_to_debug_db(npu_op, emit.offset)
+            if not isinstance(npu_op, NpuDmaOperation):
+                # Subtraction by 4 is to account for that offsets are pre-incremented.
+                add_to_debug_db(npu_op, emit.offset - 4)
     # Fill in final part of command stream:
     emit.cmd_do_operation(cmd0.NPU_OP_STOP, param=0xFFFF)
     res = emit.to_list()

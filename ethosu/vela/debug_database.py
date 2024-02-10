@@ -34,7 +34,7 @@ class DebugDatabase:
 
     SOURCE_TABLE = "source"
     _sourceUID: Dict[Any, int] = {}
-    _sourceHeaders = ["id", "operator", "kernel_w", "kernel_h", "ofm_w", "ofm_h", "ofm_d"]
+    _sourceHeaders = ["id", "operator", "kernel_w", "kernel_h", "ofm_w", "ofm_h", "ofm_d", "ext_key"]
     _sourceTable: List[List[Union[float, int, str]]] = []
 
     OPTIMISED_TABLE = "optimised"
@@ -58,7 +58,7 @@ class DebugDatabase:
         cls._sourceUID[op] = uid
         ofm_shape = numeric_util.full_shape(3, op.outputs[0].shape, 1)
         cls._sourceTable.append(
-            [uid, str(op.type), op.kernel.width, op.kernel.height, ofm_shape[-2], ofm_shape[-3], ofm_shape[-1]]
+            [uid, str(op.type), op.kernel.width, op.kernel.height, ofm_shape[-2], ofm_shape[-3], ofm_shape[-1], op.op_index]
         )
 
     # Ops are added when their type changes, and after optimisation. If an op was already
