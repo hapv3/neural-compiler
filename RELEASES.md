@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright 2020-2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+SPDX-FileCopyrightText: Copyright 2020-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 
 SPDX-License-Identifier: Apache-2.0
 
@@ -21,6 +21,25 @@ These are the release notes for all Vela releases.  They document all of the
 main feature changes, interface changes and reported defects that have been
 fixed.  The version numbering adheres to the
 [semantic versioning](https://semver.org/) scheme.
+
+## Release 3.11.0 - 19/02/2024
+
+**Main feature changes:**
+
+* New operator support: MIRROR_PAD
+* Upgrade TensorFlow Lite support to version 2.15
+* Fixed issue with reporting incorrect peak memory usage with verbose allocation option
+* Fixed issue with incorrect number of CPU operators in summary report
+* Fixed rounding mode issue with int16 FULLY_CONNECTED
+
+**Interface changes:**
+
+* None
+
+**Reported defect fixes:**
+
+* Fixed issue with passing through FULLY_CONNECTED operators with dynamic weights (MLCE-1176)
+
 
 ## Release 3.10.0 - 16/11/2023
 
