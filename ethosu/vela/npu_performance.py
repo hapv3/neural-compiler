@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2020-2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2020-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -954,7 +954,11 @@ def calc_new_performance_for_network(
             if encoded_npu_weight and (encoded_npu_weight.equivalence_id not in encoded_npu_weight_uuids):
 
                 encoded_npu_weight_uuids.add(encoded_npu_weight.equivalence_id)
-                total_encoded_weight_size += len(encoded_npu_weight.buffer)
+                # Get total weight size from encoded ranges
+                sz = 0
+                for key in encoded_npu_weight.encoded_ranges:
+                    sz += encoded_npu_weight.encoded_ranges[key].weight_bytes
+                total_encoded_weight_size += sz
 
             total_bws += bws[sched_op]
             total_macs += macs[sched_op]
