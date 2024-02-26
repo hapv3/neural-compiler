@@ -99,20 +99,24 @@ Operation *TFLiteGraphOptimiser::MakeOperation(
 }
 
 // Converts LeakyReLU to
-// if alpha <= 1
-//     Max(alpha * IFM, identity * IFM)
+// if 0 <= alpha <= 1
+//     Maximum(alpha * IFM, identity * IFM)
 // else
-//     Min(alpha * IFM, identity * IFM)
+//     Relu(IFM)   Minimum(IFM, 0)
+//        \         /
+//         \    Mul(alpha)
+//          \     /
+//            Add
 Operation *TFLiteGraphOptimiser::ConvertLeakyRelu16bit(TensorConnection &ifmConn, TensorConnection &ofmConn, Operation *operation)
 {
     Operation *returnOp = operation;
 
     auto ifm = ifmConn.tensor.get();
     auto ofm = ofmConn.tensor.get();
-    auto *lrelu = operation->Attribute<leaky_relu_attr_t>();
-    float alpha = lrelu->alpha;
+    auto params = operation->Input(TensorUsage::Params);
+    auto *attr = operation->Attribute<leaky_relu_attr_t>();
+    float alpha = attr->alpha;
     int scalar = 1;
-
     auto alphaQuant = ifmConn.quantization;
     alphaQuant.quantMin = {0};
     alphaQuant.quantMax = {int64_t(alpha * IntegerMax(ifmConn.tensor->Type()))};
@@ -121,53 +125,95 @@ Operation *TFLiteGraphOptimiser::ConvertLeakyRelu16bit(TensorConnection &ifmConn
 
     if ( alpha < 0 )
     {
+        // For negative alpha we move the sign to the scalar instead.
         scalar = -1;
         alphaQuant.scales[0].scale *= -1;
     }
 
-    // Multiply all values with alpha
-    auto fmAlpha = CreateConstTensor("lrelu_alpha", int16_t(scalar));
-    auto alphaMulOp = MakeMulWithConstTensor("alpha", ifmConn, ofmConn, fmAlpha, alphaQuant);
-
-    RecordOptimisation(operation, alphaMulOp);
-    TensorConnection *identityConn = &ifmConn;
-
-    if ( !IsScalingValidAndEqual(ifmConn, ofmConn) )
+    if ( params != nullptr )
     {
-        // Identity operation is introduced to handle rescaling of the IFM
-        auto identityQuant = ifmConn.quantization;
-        identityQuant.quantMin = {0};
-        identityQuant.quantMax = {int64_t(IntegerMax(ifmConn.tensor->Type()))};
-        identityQuant.zeroPoints[0] = 0;
-        identityQuant.scales[0] = {1, 0};
-
-        auto fmIdentity = CreateConstTensor("lrelu_ident", int16_t(1));
-
-        auto identityMulOp = MakeMulWithConstTensor("identity", ifmConn, ofmConn, fmIdentity, identityQuant);
-        RecordOptimisation(operation, identityMulOp);
-        identityConn = identityMulOp->Output(TensorUsage::OFM);
+        // If alpha comes in a params-tensor (e.g. converted PReLU)
+        // the alpha-value also has quantization-parameters
+        assert(params->tensor->IsConstant());
+        assert(params->tensor->Type() == DataType::Int16);
+        auto view = params->tensor->View();
+        // Set scalar and alphaQuant accordingly
+        scalar = view.Buffer()->Data<int16_t>()[0];
+        alphaQuant = params->quantization;
     }
 
-    // Merge scaled and unscaled values with a MIN or a MAX depending on alpha
-    if ( alpha <= 1 )
+    if ( alpha >= 0 && alpha <= 1 )
     {
-        // If alpha <= 1
-        // Max(negative * alpha, negative) = negative * alpha
-        // Max(positive * alpha, positive) = positive
+        // Lower to:
+        //     Maximum(alpha * IFM, identity * IFM)
+        auto fmAlpha = CreateConstTensor("lrelu_alpha", int16_t(scalar));
+        auto alphaMulOp = MakeMulWithConstTensor("alpha", ifmConn, ofmConn, fmAlpha, alphaQuant);
+        RecordOptimisation(operation, alphaMulOp);
+
+        TensorConnection *identityConn = &ifmConn;
+        if ( !IsScalingValidAndEqual(ifmConn, ofmConn) )
+        {
+            // Identity operation is introduced to handle rescaling of the IFM
+            auto identityQuant = ifmConn.quantization;
+            identityQuant.quantMin = {0};
+            identityQuant.quantMax = {int64_t(IntegerMax(ifmConn.tensor->Type()))};
+            identityQuant.zeroPoints[0] = 0;
+            identityQuant.scales[0] = {1, 0};
+            auto fmIdentity = CreateConstTensor("lrelu_ident", int16_t(1));
+            auto identityMulOp = MakeMulWithConstTensor("identity", ifmConn, ofmConn, fmIdentity, identityQuant);
+            RecordOptimisation(operation, identityMulOp);
+            identityConn = identityMulOp->Output(TensorUsage::OFM);
+        }
+
+        // Merge scaled and unscaled values with a Maximum
+        // Maximum(negative * alpha, negative) = negative * alpha
+        // Maximum(positive * alpha, positive) = positive
         auto maxOp = MakeOperation(OpType::Maximum, alphaMulOp->Output(TensorUsage::OFM), identityConn, &ofmConn);
+        maxOp->Input(TensorUsage::IFM)->Set(ofmConn.quantization);
         RecordOptimisation(operation, maxOp);
         returnOp = maxOp;
     }
     else
     {
-        // If alpha > 1:
-        // Min(negative * alpha, negative) = negative * alpha
-        // Min(positive * alpha, positive) = positive
-        auto minOp = MakeOperation(OpType::Minimum, alphaMulOp->Output(TensorUsage::OFM), identityConn, &ofmConn);
-        RecordOptimisation(operation, minOp);
-        returnOp = minOp;
-    }
+        // Lower to:
+        //     Relu(IFM)   Minimum(IFM, 0)
+        //        \         /
+        //         \    Mul(alpha)
+        //          \     /
+        //            Add
 
+        // Create Minimum(IFM, 0)
+        std::shared_ptr<Tensor> zeroTens = CreateConstTensor("zero_const", ifmConn.tensor->Type(), 0);
+        std::shared_ptr<Tensor> fmNegative = ifmConn.tensor->Clone();
+        auto minOp = std::make_shared<Operation>(OpType::Minimum);
+        minOp->CopyInput(TensorUsage::IFM0, ifmConn);
+        minOp->ConnectInput(TensorUsage::IFM1, zeroTens).Set(ifmConn.quantization);
+        minOp->ConnectOutput(TensorUsage::OFM, fmNegative).Set(ifmConn.quantization);
+        minOp->SetRounding(RoundMode::DBL);
+        RecordOptimisation(operation, minOp.get());
+
+        // create Mul(alpha)
+        auto fmAlpha = CreateConstTensor("lrelu_alpha", int16_t(scalar));
+        auto alphaMulOp = MakeMulWithConstTensor("alpha", *minOp->Output(TensorUsage::OFM), ofmConn, fmAlpha, alphaQuant);
+        RecordOptimisation(operation, alphaMulOp);
+
+        // create ReLU(IFM) to Select (and scale) values > 0
+        std::shared_ptr<Tensor> fmScaled = ofmConn.tensor->Clone();
+        auto reluOp = std::make_shared<Operation>(OpType::Relu);
+        reluOp->CopyInput(TensorUsage::IFM0, ifmConn);
+        reluOp->ConnectOutput(TensorUsage::OFM, fmScaled).Set(ofmConn.quantization);
+        reluOp->Output(TensorUsage::OFM)->quantization.quantMin.push_back(ofmConn.quantization.zeroPoints[0]);
+        reluOp->SetRounding(RoundMode::DBL);
+        RecordOptimisation(operation, reluOp.get());
+
+        // Create Add(Relu, Mul) to add scaled and alpha-multiplied values
+        auto addOp = std::make_shared<Operation>(OpType::Add);
+        addOp->CopyInput(TensorUsage::IFM0, *reluOp->Output(TensorUsage::OFM));
+        addOp->CopyInput(TensorUsage::IFM1, *alphaMulOp->Output(TensorUsage::OFM));
+        addOp->CopyOutput(TensorUsage::OFM, ofmConn);
+        RecordOptimisation(operation, addOp.get());
+        returnOp = addOp.get();
+    }
     return returnOp;
 }
 
@@ -2362,18 +2408,12 @@ Operation *TFLiteGraphOptimiser::ConvertTanhSigmoidToLUT(Graph *const, Operation
 Operation *TFLiteGraphOptimiser::ConvertPrelu(Graph *const graph, Operation *const operation)
 {
     // Lowering of PReLU
-    // To Minimum + Mul + ReLU + Add
-    //
-    //   x>0      x <= 0
-    //   ReLU      Minimum(x, 0)
-    //     \       /
-    //      \     Mul(alpha)
-    //       \   /
-    //        Add
-    //
-    // ReLU is used for positive input values
-    // Minimum(x,0) + Mul(alpha) is used for negative input values
-    // Add sums the two cases
+    // if all alpha values are equal:
+    //     convert to LeakyReLU
+    // else if all alpha values are < 1:
+    //     convert to max(alpha * IFM, identity * IFM)
+    // else:
+    //     Convert to Minimum + Mul + ReLU + Add
     UNUSED(graph);
     auto returnOp = operation;
     auto opType = operation->Type();
@@ -2395,6 +2435,138 @@ Operation *TFLiteGraphOptimiser::ConvertPrelu(Graph *const graph, Operation *con
         unitQuantOfmZp.zeroPoints.clear();
         unitQuantOfmZp.zeroPoints.push_back(ofmQuant.zeroPoints[0]);
         unitQuantOfmZp.type = QuantizationType::EXPLICIT;
+
+        if ( params->tensor->IsConstant() )
+        {
+            // Special-cases for constant alpha-tensor
+            auto alpha = params->tensor->View();
+            int alphaSize = alpha.ViewShape().Elements();
+
+            if ( alphaSize > 0 )
+            {
+                float alphaScale = 1.0f;
+                int64_t alphaZp = 0;
+                int alphaMin = 0;
+                int alphaMax = 0;
+                if ( params->tensor->Type() == DataType::Int8 )
+                {
+                    auto *alphaBuf = alpha.Buffer()->Data<int8_t>();
+                    alphaMin = *std::min_element(alphaBuf, alphaBuf + alphaSize);
+                    alphaMax = *std::max_element(alphaBuf, alphaBuf + alphaSize);
+                }
+                else if ( params->tensor->Type() == DataType::UInt8 )
+                {
+                    auto *alphaBuf = alpha.Buffer()->Data<uint8_t>();
+                    alphaMin = *std::min_element(alphaBuf, alphaBuf + alphaSize);
+                    alphaMax = *std::max_element(alphaBuf, alphaBuf + alphaSize);
+                }
+                else if ( params->tensor->Type() == DataType::Int16 )
+                {
+                    auto *alphaBuf = alpha.Buffer()->Data<int16_t>();
+                    alphaMin = *std::min_element(alphaBuf, alphaBuf + alphaSize);
+                    alphaMax = *std::max_element(alphaBuf, alphaBuf + alphaSize);
+                }
+
+                if ( alphaQuant.zeroPoints.size() )
+                {
+                    alphaZp = alphaQuant.zeroPoints[0];
+                }
+                if ( alphaQuant.scales.size() )
+                {
+                    alphaScale = alphaQuant.scales[0].Dequantize();
+                }
+
+                // rescale Min/Max
+                float scaledAlphaMin = (alphaMin - alphaZp) * alphaScale;
+                float scaledAlphaMax = (alphaMax - alphaZp) * alphaScale;
+
+                if ( (alphaMin == alphaMax) )
+                {
+                    // If all alpha values are equal, we can convert to LeakyReLU
+                    auto lreluOp = std::make_shared<Operation>(OpType::LeakyRelu);
+                    lreluOp->CopyInput(TensorUsage::IFM, *ifmConn);
+                    lreluOp->CopyInput(TensorUsage::Params, *params);
+                    lreluOp->CopyOutput(TensorUsage::OFM, *ofmConn);
+                    auto *attr = lreluOp->Attribute<leaky_relu_attr_t>();
+                    attr->alpha = scaledAlphaMin;
+                    // and then optimize LeakyRelU
+                    returnOp = ConvertLeakyRelu(graph, lreluOp.get());
+                    RecordOptimisation(operation, returnOp);
+                    operation->Disconnect();
+                    return returnOp;
+                }
+                else if ( scaledAlphaMax <= 1 )
+                {
+                    // If all alpha values are <= 1
+                    // We can convert to Max(alpha * IFM, identity * IFM)
+                    //
+                    //   IFM           IFM
+                    //     \          /
+                    //  Mul(alpha)  Mul(identity) - if ofmScale != ifmScale
+                    //       \      /
+                    //        Maximum
+                    //
+                    //
+
+                    std::shared_ptr<Tensor> mulAlphaTens = ofmConn->tensor->Clone();
+                    auto mulAlpha = std::make_shared<Operation>(OpType::Mul);
+                    mulAlpha->CopyInput(TensorUsage::IFM0, *ifmConn);
+                    mulAlpha->CopyInput(TensorUsage::IFM1, *params);
+                    mulAlpha->Input(TensorUsage::IFM1)->Set(params->tensor->StorageShape());
+                    mulAlpha->CopyOutput(TensorUsage::OFM, *ofmConn);
+                    mulAlpha->ConnectOutput(TensorUsage::OFM, mulAlphaTens)
+                        .Set(ofmConn->shape)
+                        .Set(ofmConn->quantization)
+                        .Set(ofmConn->slice);
+                    mulAlpha->SetRounding(RoundMode::DBL);
+                    RecordOptimisation(operation, mulAlpha.get());
+
+                    TensorConnection *alphaConn = mulAlpha->Output(TensorUsage::OFM);
+                    TensorConnection *identityConn = ifmConn;
+                    if ( ifmConn->quantization != ofmConn->quantization )
+                    {
+                        // If OFM/IFM quantization differ, we need to introduce
+                        // an identity Mul operation to handle scaling.
+                        std::shared_ptr<Tensor> oneTens;
+                        if ( ifmConn->tensor->Type() == DataType::Int16 )
+                        {
+                            oneTens = CreateConstTensor("one_const", int16_t(1));
+                        }
+                        else
+                        {
+                            oneTens = CreateConstTensor("one_const", int8_t(1));
+                        }
+                        auto mulIdentity = MakeMulWithConstTensor("rescaled", *ifmConn, *ofmConn, oneTens, Quantization::Unit());
+                        RecordOptimisation(operation, mulIdentity);
+                        identityConn = mulIdentity->Output(TensorUsage::OFM);
+                    }
+                    // Create Maximum operation that combines identity and alphaConn
+                    auto maxOp = std::make_shared<Operation>(OpType::Maximum);
+                    maxOp->CopyInput(TensorUsage::IFM0, *alphaConn);
+                    maxOp->CopyInput(TensorUsage::IFM1, *identityConn);
+                    maxOp->CopyOutput(TensorUsage::OFM, *ofmConn);
+                    maxOp->SetRounding(RoundMode::DBL);
+                    RecordOptimisation(operation, maxOp.get());
+                    returnOp = maxOp.get();
+                    operation->Disconnect();
+                    return returnOp;
+                }
+            }
+        }
+
+        // Generic catch-all case
+        // Convert to Minimum + Mul + ReLU + Add
+        //
+        //   x>0      x <= 0
+        //   ReLU      Minimum(x, 0)
+        //     \       /
+        //      \     Mul(alpha)
+        //       \   /
+        //        Add
+        //
+        // ReLU is used for positive input values
+        // Minimum(x,0) + Mul(alpha) is used for negative input values
+        // Add sums the two cases
 
         std::shared_ptr<Tensor> zeroTens = CreateConstTensor("zero_const", ifmConn->tensor->Type(), 0);
         std::shared_ptr<Tensor> fmNegative = ifmConn->tensor->Clone();
@@ -2459,11 +2631,13 @@ Operation *TFLiteGraphOptimiser::ConvertLeakyRelu(Graph *const graph, Operation 
     auto returnOp = operation;
     auto opType = operation->Type();
     auto ifmConn = operation->Input(TensorUsage::IFM0);
+    auto params = operation->Input(TensorUsage::Params);
     auto ofmConn = operation->Output(TensorUsage::OFM);
 
     // TODO MLBEDSW-8770: Investigate performance of leakyReLU optimisations
     if ( opType == OpType::LeakyRelu && ifmConn != nullptr && ofmConn != nullptr )
     {
+        bool isConvertedPrelu = (params != nullptr);  // converted Prelu has params tensor
         const auto *attr = operation->Attribute<leaky_relu_attr_t>();
         float alpha = attr->alpha;
         auto ifm = ifmConn->tensor.get();
@@ -2495,9 +2669,9 @@ Operation *TFLiteGraphOptimiser::ConvertLeakyRelu(Graph *const graph, Operation 
             returnOp = Convert8bitLeakyReluToLUT(graph, operation, alpha);
             RecordOptimisation(operation, returnOp);
         }
-        else if ( alpha < 0 || !_constraints->CanExecute(query) )
+        else if ( alpha < 0 || isConvertedPrelu || !_constraints->CanExecute(query) )
         {
-            // Use 16-bit lowering to Mul + Max or Mul + Min
+            // Use 16-bit lowering to Mul + Max or Min + Mul + Relu + Add
             returnOp = ConvertLeakyRelu16bit(*ifmConn, *ofmConn, operation);
         }
     }
