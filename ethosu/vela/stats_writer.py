@@ -1,4 +1,5 @@
 # SPDX-FileCopyrightText: Copyright 2020-2022, 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: (c) Meta Platforms, Inc. and affiliates. (http://www.meta.com)
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -280,7 +281,7 @@ def print_performance_metrics_for_strat(
     n_total_operations = max(n_cpu_operations + n_npu_operations, 1)  # avoid potential divide by zero
 
     def format_tens_list(lst):
-        return " ".join(str(list(tens.shape)) for tens in lst)
+        return " ".join(str(list(tens.shape)) for tens in lst if tens is not None)
 
     for str_ops_type, n_ops, ops in (
         ("CPU", n_cpu_operations, cpu_operations),
