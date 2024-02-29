@@ -280,23 +280,24 @@ def _prepare_scale_and_bias(arch, tens, explicit_scaling):
         # If weight_scales is not already an iterable make it into a list
         weight_scales = [weight_scales]
 
-    # Convert scales to np.double (from np.float32) to conform to TensorFlow Lite which
-    # uses double during scaling calculations
-    # TensorFlow Lite casts the scales slightly differently for uint8 and int8 as well as
-    # for FullyConnected operators
-    if ifm_dtype == DataType.uint8 or first_consumer_op.original_type == Op.FullyConnected:
-        scales = [np.double(ifm_scale * weight_scale) / np.double(ofm_scale) for weight_scale in weight_scales]
-    elif ifm_dtype == DataType.int8 or ifm_dtype == DataType.int16:
-        scales = [
-            (np.double(ifm_scale) * np.double(weight_scale)) / np.double(ofm_scale) for weight_scale in weight_scales
-        ]
-    else:
-        raise UnsupportedFeatureError(f"Compression of {ifm_dtype} is not implemented; Tensor: '{tens.name}'")
-
     if explicit_scaling:
         assert len(explicit_scaling.shift) == len(explicit_scaling.multiplier)
         quantised_scales = [(int(m), int(s)) for s, m in zip(explicit_scaling.shift, explicit_scaling.multiplier)]
     else:
+        # Convert scales to np.double (from np.float32) to conform to TensorFlow Lite which
+        # uses double during scaling calculations
+        # TensorFlow Lite casts the scales slightly differently for uint8 and int8 as well as
+        # for FullyConnected operators
+        if ifm_dtype == DataType.uint8 or first_consumer_op.original_type == Op.FullyConnected:
+            scales = [np.double(ifm_scale * weight_scale) / np.double(ofm_scale) for weight_scale in weight_scales]
+        elif ifm_dtype == DataType.int8 or ifm_dtype == DataType.int16:
+            scales = [
+                (np.double(ifm_scale) * np.double(weight_scale)) / np.double(ofm_scale)
+                for weight_scale in weight_scales
+            ]
+        else:
+            raise UnsupportedFeatureError(f"Compression of {ifm_dtype} is not implemented; Tensor: '{tens.name}'")
+
         # quantise all of the weight scales into (scale_factor, shift)
         if ifm_dtype == DataType.int16 and bias_tens.dtype == DataType.int64:
             # Reference uses reduced scaling for int16 with int64 bias

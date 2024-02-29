@@ -387,6 +387,8 @@ def rewrite_rescale(op, arch, nng):
         ifm.quantization.zero_point = input_zp
         ofm.quantization.zero_point = output_zp
 
+        assert per_channel is False, "per_channel rescale not supported"
+
         for s, m in zip(shift, multiplier):
             # TODO these are the TOSA limitations
             assert m >= 0
@@ -403,11 +405,7 @@ def rewrite_rescale(op, arch, nng):
         # Generate Rescale behaviour attached to a compatible NOP
         avgpool_op = replace_rescale_with_avg_pool(op)
         avgpool_op.rounding_mode = rounding_mode
-            
-        if per_channel:
-            assert False, "per_channel rescale not supported"
-        else:
-            avgpool_op.explicit_scaling = explicit_scaling
+        avgpool_op.explicit_scaling = explicit_scaling
 
     return op
 

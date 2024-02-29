@@ -42,7 +42,7 @@ class TosaBasicBlock(object):
             x = self._tab.Vector(o)
             x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
             x = self._tab.Indirect(x)
-            from tosa.TosaOperator import TosaOperator
+            from .TosaOperator import TosaOperator
             obj = TosaOperator()
             obj.Init(self._tab.Bytes, x)
             return obj
@@ -67,7 +67,7 @@ class TosaBasicBlock(object):
             x = self._tab.Vector(o)
             x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
             x = self._tab.Indirect(x)
-            from tosa.TosaTensor import TosaTensor
+            from .TosaTensor import TosaTensor
             obj = TosaTensor()
             obj.Init(self._tab.Bytes, x)
             return obj
