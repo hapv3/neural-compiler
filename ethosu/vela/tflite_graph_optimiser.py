@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2020-2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2020-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -191,12 +191,17 @@ def remove_SplitSliceRead(op, arch):
     if op.type == Op.SplitSliceRead:
         # Check if it is possible to put the SplitSliceRead on the tensor consumer(s),
         # or if an avgpool need to be inserted
-        # Not possible to do if consumer is a Transpose op since ifm shape has been reshaped and can not be changed
+        # Not possible to move:
+        #   - if consumer is a Transpose op since ifm shape has been reshaped and can not be changed
+        #   - if consumer is elementwise and ifm needs to be broadcasted
         if op.ofm_shapes[0] == Shape4D.from_list(op.ofm.shape) and all(
             consumer is not None
             and consumer.run_on_npu
             and consumer.type not in memory_only_ops
             and consumer.original_type != Op.Transpose
+            and not (
+                consumer.type.is_binary_elementwise_op() and Shape4D.from_list(consumer.ofm.shape) != op.ofm_shapes[0]
+            )
             for consumer in op.ofm.consumer_list
         ):
             # SplitSliceRead can be performed by tensor consumer(s)
