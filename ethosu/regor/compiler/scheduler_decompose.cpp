@@ -90,12 +90,12 @@ bool CanRunOnHardware(Architecture *arch, const SchedulerOperation *schedOp)
     if ( !ifm || !ofm ) return false;
     qOpGroup.type = schedOp->Type();
     qOpGroup.kernel = schedOp->Kernel();
-    qOpGroup.ifm.key = ifm->tensor->uid;
-    qOpGroup.ifm.type = ifm->tensor->dataType;
+    qOpGroup.ifm[0].key = ifm->tensor->uid;
+    qOpGroup.ifm[0].type = ifm->tensor->dataType;
     if ( ifm2 )
     {
-        qOpGroup.ifm2.key = ifm2->tensor->uid;
-        qOpGroup.ifm2.type = ifm2->tensor->dataType;
+        qOpGroup.ifm[1].key = ifm2->tensor->uid;
+        qOpGroup.ifm[1].type = ifm2->tensor->dataType;
     }
     qOpGroup.ofm.key = ofm->tensor->uid;
     qOpGroup.ofm.type = ofm->tensor->dataType;

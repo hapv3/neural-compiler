@@ -133,6 +133,10 @@ bool Compiler::ParseOptions(const char *text, size_t size)
                     flags.Parse(reader.Get<std::string>());
                     _compilerOptions.outputFormat = flags;
                 }
+                else if ( key == "disable_chaining" )
+                {
+                    _compilerOptions.disableChaining = reader.Get<bool>();
+                }
                 reader.End();
             }
         }
@@ -371,7 +375,7 @@ std::unique_ptr<Graph> Compiler::CompileGraph(std::unique_ptr<Graph> &graph,
     }
 
     // Pack/linearise graph Operations into SchedulerOperations
-    SchedulerPacking packing(_architecture.get());
+    SchedulerPacking packing(_architecture.get(), _compilerOptions.disableChaining);
     auto scheduleOps = packing.Process(graph.get());
 
     // Schedule the linearised operation sequence

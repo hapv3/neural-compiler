@@ -655,6 +655,18 @@ int EthosU55OpGroup::Add(const ArchitectureOpGroupQuery &op, const std::vector<i
         return 0;
     }
 
+    if ( !CanRunOnNPU(op) )
+    {
+        // Can only fuse NPU ops
+        return 0;
+    }
+
+    if ( _opsCount > 0 && !IsActivation(op.type) )
+    {
+        // Can only fuse with activation
+        return 0;
+    }
+
     for ( int dep : dependsOn )
     {
         if ( dep > 0 )
@@ -674,40 +686,31 @@ int EthosU55OpGroup::Add(const ArchitectureOpGroupQuery &op, const std::vector<i
         }
 
         const EthosU55OpGroup::OpInfo &prevOp = _ops[dep];
-        if ( prevOp.ofm.key != op.ifm.key && prevOp.ofm.key != op.ifm2.key )
+
+        if ( prevOp.ofm.key != op.ifm[0].key && (op.inputs == 1 || prevOp.ofm.key != op.ifm[1].key) )
         {
             // Can only fuse when ops are connected
             return 0;
         }
-    }
-
-    if ( !CanRunOnNPU(op) )
-    {
-        // Can only fuse NPU ops
-        return 0;
-    }
-
-    if ( _opsCount > 0 && !IsActivation(op.type) )
-    {
-        // Can only fuse with activation
-        return 0;
+        else
+        {
+            _fusedTensors.insert(prevOp.ofm.key);
+        }
     }
 
     // Generated key
     int key = (-_opsCount) - 1;
 
     // Save copy of op
-    _ops[_opsCount].type = op.type;
-    _ops[_opsCount].ifm.key = op.ifm.key;
-    _ops[_opsCount].ifm.type = op.ifm.type;
-    _ops[_opsCount].ifm2.key = op.ifm2.key;
-    _ops[_opsCount].ifm2.type = op.ifm2.type;
-    _ops[_opsCount].ofm.key = op.ofm.key;
-    _ops[_opsCount].ofm.type = op.ofm.type;
+    _ops[_opsCount] = op;
     _opsInternal[_opsCount].dependsOn = dependsOn;
     _opsCount++;
 
     return key;
+}
+bool EthosU55OpGroup::NeedsAllocation(UniqueId tensorUID)
+{
+    return _fusedTensors.count(tensorUID) != 0;
 }
 
 // Table of allowed ifm/ofm data type combinations for each HWOp
@@ -750,7 +753,7 @@ bool EthosU55OpGroup::CanRunOnNPU(const ArchitectureOpGroupQuery &op)
 {
     EthosU55NpuOp npuOp = ArchEthosU55::GetHWOp(op.type);
 
-    if ( IsFloat(op.ifm.type | op.ifm2.type | op.ofm.type) )
+    if ( IsFloat(op.ifm[0].type | op.ifm[1].type | op.ofm.type) )
     {
         return false;
     }
@@ -801,7 +804,7 @@ bool EthosU55OpGroup::CanRunOnNPU(const ArchitectureOpGroupQuery &op)
             return false;
         }
         auto &typeMap = map->second;
-        auto ifmEntry = typeMap.find(op.ifm.type);
+        auto ifmEntry = typeMap.find(op.ifm[0].type);
         if ( ifmEntry == typeMap.end() )
         {  // Unsupported ifm data type
             return false;
@@ -832,7 +835,7 @@ bool EthosU55OpGroup::CanRunOnNPU(const ArchitectureOpGroupQuery &op)
             case OpType::Abs:
             {
                 validIfmTypes = {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32};
-                validOfmTypes = {op.ifm.type};
+                validOfmTypes = {op.ifm[0].type};
             }
             break;
             case OpType::CLZ:
@@ -852,11 +855,11 @@ bool EthosU55OpGroup::CanRunOnNPU(const ArchitectureOpGroupQuery &op)
                 break;
         }
 
-        if ( 0 == std::count(validIfmTypes.begin(), validIfmTypes.end(), op.ifm.type) )
+        if ( 0 == std::count(validIfmTypes.begin(), validIfmTypes.end(), op.ifm[0].type) )
         {  // Unsupported ifm data type
             return false;
         }
-        if ( IsBinaryElementwise(op.type) && op.ifm2.type != op.ifm.type )
+        if ( IsBinaryElementwise(op.type) && op.ifm[1].type != op.ifm[0].type )
         {  // ifm2 data type must match ifm data type
             return false;
         }

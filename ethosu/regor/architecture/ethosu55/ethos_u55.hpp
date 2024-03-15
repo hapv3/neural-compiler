@@ -28,6 +28,7 @@
 #include "ethos_u55_performance.hpp"
 
 #include <string>
+#include <unordered_set>
 
 namespace regor
 {
@@ -123,9 +124,11 @@ private:
     std::array<OpInfo, 2> _ops;
     std::array<InternalOpInfo, 2> _opsInternal;
     int _opsCount = 0;
+    std::unordered_set<UniqueId> _fusedTensors;
 
 public:
     int Add(const ArchitectureOpGroupQuery &op, const std::vector<int> &dependsOn = {}) override;
+    bool NeedsAllocation(UniqueId TensorUID) override;
 
 protected:
     bool CanRunOnNPU(const ArchitectureOpGroupQuery &op) override;

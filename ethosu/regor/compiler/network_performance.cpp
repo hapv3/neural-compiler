@@ -77,6 +77,7 @@ PerformanceResult NetworkPerformance::Measure(Schedule *schedule, OptimiserDatab
         opTableColumnCount = int(columns.size());
     }
 
+    // TODO MLBEDSW-7954 handle sub-operations
     for ( auto const &schedOp : _ops )
     {
         SchedulerOpInfo *cost = schedule->Cost(schedOp.get());

@@ -47,6 +47,9 @@ private:
     std::unordered_map<SchedulerOperation *, std::shared_ptr<Operation>> _oldOpToNewOp;
     std::unordered_map<Tensor *, std::shared_ptr<Tensor>> _oldTensorToNewTensor;
 
+    void ConnectTensors(Operation *op, const std::unique_ptr<SchedulerOperation> &schedOp,
+        std::unordered_map<const Tensor *, Address> &tensorAddressMap);
+
     std::shared_ptr<Tensor> LookupNewTensor(Tensor *oldTensor);
     std::shared_ptr<Tensor> LookupNewTensor(
         Tensor *oldTensor, std::unordered_map<const Tensor *, Address> &tensorAddressMap, Address allocatedAddress);

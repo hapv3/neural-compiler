@@ -105,7 +105,6 @@ static int AccumulatorBits(EthosU85Accumulator accType)
     return bits;
 }
 
-
 ArchEthosU85::ArchEthosU85() : _subkernelMax(8, 8, 65536), _ofmBlockMax(128, 128, 1024)
 {
     _weightEncoder = std::make_unique<EthosU85WeightEncoder>(this);
@@ -188,7 +187,7 @@ std::unique_ptr<ArchitectureOpGroup> ArchEthosU85::CreateOpGroup(const Architect
 {
     LOG_TRACE1("Trying to create ArchEthosU85 OpGroup for {}\n", OpTypeToString(op.type));
 
-    auto group = std::make_unique<EthosU85OpGroup>();
+    auto group = std::make_unique<EthosU85OpGroup>(this);
     if ( !group->Add(op) )
     {
         return nullptr;
@@ -219,6 +218,7 @@ AxisMask ArchEthosU85::CanSubdivide(OpType opType)
 
 bool ArchEthosU85::SupportsScalar(OpType opType, DataType dataType, TensorUsage usage)
 {
+
     bool supportedType(dataType == DataType::Int8 || dataType == DataType::UInt8 || dataType == DataType::Int16 || dataType == DataType::Int32);
     return EthosU85RCSGenerator::IsSupportedElementwise(opType) && supportedType && IsIFM(usage);
 }
@@ -1103,77 +1103,223 @@ EthosU85NpuOp ArchEthosU85::GetHWOp(OpType type)
     return EthosU85NpuOp::None;
 }
 
-// TODO: this is activation fusing only
+int EthosU85OpGroup::KeyToOpIndex(int key)
+{
+    if ( key > 0 )
+    {
+        key = -1;
+    }
+
+    else if ( key < 0 )
+    {
+        key = (-key) - 1;
+    }
+
+    if ( key >= _opsCount )
+    {
+        key = -1;
+    }
+    return key;
+}
+
+static constexpr bool CanStartChain(EthosU85NpuOp npuOp)
+{
+    return (
+        npuOp == EthosU85NpuOp::Convolution || npuOp == EthosU85NpuOp::Depthwise ||
+        npuOp == EthosU85NpuOp::Elementwise || npuOp == EthosU85NpuOp::Pooling || npuOp == EthosU85NpuOp::VectorProduct);
+}
+
+int EthosU85OpGroup::ExternalIfms(const ArchitectureOpGroupQuery &op)
+{
+    int externalInputs = op.inputs;
+    for ( int i = 0; i < op.inputs; i++ )
+    {
+        if ( op.ifm[i].isConst && op.ifm[i].shape.Elements() == 1 &&
+             _arch->SupportsScalar(op.type, op.ifm[i].type, MakeTensorUsage(TensorUsage::IFM, i)) )
+        {
+            externalInputs -= 1;
+        }
+    }
+    return externalInputs;
+}
+
+bool EthosU85OpGroup::Fuse(const ArchitectureOpGroupQuery &op, const std::vector<int> &dependsOn)
+{
+    if ( _opsCount > 1 )
+    {
+        // TODO MLBEDSW-9142: support fusing on chained ops
+        return false;
+    }
+
+    // activation fusing..
+    if ( op.ifm[0].type == DataType::Int16 && (op.type == OpType::Sigmoid || op.type == OpType::Tanh) )
+    {
+        // Can not fuse int16 Sigmoid and Tanh LUT since they require special scaling done by AvgPoolNop
+        return false;
+    }
+
+    if ( dependsOn.size() > 1 )
+    {
+        // Can only fuse with one op
+        return false;
+    }
+
+    int dep = KeyToOpIndex(dependsOn[0]);
+    if ( dep < 0 )
+    {
+        // invalid key
+        return false;
+    }
+    const EthosU85OpGroup::OpInfo &prevOp = _ops[dep];
+
+    // Can't fuse activation with activation..
+    if ( IsActivation(prevOp.type) )
+    {
+        return false;
+    }
+
+    _fusedTensors.insert(prevOp.ofm.key);
+    return true;
+}
+
+bool EthosU85OpGroup::Chain(const ArchitectureOpGroupQuery &op, const std::vector<int> &dependsOn, int externalInputs)
+{
+    // Op is considered for chaining
+    EthosU85NpuOp npuOp = ArchEthosU85::GetHWOp(op.type);
+    if ( _supportsChaining == false )
+    {
+        // primaryOp in opgroup doesnt support chaining
+        return false;
+    }
+    if ( externalInputs == 0 )
+    {
+        // can only consider external (non-constant) inputs for chaining
+        return false;
+    }
+    if ( _opsCount > _chainLength )
+    {
+        // TODO MLBEDSW-9142: support chaining on fused ops
+        return false;
+    }
+    if ( npuOp != EthosU85NpuOp::Elementwise )
+    {
+        return false;
+    }
+    if ( (_chainLength + 1) > _maxChainLength )
+    {
+        return false;
+    }
+    if ( (_externalIfms + (externalInputs - int(dependsOn.size()))) > _maxExternalIfms )
+    {
+        return false;
+    }
+    for ( int key : dependsOn )
+    {
+        int dep = KeyToOpIndex(key);
+        if ( dep < 0 )
+        {
+            return false;
+        }
+        const EthosU85OpGroup::OpInfo &prevOp = _ops[dep];
+
+        if ( prevOp.ofm.isReordered )
+        {
+            // cannot chain reordered ofm
+            return false;
+        }
+
+        if ( prevOp.ofm.shape != op.ofm.shape )
+        {
+            // cannot chain broadcasted ofm
+            return false;
+        }
+
+        if ( prevOp.ofm.key == op.ifm[0].key )
+        {
+            _tensorCbMap[prevOp.ofm.key] = _chainIdx++;
+            externalInputs--;
+        }
+        else if ( op.inputs == 2 && (prevOp.ofm.key == op.ifm[1].key) )
+        {
+            _tensorCbMap[prevOp.ofm.key] = _chainIdx++;
+            externalInputs--;
+        }
+        else
+        {
+            // dependency without connection
+            return false;
+        }
+    }
+    _externalIfms += externalInputs;
+    _chainLength += 1;
+    return true;
+}
+
 int EthosU85OpGroup::Add(const ArchitectureOpGroupQuery &op, const std::vector<int> &dependsOn)
 {
-    LOG_TRACE1("Trying to add op {}\n", OpTypeToString(op.type));
+    int externalInputs = ExternalIfms(op);
 
-    if ( _opsCount >= 2 )
-    {
-        // Can only fuse 2 ops
-        return 0;
-    }
-
-    for ( int dep : dependsOn )
-    {
-        if ( dep > 0 )
-        {
-            // Don't validate user-specified (positive keys) dependencies
-            continue;
-        }
-        else if ( dep < 0 )
-        {
-            // Convert to group generated keys (negative keys) to array index
-            dep = (-dep) - 1;
-            if ( dep >= _opsCount )
-            {
-                // Missing dependency
-                return 0;
-            }
-        }
-
-        const EthosU85OpGroup::OpInfo &prevOp = _ops[dep];
-        if ( prevOp.ofm.key != op.ifm.key && prevOp.ofm.key != op.ifm2.key )
-        {
-            // Can only fuse when ops are connected
-            return 0;
-        }
-    }
     if ( !CanRunOnNPU(op) )
     {
         // Can only fuse NPU ops
         return 0;
     }
 
-    if ( _opsCount > 0 )
+    if ( _opsCount == 0 )
     {
-        if ( !IsActivation(op.type) )
+        EthosU85NpuOp npuOp = ArchEthosU85::GetHWOp(op.type);
+        _supportsChaining = CanStartChain(npuOp);
+        _externalIfms = externalInputs;
+        _chainLength = 1;
+    }
+    else if ( IsActivation(op.type) )
+    {
+        if ( Fuse(op, dependsOn) == false )
         {
-            // Can only fuse with activation
             return 0;
         }
-        else if ( op.ifm.type == DataType::Int16 && (op.type == OpType::Sigmoid || op.type == OpType::Tanh) )
+    }
+    else
+    {
+        if ( Chain(op, dependsOn, externalInputs) == false )
         {
-            // Can not fuse int16 Sigmoid and Tanh LUT since they require special scaling done by AvgPoolNop
             return 0;
         }
     }
 
     // Generated key
     int key = (-_opsCount) - 1;
-
     // Save copy of op
-    _ops[_opsCount].type = op.type;
-    _ops[_opsCount].ifm.key = op.ifm.key;
-    _ops[_opsCount].ifm.type = op.ifm.type;
-    _ops[_opsCount].ifm2.key = op.ifm2.key;
-    _ops[_opsCount].ifm2.type = op.ifm2.type;
-    _ops[_opsCount].ofm.key = op.ofm.key;
-    _ops[_opsCount].ofm.type = op.ofm.type;
+    _ops[_opsCount] = op;
     _opsInternal[_opsCount].dependsOn = dependsOn;
     _opsCount++;
 
     return key;
+}
+
+int EthosU85OpGroup::ChainingBuffer(UniqueId tensorUID)
+{
+    auto cb = _tensorCbMap.find(tensorUID);
+    if ( cb != std::end(_tensorCbMap) )
+    {
+        return cb->second;
+    }
+    return -1;
+}
+
+bool EthosU85OpGroup::IsChained(UniqueId tensorUID)
+{
+    return ChainingBuffer(tensorUID) >= 0;
+}
+
+bool EthosU85OpGroup::IsFused(UniqueId tensorUID)
+{
+    return _fusedTensors.count(tensorUID) != 0;
+}
+
+bool EthosU85OpGroup::NeedsAllocation(UniqueId tensorUID)
+{
+    return !IsChained(tensorUID) && !IsFused(tensorUID);
 }
 
 // TODO: This table is from the EthosU55/U65 Embedded NPU Interface Specification, it's not completely valid for
@@ -1229,7 +1375,7 @@ bool EthosU85OpGroup::CanRunOnNPU(const ArchitectureOpGroupQuery &op)
 {
     EthosU85NpuOp npuOp = ArchEthosU85::GetHWOp(op.type);
 
-    if ( IsFloat(op.ifm.type | op.ifm2.type | op.ofm.type) )
+    if ( IsFloat(op.ifm[0].type | op.ifm[1].type | op.ofm.type) )
     {
         return false;
     }
@@ -1282,7 +1428,7 @@ bool EthosU85OpGroup::CanRunOnNPU(const ArchitectureOpGroupQuery &op)
             return false;
         }
         auto &typeMap = map->second;
-        auto ifmEntry = typeMap.find(op.ifm.type);
+        auto ifmEntry = typeMap.find(op.ifm[0].type);
         if ( ifmEntry == typeMap.end() )
         {  // Unsupported ifm data type
             return false;

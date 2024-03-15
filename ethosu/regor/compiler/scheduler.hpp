@@ -285,7 +285,8 @@ private:
 
     Point2i GetStripeInputRequirement(const Shape &ofmShape, Kernel *kernel, ArchResampling resampling);
 
-    std::unique_ptr<SchedulerOpInfo> CreateSchedulerOpInfo(SchedulerOperation *op, const Shape &ofmStripeShape);
+    std::unique_ptr<SchedulerOpInfo> CreateSchedulerOpInfo(SchedulerOperation *op, const Shape &ofmStripeShape,
+        const std::unique_ptr<SchedulerOpInfo> &parentInfo = nullptr);
 
     std::unique_ptr<Schedule> CreateInitialSchedule();
 

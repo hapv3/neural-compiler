@@ -71,7 +71,8 @@ bool IsConnected(const SchedulerOperation &first, const SchedulerOperation &seco
 
 }  // namespace
 
-SchedulerPacking::SchedulerPacking(Architecture *arch) : _arch(arch)
+SchedulerPacking::SchedulerPacking(Architecture *arch, bool disableChaining) :
+        _arch(arch), _disableChaining(disableChaining)
 {
 }
 
@@ -114,6 +115,37 @@ void SchedulerPacking::FilterOperations(const std::vector<Operation *> &executio
     }
 }
 
+ArchitectureOpGroupQuery SchedulerPacking::CreateOpGroupQuery(const SchedulerOperation *schedOp) const
+{
+    ArchitectureOpGroupQuery query{};
+    query.type = schedOp->Type();
+    query.inputs = schedOp->TryIFM(1) ? 2 : 1;
+    query.kernel = schedOp->Kernel();
+
+    auto ifm0 = schedOp->IFM(0);
+    auto ifm1 = schedOp->TryIFM(1);
+    auto ofm = schedOp->OFM();
+    query.ifm[0].key = ifm0->tensor->uid;
+    query.ifm[0].type = ifm0->tensor->dataType;
+    query.ifm[0].shape = ifm0->shape;
+    query.ifm[0].isReordered = (!IsNone(ifm0->transpose)) || (ifm0->reverse != ReverseType::None);
+    query.ifm[0].isConst = ifm0->tensor->IsConstant();
+    if ( ifm1 )
+    {
+        query.ifm[1].key = ifm1->tensor->uid;
+        query.ifm[1].type = ifm1->tensor->dataType;
+        query.ifm[1].shape = ifm1->shape;
+        query.ifm[1].isReordered = (!IsNone(ifm1->transpose)) || (ifm1->reverse != ReverseType::None);
+        query.ifm[1].isConst = ifm1->tensor->IsConstant();
+    }
+    query.ofm.key = ofm->tensor->uid;
+    query.ofm.type = ofm->tensor->dataType;
+    query.ofm.shape = ofm->shape;
+    query.ofm.isReordered = (!IsNone(ofm->transpose)) || (ofm->reverse != ReverseType::None);
+    query.ofm.isConst = false;
+    return query;
+}
+
 void SchedulerPacking::SchedulerPacking::PackOperations()
 {
     LOG_TRACE1("Scheduler Packing (of {0} Ops)\n", _schedList.size());
@@ -126,7 +158,7 @@ void SchedulerPacking::SchedulerPacking::PackOperations()
         SchedulerOperation *primaryOp = cur->get();
 
         // Compact the list as we go
-        if ( std::distance(write, cur) >= 1 )
+        if ( std::distance(write, cur) > 0 )
         {
             *write = std::move(*cur);
         }
@@ -136,18 +168,7 @@ void SchedulerPacking::SchedulerPacking::PackOperations()
 
         LOG_TRACE1("Creating new group with {}\n", OpTypeToString(primaryOp->Type()));
 
-        ArchitectureOpGroupQuery op0{};
-        op0.type = primaryOp->Type();
-        op0.kernel = primaryOp->Kernel();
-        op0.ifm.key = primaryOp->IFM(0)->tensor->uid;
-        op0.ifm.type = primaryOp->IFM(0)->tensor->dataType;
-        if ( primaryOp->TryIFM(1) )
-        {
-            op0.ifm2.key = primaryOp->IFM(1)->tensor->uid;
-            op0.ifm2.type = primaryOp->IFM(1)->tensor->dataType;
-        }
-        op0.ofm.key = primaryOp->OFM()->tensor->uid;
-        op0.ofm.type = primaryOp->OFM()->tensor->dataType;
+        auto op0 = CreateOpGroupQuery(primaryOp);
 
         // Try to create OpGroup
         auto group = _arch->CreateOpGroup(op0);
@@ -187,28 +208,24 @@ void SchedulerPacking::SchedulerPacking::PackOperations()
                 LOG_TRACE1("Added {} (key {}) to {} (key {})\n", OpTypeToString(nextOp->Type()), key,
                     OpTypeToString(prevOp->Type()), prevOpKey);
 
-                // Replace primary op's OFM by nextOp's OFM
-                auto *ofmConn = primaryOp->OFM();
-                ofmConn->tensor = nextOp->OFM()->tensor;
                 if ( IsActivation(nextOp->Type()) )
                 {
+                    primaryOp->AddSubOp(std::move(*cur));
+                    // Replace primary op's OFM by nextOp's OFM
+                    auto *ofmConn = prevOp->OFM();
+                    ofmConn->tensor = nextOp->OFM()->tensor;
                     ofmConn->quantization = prevOp->Output(TensorUsage::OFM)->quantization;
                     ofmConn->quantization.quantMin = nextOp->Output(TensorUsage::OFM)->quantization.quantMin;
                     ofmConn->quantization.quantMax = nextOp->Output(TensorUsage::OFM)->quantization.quantMax;
                 }
-                // Add nextOp's LUT to primary Op
-                auto lutConn = nextOp->TryInput(TensorUsage::LUT);
-                if ( lutConn != nullptr )
+                else
                 {
-                    primaryOp->AddInput(TensorUsage::LUT)->tensor = lutConn->tensor;
+                    primaryOp->AddSubOp(std::move(*cur));
                 }
-
                 prevOpKey = key;
                 prevOp = nextOp;
-                primaryOp->AddSubOp(std::move(*cur));
                 cur++;
             }
-
             LOG_TRACE1("\t{0}: {1} - OFM [{2}] <- (IFM0 [{3}], IFM1 [{4}], Primary={5})\n", primaryOp->Index(),
                 OpTypeToString(primaryOp->Type()), primaryOp->OFM()->shape.ToString(), primaryOp->IFM(0)->shape.ToString(),
                 primaryOp->TryIFM(1) ? primaryOp->IFM(1)->shape.ToString() : "", primaryOp->PrimaryIfmIndex());
@@ -326,9 +343,8 @@ int SchedulerPacking::CanPack(const SchedulerOperation *schedOp, const Scheduler
         return 0;
     }
 
-    if ( IsActivation(prevOp->Type()) )
+    if ( _disableChaining && !IsActivation(nextOp->Type()) )
     {
-        // Can not fuse anything to an activation
         return 0;
     }
 
@@ -352,19 +368,7 @@ int SchedulerPacking::CanPack(const SchedulerOperation *schedOp, const Scheduler
         return 0;
     }
 
-    ArchitectureOpGroupQuery op1{};
-    op1.type = nextOp->Type();
-    op1.kernel = nextOp->Kernel();
-    op1.ifm.key = nextConnIfm->tensor->uid;
-    op1.ifm.type = nextConnIfm->tensor->dataType;
-    if ( nextConnIfm2 )
-    {
-        op1.ifm2.key = nextConnIfm2->tensor->uid;
-        op1.ifm2.type = nextConnIfm2->tensor->dataType;
-    }
-    op1.ofm.key = nextConnOfm->tensor->uid;
-    op1.ofm.type = nextConnOfm->tensor->dataType;
-
+    auto op1 = CreateOpGroupQuery(nextOp);
     return schedOp->_opGroup->Add(op1, {prevOpKey});
 }
 

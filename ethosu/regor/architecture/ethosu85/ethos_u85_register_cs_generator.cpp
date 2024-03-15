@@ -40,9 +40,77 @@ namespace regor
 
 using namespace ethosu85;
 
+constexpr int INVALID_CB = -1;
+
+namespace
+{
+bool IsLUTType(OpType opType)
+{
+    return opType == OpType::LUT || opType == OpType::Sigmoid || opType == OpType::Tanh;
+}
+
+constexpr uint16_t OpCode(uint64_t cmd)
+{
+    return uint16_t(cmd & 0xFFFF);
+}
+}  // namespace
+
+void EthosU85Emitter::StartChaining()
+{
+    // The following commands need to be reset before starting a chain
+    static const std::array<uint16_t, 4> resetCmds = {
+        OpCode(isa::npu_set_ifm_precision_t()),
+        OpCode(isa::npu_set_ifm2_precision_t()),
+        OpCode(isa::npu_set_ifm_zero_point_t()),
+        OpCode(isa::npu_set_ifm2_zero_point_t()),
+    };
+    for ( auto cmd : resetCmds )
+    {
+        _registers.erase(cmd);
+    }
+}
+
+void EthosU85Emitter::ClearChainingRegisters()
+{
+    // The following commands need to be reset after any operation with a chained OFM
+    static const std::array<uint16_t, 27> resetCmds = {
+        OpCode(isa::npu_set_ifm_precision_t()),
+        OpCode(isa::npu_set_ifm_base0_t()),
+        OpCode(isa::npu_set_ifm_base1_t()),
+        OpCode(isa::npu_set_ifm_base2_t()),
+        OpCode(isa::npu_set_ifm_base3_t()),
+        OpCode(isa::npu_set_ifm_width0_m1_t()),
+        OpCode(isa::npu_set_ifm_height0_m1_t()),
+        OpCode(isa::npu_set_ifm_height1_m1_t()),
+        OpCode(isa::npu_set_ifm_stride_x_t()),
+        OpCode(isa::npu_set_ifm_stride_y_t()),
+        OpCode(isa::npu_set_ifm_stride_c_t()),
+        OpCode(isa::npu_set_ifm_region_t()),
+        OpCode(isa::npu_set_ifm_zero_point_t()),
+        OpCode(isa::npu_set_ifm2_precision_t()),
+        OpCode(isa::npu_set_ifm2_base0_t()),
+        OpCode(isa::npu_set_ifm2_base1_t()),
+        OpCode(isa::npu_set_ifm2_base2_t()),
+        OpCode(isa::npu_set_ifm2_base3_t()),
+        OpCode(isa::npu_set_ifm2_width0_m1_t()),
+        OpCode(isa::npu_set_ifm2_height0_m1_t()),
+        OpCode(isa::npu_set_ifm2_height1_m1_t()),
+        OpCode(isa::npu_set_ifm2_stride_x_t()),
+        OpCode(isa::npu_set_ifm2_stride_y_t()),
+        OpCode(isa::npu_set_ifm2_stride_c_t()),
+        OpCode(isa::npu_set_ifm2_region_t()),
+        OpCode(isa::npu_set_ifm2_zero_point_t()),
+        OpCode(isa::npu_set_ofm_precision_t()),
+    };
+    for ( auto cmd : resetCmds )
+    {
+        _registers.erase(cmd);
+    }
+}
+
 void EthosU85Emitter::Emit(uint32_t instr)
 {
-    uint16_t cmd = instr & 0xFFFF;
+    uint16_t cmd = OpCode(instr);
     assert(IsCmd0(cmd));
     bool emit = IsOp(cmd) || SetRegister(cmd, instr);
     if ( emit )
@@ -53,7 +121,7 @@ void EthosU85Emitter::Emit(uint32_t instr)
 
 void EthosU85Emitter::Emit(uint64_t instr)
 {
-    uint16_t cmd = instr & 0xFFFF;
+    uint16_t cmd = OpCode(instr);
     assert(IsCmd1(cmd));
     bool emit = IsOp(cmd) || SetRegister(cmd, instr);
     if ( emit )
@@ -68,7 +136,6 @@ void EthosU85Emitter::Clear()
     _stream.clear();
     _registers.clear();
 }
-
 
 bool EthosU85Emitter::SetRegister(uint16_t reg, uint64_t value)
 {
@@ -725,8 +792,12 @@ int EthosU85RCSGenerator::CalcBlockDep(HLCStripe *prevStripe, HLCStripe *stripe)
     }
     const auto &op = stripe->operation;
     const auto &prevOp = prevStripe->operation;
-    const auto &prevOfm = prevOp->ofm;
+    auto &prevOfm = prevOp->ofm;
 
+    if ( prevOp->subOps.size() )
+    {
+        prevOfm = prevOp->subOps.back().ofm;
+    }
     // TODO: Investigate if this is correct
     if ( !IsNone(prevOp->ofm.transpose) )
     {
@@ -824,21 +895,25 @@ void EthosU85RCSGenerator::GeneratePadding(const HLCPadding &padding)
 void EthosU85RCSGenerator::GenerateActivation(const HLCStripe *stripe, MemoryAccesses &memoryAccesses)
 {
     const HLCOperation *op = stripe->operation.get();
-    assert(op->subOps.size() <= 1);
     OpType opType = OpType::None;
+    const HLCParameters *parameters = nullptr;
+    assert(stripe->opGroup != nullptr);
+    EthosU85OpGroup *opGroup = static_cast<EthosU85OpGroup *>(stripe->opGroup);
     if ( IsActivation(op->type) )
     {
         // Non-fused activation
         opType = op->type;
-        assert(op->subOps.empty() || opType == op->subOps[0].type || opType == OpType::Sigmoid || opType == OpType::Tanh);
+        parameters = &op->parameters;
     }
-    else if ( !op->subOps.empty() )
+    else if ( !op->subOps.empty() && opGroup->IsFused(op->subOps[0].ifm[0].uid) )
     {
         // Fused activation
+        assert(IsActivation(op->subOps[0].type));
         opType = op->subOps[0].type;
+        parameters = &op->subOps[0].parameters;
     }
+
     auto &ofm = op->ofm;
-    auto &ifm = op->ifm[0];
     int size = std::min(16, DataTypeSizeBits(ofm.dataType));
     assert(size > 0 && "Illegal data type");
     bool isSigned = ToActivationType(ofm.dataType) == activation_type::SIGNED;
@@ -856,10 +931,10 @@ void EthosU85RCSGenerator::GenerateActivation(const HLCStripe *stripe, MemoryAcc
         quantizedMax = std::min(quantizedMax, ofm.quantization.quantMax[0]);
     }
 
-    if ( opType == OpType::LUT || opType == OpType::Sigmoid || opType == OpType::Tanh )
+    if ( IsLUTType(opType) )
     {
-        auto &param = op->subOps[0].parameters.lut;
-        int lutSize = param.sizeBytes;
+        auto &lutParams = parameters->lut;
+        int lutSize = lutParams.sizeBytes;
 
         auto pos = _stripeToLutSlot.find(stripe);
         if ( pos != _stripeToLutSlot.end() )
@@ -881,16 +956,16 @@ void EthosU85RCSGenerator::GenerateActivation(const HLCStripe *stripe, MemoryAcc
         {
             case DataType::Int8:
                 assert(lutSize == 256);
-                assert(param.ifmType == DataType::Int8);
+                assert(lutParams.ifmType == DataType::Int8);
                 act = activation_function::LUT_S8_S8;
                 break;
             case DataType::UInt8:
                 assert(lutSize == 256);
-                assert(param.ifmType == DataType::UInt8);
+                assert(lutParams.ifmType == DataType::UInt8);
                 act = activation_function::LUT_U8_U8;
                 break;
             case DataType::Int16:
-                if ( param.ifmType == DataType::Int8 )
+                if ( lutParams.ifmType == DataType::Int8 )
                 {
                     assert(lutSize == 512 && tableIndex % 2 == 0);
                     act = activation_function::LUT_S8_S16;
@@ -898,14 +973,14 @@ void EthosU85RCSGenerator::GenerateActivation(const HLCStripe *stripe, MemoryAcc
                 else
                 {
                     assert(lutSize == 2048 && tableIndex == 0);
-                    assert(param.ifmType == DataType::Int16);
+                    assert(lutParams.ifmType == DataType::Int16);
                     if ( opType == OpType::LUT ) act = activation_function::LUT_S16_S16;
                     else if ( opType == OpType::Sigmoid ) act = activation_function::LUT_SIGMOID;
                     else act = activation_function::LUT_TANH;
                 }
                 break;
             case DataType::Int32:
-                if ( param.ifmType == DataType::Int8 )
+                if ( lutParams.ifmType == DataType::Int8 )
                 {
                     assert(lutSize == 1024 && tableIndex % 4 == 0);
                     act = activation_function::LUT_S8_S32;
@@ -913,7 +988,7 @@ void EthosU85RCSGenerator::GenerateActivation(const HLCStripe *stripe, MemoryAcc
                 else
                 {
                     assert(lutSize == 2048 && tableIndex == 0);
-                    assert(param.ifmType == DataType::Int16);
+                    assert(lutParams.ifmType == DataType::Int16);
                     act = activation_function::LUT_S16_S32;
                 }
                 break;
@@ -989,27 +1064,43 @@ void EthosU85RCSGenerator::GenerateInputBroadcast(const Shape &ifmShape, const S
 }
 
 // Generates IFM_PRECISION register
-void EthosU85RCSGenerator::GenerateIFMPrecision(const HLCFeatureMap &fm)
+void EthosU85RCSGenerator::GenerateIFMPrecision(const HLCFeatureMap &fm, bool chained, bool isScalar)
 {
     activation_type type = ToActivationType(fm.dataType);
     activation_precision precision = ToActivationPrecision(fm.dataType);
     activation_format format = ToActivationFormat(fm.format);
     activation_storage storage = activation_storage::TILE2X2;
+    if ( chained )
+    {
+        storage = activation_storage::CHAINED;
+    }
+    else if ( isScalar )
+    {
+        storage = activation_storage::NONE;
+    }
     Emit(isa::npu_set_ifm_precision_t(type, precision, format, storage));
 }
 
 // Generates IFM2_PRECISION register
-void EthosU85RCSGenerator::GenerateIFM2Precision(const HLCFeatureMap &fm)
+void EthosU85RCSGenerator::GenerateIFM2Precision(const HLCFeatureMap &fm, bool chained, bool isScalar)
 {
     activation_type type = ToActivationType(fm.dataType);
     activation_precision precision = ToActivationPrecision(fm.dataType);
     activation_format format = ToActivationFormat(fm.format);
     activation_storage storage = activation_storage::TILE2X2;
+    if ( chained )
+    {
+        storage = activation_storage::CHAINED;
+    }
+    else if ( isScalar )
+    {
+        storage = activation_storage::NONE;
+    }
     Emit(isa::npu_set_ifm2_precision_t(type, precision, format, storage));
 }
 
 // Generates OFM_PRECISION register
-void EthosU85RCSGenerator::GenerateOFMPrecision(const HLCFeatureMap &fm, bool useGlobalScale, bool enable_output)
+void EthosU85RCSGenerator::GenerateOFMPrecision(const HLCFeatureMap &fm, bool chained, bool useGlobalScale, bool enable_output)
 {
     activation_type type = ToActivationType(fm.dataType);
     activation_precision precision = ToActivationPrecision(fm.dataType);
@@ -1017,8 +1108,13 @@ void EthosU85RCSGenerator::GenerateOFMPrecision(const HLCFeatureMap &fm, bool us
     auto scaleMode = useGlobalScale ? ofm_scale_mode::GLOBAL : ofm_scale_mode::PER_CHANNEL;
     activation_reverse reverse = ToActivationReverse(fm.reverse);
     activation_transpose transpose = ToActivationTranspose(fm.transpose);
-    // TODO implement MLBEDSW-7867 storage
     activation_storage storage = enable_output ? activation_storage::TILE2X2 : activation_storage::NONE;
+    if ( chained )
+    {
+        storage = activation_storage::CHAINED;
+        assert(reverse == activation_reverse::NONE && "Can't combine chaining and reverse");
+        assert(transpose == activation_transpose::HWC && "Can't combine chaining and transpose");
+    }
     if ( reverse != activation_reverse::NONE )
     {
         assert(transpose == activation_transpose::HWC && "Can't combine reverse and transpose");
@@ -1029,16 +1125,12 @@ void EthosU85RCSGenerator::GenerateOFMPrecision(const HLCFeatureMap &fm, bool us
         assert(reverse == activation_reverse::NONE && "Can't combine transpose and reverse");
         assert(storage != activation_storage::CHAINED && "Can't combine transpose and chaining");
     }
-    if ( storage == activation_storage::CHAINED )
-    {
-        assert(reverse == activation_reverse::NONE && "Can't combine chaining and reverse");
-        assert(transpose == activation_transpose::HWC && "Can't combine chaining and transpose");
-    }
     Emit(isa::npu_set_ofm_precision_t(type, precision, format, scaleMode, reverse, transpose, storage));
 }
 
 // Generates common IFM registers
-void EthosU85RCSGenerator::GenerateIFM(OpType opType, const HLCFeatureMap &fm, const Box &inputArea, bool isScalar, int32_t scalarValue)
+void EthosU85RCSGenerator::GenerateIFM(OpType opType, const HLCFeatureMap &fm, const Box &inputArea, bool isScalar,
+    int32_t scalarValue, int chainBuffer, bool ifm2Chained)
 {
     if ( isScalar )
     {
@@ -1046,34 +1138,50 @@ void EthosU85RCSGenerator::GenerateIFM(OpType opType, const HLCFeatureMap &fm, c
     }
     else
     {
-        CheckAddresses(fm);
-        Emit(isa::npu_set_ifm_region_t(ToRegion(fm.memArea)));
-        Shape strides = fm.strides;
-        auto tiles = GetTiles(fm, strides, inputArea);
-        auto boxSize = inputArea.SizeShape();
-        // IFM_BASE registers
-        Emit(isa::npu_set_ifm_base0_t(tiles.address[0]));
-        Emit(isa::npu_set_ifm_base1_t(tiles.address[1]));
-        Emit(isa::npu_set_ifm_base2_t(tiles.address[2]));
-        Emit(isa::npu_set_ifm_base3_t(tiles.address[3]));
-        // Tile related registers
-        Emit(isa::npu_set_ifm_height0_m1_t(tiles.height0 - 1));
-        Emit(isa::npu_set_ifm_height1_m1_t(tiles.height1 - 1));
-        Emit(isa::npu_set_ifm_width0_m1_t(tiles.width0 - 1));
-        Emit(isa::npu_set_ifm_depth_m1_t(boxSize.Depth() - 1));
-        // IFM_STRIDE registers
-        Emit(isa::npu_set_ifm_stride_y_t(strides.Height() * fm.stepXY.y));
-        Emit(isa::npu_set_ifm_stride_x_t(strides.Width() * fm.stepXY.x));
-        Emit(isa::npu_set_ifm_stride_c_t(strides.Depth()));
+        if ( chainBuffer != INVALID_CB )
+        {
+            // chained ifm1
+            Emit(isa::npu_set_ifm_region_t(chainBuffer));
+        }
+        else
+        {
+            CheckAddresses(fm);
+            Emit(isa::npu_set_ifm_region_t(ToRegion(fm.memArea)));
+            Shape strides = fm.strides;
+            auto tiles = GetTiles(fm, strides, inputArea);
+            auto boxSize = inputArea.SizeShape();
+            // IFM_BASE registers
+            Emit(isa::npu_set_ifm_base0_t(tiles.address[0]));
+            Emit(isa::npu_set_ifm_base1_t(tiles.address[1]));
+            Emit(isa::npu_set_ifm_base2_t(tiles.address[2]));
+            Emit(isa::npu_set_ifm_base3_t(tiles.address[3]));
+            // Tile related registers
+            Emit(isa::npu_set_ifm_height0_m1_t(tiles.height0 - 1));
+            Emit(isa::npu_set_ifm_height1_m1_t(tiles.height1 - 1));
+            Emit(isa::npu_set_ifm_width0_m1_t(tiles.width0 - 1));
+            if ( !ifm2Chained )
+            {
+                // set_ifm_depth is shared between ifm1/ifm2.
+                // but should only be emitted if neither of the inputs are chained
+                Emit(isa::npu_set_ifm_depth_m1_t(boxSize.Depth() - 1));
+            }
+            //  IFM_STRIDE registers
+            Emit(isa::npu_set_ifm_stride_y_t(strides.Height() * fm.stepXY.y));
+            Emit(isa::npu_set_ifm_stride_x_t(strides.Width() * fm.stepXY.x));
+            Emit(isa::npu_set_ifm_stride_c_t(strides.Depth()));
+        }
     }
     // IFM_ZERO_POINT register
     auto &quant = fm.quantization;
     uint32_t zp = UseZeroPoint0(opType, fm, false) ? 0 : uint32_t(quant.zeroPoints[0]);
+
+    // ifm zero-point is force-emitted if ofm is chained
     Emit(isa::npu_set_ifm_zero_point_t(zp));
 }
 
 // Generates common IFM2 registers
-void EthosU85RCSGenerator::GenerateIFM2(OpType opType, const HLCFeatureMap &fm, const Box &inputArea, bool isScalar, int32_t scalarValue)
+void EthosU85RCSGenerator::GenerateIFM2(
+    OpType opType, const HLCFeatureMap &fm, const Box &inputArea, bool isScalar, int32_t scalarValue, int chainBuffer)
 {
     if ( isScalar )
     {
@@ -1081,55 +1189,76 @@ void EthosU85RCSGenerator::GenerateIFM2(OpType opType, const HLCFeatureMap &fm, 
     }
     else
     {
-        CheckAddresses(fm);
-        Emit(isa::npu_set_ifm2_region_t(ToRegion(fm.memArea)));
-        Shape strides = fm.strides;
-        auto tiles = GetTiles(fm, strides, inputArea);
-        // IFM2_BASE registers
-        Emit(isa::npu_set_ifm2_base0_t(tiles.address[0]));
-        Emit(isa::npu_set_ifm2_base1_t(tiles.address[1]));
-        Emit(isa::npu_set_ifm2_base2_t(tiles.address[2]));
-        Emit(isa::npu_set_ifm2_base3_t(tiles.address[3]));
-        // Tile related registers
-        Emit(isa::npu_set_ifm2_height0_m1_t(tiles.height0 - 1));
-        Emit(isa::npu_set_ifm2_height1_m1_t(tiles.height1 - 1));
-        Emit(isa::npu_set_ifm2_width0_m1_t(tiles.width0 - 1));
-        // IFM2_STRIDE registers
-        Emit(isa::npu_set_ifm2_stride_y_t(strides.Height() * fm.stepXY.y));
-        Emit(isa::npu_set_ifm2_stride_x_t(strides.Width() * fm.stepXY.x));
-        Emit(isa::npu_set_ifm2_stride_c_t(strides.Depth()));
+        if ( chainBuffer != INVALID_CB )
+        {
+            // chained ifm2
+            Emit(isa::npu_set_ifm2_region_t(chainBuffer));
+        }
+        else
+        {
+            CheckAddresses(fm);
+            Emit(isa::npu_set_ifm2_region_t(ToRegion(fm.memArea)));
+            Shape strides = fm.strides;
+            auto tiles = GetTiles(fm, strides, inputArea);
+            // IFM2_BASE registers
+            Emit(isa::npu_set_ifm2_base0_t(tiles.address[0]));
+            Emit(isa::npu_set_ifm2_base1_t(tiles.address[1]));
+            Emit(isa::npu_set_ifm2_base2_t(tiles.address[2]));
+            Emit(isa::npu_set_ifm2_base3_t(tiles.address[3]));
+            // Tile related registers
+            Emit(isa::npu_set_ifm2_height0_m1_t(tiles.height0 - 1));
+            Emit(isa::npu_set_ifm2_height1_m1_t(tiles.height1 - 1));
+            Emit(isa::npu_set_ifm2_width0_m1_t(tiles.width0 - 1));
+            // IFM2_STRIDE registers
+            Emit(isa::npu_set_ifm2_stride_y_t(strides.Height() * fm.stepXY.y));
+            Emit(isa::npu_set_ifm2_stride_x_t(strides.Width() * fm.stepXY.x));
+            Emit(isa::npu_set_ifm2_stride_c_t(strides.Depth()));
+        }
     }
     // IFM2_ZERO_POINT register
     auto &quant = fm.quantization;
     uint32_t zp = UseZeroPoint0(opType, fm, false) ? 0 : uint32_t(quant.zeroPoints[0]);
+
+    // ifm zero-point is force-emitted if ofm is chained
     Emit(isa::npu_set_ifm2_zero_point_t(zp));
 }
 
 // Generates OFM registers
-void EthosU85RCSGenerator::GenerateOFM(OpType opType, const HLCFeatureMap &fm, const Box &outputArea)
+void EthosU85RCSGenerator::GenerateOFM(OpType opType, const HLCFeatureMap &fm, const Box &outputArea, int chainBuffer)
 {
-    CheckAddresses(fm);
-    Emit(isa::npu_set_ofm_region_t(ToRegion(fm.memArea)));
-    Shape strides = fm.strides;
-    auto tiles = GetTiles(fm, strides, outputArea);
     auto boxSize = outputArea.SizeShape().Untranspose(fm.transpose);
-    // OFM_BASE registers
-    Emit(isa::npu_set_ofm_base0_t(tiles.address[0]));
-    Emit(isa::npu_set_ofm_base1_t(tiles.address[1]));
-    Emit(isa::npu_set_ofm_base2_t(tiles.address[2]));
-    Emit(isa::npu_set_ofm_base3_t(tiles.address[3]));
-    // OFM size (shape *before* transposition) //TODO: Maybe transpose stepXY. Here or in tiles?
-    Emit(isa::npu_set_ofm_height_m1_t(DivRoundUp(boxSize.Height(), fm.stepXY.y) - 1));
-    Emit(isa::npu_set_ofm_width_m1_t(DivRoundUp(boxSize.Width(), fm.stepXY.x) - 1));
-    Emit(isa::npu_set_ofm_depth_m1_t(boxSize.Depth() - 1));
-    // Tile related registers (shape *after* transposition)
-    Emit(isa::npu_set_ofm_height0_m1_t(tiles.height0 - 1));
-    Emit(isa::npu_set_ofm_height1_m1_t(tiles.height1 - 1));
-    Emit(isa::npu_set_ofm_width0_m1_t(tiles.width0 - 1));
-    // OFM_STRIDE registers
-    Emit(isa::npu_set_ofm_stride_y_t(strides.Height() * fm.stepXY.y));
-    Emit(isa::npu_set_ofm_stride_x_t(strides.Width() * fm.stepXY.x));
-    Emit(isa::npu_set_ofm_stride_c_t(strides.Depth()));
+    if ( chainBuffer != INVALID_CB )
+    {
+        Emit(isa::npu_set_ofm_region_t(chainBuffer));
+
+        Emit(isa::npu_set_ofm_height_m1_t(DivRoundUp(boxSize.Height(), fm.stepXY.y) - 1));
+        Emit(isa::npu_set_ofm_width_m1_t(DivRoundUp(boxSize.Width(), fm.stepXY.x) - 1));
+        Emit(isa::npu_set_ofm_depth_m1_t(boxSize.Depth() - 1));
+    }
+    else
+    {
+        CheckAddresses(fm);
+        Emit(isa::npu_set_ofm_region_t(ToRegion(fm.memArea)));
+        Shape strides = fm.strides;
+        auto tiles = GetTiles(fm, strides, outputArea);
+        // OFM_BASE registers
+        Emit(isa::npu_set_ofm_base0_t(tiles.address[0]));
+        Emit(isa::npu_set_ofm_base1_t(tiles.address[1]));
+        Emit(isa::npu_set_ofm_base2_t(tiles.address[2]));
+        Emit(isa::npu_set_ofm_base3_t(tiles.address[3]));
+        // OFM size (shape *before* transposition)
+        Emit(isa::npu_set_ofm_height_m1_t(DivRoundUp(boxSize.Height(), fm.stepXY.y) - 1));
+        Emit(isa::npu_set_ofm_width_m1_t(DivRoundUp(boxSize.Width(), fm.stepXY.x) - 1));
+        Emit(isa::npu_set_ofm_depth_m1_t(boxSize.Depth() - 1));
+        // Tile related registers (shape *after* transposition)
+        Emit(isa::npu_set_ofm_height0_m1_t(tiles.height0 - 1));
+        Emit(isa::npu_set_ofm_height1_m1_t(tiles.height1 - 1));
+        Emit(isa::npu_set_ofm_width0_m1_t(tiles.width0 - 1));
+        // OFM_STRIDE registers
+        Emit(isa::npu_set_ofm_stride_y_t(strides.Height()));
+        Emit(isa::npu_set_ofm_stride_x_t(strides.Width()));
+        Emit(isa::npu_set_ofm_stride_c_t(strides.Depth()));
+    }
     // OFM_ZERO_POINT register
     auto &quant = fm.quantization;
     uint32_t zp = UseZeroPoint0(opType, fm, true) ? 0 : uint32_t(quant.zeroPoints[0]);
@@ -1331,8 +1460,7 @@ void EthosU85RCSGenerator::GenerateAccFormat(const HLCStripe *stripe)
 }
 
 // Calculates and generates KERNEL_WAIT or DMA_WAIT register
-void EthosU85RCSGenerator::GenerateWaits(bool isKernelWait, const MemoryAccesses &memoryAccesses, int maxWaits,
-    std::deque<MemoryAccesses> &outstandingAccesses, std::deque<MemoryAccesses> &accessesToUpdate)
+void EthosU85RCSGenerator::GenerateWaits(bool isKernelWait, const MemoryAccesses &memoryAccesses, std::deque<MemoryAccesses> &outstandingAccesses)
 {
     int waits = CalcCommandWaits(memoryAccesses, outstandingAccesses);
     if ( waits >= 0 )
@@ -1346,6 +1474,10 @@ void EthosU85RCSGenerator::GenerateWaits(bool isKernelWait, const MemoryAccesses
             Emit(isa::npu_op_dma_wait_t(waits));
         }
     }
+}
+
+void EthosU85RCSGenerator::UpdateMemoryAccesses(const MemoryAccesses &memoryAccesses, std::deque<MemoryAccesses> &accessesToUpdate, int maxWaits)
+{
     accessesToUpdate.push_back(memoryAccesses);
     if ( int(accessesToUpdate.size()) > maxWaits )
     {
@@ -1371,10 +1503,10 @@ EthosU85RCSGenerator::InsertLUTDMACommands(std::vector<std::unique_ptr<HighLevel
         {
             auto stripe = static_cast<HLCStripe *>(hlc.get());
             auto op = stripe->operation;
-            auto config = static_cast<EthosU85OpConfig *>(op->config);
-            if ( !op->subOps.empty() && op->subOps[0].type == OpType::LUT )
+            // TODO MLBEDSW-9142 LUT for chained subOps should be inserted before the primary Op
+            if ( IsLUTType(op->type) || (!op->subOps.empty() && IsLUTType(op->subOps[0].type)) )
             {
-                const auto &srcTens = op->subOps[0].parameters.lut;
+                const auto &srcTens = IsLUTType(op->type) ? op->parameters.lut : op->subOps[0].parameters.lut;
                 assert(srcTens.sizeBytes % lutSlotSize == 0);
                 bool alreadyInLutMem;
                 int sizeInSlots = srcTens.sizeBytes / lutSlotSize;
@@ -1482,9 +1614,24 @@ void EthosU85RCSGenerator::GenerateCommon(const HLCStripe *stripe, bool useGloba
     auto op = stripe->operation.get();
     int32_t scalarValue = 0;
     bool isScalar = IsScalar(op->ifm[0], scalarValue) && IsElementwise(op->type);
-    GenerateIFMPrecision(op->ifm[0]);
-    GenerateIFM(op->type, op->ifm[0], stripe->ifmAreas[0], isScalar, scalarValue);
-    if ( !isScalar )
+    assert(stripe->opGroup != nullptr);
+    EthosU85OpGroup *opGroup = static_cast<EthosU85OpGroup *>(stripe->opGroup);
+    int ofmCb = opGroup->ChainingBuffer(op->ofm.uid);
+    int ifmCb = opGroup->ChainingBuffer(op->ifm[0].uid);
+    int ifm2Cb = -1;
+    bool ofmChained = (ofmCb >= 0);
+    bool ifmChained = (ifmCb >= 0);
+    bool ifm2Chained = false;
+
+    if ( op->ifm.size() == 2 )
+    {
+        ifm2Cb = opGroup->ChainingBuffer(op->ifm[1].uid);
+        ifm2Chained = (ifm2Cb >= 0);
+    }
+    EthosU85OpConfig *config = static_cast<EthosU85OpConfig *>(stripe->operation->config);
+    GenerateIFMPrecision(op->ifm[0], ifmChained, isScalar);
+    GenerateIFM(op->type, op->ifm[0], stripe->ifmAreas[0], isScalar, scalarValue, ifmCb, ifm2Chained);
+    if ( !isScalar && !ifmChained )
     {
         memoryAccesses.push_back(ToMemoryAccess(op->ifm[0], stripe->ifmAreas[0], AccessDirection::Read));
     }
@@ -1494,10 +1641,12 @@ void EthosU85RCSGenerator::GenerateCommon(const HLCStripe *stripe, bool useGloba
     {
         GeneratePadding(stripe->padding);
     }
-    GenerateOFM(op->type, op->ofm, stripe->ofmArea);
-    memoryAccesses.push_back(ToMemoryAccess(op->ofm, stripe->ofmArea, AccessDirection::Write));
-    EthosU85OpConfig *config = static_cast<EthosU85OpConfig *>(stripe->operation->config);
-    GenerateOFMPrecision(op->ofm, useGlobalScale, config->AccOutputEnabled());
+    GenerateOFMPrecision(op->ofm, ofmChained, useGlobalScale, config->AccOutputEnabled());
+    GenerateOFM(op->type, op->ofm, stripe->ofmArea, ofmCb);
+    if ( !ofmChained )
+    {
+        memoryAccesses.push_back(ToMemoryAccess(op->ofm, stripe->ofmArea, AccessDirection::Write));
+    }
     if ( !IsElementwise(op->type) && op->type != OpType::Resize )
     {
         GenerateKernel(op->kernel, config->Traversal() == EthosU85Traversal::PartKernel);
@@ -1519,12 +1668,12 @@ void EthosU85RCSGenerator::GenerateConvolutionOp(const HLCStripe *stripe, Memory
     {
         // Dynamic weights
         useGlobalScale = true;
-        GenerateIFM2(op->type, op->ifm[1], stripe->ifmAreas[1], false, 0);
-        GenerateIFM2Precision(op->ifm[1]);
+        GenerateIFM2Precision(op->ifm[1], false, false);
+        GenerateIFM2(op->type, op->ifm[1], stripe->ifmAreas[1], false, 0, -1);
         Emit(isa::npu_set_weight_format_t(weight_format::SWD, weight_sparsity::NONE));  // Reset weight format
     }
 
-    if ( !op->ofm.quantization.scales.empty() )
+    if ( !op->ofm.quantization.scales.empty() && useGlobalScale )
     {
         ofmScale = op->ofm.quantization.scales[0];
         assert(unsigned(ofmScale.shift) < 64);
@@ -1541,8 +1690,8 @@ void EthosU85RCSGenerator::GeneratePoolingOp(HLCStripe *stripe, MemoryAccesses &
     bool useGlobalScale = !op->scales;
     if ( opType == OpType::Rescale && DataTypeSizeBits(op->ifm[0].dataType) >= 32 )
     {
-        GenerateIFM2(op->type, op->ifm[0], stripe->ifmAreas[0], false, 0);
-        GenerateIFM2Precision(op->ifm[0]);
+        GenerateIFM2Precision(op->ifm[0], false, false);
+        GenerateIFM2(op->type, op->ifm[0], stripe->ifmAreas[0], false, 0, -1);
     }
     else if ( _arch->UseAvgPoolNop(op->type) )
     {
@@ -1572,6 +1721,10 @@ void EthosU85RCSGenerator::GenerateElementwiseOp(HLCStripe *stripe, MemoryAccess
         // Binary operation: generate IFM2 registers
         assert(op->ifm.size() == 2);
         assert(stripe->ifmAreas.size() == 2);
+        assert(stripe->opGroup != nullptr);
+        EthosU85OpGroup *opGroup = static_cast<EthosU85OpGroup *>(stripe->opGroup);
+        int ifm2Cb = opGroup->ChainingBuffer(op->ifm[1].uid);
+        bool ifm2Chained = (ifm2Cb >= 0);
         int32_t scalarValue = 0;
         auto ifmShape = stripe->ifmAreas[0].SizeShape();
         auto ifm2Shape = stripe->ifmAreas[1].SizeShape();
@@ -1579,12 +1732,12 @@ void EthosU85RCSGenerator::GenerateElementwiseOp(HLCStripe *stripe, MemoryAccess
         GenerateCommon(stripe, useGlobalScale, memoryAccesses);
         bool ifmIsScalar = IsScalar(op->ifm[0], scalarValue);
         bool ifm2IsScalar = IsScalar(op->ifm[1], scalarValue);
-        GenerateIFM2(opType, op->ifm[1], stripe->ifmAreas[1], ifm2IsScalar, scalarValue);
-        if ( !ifm2IsScalar )
+        GenerateIFM2Precision(op->ifm[1], ifm2Chained, ifm2IsScalar);
+        GenerateIFM2(opType, op->ifm[1], stripe->ifmAreas[1], ifm2IsScalar, scalarValue, ifm2Cb);
+        if ( !ifm2IsScalar && !ifm2Chained )
         {
             memoryAccesses.push_back(ToMemoryAccess(op->ifm[1], stripe->ifmAreas[1], AccessDirection::Read));
         }
-        GenerateIFM2Precision(op->ifm[1]);
         GenerateInputBroadcast(ifmShape, ifm2Shape, ifmIsScalar, ifm2IsScalar);
     }
 }
@@ -1687,6 +1840,101 @@ bool EthosU85RCSGenerator::GenerateStripe(HLCStripe *stripe, MemoryAccesses &mem
     EthosU85OpConfig *config = static_cast<EthosU85OpConfig *>(stripe->operation->config);
     GenerateBlockConfig(config, stripe->operation->ofm);
     GenerateAccFormat(stripe);
+    return true;
+}
+
+
+std::shared_ptr<HLCStripe> EthosU85RCSGenerator::MakeStripeForSubOp(HLCStripe *stripe, HLCSubOperation &subOp)
+{
+    auto op = std::make_shared<HLCOperation>();
+    op->type = subOp.type;
+    op->ifm = subOp.ifm;
+    op->ofm = subOp.ofm;
+    if ( IsLUTType(subOp.type) )
+    {
+        op->parameters.lut = subOp.parameters.lut;
+    }
+    else if ( subOp.type == OpType::LeakyRelu )
+    {
+        op->parameters.leaky_relu = subOp.parameters.leaky_relu;
+    }
+    op->rounding = subOp.rounding;
+    op->config = stripe->operation->config;
+    std::shared_ptr<HLCStripe> newStripe = std::make_shared<HLCStripe>(op);
+    for ( int i = 0; i < int(subOp.ifm.size()); i++ )
+    {
+        // TODO MLBEDSW-9143 cascading + chaining requires striping area information for suboperations
+        newStripe->ifmAreas.push_back(subOp.ifm[i].shape);
+    }
+    newStripe->ofmArea = stripe->ofmArea;
+    newStripe->padding = stripe->padding;
+    newStripe->opGroup = stripe->opGroup;
+    return newStripe;
+}
+
+bool EthosU85RCSGenerator::GenerateOpGroup(HLCStripe *stripe, HLCStripe *prevOp, MemoryAccesses &memoryAccesses,
+    std::deque<MemoryAccesses> &outstandingDmaAccesses)
+{
+    std::vector<HLCSubOperation> subOps = stripe->operation->subOps;
+    assert(stripe->opGroup != nullptr);
+    EthosU85OpGroup *opGroup = static_cast<EthosU85OpGroup *>(stripe->opGroup);
+    bool isChained = (subOps.size() > 1 || (subOps.size() == 1 && !IsActivation(subOps[0].type)));
+
+    int blockdep = 0;
+    if ( isChained )
+    {
+        _emit.StartChaining();
+        // TODO MLBEDSW-9162: calculate block-dependency for chained operations
+    }
+    else
+    {
+        blockdep = CalcBlockDep(prevOp, stripe);
+    }
+
+    // TODO MLBEDSW-9144 Compute MemoryAccesses for whole chain
+    // and emit DMA waits for the whole chain before the first op.
+
+    // Unroll Opgroup intro stripes and generate commands for each subOp separately
+    int idx = -1;
+    std::shared_ptr<HLCStripe> subStripe = nullptr;
+    while ( idx < int(subOps.size()) )
+    {
+        if ( idx >= 0 )
+        {
+            // chained sub operation
+            assert(opGroup->IsChained(stripe->operation->ofm.uid));
+            HLCSubOperation subOp = subOps[idx];
+            subStripe = MakeStripeForSubOp(stripe, subOp);
+            stripe = subStripe.get();
+        }
+        // fuse next subOp if its an activation
+        if ( ((idx + 1) < int(subOps.size())) && opGroup->IsFused(subOps[idx + 1].ifm[0].uid) )
+        {
+            assert(IsActivation(subOps[idx + 1].type));
+            if ( idx >= 0 )
+            {
+                HLCSubOperation activation = subOps[idx + 1];
+                stripe->operation->subOps.push_back(std::move(activation));
+            }
+            idx++;
+        }
+        if ( !GenerateStripe(stripe, memoryAccesses) )
+        {
+            return false;
+        }
+
+        Emit(isa::npu_set_blockdep_t(blockdep));
+
+        GenerateWaits(false, memoryAccesses, outstandingDmaAccesses);
+        GenerateOperationCode(stripe->operation.get());
+        if ( isChained )
+        {
+            // clear chain cache between every chained subOp
+            _emit.ClearChainingRegisters();
+        }
+        idx++;
+    }
+
     return true;
 }
 
@@ -1800,43 +2048,46 @@ std::vector<uint32_t> EthosU85RCSGenerator::GenerateCommandStream(std::vector<st
     int maxOutstandingKernelOps = _arch->MaxOutstandingKernelOps();
     HLCStripe *prevOp = nullptr;
     std::vector<std::pair<unsigned, std::string>> debugInfo;
+
     for ( auto &hlc : cmds )
     {
-        MemoryAccesses memoryAccesses;
         int emitStart = _emit.Position();
         if ( hlc->IsStripe() )
         {
+            MemoryAccesses memoryAccesses;
             auto stripe = static_cast<HLCStripe *>(hlc.get());
             if ( verbose )
             {
                 debugInfo.emplace_back(emitStart, stripe->operation->ToString());
             }
-            if ( !GenerateStripe(stripe, memoryAccesses) )
+
+            if ( !GenerateOpGroup(stripe, prevOp, memoryAccesses, outstandingDmaAccesses) )
             {
                 return std::vector<uint32_t>();
             }
-            // BLOCKDEP register
-            int blockdep = CalcBlockDep(prevOp, stripe);
-            Emit(isa::npu_set_blockdep_t(blockdep));
-            GenerateWaits(false, memoryAccesses, maxOutstandingKernelOps, outstandingDmaAccesses, outstandingNpuAccesses);
-            GenerateOperationCode(stripe->operation.get());
+
             prevOp = stripe;
+
             // Return command mapping information to the caller
             int emitEnd = _emit.Position();
             if ( cmdRanges )
             {
                 cmdRanges->emplace_back(stripe->operation->_srcKey, emitStart, emitEnd);
             }
+
+            UpdateMemoryAccesses(memoryAccesses, outstandingNpuAccesses, maxOutstandingKernelOps);
         }
         else
         {
+            MemoryAccesses dmaAccesses;
             auto dma = static_cast<HLCDMA *>(hlc.get());
             if ( verbose )
             {
                 debugInfo.emplace_back(emitStart, dma->ToString());
             }
-            GenerateDMA(dma, memoryAccesses);
-            GenerateWaits(true, memoryAccesses, maxOutstandingDMAOps, outstandingNpuAccesses, outstandingDmaAccesses);
+            GenerateDMA(dma, dmaAccesses);
+            GenerateWaits(true, dmaAccesses, outstandingNpuAccesses);
+            UpdateMemoryAccesses(dmaAccesses, outstandingDmaAccesses, maxOutstandingDMAOps);
             Emit(isa::npu_op_dma_start_t());
         }
     }

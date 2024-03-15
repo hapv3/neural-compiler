@@ -152,10 +152,10 @@ public:
         operation->ConnectInput(TensorUsage::State, _featureMapTensor);
         operation->ConnectInput(MakeTensorUsage(TensorUsage::State, 1), _stagingTensor);
 
-        for ( const auto &subOp : npuOp->Operations() )
+        for ( const auto &op : npuOp->Operations() )
         {
-            const auto cost = _schedule->Cost(subOp.get());
-            for ( const auto &input : subOp->inputs.pairs() )
+            const auto cost = _schedule->Cost(op.get());
+            for ( const auto &input : op->inputs.pairs() )
             {
                 if ( input.second.tensor->srcTensor->IsConstant() )
                 {
@@ -177,9 +177,23 @@ public:
                     }
                 }
             }
-            if ( cost->npuScalesTensor && !subOp->inputs.contains(TensorUsage::Scales) )
+            if ( cost->npuScalesTensor && !op->inputs.contains(TensorUsage::Scales) )
             {
                 AddToReadOnly(cost->npuScalesTensor.get());
+            }
+            for ( const auto &subOp : op->SubOps() )
+            {
+                for ( const auto &input : subOp->inputs.pairs() )
+                {
+                    if ( input.second.tensor->srcTensor->IsConstant() )
+                    {
+                        auto tensor = input.second.tensor.get();
+                        if ( tensor->allocatedAddress >= 0 )
+                        {
+                            AddToReadOnly(tensor);
+                        }
+                    }
+                }
             }
         }
     }

@@ -64,7 +64,7 @@ void LiveRangeGraph::ExtractLiveRangesFromCascades(const std::vector<std::unique
         CascadeInfo *cascadeInfo = cascade == 0 ? nullptr : &schedule->cascades[cascade];
         CascadeBuffer *cascadeBuffer = nullptr;
 
-        if ( cascadeInfo == nullptr )
+        if ( cascadeInfo == nullptr && schedOp->OpGroup()->NeedsAllocation(schedOp->OFM()->tensor->uid) )
         {
             // Check if op have an ifm tensor that can be reused for the ofm
             auto ifmTens = ReusableIFM(schedOp, targetMemory);

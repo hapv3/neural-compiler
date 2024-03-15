@@ -39,6 +39,8 @@ public:
     void Clear();
     int Position() const { return int(_stream.size()); }
     const std::vector<uint32_t> &CommandStream() const { return _stream; }
+    void ClearChainingRegisters();
+    void StartChaining();
 
 private:
     bool SetRegister(uint16_t reg, uint64_t value);
@@ -183,17 +185,18 @@ protected:
     // Generates IFM_BROADCAST and IFM2_BROADCAST register for binary elementwise operations
     void GenerateInputBroadcast(const Shape &ifmShape, const Shape &ifm2Shape, bool ifmIsScalar, bool ifm2IsScalar);
     // Generates IFM_PRECISION register
-    void GenerateIFMPrecision(const HLCFeatureMap &fm);
+    void GenerateIFMPrecision(const HLCFeatureMap &fm, bool chained, bool isScalar);
     // Generates IFM2_PRECISION register
-    void GenerateIFM2Precision(const HLCFeatureMap &fm);
+    void GenerateIFM2Precision(const HLCFeatureMap &fm, bool chained, bool isScalar);
     // Generates OFM_PRECISION register
-    void GenerateOFMPrecision(const HLCFeatureMap &fm, bool useGlobalScale, bool enable_output);
+    void GenerateOFMPrecision(const HLCFeatureMap &fm, bool chained, bool useGlobalScale, bool enable_output);
     // Generates common IFM registers
-    void GenerateIFM(OpType opType, const HLCFeatureMap &fm, const Box &inputArea, bool isScalar, int32_t scalarValue);
+    void GenerateIFM(OpType opType, const HLCFeatureMap &fm, const Box &inputArea, bool isScalar, int32_t scalarValue,
+        int chainBuffer, bool ifm2Chained);
     // Generates common IFM2 registers
-    void GenerateIFM2(OpType opType, const HLCFeatureMap &fm, const Box &inputArea, bool isScalar, int32_t scalarValue);
+    void GenerateIFM2(OpType opType, const HLCFeatureMap &fm, const Box &inputArea, bool isScalar, int32_t scalarValue, int chainBuffer);
     // Generates OFM registers
-    void GenerateOFM(OpType opType, const HLCFeatureMap &fm, const Box &outputArea);
+    void GenerateOFM(OpType opType, const HLCFeatureMap &fm, const Box &outputArea, int chainBuffer);
     // Generates WEIGHT registers
     void GenerateWeights(const HLCStripe *stripe, MemoryAccesses &memoryAccesses);
     // Generates SCALE registers
@@ -203,8 +206,9 @@ protected:
     // Generates ACC_FORMAT register
     void GenerateAccFormat(const HLCStripe *stripe);
     // Calculates and generates KERNEL_WAIT or DMA_WAIT register
-    void GenerateWaits(bool isKernelWait, const MemoryAccesses &memoryAccesses, int maxWaits,
-        std::deque<MemoryAccesses> &outstandingAccesses, std::deque<MemoryAccesses> &accessesToUpdate);
+    void GenerateWaits(bool isKernelWait, const MemoryAccesses &memoryAccesses, std::deque<MemoryAccesses> &outstandingAccesses);
+    // Save current memory accesses to accessesToUpdate
+    void UpdateMemoryAccesses(const MemoryAccesses &memoryAccesses, std::deque<MemoryAccesses> &accessesToUpdate, int maxWaits);
     // Inserts DMA commands for copying LUTs from constant memory
     // to LUT memory
     std::vector<std::unique_ptr<HighLevelCommand>> InsertLUTDMACommands(std::vector<std::unique_ptr<HighLevelCommand>> &cmds);
@@ -225,6 +229,8 @@ protected:
     // Resize operations
     void GenerateResizeOp(HLCStripe *stripe, MemoryAccesses &memoryAccesses);
     bool GenerateStripe(HLCStripe *stripe, MemoryAccesses &memoryAccesses);
+    std::shared_ptr<HLCStripe> MakeStripeForSubOp(HLCStripe *stripe, HLCSubOperation &subOp);
+    bool GenerateOpGroup(HLCStripe *stripe, HLCStripe *prevOp, MemoryAccesses &memoryAccesses, std::deque<MemoryAccesses> &outstandingDmaAccesses);
     // Generates register commands for DMA operations
     void GenerateDMA(const HLCDMA *dma, MemoryAccesses &memoryAccesses);
 

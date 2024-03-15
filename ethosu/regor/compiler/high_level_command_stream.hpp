@@ -77,6 +77,7 @@ struct HLCFeatureMap
     ArchResampling resamplingMode = ArchResampling::None;
     TransposeType transpose = TransposeType::None;
     ReverseType reverse = ReverseType::None;
+    UniqueId uid = ~0u;
 
     int AllocationSizeBytes() const { return TensorAllocationBytes(shape, format, dataType); }
 
@@ -146,7 +147,10 @@ union HLCParameters
 struct HLCSubOperation
 {
     OpType type = OpType::None;
+    std::vector<HLCFeatureMap> ifm;
+    HLCFeatureMap ofm;
     HLCParameters parameters = {};
+    HLCRoundMode rounding;
 };
 
 /// <summary>
@@ -204,13 +208,14 @@ class HLCStripe : public HighLevelCommand
 {
 public:
     std::shared_ptr<HLCOperation> operation;
+    ArchitectureOpGroup *opGroup;
     std::vector<Box> ifmAreas;
     Box ofmArea;
     int weightRangeDepth = 0;  // Identifies depth slice
     HLCPadding padding;
 
 public:
-    HLCStripe(const std::shared_ptr<HLCOperation> &operation_) : operation(operation_) {}
+    HLCStripe(const std::shared_ptr<HLCOperation> &operation_) : operation(operation_), opGroup(nullptr) {}
     bool IsStripe() const override { return true; }
 
     std::string ToString() const override

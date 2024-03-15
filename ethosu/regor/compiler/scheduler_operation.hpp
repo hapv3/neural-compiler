@@ -133,7 +133,7 @@ public:
     AccumulatorControl _accumulatorControl;
     DynamicRef _attr;
     const class SchedulerOperation *_parent = nullptr;
-    std::vector<std::unique_ptr<SchedulerOperation>> _subOps;  // (activations, or Ethos-U85 chained ops)
+    std::vector<std::unique_ptr<SchedulerOperation>> _subOps;  // activations or Ethos-U85 chained ops
     ordered_map<TensorUsage, SchedulerConnection> inputs;
     ordered_map<TensorUsage, SchedulerConnection> outputs;
     std::unique_ptr<ArchitectureOpGroup> _opGroup;
@@ -224,6 +224,15 @@ public:
 
     const std::vector<std::unique_ptr<SchedulerOperation>> &SubOps() const { return _subOps; }
 
+    ArchitectureOpGroup *OpGroup() const
+    {
+        if ( _parent )
+        {
+            return _parent->OpGroup();
+        }
+        return _opGroup.get();
+    };
+
     // Returns connections for which live range calculation is needed
     std::vector<std::pair<TensorUsage, SchedulerTensor *>> LiveRangeTensors() const
     {
@@ -235,11 +244,31 @@ public:
                 auto usage = item.first & TensorUsage::TypeMask;
                 if ( usage == TensorUsage::IFM || usage == TensorUsage::OFM || usage == TensorUsage::LUT )
                 {
-                    liveTensors.push_back(std::make_pair(item.first, item.second.tensor.get()));
+                    if ( _opGroup->NeedsAllocation(item.second.tensor->uid) )
+                    {
+                        liveTensors.push_back(std::make_pair(item.first, item.second.tensor.get()));
+                    }
                 }
             }
         }
-        // TODO: intermediates
+        // live-tensors from sub-operations
+        for ( const auto &subOp : SubOps() )
+        {
+            for ( const auto *list : {&subOp->inputs, &subOp->outputs} )
+            {
+                for ( const auto &item : list->pairs() )
+                {
+                    auto usage = item.first & TensorUsage::TypeMask;
+                    if ( usage == TensorUsage::IFM || usage == TensorUsage::OFM || usage == TensorUsage::LUT )
+                    {
+                        if ( _opGroup->NeedsAllocation(item.second.tensor->uid) )
+                        {
+                            liveTensors.push_back(std::make_pair(item.first, item.second.tensor.get()));
+                        }
+                    }
+                }
+            }
+        }
         return liveTensors;
     }
 

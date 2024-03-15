@@ -45,11 +45,12 @@ class SchedulerPacking
 {
 protected:
     Architecture *_arch = nullptr;
+    bool _disableChaining = false;
     std::vector<std::unique_ptr<SchedulerOperation>> _schedList;
     std::unordered_map<Tensor *, std::shared_ptr<SchedulerTensor>> _tensorMap;
 
 public:
-    SchedulerPacking(Architecture *arch);
+    SchedulerPacking(Architecture *arch, bool disableChaining);
 
 public:
     std::vector<std::unique_ptr<SchedulerOperation>> Process(const Graph *graph);
@@ -65,6 +66,7 @@ private:
     std::unique_ptr<SchedulerOperation> MakeSchedulerOperation(Operation *op, const Graph *graph);
     std::vector<std::unique_ptr<SchedulerOperation>> DecomposeSchedulerOperation(std::unique_ptr<SchedulerOperation> op);
     ArchResampling ResamplingMode(TensorUsage usage, OpType opType) const;
+    ArchitectureOpGroupQuery CreateOpGroupQuery(const SchedulerOperation *schedOp) const;
 };
 
 }  // namespace regor

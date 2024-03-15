@@ -55,6 +55,7 @@ struct CompilerOptions
     bool verboseRegisterCommandStream = false;
     bool debugDatabase = false;
     bool perfReport = true;
+    bool disableChaining = false;
     OutputFormat outputFormat = OutputFormat::TFLite;
 };
 

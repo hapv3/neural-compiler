@@ -251,6 +251,7 @@ static void MakeFeatureMap(const SchedulerConnection *schedConn, HLCFeatureMap &
     fm.transpose = schedConn->transpose;
     fm.reverse = schedConn->reverse;
     fm.resamplingMode = schedConn->resamplingMode;
+    fm.uid = schedConn->tensor->uid;
 }
 
 static std::unique_ptr<HLCWeights> MakeWeights(NpuWeightTensor *srcTensor, Buffering buffering, SchedulerTensor *bufTensor = nullptr)
@@ -275,14 +276,51 @@ static std::unique_ptr<HLCWeights> MakeWeights(NpuWeightTensor *srcTensor, Buffe
     return weights;
 }
 
+static HLCSubOperation MakeSubOperation(const std::unique_ptr<SchedulerOperation> &schedOp)
+{
+    HLCSubOperation hlcSubOp;
+    hlcSubOp.type = schedOp->Type();
+    auto lutConn = schedOp->TryInput(TensorUsage::LUT);
+
+    for ( int i = 0; i < MAX_NUM_IFM; ++i )
+    {
+        auto ifm = schedOp->TryIFM(i);
+        if ( ifm != nullptr )
+        {
+            hlcSubOp.ifm.emplace_back();
+            MakeFeatureMap(ifm, hlcSubOp.ifm.back());
+        }
+    }
+    MakeFeatureMap(schedOp->OFM(), hlcSubOp.ofm);
+    hlcSubOp.rounding = HLCRoundMode(schedOp->Rounding());
+
+    if ( schedOp->Type() == OpType::LeakyRelu )
+    {
+        const auto &parameters = schedOp->Parameters();
+        hlcSubOp.parameters.leaky_relu.alpha = parameters.leaky_relu.alpha;
+    }
+    else if ( lutConn != nullptr )
+    {
+        auto lutTensor = lutConn->tensor;
+        auto &param = hlcSubOp.parameters.lut;
+        param.memArea = lutTensor->memArea;
+        param.address = lutTensor->allocatedAddress;
+        param.sizeBytes = lutTensor->AllocationSizeBytes();
+        param.ifmType = schedOp->IFM(0)->tensor->dataType;
+    }
+    return hlcSubOp;
+}
+
 static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, SchedulerOpInfo *opInfo)
 {
+    assert(opInfo);
     auto op = std::make_shared<HLCOperation>();
     op->type = schedOp->Type();
     op->kernel = *schedOp->Kernel();
     op->config = opInfo->Config();
     op->rounding = HLCRoundMode(schedOp->Rounding());
     op->_srcKey = schedOp->_srcKey;
+
     for ( int i = 0; i < MAX_NUM_IFM; ++i )
     {
         auto ifm = schedOp->TryIFM(i);
@@ -317,49 +355,37 @@ static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, 
             opInfo->bufferedWeightTensor.tensor.get());
     }
 
+    // Register command stream generator will allocate the LUT
+    // in LUT memory and generate DMA for the LUT; for this
+    // it must know the location of the tensor in read-only memory
     auto lutConn = schedOp->TryInput(TensorUsage::LUT);
     if ( lutConn != nullptr )
     {
-        // Add sub op for operations using LUT
-        HLCSubOperation lutSubOp;
-        lutSubOp.type = OpType::LUT;
-        auto &param = lutSubOp.parameters.lut;
-        auto lut = lutConn->tensor;
-        auto end = schedOp->SubOps().end();
-        auto subOp = std::find_if(schedOp->SubOps().begin(), end, [](auto &so) { return so->Type() == OpType::LUT; });
-        // Register command stream generator will allocate the LUT
-        // in LUT memory and generate DMA for the LUT; for this
-        // it must know the location of the tensor in read-only memory
-        param.memArea = lut->memArea;
-        param.address = lut->allocatedAddress;
-        param.sizeBytes = lut->AllocationSizeBytes();
-        param.ifmType = subOp != end ? (*subOp)->IFM(0)->tensor->dataType : schedOp->IFM(0)->tensor->dataType;
-        op->subOps.push_back(std::move(lutSubOp));
+        auto lutTensor = lutConn->tensor;
+        auto &param = op->parameters.lut;
+        param.memArea = lutTensor->memArea;
+        param.address = lutTensor->allocatedAddress;
+        param.sizeBytes = lutTensor->AllocationSizeBytes();
+        param.ifmType = schedOp->IFM(0)->tensor->dataType;
     }
+
     for ( auto &subOp : schedOp->SubOps() )
     {
-        if ( subOp->Type() != OpType::LUT )
-        {
-            HLCSubOperation hlcSubOp;
-            hlcSubOp.type = subOp->Type();
-            // TODO: add op type specific info
-            if ( subOp->Type() == OpType::LeakyRelu )
-            {
-                const auto &parameters = subOp->Parameters();
-                hlcSubOp.parameters.leaky_relu.alpha = parameters.leaky_relu.alpha;
-            }
-            op->subOps.push_back(std::move(hlcSubOp));
-        }
+        HLCSubOperation hlcSubOp = MakeSubOperation(subOp);
+        op->subOps.push_back(std::move(hlcSubOp));
     }
+
     const auto &parameters = schedOp->Parameters();
     const auto &attr = schedOp->Attributes();
     const auto &ifmShape = schedOp->IFM(0)->shape;
     switch ( schedOp->Type() )
     {
         case OpType::LeakyRelu:
+            assert(lutConn == nullptr);
             op->parameters.leaky_relu.alpha = parameters.leaky_relu.alpha;
             break;
         case OpType::Resize:
+            assert(lutConn == nullptr);
             op->parameters.resize.scaleY = attr.resize.scaleY;
             op->parameters.resize.scaleX = attr.resize.scaleX;
             op->parameters.resize.offsetY = attr.resize.offsetYX[0];
@@ -379,6 +405,7 @@ static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, 
             }
             break;
         case OpType::ArgMax:
+            assert(lutConn == nullptr);
             op->parameters.argmax.axis = attr.axis.axis;
             break;
         default:
@@ -529,6 +556,7 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
     auto opType = op->Type();
     auto ofmConn = op->OFM();
     auto ifm0Conn = op->IFM(0);
+    auto opGroup = op->OpGroup();
     const auto &ofmShape = ofmConn->SliceShape();
     const auto &ifm0Shape = ifm0Conn->SliceShape();
 
@@ -582,6 +610,7 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
                 auto hlcStripe = std::make_unique<HLCStripe>(hlcOp);
                 hlcStripe->padding = padding;
                 hlcStripe->ofmArea = outputArea;
+                hlcStripe->opGroup = opGroup;
                 for ( unsigned ifmIndex = 0; ifmIndex < hlcOp->ifm.size(); ++ifmIndex )
                 {
                     auto ifmConn = op->IFM(ifmIndex);
@@ -676,6 +705,15 @@ void HLCStreamGenerator::GenerateCommandsForCascade(vector_span<std::unique_ptr<
         {
             auto &shape = item->second.shape;
             hlcOps[i - 1]->ofm.shape = shape;
+            // TODO MLBEDSW-9142: support fused activations inside chains
+            // for now, we assume maximum one subOp (fused activation) on cascades
+            if ( hlcOps[i - 1]->subOps.size() )
+            {
+                assert(hlcOps[i - 1]->subOps.size() == 1);
+                assert(hlcOps[i - 1]->subOps[0].ifm.size() == 1);
+                hlcOps[i - 1]->subOps[0].ifm[0].shape = shape;
+                hlcOps[i - 1]->subOps[0].ofm.shape = shape;
+            }
             hlcOps[i]->ifm[cascadedOps[i]->PrimaryIfmIndex()].shape = shape;
         }
     }
@@ -744,6 +782,7 @@ HLCStream HLCStreamGenerator::GenerateCommandStream(const NPUOperation *npuOp, c
         auto op = schedOp.get();
         hlcOps.push_back(MakeOperation(op, schedule->Cost(op)));
     }
+
     // Generate the command stream
     int sz = int(npuOps.size());
     for ( int i = 0; i < sz; ++i )

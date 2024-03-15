@@ -152,13 +152,16 @@ struct ArchitectureOpGroupQuery
     {
         UniqueId key;
         DataType type;
+        Shape shape;
+        bool isReordered;
+        bool isConst;
     };
 
     OpType type;
     const Kernel *kernel;
-    TensorInfo ifm;
-    TensorInfo ifm2;
+    std::array<TensorInfo, 2> ifm;
     TensorInfo ofm;
+    int inputs;
 };
 
 /// <summary>
@@ -169,6 +172,7 @@ class ArchitectureOpGroup
 public:
     virtual ~ArchitectureOpGroup() = default;
     virtual int Add(const ArchitectureOpGroupQuery &op, const std::vector<int> &dependsOn = {}) = 0;
+    virtual bool NeedsAllocation(UniqueId tensorUID) = 0;
 
 protected:
     virtual bool CanRunOnNPU(const ArchitectureOpGroupQuery &op) = 0;

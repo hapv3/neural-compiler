@@ -269,7 +269,18 @@ Address Scheduler::CreateSchedulerRepresentation()
         {
             opMemoryRequired += UpdateSchedulerTensor(pos.first, &pos.second);
         }
+        for ( auto const &subOp : schedOp->SubOps() )
+        {
+            for ( auto pos : subOp->outputs.pairs() )
+            {
+                opMemoryRequired += UpdateSchedulerTensor(pos.first, &pos.second);
+            }
 
+            for ( auto pos : subOp->inputs.pairs() )
+            {
+                opMemoryRequired += UpdateSchedulerTensor(pos.first, &pos.second);
+            }
+        }
         minMemoryRequired = std::max(minMemoryRequired, opMemoryRequired);
     }
 
@@ -430,7 +441,8 @@ Flags<WeightFormat> Scheduler::BestWeightFormat(
     return ChooseBestWeightFormat(_arch, op, _options.optimizationStrategy, maxStreams, encodingResults);
 }
 
-std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(SchedulerOperation *op, const Shape &ofmStripeShape)
+std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(
+    SchedulerOperation *op, const Shape &ofmStripeShape, const std::unique_ptr<SchedulerOpInfo> &parentInfo)
 {
     assert(op->PrimaryIfmIndex() >= 0 && op->PrimaryIfmIndex() <= 1);
     SchedulerConnection *ifm = op->IFM(op->PrimaryIfmIndex());
@@ -440,8 +452,13 @@ std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(SchedulerOpera
     auto ifm2Shape = ifm2 ? ifm2->shape : Shape();
     auto ofmShape = ofmStripeShape;
 
+    bool isChained =
+        (op->Parent() != nullptr || op->SubOps().size() > 1 ||
+            (op->SubOps().size() == 1 && !IsActivation(op->SubOps()[0]->Type())));
+
     // Operations that cannot be subdivided require full OFM shape
-    if ( _arch->CanSubdivide(op->Type()) == AxisMask::None )
+    // TODO MLBEDSW-9143 support cascading for chains..
+    if ( _arch->CanSubdivide(op->Type()) == AxisMask::None || isChained )
     {
         ofmShape = op->OFM()->shape;
     }
@@ -480,7 +497,7 @@ std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(SchedulerOpera
     std::unique_ptr<ArchitectureOpConfig> blockConfig;
     do
     {
-        blockConfig = GetOpConfig(_arch, op, ifmShape, ifm2Shape, ofmShape, weightFormat);
+        blockConfig = parentInfo ? parentInfo->Config()->Clone() : GetOpConfig(_arch, op, ifmShape, ifm2Shape, ofmShape, weightFormat);
 
         if ( weights == nullptr || !weights->tensor->IsConstant() ) break;
 
@@ -543,6 +560,14 @@ std::unique_ptr<Schedule> Scheduler::CreateInitialSchedule()
         auto cost = CreateSchedulerOpInfo(op.get(), op->OFM()->SliceShape());
         cost->cycles = EstimateOpPerformance(op.get(), cost->Config(), op->OFM()->shape.Depth());
         cost->elementAccess = EstimateOpElementAccess(op.get(), cost->Config(), op->OFM()->shape.Depth());
+        // sub-operations
+        for ( auto &subOp : op->SubOps() )
+        {
+            auto subCost = CreateSchedulerOpInfo(subOp.get(), subOp->OFM()->SliceShape(), cost);
+            subCost->cycles = EstimateOpPerformance(subOp.get(), subCost->Config(), subOp->OFM()->shape.Depth());
+            subCost->elementAccess = EstimateOpElementAccess(subOp.get(), subCost->Config(), subOp->OFM()->shape.Depth());
+            schedule->SetCost(*subOp, std::move(subCost));
+        }
         schedule->SetCost(*op, std::move(cost));
     }
     return schedule;
@@ -698,6 +723,12 @@ std::shared_ptr<Schedule> Scheduler::ProposeScheduleBuffering(Schedule *refSched
         }
 
         ProposeOperatorBuffering(schedOp.get(), prevOp, bufferedSchedule.get(), refSchedule, stagingLimitClamped);
+
+        // chained sub-operations
+        for ( auto const &subOp : schedOp->SubOps() )
+        {
+            ProposeOperatorBuffering(subOp.get(), prevOp, bufferedSchedule.get(), refSchedule, stagingLimitClamped);
+        }
         prevOp = schedOp.get();
     }
 
@@ -759,6 +790,9 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
     auto scaleTens = scales->tensor.get();
     // No need to move the weights if they are already in the same memory as the staging area
     bool needsDMA = weightTens->memArea.memory != _arch->StagingMemory().memory;
+    bool isChained =
+        (schedOp->Parent() != nullptr || schedOp->SubOps().size() > 1 ||
+            (schedOp->SubOps().size() == 1 && !IsActivation(schedOp->SubOps()[0]->Type())));
 
     std::vector<int> ofmFullDepthSlices = {0, refCost->stripe.Depth()};
 
@@ -792,8 +826,9 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
 
     int weightBufferSize = 0;
 
-    // Force full depth for cascaded Ops
-    if ( cost->cascade != 0 )
+    // Force full depth for cascaded and chained ops
+    // TODO MLBEDSW-9145: support depth-slicing for chains
+    if ( cost->cascade != 0 || isChained )
     {
         weightBufferSize = fullWeightsBytes;
         // Update the memory snapshot to reflect the added size of the weights
@@ -962,8 +997,16 @@ std::shared_ptr<Schedule> Scheduler::ProposeMinimalSchedule()
         auto cost = CreateSchedulerOpInfo(schedOp.get(), minStripe);
         cost->cycles = EstimateOpPerformance(schedOp.get(), cost->Config(), schedOp->OFM()->shape.Depth());
         cost->elementAccess = EstimateOpElementAccess(schedOp.get(), cost->Config(), schedOp->OFM()->shape.Depth());
-        minSchedule->SetCost(*schedOp, std::move(cost));
 
+        // sub-operations use the same stripe as their parent
+        for ( auto &subOp : schedOp->SubOps() )
+        {
+            auto subCost = CreateSchedulerOpInfo(subOp.get(), minStripe, cost);
+            subCost->cycles = EstimateOpPerformance(subOp.get(), subCost->Config(), subOp->OFM()->shape.Depth());
+            subCost->elementAccess = EstimateOpElementAccess(subOp.get(), subCost->Config(), subOp->OFM()->shape.Depth());
+            minSchedule->SetCost(*subOp, std::move(subCost));
+        }
+        minSchedule->SetCost(*schedOp, std::move(cost));
         prevOp = schedOp.get();
     }
 
@@ -1032,9 +1075,18 @@ std::shared_ptr<Schedule> Scheduler::ProposeScheduleStriping(const Shape &finalS
         // Estimate performance
         cost->cycles = EstimateOpPerformance(schedOp, cost->Config(), schedOp->OFM()->shape.Depth());
         cost->elementAccess = EstimateOpElementAccess(schedOp, cost->Config(), schedOp->OFM()->shape.Depth());
-        stripedSchedule->SetCost(*schedOp, std::move(cost));
 
-        // Calculate the preceding Op's stripe
+        // sub-operations use the same stripe as their parent
+        for ( auto &subOp : schedOp->SubOps() )
+        {
+            auto subCost = CreateSchedulerOpInfo(subOp.get(), stripe, cost);
+            subCost->cycles = EstimateOpPerformance(subOp.get(), subCost->Config(), subOp->OFM()->shape.Depth());
+            subCost->elementAccess = EstimateOpElementAccess(subOp.get(), subCost->Config(), subOp->OFM()->shape.Depth());
+            stripedSchedule->SetCost(*subOp, std::move(subCost));
+        }
+
+        stripedSchedule->SetCost(*schedOp, std::move(cost));
+        // Calculate the preceeding Op's stripe
         stripe = schedOp->IFM(schedOp->PrimaryIfmIndex())->shape.With(-3, stripe.Height() * schedOp->Kernel()->Stride().y);
     }
     return stripedSchedule;
@@ -1100,11 +1152,18 @@ std::shared_ptr<Schedule> Scheduler::OptimizeSubSchedule(const CascadeInfo &casc
 
     // Create a sub-schedule that contains only the costs for the Ops that are part of the sub-schedule
     auto subSchedule = std::make_shared<Schedule>(_name + fmt::format("SUB_{}_{}", cascadeInfo.start, cascadeInfo.end));
-    for ( auto &subOp : subOps )
+    for ( auto &op : subOps )
     {
         // NOTE: Copies the cost objects, consider optimising this
-        auto costCopy = std::make_unique<SchedulerOpInfo>(*refSchedule->Cost(subOp.get()));
-        subSchedule->SetCost(*subOp, std::move(costCopy));
+        auto costCopy = std::make_unique<SchedulerOpInfo>(*refSchedule->Cost(op.get()));
+        subSchedule->SetCost(*op, std::move(costCopy));
+
+        // chained sub-operations
+        for ( auto &subOp : op->SubOps() )
+        {
+            costCopy = std::make_unique<SchedulerOpInfo>(*refSchedule->Cost(subOp.get()));
+            subSchedule->SetCost(*subOp, std::move(costCopy));
+        }
     }
 
     // Update subschedule cascade list
@@ -1315,9 +1374,9 @@ PerformanceQuery Scheduler::InitPerfQuery(SchedulerOperation *op, ArchitectureOp
 std::vector<FusionQuery> Scheduler::InitFusionQuery(SchedulerOperation *op)
 {
     std::vector<FusionQuery> fused;
-
-    for ( auto const &subOp : op->SubOps() )
+    if ( op->SubOps().size() && IsActivation(op->SubOps().front()->Type()) )
     {
+        auto &subOp = op->SubOps().front();
         fused.emplace_back();
 
         FusionQuery &fusedOp = fused.back();
@@ -1354,6 +1413,7 @@ CycleCost Scheduler::EstimateOpPerformance(SchedulerOperation *op, ArchitectureO
 
 ElementAccess Scheduler::EstimateOpElementAccess(SchedulerOperation *op, ArchitectureOpConfig *config, int ofm_depth)
 {
+    // TODO MLBEDSW-7954: Account for chaining in performance estimation
     ElementAccess access;
     if ( !op->IsNpuOp() )
     {
@@ -1387,6 +1447,19 @@ void Scheduler::PrintSchedule(Schedule *schedule)
         else
         {
             LOG_PRINT("{0}\n", cost->ToString());
+        }
+        if ( schedOp->SubOps().size() )
+        {
+            LOG_PRINT("\t\tsub-operations: [ ");
+            for ( auto &subOp : schedOp->SubOps() )
+            {
+                LOG_PRINT("{} ", OpTypeToString(subOp->Type()));
+            }
+            LOG_PRINT("]\n");
+        }
+        else
+        {
+            LOG_PRINT("\t\tsub-operations: -\n");
         }
 
         int mem_usage = 0;

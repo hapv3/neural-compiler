@@ -28,6 +28,7 @@
 #include "ethos_u85_performance.hpp"
 
 #include <string>
+#include <unordered_set>
 
 namespace regor
 {
@@ -100,6 +101,7 @@ public:
 class EthosU85OpGroup : public ArchitectureOpGroup
 {
     friend class ArchEthosU85;
+    friend class EthosU85RCSGenerator;
 
     using OpInfo = ArchitectureOpGroupQuery;
 
@@ -109,15 +111,35 @@ class EthosU85OpGroup : public ArchitectureOpGroup
     };
 
 private:
-    std::array<OpInfo, 5> _ops;
-    std::array<InternalOpInfo, 5> _opsInternal;
+    ArchEthosU85 *_arch;
+    std::array<OpInfo, 8> _ops;
+    std::array<InternalOpInfo, 8> _opsInternal;
+    std::unordered_map<UniqueId, int> _tensorCbMap;
+    std::unordered_set<UniqueId> _fusedTensors;
+    const int _maxChainLength = 4;
+    const int _maxExternalIfms = 3;  // non-chained IFMs for a chain
     int _opsCount = 0;
+    int _chainLength = 0;
+    int _externalIfms = 0;
+    int _chainIdx = 0;
+    bool _supportsChaining = false;
 
 public:
+    EthosU85OpGroup(ArchEthosU85 *arch) : _arch(arch){};
     int Add(const ArchitectureOpGroupQuery &op, const std::vector<int> &dependsOn = {}) override;
+    bool NeedsAllocation(UniqueId tensorUID) override;
 
 protected:
     bool CanRunOnNPU(const ArchitectureOpGroupQuery &op) override;
+    int ChainingBuffer(UniqueId tensorUID);
+    bool IsChained(UniqueId tensorUID);
+    bool IsFused(UniqueId tensorUID);
+
+private:
+    int KeyToOpIndex(int key);
+    int ExternalIfms(const ArchitectureOpGroupQuery &op);
+    bool Chain(const ArchitectureOpGroupQuery &op, const std::vector<int> &dependsOn, int externalInputs);
+    bool Fuse(const ArchitectureOpGroupQuery &op, const std::vector<int> &dependsOn);
 };
 
 /// <summary>
@@ -177,7 +199,6 @@ protected:
 
 public:
     ArchEthosU85();
-
 
     bool ParseConfig(IniReader *reader) override;
 

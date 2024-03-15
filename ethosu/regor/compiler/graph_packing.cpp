@@ -77,7 +77,6 @@ std::unique_ptr<Graph> GraphPacking::Process(std::vector<std::pair<Operation *, 
                 assert(subOp->IsNpuOp());
                 _oldOpToNewOp[subOp.get()] = currentOp;
             }
-
             currentNpuOp->AddOperation(std::move(schedOp));
         }
         else
@@ -119,65 +118,16 @@ std::unique_ptr<Graph> GraphPacking::Process(std::vector<std::pair<Operation *, 
     currentNpuOp = nullptr;
     currentOp = nullptr;
 
+    // Connect Input/Output tensors
     for ( auto &item : npuOps )
     {
         Operation *op = item.first;
-
         for ( const auto &schedOp : item.second->Operations() )
         {
-            for ( const auto &schedConn : schedOp->inputs )
+            ConnectTensors(op, schedOp, tensorAddressMap);
+            for ( const auto &subOp : schedOp->SubOps() )
             {
-                const auto &schedTensor = schedConn.tensor;
-                if ( schedTensor->IsConstant() )
-                {
-                    // Don't connect constant tensors - they are handled at scheduler level
-                    continue;
-                }
-
-                const bool isConsumedByUs = std::any_of(schedTensor->consumers.begin(), schedTensor->consumers.end(),
-                    [&, op](SchedulerOperation *cons) { return _oldOpToNewOp.at(cons).get() == op; });
-                const bool isProducedByUsOnly = std::all_of(schedTensor->producers.begin(), schedTensor->producers.end(),
-                    [&, op](SchedulerOperation *prod) { return _oldOpToNewOp.at(prod).get() == op; });
-                if ( isConsumedByUs && isProducedByUsOnly && !schedTensor->isGraphInput )
-                {
-                    // Don't connect NPU internal tensors
-                    continue;
-                }
-
-                // Connect input tensor to new Ethos-U operation, but only once
-                const auto &oldTensor = schedTensor->srcTensor;
-                assert(oldTensor && "Missing source graph tensor");
-                const auto newTensor = LookupNewTensor(oldTensor.get(), tensorAddressMap, schedTensor->allocatedAddress);
-                if ( op->UsageOfTensor(newTensor.get()) == TensorUsage::None )
-                {
-                    const auto usage = MakeTensorUsage(TensorUsage::IFM, op->Inputs().size());
-                    op->ConnectInput(usage, newTensor).Set(schedConn.quantization);
-                }
-            }
-
-            for ( const auto &schedConn : schedOp->outputs )
-            {
-                const auto &schedTensor = schedConn.tensor;
-
-                const bool isProducedByUs = std::any_of(schedTensor->producers.begin(), schedTensor->producers.end(),
-                    [&](SchedulerOperation *prod) { return _oldOpToNewOp.at(prod).get() == op; });
-                const bool isConsumedByUsOnly = std::all_of(schedTensor->consumers.begin(), schedTensor->consumers.end(),
-                    [&](SchedulerOperation *cons) { return _oldOpToNewOp.at(cons).get() == op; });
-                if ( isProducedByUs && isConsumedByUsOnly && !schedTensor->isGraphOutput )
-                {
-                    // Don't connect NPU internal tensors
-                    continue;
-                }
-
-                // Connect output tensor to new Ethos-U operation, but only once
-                const auto &oldTensor = schedTensor->srcTensor;
-                assert(oldTensor && "Missing source graph tensor");
-                const auto newTensor = LookupNewTensor(oldTensor.get(), tensorAddressMap, schedTensor->allocatedAddress);
-                if ( op->UsageOfTensor(newTensor.get()) == TensorUsage::None )
-                {
-                    const auto usage = MakeTensorUsage(TensorUsage::OFM, op->Outputs().size());
-                    op->ConnectOutput(usage, newTensor).Set(schedConn.quantization);
-                }
+                ConnectTensors(op, subOp, tensorAddressMap);
             }
         }
     }
@@ -207,6 +157,62 @@ std::unique_ptr<Graph> GraphPacking::Process(std::vector<std::pair<Operation *, 
     graph->SetScheduledOrder(std::move(newOpsInScheduledOrder));
 
     return graph;
+}
+
+void GraphPacking::ConnectTensors(Operation *op, const std::unique_ptr<SchedulerOperation> &schedOp,
+    std::unordered_map<const Tensor *, Address> &tensorAddressMap)
+{
+    auto isCurrentOp = [&map = _oldOpToNewOp, op](SchedulerOperation *sop) { return map[sop].get() == op; };
+    for ( const auto &schedConn : schedOp->inputs )
+    {
+        const auto &schedTensor = schedConn.tensor;
+        if ( schedTensor->IsConstant() )
+        {
+            // Don't connect constant tensors - they are handled at scheduler level
+            continue;
+        }
+        const bool isConsumedByUs = std::any_of(schedTensor->consumers.begin(), schedTensor->consumers.end(), isCurrentOp);
+        const bool isProducedByUsOnly = std::all_of(schedTensor->producers.begin(), schedTensor->producers.end(), isCurrentOp);
+
+        if ( isConsumedByUs && isProducedByUsOnly && !schedTensor->isGraphInput )
+        {
+            // Don't connect NPU internal tensors
+            continue;
+        }
+
+        // Connect input tensor to new Ethos-U operation, but only once
+        const auto &oldTensor = schedTensor->srcTensor;
+        assert(oldTensor && "Missing source graph tensor");
+        const auto newTensor = LookupNewTensor(oldTensor.get(), tensorAddressMap, schedTensor->allocatedAddress);
+        if ( op->UsageOfTensor(newTensor.get()) == TensorUsage::None )
+        {
+            const auto usage = MakeTensorUsage(TensorUsage::IFM, op->Inputs().size());
+            op->ConnectInput(usage, newTensor).Set(schedConn.quantization);
+        }
+    }
+
+    for ( const auto &schedConn : schedOp->outputs )
+    {
+        const auto &schedTensor = schedConn.tensor;
+
+        const bool isProducedByUs = std::any_of(schedTensor->producers.begin(), schedTensor->producers.end(), isCurrentOp);
+        const bool isConsumedByUsOnly = std::all_of(schedTensor->consumers.begin(), schedTensor->consumers.end(), isCurrentOp);
+        if ( isProducedByUs && isConsumedByUsOnly && !schedTensor->isGraphOutput )
+        {
+            // Don't connect NPU internal tensors
+            continue;
+        }
+
+        // Connect output tensor to new Ethos-U operation, but only once
+        const auto &oldTensor = schedTensor->srcTensor;
+        assert(oldTensor && "Missing source graph tensor");
+        const auto newTensor = LookupNewTensor(oldTensor.get(), tensorAddressMap, schedTensor->allocatedAddress);
+        if ( op->UsageOfTensor(newTensor.get()) == TensorUsage::None )
+        {
+            const auto usage = MakeTensorUsage(TensorUsage::OFM, op->Outputs().size());
+            op->ConnectOutput(usage, newTensor).Set(schedConn.quantization);
+        }
+    }
 }
 
 std::shared_ptr<Tensor> GraphPacking::LookupNewTensor(Tensor *oldTensor)

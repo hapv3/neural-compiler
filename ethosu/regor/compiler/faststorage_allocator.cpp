@@ -126,6 +126,7 @@ void FastStorageAllocator::AllocateFeatureMaps(const std::vector<std::unique_ptr
     _scratchedFms.clear();
     for ( auto &schedOp : schedOps )
     {
+        auto opGroup = schedOp->OpGroup();
         if ( !schedOp->IsNpuOp() )
         {
             continue;
@@ -136,10 +137,20 @@ void FastStorageAllocator::AllocateFeatureMaps(const std::vector<std::unique_ptr
         {
             SchedulerConnection *ofm = schedOp->OFM();
             if ( !ofm->tensor->consumers.empty() && !ofm->tensor->hasCPUReaders && !ofm->tensor->isGraphOutput &&
-                 _scratchedFms.count(ofm->tensor.get()) == 0 )
+                 _scratchedFms.count(ofm->tensor.get()) == 0 && opGroup->NeedsAllocation(ofm->tensor->uid) )
             {
                 _scratchedFms[ofm->tensor.get()] = ofm->tensor->memArea;
                 ofm->tensor->memArea = fastStorage;
+            }
+            for ( auto &subOp : schedOp->SubOps() )
+            {
+                ofm = subOp->OFM();
+                if ( !ofm->tensor->consumers.empty() && !ofm->tensor->hasCPUReaders && !ofm->tensor->isGraphOutput &&
+                     _scratchedFms.count(ofm->tensor.get()) == 0 && opGroup->NeedsAllocation(ofm->tensor->uid) )
+                {
+                    _scratchedFms[ofm->tensor.get()] = ofm->tensor->memArea;
+                    ofm->tensor->memArea = fastStorage;
+                }
             }
         }
     }

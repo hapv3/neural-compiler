@@ -395,6 +395,7 @@ def get_compiler_config(
     verbose_performance: bool,
     show_cpu_operations: bool,
     output_format: str,
+    disable_chaining: bool,
 ) -> str:
     """Build compiler config file."""
     config = "\n[compiler]\n"
@@ -405,9 +406,11 @@ def get_compiler_config(
     if verbose_performance or show_cpu_operations or enable_debug_db:
         config += "enable_db=true\n"
     if output_format == "raw":
-        config += "output_format=Raw"
+        config += "output_format=Raw\n"
     else:
-        config += "output_format=TFLite"
+        config += "output_format=TFLite\n"
+    if disable_chaining:
+        config += "disable_chaining=true\n"
 
     config += "\n[scheduler]\n"
     config += f"optimize={optimize}\n"
@@ -616,6 +619,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # debug options
     parser.add_argument("--debug-force-regor", action="store_true", help="Debug: Force the use of the regor")
+    parser.add_argument("--disable-chaining", action="store_true", default=False)
 
     args = parser.parse_args(argv)
 
@@ -737,6 +741,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             args.verbose_performance,
             args.show_cpu_operations,
             args.output_format,
+            args.disable_chaining,
         )
 
         process_regor(
