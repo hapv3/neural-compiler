@@ -232,6 +232,7 @@ else()
         "-Wno-switch-enum"                            # TODO : Switch case in TFLite ops handling
         "$<$<CXX_COMPILER_ID:GNU>:-Wno-array-bounds>" # TODO : False positives on Shape operators
         "-Wno-unused-function"
+        "-Wno-unused-parameter"
         "-Wno-unused"
         "-Wno-double-promotion"
     )
