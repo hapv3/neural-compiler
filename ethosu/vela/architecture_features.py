@@ -397,6 +397,7 @@ class ArchitectureFeatures:
         self.shram_total_banks = accel_config.shram_banks - self.shram_reserved_unused_banks
         self.shram_bank_granules = np.array(accel_config.shram_granules, np.int32)
         self.shram_lut_size = 2048
+        self.shram_lut_slot_size = 256
         # SHRAM base address of the activation lookup table
         self.shram_lut_address = self.shram_bank_size * self.available_shram_banks(True)
 

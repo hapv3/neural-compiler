@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2020-2021, 2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2020-2021, 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -131,14 +131,20 @@ def test_optimize_high_level_cmd_stream_2K():
         assert cmd.in_tensor == op.activation_lut.src_tensor
     # Check that lut0, lut1 and lut2 in op0, op1, op2 are stored on different addresses
     assert orig_cmd_list[0].out_tensor.address != orig_cmd_list[1].out_tensor.address
+    assert orig_cmd_list[0].ps.primary_op.activation.lut_index != orig_cmd_list[1].ps.primary_op.activation.lut_index
     assert orig_cmd_list[0].out_tensor.address != orig_cmd_list[2].out_tensor.address
+    assert orig_cmd_list[0].ps.primary_op.activation.lut_index != orig_cmd_list[2].ps.primary_op.activation.lut_index
     assert orig_cmd_list[1].out_tensor.address != orig_cmd_list[2].out_tensor.address
+    assert orig_cmd_list[1].ps.primary_op.activation.lut_index != orig_cmd_list[2].ps.primary_op.activation.lut_index
     # Check that lut1 in op1 and op3 have same address
     assert orig_cmd_list[1].out_tensor.address == orig_cmd_list[3].out_tensor.address
+    assert orig_cmd_list[1].ps.primary_op.activation.lut_index == orig_cmd_list[3].ps.primary_op.activation.lut_index
     # Check that lut2 in op2 and op4 have same address
     assert orig_cmd_list[2].out_tensor.address == orig_cmd_list[4].out_tensor.address
+    assert orig_cmd_list[2].ps.primary_op.activation.lut_index == orig_cmd_list[4].ps.primary_op.activation.lut_index
     # Check that lut-s for 16 bit (op5 and op6) are stored on same address
     assert orig_cmd_list[5].out_tensor.address == orig_cmd_list[6].out_tensor.address
+    assert orig_cmd_list[5].ps.primary_op.activation.lut_index == orig_cmd_list[6].ps.primary_op.activation.lut_index
 
 
 def test_optimize_high_level_cmd_stream_1K():
@@ -186,10 +192,16 @@ def test_optimize_high_level_cmd_stream_1K():
         assert cmd.in_tensor == op.activation_lut.src_tensor
     # Check that lut0, lut1 and lut2 in op0, op1, op2 are stored on different addresses
     assert orig_cmd_list[0].out_tensor.address != orig_cmd_list[1].out_tensor.address
+    assert orig_cmd_list[0].ps.primary_op.activation.lut_index != orig_cmd_list[1].ps.primary_op.activation.lut_index
     assert orig_cmd_list[0].out_tensor.address != orig_cmd_list[2].out_tensor.address
+    assert orig_cmd_list[0].ps.primary_op.activation.lut_index != orig_cmd_list[2].ps.primary_op.activation.lut_index
     assert orig_cmd_list[1].out_tensor.address != orig_cmd_list[2].out_tensor.address
+    assert orig_cmd_list[1].ps.primary_op.activation.lut_index != orig_cmd_list[2].ps.primary_op.activation.lut_index
     # Check that lut1 in op1 and op3 have same address
     assert orig_cmd_list[1].out_tensor.address == orig_cmd_list[3].out_tensor.address
+    assert orig_cmd_list[1].ps.primary_op.activation.lut_index == orig_cmd_list[3].ps.primary_op.activation.lut_index
     # Check that lut2 in op2 and op4 and op7 have same address
     assert orig_cmd_list[2].out_tensor.address == orig_cmd_list[4].out_tensor.address
+    assert orig_cmd_list[2].ps.primary_op.activation.lut_index == orig_cmd_list[4].ps.primary_op.activation.lut_index
     assert orig_cmd_list[2].out_tensor.address == orig_cmd_list[7].out_tensor.address
+    assert orig_cmd_list[2].ps.primary_op.activation.lut_index == orig_cmd_list[7].ps.primary_op.activation.lut_index

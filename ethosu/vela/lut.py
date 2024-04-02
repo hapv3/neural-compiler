@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2020-2021, 2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2020-2021, 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -83,7 +83,7 @@ class LUTState:
 
 def get_lut_index(arch, lut_tensor):
     # Returns the index in SHRAM where the given LUT is stored, a value between 0 and 8
-    slot = (lut_tensor.address - arch.shram_lut_address) // lut_tensor.storage_size()
+    slot = (lut_tensor.address - arch.shram_lut_address) // arch.shram_lut_slot_size
     assert 0 <= slot < 8
     return slot
 
@@ -107,7 +107,6 @@ def optimize_high_level_cmd_stream(sg, arch):
     # - Removes unnecessary DMA operations of LUT-s that are already present in SHRAM from sg's command stream
     cmd_stream = []  # will contain existing command stream minus unneeded DMA operations
     lut_state = LUTState()
-    slot_size = 256
     lut_start = arch.shram_lut_address
     lut_end = lut_start + arch.shram_lut_size
     for cmd in sg.high_level_command_stream:
@@ -131,9 +130,10 @@ def optimize_high_level_cmd_stream(sg, arch):
         # Place the LUT in the last 2 blocks of SHRAM
         # Alignment is always on the size of the LUT, 256 for 256-byte LUT, 1K for 1K LUT, etc
         address = lut_state.find_best_address(lut_start, lut_end, lut_tens.storage_size())
+
         lut_tens.equivalence_id = uuid.uuid4()
         lut_tens.address = address
-        cmd.ps.primary_op.activation.lut_index = (address - lut_start) // slot_size
+        cmd.ps.primary_op.activation.lut_index = (address - lut_start) // arch.shram_lut_slot_size
         lut_state = lut_state.put(lut_tens)
         cmd_stream.append(cmd)
     sg.high_level_command_stream = cmd_stream
