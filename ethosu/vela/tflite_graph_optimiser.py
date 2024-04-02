@@ -34,6 +34,7 @@ from .errors import UnsupportedFeatureError
 from .ethos_u55_regs.ethos_u55_regs import resampling_mode
 from .graph_optimiser_util import bypass_memory_only_ops
 from .graph_optimiser_util import calc_explicit_padding
+from .graph_optimiser_util import check_splitsliceread_to_consumer_shape
 from .graph_optimiser_util import convert_depthwise_to_conv
 from .graph_optimiser_util import create_avg_pool_for_concat
 from .graph_optimiser_util import memory_only_ops
@@ -199,6 +200,7 @@ def remove_SplitSliceRead(op, arch):
             and consumer.run_on_npu
             and consumer.type not in memory_only_ops
             and consumer.original_type != Op.Transpose
+            and check_splitsliceread_to_consumer_shape(op, consumer)
             and not (
                 consumer.type.is_binary_elementwise_op() and Shape4D.from_list(consumer.ofm.shape) != op.ofm_shapes[0]
             )

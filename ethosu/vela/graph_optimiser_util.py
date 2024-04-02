@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2021-2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -209,6 +209,17 @@ def set_ifm_ofm_op_shapes(op, arch, nng):
             return op
         op.set_ifm_ofm_shapes()
     return op
+
+
+def check_splitsliceread_to_consumer_shape(op, cons_op):
+    assert op.type == Op.SplitSliceRead
+    # SplitSliceRead ofm shape must match consumer ifm shape
+    if cons_op.ifm == op.ofm:
+        return cons_op.ifm_shapes[0] == op.ofm_shapes[0]
+    elif cons_op.type.is_binary_elementwise_op() and cons_op.ifm2 == op.ofm:
+        return cons_op.ifm_shapes[1] == op.ofm_shapes[0]
+
+    return False
 
 
 def move_splitsliceread_to_consumer(op, cons_op):
