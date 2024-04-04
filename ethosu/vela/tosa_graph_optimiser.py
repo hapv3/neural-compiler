@@ -357,6 +357,7 @@ def rewrite_activation(op, arch, nng):
 
     return op
 
+
 def rewrite_rescale(op, arch, nng):
     if op.type == Op.Rescale:
         ifm = op.ifm
@@ -364,7 +365,6 @@ def rewrite_rescale(op, arch, nng):
 
         # some error checking
         assert len(ifm.ops) == 1
-        prev_op = ifm.ops[0]
 
         input_zp = op.attrs["input_zp"]
         output_zp = op.attrs["output_zp"]
@@ -408,6 +408,7 @@ def rewrite_rescale(op, arch, nng):
         avgpool_op.explicit_scaling = explicit_scaling
 
     return op
+
 
 def convert_pad_in_width(op):
     """

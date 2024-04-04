@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2020-2022 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2020-2022, 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -58,7 +58,16 @@ class DebugDatabase:
         cls._sourceUID[op] = uid
         ofm_shape = numeric_util.full_shape(3, op.outputs[0].shape, 1)
         cls._sourceTable.append(
-            [uid, str(op.type), op.kernel.width, op.kernel.height, ofm_shape[-2], ofm_shape[-3], ofm_shape[-1], op.op_index]
+            [
+                uid,
+                str(op.type),
+                op.kernel.width,
+                op.kernel.height,
+                ofm_shape[-2],
+                ofm_shape[-3],
+                ofm_shape[-1],
+                op.op_index,
+            ]
         )
 
     # Ops are added when their type changes, and after optimisation. If an op was already

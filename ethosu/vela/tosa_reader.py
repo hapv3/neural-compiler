@@ -349,7 +349,7 @@ class TosaGraph:
     def check_version(self, tosa_graph):
         version = tosa_graph.Version()
         version_str = f"{version._Major()}.{version._Minor()}.{version._Patch()}"
-        if version_str not in ( "0.80.0", "0.80.1" ):
+        if version_str not in ("0.80.0", "0.80.1"):
             print(f"Unsupported TOSA version: {version_str}")
             assert False
 
