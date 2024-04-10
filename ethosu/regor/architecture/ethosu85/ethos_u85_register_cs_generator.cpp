@@ -1752,6 +1752,7 @@ void EthosU85RCSGenerator::GenerateResizeOp(HLCStripe *stripe, MemoryAccesses &m
     Shape ofmBlock = config->_ofmBlock;
 
     auto ifmShape = stripe->ifmAreas[0].SizeShape();
+    auto ofmShape = stripe->ofmArea.SizeShape();
 
     // operator-parameters
     const HLCParameters *params = &op->parameters;
@@ -1761,6 +1762,9 @@ void EthosU85RCSGenerator::GenerateResizeOp(HLCStripe *stripe, MemoryAccesses &m
     int offset_w = params->resize.offsetX;
 
     round_mode_ofm roundMode = GetOfmRoundingMode(op);
+
+    // calculate ifm width read
+    int ifmWidthRead = ((ofmShape.Width() - 1) * scale_w.d + offset_w) / scale_w.n + 2;
 
     // scaling is shift only and + 16
     QuantizedScale ofmScale = op->ofm.quantization.scales[0];
@@ -1807,7 +1811,7 @@ void EthosU85RCSGenerator::GenerateResizeOp(HLCStripe *stripe, MemoryAccesses &m
     Emit(isa::npu_set_resize_x_offset_t(offset_w));
     Emit(isa::npu_set_resize_y_offset_t(offset_h));
     Emit(isa::npu_set_kernel_height_m1_t(ifmShape.Height() - 1));
-    Emit(isa::npu_set_kernel_width_m1_t(ifmShape.Width() - 1));
+    Emit(isa::npu_set_kernel_width_m1_t(std::min(ifmShape.Width() - 1, ifmWidthRead - 1)));
 }
 
 bool EthosU85RCSGenerator::GenerateStripe(HLCStripe *stripe, MemoryAccesses &memoryAccesses)
