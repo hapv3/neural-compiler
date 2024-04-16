@@ -46,6 +46,7 @@ private:
     Tensor *ConvertInt48Tensors(Graph *graph, Tensor *tensor);
     Operation *RewriteFullyConnected(Graph *const graph, Operation *const operation);
     Operation *FixupPoolStrides(Graph *const, Operation *const operation);
+    Operation *RewriteRescale(Graph *const graph, Operation *const operation);
 
 public:
     // The graph optimisation steps.
@@ -80,7 +81,9 @@ public:
                 &GraphIrOptimiser::ConvertAttributes,
                 &GraphIrOptimiser::ConvertResizeOffsets,
                 &GraphIrOptimiser::RewriteFullyConnected,
-                &GraphIrOptimiser::FixupPoolStrides
+                &GraphIrOptimiser::FixupPoolStrides,
+                &GraphIrOptimiser::RewriteRescale,
+
             }
         },
         {

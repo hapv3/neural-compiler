@@ -322,6 +322,8 @@ private:
 
     void PrintSchedule(Schedule *schedule);
 
+    WeightScaleTensors EncodeQuantizationScaleTensor(std::unique_ptr<IWeightEncodingConfig> encodingParams, Quantization &ofmQuantization);
+
     WeightScaleTensors EncodeWeightAndScaleTensor(std::unique_ptr<IWeightEncodingConfig> encodingParams, const SchedulerTensor *weightTens,
         const SchedulerTensor *scaleTens, const Quantization &weightQuantization, const Quantization &ofmQuantization);
 

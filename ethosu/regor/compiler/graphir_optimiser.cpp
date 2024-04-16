@@ -18,6 +18,7 @@
 
 #include "compiler/graphir_optimiser.hpp"
 
+#include "operation_util.hpp"
 #include "optimiser_utils.hpp"
 
 namespace regor
@@ -37,7 +38,6 @@ Tensor *GraphIrOptimiser::ConvertInt48Tensors(Graph *, Tensor *tensor)
     return tensor;
 }
 
-
 Operation *GraphIrOptimiser::ConvertAttributes(Graph *const graph, Operation *const operation)
 {
     UNUSED(graph);
@@ -45,6 +45,11 @@ Operation *GraphIrOptimiser::ConvertAttributes(Graph *const graph, Operation *co
     if ( opType == OpType::Asr )
     {
         auto roundMode = operation->attr.asr.round ? RoundMode::NATURAL : RoundMode::TRUNCATE_TO_LOWER;
+        operation->SetRounding(roundMode);
+    }
+    if ( opType == OpType::Rescale )
+    {
+        auto roundMode = operation->attr.rescale.double_round ? RoundMode::DBL : RoundMode::NATURAL;
         operation->SetRounding(roundMode);
     }
     return operation;
@@ -196,7 +201,45 @@ Operation *GraphIrOptimiser::RewriteFullyConnected(Graph *const graph, Operation
             }
         }
     }
+    return returnOp;
+}
 
+Operation *GraphIrOptimiser::RewriteRescale(Graph *const, Operation *const operation)
+{
+    Operation *returnOp = operation;
+    OpType opType = operation->Type();
+    if ( opType == OpType::Rescale )
+    {
+        auto ofmConn = operation->Output(TensorUsage::OFM);
+        auto ifmConn = operation->Input(TensorUsage::IFM);
+        auto mulConn = operation->Input(TensorUsage::Params);
+        auto shiftConn = operation->Input(TensorUsage::Params1);
+        auto mulView = mulConn->tensor->View();
+        auto shiftView = shiftConn->tensor->View();
+        auto inT = ifmConn->tensor->Type();
+        auto mulT = mulConn->tensor->Type();
+        auto shiftT = shiftConn->tensor->Type();
+        assert(mulT == DataType::Int16 || mulT == DataType::Int32);
+        assert(shiftT == DataType::Int8);
+        std::vector<QuantizedScale> newScale;
+        int channels = operation->attr.rescale.per_channel ? ofmConn->shape.Depth() : 1;
+        for ( int i = 0; i < channels; i++ )
+        {
+            QuantizedScale qScale;
+            int32_t scale = mulT == DataType::Int32 ? mulView.Values<int32_t>()[i] : mulView.Values<int16_t>()[i];
+            int32_t shift = shiftView.Values<int8_t>()[i];
+            assert(operation->attr.rescale.scale32 || static_cast<int16_t>(scale) == scale);
+            assert(static_cast<int8_t>(shift) == shift);
+
+            qScale.scale = operation->attr.rescale.scale32 ? scale : static_cast<int16_t>(scale);
+            qScale.shift = shift;
+            newScale.emplace_back(qScale);
+        }
+        ofmConn->quantization.scales = std::move(newScale);
+        auto rescaleOp = operation->shared_from_this();
+        rescaleOp->DisconnectInputInvalidatingInputs(TensorUsage::Params);
+        rescaleOp->DisconnectInputInvalidatingInputs(TensorUsage::Params1);
+    }
     return returnOp;
 }
 

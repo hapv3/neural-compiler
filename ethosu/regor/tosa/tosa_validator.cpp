@@ -30,7 +30,7 @@ namespace validator
 void ValidateOperator(const GraphApi::GraphOperation *graphOp, const Context &context)
 {
     if ( graphOp == nullptr ) throw std::invalid_argument("No operation");
-    if ( context.version == GraphApi::VERSION_TOSA_0_60 && context.profile == GraphApi::PROFILE_BASELINE )
+    if ( (context.version & 0xFFFFFF00) == GraphApi::VERSION_TOSA_0_60 && context.profile == GraphApi::PROFILE_BASELINE )
     {
         ValidateOperator_Version_0_60_0_Profile_BI(graphOp, context);
         return;

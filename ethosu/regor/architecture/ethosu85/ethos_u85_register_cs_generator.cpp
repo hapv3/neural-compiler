@@ -166,6 +166,8 @@ activation_precision ToActivationPrecision(DataType type)
             return activation_precision::B16;
         case 32:
             return activation_precision::B32;
+        case 48:
+            [[fallthrough]];
         case 64:
             return activation_precision::B64;
         default:
@@ -460,7 +462,7 @@ bool EthosU85RCSGenerator::UseZeroPoint0(OpType opType, const HLCFeatureMap &fm,
     {
         return false;
     }
-    if ( fm.quantization.zeroPoints.empty() || (fm.dataType == DataType::Int32 && !isOFM) )
+    if ( fm.quantization.zeroPoints.empty() || (DataTypeSizeBits(fm.dataType) >= 32 && !isOFM) )
     {
         return true;
     }
@@ -582,12 +584,12 @@ int EthosU85RCSGenerator::Disassemble(const uint32_t *in, std::string &op, std::
 //----------------------------------------------------------------------
 
 // Generates OFM_SCALE register for pooling operations
-void EthosU85RCSGenerator::GenerateOFMScalingForPooling(HLCOperation *poolOp)
+void EthosU85RCSGenerator::GenerateOFMScalingForPooling(HLCOperation *poolOp, bool useGlobalScale)
 {
     QuantizedScale ofmScale(1, 0);
     bool isNoOp = _arch->UseAvgPoolNop(poolOp->type);
     ethosU85Scaling::RescalePooling(poolOp, isNoOp);
-    if ( !poolOp->ofm.quantization.scales.empty() )
+    if ( useGlobalScale && !poolOp->ofm.quantization.scales.empty() )
     {
         ofmScale = poolOp->ofm.quantization.scales[0];
         assert(unsigned(ofmScale.shift) < 64);
@@ -1263,16 +1265,31 @@ void EthosU85RCSGenerator::GenerateBlockConfig(const EthosU85OpConfig *config, c
 }
 
 // Generates ACC_FORMAT register
-void EthosU85RCSGenerator::GenerateAccFormat(const EthosU85OpConfig *config)
+void EthosU85RCSGenerator::GenerateAccFormat(const HLCStripe *stripe)
 {
-    auto accType = config->_accumulatorType;
+    auto opType = stripe->operation->type;
+    EthosU85OpConfig *config = static_cast<EthosU85OpConfig *>(stripe->operation->config);
+    EthosU85Accumulator accType;
+    ArchAccumulatorSource accSrc;
+
+    if ( opType == OpType::Rescale && DataTypeSizeBits(stripe->operation->ifm[0].dataType) >= 32 )
+    {
+        accType = DataTypeSizeBits(stripe->operation->ifm[0].dataType) == 32 ? EthosU85Accumulator::Acc32 : EthosU85Accumulator::Acc48;
+        accSrc = ArchAccumulatorSource::Ifm2;
+    }
+    else
+    {
+        accType = config->Acc();
+        accSrc = config->AccSource();
+    }
+
     acc_format format = accType == EthosU85Accumulator::Acc32 ? acc_format::I32 : acc_format::I48;
 
     auto w = config->OfmUBlock().Width();
     auto h = config->OfmUBlock().Height();
     microblock block = microblock::U1X1;
 
-    switch ( h << 4 | w )
+    switch ( unsigned(h) << 4 | w )
     {
         case 0x11:
             block = microblock::U1X1;
@@ -1296,7 +1313,7 @@ void EthosU85RCSGenerator::GenerateAccFormat(const EthosU85OpConfig *config)
             assert(false && "Invalid microblock");
     }
     acc_input input;
-    switch ( config->AccSource() )
+    switch ( accSrc )
     {
         case ArchAccumulatorSource::Acc:
             input = acc_input::KEEP;
@@ -1445,6 +1462,10 @@ void EthosU85RCSGenerator::GenerateOperationCode(const HLCOperation *op)
     {
         Emit(isa::npu_op_dma_start_t());
     }
+    else if ( opType == OpType::Rescale )
+    {
+        Emit(isa::npu_op_pool_t(DataTypeSizeBits(op->ifm[0].dataType) >= 32 ? pooling_mode::NONE : pooling_mode::SUM));
+    }
     else if ( _arch->UseAvgPoolNop(opType) )
     {
         // Implemented using SUM
@@ -1515,21 +1536,23 @@ void EthosU85RCSGenerator::GenerateConvolutionOp(const HLCStripe *stripe, Memory
 // MaxPool/AvgPool or operations that are mapped to AvgPool
 void EthosU85RCSGenerator::GeneratePoolingOp(HLCStripe *stripe, MemoryAccesses &memoryAccesses)
 {
+    auto opType = stripe->operation->type;
     auto op = stripe->operation.get();
-    bool useGlobalScale = true;  // TODO: Add any per channel scaling modes
-    if ( _arch->UseAvgPoolNop(op->type) )
+    bool useGlobalScale = !op->scales;
+    if ( opType == OpType::Rescale && DataTypeSizeBits(op->ifm[0].dataType) >= 32 )
+    {
+        GenerateIFM2(op->type, op->ifm[0], stripe->ifmAreas[0], false, 0);
+        GenerateIFM2Precision(op->ifm[0]);
+    }
+    else if ( _arch->UseAvgPoolNop(op->type) )
     {
         assert(op->kernel.Size() == Point2i(1, 1));
         assert(op->kernel.Stride() == Point2i(1, 1));
         assert(op->kernel.Dilation() == Point2i(1, 1));
         assert(op->kernel.DepthMultiplier() == 1);
-        assert(useGlobalScale);
     }
     GenerateCommon(stripe, useGlobalScale, memoryAccesses);
-    if ( useGlobalScale )
-    {
-        GenerateOFMScalingForPooling(op);
-    }
+    GenerateOFMScalingForPooling(op, useGlobalScale);
 }
 
 // Elementwise operations
@@ -1663,7 +1686,7 @@ bool EthosU85RCSGenerator::GenerateStripe(HLCStripe *stripe, MemoryAccesses &mem
     }
     EthosU85OpConfig *config = static_cast<EthosU85OpConfig *>(stripe->operation->config);
     GenerateBlockConfig(config, stripe->operation->ofm);
-    GenerateAccFormat(config);
+    GenerateAccFormat(stripe);
     return true;
 }
 

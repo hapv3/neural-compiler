@@ -49,7 +49,12 @@ public:
     //
     // Conversions from Regor types to TensorFlow Lite types
     //
-    static tflite::TensorType DataTypeToTensorType(DataType type) { return _dataTypeToTensorType.at(type); }
+    static tflite::TensorType DataTypeToTensorType(DataType type)
+    {
+        if ( type == DataType::Int48 ) return tflite::TensorType::INT64;
+        else if ( type == DataType::UInt48 ) return tflite::TensorType::UINT64;
+        return _dataTypeToTensorType.at(type);
+    }
     static tflite::ActivationFunctionType OpTypeToActivationFunction(OpType type)
     {
         auto it = _opTypeToActivationFunction.find(type);

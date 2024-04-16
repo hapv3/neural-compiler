@@ -472,7 +472,6 @@ std::unique_ptr<SchedulerOperation> SchedulerPacking::MakeSchedulerOperation(Ope
             schedOp->SetPrimaryIfmIndex(1);
         }
     }
-
     return schedOp;
 }
 

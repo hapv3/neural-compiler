@@ -93,12 +93,10 @@ void RescaleConvolution(HLCOperation *op)
             outScale = ElementwiseMulScale(ifm1Scale, ifm2Scale, ofmScale);
         }
     }
-    if ( ofmQuant->type == QuantizationType::TFLITE )
-    {
-        ofmQuant->scales.clear();
-        ofmQuant->scales.push_back(outScale);
-        ofmQuant->type = QuantizationType::EXPLICIT;
-    }
+
+    ofmQuant->scales.clear();
+    ofmQuant->scales.push_back(outScale);
+    ofmQuant->type = QuantizationType::EXPLICIT;
 }
 
 void RescaleElementwise(HLCOperation *op)

@@ -22,6 +22,7 @@
 
 #include "architecture/weight_encoder.hpp"
 #include "cascade_builder.hpp"
+#include "common/data_type.hpp"
 #include "common/scaling.hpp"
 #include "common/vector_span.hpp"
 #include "faststorage_allocator.hpp"
@@ -510,7 +511,18 @@ std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(SchedulerOpera
             else break;
         }
     } while ( true );
+    if ( weights == nullptr && op->OFM()->quantization.scales.size() > 1 )
+    {
+        WeightsRef weightsRef;
+        weightsRef.isScales = true;
 
+        std::vector<int> depthOffsets{0, ofmShape.Depth()};
+
+        auto encodingParams = _arch->WeightEncoder()->GetEncodingConfig(
+            blockConfig.get(), weightsRef, op->Kernel(), ifm->tensor->dataType, depthOffsets, weightFormat);
+
+        weightScales = EncodeQuantizationScaleTensor(std::move(encodingParams), op->OFM()->quantization);
+    }
     // Finally construct and populate operator information (cost)
     auto opInfo = std::make_unique<SchedulerOpInfo>(std::move(blockConfig), ifmShape, ifm2Shape, ofmShape);
     opInfo->SetWeightScaleTensors(weightScales.npuWeightsTensor, weightScales.npuScalesTensor);
@@ -1476,6 +1488,14 @@ static int ApplyZeroPointOHWI(const WeightTransformParam *param, int value)
     return value;
 }
 
+WeightScaleTensors Scheduler::EncodeQuantizationScaleTensor(std::unique_ptr<IWeightEncodingConfig> encodingParams, Quantization &ofmQuantization)
+{
+    SchedulerTensor scaleTens;
+    scaleTens.dataType = DataType::Int32;
+
+    return TryEncodeWeightAndScaleTensor(encodingParams.get(), nullptr, &scaleTens, {}, ofmQuantization, false, true);
+}
+
 WeightScaleTensors Scheduler::EncodeWeightAndScaleTensor(std::unique_ptr<IWeightEncodingConfig> encodingParams, const SchedulerTensor *weightTens,
     const SchedulerTensor *scaleTens, const Quantization &weightQuantization, const Quantization &ofmQuantization)
 {
@@ -1504,7 +1524,6 @@ WeightScaleTensors Scheduler::EncodeWeightAndScaleTensor(std::unique_ptr<IWeight
     // Attempt the encode (may fail)
     WeightScaleTensors result = TryEncodeWeightAndScaleTensor(
         encodingParams.get(), weightTens, scaleTens, weightQuantization, ofmQuantization, doWeights, doScales);
-    result.scaleHash = HashVector32(ofmQuantization.scales);
 
     if ( doWeights )
     {
@@ -1535,46 +1554,65 @@ WeightScaleTensors Scheduler::TryEncodeWeightAndScaleTensor(IWeightEncodingConfi
     const SchedulerTensor *weightTens, const SchedulerTensor *scaleTens, const Quantization &weightQuantization,
     const Quantization &ofmQuantization, bool doWeights, bool doScales)
 {
+    assert(doWeights || doScales);
+
     // Create tensor to hold encoded output
     auto npuTensor = std::make_shared<NpuWeightTensor>();
-    npuTensor->memArea = weightTens->memArea;
-
-    int weightRangeIndex = 0;
+    int rangeIndex = 0;
     int maxSingleBufferLen = 0;
     std::vector<uint8_t> encodedStream;
-
-    const auto &weightView = weightTens->bufferView;
-    Shape wshape = weightView.ViewShape();
-    auto strides = weightView.StrideBytes() * 8 / DataTypeSizeBits(weightTens->dataType);
-
-    Shape ohwiStrides;
     Shape ohwiShape;
-    if ( weightTens->srcTensor->AxisOrder() == AxisOrder::IHWO )
+    int channels;
+
+    SchedulerTransformParam param;
+    const uint8_t *weightsData = nullptr;
+    Shape ohwiStrides;
+    std::unique_ptr<IVolumeWeightSource> weightSource;
+    std::unique_ptr<IVolumeScaleSource> scaleSource;
+
+    if ( weightTens )
     {
-        ohwiStrides = strides.Extract(3, 1, 2, 0);
-        ohwiShape = wshape.Extract(3, 1, 2, 0);
+        npuTensor->memArea = weightTens->memArea;
+        const auto &weightView = weightTens->bufferView;
+        Shape wshape = weightView.ViewShape();
+        auto strides = weightView.StrideBytes() * 8 / DataTypeSizeBits(weightTens->dataType);
+        weightsData = weightView.Buffer()->Data<uint8_t>();
+
+        if ( weightTens->srcTensor->AxisOrder() == AxisOrder::IHWO )
+        {
+            ohwiStrides = strides.Extract(3, 1, 2, 0);
+            ohwiShape = wshape.Extract(3, 1, 2, 0);
+        }
+        else
+        {
+            ohwiStrides = std::move(strides);
+            ohwiShape = std::move(wshape);
+        }
+        channels = ohwiShape[0];
+
+        // Set up weight source
+        param.zeroPoints = weightQuantization.zeroPoints.data();
+        param.zeroCount = int(weightQuantization.zeroPoints.size());
+
+        auto zeroOffsetFunc = (weightTens->srcTensor->AxisOrder() == AxisOrder::IHWO) ? ApplyZeroPointIHWO : ApplyZeroPointOHWI;
+        weightSource = _arch->WeightEncoder()->GetWeightSource(encodingParams, weightTens->dataType, zeroOffsetFunc, &param);
     }
     else
     {
-        ohwiStrides = std::move(strides);
-        ohwiShape = std::move(wshape);
+        npuTensor->memArea = _arch->ReadonlyMemory();
+        channels = ofmQuantization.scales.size();
+        ohwiShape = Shape{channels};
     }
 
-    // Set up weight source
-    SchedulerTransformParam param;
-    param.zeroPoints = weightQuantization.zeroPoints.data();
-    param.zeroCount = int(weightQuantization.zeroPoints.size());
+    if ( doScales )
+        scaleSource = _arch->WeightEncoder()->GetScaleSource(encodingParams, scaleTens->dataType, ofmQuantization);
 
-    auto zeroOffsetFunc = (weightTens->srcTensor->AxisOrder() == AxisOrder::IHWO) ? ApplyZeroPointIHWO : ApplyZeroPointOHWI;
-    auto weightSource = _arch->WeightEncoder()->GetWeightSource(encodingParams, weightTens->dataType, zeroOffsetFunc, &param);
-    auto scaleSource = _arch->WeightEncoder()->GetScaleSource(encodingParams, scaleTens->dataType, ofmQuantization);
-
-    auto weightsData = weightView.Buffer()->Data<uint8_t>();
-    int fullOfmDepth = ohwiShape[0];
     int totalWeightBytes = 0;
     int subStreams = 1;
     int scaleStreamsRequired = 1;
-    const int streamsRequired = _arch->WeightEncoder()->StreamsRequired(encodingParams, ohwiShape, scaleStreamsRequired);
+    int streamsRequired = _arch->WeightEncoder()->StreamsRequired(encodingParams, ohwiShape, scaleStreamsRequired);
+
+    if ( weightTens == nullptr ) streamsRequired = scaleStreamsRequired;
 
     // Note: in case of multiple cores, each core's weights are interleaved in O-dimension
     auto const &depthOffsets = encodingParams->DepthOffsets();
@@ -1584,7 +1622,7 @@ WeightScaleTensors Scheduler::TryEncodeWeightAndScaleTensor(IWeightEncodingConfi
         int depthOffset = depthOffsets[idx];
 
         // Do not generate for offsets outside the OFM
-        assert(depthOffset >= 0 && depthOffset < fullOfmDepth);
+        assert(depthOffset >= 0 && depthOffset < channels);
         int depthLength = depthOffsets[idx + 1] - depthOffset;
 
         int bufferStartOffset = int(encodedStream.size());
@@ -1596,13 +1634,14 @@ WeightScaleTensors Scheduler::TryEncodeWeightAndScaleTensor(IWeightEncodingConfi
             int key = WeightKey(stream, depthOffset);
             WeightRange range;
             range.offset = int(encodedStream.size());
-            range.index = weightRangeIndex++;
+            range.index = rangeIndex++;
 
             if ( doScales && stream < scaleStreamsRequired )
             {
                 // Encode Scales and biases
-                auto biases = scaleTens->bufferView.Values<uint8_t>();
-                scaleSource->SetSource(&biases[0], scaleTens->bufferView.ViewShape().Depth(), depthOffset, depthLength, stream);
+                const uint8_t *biases = scaleTens->bufferView.HasBuffer() ? &scaleTens->bufferView.Values<uint8_t>()[0] : nullptr;
+                int biasCount = scaleTens->bufferView.HasBuffer() ? scaleTens->bufferView.ViewShape().Depth() : depthOffset + depthLength;
+                scaleSource->SetSource(biases, biasCount, depthOffset, depthLength, stream);
                 if ( scaleSource->Elements() == 0 )
                 {
                     // No more elements left to encode
@@ -1642,7 +1681,13 @@ WeightScaleTensors Scheduler::TryEncodeWeightAndScaleTensor(IWeightEncodingConfi
     // Reduce stored memory usage as much as possible
     encodedStream.shrink_to_fit();
 
-    auto encodedTensor = std::make_shared<Tensor>(doWeights ? weightTens->Name() : scaleTens->Name(), DataType::UInt8);
+    auto encodedTensor = std::make_shared<Tensor>(
+        doWeights ?
+            weightTens->Name() :
+        scaleTens->bufferView.HasBuffer() ?
+            scaleTens->Name() :
+            "Scales",
+        DataType::UInt8);
     int streamSize = int(encodedStream.size());
     auto buf = std::make_shared<Buffer>(std::move(encodedStream));
     encodedTensor->SetStorageShape(Shape(1, 1, 1, streamSize));
@@ -1661,12 +1706,9 @@ WeightScaleTensors Scheduler::TryEncodeWeightAndScaleTensor(IWeightEncodingConfi
     if ( doWeights )
     {
         result.npuWeightsTensor = std::move(npuTensor);
-        result.npuScalesTensor = nullptr;
     }
     else
     {
-        // Only scales encoded
-        assert(doScales);
         result.npuScalesTensor = std::move(npuTensor);
     }
 

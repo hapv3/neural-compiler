@@ -46,7 +46,8 @@ const std::map<tflite::TensorType, DataType> TfLiteMapping::_tensorTypeToDataTyp
     {tflite::TensorType::UINT64,        DataType::UInt64},
     {tflite::TensorType::RESOURCE,      DataType::Resource},
     {tflite::TensorType::VARIANT,       DataType::Variant},
-    {tflite::TensorType::UINT32,        DataType::UInt32}
+    {tflite::TensorType::UINT32,        DataType::UInt32},
+    {tflite::TensorType::UINT16,        DataType::UInt16}
     // clang-format on
 };
 

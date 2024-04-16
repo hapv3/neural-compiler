@@ -177,6 +177,10 @@ public:
                     }
                 }
             }
+            if ( cost->npuScalesTensor && !subOp->inputs.contains(TensorUsage::Scales) )
+            {
+                AddToReadOnly(cost->npuScalesTensor.get());
+            }
         }
     }
 

@@ -152,6 +152,8 @@ activation_precision ToActivationPrecision(DataType type)
             return activation_precision::B16;
         case 32:
             return activation_precision::B32;
+        case 48:
+            [[fallthrough]];
         case 64:
             return activation_precision::B64;
         default:
@@ -524,19 +526,19 @@ int EthosU55RCSGenerator::Disassemble(const uint32_t *in, std::string &op, std::
 //----------------------------------------------------------------------
 
 // Generates OFM_SCALE register for pooling operations
-void EthosU55RCSGenerator::GenerateOFMScalingForPooling(HLCOperation *poolOp)
+void EthosU55RCSGenerator::GenerateOFMScalingForPooling(HLCOperation *poolOp, bool useGlobalScale)
 {
-    QuantizedScale quant(1, 0);
+    QuantizedScale ofmScale(1, 0);
     bool isNoOp = _arch->UseAvgPoolNop(poolOp->type);
     ethosU55Scaling::RescalePooling(poolOp, isNoOp);
 
-    if ( poolOp->ofm.quantization && !poolOp->ofm.quantization.scales.empty() )
+    if ( useGlobalScale && !poolOp->ofm.quantization.scales.empty() )
     {
-        quant = poolOp->ofm.quantization.scales[0];
-        assert(unsigned(quant.shift) < 64);
+        ofmScale = poolOp->ofm.quantization.scales[0];
+        assert(unsigned(ofmScale.shift) < 64);
     }
 
-    Emit(isa::npu_set_ofm_scale_t(uint32_t(quant.shift), quant.scale));
+    Emit(isa::npu_set_ofm_scale_t(uint32_t(ofmScale.shift), ofmScale.scale));
 }
 
 // Generates OFM/OPA/OPB_SCALE registers for elementwise operators.
@@ -1240,7 +1242,7 @@ void EthosU55RCSGenerator::GenerateOperationCode(OpType opType)
             Emit(isa::npu_op_elementwise_t(item->second));
         }
     }
-    else if ( _arch->UseAvgPoolNop(opType) )
+    else if ( _arch->UseAvgPoolNop(opType) || opType == OpType::Rescale )
     {
         // Implemented using AvgPool
         Emit(isa::npu_op_pool_t(pooling_mode::AVERAGE));
@@ -1296,8 +1298,9 @@ void EthosU55RCSGenerator::GeneratePoolingOp(HLCStripe *stripe, MemoryAccesses &
     auto op = stripe->operation.get();
     auto pad = stripe->padding;
     auto padSum = pad.top + pad.left + pad.bottom + pad.right;
-    bool useGlobalScale = op->type != OpType::MaxPool && padSum == 0;
+    bool useGlobalScale = !op->scales;
 
+    assert(!useGlobalScale || (op->type != OpType::MaxPool && padSum == 0));
     if ( _arch->UseAvgPoolNop(op->type) )
     {
         assert(op->kernel.Size() == Point2i(1, 1));
@@ -1307,10 +1310,7 @@ void EthosU55RCSGenerator::GeneratePoolingOp(HLCStripe *stripe, MemoryAccesses &
         assert(useGlobalScale);
     }
     GenerateCommon(stripe, useGlobalScale, RCSIfmScaleMode::OPA_OPB_16, memoryAccesses);
-    if ( useGlobalScale )
-    {
-        GenerateOFMScalingForPooling(op);
-    }
+    GenerateOFMScalingForPooling(op, useGlobalScale);
 }
 
 // Elementwise operations

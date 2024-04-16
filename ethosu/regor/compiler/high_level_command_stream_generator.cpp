@@ -624,6 +624,10 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
                         _filledWeightBuffers[opInfo->bufferedWeightTensor.tensor.get()] = newWeights;
                     }
                 }
+                else if ( opInfo->npuScalesTensor != nullptr )
+                {
+                    hlcStripe->weightRangeDepth = startChannel;
+                }
                 else
                 {
                     hlcStripe->weightRangeDepth = -1;

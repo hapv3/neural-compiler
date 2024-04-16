@@ -93,6 +93,16 @@ TensorConnection &Operation::ConnectInput(TensorUsage usage, const std::shared_p
     return _inputs[usage];
 }
 
+void Operation::DisconnectInputInvalidatingInputs(TensorUsage usage)
+{
+    auto *inputConnection = Input(usage);
+    if ( inputConnection )
+    {
+        if ( inputConnection->tensor ) inputConnection->tensor->RemoveReader(shared_from_this());
+        _inputs.erase(usage);  // Invalidates all pointers to input connections.
+    }
+}
+
 void Operation::CopyOutput(TensorUsage usage, const TensorConnection &tensorConnection)
 {
     ConnectOutput(usage, tensorConnection.tensor)

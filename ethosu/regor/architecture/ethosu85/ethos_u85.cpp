@@ -527,7 +527,7 @@ void ArchEthosU85::SetupOfmUBlockToOpTable()
             // 16 bit ifm
             conv | matmul | vectorprod | depthwise | pool | reducesum | elementwise | resize,
             // 32 bit ifm
-            reducesum | elementwise | resize,
+            reducesum | elementwise | resize | pool,
         };
         _uBlockToOpTable[b_1x1x16] = {
             depthwise | pool | elementwise | resize,
@@ -543,12 +543,12 @@ void ArchEthosU85::SetupOfmUBlockToOpTable()
         _uBlockToOpTable[b_2x2x8] = {
             conv | matmul | vectorprod | reducesum | elementwise | resize,
             conv | matmul | vectorprod | depthwise | pool | reducesum | elementwise | resize,
-            reducesum | elementwise | resize
+            reducesum | elementwise | resize | pool
         };
         _uBlockToOpTable[b_1x4x8] = {
             conv | matmul | vectorprod | reducesum | elementwise | resize,
             conv | matmul | vectorprod | depthwise | pool | reducesum | elementwise | resize,
-            reducesum | elementwise | resize
+            reducesum | elementwise | resize | pool
         };
         _uBlockToOpTable[b_1x2x16] = {
             depthwise | pool | elementwise | resize,
@@ -563,12 +563,12 @@ void ArchEthosU85::SetupOfmUBlockToOpTable()
         _uBlockToOpTable[b_2x2x16] = {
             conv | depthwise | vectorprod | pool | reducesum | elementwise | resize | matmul,
             conv | depthwise | vectorprod | pool | reducesum | elementwise | resize | matmul,
-            reducesum | elementwise | resize,
+            reducesum | elementwise | resize | pool,
         };
         _uBlockToOpTable[b_1x4x16] = {
             conv | depthwise | vectorprod | pool | reducesum | elementwise | resize | matmul,
             conv | depthwise | vectorprod | pool | reducesum | elementwise | resize | matmul,
-            reducesum | elementwise | resize,
+            reducesum | elementwise | resize | pool,
         };
     }
     else if ( _macs == 1024 )
@@ -589,7 +589,7 @@ void ArchEthosU85::SetupOfmUBlockToOpTable()
         _uBlockToOpTable[b_2x4x16] = {
             conv | vectorprod | depthwise | pool | reducesum | elementwise | resize,
             conv | vectorprod | depthwise | pool | reducesum | elementwise | resize,
-            reducesum | elementwise | resize,
+            reducesum | elementwise | resize | pool,
         };
     }
     else
@@ -610,7 +610,7 @@ void ArchEthosU85::SetupOfmUBlockToOpTable()
         _uBlockToOpTable[b_4x4x16] = {
             conv | vectorprod | depthwise | pool | reducesum | elementwise | resize,
             conv | vectorprod | depthwise | pool | reducesum | elementwise | resize,
-            reducesum | elementwise | resize,
+            reducesum | elementwise | resize | pool,
         };
     }
     // clang-format on
@@ -622,6 +622,12 @@ bool ArchEthosU85::IsUBlockValid(const OpType opType, int ifmBits, const Shape &
     if ( npuOp == EthosU85NpuOp::None )
     {
         return false;
+    }
+
+    if ( opType == OpType::Rescale && ifmBits == 64 )
+    {
+        // Accumulator restore for 48-bit (in 64-bit container) uses 2 32-bit passes
+        ifmBits = 32;
     }
 
     unsigned blockIdx = IndexForOfmUBlock(ofmUBlock);
@@ -689,7 +695,7 @@ Shape ArchEthosU85::FindUBlock(OpType opType, const ArchitectureConfigQuery &que
 
 std::unique_ptr<ArchitectureOpConfig> ArchEthosU85::FindBlockConfig(OpType opType, const ArchitectureConfigQuery &query)
 {
-    assert(query.ifmBits > 0 && query.ifmBits <= 32);
+    assert(query.ifmBits > 0 && (query.ifmBits <= 32 || (query.ifmBits == 64 && opType == OpType::Rescale)));
     assert(query.ofmShape.Size() > 2 && "Insufficient dimensions to search for block config");
     assert(query.kernel != nullptr);
 
@@ -731,7 +737,7 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU85::FindBlockConfig(OpType opTyp
     {
         accType = EthosU85Accumulator::Acc48;
     }
-    else if ( query.ifmBits == 64 && isPooling )
+    else if ( query.ifmBits == 64 && opType == OpType::Rescale )
     {
         // Special case for Rescale int48
         accType = EthosU85Accumulator::Acc48;
@@ -1105,6 +1111,7 @@ EthosU85NpuOp ArchEthosU85::GetHWOp(OpType type)
         {OpType::Resize, EthosU85NpuOp::Resize},
         {OpType::Gather, EthosU85NpuOp::Dma},
         {OpType::Scatter, EthosU85NpuOp::Dma},
+        {OpType::Rescale, EthosU85NpuOp::Pooling},
     };
 
     auto pos = toNpuOp.find(type);
@@ -1289,7 +1296,7 @@ bool EthosU85OpGroup::CanRunOnNPU(const ArchitectureOpGroupQuery &op)
     // Check allowed ifm/ofm data type mapping
     if ( npuOp != EthosU85NpuOp::Elementwise )
     {
-        if ( op.type == OpType::LUT || op.type == OpType::MemoryCopy )
+        if ( op.type == OpType::LUT || op.type == OpType::MemoryCopy || op.type == OpType::Rescale )
         {  // TODO: LUT operations end up here due to UseAvgPoolNop although the rules are not the same as
            // for a Pooling operation, so skip checks for now.
             return true;

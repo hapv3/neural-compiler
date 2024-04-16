@@ -336,7 +336,8 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                 }
 
                 GraphApi::GraphShape tosaShape;
-                tosaShape.count = shape.ToNHWC(tosaShape.axisNHWC, GraphApi::MAX_TENSOR_DIMS);
+                assert(shape.Size() <= GraphApi::MAX_TENSOR_DIMS);
+                tosaShape.count = shape.ToNHWC(tosaShape.axisNHWC, shape.Size());
 
                 auto tensor = builder->CreateTensor(name, tosaShape, GraphApi::GraphTensorLayout::Linear, type, buffer);
 

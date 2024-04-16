@@ -169,7 +169,7 @@ protected:
     //----------------------------------------------------------------------
 
     // Generates OFM_SCALE register for pooling operations
-    void GenerateOFMScalingForPooling(HLCOperation *poolOp);
+    void GenerateOFMScalingForPooling(HLCOperation *poolOp, bool useGlobalScale);
     // Generates OFM/OPA/OPB_SCALE registers for elementwise operators.
     // Returns the operator to scale
     RCSIfmScaleMode GenerateScalingForElementwise(HLCOperation *op, int ifm0Index);

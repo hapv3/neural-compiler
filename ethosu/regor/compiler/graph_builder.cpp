@@ -191,7 +191,8 @@ bool GraphBuilder::RequireSyntaxVersion(uint32_t version, int32_t level)
 {
     _syntaxVersion = version | uint32_t(level);
 
-    if ( _syntaxVersion > (GraphApi::VERSION_TOSA_0_60 | GraphApi::PROFILE_BASELINE) )  // 0.60.Baseline
+    if ( _syntaxVersion > (GraphApi::VERSION_TOSA_0_80 | GraphApi::PROFILE_BASELINE | 0xFF) )  // 0.60.Baseline, ignore
+                                                                                               // patch
     {
         return false;
     }

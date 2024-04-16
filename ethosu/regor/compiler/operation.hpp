@@ -178,6 +178,8 @@ public:
     void CopyInput(TensorUsage usage, const TensorConnection &tensorConnection);
     TensorConnection &ConnectInput(TensorUsage usage, const std::shared_ptr<Tensor> &tensor);
     int CountInputs(TensorUsage usage) const { return CountUsage(_inputs, usage); }
+    // Disconnecting input invalidates all pointers to inputs.
+    void DisconnectInputInvalidatingInputs(TensorUsage usage);
 
     void CopyOutput(TensorUsage usage, const TensorConnection &tensorConnection);
     TensorConnection &ConnectOutput(TensorUsage usage, const std::shared_ptr<Tensor> &tensor);

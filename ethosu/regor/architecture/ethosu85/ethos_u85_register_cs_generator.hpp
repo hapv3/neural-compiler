@@ -152,7 +152,7 @@ protected:
     //----------------------------------------------------------------------
 
     // Generates OFM_SCALE register for pooling operations
-    void GenerateOFMScalingForPooling(HLCOperation *poolOp);
+    void GenerateOFMScalingForPooling(HLCOperation *poolOp, bool useGlobalScale);
     // Generates OFM/IFM/IFM2_SCALE registers for elementwise operators.
     void GenerateScalingForElementwise(HLCOperation *op);
 
@@ -201,7 +201,7 @@ protected:
     // Generates OFM_BLK_HEIGHT/WIDTH/DEPTH registers
     void GenerateBlockConfig(const EthosU85OpConfig *config, const HLCFeatureMap &fm);
     // Generates ACC_FORMAT register
-    void GenerateAccFormat(const EthosU85OpConfig *config);
+    void GenerateAccFormat(const HLCStripe *stripe);
     // Calculates and generates KERNEL_WAIT or DMA_WAIT register
     void GenerateWaits(bool isKernelWait, const MemoryAccesses &memoryAccesses, int maxWaits,
         std::deque<MemoryAccesses> &outstandingAccesses, std::deque<MemoryAccesses> &accessesToUpdate);

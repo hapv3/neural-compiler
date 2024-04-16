@@ -93,13 +93,19 @@ std::unique_ptr<IWeightEncodingConfig> EthosU85WeightEncoder::GetEncodingConfig(
     params->dilation = kernel->Dilation();
     params->stride = kernel->Stride();
 
-    assert(!weights.isScales);
-    Shape ohwiStrides = weights.view->StrideBytes() * 8 / DataTypeSizeBits(weights.type);
-    if ( weights.axisOrder == AxisOrder::IHWO )
+    if ( !weights.isScales )
     {
-        ohwiStrides = ohwiStrides.Extract(3, 1, 2, 0);
+        Shape ohwiStrides = weights.view->StrideBytes() * 8 / DataTypeSizeBits(weights.type);
+        if ( weights.axisOrder == AxisOrder::IHWO )
+        {
+            ohwiStrides = ohwiStrides.Extract(3, 1, 2, 0);
+        }
+        params->ohwiStrides = std::move(ohwiStrides);
     }
-    params->ohwiStrides = std::move(ohwiStrides);
+    else
+    {
+        params->ohwiStrides = Shape{nullptr, 4, 0};
+    }
     params->Rehash();
 
     return params;
@@ -654,7 +660,7 @@ public:
             int index = _biasIndex + i;
             if ( index < _bufferSize )
             {
-                *biasBuffer++ = _buffer[index];
+                *biasBuffer++ = _buffer ? static_cast<int64_t>(_buffer[index]) : 0;
                 *quantBuffer++ = _quantization.scales[index % scaleSize];
             }
             else
@@ -700,6 +706,22 @@ std::unique_ptr<IVolumeScaleSource> EthosU85WeightEncoder::GetScaleSource(
         else if ( cfg->ifmType == DataType::Int16 )
         {
             return std::make_unique<EthosU85ScaleSource<int32_t, DataType::Int16>>(_arch->_cores, cfg->ofmUBlock.Depth(), explicitQuant);
+        }
+        else if ( cfg->ifmType == DataType::UInt16 )
+        {
+            return std::make_unique<EthosU85ScaleSource<int32_t, DataType::UInt16>>(_arch->_cores, cfg->ofmUBlock.Depth(), explicitQuant);
+        }
+        else if ( cfg->ifmType == DataType::Int32 )
+        {
+            return std::make_unique<EthosU85ScaleSource<int32_t, DataType::Int32>>(_arch->_cores, cfg->ofmUBlock.Depth(), explicitQuant);
+        }
+        else if ( cfg->ifmType == DataType::Int48 )
+        {
+            return std::make_unique<EthosU85ScaleSource<int32_t, DataType::Int48>>(_arch->_cores, cfg->ofmUBlock.Depth(), explicitQuant);
+        }
+        else if ( cfg->ifmType == DataType::Int64 )
+        {
+            return std::make_unique<EthosU85ScaleSource<int32_t, DataType::Int64>>(_arch->_cores, cfg->ofmUBlock.Depth(), explicitQuant);
         }
     }
     else if ( scaleType == DataType::Int48 && DataTypeSizeBits(cfg->ifmType) == 16 )
