@@ -21,6 +21,7 @@
 #include "common/logging.hpp"
 
 #include "architecture/architecture.hpp"
+#include "architecture/architecture_constraints.hpp"
 #include "common/reverse_type.hpp"
 #include "common/scaling.hpp"
 #include "common/transpose_type.hpp"
@@ -1011,9 +1012,12 @@ Operation *TFLiteGraphOptimiser::RemoveTranspose(Graph *const graph, Operation *
             Operation *prevOp = ifm->Writers()[0].get();
             OpType prevOpType = prevOp->Type();
             auto prevOfmConn = prevOp->Output(TensorUsage::OFM);
+            ExecutionQuery query{};
+            query.opType = prevOpType;
+            query.transposeType = transposeType;
 
             if ( IsNone(prevOfmConn->transpose) && prevOfmConn->reverse == ReverseType::None &&
-                 prevOfmConn->shape == ifmShape && _arch->SupportsTranspose(prevOpType, transposeType) )
+                 prevOfmConn->shape == ifmShape && _constraints->CanExecute(query) )
             {
                 // Set transpose type and shape on main op's OFM connection
                 prevOp->Output(TensorUsage::OFM)->shape = Shape::PadAxes(ofmShape, 4, 1);
@@ -1023,6 +1027,10 @@ Operation *TFLiteGraphOptimiser::RemoveTranspose(Graph *const graph, Operation *
                 mainOp = prevOp;
             }
         }
+
+        ExecutionQuery query{};
+        query.opType = OpType::MemoryCopy;
+        query.transposeType = transposeType;
 
         // If the transpose type is not supported (for example it's transposing in the batch dimension), try to
         // rearrange the IFM and OFM shapes by moving any dimension that is 1 to the left. Then recalculate the
@@ -1039,7 +1047,7 @@ Operation *TFLiteGraphOptimiser::RemoveTranspose(Graph *const graph, Operation *
         // 1x8x128x32 + [2, 0, 1, 3] -> 128x1x8x32
         // Compact, with supported permutation vector:
         // 1x8x128x32 + [0, 2, 1, 3] ("NWHC") -> 1x128x8x32
-        if ( !mainOp && !_arch->SupportsTranspose(OpType::MemoryCopy, transposeType) )
+        if ( !mainOp && !_constraints->CanExecute(query) )
         {
             const auto paddedIfmShape = Shape::PadAxes(ifmShape, 4, 1);
             const auto paddedOfmShape = Shape::PadAxes(ofmShape, 4, 1);
@@ -1071,7 +1079,10 @@ Operation *TFLiteGraphOptimiser::RemoveTranspose(Graph *const graph, Operation *
 
             // Use the compacted mask if supported
             TransposeType compactTransposeType = TransposeType(compactMask);
-            if ( _arch->SupportsTranspose(OpType::MemoryCopy, compactTransposeType) )
+
+            query.transposeType = compactTransposeType;
+
+            if ( _constraints->CanExecute(query) )
             {
                 // Build new IFM shape with the rearranged dimensions
                 std::vector<int> newIfmShape;
@@ -1093,7 +1104,9 @@ Operation *TFLiteGraphOptimiser::RemoveTranspose(Graph *const graph, Operation *
             }
         }
 
-        if ( !mainOp && _arch->SupportsTranspose(OpType::MemoryCopy, transposeType) )
+        query.transposeType = transposeType;
+
+        if ( !mainOp && _constraints->CanExecute(query) )
         {
             // Previous doesn't support transpose -- Add a MemoryCopy so we can fuse transpose to it
             auto memoryCopy = InsertCopyOpAfterTensor(ifmConn->tensor, ifmConn->quantization);
@@ -1184,9 +1197,11 @@ Operation *TFLiteGraphOptimiser::RemoveReverse(Graph *const graph, Operation *co
             Operation *prevOp = ifm->Writers()[0].get();
             OpType prevOpType = prevOp->Type();
             auto prevOfmConn = prevOp->Output(TensorUsage::OFM);
-
+            ExecutionQuery query{};
+            query.opType = prevOpType;
+            query.reverseType = reverseType;
             if ( prevOfmConn->reverse == ReverseType::None && IsNone(prevOfmConn->transpose) &&
-                 prevOfmConn->shape == ifmShape && _arch->SupportsReverse(prevOpType, reverseType) )
+                 prevOfmConn->shape == ifmShape && _constraints->CanExecute(query) )
             {
                 // Set reverse type and shape on main op's OFM connection
                 prevOp->Output(TensorUsage::OFM)->shape = Shape::PadAxes(ofmShape, 4, 1);
@@ -1197,7 +1212,11 @@ Operation *TFLiteGraphOptimiser::RemoveReverse(Graph *const graph, Operation *co
             }
         }
 
-        if ( !mainOp && _arch->SupportsReverse(OpType::MemoryCopy, reverseType) )
+        ExecutionQuery query{};
+        query.opType = OpType::MemoryCopy;
+        query.reverseType = reverseType;
+
+        if ( !mainOp && _constraints->CanExecute(query) )
         {
             // Previous doesn't support reverse -- Add a MemoryCopy so we can fuse reverse to it
             auto memoryCopy = InsertCopyOpAfterTensor(ifmConn->tensor, ifmConn->quantization);
@@ -1238,7 +1257,10 @@ Operation *TFLiteGraphOptimiser::ConvertGather(Graph *const graph, Operation *co
 
     OpType opType = operation->Type();
 
-    if ( opType == OpType::GatherV2 && _arch->SupportsGather(OpType::Gather) )
+    ExecutionQuery query{};
+    query.opType = OpType::Gather;
+
+    if ( opType == OpType::GatherV2 && _constraints->CanExecute(query) )
     {
         auto *paramsConn = operation->Input(TensorUsage::IFM0);
         auto *idxConn = operation->Input(TensorUsage::IFM1);
@@ -1347,7 +1369,10 @@ Operation *TFLiteGraphOptimiser::ConvertScatter(Graph *const graph, Operation *c
 
     OpType opType = operation->Type();
 
-    if ( opType == OpType::ScatterNd && _arch->SupportsScatter(OpType::Scatter) )
+    ExecutionQuery query{};
+    query.opType = OpType::Scatter;
+
+    if ( opType == OpType::ScatterNd && _constraints->CanExecute(query) )
     {
         auto *idxConn = operation->Input(TensorUsage::IFM0);
         auto *updatesConn = operation->Input(TensorUsage::IFM1);
@@ -1480,22 +1505,27 @@ Operation *TFLiteGraphOptimiser::ConvertResize(Graph *const graph, Operation *co
         }
 
         // set up op-support query
-        ResizeSupportQuery query;
-        query.scaleX = {int16_t(width_n), int16_t(width_d)};
-        query.scaleY = {int16_t(height_n), int16_t(height_d)};
-        query.offsetX = widthOffset;
-        query.offsetY = heightOffset;
-        query.ifmShape = ifmConn->shape;
+        ResizeSupportQuery resizeQuery;
+        resizeQuery.scaleX = {int16_t(width_n), int16_t(width_d)};
+        resizeQuery.scaleY = {int16_t(height_n), int16_t(height_d)};
+        resizeQuery.offsetX = widthOffset;
+        resizeQuery.offsetY = heightOffset;
+        resizeQuery.ifmShape = ifmConn->shape;
 
         if ( opType == OpType::ResizeBilinear )
         {
-            query.mode = ArchResizeMode::Bilinear;
+            resizeQuery.mode = ArchResizeMode::Bilinear;
         }
         else
         {
-            query.mode = ArchResizeMode::Nearest;
+            resizeQuery.mode = ArchResizeMode::Nearest;
         }
-        if ( _arch->SupportsResize(query) )
+
+        ExecutionQuery query{};
+        query.opType = opType;
+        query.resizeQuery = resizeQuery;
+
+        if ( _constraints->CanExecute(query) )
         {
             // Replace ResizeBilinear or ResizeNearestNeighbor with a Resize op
             auto resizeOp = std::make_shared<Operation>(OpType::Resize);
@@ -1548,7 +1578,9 @@ Operation *TFLiteGraphOptimiser::ConvertArgMax(Graph *const graph, Operation *co
 {
     UNUSED(graph);
     Operation *returnOp = operation;
-    if ( operation->Type() == OpType::ArgMax && _arch->SupportsArgMax(OpType::ArgMax) )
+    ExecutionQuery query{};
+    query.opType = OpType::ArgMax;
+    if ( operation->Type() == OpType::ArgMax && _constraints->CanExecute(query) )
     {
         if ( operation->Input(TensorUsage::IFM0)->slice.shape )
         {
@@ -1705,7 +1737,9 @@ Operation *TFLiteGraphOptimiser::CreateTransposeForMatMul(const std::shared_ptr<
 Operation *TFLiteGraphOptimiser::RewriteBatchMatMul(Graph *const, Operation *const operation)
 {
     Operation *returnOp = operation;
-    if ( operation->Type() == OpType::BatchMatMul && _arch->SupportsMatMul(OpType::MatMul) )
+    ExecutionQuery query{};
+    query.opType = OpType::MatMul;
+    if ( operation->Type() == OpType::BatchMatMul && _constraints->CanExecute(query) )
     {
         const auto ifm = operation->Input(TensorUsage::IFM0);
         const auto ifm2 = operation->Input(TensorUsage::IFM1);
@@ -1790,7 +1824,9 @@ Operation *TFLiteGraphOptimiser::RewriteFullyConnectDynamic(Graph *const, Operat
 {
     Operation *returnOp = operation;
     auto ifm2 = operation->Input(TensorUsage::Weights);
-    if ( operation->Type() == OpType::FullyConnected && !ifm2->tensor->IsConstant() && _arch->SupportsMatMul(OpType::MatMul) )
+    ExecutionQuery query{};
+    query.opType = OpType::MatMul;
+    if ( operation->Type() == OpType::FullyConnected && !ifm2->tensor->IsConstant() && _constraints->CanExecute(query) )
     {
         const auto ifm = operation->Input(TensorUsage::IFM0);
         const auto ofm = operation->Output(TensorUsage::OFM);
@@ -2470,7 +2506,9 @@ Operation *TFLiteGraphOptimiser::ConvertTanhSigmoidToLUT(Graph *const, Operation
 
     if ( ifm->Type() == DataType::Int16 && (opType == OpType::Sigmoid || opType == OpType::Tanh) )
     {
-        if ( _arch->SupportsSigmoidTanhLutInt16(opType) )
+        ExecutionQuery query{};
+        query.opType = opType;
+        if ( _constraints->CanExecute(query) )
         {
             returnOp = ConvertTanhSigmoidToLUT16(operation);
         }
@@ -2614,6 +2652,11 @@ Operation *TFLiteGraphOptimiser::ConvertLeakyRelu(Graph *const graph, Operation 
         auto ifm = ifmConn->tensor.get();
         auto ofm = ofmConn->tensor.get();
         bool quantized = !IsScalingValidAndEqual(*ifmConn, *ofmConn);
+        ExecutionQuery query{};
+        query.quantized = quantized;
+        query.type = ifm->Type();
+
+
         if ( alpha == 0 || std::isinf(1 / alpha) )
         {
             // alpha == 0 can be converted to ReLU
@@ -2629,7 +2672,7 @@ Operation *TFLiteGraphOptimiser::ConvertLeakyRelu(Graph *const graph, Operation 
             RecordOptimisation(operation, absOp);
             returnOp = absOp;
         }
-        else if ( alpha < 0 || !_arch->SupportsLeakyRelu(quantized, ifm->Type()) )
+        else if ( alpha < 0 || !_constraints->CanExecute(query) )
         {
             if ( (ifm->Type() == DataType::Int8 || ifm->Type() == DataType::UInt8) )
             {
@@ -2909,10 +2952,10 @@ Operation *TFLiteGraphOptimiser::ConvertPad(Graph *const graph, Operation *const
     return mainOp.get();
 }
 
-TFLiteGraphOptimiser::TFLiteGraphOptimiser(Architecture *arch, const GraphOptimiserOptions &options, OptimiserDatabase *db) :
-        GraphOptimiser(arch, options, db)
+TFLiteGraphOptimiser::TFLiteGraphOptimiser(IArchitectureConstraints *constraints, const GraphOptimiserOptions &options, OptimiserDatabase *db) :
+        GraphOptimiser(constraints, options, db)
 {
-    _softmax = std::make_unique<Softmax>(arch, db);
+    _softmax = std::make_unique<Softmax>(db);
 }
 
 void TFLiteGraphOptimiser::OptimiseGraph(Graph *graph)

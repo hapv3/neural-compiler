@@ -28,8 +28,6 @@
 #include <utility>
 #include <vector>
 
-
-
 namespace tflite
 {
 using BufferOffsetRef = const flatbuffers::Vector<flatbuffers::Offset<Buffer>> &;

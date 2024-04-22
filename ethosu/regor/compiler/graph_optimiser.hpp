@@ -61,22 +61,22 @@ struct GraphOptimiserOptions
 class GraphOptimiser
 {
 protected:
-    Architecture *_arch = nullptr;
+    IArchitectureConstraints *_constraints = nullptr;
     const GraphOptimiserOptions _options;
     OptimiserDatabase *_db;
 
 public:
-    GraphOptimiser(Architecture *arch, const GraphOptimiserOptions &options, OptimiserDatabase *db) :
-            _arch(arch), _options(options), _db(db)
+    GraphOptimiser(IArchitectureConstraints *constraints, const GraphOptimiserOptions &options, OptimiserDatabase *db) :
+            _constraints(constraints), _options(options), _db(db)
     {
-        assert(_arch != nullptr);
+        assert(_constraints != nullptr);
     }
     const GraphOptimiserOptions &Options() const { return _options; }
 
 
 
-    static std::unique_ptr<GraphOptimiser> MakeGraphOptimiser(
-        GraphNotation notation, Architecture *arch, const GraphOptimiserOptions &options, OptimiserDatabase *db);
+    static std::unique_ptr<GraphOptimiser> MakeGraphOptimiser(GraphNotation notation,
+        IArchitectureConstraints *constraints, const GraphOptimiserOptions &options, OptimiserDatabase *db);
     static void ParseGraphOptimiserOptions(GraphOptimiserOptions &opt, IniReader &reader);
 
     void Process(Graph *graph);

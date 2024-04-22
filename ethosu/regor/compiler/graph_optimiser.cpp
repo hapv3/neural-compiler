@@ -41,16 +41,16 @@
 namespace regor
 {
 
-std::unique_ptr<GraphOptimiser> GraphOptimiser::MakeGraphOptimiser(
-    GraphNotation notation, Architecture *arch, const GraphOptimiserOptions &options, OptimiserDatabase *db)
+std::unique_ptr<GraphOptimiser> GraphOptimiser::MakeGraphOptimiser(GraphNotation notation,
+    IArchitectureConstraints *constraints, const GraphOptimiserOptions &options, OptimiserDatabase *db)
 {
     switch ( notation )
     {
         case GraphNotation::TFLite:
-            return std::unique_ptr<GraphOptimiser>(std::make_unique<TFLiteGraphOptimiser>(arch, options, db));
+            return std::unique_ptr<GraphOptimiser>(std::make_unique<TFLiteGraphOptimiser>(constraints, options, db));
 
         case GraphNotation::GraphAPI:
-            return std::unique_ptr<GraphOptimiser>(std::make_unique<GraphIrOptimiser>(arch, options, db));
+            return std::unique_ptr<GraphOptimiser>(std::make_unique<GraphIrOptimiser>(constraints, options, db));
 
         default:
             LOG_ERROR("Invalid graph notation");

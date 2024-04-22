@@ -170,9 +170,8 @@ static const uint32_t ONE_OVER_ONE_PLUS_X_LUT[] = {
     // clang-format on
 };
 
-Softmax::Softmax(Architecture *arch, OptimiserDatabase *db) : _arch(arch), _db(db)
+Softmax::Softmax(OptimiserDatabase *db) : _db(db)
 {
-    assert(_arch != nullptr);
 }
 
 Operation *Softmax::ConvertOp(Operation *const operation)

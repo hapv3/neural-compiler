@@ -102,7 +102,7 @@ public:
     }};
     // clang-format on
 
-    explicit GraphIrOptimiser(Architecture *arch, const GraphOptimiserOptions &options, OptimiserDatabase *db);
+    explicit GraphIrOptimiser(IArchitectureConstraints *constraints, const GraphOptimiserOptions &options, OptimiserDatabase *db);
 
     const GraphOptStepArray &GraphOptimisationSteps() const { return _graphOptimisationSteps; }
 

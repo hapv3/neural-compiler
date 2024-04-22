@@ -23,6 +23,7 @@
 
 #include "common/bit_flags.hpp"
 #include "common/numeric_util.hpp"
+#include "ethos_u55_constraints.hpp"
 #include "ethos_u55_performance.hpp"
 #include "ethos_u55_register_cs_generator.hpp"
 #include "ethos_u55_weight_encoder.hpp"
@@ -100,6 +101,7 @@ ArchEthosU55::ArchEthosU55() : _subkernelMax(8, 8, 65536), _ofmBlockMax(32, 64, 
 {
     _weightEncoder = std::make_unique<EthosU55WeightEncoder>(this);
     _rcsGenerator = std::make_unique<EthosU55RCSGenerator>(this);
+    _constraints = std::make_unique<EthosU55Constraints>(this);
 }
 
 uint32_t ArchEthosU55::Version()
@@ -212,69 +214,10 @@ AxisMask ArchEthosU55::CanSubdivide(OpType opType)
     return AxisMask::None;
 }
 
-bool ArchEthosU55::SupportsLeakyRelu(bool quantized, DataType type)
-{
-    return quantized == false && type == DataType::Int16;
-}
-
-bool ArchEthosU55::SupportsMatMul(OpType opType)
-{
-    UNUSED(opType);
-    return false;
-}
-
-bool ArchEthosU55::SupportsTranspose(OpType opType, TransposeType transposeType)
-{
-    UNUSED(opType);
-    UNUSED(transposeType);
-    return IsNone(transposeType);
-}
-
-bool ArchEthosU55::SupportsReverse(OpType opType, ReverseType reverseType)
-{
-    UNUSED(opType);
-    UNUSED(reverseType);
-    return reverseType == ReverseType::None;
-}
-
-bool ArchEthosU55::SupportsGather(OpType opType)
-{
-    UNUSED(opType);
-    return false;
-}
-
-bool ArchEthosU55::SupportsScatter(OpType opType)
-{
-    UNUSED(opType);
-    return false;
-}
-bool ArchEthosU55::SupportsResize(const ResizeSupportQuery &query)
-{
-    UNUSED(query);
-    return false;
-}
-
-bool ArchEthosU55::SupportsSigmoidTanhLutInt16(OpType opType)
-{
-    UNUSED(opType);
-    return false;
-}
-
-bool ArchEthosU55::SupportsAccumulatorMode(ArchAccumulatorSource source, bool outputEnabled)
-{
-    return source == ArchAccumulatorSource::Reset && outputEnabled;
-}
-
 bool ArchEthosU55::SupportsScalar(OpType opType, DataType dataType, TensorUsage usage)
 {
     bool supportedType(dataType == DataType::Int8 || dataType == DataType::UInt8 || dataType == DataType::Int16);
     return EthosU55RCSGenerator::IsSupportedElementwise(opType) && supportedType && IsIFM(usage);
-}
-
-bool ArchEthosU55::SupportsArgMax(OpType opType)
-{
-    UNUSED(opType);
-    return false;
 }
 
 Flags<WeightFormat> ArchEthosU55::SupportedWeightFormat(OpType)
@@ -340,8 +283,6 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU55::FindBlockConfig(OpType opTyp
     assert(query.ifmBits > 0 && query.ifmBits <= 32);
     assert(query.ofmShape.Size() > 2 && "Insufficient dimensions to search for block config");
     assert(query.kernel != nullptr);
-
-    if ( !SupportsAccumulatorMode(query.accSource, query.accOutputEnabled) ) return nullptr;
 
     const int OFMSplitDepth = 16;  // Specific to this architecture
 

@@ -258,8 +258,8 @@ Operation *GraphIrOptimiser::FixupPoolStrides(Graph *const, Operation *const ope
     return operation;
 }
 
-GraphIrOptimiser::GraphIrOptimiser(Architecture *arch, const GraphOptimiserOptions &options, OptimiserDatabase *db) :
-        GraphOptimiser(arch, options, db)
+GraphIrOptimiser::GraphIrOptimiser(IArchitectureConstraints *constraints, const GraphOptimiserOptions &options, OptimiserDatabase *db) :
+        GraphOptimiser(constraints, options, db)
 {
 }
 

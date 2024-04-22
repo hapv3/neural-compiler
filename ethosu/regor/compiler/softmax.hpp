@@ -36,11 +36,10 @@ namespace regor
 class Softmax
 {
 private:
-    Architecture *_arch = nullptr;
     OptimiserDatabase *_db = nullptr;
 
 public:
-    Softmax(Architecture *arch, OptimiserDatabase *db);
+    Softmax(OptimiserDatabase *db);
     Operation *ConvertOp(Operation *const operation);
 
 private:

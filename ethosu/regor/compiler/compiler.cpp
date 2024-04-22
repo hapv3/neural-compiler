@@ -355,7 +355,7 @@ std::unique_ptr<Graph> Compiler::CompileGraph(std::unique_ptr<Graph> &graph,
     {
         // Run GraphNotation::TFLite Preprocess/optimise step
         std::unique_ptr<GraphOptimiser> optimiser = GraphOptimiser::MakeGraphOptimiser(
-            GraphNotation::TFLite, _architecture.get(), _graphOptimiserOptions, _optDb.get());
+            GraphNotation::TFLite, _architecture->Constraints(), _graphOptimiserOptions, _optDb.get());
         if ( optimiser )
         {
             optimiser->Process(graph.get());
@@ -364,7 +364,7 @@ std::unique_ptr<Graph> Compiler::CompileGraph(std::unique_ptr<Graph> &graph,
 
     // Run GraphNotation::GraphAPI Preprocess/optimise step
     std::unique_ptr<GraphOptimiser> optimiser = GraphOptimiser::MakeGraphOptimiser(
-        GraphNotation::GraphAPI, _architecture.get(), _graphOptimiserOptions, _optDb.get());
+        GraphNotation::GraphAPI, _architecture->Constraints(), _graphOptimiserOptions, _optDb.get());
     if ( optimiser )
     {
         optimiser->Process(graph.get());

@@ -41,6 +41,7 @@ namespace regor
 
 class WeightEncoder;
 class IRegisterCommandStreamGenerator;
+class IArchitectureConstraints;
 
 using Address = int64_t;
 
@@ -239,29 +240,6 @@ struct FusionQuery
 };
 
 /// <summary>
-/// Information for querying support for Resize
-/// </summary>
-struct ResizeSupportQuery
-{
-    ArchResizeMode mode;
-    GraphApi::FractionND scaleY;
-    GraphApi::FractionND scaleX;
-    int offsetY;
-    int offsetX;
-    Shape ifmShape;
-};
-
-/// <summary>
-/// Information for querying whether an operation can be executed by the architecture
-/// </summary>
-struct ExecutionQuery
-{
-    DataType ifmType[2];
-    DataType ofmType;
-    const Kernel *kernel;
-};
-
-/// <summary>
 /// Cycle cost of performing an operation
 /// </summary>
 struct CycleCost
@@ -328,23 +306,14 @@ public:
     virtual class WeightEncoder *WeightEncoder() = 0;
     virtual ArchitecturePerformance *Performance() = 0;
     virtual IRegisterCommandStreamGenerator *RegisterCommandStreamGenerator() = 0;
+    virtual IArchitectureConstraints *Constraints() = 0;
     virtual TensorFormat IdealBufferingFormat() { return TensorFormat::Unknown; }
     virtual Address MaxAddress() = 0;
     virtual std::vector<uint32_t> ConfigRegisters() = 0;
     virtual uint32_t Version() = 0;
     virtual int UpscaleAndRounding(ArchResampling resampling, int &rounding) = 0;
     virtual AxisMask CanSubdivide(OpType opType) = 0;
-    virtual bool SupportsLeakyRelu(bool quantized, DataType type) = 0;
-    virtual bool SupportsMatMul(OpType opType) = 0;
-    virtual bool SupportsTranspose(OpType opType, TransposeType transposeType) = 0;
-    virtual bool SupportsReverse(OpType opType, ReverseType reverseType) = 0;
-    virtual bool SupportsGather(OpType opType) = 0;
-    virtual bool SupportsScatter(OpType opType) = 0;
-    virtual bool SupportsSigmoidTanhLutInt16(OpType opType) = 0;
-    virtual bool SupportsResize(const ResizeSupportQuery &query) = 0;
-    virtual bool SupportsAccumulatorMode(ArchAccumulatorSource source, bool outputEnabled) = 0;
     virtual bool SupportsScalar(OpType opType, DataType dataType, TensorUsage usage) = 0;
-    virtual bool SupportsArgMax(OpType opType) = 0;
     virtual Flags<WeightFormat> SupportedWeightFormat(OpType op) = 0;
 
     MemArea ReadonlyMemory()

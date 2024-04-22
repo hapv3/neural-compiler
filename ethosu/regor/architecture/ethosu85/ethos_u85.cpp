@@ -23,6 +23,7 @@
 
 #include "common/bit_flags.hpp"
 #include "common/numeric_util.hpp"
+#include "ethos_u85_constraints.hpp"
 #include "ethos_u85_performance.hpp"
 #include "ethos_u85_register_cs_generator.hpp"
 #include "ethos_u85_weight_encoder.hpp"
@@ -109,6 +110,7 @@ ArchEthosU85::ArchEthosU85() : _subkernelMax(8, 8, 65536), _ofmBlockMax(128, 128
 {
     _weightEncoder = std::make_unique<EthosU85WeightEncoder>(this);
     _rcsGenerator = std::make_unique<EthosU85RCSGenerator>(this);
+    _constraints = std::make_unique<EthosU85Constraints>(this);
 }
 
 uint32_t ArchEthosU85::Version()
@@ -213,179 +215,6 @@ AxisMask ArchEthosU85::CanSubdivide(OpType opType)
         return AxisMask::AxisY;
     }
     return AxisMask::None;
-}
-
-bool ArchEthosU85::SupportsLeakyRelu(bool /*quantized*/, DataType /*type*/)
-{
-    return true;
-}
-
-bool ArchEthosU85::SupportsMatMul(OpType opType)
-{
-    EthosU85NpuOp npuOp = GetHWOp(opType);
-    if ( npuOp == EthosU85NpuOp::None )
-    {
-        return false;
-    }
-
-    return true;
-}
-
-bool ArchEthosU85::SupportsTranspose(OpType opType, TransposeType transposeType)
-{
-    if ( IsNone(transposeType) ) return true;
-
-    EthosU85NpuOp npuOp = GetHWOp(opType);
-    if ( npuOp == EthosU85NpuOp::None || npuOp == EthosU85NpuOp::Resize || npuOp == EthosU85NpuOp::Dma )
-    {
-        return false;
-    }
-    else if ( npuOp == EthosU85NpuOp::Elementwise )
-    {
-        return transposeType == TransposeType::NHWC || transposeType == TransposeType::NHCW || transposeType == TransposeType::NCHW;
-    }
-
-    return transposeType == TransposeType::NHWC || transposeType == TransposeType::NWHC || transposeType == TransposeType::NHCW ||
-           transposeType == TransposeType::NWCH || transposeType == TransposeType::NCHW || transposeType == TransposeType::NCWH;
-}
-
-bool ArchEthosU85::SupportsReverse(OpType opType, ReverseType reverseType)
-{
-    if ( reverseType == ReverseType::None ) return true;
-
-    EthosU85NpuOp npuOp = GetHWOp(opType);
-    if ( npuOp == EthosU85NpuOp::None || npuOp == EthosU85NpuOp::Elementwise || npuOp == EthosU85NpuOp::Dma )
-    {
-        return false;
-    }
-
-    return reverseType == ReverseType::H || reverseType == ReverseType::W || reverseType == ReverseType::C;
-}
-
-bool ArchEthosU85::SupportsGather(OpType opType)
-{
-    EthosU85NpuOp npuOp = GetHWOp(opType);
-    if ( npuOp == EthosU85NpuOp::None )
-    {
-        return false;
-    }
-
-    return true;
-}
-
-bool ArchEthosU85::SupportsScatter(OpType opType)
-{
-    EthosU85NpuOp npuOp = GetHWOp(opType);
-    if ( npuOp == EthosU85NpuOp::None )
-    {
-        return false;
-    }
-
-    return true;
-}
-
-bool ArchEthosU85::SupportsSigmoidTanhLutInt16(OpType opType)
-{
-    return (opType == OpType::Sigmoid || opType == OpType::Tanh);
-}
-
-bool ArchEthosU85::SupportsArgMax(OpType opType)
-{
-    EthosU85NpuOp npuOp = GetHWOp(opType);
-    if ( npuOp == EthosU85NpuOp::None )
-    {
-        return false;
-    }
-
-    return true;
-}
-
-bool ArchEthosU85::SupportsResize(const ResizeSupportQuery &query)
-{
-    /* Supported operator checks for resize operations
-     *
-     *  * Scaling numerators must be less than or equal to 2048
-     *  * Offsets must be in the range [-numerator, numerator) for each axis
-     *  * The following constraints apply to upscale-factors
-     *    mode REPLICATE:
-     *      Any width and height upscale-factors are supported
-     *    mode NEAREST:
-     *      Any width and height upscale-factors are supported
-     *    mode BILINEAR:
-     *      if IFM W*H == 1*1:
-     *        Any width and height upscale-factors are supported
-     *      else:
-     *        The upscale-factors need to be powers-of-two.
-     */
-    if ( query.ifmShape.Width() == 1 && query.ifmShape.Height() == 1 )
-    {
-        return true;
-    }
-
-    int n_w = query.scaleX.n;
-    int d_w = query.scaleX.d;
-    int n_h = query.scaleY.n;
-    int d_h = query.scaleY.d;
-    bool supported = true;
-
-    if ( n_h > 2048 )
-    {
-        LOG_WARN("Resize height scale numerator ({}) exceeds maximum size (2048).\n", n_h);
-        supported = false;
-    }
-    if ( n_w > 2048 )
-    {
-        LOG_WARN("Resize width scale numerator ({}) exceeds maximum size (2048).\n", n_w);
-        supported = false;
-    }
-    if ( query.offsetY >= n_h || query.offsetY < -n_h )
-    {
-        LOG_WARN("Resize height offset: {} is outside the valid range [-height_numerator, height_numerator) = [{}, {})\n",
-            query.offsetY, -n_h, n_h);
-        supported = false;
-    }
-    if ( query.offsetX >= n_w || query.offsetX < -n_w )
-    {
-        LOG_WARN("Resize width offset: {} is outside the valid range [-with_numerator, width_numerator) = [{}, {})\n",
-            query.offsetX, -n_w, n_w);
-        supported = false;
-    }
-
-    if ( query.mode == ArchResizeMode::Bilinear )
-    {
-        // Get scale fractions and verify that scale-factor is a power of two.
-
-        if ( n_w % d_w != 0 )
-        {
-            LOG_WARN("ResizeBilinear width scale-factor is not an integer: {}/{}\n", n_w, d_w);
-            supported = false;
-        }
-        if ( n_h % d_h != 0 )
-        {
-            LOG_WARN("ResizeBilinear height scale-factor is not an integer: {}/{}\n", n_h, d_h);
-            supported = false;
-        }
-        int scale_w = n_w / d_w;
-        int scale_h = n_h / d_h;
-        if ( !IsPowerOfTwo(scale_w) )
-        {
-            LOG_WARN("ResizeBilinear width scale-factor is not a power of two: {}\n", double(n_w) / d_w);
-            supported = false;
-        }
-        if ( !IsPowerOfTwo(scale_h) )
-        {
-            LOG_WARN("ResizeBilinear height scale-factor is not a power of two: {}\n", double(n_h) / d_h);
-            supported = false;
-        }
-        return supported;
-    }
-    return supported;
-}
-
-bool ArchEthosU85::SupportsAccumulatorMode(ArchAccumulatorSource source, bool outputEnabled)
-{
-    UNUSED(outputEnabled);
-    return source == ArchAccumulatorSource::Reset || source == ArchAccumulatorSource::Acc || source == ArchAccumulatorSource::Ifm2;
 }
 
 bool ArchEthosU85::SupportsScalar(OpType opType, DataType dataType, TensorUsage usage)

@@ -295,7 +295,7 @@ public:
     }};
     // clang-format on
 
-    explicit TFLiteGraphOptimiser(Architecture *arch, const GraphOptimiserOptions &options, OptimiserDatabase *db);
+    explicit TFLiteGraphOptimiser(IArchitectureConstraints *constraints, const GraphOptimiserOptions &options, OptimiserDatabase *db);
 
     const GraphOptStepArray &GraphOptimisationSteps() const { return _graphOptimisationSteps; }
 

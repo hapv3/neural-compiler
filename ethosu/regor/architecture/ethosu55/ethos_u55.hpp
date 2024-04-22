@@ -19,6 +19,7 @@
 #pragma once
 
 #include "architecture/architecture.hpp"
+#include "architecture/architecture_constraints.hpp"
 #include "architecture/ethos_u_scaling.hpp"
 #include "architecture/register_command_stream_generator.hpp"
 #include "architecture/weight_encoder.hpp"
@@ -140,6 +141,7 @@ class ArchEthosU55 : public Architecture
     friend class EthosU55RCSGenerator;
     friend class EthosU65RCSGenerator;
     friend class EthosU55OpGroup;
+    friend class EthosU55Constraints;
 
 public:
     struct AcceleratorConfig
@@ -180,6 +182,7 @@ protected:
     std::unique_ptr<class WeightEncoder> _weightEncoder;
     std::unique_ptr<ArchitecturePerformance> _performance;
     std::unique_ptr<IRegisterCommandStreamGenerator> _rcsGenerator;
+    std::unique_ptr<IArchitectureConstraints> _constraints;
 
 public:
     ArchEthosU55();
@@ -191,23 +194,14 @@ public:
     std::unique_ptr<ArchitectureOpGroup> CreateOpGroup(const ArchitectureOpGroupQuery &op) override;
     class WeightEncoder *WeightEncoder() override { return _weightEncoder.get(); }
     IRegisterCommandStreamGenerator *RegisterCommandStreamGenerator() override { return _rcsGenerator.get(); }
+    IArchitectureConstraints *Constraints() override { return _constraints.get(); }
     ArchitecturePerformance *Performance() override { return _performance.get(); }
     TensorFormat IdealBufferingFormat() override { return TensorFormat::NHCWB16; }
     Address MaxAddress() override { return 1LL << 32; }
     std::vector<uint32_t> ConfigRegisters() override;
     int UpscaleAndRounding(ArchResampling resampling, int &rounding) override;
     AxisMask CanSubdivide(OpType opType) override;
-    bool SupportsLeakyRelu(bool quantized, DataType type) override;
-    bool SupportsMatMul(OpType opType) override;
-    bool SupportsTranspose(OpType opType, TransposeType transposeType) override;
-    bool SupportsReverse(OpType opType, ReverseType reverseType) override;
-    bool SupportsGather(OpType opType) override;
-    bool SupportsScatter(OpType opType) override;
-    bool SupportsSigmoidTanhLutInt16(OpType opType) override;
-    bool SupportsResize(const ResizeSupportQuery &query) override;
-    bool SupportsAccumulatorMode(ArchAccumulatorSource source, bool outputEnabled) override;
     bool SupportsScalar(OpType opType, DataType dataType, TensorUsage usage) override;
-    bool SupportsArgMax(OpType opType) override;
     Flags<WeightFormat> SupportedWeightFormat(OpType op) override;
     uint32_t Version() override;
 
