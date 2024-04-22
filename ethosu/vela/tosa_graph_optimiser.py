@@ -247,7 +247,11 @@ def fix_sg_input_output_tosa(op, arch, nng):
         # consumed by CPU
 
         # Check if operator ifm/ofm are sg ifm/ofm
-        ifm_is_sg_ifm = op.ifm.ops[0].type in (Op.Placeholder, Op.SubgraphInput, Op.Const)
+        ifm_is_sg_ifm = op.ifm.ops[0].type in (
+            Op.Placeholder,
+            Op.SubgraphInput,
+            Op.Const,
+        )
         ifm_is_sg_ofm = any(ifm_cons is None for ifm_cons in op.ifm.consumer_list)
         ofm_is_sg_ofm = any(ofm_cons is None for ofm_cons in op.ofm.consumer_list)
         # Check if ifm/ofm is produced repectivly consumed by CPU
@@ -302,7 +306,13 @@ def remove_splitsliceread(op, arch):
         else:
             name = op.name + "_add"
             ofm = op.ofm
-            ifm2 = create_const_tensor(name + "_zero_scalar", [1], ofm.dtype, [0], quantization=ofm.quantization)
+            ifm2 = create_const_tensor(
+                name + "_zero_scalar",
+                [1],
+                ofm.dtype,
+                [0],
+                quantization=ofm.quantization,
+            )
             add_op = create_add_nop(name)
             add_op.inputs = [op.ifm, ifm2]
             add_op.outputs = [ofm]
@@ -330,7 +340,13 @@ def rewrite_concat(op):
         write_offset = [0, 0, 0, 0]
         write_offset[axis_4D] = offset
         concat_end = offset + op.ifm_shapes[idx][axis_4D]
-        create_add_for_concat(op, op.name + str(idx) + "_add", inp, op.ifm_shapes[idx], Shape4D.from_list(write_offset))
+        create_add_for_concat(
+            op,
+            op.name + str(idx) + "_add",
+            inp,
+            op.ifm_shapes[idx],
+            Shape4D.from_list(write_offset),
+        )
         offset = concat_end
     assert op.ofm_shapes[0][axis_4D] == offset
 
@@ -417,7 +433,10 @@ def rewrite_rescale(op, arch, nng):
                 DebugDatabase.add_optimised(op, prev_op)
                 return op
             else:
-                print("Warning, unsupported fusing of TOSA Rescale previous operator is of type:", prev_op.type)
+                print(
+                    "Warning, unsupported fusing of TOSA Rescale previous operator is of type:",
+                    prev_op.type,
+                )
                 assert False
         elif (
             (ifm.dtype == DataType.int8 and ofm.dtype == DataType.int8)
@@ -447,7 +466,7 @@ def rewrite_rescale(op, arch, nng):
                 for a in equal_attributes:
                     assert op.attrs[a] == rescale_1.attrs[a] == rescale_2.attrs[a], (
                         f"Only handling equal {a} for all operands "
-                        "({op.attrs[a]}, {rescale_1.attrs[a]}, {rescale_2.attrs[a]}) "
+                        f"({op.attrs[a]}, {rescale_1.attrs[a]}, {rescale_2.attrs[a]}) "
                         "for all the rescale operations to be fused with Add!"
                     )
 
@@ -486,7 +505,10 @@ def rewrite_rescale(op, arch, nng):
                 print("Warning, unsupported fusing of TOSA Rescale with Add.")
                 assert False
         else:
-            print("Warning, unsupported fusing of TOSA Rescale previous operator is of type:", prev_op.type)
+            print(
+                "Warning, unsupported fusing of TOSA Rescale previous operator is of type:",
+                prev_op.type,
+            )
             assert False
 
     return op
@@ -519,17 +541,31 @@ def convert_pad_in_width(op):
     if left > 0:
         shape = Shape4D(1, ifm_shape.height, left, ofm_shape.depth)
         zero_tens = create_const_tensor(
-            op.name + "_left", shape.as_list(), ofm.dtype, shape.elements() * [pad_value], quantization=quant
+            op.name + "_left",
+            shape.as_list(),
+            ofm.dtype,
+            shape.elements() * [pad_value],
+            quantization=quant,
         )
         zero_tens.equivalence_id = create_equivalence_id(tuple(zero_tens.values))
         create_add_for_concat(op, op.name + "_left", zero_tens, shape, shp0)
     if right > 0:
         shape = Shape4D(1, ifm_shape.height, right, ofm_shape.depth)
         zero_tens = create_const_tensor(
-            op.name + "_right", shape.as_list(), ofm.dtype, shape.elements() * [pad_value], quantization=quant
+            op.name + "_right",
+            shape.as_list(),
+            ofm.dtype,
+            shape.elements() * [pad_value],
+            quantization=quant,
         )
         zero_tens.equivalence_id = create_equivalence_id(tuple(zero_tens.values))
-        create_add_for_concat(op, op.name + "_right", zero_tens, shape, shp0.with_width(ofm_shape.width - right))
+        create_add_for_concat(
+            op,
+            op.name + "_right",
+            zero_tens,
+            shape,
+            shp0.with_width(ofm_shape.width - right),
+        )
 
     op.type = Op.ConcatTFLite
     return add_op
@@ -992,7 +1028,12 @@ def tosa_optimise_graph(nng, arch):
         )
 
     # Rewite Operators step
-    op_rewrite_list = [set_tensor_equivalence, rewrite_rescale, convert_depthwise_to_conv, convert_table_to_lut]
+    op_rewrite_list = [
+        set_tensor_equivalence,
+        rewrite_rescale,
+        convert_depthwise_to_conv,
+        convert_table_to_lut,
+    ]
 
     for idx, sg in enumerate(nng.subgraphs):
         nng.subgraphs[idx] = rewrite_graph.rewrite_graph_pre_order(

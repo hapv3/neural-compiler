@@ -247,7 +247,8 @@ class TosaSubgraph:
                 if depth_multiplier > 1:
                     assert op.ifm.shape[-1] == 1 and op.ofm.shape[-1] == depth_multiplier, (
                         "For depth multipliers > 1, IFM channels must be 1 and "
-                        "OFM channels must be equal to the depth multiplier")
+                        "OFM channels must be equal to the depth multiplier"
+                    )
                 op.attrs["depth_multiplier"] = depth_multiplier
             if op.type == Op.SplitSliceRead:
                 op.read_offsets[0] = Shape4D.from_list(list(op.attrs["start"]), 0)
