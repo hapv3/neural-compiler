@@ -253,7 +253,10 @@ class Subgraph:
             for tens in ps.inputs:
                 for op in tens.ops:
                     pred_pass = op.scheduled_pass
-                    assert pred_pass.time < ps.time
+                    # Pass with split concat ops may end up with a dependency to
+                    # itself since output from concat is produced by several avg pool ops.
+                    # Hence pred_pass can be equal to ps.
+                    assert pred_pass == ps or pred_pass.time < ps.time
                     if ps not in pred_pass.successors:
                         pred_pass.successors.append(ps)
 
