@@ -135,13 +135,14 @@ public:
         int macs;
         int cores;
         std::array<Shape, 3> ofmUBlocks;
-        int nOfmUBlocks;
         Shape ifmUBlock;
+        int nOfmUBlocks;
         int ifmRamSizeBytes;
         int accRamSizeBytes;
-        int elemUnits;
-        int numAxiSramLog2;
-        int numAxiExtLog2;
+        int obRamSizeBytes;
+        int cbRamSizeBytes;
+        uint8_t numAxiSramLog2;
+        uint8_t numAxiExtLog2;
         const EthosU85PerfInfo *perfInfo;
     };
 
@@ -160,6 +161,8 @@ private:
     std::array<std::array<Shape, 3>, 3> _uBlockToIfmAuTable{};
     Shape _ifmUBlock;
     int _ifmRamSizeBytes = 0;
+    int _cbRamSizeBytes = 0;
+    int _obRamSizeBytes = 0;
     int _accRamSizeBytes = 0;
     int _numAxiSramLog2 = 0;
     int _numAxiExtLog2 = 0;
@@ -202,6 +205,15 @@ public:
 protected:
     void ApplyConfig(const AcceleratorConfig *cfg);
 
+    struct FindConfigCommon
+    {
+        Shape ofmBlockMax;
+        Shape granule;
+        Shape ublock;
+        int accBits;
+    };
+
+    Shape FindElementwiseConfig(const ArchitectureConfigQuery &query, const FindConfigCommon &common);
     std::unique_ptr<ArchitectureOpConfig> FindBlockConfig(OpType opType, const ArchitectureConfigQuery &query);
 
     bool TryBlockConfig(EthosU85NpuOp npuOp, const Shape &ofmBlock, const Shape &ifmBlock, const Shape &ifmShape,

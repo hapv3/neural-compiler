@@ -21,6 +21,10 @@
 
 enum class TransposeType : uint32_t
 {
+    H = 0x1,
+    W = 0x2,
+    C = 0x3,
+    MaskC = 0xF,
     NHWC = 0x0123,
     NWHC = 0x0213,
     NHCW = 0x0132,
@@ -35,13 +39,15 @@ inline constexpr TransposeType operator>>(TransposeType type, uint32_t size)
     return TransposeType(uint32_t(type) >> size);
 }
 
-inline bool IsNone(TransposeType type)
+inline constexpr TransposeType operator&(TransposeType a, TransposeType b)
 {
-    for ( int p = 0; p < 32; p += 4 )
-    {
-        if ( type == (TransposeType::None >> p) ) return true;
-    }
-    return false;
+    return TransposeType(uint32_t(a) & uint32_t(b));
+}
+
+inline constexpr bool IsNone(TransposeType type)
+{
+    uint32_t offset = (7u - (uint32_t(type) & 7u)) * 4;
+    return uint32_t(TransposeType::None) >> offset == uint32_t(type);
 }
 
 // Reduce a 4D transpose mask to a 3D transpose mask (f.ex. 0x0123 -> 0x012)

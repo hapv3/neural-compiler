@@ -64,16 +64,19 @@ static const EthosU85PerfInfo s_EthosU85PerfInfo[] = {
 
 static const ArchEthosU85::AcceleratorConfig s_EthosU85Configs[] = {
     // Accelerator.Ethos_U85_128
-    {128, 1, {Shape(1, 2, 8), Shape(1, 1, 16)}, 2, Shape(1, 2, 8), 8 * 1024, 8 * 1024, 2, 1, 0, &s_EthosU85PerfInfo[0]},
+    {128, 1, {Shape(1, 2, 8), Shape(1, 1, 16)}, Shape(1, 2, 8), 2, 8192, 8192, 2048, 768, 1, 0, &s_EthosU85PerfInfo[0]},
     // Accelerator.Ethos_U85_256
-    {256, 1, {Shape(1, 2, 16), Shape(1, 4, 8), Shape(2, 2, 8)}, 3, Shape(2, 2, 8), 16 * 1024, 16 * 1024, 4, 1, 0, &s_EthosU85PerfInfo[0]},
+    {256, 1, {Shape(1, 2, 16), Shape(1, 4, 8), Shape(2, 2, 8)}, Shape(2, 2, 8), 3, 16384, 16384, 2048, 1536, 1, 0, &s_EthosU85PerfInfo[0]},
     // Accelerator.Ethos_U85_512
-    {512, 2, {Shape(2, 2, 16), Shape(1, 4, 16)}, 2, Shape(2, 2, 16), 16 * 1024, 32 * 1024, 8, 1, 0, &s_EthosU85PerfInfo[1]},
-    // Accelerator.Ethos_U85_1014
-    {1024, 4, {Shape(2, 2, 32), Shape(1, 4, 32), Shape(2, 4, 16)}, 3, Shape(4, 2, 16), 16 * 1024, 64 * 1024, 16, 1, 1, &s_EthosU85PerfInfo[2]},
+    {512, 2, {Shape(2, 2, 16), Shape(1, 4, 16)}, Shape(2, 2, 16), 2, 16384, 32768, 4096, 3072, 1, 0, &s_EthosU85PerfInfo[1]},
+    // Accelerator.Ethos_U85_1024
+    {1024, 4, {Shape(2, 2, 32), Shape(1, 4, 32), Shape(2, 4, 16)}, Shape(4, 2, 16), 3, 16384, 65536, 4096, 6144, 1, 1, &s_EthosU85PerfInfo[2]},
     // Accelerator.Ethos_U85_2048
-    {2048, 4, {Shape(2, 2, 64), Shape(1, 4, 64), Shape(4, 4, 16)}, 3, Shape(4, 4, 16), 32 * 1024, 128 * 1024, 32, 2, 1, &s_EthosU85PerfInfo[3]},
+    {2048, 4, {Shape(2, 2, 64), Shape(1, 4, 64), Shape(4, 4, 16)}, Shape(4, 4, 16), 3, 32768, 131072, 8192, 12288, 2, 1, &s_EthosU85PerfInfo[3]},
 };
+
+constexpr int CB_SLOTS = 6;
+constexpr int BRICK_ELEMENTS = 16;
 
 enum class ElementwiseUsage
 {
@@ -154,6 +157,8 @@ void ArchEthosU85::ApplyConfig(const AcceleratorConfig *cfg)
     // Internal memory
     _ifmRamSizeBytes = cfg->ifmRamSizeBytes;
     _accRamSizeBytes = cfg->accRamSizeBytes;
+    _cbRamSizeBytes = cfg->cbRamSizeBytes;
+    _obRamSizeBytes = cfg->obRamSizeBytes;
     _numAxiSramLog2 = cfg->numAxiSramLog2;
     _numAxiExtLog2 = cfg->numAxiExtLog2;
 
@@ -693,21 +698,167 @@ Shape ArchEthosU85::FindUBlock(OpType opType, const ArchitectureConfigQuery &que
     return bestUblk;
 }
 
+static int GranularScale(int range, int granule, double ratio)
+{
+    assert(granule > 0);
+    int granules = range / granule;
+    granules = std::max(int(granules * ratio), 1);
+    return granules * granule;
+}
+
+static Shape FitVolumeByAspect(
+    const Shape &shape, int fitVolume, const Shape &granule, const Shape &limit, const std::array<int, 3> &priority)
+{
+    LOG_TRACE2("FitVolumeByAspect: {} into {} granule {}, limit {}\n", shape.ToString(), fitVolume, granule.ToString(),
+        limit.ToString());
+    LOG_INDENT(Logging::Out);
+    assert(shape.Size() >= 3);
+    assert(priority[0] + priority[1] + priority[2] == -6);  // Simple axis presence check
+
+    // Extract axes by their priority
+    int primary = shape[priority[0]];
+    int secondary = shape[priority[1]];
+    int tertiary = shape[priority[2]];
+    int pgranule = granule[priority[0]];
+    int sgranule = granule[priority[1]];
+    int tgranule = granule[priority[2]];
+    int plimit = limit[priority[0]];
+    int slimit = limit[priority[1]];
+    int tlimit = limit[priority[2]];
+
+    // Fit a roughly aspect-correct 'shape' into 'fitVolume'
+    int sval, tval;
+    int pval = std::clamp(primary, 1, plimit);
+    pval = RoundAway(pval, pgranule);
+
+    // Planar area (depends on chosen axes)
+    int area = std::max(fitVolume / pval, 1);
+    assert(secondary > 0);
+    double aspect = double(tertiary) / secondary;
+
+    // Casting to int rounds down, making tval the smallest axis
+    tval = int(std::sqrt(area * aspect));
+    tval = std::clamp(tval, 1, tlimit);
+
+    // Divide before rounding tval to push sval upwards
+    sval = area / tval;
+    sval = std::clamp(sval, 1, slimit);
+
+    // Round to granule
+    sval = RoundAway(sval, sgranule);
+    tval = RoundAway(tval, tgranule);
+
+    Shape result(1, 1, 1);
+    result[priority[0]] = pval;
+    result[priority[1]] = sval;
+    result[priority[2]] = tval;
+
+    LOG_TRACE2("Pre-fitted shape: {}\n", result.ToString());
+
+    // The result MUST NOT exceed the requested volume
+    // TODO: Crude loop - WORKS but needs improvement
+    int elements = pval * sval * tval;
+    while ( elements > fitVolume )
+    {
+        double ratio = double(fitVolume) / elements;
+        if ( tval > tgranule )
+        {
+            tval = GranularScale(tval, tgranule, ratio);
+        }
+        else if ( sval > sgranule )
+        {
+            sval = GranularScale(sval, sgranule, ratio);
+        }
+        else if ( pval > pgranule )
+        {
+            pval = GranularScale(pval, pgranule, ratio);
+        }
+        else break;  // Give up
+        elements = pval * sval * tval;
+    }
+
+    result[priority[0]] = pval;
+    result[priority[1]] = sval;
+    result[priority[2]] = tval;
+    LOG_TRACE2("Fitted Shape: {}\n", result.ToString());
+    return result;
+}
+
+Shape ArchEthosU85::FindElementwiseConfig(const ArchitectureConfigQuery &query, const FindConfigCommon &common)
+{
+    LOG_TRACE2("Elementwise OFM {}\n", query.ofmShape.ToString());
+    LOG_INDENT(Logging::Out);
+    assert(query.ifmBits > 0);
+    const Shape ofmShape = Shape::PadAxes(Shape::RoundAway(query.ofmShape, common.ublock), 3, 1);
+    Shape ofmBlockLimit = Shape::Min(ofmShape, common.ofmBlockMax);
+
+    // Default to width/depth for HCWB16
+    std::array<int, 3> axisPriority{-2, -1, -3};
+
+    const bool isScalar = (query.ifmShape[0].Elements() == 1) || (query.ifmShape[1] && query.ifmShape[1].Elements() == 1);
+    // Binary elementwise, potentially broadcast
+    if ( !isScalar && query.ifmShape[1] )
+    {
+        const int cbBricks = (_cbRamSizeBytes / CB_SLOTS) / (BRICK_ELEMENTS * (query.ifmBits / 8));
+        unsigned broadcastMask = query.ifmShape[0].LessMask(query.ofmShape);
+        broadcastMask |= query.ifmShape[1].LessMask(query.ofmShape);
+        // Broadcast in depth first
+        if ( broadcastMask & 1 )
+        {
+            int hLimit = common.ublock.Height();
+            int wLimit = cbBricks / common.ublock.Height();
+            while ( (wLimit > common.ublock.Width()) && (wLimit > ofmBlockLimit.Width() / 2) && (hLimit < ofmBlockLimit.Height()) )
+            {
+                wLimit = wLimit / 2;
+                hLimit = hLimit * 2;
+            }
+
+            return Shape(hLimit, wLimit, RoundAway(ofmBlockLimit.Depth(), common.ublock.Depth()));
+        }
+        // Broadcast in width first
+        else if ( broadcastMask & 2 )
+        {
+            axisPriority = {-2, -1, -3};
+        }
+        // Broadcast in height first
+        else if ( broadcastMask & 4 )
+        {
+            int cLimit = common.granule.Depth();
+            int wLimit = cbBricks;
+
+            while ( (wLimit > common.ublock.Width()) && (wLimit > ofmBlockLimit.Width() / 2) && (cLimit < ofmBlockLimit.Depth()) )
+            {
+                wLimit = wLimit / 2;
+                cLimit = cLimit * 2;
+            }
+
+            return Shape(ofmBlockLimit.Height(), wLimit, cLimit);
+        }
+    }
+
+    // As long as the output buffer is kept filled we will fill the pipeline. We size for
+    // at least this many elements which ultimately affects HW striping.
+    const int minOfmElements = 2 * (_obRamSizeBytes * 8) / query.ifmBits;
+    // Fit the ofmShape into the available elements with granule and limit constraints.
+    Shape ofmBlock = FitVolumeByAspect(ofmShape, minOfmElements, common.granule, ofmBlockLimit, axisPriority);
+    ofmBlock = Shape::RoundAway(ofmBlock, common.granule);
+    LOG_TRACE2("Elementwise choice: ofmBlock = {}\n", ofmBlock.ToString());
+    return ofmBlock;
+}
+
 std::unique_ptr<ArchitectureOpConfig> ArchEthosU85::FindBlockConfig(OpType opType, const ArchitectureConfigQuery &query)
 {
+    constexpr int OFMSplitDepth = 16;  // Specific to this architecture
     assert(query.ifmBits > 0 && (query.ifmBits <= 32 || (query.ifmBits == 64 && opType == OpType::Rescale)));
     assert(query.ofmShape.Size() > 2 && "Insufficient dimensions to search for block config");
     assert(query.kernel != nullptr);
 
-    if ( !SupportsAccumulatorMode(query.accSource, query.accOutputEnabled) ) return nullptr;
-
-    const int OFMSplitDepth = 16;  // Specific to this architecture
+    EthosU85NpuOp npuOp = GetHWOp(opType);
+    assert(npuOp != EthosU85NpuOp::None);
+    if ( npuOp == EthosU85NpuOp::Dma ) return nullptr;  // DMA ops don't use block config
 
     // Elementwise larger-volume correction
     const Shape &ifmShape = (query.ifmShape[1].Elements() > query.ifmShape[0].Elements()) ? query.ifmShape[1] : query.ifmShape[0];
-
-    EthosU85NpuOp npuOp = GetHWOp(opType);
-    assert(npuOp != EthosU85NpuOp::None);
 
     // Operator typing help
     bool isPooling = npuOp == EthosU85NpuOp::Pooling || npuOp == EthosU85NpuOp::ReduceSum;
@@ -716,30 +867,16 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU85::FindBlockConfig(OpType opTyp
     bool isElementwise = npuOp == EthosU85NpuOp::Elementwise;
     bool isConvolution = npuOp == EthosU85NpuOp::Convolution || npuOp == EthosU85NpuOp::Depthwise;
     bool isResize = npuOp == EthosU85NpuOp::Resize;
-    bool isDma = npuOp == EthosU85NpuOp::Dma;
     bool isPartKernel = isConvolution && ChooseKernelMethod(ifmShape, query.ifmBits, query.kernel);
     bool isEqualDepthOp = isElementwise || (isPooling && !isReduceSum) || isDepthwise || isResize;
-
-    if ( isDma )
-    {
-        // DMA ops doesn't use block config
-        return nullptr;
-    }
-
-    // Operator configuration to be returned
-    auto config = std::make_unique<EthosU85OpConfig>();
 
     EthosU85Traversal traversal = isDepthwise ? EthosU85Traversal::Depthwise : (isPartKernel ? EthosU85Traversal::PartKernel : EthosU85Traversal::DepthFirst);
 
     // Accumulator settings
     EthosU85Accumulator accType = EthosU85Accumulator::Acc32;
-    if ( query.ifmBits == 16 && (!isPooling || isReduceSum) && query.scaled )
+    if ( (query.ifmBits == 16 && (!isPooling || isReduceSum) && query.scaled) ||  // Normal 16-bit selection
+         (query.ifmBits >= 32) )                                                  // Special case for Rescale int48
     {
-        accType = EthosU85Accumulator::Acc48;
-    }
-    else if ( query.ifmBits == 64 && opType == OpType::Rescale )
-    {
-        // Special case for Rescale int48
         accType = EthosU85Accumulator::Acc48;
     }
 
@@ -749,7 +886,7 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU85::FindBlockConfig(OpType opTyp
     int numBlocksInRam = 2;
 
     const Shape ofmUBlock = FindUBlock(opType, query);
-    if ( ofmUBlock == Shape() )
+    if ( !ofmUBlock )
     {
         // no valid ofm microblock found
         LOG_WARN("Could not find a valid OFM microblock for {} with {}-bit input.\n", OpTypeToString(opType), query.ifmBits);
@@ -779,31 +916,45 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU85::FindBlockConfig(OpType opTyp
         ifmBlockDepth = 64;
     }
 
+    // When using brick format and certain transposes, there are additional constraints to the block size, so we must
+    // extend the search space to be able to find a valid block size.
+    Shape ofmBlockGranule = ofmUBlock;
+    if ( query.ofmFormat == TensorFormat::NHCWB16 )
+    {
+        if ( (query.transpose & TransposeType::MaskC) == TransposeType::W ) ofmBlockGranule[-2] = 16;
+        if ( (query.transpose & TransposeType::MaskC) == TransposeType::H ) ofmBlockGranule[-3] = 16;
+    }
+    if ( query.ofmShape.Depth() >= 16 ) ofmBlockGranule[-1] = 16;
+
+    // Operator configuration to be returned
+    auto config = std::make_unique<EthosU85OpConfig>();
+    config->_ofmUBlock = ofmUBlock;
+    config->_accumulatorType = accType;
+    config->_accumulatorSource = query.accSource;
+    config->_accumulatorOutputEnabled = query.accOutputEnabled;
+    config->_ifmRamSizeBytes = _ifmRamSizeBytes;
+    config->_traversal = traversal;
+
+    // Common constant vars
+    FindConfigCommon common;
+    common.ofmBlockMax = _ofmBlockMax.Untranspose(Reduce4To3(query.transpose));
+    common.ublock = ofmUBlock;
+    common.granule = ofmBlockGranule;
+    common.accBits = AccumulatorBits(accType);
+
+    if ( isElementwise )
+    {
+        config->_ofmBlock = FindElementwiseConfig(query, common);
+        config->_ifmBlock = config->_ofmBlock;
+        return config;
+    }
+
     // Weights fetch (for operators that have them)
     int weightFetchWH = isConvolution ? query.kernel->Size().AreaXY() : 0;
 
     int ofmUBlockDepth = ofmUBlock.Depth();
 
-    // When using brick format and certain transposes, there are additional constraints to the block size, so we must
-    // extend the search space to be able to find a valid block size.
-    Shape ofmBlockMin = Shape(0, 0, 0);
-    if ( query.ofmFormat == TensorFormat::NHCWB16 )
-    {
-        switch ( query.transpose )
-        {
-            case TransposeType::NCHW:
-            case TransposeType::NHCW:
-                ofmBlockMin = ofmBlockMin.WithWidth(16);
-                break;
-            case TransposeType::NCWH:
-            case TransposeType::NWCH:
-                ofmBlockMin = ofmBlockMin.WithHeight(16);
-                break;
-            default:
-                break;
-        }
-    }
-    Shape searchSpaceStep = Shape::Max(ofmUBlock, ofmBlockMin);
+    Shape searchSpaceStep = Shape::Max(ofmUBlock, ofmBlockGranule);
     Shape ofmBlockMaxTp = _ofmBlockMax.Untranspose(Reduce4To3(query.transpose));
     Shape searchSpaceEnd = Shape::RoundAway(Shape::Max(Shape::Min(query.ofmShape, ofmBlockMaxTp), searchSpaceStep), ofmUBlock);
 
@@ -891,8 +1042,7 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU85::FindBlockConfig(OpType opTyp
                     }
 
                     // Scale relative to every output OFM element
-                    float relativeCost =
-                        (isElementwise || isResize) ? float(ofmElements) / (float(height) * width * depth) : (ifmFetch + weightFetch) / float(ofmElements);
+                    float relativeCost = (isResize) ? float(ofmElements) / (float(height) * width * depth) : (ifmFetch + weightFetch) / float(ofmElements);
 
                     // If the entire IFM can be encompassed by both buffers, bias to prefer this configuration
                     if ( ifmShape.Elements() < ifmBlock.Elements() * 2 )
@@ -992,12 +1142,8 @@ int ArchEthosU85::CalcResizeMaxOfmBlockWidth(int ifmBits, int scaleN, int scaleD
     // the IFM block to fit in the chaining buffer
     assert(scaleN > 0);
     assert(scaleD > 0);
-    int numIfmCbSlots = _macs / 16;
-    if ( ifmBits == 16 )
-    {
-        numIfmCbSlots /= 2;
-    }
-    int maxOfmBlkW = int(std::ceil(((numIfmCbSlots - 2) * scaleN + 1) / double(scaleD)));
+    const int cbBricks = (_cbRamSizeBytes / CB_SLOTS) / (BRICK_ELEMENTS * (ifmBits / 8));
+    int maxOfmBlkW = int(std::ceil(((cbBricks - 2) * scaleN + 1) / double(scaleD)));
     maxOfmBlkW = std::max(1, std::min(maxOfmBlkW, _ofmBlockMax.Width()));
     return maxOfmBlkW;
 }

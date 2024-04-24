@@ -497,6 +497,12 @@ public:
         return result;
     }
 
+    unsigned LessMask(const Shape &other) const { return MinAxisFunc<std::less<int32_t>>(*this, other); }
+
+    unsigned GreaterMask(const Shape &other) const { return MinAxisFunc<std::greater<int32_t>>(*this, other); }
+
+    unsigned EqualMask(const Shape &other) const { return MinAxisFunc<std::equal_to<int32_t>>(*this, other); }
+
     bool IsValid() const { return _last >= 0; }
 
     bool IsDynamic() const { return _dynamic; }
@@ -593,6 +599,21 @@ private:
     const int32_t *Storage() const { return _dynamic ? _storage.ptr : _storage.axes; }
 
     int ToOffset(int index) const { return (index < 0) ? (-index - 1) : (_last - index); }
+
+    template<typename FUNC>
+    static unsigned MinAxisFunc(const Shape &a, const Shape &b)
+    {
+        int size = std::min(a.Size(), b.Size());
+        assert(size < 32);
+        auto *pa = a.Storage();
+        auto *pb = b.Storage();
+        unsigned axisMask = 0;
+        for ( int i = 0; i < size; i++ )
+        {
+            if ( FUNC()(pa[i], pb[i]) ) axisMask |= 1 << i;
+        }
+        return axisMask;
+    }
 
     // Apply a function to the minimum number of axes between two shapes.
     template<typename FUNC>
