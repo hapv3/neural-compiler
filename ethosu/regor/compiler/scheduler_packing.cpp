@@ -486,6 +486,9 @@ std::vector<std::unique_ptr<SchedulerOperation>> SchedulerPacking::DecomposeSche
         case OpType::DepthwiseConv2DBias:
             result = DecomposeDepthwiseConv2D(_arch, std::move(op));
             break;
+        case OpType::TransposeConv2D:
+            result = DecomposeTransposeConv2D(_arch, std::move(op));
+            break;
         default:
             assert(false);
             break;
@@ -495,14 +498,6 @@ std::vector<std::unique_ptr<SchedulerOperation>> SchedulerPacking::DecomposeSche
 
 ArchResampling SchedulerPacking::ResamplingMode(TensorUsage usage, OpType opType) const
 {
-    // only set resampling-mode on IFM-connections
-    if ( IsIFM(usage) )
-    {
-        if ( opType == OpType::Conv2DBackpropInputSwitchedBias )
-        {
-            return ArchResampling::Zeros;
-        }
-    }
     return ArchResampling::None;
 }
 

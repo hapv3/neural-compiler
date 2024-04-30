@@ -410,6 +410,15 @@ flatbuffers::Offset<void> TfLiteWriter::SerialiseOptions(const Operation *operat
         }
         break;
 
+        case tflite::BuiltinOptions::TransposeConvOptions:
+        {
+            const auto kernel = TfLiteKernel(*operation->Kernel());
+            const auto typed_offset = tflite::CreateTransposeConvOptions(
+                _flatbuffer, kernel.padding, kernel.stride_w, kernel.stride_h, fused_activation_function);
+            offset = typed_offset.Union();
+        }
+        break;
+
         case tflite::BuiltinOptions::Pool2DOptions:
         {
             const auto kernel = TfLiteKernel(*operation->Kernel());
@@ -683,7 +692,6 @@ flatbuffers::Offset<void> TfLiteWriter::SerialiseOptions(const Operation *operat
         case tflite::BuiltinOptions::LessEqualOptions:
         case tflite::BuiltinOptions::SelectOptions:
         case tflite::BuiltinOptions::SliceOptions:
-        case tflite::BuiltinOptions::TransposeConvOptions:
         case tflite::BuiltinOptions::SparseToDenseOptions:
         case tflite::BuiltinOptions::TileOptions:
         case tflite::BuiltinOptions::ExpandDimsOptions:

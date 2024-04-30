@@ -149,9 +149,8 @@ public:
 namespace
 {
 
-const std::array<BuiltinOperator, 1> convolutionOps = {
-    BuiltinOperator::CONV_2D,
-};
+const std::array<BuiltinOperator, 3> convolutionOps = {
+    BuiltinOperator::CONV_2D, BuiltinOperator::DEPTHWISE_CONV_2D, BuiltinOperator::TRANSPOSE_CONV};
 
 const std::array<BuiltinOperator, 2> poolingOps = {BuiltinOperator::AVERAGE_POOL_2D, BuiltinOperator::MAX_POOL_2D};
 

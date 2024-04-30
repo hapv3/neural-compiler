@@ -2709,7 +2709,8 @@ int TFLiteGraphOptimiser::CalcPadAfter(int inputSize, int stride, int filterSize
 Operation *TFLiteGraphOptimiser::ReplacePadByExplicitPadding(Graph *const graph, Operation *const operation)
 {
     UNUSED(graph);
-    if ( IsConvolution(operation->Type()) && operation->Kernel()->Padding().IsZero() && operation->IFM(0)->Writers().size() == 1 )
+    if ( IsConvolution(operation->Type()) && operation->Type() != OpType::TransposeConv2D &&
+         operation->Kernel()->Padding().IsZero() && operation->IFM(0)->Writers().size() == 1 )
     {
         // Potential for future optimization: in certain cases also Pad+AvgPool can be handled
         // by changing to Depthwise.

@@ -542,9 +542,9 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
     CalcPaddingAndSkirt(kernel, maxIfmShape, ofmShape, padding, skirt);
 
     int upscaling = 1;
-    if ( opType == OpType::Conv2DBackpropInputSwitchedBias )
+    if ( ifm0Conn->resamplingMode == ArchResampling::Zeros )
     {
-        upscaling = ofmShape.Height() / ifm0Shape.Height();
+        upscaling = 2;
     }
     auto &depthSlices = opInfo->ofmDepthSlices;
     int dilatedKernelHeight = kernel->DilatedWH().y;

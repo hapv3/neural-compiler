@@ -128,6 +128,7 @@ bool CanDecompose(Architecture *, const SchedulerOperation *schedOp)
         return false;
     if ( schedOp->Type() == OpType::Conv2D ) return true;
     if ( schedOp->Type() == OpType::DepthwiseConv2DBias ) return true;
+    if ( schedOp->Type() == OpType::TransposeConv2D ) return true;
     return false;
 }
 
@@ -320,6 +321,144 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
     // TODO: MLBEDSW-8783 Decompose convolutions with large stride
     // If we get here, decomposition has failed, the resulting operations will be executed on CPU
     result.emplace_back(std::move(op));
+    return result;
+}
+
+// Reverse elements along H and W axes
+template<typename TYPE>
+static std::shared_ptr<SchedulerTensor> ReverseHW2(SchedulerTensor *tensor)
+{
+    const auto &inBufferView = tensor->bufferView;
+    const auto &inBufferValues = inBufferView.Values<TYPE>();
+
+    // Create output buffer that will contain reversed weights
+    const auto size = inBufferView.BufferSize();
+    auto outBuffer = std::make_shared<Buffer>(std::make_unique<TYPE[]>(size), size);
+    BufferView outBufferView(std::move(outBuffer), tensor->bufferView);
+    auto outBufferValues = outBufferView.WritableValues<TYPE>();
+
+    // Reverse height and width into the output buffer
+    int batch = outBufferView.ViewShape().Batch();
+    int height = outBufferView.ViewShape().Height();
+    int width = outBufferView.ViewShape().Width();
+    int depth = outBufferView.ViewShape().Depth();
+    for ( int n = 0; n < batch; n++ )
+    {
+        for ( int h = 0; h < height; h++ )
+        {
+            for ( int w = 0; w < width; w++ )
+            {
+                for ( int c = 0; c < depth; c++ )
+                {
+                    int inElement = inBufferValues.ElementIndex({n, h, w, c});
+                    int outElement = outBufferValues.ElementIndex({n, height - h - 1, width - w - 1, c});
+
+                    outBufferValues[outElement] = inBufferValues[inElement];
+                }
+            }
+        }
+    }
+
+    // Clone tensor with new buffer with new unique ID because now the tensor is different
+    auto clonedTensor = std::make_shared<SchedulerTensor>(*tensor);
+    clonedTensor->bufferView = std::move(outBufferView);
+    clonedTensor->equivalenceId = GenerateUniqueId();
+
+    return clonedTensor;
+}
+
+// Reverse elements along H and W axes
+static std::shared_ptr<SchedulerTensor> ReverseHW(SchedulerTensor *tensor)
+{
+    assert(tensor->IsConstant());
+    assert(tensor->producers.size() == 0);
+    assert(tensor->consumers.size() == 1);
+
+    switch ( tensor->dataType )
+    {
+        case DataType::Int8:
+            return ReverseHW2<int8_t>(tensor);
+        case DataType::UInt8:
+            return ReverseHW2<uint8_t>(tensor);
+        default:
+            assert(false && "Unknown data type");
+            return nullptr;
+    }
+}
+
+// Decompose Transpose Conv2D into Conv2D
+std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTransposeConv2D(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
+{
+    std::vector<std::unique_ptr<SchedulerOperation>> result;
+
+    auto ifmConn = op->Input(TensorUsage::IFM);
+    auto weightsConn = op->Input(TensorUsage::Weights);
+    auto ofmConn = op->Output(TensorUsage::OFM);
+
+    auto kernel = op->Kernel();
+    const int32_t kernel_h = kernel->Size().y;
+    assert(kernel_h > 0);
+    const int32_t kernel_w = kernel->Size().x;
+    assert(kernel_w > 0);
+    const int32_t stride_h = kernel->Stride().y;
+    assert(stride_h > 0);
+    const int32_t stride_w = kernel->Stride().x;
+    assert(stride_w > 0);
+
+    int actualIfmHeight = ifmConn->shape.Height() * stride_h;
+    int actualIfmWidth = ifmConn->shape.Width() * stride_w;
+    int actualOfmHeight = ofmConn->shape.Height();
+    int actualOfmWidth = ofmConn->shape.Width();
+    int heightPadding = NeededTotalPadding(actualIfmHeight, actualOfmHeight, 1, kernel_h);
+    int widthPadding = NeededTotalPadding(actualIfmWidth, actualOfmWidth, 1, kernel_w);
+
+    if ( (stride_h == 1 && stride_w == 1) || (stride_h == 2 && stride_w == 2) ||
+         (stride_h == 1 && stride_w == 2 && ifmConn->shape.Height() == 1 && kernel_h == 1) )
+    {
+        // IFM pad for 1x1 stride
+        int bottom = heightPadding / 2;
+        int top = heightPadding - bottom;
+        int right = widthPadding / 2;
+        int left = widthPadding - right;
+
+        // Reverse H and W weights
+        weightsConn->tensor = ReverseHW(weightsConn->tensor.get());
+
+        if ( (stride_h == 2 || stride_w == 2) )
+        {
+            ifmConn->resamplingMode = ArchResampling::Zeros;
+
+            // IFM pad for 2x2 stride
+            if ( kernel->Padding().IsZero() )
+            {
+                // TFLite VALID padding
+                bottom = std::max(kernel_h - 2, 0);
+                top = kernel_h - 1;
+                right = std::max(kernel_w - 2, 0);
+                left = kernel_w - 1;
+            }
+            else
+            {
+                // TFLite SAME padding
+                bottom = std::max(((heightPadding + 1) / stride_h) - 1, 0);
+                top = std::max(kernel_h - 1 - bottom, 0);
+                right = std::max(((widthPadding + 1) / stride_w) - 1, 0);
+                left = std::max(kernel_w - 1 - right, 0);
+            }
+        }
+
+        Kernel newKernel = kernel->WithStride({1, 1}).WithPadding({top, left, bottom, right});
+
+        // Switch to Conv2D
+        op->_type = OpType::Conv2DBias;
+        op->SetKernel(&newKernel);
+        result.emplace_back(std::move(op));
+    }
+    else
+    {
+        result.emplace_back(std::move(op));
+    }
+
     return result;
 }
 

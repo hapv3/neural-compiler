@@ -112,8 +112,6 @@ enum class OpType : uint16_t
     ConcatEmbeddings,
     ConcatTFLite,
     Const,
-    Conv2DBackpropInput,
-    Conv2DBackpropInputSwitchedBias,
     Conv2DBias,
     Cos,
     Cumsum,
@@ -242,8 +240,7 @@ constexpr inline bool IsDepthwise(OpType opType)
 
 constexpr inline bool IsConvolution(OpType opType)
 {
-    return opType == OpType::Conv2D || opType == OpType::Conv2DBackpropInput || opType == OpType::Conv2DBackpropInputSwitchedBias ||
-           opType == OpType::Conv2DBias || opType == OpType::DepthwiseConv2DBias;
+    return opType == OpType::Conv2D || opType == OpType::Conv2DBias || opType == OpType::DepthwiseConv2DBias || opType == OpType::TransposeConv2D;
 }
 
 constexpr inline bool IsPooling(OpType opType)

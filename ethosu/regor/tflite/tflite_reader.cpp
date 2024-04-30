@@ -72,15 +72,32 @@ static void ClampActivation(const std::shared_ptr<Operation> &operation)
 static void SetKernel(const std::shared_ptr<Operation> &operation, const Point2i &size, const Point2i &stride,
     const Point2i &dilation, tflite::Padding padding, int depthMultiplier = 1)
 {
+    const auto &inputShape = operation->IFM(0)->StorageShape();
+    const auto &outputShape = operation->OFM()->StorageShape();
     Margin pad;
-    if ( padding == tflite::Padding::SAME )
+    if ( operation->Type() == OpType::TransposeConv2D )
     {
-        auto &inputShape = operation->IFM(0)->StorageShape();
-        int dw = dilation.x * (size.x - 1) + 1;
-        int xpad = NeededTotalPadding(inputShape.Width(), stride.x, dw);
-        int dh = dilation.y * (size.y - 1) + 1;
-        int ypad = NeededTotalPadding(inputShape.Height(), stride.y, dh);
-        pad = Margin(ypad / 2, xpad / 2, (ypad + 1) / 2, (xpad + 1) / 2);
+        // Calculate TOSA TRANSPOSE_CONV2D out_pad
+        int totalPaddingWidth = (inputShape.Width() - 1) * stride.x + size.x - outputShape.Width();
+        totalPaddingWidth = totalPaddingWidth > 0 ? totalPaddingWidth : 0;
+        int totalPaddingHeight = (inputShape.Height() - 1) * stride.y + size.y - outputShape.Height();
+        totalPaddingHeight = totalPaddingHeight > 0 ? totalPaddingHeight : 0;
+        int padTop = totalPaddingHeight / 2;
+        int padLeft = totalPaddingWidth / 2;
+        int padBottom = totalPaddingHeight - padTop;
+        int padRight = totalPaddingWidth - padLeft;
+        pad = Margin(padTop, padLeft, padBottom, padRight);
+    }
+    else
+    {
+        if ( padding == tflite::Padding::SAME )
+        {
+            int dw = dilation.x * (size.x - 1) + 1;
+            int xpad = NeededTotalPadding(inputShape.Width(), stride.x, dw);
+            int dh = dilation.y * (size.y - 1) + 1;
+            int ypad = NeededTotalPadding(inputShape.Height(), stride.y, dh);
+            pad = Margin(ypad / 2, xpad / 2, (ypad + 1) / 2, (xpad + 1) / 2);
+        }
     }
     auto kernel = std::make_unique<Kernel>(size, stride, dilation, depthMultiplier, pad);
     operation->SetKernel(std::move(kernel));
@@ -419,6 +436,17 @@ void TfLiteReader::ParseOperatorOptions(
         }
         break;
 
+        case tflite::BuiltinOptions::TransposeConvOptions:
+        {
+            const auto options = GetBuiltinOptions<tflite::TransposeConvOptions>(tflite_operator);
+            auto weight_tensor = operation->Input(TensorUsage::Weights)->tensor;
+            weight_tensor->SetAxisOrder(AxisOrder::OHWI);
+            SetKernel(operation, Point2i(weight_tensor->StorageShape().Width(), weight_tensor->StorageShape().Height()),
+                Point2i(options->stride_w(), options->stride_h()), Point2i(1, 1) /* no dilation */, options->padding());
+            UnFuseActivation(operation, options->fused_activation_function(), optDb);
+        }
+        break;
+
         case tflite::BuiltinOptions::Pool2DOptions:
         {
             const auto options = GetBuiltinOptions<tflite::Pool2DOptions>(tflite_operator);
@@ -669,7 +697,6 @@ void TfLiteReader::ParseOperatorOptions(
         case tflite::BuiltinOptions::LessEqualOptions:
         case tflite::BuiltinOptions::SelectOptions:
         case tflite::BuiltinOptions::SliceOptions:
-        case tflite::BuiltinOptions::TransposeConvOptions:
         case tflite::BuiltinOptions::SparseToDenseOptions:
         case tflite::BuiltinOptions::TileOptions:
         case tflite::BuiltinOptions::ExpandDimsOptions:
