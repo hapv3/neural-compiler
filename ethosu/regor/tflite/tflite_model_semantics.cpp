@@ -361,6 +361,19 @@ void ConstraintMatchingInOutTypes(const Operator &op, const SubGraph &subgraph, 
     }
 }
 
+void ConstraintSoftmaxInOutTypes(const Operator &op, const SubGraph &subgraph, const BuiltinOperator &builtinOperator, BufferOffsetRef)
+{
+    auto ifm = TensorFromUsage(regor::TensorUsage::IFM, op, builtinOperator, *subgraph.tensors());
+    auto ofm = TensorFromUsage(regor::TensorUsage::OFM, op, builtinOperator, *subgraph.tensors());
+    if ( ifm->type() != ofm->type() && !(ifm->type() == TensorType::INT8 && ofm->type() == TensorType::INT16) )
+    {
+        std::string constraint = "IFM and OFM types must match or upcast";
+        std::string extra = fmt::format(
+            "IFM type={} and OFM type={}", EnumNameTensorType(ifm->type()), EnumNameTensorType(ofm->type()));
+        throw InvalidTfLiteException(constraint, extra, op, subgraph, builtinOperator);
+    }
+}
+
 void ConstraintBetaValueRange(const Operator &op, const SubGraph &subgraph, const BuiltinOperator &builtinOperator, BufferOffsetRef)
 {
     auto beta = CheckedPtr(op.builtin_options_as_SoftmaxOptions())->beta();
@@ -876,7 +889,7 @@ regor::ordered_map<BuiltinOperator, OpCheckVec> GetSpecificConstraints()
     }
     // SoftmaxSpecificChecks
     specificOpConstraints[BuiltinOperator::SOFTMAX].emplace_back(&ConstraintMatchingShapes);
-    specificOpConstraints[BuiltinOperator::SOFTMAX].emplace_back(&ConstraintMatchingInOutTypes);
+    specificOpConstraints[BuiltinOperator::SOFTMAX].emplace_back(&ConstraintSoftmaxInOutTypes);
     specificOpConstraints[BuiltinOperator::SOFTMAX].emplace_back(&ConstraintBetaValueRange);
 
     // SplitSpecificChecks

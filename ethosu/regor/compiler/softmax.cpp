@@ -363,7 +363,27 @@ Operation *Softmax::GetGraph8Bit(Operation *const operation, TensorConnection *i
     op->attr.asr.round = true;
     op->ConnectInput(TensorUsage::IFM, scaled_exp).Set(oneScaleQuant);
     op->ConnectInput(TensorUsage::IFM1, right_shift).Set(noScaleQuantZp0);
-    op->ConnectOutput(TensorUsage::OFM, ofmConn->tensor).Set(ofmConn->quantization).Set(ofmConn->shape);
+    if ( ifmConn->tensor->Type() == DataType::Int8 && ofmConn->tensor->Type() == DataType::Int16 )
+    {  // Special case for int16 output zero point correction
+        std::string name(op->IFM(0)->Name() + "/" + OpTypeToString(op->Type()));
+        auto shr = std::make_shared<Tensor>(name, op->IFM(0)->Type());
+        shr->SetStorageShape(op->Input(TensorUsage::IFM)->shape);
+        op->ConnectOutput(TensorUsage::OFM, shr).Set(oneScaleQuant);
+        RecordOptimisation(operation, op);
+
+        // PASS 27 - ADD
+        int32_t zp(ofmConn->quantization.zeroPoints[0]);
+        assert(zp == std::numeric_limits<int16_t>::min());
+        auto addOp = std::make_shared<Operation>(OpType::Add);
+        op = addOp.get();
+        op->ConnectInput(TensorUsage::IFM, shr).Set(oneScaleQuant);
+        op->ConnectInput(TensorUsage::IFM1, CreateConstTensor("zeroPoint", zp)).Set(noScaleQuantZp0);
+        op->ConnectOutput(TensorUsage::OFM, ofmConn->tensor).Set(oneScaleQuant).Set(ofmConn->shape);
+    }
+    else
+    {
+        op->ConnectOutput(TensorUsage::OFM, ofmConn->tensor).Set(ofmConn->quantization).Set(ofmConn->shape);
+    }
     RecordOptimisation(operation, op);
 
     return op;
