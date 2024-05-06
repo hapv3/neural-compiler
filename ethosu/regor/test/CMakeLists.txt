@@ -38,6 +38,7 @@ add_catch_test(
         test_graph_packing.cpp
         test_ordered_map.cpp
         test_arch_ethos_u85.cpp
+        test_hash.cpp
     DEPS
         regor::regor-objects
         regor::fmt

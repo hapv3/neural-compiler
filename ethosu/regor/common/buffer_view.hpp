@@ -19,6 +19,7 @@
 #pragma once
 
 #include "common.hpp"
+#include "hash.hpp"
 #include "shape.hpp"
 
 #include <cassert>
@@ -89,6 +90,7 @@ private:
     bool _isLocal = false;
     LocalStorage _localStorage;
     DeleteFunc _deleter = nullptr;
+    Hash128 _dataHash;
 
 public:
     Buffer(const Buffer &) = delete;
@@ -115,6 +117,8 @@ public:
             assert(alias && buffer);
             _refData.cdata = buffer;
         }
+
+        Rehash();
     }
 
     template<typename TYPE, std::enable_if_t<IsSupportedIntegral<TYPE>::value, int> = 0>
@@ -124,6 +128,8 @@ public:
         _refData.data = ptr.release();
         _sizeBytes = sizeof(TYPE);
         _deleter = &Buffer::Delete<TYPE>;
+
+        Rehash();
     }
 
     template<typename TYPE, std::enable_if_t<IsSupportedIntegral<TYPE>::value, int> = 0>
@@ -135,6 +141,8 @@ public:
         assert(INT_MAX / int(sizeof(TYPE)) >= sizeElements);
         _sizeBytes = sizeof(TYPE) * sizeElements;
         _deleter = &Buffer::DeleteArray<TYPE>;
+
+        Rehash();
     }
 
     template<typename TYPE, std::enable_if_t<IsSupportedIntegral<TYPE>::value, int> = 0>
@@ -145,6 +153,8 @@ public:
         _deleter = &Buffer::DeleteVector<TYPE>;
         _refData.data = &GetLocalVector<TYPE>();
         _isLocal = true;
+
+        Rehash();
     }
 
     ~Buffer()
@@ -199,6 +209,7 @@ public:
             return reinterpret_cast<T *>(_refData.data);
         }
     }
+
     template<typename T>
     const T *Data() const
     {
@@ -263,6 +274,19 @@ public:
         {
             return _sizeBytes;
         }
+    }
+
+    const Hash128 &Hash() const { return _dataHash; }
+
+    void Rehash()
+    {
+        // Calculate MD5 hash of data, prefixed by the size of data
+        const auto buffer = const_cast<const Buffer *>(this);
+        auto sizeStr = fmt::format("<{}>", buffer->Size());
+        MD5 hash;
+        hash.Combine(reinterpret_cast<uint8_t *>(sizeStr.data()), int(sizeStr.size()));
+        hash.Combine(buffer->Data<uint8_t>(), buffer->Size());
+        hash.Get(_dataHash);
     }
 
 private:
@@ -403,7 +427,15 @@ public:
     }
 
 public:
+    bool operator==(const BufferView &other) const
+    {
+        return std::tie(_elementBits, _baseOffset, _axisElements, _strideBytes, _buffer->Hash()) ==
+               std::tie(other._elementBits, other._baseOffset, other._axisElements, other._strideBytes, other._buffer->Hash());
+    }
+
     bool HasBuffer() const { return _buffer != nullptr; }
+    int ElementBits() const { return _elementBits; }
+    int FirstElement() const { return _baseOffset; }
     const Shape &ViewShape() const { return _axisElements; }
     const Shape &StrideBytes() const { return _strideBytes; }
 
@@ -441,5 +473,16 @@ public:
     const class Buffer *Buffer() const { return _buffer.get(); }
 };
 
+/// <summary>
+/// Hash function of a view of buffer memory
+/// </summary>
+struct BufferViewHash
+{
+    std::size_t operator()(const BufferView &key) const
+    {
+        return SimpleHash32(
+            key.ElementBits(), key.FirstElement(), key.ViewShape(), key.StrideBytes(), key.Buffer()->Hash().Hash32());
+    }
+};
 
 }  // namespace regor

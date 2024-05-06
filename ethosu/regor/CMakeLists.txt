@@ -247,6 +247,7 @@ regor_lib(
         "regor.cpp"
         "common/common.cpp"
         "common/data_type.cpp"
+        "common/hash.cpp"
         "common/logging.cpp"
         "common/scaling.cpp"
         "common/transpose_type.cpp"
