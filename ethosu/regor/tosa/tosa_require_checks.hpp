@@ -40,3 +40,29 @@ void RequireCheck_2apk8ly9uthz6(const regor::Operation *op, const Context &conte
 }  // namespace checks
 }  // namespace validator
 }  // namespace tosa
+namespace tosa
+{
+namespace validator
+{
+namespace checks
+{
+// Checks for TOSA specification 0.80.0
+void RequireCheck_7uc4ey0qoi0f(const regor::Operation *op, const Context &context);
+void RequireCheck_32ckjbsfiesgu(const regor::Operation *op, const Context &context);
+void RequireCheck_1h6xoevynk8a0(const regor::Operation *op, const Context &context);
+void RequireCheck_2f51h19mqfhr8(const regor::Operation *op, const Context &context);
+void RequireCheck_1oaur42wgph0t(const regor::Operation *op, const Context &context);
+void RequireCheck_3dbpm758kyex1(const regor::Operation *op, const Context &context);
+void RequireCheck_3ah9e1mnk126p(const regor::Operation *op, const Context &context);
+void RequireCheck_2e13btqfr98am(const regor::Operation *op, const Context &context);
+void RequireCheck_lt5trq6bbw9w(const regor::Operation *op, const Context &context);
+void RequireCheck_1nuiu459z8num(const regor::Operation *op, const Context &context);
+void RequireCheck_182ljbxwn59zs(const regor::Operation *op, const Context &context);
+void RequireCheck_2pd0619ns6vtd(const regor::Operation *op, const Context &context);
+void RequireCheck_54sthn768s68(const regor::Operation *op, const Context &context);
+void RequireCheck_7uvvy4pqp2pj(const regor::Operation *op, const Context &context);
+void RequireCheck_2wyo0jz6whe2p(const regor::Operation *op, const Context &context);
+void RequireCheck_8hliqs7zbosu(const regor::Operation *op, const Context &context);
+}  // namespace checks
+}  // namespace validator
+}  // namespace tosa

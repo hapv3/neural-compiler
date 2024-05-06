@@ -159,3 +159,37 @@ void ErrorIfCheck_3oet4aggtv528(const regor::Operation *op, const Context &conte
 }  // namespace checks
 }  // namespace validator
 }  // namespace tosa
+namespace tosa
+{
+namespace validator
+{
+namespace checks
+{
+// Checks for TOSA specification 0.80.0
+void ErrorIfCheck_4tfs5fdsigv(const regor::Operation *op, const Context &context);
+void ErrorIfCheck_3nav30dsmv6gd(const regor::Operation *op, const Context &context);
+void ErrorIfCheck_2p5uniza3kjyg(const regor::Operation *op, const Context &context);
+void ErrorIfCheck_1gr4n0iszdlxr(const regor::Operation *op, const Context &context);
+void ErrorIfCheck_318wf63fa7ql0(const regor::Operation *op, const Context &context);
+void ErrorIfCheck_2d0jmyhr9lscf(const regor::Operation *op, const Context &context);
+void ErrorIfCheck_28csiz8foar64(const regor::Operation *op, const Context &context);
+void ErrorIfCheck_3tu2mqt96ickt(const regor::Operation *op, const Context &context);
+void ErrorIfCheck_1hynqeiugz9lt(const regor::Operation *op, const Context &context);
+void ErrorIfCheck_1advtk54oueo2(const regor::Operation *op, const Context &context);
+void ErrorIfCheck_192e2vu3t5aqm(const regor::Operation *op, const Context &context);
+void ErrorIfCheck_5y7ov1oeymoa(const regor::Operation *op, const Context &context);
+void ErrorIfCheck_oln8qpyh6lba(const regor::Operation *op, const Context &context);
+void ErrorIfCheck_3thipxl768n8b(const regor::Operation *op, const Context &context);
+void ErrorIfCheck_3bzibvkt1zqng(const regor::Operation *op, const Context &context);
+void ErrorIfCheck_171if2aq7ntnm(const regor::Operation *op, const Context &context);
+void ErrorIfCheck_1wbutqm1lq6qy(const regor::Operation *op, const Context &context);
+void ErrorIfCheck_2x883ovw61v55(const regor::Operation *op, const Context &context);
+void ErrorIfCheck_7yfu5xo1ii36(const regor::Operation *op, const Context &context);
+void ErrorIfCheck_3kc0n1wjhehqz(const regor::Operation *op, const Context &context);
+void ErrorIfCheck_3rzfyy6qi1bly(const regor::Operation *op, const Context &context);
+void ErrorIfCheck_23cyq2l8quj8p(const regor::Operation *op, const Context &context);
+void ErrorIfCheck_13bcaagzywlqq(const regor::Operation *op, const Context &context);
+void ErrorIfCheck_15kl5g5u1jrhq(const regor::Operation *op, const Context &context);
+}  // namespace checks
+}  // namespace validator
+}  // namespace tosa

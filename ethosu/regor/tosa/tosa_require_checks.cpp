@@ -102,3 +102,157 @@ void RequireCheck_2apk8ly9uthz6(const regor::Operation *op, [[maybe_unused]] con
 }  // namespace checks
 }  // namespace validator
 }  // namespace tosa
+namespace tosa
+{
+namespace validator
+{
+namespace checks
+{
+// Checks for TOSA specification 0.80.0
+void RequireCheck_7uc4ey0qoi0f(const regor::Operation *op, [[maybe_unused]] const Context &context)
+{
+    // Operators: ARITHMETIC_RIGHT_SHIFT,
+    static constexpr char constraint[] = "REQUIRE((in_out_t == i32_t && 0 <= value2 && value2 <= 31) || (in_out_t == i16_t && 0 <= value2 && value2 <= 15) || (in_out_t == i8_t && 0 <= value2 && value2 <= 7))";
+    bool checkOk = true;
+    checkOk = (op != nullptr);  // TODO: Implement check
+    if ( !checkOk ) throw std::invalid_argument(constraint);
+}
+
+void RequireCheck_32ckjbsfiesgu(const regor::Operation *op, [[maybe_unused]] const Context &context)
+{
+    // Operators: INTDIV,
+    static constexpr char constraint[] = "REQUIRE(static_cast<int64_t>(value1) / static_cast<int64_t>(value2) <= maximum_s<in_out_t>)";
+    bool checkOk = true;
+    checkOk = (op != nullptr);  // TODO: Implement check
+    if ( !checkOk ) throw std::invalid_argument(constraint);
+}
+
+void RequireCheck_1h6xoevynk8a0(const regor::Operation *op, [[maybe_unused]] const Context &context)
+{
+    // Operators: LOGICAL_RIGHT_SHIFT,
+    static constexpr char constraint[] = "REQUIRE(0 <= static_cast<int32_t>(value2) && static_cast<int32_t>(value2) <= 31)";
+    bool checkOk = true;
+    checkOk = (op != nullptr);  // TODO: Implement check
+    if ( !checkOk ) throw std::invalid_argument(constraint);
+}
+
+void RequireCheck_2f51h19mqfhr8(const regor::Operation *op, [[maybe_unused]] const Context &context)
+{
+    // Operators: MUL,
+    static constexpr char constraint[] = "REQUIRE(0 <= shift && shift <= 63)";
+    bool checkOk = true;
+    checkOk = (op != nullptr);  // TODO: Implement check
+    if ( !checkOk ) throw std::invalid_argument(constraint);
+}
+
+void RequireCheck_1oaur42wgph0t(const regor::Operation *op, [[maybe_unused]] const Context &context)
+{
+    // Operators: MUL,
+    static constexpr char constraint[] = "REQUIRE(in_t == int32_t || shift == 0)";
+    bool checkOk = true;
+    checkOk = (op != nullptr);  // TODO: Implement check
+    if ( !checkOk ) throw std::invalid_argument(constraint);
+}
+
+void RequireCheck_3dbpm758kyex1(const regor::Operation *op, [[maybe_unused]] const Context &context)
+{
+    // Operators: MUL,
+    static constexpr char constraint[] = "REQUIRE(product >= minimum_s<i32_t> && product <= maximum_s<i32_t>)";
+    bool checkOk = true;
+    checkOk = (op != nullptr);  // TODO: Implement check
+    if ( !checkOk ) throw std::invalid_argument(constraint);
+}
+
+void RequireCheck_3ah9e1mnk126p(const regor::Operation *op, [[maybe_unused]] const Context &context)
+{
+    // Operators: VARIABLE,
+    static constexpr char constraint[] = "REQUIRE(var_t == in_t)";
+    bool checkOk = true;
+    checkOk = (op != nullptr);  // TODO: Implement check
+    if ( !checkOk ) throw std::invalid_argument(constraint);
+}
+
+void RequireCheck_2e13btqfr98am(const regor::Operation *op, [[maybe_unused]] const Context &context)
+{
+    // Operators: VARIABLE,
+    static constexpr char constraint[] = "REQUIRE(var_shape == shape)";
+    bool checkOk = true;
+    checkOk = (op != nullptr);  // TODO: Implement check
+    if ( !checkOk ) throw std::invalid_argument(constraint);
+}
+
+void RequireCheck_lt5trq6bbw9w(const regor::Operation *op, [[maybe_unused]] const Context &context)
+{
+    // Operators: VARIABLE,
+    static constexpr char constraint[] = "REQUIRE(!var_tensor.seen)";
+    bool checkOk = true;
+    checkOk = (op != nullptr);  // TODO: Implement check
+    if ( !checkOk ) throw std::invalid_argument(constraint);
+}
+
+void RequireCheck_1nuiu459z8num(const regor::Operation *op, [[maybe_unused]] const Context &context)
+{
+    // Operators: VARIABLE_WRITE,
+    static constexpr char constraint[] = "REQUIRE(variable_tensor)";
+    bool checkOk = true;
+    checkOk = (op != nullptr);  // TODO: Implement check
+    if ( !checkOk ) throw std::invalid_argument(constraint);
+}
+
+void RequireCheck_182ljbxwn59zs(const regor::Operation *op, [[maybe_unused]] const Context &context)
+{
+    // Operators: VARIABLE_WRITE,
+    static constexpr char constraint[] = "REQUIRE(variable_tensor.seen)";
+    bool checkOk = true;
+    checkOk = (op != nullptr);  // TODO: Implement check
+    if ( !checkOk ) throw std::invalid_argument(constraint);
+}
+
+void RequireCheck_2pd0619ns6vtd(const regor::Operation *op, [[maybe_unused]] const Context &context)
+{
+    // Operators: VARIABLE_WRITE, VARIABLE_READ,
+    static constexpr char constraint[] = "REQUIRE(variable_tensor.shape == shape)";
+    bool checkOk = true;
+    checkOk = (op != nullptr);  // TODO: Implement check
+    if ( !checkOk ) throw std::invalid_argument(constraint);
+}
+
+void RequireCheck_54sthn768s68(const regor::Operation *op, [[maybe_unused]] const Context &context)
+{
+    // Operators: VARIABLE_WRITE,
+    static constexpr char constraint[] = "REQUIRE(variable_tensor.type == in_t)";
+    bool checkOk = true;
+    checkOk = (op != nullptr);  // TODO: Implement check
+    if ( !checkOk ) throw std::invalid_argument(constraint);
+}
+
+void RequireCheck_7uvvy4pqp2pj(const regor::Operation *op, [[maybe_unused]] const Context &context)
+{
+    // Operators: VARIABLE_READ,
+    static constexpr char constraint[] = "REQUIRE(variable_tensor != NULL)";
+    bool checkOk = true;
+    checkOk = (op != nullptr);  // TODO: Implement check
+    if ( !checkOk ) throw std::invalid_argument(constraint);
+}
+
+void RequireCheck_2wyo0jz6whe2p(const regor::Operation *op, [[maybe_unused]] const Context &context)
+{
+    // Operators: VARIABLE_READ,
+    static constexpr char constraint[] = "REQUIRE(variable_tensor.is_written)";
+    bool checkOk = true;
+    checkOk = (op != nullptr);  // TODO: Implement check
+    if ( !checkOk ) throw std::invalid_argument(constraint);
+}
+
+void RequireCheck_8hliqs7zbosu(const regor::Operation *op, [[maybe_unused]] const Context &context)
+{
+    // Operators: VARIABLE_READ,
+    static constexpr char constraint[] = "REQUIRE(variable_tensor.type == out_t)";
+    bool checkOk = true;
+    checkOk = (op != nullptr);  // TODO: Implement check
+    if ( !checkOk ) throw std::invalid_argument(constraint);
+}
+
+}  // namespace checks
+}  // namespace validator
+}  // namespace tosa

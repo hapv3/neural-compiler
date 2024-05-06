@@ -86,6 +86,7 @@ REGOR_OP_NAMES = {
   'IDENTITY': 'OpType::Identity',
   'COND_IF':  'OpType::If',
   'WHILE_LOOP': 'OpType::While',
+  'CUSTOM': 'OpType::Custom',
     #'FFT2D',      'OpType::CurrentlyUnsupported',
     #'RFFT2D',     'OpType::CurrentlyUnsupported',
     #'ERF',        'OpType::CurrentlyUnsupported',
@@ -284,7 +285,7 @@ class TosaValidator
       function << emit_check_header(check)
       function << indent(1) + "static constexpr char constraint[] = \"%s(%s)\";\n" % [macro_name, check]
       function << indent(1) + "bool checkOk = true;\n"
-      function << indent(1) + "checkOk = (graphOp != nullptr);  // TODO: Implement check\n"
+      function << indent(1) + "checkOk = (op != nullptr);  // TODO: Implement check\n"
       function << indent(1) + "if ( !checkOk ) throw std::invalid_argument(constraint);\n"
       function << "}\n\n"
     end
@@ -514,7 +515,7 @@ class TosaValidator
       @level_limits.each { |name, level| f.write indent(1) + "Level%s,\n" % name}
       f.write "};\n\n"
       f.write "struct Context\n{\n"
-      f.write indent(1) + "uint32_t version = GraphApi::VERSION_TOSA_0_60;\n"
+      f.write indent(1) + "uint32_t version = GraphApi::VERSION_TOSA_0_80;\n"
       f.write indent(1) + "int32_t profile = GraphApi::PROFILE_BASELINE;\n"
       f.write indent(1) + "Level level = Level::Level8K;\n"
       f.write indent(1) + "std::function<const regor::Graph*(const char *)> GetGraph;\n"
@@ -557,7 +558,7 @@ class TosaValidator
         tosa_profile_const = "GraphApi::PROFILE_MAIN"
       else return
       end
-      check = indent(1) + "if ( context.version == %s && context.profile == %s )\n" % [tosa_version_const, tosa_profile_const]
+      check = indent(1) + "if ( (context.version & 0xFFFFFF00) == %s && context.profile == %s )\n" % [tosa_version_const, tosa_profile_const]
       check << indent(1) + "{\n"
       check << indent(2) + "ValidateOperator%s(graphOp, context);\n" % /(_Version_.*Profile_.*)\(/.match(validator_name)[1]
       check << indent(2) + "return;\n"
@@ -821,7 +822,7 @@ end
 options = parse_options
 xmlfile = File.new("%s/tosa.xml" % options[:spec])
 xml = REXML::Document.new(xmlfile)
-doc = Asciidoctor.load_file "%s/tosa_spec.adoc" % options[:spec], safe: :safe, attributes: "generated=%s/out/gen" % options[:spec]
+doc = Asciidoctor.load_file "%s/tosa_spec.adoc" % options[:spec], safe: :safe, attributes: "generated=%s/out/gen pseudocode=%s/pseudocode" % [options[:spec], options[:spec]]
 validator = TosaValidator.new(xml, doc, 'BI', '8K')
 validator.update_argument_checks
 validator.update_error_checks
