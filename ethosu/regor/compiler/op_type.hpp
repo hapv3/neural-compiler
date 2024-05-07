@@ -284,7 +284,8 @@ constexpr inline bool IsVariadic(OpType opType)
 constexpr inline bool IsReshape(OpType opType)
 {
     // The Reshape like operations: Reshape, Squeeze, and ExpandDims
-    return opType == OpType::Reshape || opType == OpType::QuantizedReshape || opType == OpType::Squeeze || opType == OpType::ExpandDims;
+    return opType == OpType::Reshape || opType == OpType::QuantizedReshape || opType == OpType::Squeeze ||
+           opType == OpType::ExpandDims || opType == OpType::Identity;
 }
 
 }  // namespace regor

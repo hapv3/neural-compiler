@@ -107,7 +107,7 @@ void ReplaceProducerOutput(std::vector<std::shared_ptr<Operation>> producerList,
 // Parameters:
 // - exemptOperation: operation to exempt.
 // - consumerList: List of consumers.
-// - tensorToReplace: if IFM on consumer match this tensor, replace it.
+// - tensorToReplace: if input tensor on consumer match this tensor, replace it.
 // - newTensor: The new input tensor to connect.
 void ReplaceConsumerInput(const Operation *const exemptOperation, std::vector<std::shared_ptr<Operation>> consumerList,
     const Tensor *const tensorToReplace, std::shared_ptr<Tensor> newTensor)
@@ -116,25 +116,21 @@ void ReplaceConsumerInput(const Operation *const exemptOperation, std::vector<st
     for ( const auto &consumer : consumerList )
     {
         Operation *cons = consumer.get();
-        auto idx = 0;
-        auto usage = MakeTensorUsage(TensorUsage::IFM, 0);
-        auto *consIfmConn = cons->Input(usage);
 
-        while ( consIfmConn != nullptr )
+        for ( const auto &consInput : cons->Inputs().pairs() )
         {
-            if ( consIfmConn->tensor.get() == tensorToReplace && cons != exemptOperation )
+            if ( consInput.second.tensor.get() == tensorToReplace && cons != exemptOperation )
             {
                 // Do not want to replace the shape. Only the tensor and add writers.
                 // As ConnectInput but do not replace shape.
                 newTensor->AddReader(cons->shared_from_this());
-                if ( consIfmConn->tensor != newTensor )
+                auto *consInputConnection = cons->Input(consInput.first);
+                if ( consInputConnection->tensor != newTensor )
                 {
-                    consIfmConn->tensor->RemoveReader(cons->shared_from_this());
+                    consInputConnection->tensor->RemoveReader(cons->shared_from_this());
+                    consInputConnection->tensor = newTensor;
                 }
-                consIfmConn->tensor = newTensor;
             }
-            usage = MakeTensorUsage(TensorUsage::IFM, ++idx);
-            consIfmConn = cons->Input(usage);
         }
     }
 }
