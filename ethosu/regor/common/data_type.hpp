@@ -230,16 +230,26 @@ inline constexpr uint64_t IntegerMax(DataType type)
     return ~0ULL >> (64 - DataTypeSizeBits(type) + int(IsSignedInteger(type)));
 }
 
+static_assert(std::numeric_limits<int8_t>::max() == IntegerMax(DataType::Int8));
+static_assert(std::numeric_limits<int16_t>::max() == IntegerMax(DataType::Int16));
+static_assert(std::numeric_limits<int32_t>::max() == IntegerMax(DataType::Int32));
+static_assert(std::numeric_limits<int64_t>::max() == IntegerMax(DataType::Int64));
+
 inline constexpr int64_t IntegerMin(DataType type)
 {
     assert(IsInteger(type));
     if ( IsSignedInteger(type) )
     {
         int size = DataTypeSizeBits(type);
-        return -(1LL << (size - 1));
+        return -(1ULL << (size - 1));
     }
     return 0;
 }
+
+static_assert(std::numeric_limits<int8_t>::min() == IntegerMin(DataType::Int8));
+static_assert(std::numeric_limits<int16_t>::min() == IntegerMin(DataType::Int16));
+static_assert(std::numeric_limits<int32_t>::min() == IntegerMin(DataType::Int32));
+static_assert(std::numeric_limits<int64_t>::min() == IntegerMin(DataType::Int64));
 
 template<typename T>
 struct DataTypeOf
