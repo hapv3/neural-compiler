@@ -155,33 +155,43 @@ static inline int Clz(uint32_t value)
 #endif
 }
 
+inline constexpr bool IsPacked(DataType type)
+{
+    return (type & DataType::Packed) == DataType::Packed;
+}
+
+inline constexpr bool IsVariablySized(DataType type)
+{
+    return (type & DataType::VariablySized) == DataType::VariablySized;
+}
+
 inline constexpr int DataTypeStorageSizeBits(DataType type)
 {
     unsigned bits = unsigned(type & 0x00FFu);
     // Interpret packed word size as the largest set bit
-    if ( (type & DataType::Packed) == DataType::Packed )
+    if ( IsPacked(type) )
     {
         assert(bits > 0);
         return 1 << (31 - Clz(bits));
     }
-    return (!(type & DataType::VariablySized) ? std::max(int(bits), 8) : -1);
+    return (!IsVariablySized(type) ? std::max(int(bits), 8) : -1);
 }
 
 inline constexpr int DataTypeSizeBits(DataType type)
 {
     unsigned bits = unsigned(type & 0x00FFu);
-    if ( (type & DataType::Packed) == DataType::Packed )
+    if ( IsPacked(type) )
     {
         assert(bits > 0);
         bits ^= 1 << (31 - Clz(bits));  // Strip container word
     }
-    return (!(type & DataType::VariablySized) ? int(bits) : -1);
+    return (!IsVariablySized(type) ? int(bits) : -1);
 }
 
 inline constexpr int DataTypeStorageSizeBytes(DataType type, int elements)
 {
     const int storageBits = DataTypeStorageSizeBits(type);
-    const int bits = (type & DataType::Packed) == DataType::Packed ? DataTypeSizeBits(type) : storageBits;
+    const int bits = IsPacked(type) ? DataTypeSizeBits(type) : storageBits;
     assert(storageBits >= 8);
     return (((elements * bits) + storageBits - 1) / storageBits) * (storageBits / 8);
 }
@@ -189,14 +199,14 @@ inline constexpr int DataTypeStorageSizeBytes(DataType type, int elements)
 
 inline constexpr int DataTypeElements(DataType type, int size)
 {
-    const int bits = (type & DataType::Packed) == DataType::Packed ? DataTypeSizeBits(type) : DataTypeStorageSizeBits(type);
+    const int bits = IsPacked(type) ? DataTypeSizeBits(type) : DataTypeStorageSizeBits(type);
     assert(size <= std::numeric_limits<int>::max() / 8);
     return 8 * size / bits;
 }
 
 inline constexpr DataType DataTypeBase(DataType type)
 {
-    return (!(type & DataType::VariablySized) ? type & 0xFF00u : type);
+    return (!IsVariablySized(type) ? type & 0xFF00u : type);
 }
 
 inline std::string DataTypeToString(const DataType type)
