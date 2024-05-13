@@ -1729,7 +1729,7 @@ void ValidateOperator_PAD(const regor::Operation *op, const Context &context)
 void ValidateOperator_RESHAPE(const regor::Operation *op, const Context &context)
 {
     const Argument input1 = {Category::Input, "input1", "in_out_t", {1, MAX_RANK}}; /*Input tensor shape=shape1*/
-    const Argument shape = {Category::Input, "shape", "shape_t", {1, 1}}; /*1D shape tensor giving the new shape.
+    const Argument shape = {Category::Attribute, "shape", "shape_t", {1, 1}}; /*1D shape tensor giving the new shape.
                                                                              shape=[rank(shape)]*/
     const Argument output = {Category::Output, "output", "in_out_t", {1, MAX_RANK}}; /*Output tensor of same type, size
                                                                                         as the input tensor

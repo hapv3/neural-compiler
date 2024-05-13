@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -27,7 +27,7 @@ namespace
 
 std::optional<uint32_t> MaybeGetTosaVersion(uint32_t syntaxVersion)
 {
-    if ( syntaxVersion == 0 ) syntaxVersion = (GraphApi::VERSION_TOSA_0_60 | GraphApi::PROFILE_BASELINE);
+    if ( syntaxVersion == 0 ) syntaxVersion = (GraphApi::VERSION_TOSA_0_80 | GraphApi::PROFILE_BASELINE);
     if ( (syntaxVersion & GraphApi::VERSION_TOSA_0_60) == GraphApi::VERSION_TOSA_0_60 )
     {
         return GraphApi::VERSION_TOSA_0_60;

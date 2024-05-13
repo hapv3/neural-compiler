@@ -60,6 +60,8 @@ const std::unordered_set<std::string_view> tosaSupportedTypes = {
     "mul_t",
     "tensor_list_t",
     "tosa_graph_t",
+    "shape_t",
+    "acc_size_t",
 };
 
 std::optional<regor::DataType> MapType(const std::string_view &type)
@@ -83,6 +85,8 @@ std::optional<regor::DataType> MapType(const std::string_view &type)
         {"bf16_t", DataType::BFloat16},
         {"fp32_t", DataType::Float32},
         {"index_t", DataType::Int32},
+        {"shape_t", DataType::Int32},
+        {"acc_size_t", DataType::Int32},
     };
 
     if ( auto p = typeMap.find(type); p != typeMap.end() ) return p->second;

@@ -37,6 +37,26 @@ static bool shapeCheck(const TensorConnection *t1, int index1, const TensorConne
     const auto &shape2 = t2->shape;
     return (shape1.Size() > index1 && shape2.Size() > index2 && shape1[index1] == shape2[index2]);
 }
+
+static Shape broadcastShape(const Shape &shape1, const Shape &shape2)
+{
+    if ( shape1.Size() != shape2.Size() ) throw std::invalid_argument("ERROR_IF(rank(shape1) != rank(shape2))");
+    Shape shape = shape1;
+    for ( auto i = 0; i < shape.Size(); i++ )
+    {
+        if ( shape[i] == 1 )
+        {
+            shape[i] = shape2[i];
+        }
+        else
+        {
+            if ( shape2[i] != 1 && shape2[i] != shape[i] )
+                throw std::invalid_argument("ERROR_IF(shape2[i] != 1 && shape2[i] != shape[i])");
+        }
+    }
+    return shape;
+}
+
 namespace tosa
 {
 namespace validator
@@ -1495,63 +1515,73 @@ void ErrorIfCheck_4tfs5fdsigv(const regor::Operation *op, [[maybe_unused]] const
 {
     // Operators: AVG_POOL2D,
     static constexpr char constraint[] = "ERROR_IF(in_out_t != i8_t && input_zp != 0)";
-    bool checkOk = true;
-    checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    const auto *input = op->Input(TensorUsage::IFM);
+    auto in_out_t = input->tensor->Type();
+    auto &zp = input->quantization.zeroPoints;
+    auto input_zp = zp.empty() ? 0 : zp[0];
+    if ( in_out_t != DataType::Int8 && input_zp != 0 ) throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_3nav30dsmv6gd(const regor::Operation *op, [[maybe_unused]] const Context &context)
 {
     // Operators: AVG_POOL2D, NEGATE,
     static constexpr char constraint[] = "ERROR_IF(in_out_t != i8_t && output_zp != 0)";
-    bool checkOk = true;
-    checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    auto in_out_t = op->OFM()->Type();
+    auto &zp = op->Output(TensorUsage::OFM)->quantization.zeroPoints;
+    auto output_zp = zp.empty() ? 0 : zp[0];
+    if ( in_out_t != DataType::Int8 && output_zp != 0 ) throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_2p5uniza3kjyg(const regor::Operation *op, [[maybe_unused]] const Context &context)
 {
     // Operators: CONV2D, CONV3D, DEPTHWISE_CONV2D, FULLY_CONNECTED, TRANSPOSE_CONV2D,
     static constexpr char constraint[] = "ERROR_IF(in_t != i8_t && input_zp != 0)";
-    bool checkOk = true;
-    checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    auto in_t = op->IFM(0)->Type();
+    auto &zp = op->Input(TensorUsage::IFM)->quantization.zeroPoints;
+    auto input_zp = zp.empty() ? 0 : zp[0];
+    if ( in_t != DataType::Int8 && input_zp != 0 ) throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_1gr4n0iszdlxr(const regor::Operation *op, [[maybe_unused]] const Context &context)
 {
     // Operators: CONV2D, CONV3D, FULLY_CONNECTED, TRANSPOSE_CONV2D,
     static constexpr char constraint[] = "ERROR_IF(BC != OC && BC != 1)";
-    bool checkOk = true;
-    checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    const auto *bias = op->Input(TensorUsage::Scales);
+    const auto *output = op->Output(TensorUsage::OFM);
+    if ( (bias->shape.Elements() != 1) && !shapeCheck(output, 3, bias, 0) )
+        throw std::invalid_argument(constraint);  // OC
 }
 
 void ErrorIfCheck_318wf63fa7ql0(const regor::Operation *op, [[maybe_unused]] const Context &context)
 {
     // Operators: CONV3D, DEPTHWISE_CONV2D, FULLY_CONNECTED, TRANSPOSE_CONV2D,
     static constexpr char constraint[] = "ERROR_IF(weight_t != i8_t && weight_zp != 0)";
-    bool checkOk = true;
-    checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    auto weight_t = op->Input(TensorUsage::Weights)->tensor->Type();
+    auto &zp = op->Input(TensorUsage::Weights)->quantization.zeroPoints;
+    auto weight_zp = zp.empty() ? 0 : zp[0];
+    if ( weight_t != DataType::Int8 && weight_zp != 0 ) throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_2d0jmyhr9lscf(const regor::Operation *op, [[maybe_unused]] const Context &context)
 {
     // Operators: DEPTHWISE_CONV2D,
     static constexpr char constraint[] = "ERROR_IF(BC != C*M && BC != 1)";
-    bool checkOk = true;
-    checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    const auto *bias = op->Input(TensorUsage::Scales);
+    const auto *output = op->Output(TensorUsage::OFM);
+    if ( (bias->shape.Elements() != 1) && !shapeCheck(output, 3, bias, 0) )
+        throw std::invalid_argument(constraint);  // OC = C*M
 }
 
 void ErrorIfCheck_28csiz8foar64(const regor::Operation *op, [[maybe_unused]] const Context &context)
 {
     // Operators: MATMUL,
     static constexpr char constraint[] = "ERROR_IF(in_t != i8_t && (A_zp != 0 || B_zp != 0))";
-    bool checkOk = true;
-    checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    auto in_t = op->IFM(0)->Type();
+    auto &zpA = op->Input(TensorUsage::IFM)->quantization.zeroPoints;
+    auto A_zp = zpA.empty() ? 0 : zpA[0];
+    auto &zpB = op->Input(TensorUsage::IFM1)->quantization.zeroPoints;
+    auto B_zp = zpB.empty() ? 0 : zpB[0];
+    if ( in_t != DataType::Int8 && (A_zp != 0 || B_zp != 0) ) throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_3tu2mqt96ickt(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -1559,7 +1589,7 @@ void ErrorIfCheck_3tu2mqt96ickt(const regor::Operation *op, [[maybe_unused]] con
     // Operators: ADD, INTDIV, MUL, SUB,
     static constexpr char constraint[] = "ERROR_IF(rank(shape) != 0 || rank(shape1) != 0 || rank(shape2) != 0)";
     bool checkOk = true;
-    checkOk = (op != nullptr);  // TODO: Implement check
+    checkOk = (op != nullptr);  // Not implemented, this constraint for mode shape_t is gone in 0.90;
     if ( !checkOk ) throw std::invalid_argument(constraint);
 }
 
@@ -1569,45 +1599,58 @@ void ErrorIfCheck_1hynqeiugz9lt(const regor::Operation *op, [[maybe_unused]] con
     //  LOGICAL_LEFT_SHIFT, LOGICAL_RIGHT_SHIFT, LOGICAL_OR, LOGICAL_XOR, MAXIMUM, MINIMUM, MUL, POW, SUB, EQUAL,
     //  GREATER, GREATER_EQUAL,
     static constexpr char constraint[] = "ERROR_IF(shape != broadcast_shape(shape1, shape2))";
-    bool checkOk = true;
-    checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    auto shape1 = op->Input(TensorUsage::IFM)->shape;
+    auto shape2 = op->Input(TensorUsage::IFM1)->shape;
+    auto shape = op->Output(TensorUsage::OFM)->shape;
+    if ( shape != broadcastShape(shape1, shape2) ) throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_1advtk54oueo2(const regor::Operation *op, [[maybe_unused]] const Context &context)
 {
     // Operators: NEGATE,
     static constexpr char constraint[] = "ERROR_IF(in_out_t != i8_t && input1_zp != 0)";
-    bool checkOk = true;
-    checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    auto in_out_t = op->IFM(0)->Type();
+    auto &zp = op->Input(TensorUsage::IFM)->quantization.zeroPoints;
+    auto input1_zp = zp.empty() ? 0 : zp[0];
+    if ( in_out_t != DataType::Int8 && input1_zp != 0 ) throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_192e2vu3t5aqm(const regor::Operation *op, [[maybe_unused]] const Context &context)
 {
     // Operators: SELECT,
     static constexpr char constraint[] = "ERROR_IF(shape != broadcast_shape(broadcast_shape(shape1, shape2), shape3))";
-    bool checkOk = true;
-    checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    auto shape1 = op->Input(TensorUsage::IFM)->shape;
+    auto shape2 = op->Input(TensorUsage::IFM1)->shape;
+    auto shape3 = op->Input(TensorUsage::IFM2)->shape;
+    auto shape = op->Output(TensorUsage::OFM)->shape;
+    if ( shape != broadcastShape(broadcastShape(shape1, shape2), shape3) ) throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_5y7ov1oeymoa(const regor::Operation *op, [[maybe_unused]] const Context &context)
 {
     // Operators: CONCAT,
     static constexpr char constraint[] = "ERROR_IF(axis < 0 || axis >= max(1,rank(shapes1[0])))";
-    bool checkOk = true;
-    checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    const auto rank = op->Input(TensorUsage::IFM)->shape.Size();
+    if ( op->attr.axis.axis < 0 || op->attr.axis.axis >= std::max<int>(1, rank) )
+        throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_oln8qpyh6lba(const regor::Operation *op, [[maybe_unused]] const Context &context)
 {
     // Operators: CONCAT,
     static constexpr char constraint[] = "ERROR_IF(shape[axis] != sum(shape_dim(shapes1[k], axis) for all k))";
-    bool checkOk = true;
-    checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    const auto &shape = op->Output(TensorUsage::OFM)->shape;
+    const auto &inputs = op->Inputs();
+    auto axis = op->attr.axis.axis;
+    int64_t sum = 0;
+    for ( const auto &input : inputs )
+    {
+        auto inputDim = axis >= input.shape.Size() ? 1 : input.shape[axis];
+        if ( inputDim < 0 || sum + inputDim > std::numeric_limits<int32_t>::max() )
+            throw std::invalid_argument(constraint);
+        sum += inputDim;
+    }
+    if ( shape[axis] != sum ) throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_3thipxl768n8b(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -1615,7 +1658,7 @@ void ErrorIfCheck_3thipxl768n8b(const regor::Operation *op, [[maybe_unused]] con
     // Operators: CONCAT,
     static constexpr char constraint[] = "ERROR_IF(in_out_t == shape_t && rank(shape) > 1)";
     bool checkOk = true;
-    checkOk = (op != nullptr);  // TODO: Implement check
+    checkOk = (op != nullptr);  // Not implemented, this constraint for mode shape_t is gone in 0.90;
     if ( !checkOk ) throw std::invalid_argument(constraint);
 }
 
@@ -1623,81 +1666,95 @@ void ErrorIfCheck_3bzibvkt1zqng(const regor::Operation *op, [[maybe_unused]] con
 {
     // Operators: CONCAT,
     static constexpr char constraint[] = "ERROR_IF(index != axis && input_shape[index] != shapes1[0][index])";
-    bool checkOk = true;
-    checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    auto axis = op->attr.axis.axis;
+    const auto &inputs = op->Inputs();
+    const auto &shape0 = inputs.front().shape;
+    for ( const auto &input : inputs )
+    {
+        if ( input.shape.Size() != shape0.Size() )
+            throw std::invalid_argument("ERROR_IF(rank(input_shape) != rank(shape0))");
+        for ( int index = 0; index < input.shape.Size(); index++ )
+        {
+            if ( index != axis && input.shape != shape0 ) throw std::invalid_argument(constraint);
+        }
+    }
 }
 
 void ErrorIfCheck_171if2aq7ntnm(const regor::Operation *op, [[maybe_unused]] const Context &context)
 {
     // Operators: DIM,
     static constexpr char constraint[] = "ERROR_IF(axis >= rank(shape))";
-    bool checkOk = true;
-    checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    const auto rank = op->Input(TensorUsage::IFM)->shape.Size();
+    auto axis = op->attr.axis.axis;
+    if ( axis >= rank ) throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_1wbutqm1lq6qy(const regor::Operation *op, [[maybe_unused]] const Context &context)
 {
     // Operators: RESCALE,
     static constexpr char constraint[] = "ERROR_IF(in_t != i8_t && (in_t != i16_t || input_unsigned == False) && input_zp != 0)";
-    bool checkOk = true;
-    checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    auto in_t = op->IFM(0)->Type();
+    auto &zp = op->Input(TensorUsage::IFM)->quantization.zeroPoints;
+    auto input_zp = zp.empty() ? 0 : zp[0];
+    if ( DataTypeSizeBits(in_t) != 8 && in_t != DataType::UInt16 && input_zp != 0 )
+        throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_2x883ovw61v55(const regor::Operation *op, [[maybe_unused]] const Context &context)
 {
     // Operators: RESCALE,
     static constexpr char constraint[] = "ERROR_IF(out_t != i8_t && (out_t != i16_t || output_unsigned == False) && output_zp != 0)";
-    bool checkOk = true;
-    checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    auto out_t = op->OFM()->Type();
+    auto &zp = op->Output(TensorUsage::OFM)->quantization.zeroPoints;
+    auto output_zp = zp.empty() ? 0 : zp[0];
+    if ( DataTypeSizeBits(out_t) != 8 && out_t != DataType::UInt16 && output_zp != 0 )
+        throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_7yfu5xo1ii36(const regor::Operation *op, [[maybe_unused]] const Context &context)
 {
     // Operators: RESCALE,
     static constexpr char constraint[] = "ERROR_IF(in_t == i16_t && input_unsigned == True && input_zp != 0 && input_zp != 32768)";
-    bool checkOk = true;
-    checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    auto in_t = op->IFM(0)->Type();
+    auto &zp = op->Input(TensorUsage::IFM)->quantization.zeroPoints;
+    auto input_zp = zp.empty() ? 0 : zp[0];
+    if ( in_t == DataType::UInt16 && (input_zp != 0 && input_zp != 32768) ) throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_3kc0n1wjhehqz(const regor::Operation *op, [[maybe_unused]] const Context &context)
 {
     // Operators: RESCALE,
     static constexpr char constraint[] = "ERROR_IF(out_t == i16_t && output_unsigned == True && output_zp != 0 && output_zp != 32768)";
-    bool checkOk = true;
-    checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    auto out_t = op->OFM()->Type();
+    auto &zp = op->Output(TensorUsage::OFM)->quantization.zeroPoints;
+    auto output_zp = zp.empty() ? 0 : zp[0];
+    if ( out_t == DataType::UInt16 && (output_zp != 0 && output_zp != 32768) ) throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_3rzfyy6qi1bly(const regor::Operation *op, [[maybe_unused]] const Context &context)
 {
     // Operators: RESCALE,
     static constexpr char constraint[] = "ERROR_IF(scale32 && in_t == i48_t)";
-    bool checkOk = true;
-    checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    auto in_t = op->IFM(0)->Type();
+    if ( op->attr.rescale.scale32 && DataTypeSizeBits(in_t) == 48 ) throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_23cyq2l8quj8p(const regor::Operation *op, [[maybe_unused]] const Context &context)
 {
     // Operators: RESCALE,
     static constexpr char constraint[] = "ERROR_IF(in_t == i16_t && out_t == i32_t && input_unsigned)";
-    bool checkOk = true;
-    checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    auto in_t = op->IFM(0)->Type();
+    auto out_t = op->OFM()->Type();
+    if ( in_t == DataType::UInt16 && DataTypeSizeBits(out_t) == 32 ) throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_13bcaagzywlqq(const regor::Operation *op, [[maybe_unused]] const Context &context)
 {
     // Operators: RESCALE,
     static constexpr char constraint[] = "ERROR_IF(in_t == i32_t && out_t == i16_t && output_unsigned)";
-    bool checkOk = true;
-    checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    auto in_t = op->IFM(0)->Type();
+    auto out_t = op->OFM()->Type();
+    if ( DataTypeSizeBits(in_t) == 32 && out_t == DataType::UInt16 ) throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_15kl5g5u1jrhq(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -1705,7 +1762,7 @@ void ErrorIfCheck_15kl5g5u1jrhq(const regor::Operation *op, [[maybe_unused]] con
     // Operators: COND_IF, WHILE_LOOP,
     static constexpr char constraint[] = "ERROR_IF(tosa_nesting_depth >= MAX_NESTING)";
     bool checkOk = true;
-    checkOk = (op != nullptr);  // TODO: Implement check
+    checkOk = (op != nullptr);  // Can't implement this check with current validation code
     if ( !checkOk ) throw std::invalid_argument(constraint);
 }
 
