@@ -28,7 +28,9 @@
 #include "compiler/graph.hpp"
 #include "compiler/op_type.hpp"
 #include "compiler/operation.hpp"
+#include "compiler/operation_util.hpp"
 #include "compiler/tensor.hpp"
+#include "compiler/tflite_graph_optimiser.hpp"
 #include "flatbuffer_utils.hpp"
 #include "tflite_mapping.hpp"
 #include "tflite_model_semantics.hpp"
@@ -124,7 +126,8 @@ static Shape OperationOFMShape(OpType type, const Shape &input)
     return input;
 }
 
-void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::unique_ptr<Graph>> &graphs, OptimiserDatabase *optDb)
+void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::unique_ptr<Graph>> &graphs,
+    OptimiserDatabase *optDb, IArchitectureConstraints *constraints)
 {
     assert(model);
 
@@ -264,7 +267,7 @@ void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::uniqu
             }
             // Interpretation of operator options may depend on input/output tensor information,
             // so the operation must be connected to its tensors before parsing operator options.
-            ParseOperatorOptions(operation, tflite_operator, optDb);
+            ParseOperatorOptions(operation, tflite_operator, optDb, constraints);
 
             // Set rounding according to reference
             SetOperatorRounding(operation);
@@ -313,9 +316,10 @@ void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::uniqu
     }
 }
 
-void TfLiteReader::LoadGraphs(const void *input, size_t size, std::vector<std::unique_ptr<Graph>> &graphs, OptimiserDatabase *optDb)
+void TfLiteReader::LoadGraphs(const void *input, size_t size, std::vector<std::unique_ptr<Graph>> &graphs,
+    OptimiserDatabase *optDb, IArchitectureConstraints *constraints)
 {
-    LoadGraphs(LoadModel(input, size), graphs, optDb);
+    LoadGraphs(LoadModel(input, size), graphs, optDb, constraints);
 }
 
 std::shared_ptr<Tensor> TfLiteReader::ParseTensor(const tflite::Tensor *tflite_tensor,
@@ -398,12 +402,12 @@ static const T *GetBuiltinOptions(const tflite::Operator *tflite_operator)
     return options;
 }
 
-void TfLiteReader::ParseOperatorOptions(
-    const std::shared_ptr<Operation> &operation, const tflite::Operator *tflite_operator, OptimiserDatabase *optDb)
+void TfLiteReader::ParseOperatorOptions(const std::shared_ptr<Operation> &operation,
+    const tflite::Operator *tflite_operator, OptimiserDatabase *optDb, IArchitectureConstraints *constraints)
 {
     const auto type = tflite_operator->builtin_options_type();
-
     assert((type == TfLiteMapping::OpTypeToBuiltinOptions(operation->Type())) || (type == tflite::BuiltinOptions::NONE));
+    auto activation_function = tflite::ActivationFunctionType::NONE;
 
     switch ( type )
     {
@@ -415,7 +419,7 @@ void TfLiteReader::ParseOperatorOptions(
             SetKernel(operation, Point2i(weight_tensor->StorageShape().Width(), weight_tensor->StorageShape().Height()),
                 Point2i(options->stride_w(), options->stride_h()),
                 Point2i(options->dilation_w_factor(), options->dilation_h_factor()), options->padding());
-            UnFuseActivation(operation, options->fused_activation_function(), optDb);
+            activation_function = options->fused_activation_function();
         }
         break;
 
@@ -433,7 +437,7 @@ void TfLiteReader::ParseOperatorOptions(
             }
             SetKernel(operation, weightShape.WH<int>(), Point2i(options->stride_w(), options->stride_h()),
                 Point2i(options->dilation_w_factor(), options->dilation_h_factor()), options->padding(), depth_multiplier);
-            UnFuseActivation(operation, options->fused_activation_function(), optDb);
+            activation_function = options->fused_activation_function();
         }
         break;
 
@@ -444,7 +448,7 @@ void TfLiteReader::ParseOperatorOptions(
             weight_tensor->SetAxisOrder(AxisOrder::OHWI);
             SetKernel(operation, Point2i(weight_tensor->StorageShape().Width(), weight_tensor->StorageShape().Height()),
                 Point2i(options->stride_w(), options->stride_h()), Point2i(1, 1) /* no dilation */, options->padding());
-            UnFuseActivation(operation, options->fused_activation_function(), optDb);
+            activation_function = options->fused_activation_function();
         }
         break;
 
@@ -454,14 +458,15 @@ void TfLiteReader::ParseOperatorOptions(
             SetKernel(operation, Point2i(options->filter_width(), options->filter_height()),
                 Point2i(options->stride_w(), options->stride_h()), Point2i(1, 1),  // no dilation
                 options->padding());
-            UnFuseActivation(operation, options->fused_activation_function(), optDb);
+            activation_function = options->fused_activation_function();
         }
         break;
 
         case tflite::BuiltinOptions::FullyConnectedOptions:
         {
             const auto options = GetBuiltinOptions<tflite::FullyConnectedOptions>(tflite_operator);
-            UnFuseActivation(operation, options->fused_activation_function(), optDb);
+            activation_function = options->fused_activation_function();
+
             // TODO: Are `weights_format`, `keep_num_dims` or `asymmetric_quantize_inputs` used?
 
             auto weight_tensor = operation->Input(TensorUsage::Weights)->tensor;
@@ -517,42 +522,42 @@ void TfLiteReader::ParseOperatorOptions(
         {
             const auto options = GetBuiltinOptions<tflite::ConcatenationOptions>(tflite_operator);
             operation->Parameters().concat.axis = options->axis();
-            UnFuseActivation(operation, options->fused_activation_function(), optDb);
+            activation_function = options->fused_activation_function();
         }
         break;
 
         case tflite::BuiltinOptions::AddOptions:
         {
             const auto options = GetBuiltinOptions<tflite::AddOptions>(tflite_operator);
-            UnFuseActivation(operation, options->fused_activation_function(), optDb);
+            activation_function = options->fused_activation_function();
         }
         break;
 
         case tflite::BuiltinOptions::SubOptions:
         {
             const auto options = GetBuiltinOptions<tflite::SubOptions>(tflite_operator);
-            UnFuseActivation(operation, options->fused_activation_function(), optDb);
+            activation_function = options->fused_activation_function();
         }
         break;
 
         case tflite::BuiltinOptions::DivOptions:
         {
             const auto options = GetBuiltinOptions<tflite::DivOptions>(tflite_operator);
-            UnFuseActivation(operation, options->fused_activation_function(), optDb);
+            activation_function = options->fused_activation_function();
         }
         break;
 
         case tflite::BuiltinOptions::MulOptions:
         {
             const auto options = GetBuiltinOptions<tflite::MulOptions>(tflite_operator);
-            UnFuseActivation(operation, options->fused_activation_function(), optDb);
+            activation_function = options->fused_activation_function();
         }
         break;
 
         case tflite::BuiltinOptions::L2NormOptions:
         {
             const auto options = GetBuiltinOptions<tflite::L2NormOptions>(tflite_operator);
-            UnFuseActivation(operation, options->fused_activation_function(), optDb);
+            activation_function = options->fused_activation_function();
         }
         break;
 
@@ -625,7 +630,7 @@ void TfLiteReader::ParseOperatorOptions(
         case tflite::BuiltinOptions::SVDFOptions:
         {
             const auto options = GetBuiltinOptions<tflite::SVDFOptions>(tflite_operator);
-            UnFuseActivation(operation, options->fused_activation_function(), optDb);
+            activation_function = options->fused_activation_function();
         }
         break;
 
@@ -759,6 +764,25 @@ void TfLiteReader::ParseOperatorOptions(
             LOG_ERROR("TfLiteReader: Unrecognised built-in options type '{}'\n", int(type));
             break;
     }
+    ExecutionQuery query{};
+    bool isValidQuery = true;
+    try
+    {
+        query = OperationToExecQuery(*operation);
+    }
+    catch ( std::invalid_argument &e )
+    {
+        LOG_WARN("ExecutionQuery not buildable for operation {}: {}\n", EnumToString(operation->Type()), e.what())
+        isValidQuery = false;
+    }
+    if ( !isValidQuery || !(constraints->CanExecute(query)) )
+    {
+        operation->SetPassthroughOp();
+    }
+    else
+    {
+        UnFuseActivation(operation, activation_function, optDb);
+    }
 
     operation->SetPassthrough(tflite_operator);
 }
@@ -808,6 +832,41 @@ void TfLiteReader::UnFuseActivation(const std::shared_ptr<Operation> &operation,
     {
         optDb->AddOptimised(operation.get(), activation.get());
     }
+}
+
+ExecutionQuery TfLiteReader::OperationToExecQuery(const Operation &operation)
+{
+    ExecutionQuery query{};
+    query.opType = operation.Type();
+    query.ifmType = operation.IFM(0)->Type();
+    switch ( query.opType )
+    {
+        case OpType::LeakyRelu:
+        {
+            auto *ifmConn = operation.Input(TensorUsage::IFM0);
+            auto *ofmConn = operation.Output(TensorUsage::OFM);
+            query.quantScalingInvalidOrUnequal = !IsScalingValidAndEqual(*ifmConn, *ofmConn);
+            break;
+        }
+        case OpType::Transpose:
+        {
+            query.targetType = OpType::MemoryCopy;
+            query.transposeType = CalculateTransposeType(operation);
+            break;
+        }
+        case OpType::ReverseV2:
+            query.reverseType = CalculateReverseType(operation);
+            break;
+        case OpType::ResizeBilinear:
+            query.resizeQuery = CalculateResizeSupportQuery(operation);
+            break;
+        case OpType::ResizeNearestNeighbor:
+            query.resizeQuery = CalculateResizeSupportQuery(operation);
+            break;
+        default:
+            break;
+    }
+    return query;
 }
 
 }  // namespace regor

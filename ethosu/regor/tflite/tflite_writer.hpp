@@ -102,7 +102,7 @@ private:
     int SerialisedTensorIndex(const Tensor *tensor, const std::unordered_map<const Tensor *, Address> &addresses);
 
     flatbuffers::Offset<tflite::Tensor> SerialiseTensor(const Tensor *tensor);
-    flatbuffers::Offset<void> SerialiseOptions(const Operation *operation, const Operation *activation);
+    flatbuffers::Offset<void> SerialiseOptions(const Operation *operation, OpType type);
     flatbuffers::Offset<tflite::Metadata> SerialiseTensorAddresses(int subgraph_index);
 
     flatbuffers::Offset<tflite::Buffer> SerialiseBuffer(const Buffer *buffer);
@@ -128,7 +128,7 @@ private:
         }
     };
 
-    static std::vector<const Tensor *> SortedInputTensors(const Operation *operation);
+    static std::vector<const Tensor *> SortedInputTensors(const Operation *operation, OpType type);
 };
 
 }  // namespace regor

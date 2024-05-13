@@ -59,8 +59,6 @@ private:
 
     // utility functions
 
-    // Is the scaling of tensor a and b valid and equal.
-    bool IsScalingValidAndEqual(const TensorConnection &a, const TensorConnection &b);
     // Multiplies int with QuantizedScale with rounding.
     int MultiplyByQuantizedMultiplier(int x, QuantizedScale quantScale);
 

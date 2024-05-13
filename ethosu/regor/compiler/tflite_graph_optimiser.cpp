@@ -42,20 +42,13 @@
 #include <map>
 #include <memory>
 #include <numeric>
+#include <optional>
 #include <vector>
 
 namespace regor
 {
 
 using namespace GraphOptimisation;
-
-// Is the scaling of Tensor connection a and b valid and equal.
-bool TFLiteGraphOptimiser::IsScalingValidAndEqual(const TensorConnection &a, const TensorConnection &b)
-{
-    return (a.quantization.IsValid() && b.quantization.IsValid() && a.quantization.scales == b.quantization.scales &&
-            a.quantization.zeroPoints == b.quantization.zeroPoints);
-}
-
 
 // Multiplies int with QuantizedScale with rounding.
 int TFLiteGraphOptimiser::MultiplyByQuantizedMultiplier(int x, QuantizedScale quantScale)
@@ -2641,10 +2634,10 @@ Operation *TFLiteGraphOptimiser::ConvertLeakyRelu(Graph *const graph, Operation 
         float alpha = operation->Parameters().leaky_relu.alpha;
         auto ifm = ifmConn->tensor.get();
         auto ofm = ofmConn->tensor.get();
-        bool quantized = !IsScalingValidAndEqual(*ifmConn, *ofmConn);
+        bool quantScalingInvalidOrUnequal = !IsScalingValidAndEqual(*ifmConn, *ofmConn);
         ExecutionQuery query{};
-        query.quantized = quantized;
-        query.type = ifm->Type();
+        query.quantScalingInvalidOrUnequal = quantScalingInvalidOrUnequal;
+        query.ifmType = ifm->Type();
 
 
         if ( alpha == 0 || std::isinf(1 / alpha) )

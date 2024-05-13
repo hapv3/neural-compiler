@@ -65,12 +65,11 @@ struct ExecutionQuery
 {
     OpType opType;
     OpType targetType;
-    DataType type;
-    TensorUsage usage;
+    DataType ifmType;
     TransposeType transposeType;
     ReverseType reverseType;
     ResizeSupportQuery resizeQuery;
-    bool quantized = false;
+    bool quantScalingInvalidOrUnequal = false;
 };
 
 namespace Constraints
@@ -95,7 +94,7 @@ public:
         switch ( query.opType )
         {
             case OpType::LeakyRelu:
-                valid = SupportsLeakyRelu(query.quantized, query.type);
+                valid = SupportsLeakyRelu(query.quantScalingInvalidOrUnequal, query.ifmType);
                 break;
             case OpType::MatMul:
                 valid = SupportsMatMul(query.opType);
@@ -103,7 +102,7 @@ public:
             case OpType::Transpose:
                 valid = SupportsTranspose(query.targetType, query.transposeType);
                 break;
-            case OpType::Reverse:
+            case OpType::ReverseV2:
                 valid = SupportsReverse(query.targetType, query.reverseType);
                 break;
             case OpType::Gather:

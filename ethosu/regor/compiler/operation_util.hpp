@@ -19,10 +19,13 @@
 #pragma once
 
 #include "architecture/architecture.hpp"
+#include "architecture/architecture_constraints.hpp"
 #include "common/buffer_view.hpp"
 #include "operation.hpp"
 #include "quantization.hpp"
 #include "tensor.hpp"
+
+#include <numeric>
 
 namespace regor
 {
@@ -237,6 +240,157 @@ inline Operation *CreateRescaleAdd(const std::shared_ptr<Tensor> &ifm, const std
     auto op = CreateBinaryElementwise(OpType::Add, ifm, ifm2, ifmQuantization, ifm2Quantization, ofmQuantization);
     op->Output(TensorUsage::OFM)->quantization.scales.push_back(QuantizedScale(scale, shift));
     return op;
+}
+
+inline TransposeType CalculateTransposeType(const Operation &operation)
+{
+    auto *ifmConn = operation.Input(TensorUsage::IFM0);
+    auto *paramsConn = operation.Input(TensorUsage::Params);
+    auto *ofmConn = operation.Output(TensorUsage::OFM);
+    Shape ifmShape = ifmConn->shape;
+    Shape ofmShape = ofmConn->shape;
+    // We can only handle permutation vectors up 4 elements
+    if ( paramsConn->shape.Depth() > 4 ) throw std::invalid_argument("Permutation vector has more than 4 elements");
+
+    // We can only handle constant permutation vectors
+    if ( !paramsConn->tensor->IsConstant() ) throw std::invalid_argument("Permutation vector in non-constant");
+    // Convert the permutation vector to a transpose mask that can transpose a shape of size 4
+    // For example:
+    // [0, 1, 2, 3] -> 0x0123 ("NHWC")
+    // [0, 1, 2] -> 0x0123 ("NHWC")
+    // [0, 1] -> 0x0123 ("NHWC")
+    // [0] -> 0x0123 ("NHWC")
+    // [0, 2, 1, 3] -> 0x0213 ("NWHC")
+    // [1, 0, 2] -> 0x0213 ("NWHC")
+    uint32_t mask = 0;
+    int offset = 4 - paramsConn->shape.Depth();
+    for ( int i = 0; i < offset; i++ )
+    {
+        mask = (mask << 4) | i;
+    }
+    for ( int i = offset; i < 4; i++ )
+    {
+        mask = (mask << 4) | (offset + paramsConn->tensor->View().Values<int32_t>()[i - offset]);
+    }
+    // Convert the transpose mask to a transpose type
+    TransposeType transposeType = TransposeType(mask);
+    return transposeType;
+}
+inline ReverseType CalculateReverseType(const Operation &operation)
+{
+
+    auto ifmConn = operation.Input(TensorUsage::IFM);
+    auto paramsConn = operation.Input(TensorUsage::Params);
+    auto ofmConn = operation.Output(TensorUsage::OFM);
+
+    Shape ifmShape = ifmConn->shape;
+    Shape ofmShape = ofmConn->shape;
+
+    assert(paramsConn->tensor->Type() == DataType::Int32);
+    int32_t axis = paramsConn->tensor->View().Values<int32_t>()[0];
+
+    // We can only handle constant axis vectors
+    if ( !paramsConn->tensor->IsConstant() ) throw std::invalid_argument("Axis vector has more than 4 elements");
+    // We can only handle 1-element axis vectors
+    if ( paramsConn->shape != Shape(1) ) throw std::invalid_argument("Axis vector has has more than 1 element");
+    // Convert the axis parameter to a reverse type.
+    // For example:
+    // [axis = 0, size = 1, min_axis = 0, max_axis = 0] -> reverse type C (0x1)
+    // [axis = 0, size = 2, min_axis = 0, max_axis = 1] -> reverse type W (0x2)
+    // [axis = 1, size = 2, min_axis = 0, max_axis = 1] -> reverse type C (0x1)
+    // [axis = 0, size = 3, min_axis = 0, max_axis = 2] -> reverse type H (0x4)
+    // [axis = 1, size = 3, min_axis = 0, max_axis = 2] -> reverse type W (0x2)
+    // [axis = 2, size = 3, min_axis = 0, max_axis = 2] -> reverse type C (0x1)
+    // [axis = 1, size = 4, min_axis = 1, max_axis = 3] -> reverse type H (0x4)
+    // [axis = 2, size = 4, min_axis = 1, max_axis = 3] -> reverse type W (0x2)
+    // [axis = 3, size = 4, min_axis = 1, max_axis = 3] -> reverse type C (0x1)
+    const int size = ifmShape.Size();
+    if ( axis < 0 ) axis = size + axis;
+    const int axis_min = std::max(size - 3, 0);  // Can only reverse the last 3 dimensions
+    const int axis_max = size - 1;
+    // TODO: Change into semantic check.
+    if ( axis < axis_min || axis > axis_max ) throw std::invalid_argument("Axis vector outside [-rank(ifm),rank(ifm))");
+    assert(axis - axis_max < 32);
+
+    ReverseType reverseType = ReverseType(1 << (axis_max - axis));
+    return reverseType;
+}
+
+inline ResizeSupportQuery CalculateResizeSupportQuery(const Operation &operation)
+{
+    auto ifmConn = operation.Input(TensorUsage::IFM);
+    auto ofmConn = operation.Output(TensorUsage::OFM);
+    assert(ifmConn);
+    assert(ofmConn);
+
+    // Get numerators(n) and denominators(d) for the scale fractions
+    int width_n = ofmConn->shape.Width();
+    int width_d = ifmConn->shape.Width();
+    int height_n = ofmConn->shape.Height();
+    int height_d = ifmConn->shape.Height();
+    int heightOffset = 0;
+    int widthOffset = 0;
+
+    // Compute scaling fractions
+    // align-corners use a scale-factor of (n-1)/(d-1)
+    if ( operation.Parameters().resize.alignCorners )
+    {
+        if ( width_d > 1 )
+        {
+            width_n -= 1;
+            width_d -= 1;
+        }
+        if ( height_d > 1 )
+        {
+            height_n -= 1;
+            height_d -= 1;
+        }
+    }
+
+    // reduce scaling fractions with gcd
+    int gcd_w = std::gcd(width_n, width_d);
+    width_n = (width_n / gcd_w);
+    width_d = (width_d / gcd_w);
+
+    int gcd_h = std::gcd(height_n, height_d);
+    height_n = (height_n / gcd_h);
+    height_d = (height_d / gcd_h);
+
+    if ( operation.Parameters().resize.halfPixelCenters )
+    {
+        // make sure fractions are evenly divisible by 2
+        width_n = width_n * 2;
+        width_d = width_d * 2;
+        height_n = height_n * 2;
+        height_d = height_d * 2;
+        // adjust offset for half-pixel-centers
+        widthOffset = (width_d / 2) - (width_n / 2);
+        heightOffset = (height_d / 2) - (height_n / 2);
+    }
+
+    // set up op-support query
+    ResizeSupportQuery resizeQuery;
+    resizeQuery.scaleX = {int16_t(width_n), int16_t(width_d)};
+    resizeQuery.scaleY = {int16_t(height_n), int16_t(height_d)};
+    resizeQuery.offsetX = widthOffset;
+    resizeQuery.offsetY = heightOffset;
+    resizeQuery.ifmShape = ifmConn->shape;
+    if ( operation.Type() == OpType::ResizeBilinear )
+    {
+        resizeQuery.mode = ArchResizeMode::Bilinear;
+    }
+    else
+    {
+        resizeQuery.mode = ArchResizeMode::Nearest;
+    }
+    return resizeQuery;
+}
+
+// Is the scaling of Tensor connection a and b valid and equal.
+inline bool IsScalingValidAndEqual(const TensorConnection &a, const TensorConnection &b)
+{
+    return (a.quantization.IsValid() && b.quantization.IsValid() && a.quantization.scales == b.quantization.scales &&
+            a.quantization.zeroPoints == b.quantization.zeroPoints);
 }
 
 }  // namespace regor

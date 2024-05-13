@@ -171,7 +171,7 @@ bool Compiler::LoadTflite(const void *input, size_t size)
     if ( _compilerOptions.debugDatabase != !!_optDb )
         _optDb = _compilerOptions.debugDatabase ? std::make_unique<class OptimiserDatabase>(&_Db) : nullptr;
 
-    TfLiteReader::LoadGraphs(input, size, _graphs, _optDb.get());
+    TfLiteReader::LoadGraphs(input, size, _graphs, _optDb.get(), _architecture->Constraints());
     return !_graphs.empty();
 }
 
