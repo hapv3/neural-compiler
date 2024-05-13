@@ -348,6 +348,8 @@ def create_avg_pool_for_concat(concat_op, name, ifm, ifm_shape: Shape4D, write_o
     """Creates an average pool for the given concat op/input feature map"""
     ofm = concat_op.ofm
     avgpool_op = create_avgpool_nop(name)
+    # Enforce original type since this is used in pass packing to group concat ops
+    avgpool_op._original_type = concat_op.type
     avgpool_op.inputs = [ifm]
     avgpool_op.outputs = [ofm]
 

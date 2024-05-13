@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2020-2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2020-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -523,6 +523,23 @@ def pack_into_passes(nng, arch, verbose_packing=False):
 
         # Sort ops by op_index (same call order as in the original graph)
         pass_list_top = sorted(pass_list_top, key=lambda ps: -1 if ps.ops[0].op_index is None else ps.ops[0].op_index)
+
+        # A concat is implemented by several AvgPool ops writing to the same ofm but with slice offset
+        # Group all AvgPool ops for a concat so that they run in one sequence (within the same cmd stream)
+        last_idx = len(pass_list) - 1
+        for npu_ps in reversed(pass_list):
+            if npu_ps.placement == PassPlacement.Cpu or not npu_ps.ops[0].original_type.is_concat_op():
+                continue
+            # Concat pass found, search forward for the next avgpool op writing to the same ofm
+            idx = pass_list.index(npu_ps)
+            for next_ps in pass_list[idx + 1 :]:
+                next_is_concat = next_ps.ops[0].original_type.is_concat_op()
+                if next_is_concat and next_ps.ops[0].ofm == npu_ps.ops[0].ofm:
+                    # Avgpool writing to the same OFM, group them
+                    pass_list.remove(npu_ps)
+                    insert_index = pass_list.index(next_ps)
+                    pass_list.insert(insert_index, npu_ps)
+                    break
 
         # Sort the rest of the list based on critera 2.
         # Search from bottom of list and when a CPU pass is found
