@@ -1,0 +1,172 @@
+//
+// SPDX-FileCopyrightText: Copyright 2021, 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the License); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an AS IS BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+#pragma once
+
+// Macro to mark variables as unused
+#if !defined UNUSED
+#define UNUSED(x) (void)(x)
+#endif
+
+#define MACRO_EXPAND(a) a
+#define MACRO_CONCAT_IMPL(a, b) a##b
+#define MACRO_CONCAT(a, b) MACRO_CONCAT_IMPL(a, b)
+
+// clang-format off
+#if __GNUC__
+    #define DLL_EXPORT __attribute__((visibility("default")))
+    #define _strnicmp strncasecmp
+#elif _WIN32
+    #if TARGET_WIN32_DLL
+        #define DLL_EXPORT __declspec(dllexport)
+    #else
+        #define DLL_EXPORT
+    #endif
+    #ifndef ssize_t
+        #define ssize_t ptrdiff_t
+    #endif
+#else
+    #error "undefined export semantics"
+#endif
+// clang-format on
+
+#include <fmt/format.h>
+#include <fmt/ranges.h>
+#include <cassert>
+#include <cstdint>
+#include <string_view>
+#include <type_traits>
+
+template<typename ENUMTYPE, std::enable_if_t<std::is_enum_v<ENUMTYPE>, int> = 0>
+constexpr std::underlying_type_t<ENUMTYPE> format_as(ENUMTYPE e) noexcept
+{
+    return static_cast<std::underlying_type_t<ENUMTYPE>>(e);
+}
+
+namespace regor
+{
+template<typename ENUMTYPE, std::enable_if_t<std::is_enum_v<ENUMTYPE>, int> = 0>
+constexpr std::underlying_type_t<ENUMTYPE> format_as(ENUMTYPE e) noexcept
+{
+    return static_cast<std::underlying_type_t<ENUMTYPE>>(e);
+}
+}  // namespace regor
+
+#define DECLARE_ENUM_AS_FLAGS(ENUM_) \
+    static constexpr inline ENUM_ operator&(ENUM_ a, ENUM_ b) \
+    { \
+        return ENUM_(std::underlying_type<ENUM_>::type(a) & std::underlying_type<ENUM_>::type(b)); \
+    } \
+    static constexpr inline ENUM_ operator|(ENUM_ a, ENUM_ b) \
+    { \
+        return ENUM_(std::underlying_type<ENUM_>::type(a) | std::underlying_type<ENUM_>::type(b)); \
+    } \
+    static constexpr inline ENUM_ operator^(ENUM_ a, ENUM_ b) \
+    { \
+        return ENUM_(std::underlying_type<ENUM_>::type(a) ^ std::underlying_type<ENUM_>::type(b)); \
+    }
+
+using UniqueId = uint32_t;
+
+UniqueId GenerateUniqueId();
+
+#define VERIFY(x_) (assert(x_), (x_))
+
+namespace regor
+{
+
+#if defined __GNUC__
+
+template<typename TYPE>
+constexpr const char *PlatformRootName()
+{
+    const char *p = __PRETTY_FUNCTION__;
+    return p;
+}
+
+template<typename TYPE>
+constexpr std::string_view PlatformTypeName()
+{
+    const char *p = PlatformRootName<TYPE>();
+    while ( *p++ != '=' )
+    {
+    };
+    while ( *p == ' ' )
+    {
+        p++;
+    };
+    std::size_t i = 0;
+    while ( (p[i] != 0) && (p[i] != ']') && (*p != ';') )
+        i++;
+    return std::string_view(p, i);
+}
+
+#elif _MSC_VER
+
+template<typename TYPE>
+constexpr const char *PlatformRootName()
+{
+    const char *p = __FUNCSIG__;
+    return p;
+}
+
+template<typename TYPE>
+constexpr std::string_view PlatformTypeName()
+{
+    const char *p = PlatformRootName<TYPE>();
+    while ( *p++ != '<' )
+        ;
+    if ( (*p == 'c') || (*p == 'u') || (*p == 's') || (*p == 'e') )
+    {
+        if ( std::string_view(p, 7) == "struct " ) p += 7;
+        else if ( std::string_view(p, 6) == "class " ) p += 6;
+        else if ( std::string_view(p, 6) == "union " ) p += 6;
+        else if ( std::string_view(p, 5) == "enum " ) p += 5;
+    }
+    std::size_t i = 0;
+    while ( p[i] != '(' )
+        i++;
+    return std::string_view(p, i - 1);
+}
+
+#else
+#error No type hash for this target
+#endif
+
+template<typename TYPE, bool NO_NAMESPACE>
+static constexpr uint32_t PlatformTypeHash()
+{
+    const std::string_view name = PlatformTypeName<TYPE>();
+    auto p = name.begin();
+    auto e = name.end();
+    if constexpr ( NO_NAMESPACE )
+    {
+        while ( *p != ':' )
+            p++;
+        while ( *p == ':' )
+            p++;
+    }
+    uint32_t hash = 0x811c9dc5;  // FNV-1a SEED
+    while ( p < e )
+    {
+        hash = (hash ^ uint8_t(*p++)) * 0x01000193;  // FNV-1a PRIME
+    }
+    return hash;
+}
+
+}  // namespace regor

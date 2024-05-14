@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2021, 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -26,6 +26,7 @@ classifiers = [
     "License :: OSI Approved :: Apache Software License",
     "Operating System :: POSIX :: Linux",
     "Operating System :: Microsoft :: Windows :: Windows 10",
+    "Programming Language :: C++",
     "Programming Language :: C",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -57,14 +58,35 @@ vela = "ethosu.vela.vela:main"
 
 [build-system]
 requires = [
+    "setuptools >= 42",
+    "wheel",
     "numpy",
-    "setuptools_scm[toml]~=7.1.0"
+    "setuptools_scm[toml]~=7.1.0",
+    "cmake >= 3.16.3"
 ]
 build-backend = "setuptools.build_meta"
+
+[tool.cibuildwheel]
+test-command = "pytest {project}/test"
+test-extras = ["dev"]
 
 [tool.pytest.ini_options]
 minversion = "6.0"
 addopts = ["-ra", "--showlocals", "--strict-markers", "--strict-config"]
 xfail_strict = true
 filterwarnings = ["error"]
-testpaths = ["ethosu/mlw_codec/test", "ethosu/vela/test"]
+testpaths = ["test", "ethosu/mlw_codec/test", "ethosu/vela/test"]
+
+[tool.black]
+line-length = 120
+
+[tool.pylint.MAIN]
+ignore = "ethosu/regor"
+disable = "all"
+enable = "W0102"
+
+[tool.pylint.FORMAT]
+max-line-length = 120
+
+[tool.pylint.REPORTS]
+score = "no"

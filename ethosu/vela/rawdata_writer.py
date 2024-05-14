@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2021 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2021, 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -79,3 +79,27 @@ def write_rawdata_output(nng, arch, filename):
                 output_region=ofm_regions,
                 output_offset=ofm_offsets,
             )
+
+
+# Write out a CompiledRawModel to a numpy raw file.
+def write_rawdata_output_from_model(filename, model):
+    np.savez(
+        filename,
+        cmd_data=model.command_stream,
+        weight_data=model.read_only.data,
+        weight_region=model.read_only.region,
+        scratch_shape=[model.scratch.size],
+        scratch_region=model.scratch.region,
+        scratch_size=model.scratch.size,
+        scratch_fast_shape=[model.scratch_fast.size],
+        scratch_fast_region=model.scratch_fast.region,
+        scratch_fast_size=model.scratch_fast.size,
+        input_shape=[t.shape for t in model.inputs],
+        input_elem_size=[t.element_size for t in model.inputs],
+        input_region=[t.region for t in model.inputs],
+        input_offset=[t.address for t in model.inputs],
+        output_shape=[t.shape for t in model.outputs],
+        output_elem_size=[t.element_size for t in model.outputs],
+        output_region=[t.region for t in model.outputs],
+        output_offset=[t.address for t in model.outputs],
+    )

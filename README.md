@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright 2020-2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+SPDX-FileCopyrightText: Copyright 2020-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 
 SPDX-License-Identifier: Apache-2.0
 
@@ -16,6 +16,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 # Vela
+
+**_NOTE:_** **Ethos-U85 support should be considered beta-quality**
 
 This tool is used to compile a
 [TensorFlow Lite for Microcontrollers](https://www.tensorflow.org/lite/microcontrollers)
@@ -330,8 +332,10 @@ Additional useful information:
 
 * [Arm Products: Ethos-U55 NPU](https://www.arm.com/products/silicon-ip-cpu/ethos/ethos-u55)
 * [Arm Products: Ethos-U65 NPU](https://www.arm.com/products/silicon-ip-cpu/ethos/ethos-u65)
-* [Arm Developer: Ethos-U55 NPU](https://developer.arm.com/ip-products/processors/machine-learning/arm-ethos-u/ethos-u55)
-* [Arm Developer: Ethos-U65 NPU](https://developer.arm.com/ip-products/processors/machine-learning/arm-ethos-u/ethos-u65)
+* [Arm Products: Ethos-U85 NPU](https://www.arm.com/products/silicon-ip-cpu/ethos/ethos-u85)
+* [Arm Developer: Ethos-U55 NPU](https://developer.arm.com/Processors/Ethos-U55)
+* [Arm Developer: Ethos-U65 NPU](https://developer.arm.com/Processors/Ethos-U65)
+* [Arm Developer: Ethos-U85 NPU](https://developer.arm.com/Processors/Ethos-U85)
 
 ## Security
 

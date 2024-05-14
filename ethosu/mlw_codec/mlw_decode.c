@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright 2020, 2022 Arm Limited and/or its affiliates <open-source-office@arm.com>
+ * SPDX-FileCopyrightText: Copyright 2020, 2022-2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -91,7 +91,6 @@ int mlw_decode( uint8_t *inbuf, int inbuf_size, int16_t **outbuf, int verbose) {
     int first=1;
     int use_zero_run, i, j;
     int outbuf_size=0;
-    int nchunks=0;
 
     *outbuf=0;
 
@@ -260,7 +259,6 @@ int mlw_decode( uint8_t *inbuf, int inbuf_size, int16_t **outbuf, int verbose) {
             z_prev_enable = z_enable;
             z_prev_nsymbols = z_nsymbols;
             memcpy( z_prev_q, z_q, sizeof(z_prev_q));
-            nchunks++;
         } while( w_prev_enable || z_prev_enable );
 
         // Interleave non-zero and zeros into the outbut buffer

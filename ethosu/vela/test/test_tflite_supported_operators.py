@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2020-2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2020-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -15,7 +15,7 @@
 # limitations under the License.
 #
 # Description:
-# Unit tests for tflite support_operators
+# Unit tests for TFLite support_operators
 from typing import List
 
 import numpy as np

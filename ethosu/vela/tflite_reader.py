@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2020-2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2020-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -321,7 +321,7 @@ class TFLiteGraph:
                     buf_data = self.buffers[meta.Buffer()]
                     self.nng.metadata.append((name, buf_data))
         except (struct.error, TypeError, RuntimeError) as e:
-            print(f'Error: Invalid tflite file. Got "{e}" while {parsing_step}.')
+            print(f'Error: Invalid TFLite file. Got "{e}" while {parsing_step}.')
             sys.exit(1)
 
     def parse_buffer(self, buf_data):

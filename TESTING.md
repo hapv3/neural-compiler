@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright 2020, 2022-2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+SPDX-FileCopyrightText: Copyright 2020, 2022-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 
 SPDX-License-Identifier: Apache-2.0
 
@@ -19,10 +19,10 @@ limitations under the License.
 
 ## Tools
 
-Vela's Python codebase is PEP8 compliant with the exception of a 120 character
+Vela's Python code is PEP8 compliant with the exception of a 120 character
 line length.  The following code formatting and linting tools are run on all the
-Python files (excluding the directories `ethosu/vela/tflite/`, `ethosu/vela/tosa/`,
-and `ethosu/vela/ethos_u55_regs` because they contain auto-generated code):
+Python files (excluding some auto-generated code see `.pre-commit-config.yaml`
+for details):
 
 * mypy (code linter)
 * reorder-python-import (code formatter)
@@ -30,21 +30,30 @@ and `ethosu/vela/ethos_u55_regs` because they contain auto-generated code):
 * flake8 (code linter)
 * pylint (code linter)
 
-These tools are run using the [pre-commit](https://pre-commit.com/) framework.
-This is also used to run the following test and coverage tools:
+Vela's C/C++ code is formatted using the following tools (excluding some
+auto-generated and third-party code see `.pre-commit-config.yaml` for details):
 
-* pytest (testing framework)
-* pytest-cov (code coverage plugin for pytest)
+* clang-format (code formatter)
+
+All of the above tools can be installed and run using the
+[pre-commit](https://pre-commit.com/) framework (see below).
+
+In addition, there are both Python and C/C++ unit tests. These use the following
+frameworks:
+
+* pytest (Python)
+* Catch2 (C/C++)
 
 ### Installation
 
-To install the development dependencies, use the following command:
+To install the development dependencies, first install Vela with the development
+option:
 
 ``` bash
-pip install -e .[dev]
+pip install -e ".[dev]"
 ```
 
-This command will install the following tools:
+This will install the following tools:
 
 * pytest
 * pytest-cov
@@ -52,53 +61,56 @@ This command will install the following tools:
 * build
 * setuptools_scm
 
-The remaining tools will all be installed automatically upon first use of pre-commit.
+Then, the remaining tools will be installed automatically upon the first use of
+pre-commit.
 
 ### Add pre-commit hook (Automatically running the tools)
 
 To support code development all the above tools can be configured to run
-automatically on `git commit` (except pytest-cov which is run on `git push`) by
-using the command:
+automatically upon any modified file. This happens when performing a
+`git commit` command and is setup using:
 
 ```bash
 $ pre-commit install
 pre-commit installed at .git/hooks/pre-commit
 ```
 
-When committing (or pushing) if any of the tools result in a failure (meaning an
-issue was found) then it will need to be resolved and the git operation
-repeated.
+When committing a patch, if any of the tools result in a failure (meaning an
+issue was found) then the issue will need to be resolved before re-issuing the
+commit.
 
 ### Manually running the tools
 
 All of the tools can be run individually by invoking them using the following
 pre-commit framework commands:
 
-```bash
-$ pre-commit run mypy --all-files
-...
-$ pre-commit run reorder-python-imports --all-files
-...
-$ pre-commit run black --all-files
-...
-$ pre-commit run flake8 --all-files
-...
-$ pre-commit run pylint --all-files
-...
-$ pre-commit run pytest
-...
-$ pre-commit run pytest-cov --hook-stage push
-...
-```
-
-Alternatively, all of the commit stage hooks can be run using the command:
+1) Run all of the commit stages on all files in the repository:
 
 ```bash
 $ pre-commit run --all-files
-mypy.....................................................................Passed
-Reorder python imports...................................................Passed
-black....................................................................Passed
-flake8...................................................................Passed
-pylint...................................................................Passed
-pytest...................................................................Passed
+```
+
+2) Run a specific check on a specific file
+```bash
+$ pre-commit run pylint --files ethosu/vela/vela.py
+```
+
+### Manually run the pytest unit tests
+
+To run all of the pytest unit tests use the following command:
+```bash
+$ pytest
+```
+
+2) Run a specific pytest unit test
+```bash
+$ pytest pytest ethosu/vela/test/test_architecture_allocator.py
+```
+
+### Manually run the Catch2 unit tests
+
+To run all of the Catch2 unit tests use the following command:
+```bash
+$ cmake -S ethosu/regor -B build-unit-tests -DCMAKE_BUILD_TYPE=Debug -DREGOR_SANITIZE=address
+$ cmake --build build-unit-tests -t check
 ```

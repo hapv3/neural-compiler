@@ -1,0 +1,1469 @@
+//
+// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the License); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an AS IS BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+#include "ethos_u55_register_cs_generator.hpp"
+
+#include "common/common.hpp"
+#include "common/logging.hpp"
+
+#include "architecture/ethos_u_scaling.hpp"
+#include "common/data_type.hpp"
+#include "compiler/high_level_command_stream.hpp"
+#include "compiler/op_type.hpp"
+#include "ethos_u55.hpp"
+#include "ethos_u55_scaling.hpp"
+#define NPU_DISASSEMBLE
+#define NPU_NAMESPACE ethosu65
+#include "architecture/ethosu65/ethos_u65_interface.hpp"
+
+#include <cstdint>
+#include <deque>
+#include <unordered_map>
+#include <vector>
+
+namespace regor
+{
+using namespace ethosu65;
+
+void Emitter::Emit(uint32_t instr)
+{
+    uint16_t cmd = instr & 0xFFFF;
+    assert(IsCmd0(cmd));
+    bool emit = IsOp(cmd) || SetRegister(cmd, instr);
+    if ( emit )
+    {
+        _stream.push_back(instr);
+    }
+}
+
+void Emitter::Emit(uint64_t instr)
+{
+    uint16_t cmd = instr & 0xFFFF;
+    assert(IsCmd1(cmd));
+    bool emit = IsOp(cmd) || SetRegister(cmd, instr);
+    if ( emit )
+    {
+        _stream.push_back(uint32_t(instr));
+        _stream.push_back(uint32_t(instr >> 32));
+    }
+}
+
+void Emitter::Clear()
+{
+    _stream.clear();
+    _registers.clear();
+}
+
+
+bool Emitter::SetRegister(uint16_t reg, uint64_t value)
+{
+    auto item = _registers.find(reg);
+    bool isChanged = item == _registers.end() || item->second != value;
+    if ( isChanged )
+    {
+        _registers[reg] = value;
+    }
+    return isChanged;
+}
+
+bool Emitter::IsCmd0(uint16_t key)
+{
+    return (key >> 14) == uint16_t(ethosu65::cmd_ctrl::CMD0_CTRL);
+}
+
+bool Emitter::IsCmd1(uint16_t key)
+{
+    return (key >> 14) == uint16_t(ethosu65::cmd_ctrl::CMD1_CTRL);
+}
+
+bool Emitter::IsOp(uint16_t key)
+{
+    return IsCmd0(key) ? (key & (1 << 8)) == 0 : (key & (1 << 8)) != 0;
+}
+
+
+/// <summary>
+/// Generates register command streams for Ethos U55 and Ethos U65.
+/// </summary>
+
+namespace
+{
+const std::unordered_map<OpType, elementwise_mode> s_ElementwiseMap = {
+    {OpType::Add, elementwise_mode::ADD},
+    {OpType::Sub, elementwise_mode::SUB},
+    {OpType::Abs, elementwise_mode::ABS},
+    {OpType::Mul, elementwise_mode::MUL},
+    {OpType::Minimum, elementwise_mode::MIN},
+    {OpType::Maximum, elementwise_mode::MAX},
+    {OpType::LeakyRelu, elementwise_mode::LRELU},
+    {OpType::CLZ, elementwise_mode::CLZ},
+    {OpType::SHL, elementwise_mode::SHL},
+    {OpType::Asr, elementwise_mode::SHR},
+};
+
+activation_type ToActivationType(DataType type)
+{
+    if ( IsSignedInteger(type) )
+    {
+        return activation_type::SIGNED;
+    }
+    else
+    {
+        assert(IsInteger(type));
+        return activation_type::UNSIGNED;
+    }
+}
+
+activation_format ToActivationFormat(TensorFormat format)
+{
+    if ( format == TensorFormat::NHCWB16 )
+    {
+        return activation_format::NHCWB16;
+    }
+    else
+    {
+        assert(format == TensorFormat::NHWC);
+        return activation_format::NHWC;
+    }
+}
+
+activation_precision ToActivationPrecision(DataType type)
+{
+    switch ( DataTypeSizeBits(type) )
+    {
+        case 8:
+            return activation_precision::B8;
+        case 16:
+            return activation_precision::B16;
+        case 32:
+            return activation_precision::B32;
+        case 64:
+            return activation_precision::B64;
+        default:
+            assert(false);
+            return activation_precision::B64;
+    }
+}
+
+ifm_upscale_mode ToIfmUpscaleMode(ArchResampling resampling)
+{
+
+    if ( resampling == ArchResampling::Nearest )
+    {
+        return ifm_upscale_mode::NEAREST;
+    }
+    if ( resampling == ArchResampling::Zeros )
+    {
+        return ifm_upscale_mode::ZEROS;
+    }
+    return ifm_upscale_mode::NONE;
+}
+
+RCSRoundMode GetRoundingMode(const HLCOperation *op)
+{
+    switch ( op->rounding )
+    {
+        case HLCRoundMode::NATURAL:
+            return RCSRoundMode::NATURAL;
+        case HLCRoundMode::TRUNCATE:
+            return RCSRoundMode::TRUNCATE;
+        case HLCRoundMode::DBL:
+            return RCSRoundMode::DBL;
+        case HLCRoundMode::AUTO:
+            return RCSRoundMode::DBL;
+        default:
+            return RCSRoundMode::DBL;
+    }
+}
+
+ifm_scale_mode MapRcsIfmScaleModeToInterface(RCSIfmScaleMode rcsScaleMode)
+{
+    switch ( rcsScaleMode )
+    {
+        case RCSIfmScaleMode::OPA_OPB_16:
+            return ifm_scale_mode::OPA_OPB_16;
+        case RCSIfmScaleMode::OPA_32:
+            return ifm_scale_mode::OPA_32;
+        case RCSIfmScaleMode::OPB_32:
+            return ifm_scale_mode::OPB_32;
+        default:
+            assert(0 && "Unexpected value, has the interface changed?");
+            return ifm_scale_mode::OPA_32;
+    }
+}
+
+round_mode MapRcsRoundModeToInterface(RCSRoundMode rcsRoundMode)
+{
+    switch ( rcsRoundMode )
+    {
+        case RCSRoundMode::NATURAL:
+            return round_mode::NATURAL;
+        case RCSRoundMode::TRUNCATE:
+            return round_mode::TRUNCATE;
+        case RCSRoundMode::DBL:
+            return round_mode::DBL;
+        default:
+            assert(0 && "Unexpected value, has the interface changed?");
+            return round_mode::DBL;
+    }
+}
+
+}  // namespace
+
+uint32_t EthosU55RCSGenerator::IdRegister()
+{
+    return id_r{};
+}
+
+bool EthosU55RCSGenerator::IsSupportedElementwise(const OpType opType)
+{
+    return s_ElementwiseMap.count(opType) != 0;
+}
+
+EthosU55RCSGenerator::EthosU55RCSGenerator(ArchEthosU55 *arch) : _arch(arch)
+{
+}
+
+
+void EthosU55RCSGenerator::Emit(uint32_t instr)
+{
+    _emit.Emit(instr);
+}
+
+void EthosU55RCSGenerator::Emit(uint64_t instr)
+{
+    _emit.Emit(instr);
+}
+
+int EthosU55RCSGenerator::GetDoubleBufferOffset(HLCWeights *weights, int rangeIndex)
+{
+    int doubleBufferOffset = 0;
+    if ( weights->buffering == Buffering::Double )
+    {
+        assert(weights->subStreams > 0);
+        int depthIndex = rangeIndex / weights->subStreams;
+        if ( depthIndex % 2 == 1 )
+        {
+            doubleBufferOffset = weights->maxRangeBytes;
+        }
+    }
+    return doubleBufferOffset;
+}
+
+void EthosU55RCSGenerator::CheckAddressRange(ArchitectureMemory *memory, Address address, int size)
+{
+    assert(address >= 0);
+    if ( address >= memory->SizeBytes() )
+    {
+        LOG_ERROR("Error: Address out of bounds, address {0}, memory '{1}' with size {2}\n", address, memory->Name(),
+            memory->SizeBytes());
+        // TODO: replace assert by error handling
+        assert(false && "Address out of bounds");
+    }
+    assert(size >= 0);
+    if ( address + size > memory->SizeBytes() )
+    {
+        LOG_ERROR("Error: Address offset out of bounds, address {0}, offset {1}, memory '{2}' with size {3}\n", address,
+            size, memory->Name(), memory->SizeBytes());
+        // TODO: replace assert by error handling
+        assert(false && "address offset out of bounds");
+    }
+}
+
+void EthosU55RCSGenerator::CheckAddresses(const HLCFeatureMap &fm)
+{
+    CheckAddressRange(fm.memArea.memory, fm.address, fm.AllocationSizeBytes());
+    assert(fm.address % 16 == 0 || fm.format != TensorFormat::NHCWB16);
+}
+
+// Calculates the rolling buffer address of the given coordinate.
+Address EthosU55RCSGenerator::AddressForCoordinate(const HLCFeatureMap &fm, const Shape &strides, const Shape &coord)
+{
+    Shape truncatedCoord = Shape::PadAxes(coord, 4, 0) % Shape::PadAxes(fm.shape, 4, 1);
+    int offset = 0;
+    if ( fm.format == TensorFormat::NHWC )
+    {
+        offset = strides.Dot(truncatedCoord);
+    }
+    else if ( fm.format == TensorFormat::NHCWB16 )
+    {
+        constexpr int BRICK = 16;
+        int elemSize = DataTypeSizeBits(fm.dataType) / 8;
+        int strideX = BRICK * elemSize;
+        offset =
+            truncatedCoord.Height() * strides.Height() + truncatedCoord.Width() * strideX +
+            (truncatedCoord.Depth() / BRICK) * strides.Depth() + (truncatedCoord.Depth() % BRICK) * elemSize +
+            truncatedCoord.Batch() * strides.Batch();
+    }
+    else
+    {
+        assert(false);
+    }
+    return fm.address + offset;
+}
+
+// Calculates tile sizes/addresses of a feature map
+TileBox EthosU55RCSGenerator::GetTiles(const HLCFeatureMap &fm, const Shape &strides, const Box &area)
+{
+    int crossingY = RoundAway(area.Start().Height() + 1, fm.shape.Height());
+    crossingY = std::min(crossingY, area.End().Height());
+    int crossingX = RoundAway(area.Start().Width() + 1, fm.shape.Width());
+    crossingX = std::min(crossingX, area.End().Width());
+    TileBox tiles;
+    auto height = crossingY - area.Start().Height();
+    auto width = crossingX - area.Start().Width();
+    tiles.height0 = (height + fm.stepXY.y - 1) / fm.stepXY.y;
+    tiles.height1 = tiles.height0;
+    tiles.width0 = (width + fm.stepXY.x - 1) / fm.stepXY.x;
+    for ( int i = 0; i < 4; ++i )
+    {
+        tiles.address[i] = 0;
+    }
+    int fmSize = fm.AllocationSizeBytes();
+    tiles.address[0] = AddressForCoordinate(fm, strides, area.Start());
+    assert(fm.address <= tiles.address[0] && tiles.address[0] < fm.address + fmSize);
+    if ( area.End().Width() > crossingX )
+    {
+        tiles.address[1] = AddressForCoordinate(fm, strides, area.Start().WithWidth(crossingX));
+        assert(fm.address <= tiles.address[1] && tiles.address[1] < fm.address + fmSize);
+        assert(false && "Striping in vertical direction is not supported");
+    }
+    if ( area.End().Height() > crossingY )
+    {
+        tiles.address[2] = AddressForCoordinate(fm, strides, area.Start().WithHeight(crossingY));
+        assert(fm.address <= tiles.address[2] && tiles.address[2] < fm.address + fmSize);
+    }
+    if ( area.End().Width() > crossingX && area.End().Height() > crossingY )
+    {
+        tiles.address[3] = AddressForCoordinate(fm, strides, area.Start().WithWidth(crossingX).WithHeight(crossingY));
+        assert(fm.address <= tiles.address[3] && tiles.address[3] < fm.address + fmSize);
+    }
+    if ( fm.format == TensorFormat::NHCWB16 )
+    {
+        for ( int i = 0; i < 4; ++i )
+        {
+            assert(tiles.address[i] % 16 == 0 && "NHCWB16 base address is not 16-byte aligned");
+        }
+    }
+    return tiles;
+}
+
+MemoryAccess EthosU55RCSGenerator::ToMemoryAccess(const HLCFeatureMap &fm, const Box &area, AccessDirection direction)
+{
+    const auto &strides = fm.strides;
+    Address start = AddressForCoordinate(fm, strides, area.Start());
+    // Note: due to truncating of shape, AddressForCoordinate(fm, .., fm.shape) returns
+    // fm.address; the - Shape(1, 1, 1) prevents this
+    Address end = AddressForCoordinate(fm, strides, area.End() - Shape(1, 1, 1)) + DataTypeSizeBits(fm.dataType) / 8;
+    if ( end < start )
+    {
+        // Area wraps around the end of the feature map
+        start = fm.address;
+        end = fm.address + fm.AllocationSizeBytes();
+    }
+    return MemoryAccess(direction, fm.memArea, start, end);
+}
+
+// Returns region number used in NPU_SET_..._REGION
+uint32_t EthosU55RCSGenerator::ToRegion(const MemArea &memArea)
+{
+    auto region = BasePointerIndex::WeightTensor;
+    if ( memArea == _arch->FeatureMapMemory() )
+    {
+        region = BasePointerIndex::ScratchTensor;
+    }
+    else if ( memArea == _arch->StagingMemory() )
+    {
+        region = BasePointerIndex::ScratchFastTensor;
+    }
+    else if ( memArea == _arch->LUTMemory() )
+    {
+        region = BasePointerIndex::Mem2Mem;
+    }
+    else
+    {
+        assert(memArea == _arch->ReadonlyMemory());
+    }
+    return uint32_t(region);
+}
+
+bool EthosU55RCSGenerator::UseZeroPoint0(OpType opType, const HLCFeatureMap &fm, bool isOFM)
+{
+    if ( fm.quantization.forceZeroPoint )
+    {
+        return false;
+    }
+    if ( fm.quantization.zeroPoints.empty() || (fm.dataType == DataType::Int32 && !isOFM) )
+    {
+        return true;
+    }
+    return opType == OpType::AvgPool || opType == OpType::ResizeBilinear || opType == OpType::CLZ || opType == OpType::SHL;
+}
+
+// Checks if the feature map is a scalar, and if so, returns the
+// quantized value in scalarValue.
+bool EthosU55RCSGenerator::IsScalar(const HLCFeatureMap &fm, int32_t &scalarValue)
+{
+    const auto &view = fm.bufferView;
+    // A 1-sized feature map in constant memory is a scalar
+    bool isScalar = fm.shape.Elements() == 1 && view.HasBuffer();
+    if ( isScalar )
+    {
+        if ( fm.dataType == DataType::Int8 )
+        {
+            scalarValue = view.Values<int8_t>()[0];
+        }
+        else if ( fm.dataType == DataType::UInt8 )
+        {
+            scalarValue = view.Values<uint8_t>()[0];
+        }
+        else if ( fm.dataType == DataType::Int16 )
+        {
+            scalarValue = view.Values<int16_t>()[0];
+        }
+        else
+        {  // Unsupported scalar value
+            isScalar = false;
+        }
+    }
+    return isScalar;
+}
+
+// Calculates waits for KERNEL_WAIT/DMA_WAIT, returns -1 if no wait is needed
+// - opAccesses contains the memory accesses for the current operation
+// - outstanding contains the memory accesses for ongoing "other" operations
+//   (DMA operations if the current op is an NPU operation, NPU operations if the current op is a DMA operation)
+// Note: NPU - NPU dependency is handled via block dependency
+int EthosU55RCSGenerator::CalcCommandWaits(const MemoryAccesses &opAccesses, std::deque<MemoryAccesses> &outstanding)
+{
+    int waits = 0;
+    for ( int index = int(outstanding.size()) - 1; index >= 0; ++waits, --index )
+    {
+        for ( const auto &access : opAccesses )
+        {
+            for ( const auto &outstandingAccess : outstanding[index] )
+            {
+                if ( access.Conflicts(outstandingAccess) )
+                {
+                    // Current op needs to wait, and after it has waited,
+                    // outstanding[0..index] are not outstanding any longer
+                    for ( int i = 0; i <= index; ++i )
+                    {
+                        outstanding.pop_front();
+                    }
+                    return waits;
+                }
+            }
+        }
+    }
+    return -1;
+}
+
+// Returns LUT slot to be used for the given LUT operation.
+// Sets alreadyInLutMem to true if the LUT is already in SHRAM.
+int EthosU55RCSGenerator::AllocateLutSlot(
+    std::vector<LutSlot> &lutSlots, const HLCOperation *op, int sizeInSlots, int timestamp, bool &alreadyInLutMem)
+{
+    alreadyInLutMem = false;
+    int totalSlots = int(lutSlots.size());
+    if ( sizeInSlots < 0 || sizeInSlots > totalSlots )
+    {
+        assert(false);
+        return 0;
+    }
+    // Returns least recently used slot, unless the LUT is already in memory
+    int allocatedSlot = 0;
+    for ( int i = 0; i < totalSlots; i += sizeInSlots )
+    {
+        if ( lutSlots[i].hlcOp == op )
+        {
+            // LUT is already in SHRAM
+            allocatedSlot = i;
+            alreadyInLutMem = true;
+            break;
+        }
+        if ( lutSlots[i].lastUsed < lutSlots[allocatedSlot].lastUsed )
+        {
+            allocatedSlot = i;
+        }
+    }
+    for ( int j = allocatedSlot; j < allocatedSlot + sizeInSlots; ++j )
+    {
+        lutSlots[j].hlcOp = op;
+        lutSlots[j].lastUsed = timestamp;
+    }
+    return allocatedSlot;
+}
+
+//----------------------------------------------------------------------
+// Print
+//----------------------------------------------------------------------
+
+int EthosU55RCSGenerator::Disassemble(const uint32_t *in, std::string &op, std::vector<std::pair<std::string, std::string>> &fields)
+{
+    return isa::disassemble(in, op, fields);
+}
+
+//----------------------------------------------------------------------
+// Scaling (OFM/OPA/OPB_SCALE)
+//----------------------------------------------------------------------
+
+// Generates OFM_SCALE register for pooling operations
+void EthosU55RCSGenerator::GenerateOFMScalingForPooling(HLCOperation *poolOp)
+{
+    QuantizedScale quant(1, 0);
+    bool isNoOp = _arch->UseAvgPoolNop(poolOp->type);
+    ethosU55Scaling::RescalePooling(poolOp, isNoOp);
+
+    if ( poolOp->ofm.quantization && !poolOp->ofm.quantization.scales.empty() )
+    {
+        quant = poolOp->ofm.quantization.scales[0];
+        assert(unsigned(quant.shift) < 64);
+    }
+
+    Emit(isa::npu_set_ofm_scale_t(uint32_t(quant.shift), quant.scale));
+}
+
+// Generates OFM/OPA/OPB_SCALE registers for elementwise operators.
+// Returns the operator to scale
+RCSIfmScaleMode EthosU55RCSGenerator::GenerateScalingForElementwise(HLCOperation *op, int ifm0Index)
+{
+    auto opToScale = RCSIfmScaleMode::OPA_OPB_16;
+    auto opType = op->type;
+
+    QuantizedScale ofmScale(1, 0);
+    ethosU55Scaling::RescaleElementwise(op);
+    int ifmCnt = int(op->ifm.size());
+    bool allHaveScale =
+        !op->ofm.quantization.scales.empty() && !op->ifm[0].quantization.scales.empty() && ifmCnt == 2 &&
+        !op->ifm[1].quantization.scales.empty();
+
+    if ( opType == OpType::Mul || opType == OpType::Abs )
+    {
+        if ( !op->ofm.quantization.scales.empty() )
+        {
+            ofmScale = op->ofm.quantization.scales[0];
+        }
+    }
+    else if ( opType == OpType::LeakyRelu )
+    {
+        const HLCParameters *params = &op->parameters;
+        double alpha = params->leaky_relu.alpha;
+        ofmScale = QuantizedScale(alpha);
+    }
+    else if ( opType == OpType::Add || opType == OpType::Sub )
+    {
+        uint32_t opaScale = 1;
+        uint32_t opbScale = 1;
+        uint32_t opaShift = 0;
+        if ( allHaveScale )
+        {
+            ofmScale = op->ofm.quantization.scales[0];
+            QuantizedScale ifm1Scale = op->ifm[ifm0Index].quantization.scales[0];
+            QuantizedScale ifm2Scale = op->ifm[1 - ifm0Index].quantization.scales[0];
+            opaScale = ifm1Scale.scale;
+            opaShift = ifm1Scale.shift;
+            opbScale = ifm2Scale.scale;
+
+            if ( ifm1Scale.scale == 0 || ifm2Scale.scale == 0 )
+            {
+                opbScale = 0;
+                if ( ifm1Scale.scale == 0 )
+                {
+                    opToScale = RCSIfmScaleMode::OPB_32;
+                    opaScale = ifm2Scale.scale;
+                    opaShift = ifm2Scale.shift;
+                }
+                else
+                {
+                    opToScale = RCSIfmScaleMode::OPA_32;
+                }
+            }
+            if ( ifm0Index == 1 )
+            {
+                // Reversed operands
+                if ( opToScale == RCSIfmScaleMode::OPA_32 )
+                {
+                    opToScale = RCSIfmScaleMode::OPB_32;
+                }
+                else if ( opToScale == RCSIfmScaleMode::OPB_32 )
+                {
+                    opToScale = RCSIfmScaleMode::OPA_32;
+                }
+            }
+        }
+        assert(opaShift < 64);
+        Emit(isa::npu_set_opa_scale_t(opaShift, opaScale));
+        Emit(isa::npu_set_opb_scale_t(opbScale));
+    }
+    assert(unsigned(ofmScale.shift) < 64);
+    Emit(isa::npu_set_ofm_scale_t(ofmScale.shift, ofmScale.scale));
+    return opToScale;
+}
+
+//----------------------------------------------------------------------
+// BLOCKDEP calculation
+//----------------------------------------------------------------------
+
+static Shape CalcIFMJobShape(const Shape &ofmBlock, Kernel *kernel, int ifmBlockDepth)
+{
+    // TODO MLBEDSW-8498: Consider ifm_upscale_mode for job-shape calculations
+    Point2i dilatedSize = kernel->DilatedWH();
+    int h = RequiredInputSize(ofmBlock.Height(), kernel->Stride().y, dilatedSize.y, 1);
+    int w = RequiredInputSize(ofmBlock.Width(), kernel->Stride().x, dilatedSize.x, 1);
+    return Shape(1, h, w, ifmBlockDepth);
+}
+
+// Given the area and block size, adds the first/last jobs (depending on fromStart) to jobs.
+// - area: total amount of work to perform
+// - jobShape: size of each job
+// - fromStart: if true, the first jobs are added, if false, the last jobs are added
+//   (in that case, the very last job is added last)
+void EthosU55RCSGenerator::GetJobs(const Box &area, const Shape &jobShape, int nrJobsToGet, bool fromStart, std::vector<Box> &jobs)
+{
+    Shape jobSplit = Shape::DivRoundUp(area.End() - area.Start(), jobShape);
+    int z = jobSplit.Depth();
+    int w = jobSplit.Width();
+    int h = jobSplit.Height();
+    int n = z * w * h;  // n = total number of jobs for the whole area
+    const auto &start = area.Start().Extract(-3, -2, -1);
+    const auto &end = area.End().Extract(-3, -2, -1);
+    int firstJob = fromStart ? 0 : std::max(0, n - nrJobsToGet);
+    int lastJob = fromStart ? std::min(n, nrJobsToGet) : n;
+    for ( int i = firstJob; i < lastJob; ++i )
+    {
+        Shape from = Shape(start.Height() + (i / (z * w)) * jobShape.Height(),
+            start.Width() + ((i / z) % w) * jobShape.Width(), start.Depth() + (i % z) * jobShape.Depth());
+        jobs.emplace_back(from, Shape::Min(from + jobShape, end));
+    }
+}
+
+// Calculates the value for the BLOCKDEP register
+int EthosU55RCSGenerator::CalcBlockDep(HLCStripe *prevStripe, HLCStripe *stripe)
+{
+    if ( prevStripe == nullptr )
+    {
+        return 0;
+    }
+    const auto &op = stripe->operation;
+    const auto &prevOp = prevStripe->operation;
+    const auto &prevOfm = prevOp->ofm;
+    if ( _arch->_shram.reservedEndBanks == 0 )
+    {
+        // SHRAM has no reserved LUT banks
+        if ( _stripeToLutSlot.count(prevStripe) && !_stripeToLutSlot.count(stripe) )
+        {
+            // Previous operation uses LUT, current does not
+            return 0;  // Prevents corruption of the LUT
+        }
+    }
+
+    int ifmIndex = (op->ifm.size() > 1 && op->ifm[1].address == prevOfm.address && op->ifm[1].memArea == prevOfm.memArea) ? 1 : 0;
+    const auto &ifm = op->ifm[ifmIndex];
+    int maxJobs = _arch->MaxBlockdep();
+    if ( ifm.address != prevOfm.address || ifm.memArea != prevOfm.memArea )
+    {
+        for ( const auto &fm : op->ifm )
+        {
+            if ( fm.memArea == prevOfm.memArea &&
+                 Overlaps(fm.address, fm.address + fm.AllocationSizeBytes(), prevOfm.address, prevOfm.address + prevOfm.AllocationSizeBytes()) )
+            {
+                // Previous OFM overlaps in unexpected way with current IFM
+                assert(false && "Unexpected overlap previous OFM/current IFM");
+                return 0;
+            }
+        }
+        // Previous operation does not produce current operation's IFM
+        return maxJobs;
+    }
+    if ( op->ifm.size() > 1 && ifm.AllocationSizeBytes() < op->ifm[1 - ifmIndex].AllocationSizeBytes() )
+    {
+        // Prev OFM produces IFM2 which is broadcasted (this should be rare)
+        return 0;
+    }
+    if ( prevOfm.shape != ifm.shape )
+    {
+        // OFM has been reshaped; the job overlap calculations below do not work in this case
+        return 0;
+    }
+    // Previous operation produces current operations IFM
+    auto prevConfig = static_cast<EthosU55OpConfig *>(prevOp->config);
+    Shape prevBlock = prevConfig->OfmBlock();
+    auto config = static_cast<EthosU55OpConfig *>(op->config);
+    Shape currBlock = CalcIFMJobShape(config->OfmBlock(), &op->kernel, config->IfmBlock().Depth());
+    // Get the last few jobs from the previous operation (each job produces a part of the current op's IFM)
+    std::vector<Box> lastPrevJobs;
+    GetJobs(prevStripe->ofmArea, prevBlock, maxJobs, false, lastPrevJobs);
+    // Get the first few jobs from the current operation (each job consumes a part of the current op's IFM)
+    std::vector<Box> firstCurrJobs;
+    GetJobs(stripe->ifmAreas[ifmIndex], currBlock, maxJobs, true, firstCurrJobs);
+    // Find the highest block dependency such that there is no overlap between
+    // any job from the previous op with any job from the current op during block dependency jobs
+    int sz = int(std::min(lastPrevJobs.size(), firstCurrJobs.size()));
+    int prevLastIx = int(lastPrevJobs.size()) - 1;
+    for ( int blockdep = 0; blockdep < sz; ++blockdep )
+    {
+        bool overlaps = false;
+        for ( int i = 0; !overlaps && i <= blockdep; ++i )
+        {
+            for ( int j = blockdep - i; !overlaps && i + j <= blockdep; ++j )
+            {
+                if ( firstCurrJobs[i].Overlaps(lastPrevJobs[prevLastIx - j]) )
+                {
+                    overlaps = true;
+                }
+            }
+        }
+        if ( overlaps )
+        {
+            return blockdep;
+        }
+    }
+    // No overlap found
+    return sz;
+}
+
+//----------------------------------------------------------------------
+// Register generation
+//----------------------------------------------------------------------
+
+void EthosU55RCSGenerator::GeneratePadding(const HLCPadding &padding)
+{
+    Emit(isa::npu_set_ifm_pad_top_t(padding.top));
+    Emit(isa::npu_set_ifm_pad_left_t(padding.left));
+    Emit(isa::npu_set_ifm_pad_bottom_t(padding.bottom));
+    Emit(isa::npu_set_ifm_pad_right_t(padding.right));
+}
+
+// Generates ACTIVATION registers
+void EthosU55RCSGenerator::GenerateActivation(const HLCStripe *stripe, MemoryAccesses &memoryAccesses)
+{
+    const HLCOperation *op = stripe->operation.get();
+    assert(op->subOps.size() <= 1);
+    OpType opType = OpType::None;
+    if ( IsActivation(op->type) )
+    {
+        // Non-fused activation
+        opType = op->type;
+        assert(op->subOps.empty() || opType == op->subOps[0].type);
+    }
+    else if ( !op->subOps.empty() )
+    {
+        // Fused activation
+        opType = op->subOps[0].type;
+    }
+    auto &ofm = op->ofm;
+    int size = std::min(16, DataTypeSizeBits(ofm.dataType));
+    assert(size > 0 && "Illegal data type");
+    bool isSigned = bool(ofm.dataType & DataType::Signed);
+    int64_t quantizedMin = isSigned ? -(1LL << (size - 1)) : 0;
+    int64_t quantizedMax = isSigned ? (1LL << (size - 1)) - 1 : (1LL << size) - 1;
+
+    auto act = activation_function::RELU;
+    auto clipRange = activation_clip_range::OFM_PRECISION;
+    if ( ofm.quantization.quantMin.size() )
+    {
+        quantizedMin = std::max(quantizedMin, ofm.quantization.quantMin[0]);
+    }
+    if ( ofm.quantization.quantMax.size() )
+    {
+        quantizedMax = std::min(quantizedMax, ofm.quantization.quantMax[0]);
+    }
+
+    if ( opType == OpType::Sigmoid )
+    {
+        act = activation_function::SIGMOID;
+    }
+    else if ( opType == OpType::Tanh )
+    {
+        act = activation_function::TANH;
+    }
+    else if ( opType == OpType::LUT )
+    {
+        auto &param = op->subOps[0].parameters.lut;
+        size = param.sizeBytes;
+        assert(size == 256 || size == 1024 || size == 2048);
+
+        int tableIndex = 0;
+        auto pos = _stripeToLutSlot.find(stripe);
+        if ( pos != _stripeToLutSlot.end() )
+        {
+            tableIndex = pos->second;
+        }
+        else
+        {
+            assert(false && "Command uses lut, but no lut info found");
+        }
+        act = activation_function(int(activation_function::TABLE_0) + tableIndex);
+        if ( ofm.dataType == DataType::Int32 )
+        {
+            // force INT8 range
+            clipRange = activation_clip_range::FORCE_INT8;
+            quantizedMin = std::max<int64_t>(quantizedMin, -128);
+            quantizedMax = std::min<int64_t>(quantizedMax, 127);
+        }
+        auto &layout = static_cast<EthosU55OpConfig *>(op->config)->_layout;
+        Address lutStart = Address(layout.lutStart) * _arch->_shram.bankSizeBytes + tableIndex * _arch->_shram.lutSlotSize;
+        memoryAccesses.emplace_back(AccessDirection::Read, _arch->LUTMemory(), lutStart, lutStart + param.sizeBytes);
+    }
+    assert(quantizedMin <= std::numeric_limits<int16_t>::max());
+    assert(quantizedMax <= std::numeric_limits<int16_t>::max());
+    Emit(isa::npu_set_activation_t(act, clipRange));
+    Emit(isa::npu_set_activation_min_t(uint32_t(quantizedMin)));
+    Emit(isa::npu_set_activation_max_t(uint32_t(quantizedMax)));
+}
+
+// Generates KERNEL related registers
+void EthosU55RCSGenerator::GenerateKernel(const Kernel &kernel, bool partKernel)
+{
+    auto dilatedWH = kernel.DilatedWH();
+    Emit(isa::npu_set_kernel_height_m1_t(dilatedWH.y - 1));
+    Emit(isa::npu_set_kernel_width_m1_t(dilatedWH.x - 1));
+    uint32_t stride_x_lsb = (kernel.Stride().x - 1) & 1;
+    uint32_t stride_y_lsb = (kernel.Stride().y - 1) & 1;
+    uint32_t stride_x_msb = ((kernel.Stride().x - 1) >> 1) & 1;
+    uint32_t stride_y_msb = ((kernel.Stride().y - 1) >> 1) & 1;
+    auto weightOrder = partKernel ? weight_order::PART_KERNEL_FIRST : weight_order::DEPTH_FIRST;
+    kernel_dilation dilation_x = kernel_dilation(kernel.Dilation().x - 1);
+    kernel_dilation dilation_y = kernel_dilation(kernel.Dilation().y - 1);
+    kernel_decomposition decomposition = kernel_decomposition::D8X8;  //  Kernel decomposition
+    Emit(isa::npu_set_kernel_stride_t(
+        stride_x_lsb, stride_y_lsb, weightOrder, dilation_x, dilation_y, decomposition, stride_x_msb, stride_y_msb));
+}
+
+// Generates IFM2_BROADCAST register for binary elementwise operations
+void EthosU55RCSGenerator::GenerateIFM2Broadcast(const Shape &ifmShape, const Shape &ifm2Shape, bool reversedOperands, bool isScalar)
+{
+    auto broadcastH = broadcast_mode::DISABLE;
+    auto broadcastW = broadcast_mode::DISABLE;
+    auto broadcastC = broadcast_mode::DISABLE;
+    auto order = reversedOperands ? ifm2_operand_order::ORDER_A : ifm2_operand_order::ORDER_B;
+    auto isConstant = broadcast_mode::DISABLE;
+    if ( isScalar )
+    {
+        isConstant = broadcast_mode::ENABLE;
+    }
+    else
+    {
+        if ( ifmShape.Height() != ifm2Shape.Height() )
+        {
+            // Broadcast in 'H' dimension
+            broadcastH = broadcast_mode::ENABLE;
+            assert(ifm2Shape.Height() == 1);
+        }
+        if ( ifmShape.Width() != ifm2Shape.Width() )
+        {
+            // Broadcast in 'W' dimension
+            broadcastW = broadcast_mode::ENABLE;
+            assert(ifm2Shape.Width() == 1);
+        }
+        if ( ifmShape.Depth() != ifm2Shape.Depth() )
+        {
+            // Broadcast in 'C' dimension
+            broadcastC = broadcast_mode::ENABLE;
+            assert(ifm2Shape.Depth() == 1);
+        }
+    }
+    Emit(isa::npu_set_ifm2_broadcast_t(broadcastH, broadcastW, broadcastC, order, isConstant));
+}
+
+// Generates IFM_PRECISION register
+void EthosU55RCSGenerator::GenerateIFMPrecision(const HLCFeatureMap &fm, RCSIfmScaleMode scaleMode)
+{
+    activation_type type = ToActivationType(fm.dataType);
+    activation_precision precision = ToActivationPrecision(fm.dataType);
+    activation_format format = ToActivationFormat(fm.format);
+    round_mode roundMode = round_mode::DBL;
+    ifm_scale_mode interfaceScaleMode = MapRcsIfmScaleModeToInterface(scaleMode);
+    Emit(isa::npu_set_ifm_precision_t(type, precision, format, interfaceScaleMode, roundMode));
+}
+
+// Generates IFM2_PRECISION register
+void EthosU55RCSGenerator::GenerateIFM2Precision(const HLCFeatureMap &fm)
+{
+    activation_type type = ToActivationType(fm.dataType);
+    activation_precision precision = ToActivationPrecision(fm.dataType);
+    activation_format format = ToActivationFormat(fm.format);
+    Emit(isa::npu_set_ifm2_precision_t(type, precision, format));
+}
+
+// Generates OFM_PRECISION register
+void EthosU55RCSGenerator::GenerateOFMPrecision(const HLCFeatureMap &fm, bool useGlobalScale, RCSRoundMode roundMode)
+{
+    activation_type type = ToActivationType(fm.dataType);
+    activation_precision precision = ToActivationPrecision(fm.dataType);
+    activation_format format = ToActivationFormat(fm.format);
+    round_mode interfaceRoundMode = MapRcsRoundModeToInterface(roundMode);
+    auto scaleMode = useGlobalScale ? ofm_scale_mode::GLOBAL : ofm_scale_mode::PER_CHANNEL;
+    Emit(isa::npu_set_ofm_precision_t(type, precision, format, scaleMode, interfaceRoundMode));
+}
+
+// Generates common IFM registers
+void EthosU55RCSGenerator::GenerateIFM(OpType opType, const HLCFeatureMap &fm, const Box &inputArea)
+{
+    CheckAddresses(fm);
+    Emit(isa::npu_set_ifm_region_t(ToRegion(fm.memArea)));
+    Shape strides = fm.strides;
+    auto tiles = GetTiles(fm, strides, inputArea);
+    auto boxSize = inputArea.SizeShape();
+    // IFM_BASE registers
+    Emit(isa::npu_set_ifm_base0_t(tiles.address[0]));
+    Emit(isa::npu_set_ifm_base1_t(tiles.address[1]));
+    Emit(isa::npu_set_ifm_base2_t(tiles.address[2]));
+    Emit(isa::npu_set_ifm_base3_t(tiles.address[3]));
+    // Tile related registers
+    Emit(isa::npu_set_ifm_height0_m1_t(tiles.height0 - 1));
+    Emit(isa::npu_set_ifm_height1_m1_t(tiles.height1 - 1));
+    Emit(isa::npu_set_ifm_width0_m1_t(tiles.width0 - 1));
+    Emit(isa::npu_set_ifm_depth_m1_t(boxSize.Depth() - 1));
+    // IFM_STRIDE registers
+    Emit(isa::npu_set_ifm_stride_y_t(strides.Height() * fm.stepXY.y));
+    Emit(isa::npu_set_ifm_stride_x_t(strides.Width() * fm.stepXY.x));
+    Emit(isa::npu_set_ifm_stride_c_t(strides.Depth()));
+    // IFM_ZERO_POINT register
+    auto &quant = fm.quantization;
+    uint32_t zp = UseZeroPoint0(opType, fm, false) ? 0 : uint32_t(quant.zeroPoints[0]);
+    Emit(isa::npu_set_ifm_zero_point_t(zp));
+}
+
+// Generates common IFM2 registers
+void EthosU55RCSGenerator::GenerateIFM2(OpType opType, const HLCFeatureMap &fm, const Box &inputArea, bool isScalar, int32_t scalarValue)
+{
+    if ( isScalar )
+    {
+        Emit(isa::npu_set_ifm2_scalar_t(uint32_t(scalarValue)));
+    }
+    else
+    {
+        CheckAddresses(fm);
+        Emit(isa::npu_set_ifm2_region_t(ToRegion(fm.memArea)));
+        Shape strides = fm.strides;
+        auto tiles = GetTiles(fm, strides, inputArea);
+        // IFM2_BASE registers
+        Emit(isa::npu_set_ifm2_base0_t(tiles.address[0]));
+        Emit(isa::npu_set_ifm2_base1_t(tiles.address[1]));
+        Emit(isa::npu_set_ifm2_base2_t(tiles.address[2]));
+        Emit(isa::npu_set_ifm2_base3_t(tiles.address[3]));
+        // Tile related registers
+        Emit(isa::npu_set_ifm2_height0_m1_t(tiles.height0 - 1));
+        Emit(isa::npu_set_ifm2_height1_m1_t(tiles.height1 - 1));
+        Emit(isa::npu_set_ifm2_width0_m1_t(tiles.width0 - 1));
+        // IFM2_STRIDE registers
+        Emit(isa::npu_set_ifm2_stride_y_t(strides.Height() * fm.stepXY.y));
+        Emit(isa::npu_set_ifm2_stride_x_t(strides.Width() * fm.stepXY.x));
+        Emit(isa::npu_set_ifm2_stride_c_t(strides.Depth()));
+    }
+    // IFM2_ZERO_POINT register
+    auto &quant = fm.quantization;
+    uint32_t zp = UseZeroPoint0(opType, fm, false) ? 0 : uint32_t(quant.zeroPoints[0]);
+    Emit(isa::npu_set_ifm2_zero_point_t(zp));
+}
+
+// Generates OFM registers
+void EthosU55RCSGenerator::GenerateOFM(OpType opType, const HLCFeatureMap &fm, const Box &outputArea)
+{
+    CheckAddresses(fm);
+    Emit(isa::npu_set_ofm_region_t(ToRegion(fm.memArea)));
+    Shape strides = fm.strides;
+    auto tiles = GetTiles(fm, strides, outputArea);
+    auto boxSize = outputArea.SizeShape();
+    // OFM_BASE registers
+    Emit(isa::npu_set_ofm_base0_t(tiles.address[0]));
+    Emit(isa::npu_set_ofm_base1_t(tiles.address[1]));
+    Emit(isa::npu_set_ofm_base2_t(tiles.address[2]));
+    Emit(isa::npu_set_ofm_base3_t(tiles.address[3]));
+    // OFM size
+    Emit(isa::npu_set_ofm_height_m1_t(DivRoundUp(boxSize.Height(), fm.stepXY.y) - 1));
+    Emit(isa::npu_set_ofm_width_m1_t(DivRoundUp(boxSize.Width(), fm.stepXY.x) - 1));
+    // Tile related registers
+    Emit(isa::npu_set_ofm_height0_m1_t(tiles.height0 - 1));
+    Emit(isa::npu_set_ofm_height1_m1_t(tiles.height1 - 1));
+    Emit(isa::npu_set_ofm_width0_m1_t(tiles.width0 - 1));
+    Emit(isa::npu_set_ofm_depth_m1_t(boxSize.Depth() - 1));
+    // OFM_STRIDE registers
+    Emit(isa::npu_set_ofm_stride_y_t(strides.Height() * fm.stepXY.y));
+    Emit(isa::npu_set_ofm_stride_x_t(strides.Width() * fm.stepXY.x));
+    Emit(isa::npu_set_ofm_stride_c_t(strides.Depth()));
+    // OFM_ZERO_POINT register
+    auto &quant = fm.quantization;
+    uint32_t zp = UseZeroPoint0(opType, fm, true) ? 0 : uint32_t(quant.zeroPoints[0]);
+    Emit(isa::npu_set_ofm_zero_point_t(zp));
+}
+
+// Generates WEIGHT registers
+void EthosU55RCSGenerator::GenerateWeights(const HLCStripe *stripe, MemoryAccesses &memoryAccesses)
+{
+    auto weights = stripe->operation->weights.get();
+    if ( weights == nullptr )
+    {
+        return;
+    }
+    int depth = stripe->weightRangeDepth;
+    Emit(isa::npu_set_weight_region_t(ToRegion(weights->memArea)));
+    auto item0 = weights->encodedRanges.find(WeightKey(0, depth));
+    assert(item0 != weights->encodedRanges.end());
+    auto &range0 = item0->second;
+    int doubleBufferOffset = GetDoubleBufferOffset(weights, range0.index);
+    Address address = weights->address + range0.weightOffset + doubleBufferOffset;
+    int length = RoundAway(range0.weightBytes, 16);
+    CheckAddressRange(weights->memArea.memory, address, length);
+    Emit(isa::npu_set_weight_base_t(address));
+    Emit(isa::npu_set_weight_length_t(length));
+    memoryAccesses.emplace_back(AccessDirection::Read, weights->memArea, address, address + length);
+    auto item1 = weights->encodedRanges.find(WeightKey(1, depth));
+    if ( item1 != weights->encodedRanges.end() )
+    {
+        auto &range1 = item1->second;
+        Address address1 = weights->address + RoundAway(range0.TotalBytes(), 16) + range1.weightOffset + doubleBufferOffset;
+        int length1 = RoundAway(range1.weightBytes, 16);
+        CheckAddressRange(weights->memArea.memory, address1, length1);
+        Emit(isa::npu_set_weight1_base_t(address1));
+        Emit(isa::npu_set_weight1_length_t(length1));
+        memoryAccesses.emplace_back(AccessDirection::Read, weights->memArea, address1, address1 + length1);
+    }
+    else if ( _arch->_cores > 1 )
+    {
+        Emit(isa::npu_set_weight1_length_t(0));
+    }
+}
+
+// Generates SCALE registers
+void EthosU55RCSGenerator::GenerateScales(const HLCStripe *stripe, MemoryAccesses &memoryAccesses)
+{
+    auto scales = stripe->operation->scales.get();
+    if ( scales == nullptr )
+    {
+        assert(!stripe->operation->weights);
+        return;
+    }
+    int depth = stripe->weightRangeDepth;
+    Emit(isa::npu_set_scale_region_t(ToRegion(scales->memArea)));
+    auto item0 = scales->encodedRanges.find(WeightKey(0, depth));
+    assert(item0 != scales->encodedRanges.end());
+    auto &range0 = item0->second;
+    int doubleBufferOffset = GetDoubleBufferOffset(scales, range0.index);
+    Address address = scales->address + doubleBufferOffset;
+    int length = RoundAway(range0.scaleBytes, 16);
+    CheckAddressRange(scales->memArea.memory, address, length);
+    Emit(isa::npu_set_scale_base_t(address));
+    Emit(isa::npu_set_scale_length_t(length));
+    memoryAccesses.emplace_back(AccessDirection::Read, scales->memArea, address, address + length);
+    auto item1 = scales->encodedRanges.find(WeightKey(1, depth));
+    if ( item1 != scales->encodedRanges.end() )
+    {
+        auto &range1 = item1->second;
+        Address address1 = address + RoundAway(range0.TotalBytes(), 16);
+        int length1 = RoundAway(range1.scaleBytes, 16);
+        CheckAddressRange(scales->memArea.memory, address1, length1);
+        Emit(isa::npu_set_scale1_base_t(address1));
+        Emit(isa::npu_set_scale1_length_t(length1));
+        memoryAccesses.emplace_back(AccessDirection::Read, scales->memArea, address1, address1 + length1);
+    }
+    else if ( _arch->_cores > 1 )
+    {
+        Emit(isa::npu_set_scale1_length_t(0));
+    }
+}
+
+// Generates OFM_BLK_HEIGHT/WIDTH/DEPTH registers
+void EthosU55RCSGenerator::GenerateBlockConfig(const EthosU55OpConfig *config)
+{
+    Emit(isa::npu_set_ofm_blk_height_m1_t(config->OfmBlock().Height() - 1));
+    Emit(isa::npu_set_ofm_blk_width_m1_t(config->OfmBlock().Width() - 1));
+    Emit(isa::npu_set_ofm_blk_depth_m1_t(config->OfmBlock().Depth() - 1));
+}
+
+// Generates IB_END/IB_START/AB_START/ACC_FORMAT registers
+void EthosU55RCSGenerator::GenerateShramRegisters(const EthosU55OpConfig *config, bool hasIfm2)
+{
+    auto &layout = config->_layout;
+    Emit(isa::npu_set_ifm_ib_end_t(layout.ibEnd));
+    Emit(isa::npu_set_ab_start_t(layout.abStart));
+    if ( hasIfm2 )
+    {
+        Emit(isa::npu_set_ifm2_ib_start_t(layout.ibStart2));
+    }
+    // ACC_FORMAT register
+    auto accType = config->_accumulatorType;
+    acc_format format;
+    if ( accType == EthosU55SHRamElements::SHRAM_Acc16 )
+    {
+        format = acc_format::F16;
+    }
+    else if ( accType == EthosU55SHRamElements::SHRAM_Acc32 )
+    {
+        format = acc_format::I32;
+    }
+    else
+    {
+        assert(accType == EthosU55SHRamElements::SHRAM_Acc40);
+        format = acc_format::I40;
+    }
+    Emit(isa::npu_set_acc_format_t(format));
+}
+
+// Calculates and generates KERNEL_WAIT or DMA_WAIT register
+void EthosU55RCSGenerator::GenerateWaits(bool isKernelWait, const MemoryAccesses &memoryAccesses, int maxWaits,
+    std::deque<MemoryAccesses> &outstandingAccesses, std::deque<MemoryAccesses> &accessesToUpdate)
+{
+    int waits = CalcCommandWaits(memoryAccesses, outstandingAccesses);
+    if ( waits >= 0 )
+    {
+        if ( isKernelWait )
+        {
+            Emit(isa::npu_op_kernel_wait_t(waits));
+        }
+        else
+        {
+            Emit(isa::npu_op_dma_wait_t(waits));
+        }
+    }
+    accessesToUpdate.push_back(memoryAccesses);
+    if ( int(accessesToUpdate.size()) > maxWaits )
+    {
+        accessesToUpdate.pop_front();
+    }
+}
+
+// Inserts DMA commands for copying LUTs from constant memory
+// to LUT memory
+std::vector<std::unique_ptr<HighLevelCommand>>
+EthosU55RCSGenerator::InsertLUTDMACommands(std::vector<std::unique_ptr<HighLevelCommand>> &cmds)
+{
+    std::vector<std::unique_ptr<HighLevelCommand>> result;
+    int lutSlotSize = _arch->_shram.lutSlotSize;
+    int slots = (_arch->_shram.bankSizeBytes * _arch->_shram.lutBanks) / lutSlotSize;
+    std::vector<LutSlot> lutSlots(slots);
+    int timestamp = 0;
+    result.reserve(cmds.size());
+    for ( auto &hlc : cmds )
+    {
+        ++timestamp;
+        if ( hlc->IsStripe() )
+        {
+            auto stripe = static_cast<HLCStripe *>(hlc.get());
+            auto op = stripe->operation;
+            auto config = static_cast<EthosU55OpConfig *>(op->config);
+            if ( !op->subOps.empty() && op->subOps[0].type == OpType::LUT )
+            {
+                const auto &srcTens = op->subOps[0].parameters.lut;
+                assert(config->_layout.lutStart > 0);
+                assert(srcTens.sizeBytes % lutSlotSize == 0);
+                bool alreadyInLutMem;
+                int sizeInSlots = srcTens.sizeBytes / lutSlotSize;
+                int slot = AllocateLutSlot(lutSlots, op.get(), sizeInSlots, timestamp, alreadyInLutMem);
+                _stripeToLutSlot[stripe] = slot;
+
+                if ( !alreadyInLutMem )
+                {
+                    auto dma = std::make_unique<HLCDMA>();
+                    dma->srcMemArea = srcTens.memArea;
+                    dma->srcAddress = srcTens.address;
+                    dma->length = srcTens.sizeBytes;
+                    dma->destMemArea = _arch->LUTMemory();
+                    dma->destAddress = _arch->_shram.bankSizeBytes * config->_layout.lutStart + slot * lutSlotSize;
+                    result.push_back(std::move(dma));
+                }
+            }
+            else if ( _arch->_shram.reservedEndBanks == 0 )
+            {
+                // LUT is overwritten by SHRAM accumulator buffers; clear slots
+                for ( auto &slot : lutSlots )
+                {
+                    slot.hlcOp = nullptr;
+                    slot.lastUsed = 0;
+                }
+            }
+        }
+        result.push_back(std::move(hlc));
+    }
+    return result;
+}
+
+//----------------------------------------------------------------------
+// Operations
+//----------------------------------------------------------------------
+
+// Generates NPU_OP_* command
+void EthosU55RCSGenerator::GenerateOperationCode(OpType opType)
+{
+    if ( IsPooling(opType) )
+    {
+        pooling_mode mode;
+        if ( opType == OpType::AvgPool || opType == OpType::ResizeBilinear )
+        {
+            mode = pooling_mode::AVERAGE;
+        }
+        else if ( opType == OpType::MaxPool )
+        {
+            mode = pooling_mode::MAX;
+        }
+        else
+        {
+            assert(opType == OpType::ReduceSum);
+            mode = pooling_mode::REDUCE_SUM;
+        }
+        Emit(isa::npu_op_pool_t(mode));
+    }
+    else if ( IsDepthwise(opType) )
+    {
+        Emit(isa::npu_op_depthwise_t());
+    }
+    else if ( IsConvolution(opType) || IsVectorProduct(opType) )
+    {
+        Emit(isa::npu_op_conv_t());
+    }
+    else if ( IsElementwise(opType) )
+    {
+        const auto &item = s_ElementwiseMap.find(opType);
+        if ( item == s_ElementwiseMap.end() )
+        {
+            assert(false && "Unsupported elementwise operator");
+        }
+        else
+        {
+            Emit(isa::npu_op_elementwise_t(item->second));
+        }
+    }
+    else if ( _arch->UseAvgPoolNop(opType) )
+    {
+        // Implemented using AvgPool
+        Emit(isa::npu_op_pool_t(pooling_mode::AVERAGE));
+    }
+    else
+    {
+        assert(false && "Unsupported operator");
+    }
+}
+
+void EthosU55RCSGenerator::GenerateCommon(const HLCStripe *stripe, bool useGlobalScale, RCSIfmScaleMode opToScale,
+    MemoryAccesses &memoryAccesses, int ifm0Index)
+{
+    auto op = stripe->operation.get();
+    GenerateIFM(op->type, op->ifm[ifm0Index], stripe->ifmAreas[ifm0Index]);
+    memoryAccesses.push_back(ToMemoryAccess(op->ifm[ifm0Index], stripe->ifmAreas[ifm0Index], AccessDirection::Read));
+    GenerateIFMPrecision(op->ifm[ifm0Index], opToScale);
+    ifm_upscale_mode upscaleMode = ToIfmUpscaleMode(op->ifm[0].resamplingMode);
+    Emit(isa::npu_set_ifm_upscale_t(upscaleMode));
+    if ( !IsElementwise(op->type) )
+    {
+        GeneratePadding(stripe->padding);
+    }
+    GenerateOFM(op->type, op->ofm, stripe->ofmArea);
+    memoryAccesses.push_back(ToMemoryAccess(op->ofm, stripe->ofmArea, AccessDirection::Write));
+    RCSRoundMode roundMode = GetRoundingMode(op);
+    GenerateOFMPrecision(op->ofm, useGlobalScale, roundMode);
+    EthosU55OpConfig *config = static_cast<EthosU55OpConfig *>(stripe->operation->config);
+    if ( !IsElementwise(op->type) )
+    {
+        GenerateKernel(op->kernel, config->Traversal() == EthosUTraversal::PartKernel);
+    }
+    GenerateWeights(stripe, memoryAccesses);
+    GenerateScales(stripe, memoryAccesses);
+    GenerateActivation(stripe, memoryAccesses);
+    if ( _arch->_shram.reservedEndBanks == 0 )
+    {
+        // SHRAM has no reserved LUT banks; LUT is overwritten by accumulator buffer
+        memoryAccesses.emplace_back(
+            AccessDirection::Write, _arch->LUTMemory(), 0, _arch->_shram.bankSizeBytes * _arch->_shram.totalBanks);
+    }
+}
+
+// Conv2D/Depthwise operations
+void EthosU55RCSGenerator::GenerateConvolutionOp(const HLCStripe *stripe, MemoryAccesses &memoryAccesses)
+{
+    GenerateCommon(stripe, false, RCSIfmScaleMode::OPA_OPB_16, memoryAccesses);
+}
+
+// MaxPool/AvgPool/ResizeBilinear or operations that are mapped to AvgPool
+void EthosU55RCSGenerator::GeneratePoolingOp(HLCStripe *stripe, MemoryAccesses &memoryAccesses)
+{
+    auto op = stripe->operation.get();
+    auto pad = stripe->padding;
+    auto padSum = pad.top + pad.left + pad.bottom + pad.right;
+    bool useGlobalScale = op->type != OpType::MaxPool && padSum == 0;
+
+    if ( _arch->UseAvgPoolNop(op->type) )
+    {
+        assert(op->kernel.Size() == Point2i(1, 1));
+        assert(op->kernel.Stride() == Point2i(1, 1));
+        assert(op->kernel.Dilation() == Point2i(1, 1));
+        assert(op->kernel.DepthMultiplier() == 1);
+        assert(useGlobalScale);
+    }
+    GenerateCommon(stripe, useGlobalScale, RCSIfmScaleMode::OPA_OPB_16, memoryAccesses);
+    if ( useGlobalScale )
+    {
+        GenerateOFMScalingForPooling(op);
+    }
+}
+
+// Elementwise operations
+void EthosU55RCSGenerator::GenerateElementwiseOp(HLCStripe *stripe, MemoryAccesses &memoryAccesses)
+{
+    auto op = stripe->operation.get();
+    auto opType = op->type;
+    bool useGlobalScale = opType == OpType::Add || opType == OpType::Sub || opType == OpType::Mul || opType == OpType::LeakyRelu || opType == OpType::Abs;
+    if ( IsUnaryElementwise(opType) )
+    {
+        assert(op->ifm.size() == 1);
+        auto opToScale = GenerateScalingForElementwise(op, 0);
+        GenerateCommon(stripe, useGlobalScale, opToScale, memoryAccesses);
+    }
+    else
+    {
+        // Binary operation: generate IFM2 registers
+        assert(op->ifm.size() == 2);
+        assert(stripe->ifmAreas.size() == 2);
+        int32_t scalarValue = 0;
+        auto ifmShape = stripe->ifmAreas[0].SizeShape();
+        auto ifm2Shape = stripe->ifmAreas[1].SizeShape();
+        bool reversedOperands = IsScalar(op->ifm[0], scalarValue) || (ifmShape != ifm2Shape && ifmShape.IsSubShapeOf(ifm2Shape));
+        int ifmIndex = 0;
+        if ( reversedOperands )
+        {
+            // If reversed, the scalar/broadcasted feature map has to be the ifm2 tensor,
+            // so switch ifm/ifm2
+            ifmIndex = 1;
+            std::swap(ifmShape, ifm2Shape);
+        }
+        auto opToScale = GenerateScalingForElementwise(op, ifmIndex);
+        GenerateCommon(stripe, useGlobalScale, opToScale, memoryAccesses, ifmIndex);
+        int ifm2Index = 1 - ifmIndex;
+        bool isScalar = IsScalar(op->ifm[ifm2Index], scalarValue);
+        GenerateIFM2(opType, op->ifm[ifm2Index], stripe->ifmAreas[ifm2Index], isScalar, scalarValue);
+        if ( !isScalar )
+        {
+            memoryAccesses.push_back(ToMemoryAccess(op->ifm[ifm2Index], stripe->ifmAreas[ifm2Index], AccessDirection::Read));
+        }
+        GenerateIFM2Precision(op->ifm[ifm2Index]);
+        GenerateIFM2Broadcast(ifmShape, ifm2Shape, reversedOperands, isScalar);
+    }
+}
+
+bool EthosU55RCSGenerator::GenerateStripe(HLCStripe *stripe, MemoryAccesses &memoryAccesses)
+{
+    auto opType = stripe->operation->type;
+    EthosU55NpuOp npuOp = ArchEthosU55::GetHWOp(opType);
+    if ( npuOp == EthosU55NpuOp::Pooling || npuOp == EthosU55NpuOp::ReduceSum )
+    {
+        GeneratePoolingOp(stripe, memoryAccesses);
+    }
+    else if ( npuOp == EthosU55NpuOp::Depthwise || npuOp == EthosU55NpuOp::Convolution || npuOp == EthosU55NpuOp::VectorProduct )
+    {
+        GenerateConvolutionOp(stripe, memoryAccesses);
+    }
+    else if ( npuOp == EthosU55NpuOp::Elementwise )
+    {
+        GenerateElementwiseOp(stripe, memoryAccesses);
+    }
+    else
+    {
+        LOG_ERROR("Register command stream generator: unsupported operator '{}'\n", OpTypeToString(opType));
+        assert(false);
+        return false;
+    }
+    EthosU55OpConfig *config = static_cast<EthosU55OpConfig *>(stripe->operation->config);
+    GenerateBlockConfig(config);
+    GenerateShramRegisters(config, stripe->operation->ifm.size() >= 2);
+    return true;
+}
+
+// Generates register commands for DMA operations
+void EthosU55RCSGenerator::GenerateDMA(const HLCDMA *dma, MemoryAccesses &memoryAccesses)
+{
+    auto srcRegionMode = dma_region_mode::EXTERNAL;
+    auto destRegionMode = dma_region_mode::EXTERNAL;
+    if ( dma->destMemArea == _arch->LUTMemory() )
+    {
+        destRegionMode = dma_region_mode::INTERNAL;
+    }
+    auto strideMode = dma_stride_mode::D1;
+    CheckAddressRange(dma->srcMemArea.memory, dma->srcAddress, dma->length);
+    CheckAddressRange(dma->destMemArea.memory, dma->destAddress, dma->length);
+    Emit(isa::npu_set_dma0_src_region_t(ToRegion(dma->srcMemArea), srcRegionMode, strideMode));
+    Emit(isa::npu_set_dma0_src_t(dma->srcAddress));
+    Emit(isa::npu_set_dma0_dst_region_t(ToRegion(dma->destMemArea), destRegionMode, strideMode));
+    Emit(isa::npu_set_dma0_dst_t(dma->destAddress));
+    Emit(isa::npu_set_dma0_len_t(dma->length));
+    memoryAccesses.emplace_back(AccessDirection::Read, dma->srcMemArea, dma->srcAddress, dma->srcAddress + dma->length);
+    memoryAccesses.emplace_back(AccessDirection::Write, dma->destMemArea, dma->destAddress, dma->destAddress + dma->length);
+}
+
+std::vector<uint32_t> EthosU55RCSGenerator::GenerateCommandStream(std::vector<std::unique_ptr<HighLevelCommand>> &highLevelCommandStream,
+    std::vector<std::tuple<void *, int, int>> *cmdRanges, bool verbose)
+{
+    _emit.Clear();
+    _stripeToLutSlot.clear();
+    GenerateInitialRegisterSetup();
+    auto cmds = InsertLUTDMACommands(highLevelCommandStream);
+    std::deque<MemoryAccesses> outstandingDmaAccesses;
+    std::deque<MemoryAccesses> outstandingNpuAccesses;
+    int maxOutstandingDMAOps = _arch->MaxOutstandingDMAOps();
+    int maxOutstandingKernelOps = _arch->MaxOutstandingKernelOps();
+    HLCStripe *prevOp = nullptr;
+    std::vector<std::pair<unsigned, std::string>> debugInfo;
+    for ( auto &hlc : cmds )
+    {
+        MemoryAccesses memoryAccesses;
+        int emitStart = _emit.Position();
+        if ( hlc->IsStripe() )
+        {
+            auto stripe = static_cast<HLCStripe *>(hlc.get());
+            if ( verbose )
+            {
+                debugInfo.emplace_back(emitStart, stripe->operation->ToString());
+            }
+            if ( !GenerateStripe(stripe, memoryAccesses) )
+            {
+                return std::vector<uint32_t>();
+            }
+            // BLOCKDEP register
+            int blockdep = CalcBlockDep(prevOp, stripe);
+            Emit(isa::npu_set_blockdep_t(blockdep));
+            GenerateWaits(false, memoryAccesses, maxOutstandingKernelOps, outstandingDmaAccesses, outstandingNpuAccesses);
+            GenerateOperationCode(stripe->operation->type);
+            prevOp = stripe;
+            // Return command mapping information to the caller
+            int emitEnd = _emit.Position();
+            if ( cmdRanges )
+            {
+                cmdRanges->emplace_back(stripe->operation->_srcKey, emitStart, emitEnd);
+            }
+        }
+        else
+        {
+            auto dma = static_cast<HLCDMA *>(hlc.get());
+            if ( verbose )
+            {
+                debugInfo.emplace_back(emitStart, dma->ToString());
+            }
+            GenerateDMA(static_cast<HLCDMA *>(hlc.get()), memoryAccesses);
+            GenerateWaits(true, memoryAccesses, maxOutstandingDMAOps, outstandingNpuAccesses, outstandingDmaAccesses);
+            Emit(isa::npu_op_dma_start_t());
+        }
+    }
+    Emit(isa::npu_op_stop_t(0xFFFF));
+    if ( verbose )
+    {
+        PrintCommandStream(_emit.CommandStream(), debugInfo);
+    }
+    return _emit.CommandStream();
+}
+
+}  // namespace regor

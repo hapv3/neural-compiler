@@ -164,6 +164,11 @@ class Accelerator(enum.Enum):
     Ethos_U55_256 = "ethos-u55-256"
     Ethos_U65_256 = "ethos-u65-256"
     Ethos_U65_512 = "ethos-u65-512"
+    Ethos_U85_128 = "ethos-u85-128"
+    Ethos_U85_256 = "ethos-u85-256"
+    Ethos_U85_512 = "ethos-u85-512"
+    Ethos_U85_1024 = "ethos-u85-1024"
+    Ethos_U85_2048 = "ethos-u85-2048"
 
     @classmethod
     def member_list(cls):
@@ -171,7 +176,8 @@ class Accelerator(enum.Enum):
 
     @classmethod
     def from_npu_accelerator(cls, npu_accelerator: NpuAccelerator) -> "Accelerator":
-        """Converts the given public API object to Accelerator (used internally)"""
+        """Converts the given public External API object to Accelerator (used
+        internally). This interface is not available for Ethos-U85"""
         accelerator_map = {
             NpuAccelerator.Ethos_U55_32: cls.Ethos_U55_32,
             NpuAccelerator.Ethos_U55_64: cls.Ethos_U55_64,
@@ -196,10 +202,10 @@ SHRAMConfig = namedtuple(
 
 
 class ArchitectureFeatures:
-    """This class is a container for various parameters of the Ethos-U core
-    and system configuration that can be tuned, either by command line
-    parameters or by the Ethos-U architects. The class is often passed
-    around to passes that need to do architecture-dependent actions.
+    """This class is a container for various parameters of the Ethos-U55 and
+    Ethos-U65 cores and system configurations that can be tuned, either by
+    command line parameters or by the Ethos-U architects. The class is often
+    passed around to passes that need to do architecture-dependent actions.
 
     Note the difference between ArchitectureFeatures and CompilerOptions
     - ArchitectureFeatures is for changing the Ethos-U and system architecture
@@ -249,7 +255,82 @@ class ArchitectureFeatures:
         accelerator_config = accelerator_config.lower()
         if accelerator_config not in Accelerator.member_list():
             raise CliOptionError("--accelerator-config", self.accelerator_config, "Unknown accelerator configuration")
+
         self.accelerator_config = Accelerator(accelerator_config)
+        self.is_ethos_u55_system = self.accelerator_config in (
+            Accelerator.Ethos_U55_32,
+            Accelerator.Ethos_U55_64,
+            Accelerator.Ethos_U55_128,
+            Accelerator.Ethos_U55_256,
+        )
+        self.is_ethos_u65_system = self.accelerator_config in (Accelerator.Ethos_U65_256, Accelerator.Ethos_U65_512)
+        self.is_ethos_u85_system = self.accelerator_config in (
+            Accelerator.Ethos_U85_128,
+            Accelerator.Ethos_U85_256,
+            Accelerator.Ethos_U85_512,
+            Accelerator.Ethos_U85_1024,
+            Accelerator.Ethos_U85_2048,
+        )
+
+        self.system_config = system_config
+        self.memory_mode = memory_mode
+        axi_port_data_width = np.ones(MemArea.Size)
+        if self.is_ethos_u85_system:
+            self.max_outstanding_dma = 4
+            axi_port_address_width = 40
+            # axi-port data-width depends on the number of interfaces in each config
+            if self.accelerator_config == Accelerator.Ethos_U85_2048:
+                axi_port_data_width = [128 * 2 for i in range(MemArea.Size)]
+                axi_port_data_width[MemArea.Sram] = 128 * 4
+            elif self.accelerator_config == Accelerator.Ethos_U85_1024:
+                axi_port_data_width = [128 * 2 for i in range(MemArea.Size)]
+            else:
+                axi_port_data_width = [128 for i in range(MemArea.Size)]
+                axi_port_data_width[MemArea.Sram] = 128 * 2
+        elif self.is_ethos_u65_system:
+            self.max_outstanding_dma = 2
+            axi_port_address_width = 40
+            axi_port_data_width = [128 for i in range(MemArea.Size)]
+        elif self.is_ethos_u55_system:
+            self.max_outstanding_dma = 1
+            axi_port_address_width = 32
+            axi_port_data_width = [64 for i in range(MemArea.Size)]
+        else:
+            assert False, f"Unsupported accelerator_config = {self.accelerator_config}"
+
+        self.max_address_offset = 1 << axi_port_address_width
+
+        self._get_vela_config(vela_config_files, verbose_config, arena_cache_size)
+
+        self.memory_bandwidths_per_cycle = (
+            np.array([a * b for a, b in zip(axi_port_data_width, self.memory_clock_scales)]) / 8
+        )
+        self.memory_bandwidths_per_second = self.memory_bandwidths_per_cycle * self.core_clock
+
+        self.tensor_storage_mem_area = {
+            # permanent mem_area
+            TensorPurpose.Unknown: MemArea.Unknown,
+            TensorPurpose.Weights: self.permanent_storage_mem_area,
+            TensorPurpose.FeatureMap: self.feature_map_storage_mem_area,
+            TensorPurpose.LUT: self.permanent_storage_mem_area,
+            TensorPurpose.Scratch: self.feature_map_storage_mem_area,
+            TensorPurpose.ScratchFast: self.fast_storage_mem_area,
+        }
+
+        self.tensor_storage_mem_type = {
+            TensorPurpose.Unknown: MemType.Unknown,
+            TensorPurpose.Weights: MemType.Permanent_NPU,
+            TensorPurpose.FeatureMap: MemType.Scratch,
+            TensorPurpose.LUT: MemType.Scratch,
+            TensorPurpose.Scratch: MemType.Scratch,
+            TensorPurpose.ScratchFast: MemType.Scratch_fast,
+        }
+
+        if self.is_ethos_u85_system:
+            self.num_macs_per_cycle = int(accelerator_config.split("-")[-1])
+            self.ncores = 1
+            return
+
         accel_config = ArchitectureFeatures.accelerator_configs[self.accelerator_config]
         self.config = accel_config
 
@@ -273,19 +354,6 @@ class ArchitectureFeatures:
 
         self.shram = SHRAMConfig(2, 1024, accel_config.shram_banks, 2 if accel_config.shram_banks > 16 else 0)
 
-        self.system_config = system_config
-        self.memory_mode = memory_mode
-        self.is_ethos_u65_system = self.accelerator_config in (Accelerator.Ethos_U65_256, Accelerator.Ethos_U65_512)
-
-        if self.is_ethos_u65_system:
-            self.max_outstanding_dma = 2
-            axi_port_address_width = 40
-            axi_port_data_width = 128
-        else:
-            self.max_outstanding_dma = 1
-            axi_port_address_width = 32
-            axi_port_data_width = 64
-
         self.max_outstanding_kernels = 2
 
         self.ncores = accel_config.cores
@@ -303,15 +371,6 @@ class ArchitectureFeatures:
         self.num_elem_wise_units = accel_config.elem_units
         self.num_macs_per_cycle = dpu_min_height * dpu_min_width * dpu_dot_product_width * dpu_min_ofm_channels
         assert self.num_macs_per_cycle == accel_config.macs, f"{self.num_macs_per_cycle} != {accel_config.macs}"
-        # Max value in address offsets
-        self.max_address_offset = 1 << axi_port_address_width
-
-        # Get system configuration and memory mode
-        self._get_vela_config(vela_config_files, verbose_config, arena_cache_size)
-
-        self.memory_bandwidths_per_cycle = axi_port_data_width * self.memory_clock_scales / 8
-
-        self.memory_bandwidths_per_second = self.memory_bandwidths_per_cycle * self.core_clock
 
         # Get output/activation performance numbers
         self._generate_output_perf_tables(self.accelerator_config)
@@ -334,25 +393,6 @@ class ArchitectureFeatures:
 
         self.default_weight_format = TensorFormat.WeightsCompressed
         self.default_feature_map_format = TensorFormat.NHWC
-
-        self.tensor_storage_mem_area = {
-            # permanent mem_area
-            TensorPurpose.Unknown: MemArea.Unknown,
-            TensorPurpose.Weights: self.permanent_storage_mem_area,
-            TensorPurpose.FeatureMap: self.feature_map_storage_mem_area,
-            TensorPurpose.LUT: self.permanent_storage_mem_area,
-            TensorPurpose.Scratch: self.feature_map_storage_mem_area,
-            TensorPurpose.ScratchFast: self.fast_storage_mem_area,
-        }
-
-        self.tensor_storage_mem_type = {
-            TensorPurpose.Unknown: MemType.Unknown,
-            TensorPurpose.Weights: MemType.Permanent_NPU,
-            TensorPurpose.FeatureMap: MemType.Scratch,
-            TensorPurpose.LUT: MemType.Scratch,
-            TensorPurpose.Scratch: MemType.Scratch,
-            TensorPurpose.ScratchFast: MemType.Scratch_fast,
-        }
 
         self.min_block_sizes = {
             NpuBlockType.Default: (dpu_min_height, dpu_min_width),
@@ -444,10 +484,11 @@ class ArchitectureFeatures:
         elif accel_config in (Accelerator.Ethos_U55_256, Accelerator.Ethos_U65_256):
             self.output_cycles_per_elem = (0.625, 1.125, 0.5, 0.375, 0.5, 0.75, 0.125, 0.25)
             self.activation_cycles_per_elem = (1.0, 0.25, 0.0)
-        else:
-            assert accel_config == Accelerator.Ethos_U65_512
+        elif accel_config == Accelerator.Ethos_U65_512:
             self.output_cycles_per_elem = (0.3125, 0.5625, 0.25, 0.1875, 0.25, 0.375, 0.0625, 0.125)
             self.activation_cycles_per_elem = (0.5, 0.125, 0.0)
+        else:
+            assert False, f"Unsupported accel_config = {accel_config}"
 
     def calc_ifm_block_depth(self, ifm_depth, ifm_bits):
         assert ifm_bits in (8, 16, 32)

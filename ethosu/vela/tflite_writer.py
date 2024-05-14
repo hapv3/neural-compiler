@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2020-2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2020-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -372,7 +372,7 @@ class TFLiteSerialiser:
 
         # Make sure all original tensors are written back, special case for Ops
         # with connected subgraphs. Even though not all inputs are used,
-        # the reference kernel expects all inputs to be in the tflite file.
+        # the reference kernel expects all inputs to be in the TFLite file.
         # Since we traverse the graph starting with all outputs they are
         # always added but if an input is not referenced it will not be added
         # to an op.

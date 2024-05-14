@@ -2508,7 +2508,7 @@ def convert_ops_to_lut(op: Operation, arch, nng) -> Operation:
         elif op.ifm.dtype == DataType.int16:
             return create_lut_int16_op(op, math.exp, "exp")
         else:
-            # Should already be catched in tflite supported ops
+            # Should already be catched in TFLite supported ops
             assert False, f"Unsupported data type {op.ifm.dtype} for {op.type}"
 
     if op.type == Op.Rsqrt:

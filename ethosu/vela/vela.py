@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+#
 # SPDX-FileCopyrightText: Copyright 2020-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
@@ -14,15 +16,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Description:
-# Main entry point for the Vela compiler.
-#
-# Provides command line interface, options parsing, and network loading. Before calling the compiler driver.
+"""Compile a neural network model for Arm Ethos-U NPUs."""
 import argparse
 import glob
 import os
 import sys
 import time
+from typing import List
+from typing import Optional
 
 import flatbuffers
 
@@ -51,7 +52,11 @@ from .tflite_model_semantic import TFLiteSemantic
 from .tflite_supported_operators import TFLiteSupportedOperators
 from .tosa_model_semantic import TosaSemantic
 from .tosa_supported_operators import TosaSupportedOperators
+from ethosu import regor
 from ethosu.vela.architecture_features import ArchitectureFeatures
+
+TFLITE_MAGIC = 0x334C4654
+TOSA_MAGIC = 0x41534F54
 
 CONFIG_FILES_PATH = os.path.normpath(os.path.join(__file__, "..", "..", "config_files"))
 
@@ -111,6 +116,60 @@ def process(input_name, enable_debug_db, arch, model_reader_options, compiler_op
     return nng
 
 
+def process_regor(
+    arch,
+    input_name,
+    accelerator,
+    system_config,
+    options,
+    enable_debug_db,
+    output_dir,
+    verbose_weights=False,
+    show_cpu_operations=False,
+    verbose_performance=False,
+):
+    os.makedirs(output_dir, exist_ok=True)
+
+    with open(input_name, "rb") as f:
+        network = f.read()
+    fmt = get_format(network)
+
+    compiled_model = regor.compile(accelerator, network, fmt, system_config, options=options, verbose=True)
+
+    model_name = os.path.splitext(os.path.basename(input_name))[0]
+
+    output_basename = os.path.join(output_dir, model_name)
+
+    if isinstance(compiled_model, regor.CompiledTFLiteModel):
+        output_name = output_basename + "_vela.tflite"
+        with open(output_name, "wb") as f:
+            f.write(compiled_model.model)
+    elif isinstance(compiled_model, regor.CompiledRawModel):
+        rawdata_writer.write_rawdata_output_from_model(output_basename + "_vela.npz", compiled_model)
+
+    summary_csv_file = "{0}_summary_{1}.csv".format(output_basename, arch.system_config)
+
+    if verbose_performance:
+        stats_writer.write_regor_perlayer_performance_csv(
+            arch, compiled_model.opt_database, compiled_model.perf_report, output_basename
+        )
+        stats_writer.print_regor_perlayer_performance(
+            arch, compiled_model.opt_database, compiled_model.perf_report, output_basename
+        )
+
+    stats_writer.print_regor_performance_metrics(
+        arch,
+        compiled_model.perf_report,
+        model_name,
+        summary_csv_file,
+        compiled_model.opt_database,
+        verbose_weights,
+        show_cpu_operations,
+    )
+    if enable_debug_db:
+        stats_writer.write_regor_db(compiled_model.opt_database, output_basename)
+
+
 def find_subgraph_with_command_stream_order(nng, idx):
     for sg in nng.subgraphs:
         if sg.generated_stream_id == idx:
@@ -119,7 +178,7 @@ def find_subgraph_with_command_stream_order(nng, idx):
 
 
 def calculate_operator_file_offsets(name: str):
-    # Read the vela optimized tflite file
+    # Read the vela optimized TFLite file
     with open(name, "rb") as f:
         buf = bytearray(f.read())
     # Calculate the file offsets for each custom operator
@@ -321,6 +380,65 @@ def generate_supported_ops():
         print(f"Report file: {filepath}")
 
 
+def get_compiler_config(
+    enable_debug_db: bool,
+    verbose_all: bool,
+    verbose_high_level_command_stream: bool,
+    verbose_register_command_stream: bool,
+    optimize: str,
+    arena_cache_size: int,
+    verbose_schedule: bool,
+    verbose_allocation: bool,
+    verbose_graph: bool,
+    verbose_quantization: bool,
+    verbose_packing: bool,
+    verbose_performance: bool,
+    show_cpu_operations: bool,
+    output_format: str,
+) -> str:
+    """Build compiler config file."""
+    config = "\n[compiler]\n"
+    if verbose_high_level_command_stream:
+        config += "verbose_high_level_command_stream=true\n"
+    if verbose_register_command_stream:
+        config += "verbose_register_command_stream=true\n"
+    if verbose_performance or show_cpu_operations or enable_debug_db:
+        config += "enable_db=true\n"
+    if output_format == "raw":
+        config += "output_format=Raw"
+    else:
+        config += "output_format=TFLite"
+
+    config += "\n[scheduler]\n"
+    config += f"optimize={optimize}\n"
+    config += f"arena_size_limit={arena_cache_size}\n"
+    if verbose_schedule:
+        config += "verbose=true\n"
+    if verbose_allocation:
+        config += "verbose_allocation=true\n"
+
+    config += "\n[graph]\n"
+    if verbose_graph:
+        config += "verbose=true\n"
+    if verbose_quantization:
+        config += "verbose_quantization=true\n"
+
+    return config
+
+
+def get_format(in_data: bytes) -> str:
+    """Infere format based on input file."""
+    ret = "UNDEFINED"
+    if len(in_data) < 8:
+        return ret
+    second_word = int.from_bytes(in_data[4:8], "little")
+    if second_word == TFLITE_MAGIC:
+        ret = "TFLITE"
+    if second_word == TOSA_MAGIC:
+        ret = "TOSA"
+    return ret
+
+
 def list_config_files():
     print("Available config files:")
     path_length = len(CONFIG_FILES_PATH + os.path.sep)
@@ -328,247 +446,313 @@ def list_config_files():
         print(config[path_length:])
 
 
-def main(args=None):
-    try:
-        if args is None:
-            args = sys.argv[1:]
+def main(argv: Optional[List[str]] = None) -> int:
+    """Run the main entry point."""
+    if argv is None:
+        argv = sys.argv[1:]
 
-        parser = argparse.ArgumentParser(prog="vela", description="Neural network model compiler for Arm Ethos-U NPUs")
-        parser.add_argument("--version", action="version", version=__version__)
-        parser.add_argument(
-            "--api-version", action="version", version=API_VERSION, help="Displays the version of the external API."
-        )
-        parser.add_argument(
-            "--supported-ops-report",
-            action="store_true",
-            help="Generate the SUPPORTED_OPS.md file in the current working directory and exit",
-        )
+    parser = argparse.ArgumentParser(prog="vela", description="Neural network model compiler for Arm Ethos-U NPUs")
+    parser.add_argument("--version", action="version", version=__version__)
+    parser.add_argument(
+        "--api-version", action="version", version=API_VERSION, help="Displays the version of the external API."
+    )
+    parser.add_argument(
+        "--supported-ops-report",
+        action="store_true",
+        help="Generate the SUPPORTED_OPS.md file in the current working directory and exit",
+    )
 
-        parser.add_argument(
-            "--list-config-files",
-            action="store_true",
-            help=(
-                "Display all available configurations in the `config_files` folder and exit. To select config file, "
-                "use the --config argument with one of the listed config files (For example: --config Arm/vela.ini )"
-            ),
-        )
+    parser.add_argument(
+        "--list-config-files",
+        action="store_true",
+        help=(
+            "Display all available configurations in the `config_files` folder and exit. To select config file, "
+            "use the --config argument with one of the listed config files (For example: --config Arm/vela.ini )"
+        ),
+    )
 
-        # set network nargs to be optional to allow the support-ops-report CLI option to be used standalone
-        parser.add_argument(
-            "network",
-            metavar="NETWORK",
-            type=str,
-            default=None,
-            nargs="?",
-            help="Filename of the input TensorFlow Lite for Microcontrollers network",
-        )
-        parser.add_argument(
-            "--output-dir", type=str, default="output", help="Output directory to write files to (default: %(default)s)"
-        )
-        parser.add_argument(
-            "--enable-debug-db",
-            action="store_true",
-            default=None,
-            help="Enables the calculation and writing of a network debug database to output directory",
-        )
-        parser.add_argument(
-            "--config",
-            type=str,
-            action="append",
-            help="Vela configuration file(s) in Python ConfigParser .ini file format",
-        )
-        parser.add_argument("--verbose-all", action="store_true", help="Enable all verbose options")
-        parser.add_argument(
-            "--verbose-config", action="store_true", help="Verbose system configuration and memory mode"
-        )
-        parser.add_argument("--verbose-graph", action="store_true", help="Verbose graph rewriter")
-        parser.add_argument("--verbose-quantization", action="store_true", help="Verbose quantization")
-        parser.add_argument("--verbose-packing", action="store_true", help="Verbose pass packing")
-        parser.add_argument("--verbose-tensor-purpose", action="store_true", help="Verbose tensor purpose")
-        parser.add_argument("--verbose-tensor-format", action="store_true", help="Verbose tensor format")
-        parser.add_argument("--verbose-schedule", action="store_true", help="Verbose schedule")
-        parser.add_argument("--verbose-allocation", action="store_true", help="Verbose tensor allocation")
-        parser.add_argument(
-            "--verbose-high-level-command-stream", action="store_true", help="Verbose high level command stream"
-        )
-        parser.add_argument(
-            "--verbose-register-command-stream", action="store_true", help="Verbose register command stream"
-        )
-        parser.add_argument("--verbose-operators", action="store_true", help="Verbose operator list")
-        parser.add_argument("--verbose-weights", action="store_true", help="Verbose weights information")
-        parser.add_argument("--verbose-performance", action="store_true", help="Verbose performance information")
-        parser.add_argument("--verbose-progress", action="store_true", help="Verbose progress information")
-        parser.add_argument(
-            "--show-cpu-operations", action="store_true", help="Show the operations that fall back to the CPU"
-        )
-        parser.add_argument("--timing", action="store_true", help="Time the compiler doing operations")
-        parser.add_argument(
-            "--force-symmetric-int-weights",
-            action="store_true",
-            help="Forces all zero points to 0 for signed integer weights",
-        )
-        parser.add_argument(
-            "--accelerator-config",
-            type=str,
-            default="ethos-u55-256",
-            choices=list(architecture_features.Accelerator.member_list()),
-            help="Accelerator configuration to use (default: %(default)s)",
-        )
-        parser.add_argument(
-            "--system-config",
-            type=str,
-            default=architecture_features.ArchitectureFeatures.DEFAULT_CONFIG,
-            help="System configuration to select from the Vela configuration file (default: %(default)s)",
-        )
-        parser.add_argument(
-            "--memory-mode",
-            type=str,
-            default=architecture_features.ArchitectureFeatures.DEFAULT_CONFIG,
-            help="Memory mode to select from the Vela configuration file (default: %(default)s)",
-        )
-        parser.add_argument(
-            "--tensor-allocator",
-            default=TensorAllocator.HillClimb,
-            type=lambda s: TensorAllocator[s],
-            choices=list(TensorAllocator),
-            help="Tensor Allocator algorithm (default: %(default)s)",
-        )
-        parser.add_argument(
-            "--show-subgraph-io-summary",
-            action="store_true",
-            help="Shows a summary of all the subgraphs and their inputs and outputs",
-        )
-        parser.add_argument(
-            "--max-block-dependency",
-            type=int,
-            default=architecture_features.ArchitectureFeatures.MAX_BLOCKDEP,
-            choices=range(0, architecture_features.ArchitectureFeatures.MAX_BLOCKDEP + 1),
-            help=(
-                "Set the maximum value that can be used for the block dependency between npu kernel operations"
-                " (default: %(default)s)"
-            ),
-        )
-        parser.add_argument(
-            "--optimise",
-            type=lambda s: scheduler.OptimizationStrategy[s],
-            default=scheduler.OptimizationStrategy.Performance,
-            choices=list(scheduler.OptimizationStrategy),
-            help=(
-                "Set the optimisation strategy. The Size strategy results in minimal SRAM usage (does not use"
-                " arena-cache-size). The Performance strategy results in maximal performance (uses the arena-cache-size"
-                " if specified) (default: %(default)s)"
-            ),
-        )
-        parser.add_argument(
-            "--arena-cache-size",
-            type=int,
-            help=(
-                "Set the size of the arena cache memory area, in bytes. If specified, this option overrides the memory"
-                " mode attribute with the same name in a Vela configuration file"
-            ),
-        )
-        parser.add_argument(
-            "--cpu-tensor-alignment",
-            type=int,
-            default=Tensor.AllocationQuantum,
-            help=(
-                "Controls the allocation byte alignment of cpu tensors including Ethos-U Custom"
-                " operator inputs and outputs (default: %(default)s Bytes)"
-            ),
-        )
-        parser.add_argument(
-            "--recursion-limit",
-            type=int,
-            default=1000,
-            help="Set the recursion depth limit, may result in RecursionError if too low (default: %(default)s)",
-        )
-        parser.add_argument(
-            "--hillclimb-max-iterations",
-            type=int,
-            default=HillClimbAllocator.MAX_ITERATIONS,
-            help=(
-                "Set the maximum number of iterations the Hill Climb tensor allocator will run (default: %(default)s)"
-            ),
-        )
-        args = parser.parse_args(args=args)
+    # set network nargs to be optional to allow the support-ops-report CLI option to be used standalone
+    parser.add_argument(
+        "network",
+        metavar="NETWORK",
+        type=str,
+        nargs="?",
+        default=None,
+        help="Filename of the input network",
+    )
+    parser.add_argument(
+        "--output-dir", type=str, default="output", help="Output directory to write files to (default: %(default)s)"
+    )
+    parser.add_argument(
+        "--output-format",
+        type=str,
+        default="tflite",
+        choices=["tflite", "raw"],
+        help="Output format (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--enable-debug-db",
+        action="store_true",
+        default=None,
+        help="Enables the calculation and writing of a network debug database to output directory",
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        action="append",
+        help="Vela configuration file(s) in Python ConfigParser .ini file format",
+    )
+    parser.add_argument("--verbose-all", action="store_true", help="Enable all verbose options")
+    parser.add_argument(
+        "--verbose-config", action="store_true", help="Enable system configuration and memory mode debug"
+    )
+    parser.add_argument("--verbose-graph", action="store_true", help="Enable graph optimizer debug")
+    parser.add_argument("--verbose-quantization", action="store_true", help="Enable quantization debug")
+    parser.add_argument("--verbose-packing", action="store_true", help="Enable pass packing debug")
+    parser.add_argument("--verbose-tensor-purpose", action="store_true", help="Enable tensor purpose debug")
+    parser.add_argument("--verbose-tensor-format", action="store_true", help="Enable tensor format debug")
+    parser.add_argument("--verbose-schedule", action="store_true", help="Enable schedule debug")
+    parser.add_argument("--verbose-allocation", action="store_true", help="Enable tensor allocation debug")
+    parser.add_argument(
+        "--verbose-high-level-command-stream", action="store_true", help="Enable high level command stream debug"
+    )
+    parser.add_argument(
+        "--verbose-register-command-stream", action="store_true", help="Enable register command stream debug"
+    )
+    parser.add_argument("--verbose-operators", action="store_true", help="Enable operator list debug")
+    parser.add_argument("--verbose-weights", action="store_true", help="Enable weights information debug")
+    parser.add_argument("--verbose-performance", action="store_true", help="Enable performance information debug")
+    parser.add_argument("--verbose-progress", action="store_true", help="Enable progress information debug")
+    parser.add_argument(
+        "--show-cpu-operations", action="store_true", help="Show the operations that fall back to the CPU"
+    )
+    parser.add_argument("--timing", action="store_true", help="Time the compiler doing operations")
+    parser.add_argument(
+        "--force-symmetric-int-weights",
+        action="store_true",
+        help="Forces all zero points to 0 for signed integer weights",
+    )
+    parser.add_argument(
+        "--accelerator-config",
+        type=str,
+        default="ethos-u55-256",
+        choices=list(architecture_features.Accelerator.member_list()),
+        help="Accelerator configuration to use (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--system-config",
+        type=str,
+        default=architecture_features.ArchitectureFeatures.DEFAULT_CONFIG,
+        help="System configuration to select from the Vela configuration file (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--memory-mode",
+        type=str,
+        default=architecture_features.ArchitectureFeatures.DEFAULT_CONFIG,
+        help="Memory mode to select from the Vela configuration file (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--tensor-allocator",
+        default=TensorAllocator.HillClimb,
+        type=lambda s: TensorAllocator[s],
+        choices=list(TensorAllocator),
+        help="Tensor Allocator algorithm (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--show-subgraph-io-summary",
+        action="store_true",
+        help="Shows a summary of all the subgraphs and their inputs and outputs",
+    )
+    parser.add_argument(
+        "--max-block-dependency",
+        type=int,
+        default=architecture_features.ArchitectureFeatures.MAX_BLOCKDEP,
+        choices=range(0, architecture_features.ArchitectureFeatures.MAX_BLOCKDEP + 1),
+        help=(
+            "Set the maximum value that can be used for the block dependency between npu kernel operations"
+            " (default: %(default)s)"
+        ),
+    )
+    parser.add_argument(
+        "--optimise",
+        type=lambda s: scheduler.OptimizationStrategy[s],
+        default=scheduler.OptimizationStrategy.Performance,
+        choices=list(scheduler.OptimizationStrategy),
+        help=(
+            "Set the optimisation strategy. The Size strategy results in minimal SRAM usage (does not use"
+            " arena-cache-size). The Performance strategy results in maximal performance (uses the arena-cache-size"
+            " if specified) (default: %(default)s)"
+        ),
+    )
+    parser.add_argument(
+        "--arena-cache-size",
+        type=int,
+        help=(
+            "Set the size of the arena cache memory area, in bytes. If specified, this option overrides the memory"
+            " mode attribute with the same name in a Vela configuration file"
+        ),
+    )
+    parser.add_argument(
+        "--cpu-tensor-alignment",
+        type=int,
+        default=Tensor.AllocationQuantum,
+        help=(
+            "Controls the allocation byte alignment of cpu tensors including Ethos-U Custom"
+            " operator inputs and outputs (default: %(default)s Bytes)"
+        ),
+    )
+    parser.add_argument(
+        "--recursion-limit",
+        type=int,
+        default=1000,
+        help="Set the recursion depth limit, may result in RecursionError if too low (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--hillclimb-max-iterations",
+        type=int,
+        default=HillClimbAllocator.MAX_ITERATIONS,
+        help="Set the maximum number of iterations the Hill Climb tensor allocator will run (default: %(default)s)",
+    )
 
-        # Generate the supported ops report and exit
-        if args.supported_ops_report:
-            generate_supported_ops()
-            return 0
+    # debug options
+    parser.add_argument("--debug-force-regor", action="store_true", help="Debug: Force the use of the regor")
 
-        if args.list_config_files:
-            list_config_files()
-            return 0
+    args = parser.parse_args(argv)
 
-        if args.network is None:
-            parser.error("the following argument is required: NETWORK")
+    # Generate the supported ops report and exit
+    if args.supported_ops_report:
+        generate_supported_ops()
+        return 0
 
-        def _parse_config(config):
-            # Make sure the correct separator is used depending on OS
-            config = os.path.normpath(config)
+    if args.list_config_files:
+        list_config_files()
+        return 0
 
-            if not config.endswith(".ini"):
-                raise InputFileError(config, "Configuration files must use the .ini extension")
+    if args.network is None:
+        parser.error("the following argument is required: NETWORK")
 
-            if (
-                len(config.split(os.path.sep)) == 2
-                and not config.startswith(os.path.sep)
-                and not config.startswith(".")
-                and not config.startswith("~")
-            ):
-                config_path = os.path.join(CONFIG_FILES_PATH, config)
-            else:
-                # Check if the configuration file is correctly placed inside the config_files directory
-                if os.access(os.path.join(CONFIG_FILES_PATH, *config.split(os.path.sep)[-2:]), os.R_OK):
-                    rel_path = os.path.join(*config.split(os.path.sep)[-2:])
-                    print(
-                        f"Warning: Consider accessing the configuration by --config {rel_path} since it is located "
-                        "inside the config_files directory."
-                    )
-                config_path = config
+    def _parse_config(config):
+        # Make sure the correct separator is used depending on OS
+        config = os.path.normpath(config)
 
-            if not os.access(config_path, os.R_OK):
-                raise InputFileError(
-                    config_path,
-                    "File not found or is not readable. The configuration file is either not located in a folder "
-                    "directly under the `config_files` directory or its path has not been provided correctly.",
+        if not config.endswith(".ini"):
+            raise InputFileError(config, "Configuration files must use the .ini extension")
+
+        if (
+            len(config.split(os.path.sep)) == 2
+            and not config.startswith(os.path.sep)
+            and not config.startswith(".")
+            and not config.startswith("~")
+        ):
+            config_path = os.path.join(CONFIG_FILES_PATH, config)
+        else:
+            # Check if the configuration file is correctly placed inside the config_files directory
+            if os.access(os.path.join(CONFIG_FILES_PATH, *config.split(os.path.sep)[-2:]), os.R_OK):
+                rel_path = os.path.join(*config.split(os.path.sep)[-2:])
+                print(
+                    f"Warning: Consider accessing the configuration by --config {rel_path} since it is located "
+                    "inside the config_files directory."
                 )
+            config_path = config
 
-            return config_path
-
-        # check all config files exist because they will be read as a group
-        config_files = [_parse_config(cfg) for cfg in args.config] if args.config else None
-
-        if args.cpu_tensor_alignment < 16 or args.cpu_tensor_alignment & (args.cpu_tensor_alignment - 1) != 0:
-            parser.error(
-                "Invalid argument to --cpu-tensor-alignment = {} (must be greater than or equal to 16 and a power of 2)"
-                "".format(args.cpu_tensor_alignment)
+        if not os.access(config_path, os.R_OK):
+            raise InputFileError(
+                config_path,
+                "File not found or is not readable. The configuration file is either not located in a folder "
+                "directly under the `config_files` directory or its path has not been provided correctly.",
             )
 
-        if args.system_config == ArchitectureFeatures.DEFAULT_CONFIG:
-            print(f"Warning: Using {ArchitectureFeatures.DEFAULT_CONFIG} values for system configuration")
+        return config_path
 
-        if args.memory_mode == ArchitectureFeatures.DEFAULT_CONFIG:
-            print(f"Warning: Using {ArchitectureFeatures.DEFAULT_CONFIG} values for memory mode")
+    # check all config files exist because they will be read as a group
+    config_files = [_parse_config(cfg) for cfg in args.config] if args.config else None
 
-        if args.verbose_all:
-            for v in vars(args):
-                if v.startswith("verbose") and v != "verbose_all":
-                    setattr(args, v, True)
-
-        sys.setrecursionlimit(args.recursion_limit)
-
-        arch = architecture_features.ArchitectureFeatures(
-            vela_config_files=config_files,
-            system_config=args.system_config,
-            memory_mode=args.memory_mode,
-            accelerator_config=args.accelerator_config,
-            max_blockdep=args.max_block_dependency,
-            verbose_config=args.verbose_config,
-            arena_cache_size=args.arena_cache_size,
+    if args.cpu_tensor_alignment < 16 or args.cpu_tensor_alignment & (args.cpu_tensor_alignment - 1) != 0:
+        parser.error(
+            "Invalid argument to --cpu-tensor-alignment = {} (must be greater than or equal to 16 and a power of 2)"
+            "".format(args.cpu_tensor_alignment)
         )
 
+    if args.system_config == ArchitectureFeatures.DEFAULT_CONFIG:
+        print(f"Warning: Using {ArchitectureFeatures.DEFAULT_CONFIG} values for system configuration")
+
+    if args.memory_mode == ArchitectureFeatures.DEFAULT_CONFIG:
+        print(f"Warning: Using {ArchitectureFeatures.DEFAULT_CONFIG} values for memory mode")
+
+    if args.verbose_all:
+        for v in vars(args):
+            if v.startswith("verbose") and v != "verbose_all":
+                setattr(args, v, True)
+
+    sys.setrecursionlimit(args.recursion_limit)
+
+    arch = architecture_features.ArchitectureFeatures(
+        vela_config_files=config_files,
+        system_config=args.system_config,
+        memory_mode=args.memory_mode,
+        accelerator_config=args.accelerator_config,
+        max_blockdep=args.max_block_dependency,
+        verbose_config=args.verbose_config,
+        arena_cache_size=args.arena_cache_size,
+    )
+
+    model_reader_options = model_reader.ModelReaderOptions()
+
+    # The default behaviour is to use Vela for Ethos-U55/U65 and Regor for Ethos-U85. However, developers can override
+    # this by using the --debug-force-regor option
+    if arch.is_ethos_u85_system or args.debug_force_regor:
+        system_config = "[architecture]\n"
+        system_config += f"macs={arch.num_macs_per_cycle}\n"
+        system_config += f"cores={arch.ncores}\n"
+
+        system_config += "[vela]\n"
+        system_config += f"system_config_name={args.system_config}\n"
+        system_config += f"memory_mode_name={args.memory_mode}\n"
+
+        # TODO MLBEDSW-8190: Improve support for multiple config files
+        for config_file in config_files:
+            with open(config_file, "rb") as f:
+                system_config += f.read().decode("utf-8")
+
+        # Transform Vela accelerator config string format to Regor format
+        accelerator_config = args.accelerator_config
+        substrings = accelerator_config.split("-")
+        substrings = [substring.capitalize() for substring in substrings[:-1]]
+        accelerator = "".join(substrings)
+
+        options = get_compiler_config(
+            args.enable_debug_db,
+            args.verbose_all,
+            args.verbose_high_level_command_stream,
+            args.verbose_register_command_stream,
+            args.optimise,
+            # TODO MLBEDSW-8191: Clean up arena_cache_size selection
+            # arch.arena_cache_size will use value from CLI option if available, otherwise from config file
+            arch.arena_cache_size,
+            args.verbose_schedule,
+            args.verbose_allocation,
+            args.verbose_graph,
+            args.verbose_quantization,
+            args.verbose_packing,
+            args.verbose_performance,
+            args.show_cpu_operations,
+            args.output_format,
+        )
+
+        process_regor(
+            arch,
+            args.network,
+            accelerator,
+            system_config,
+            options,
+            args.enable_debug_db,
+            args.output_dir,
+            args.verbose_weights,
+            args.show_cpu_operations,
+            args.verbose_performance,
+        )
+
+    else:
         compiler_options = compiler_driver.CompilerOptions(
             verbose_graph=args.verbose_graph,
             verbose_quantization=args.verbose_quantization,
@@ -598,16 +782,16 @@ def main(args=None):
             verbose_progress=args.verbose_progress,
         )
 
-        model_reader_options = model_reader.ModelReaderOptions()
+        try:
+            nng = process(
+                args.network, args.enable_debug_db, arch, model_reader_options, compiler_options, scheduler_options
+            )
 
-        nng = process(
-            args.network, args.enable_debug_db, arch, model_reader_options, compiler_options, scheduler_options
-        )
+        except VelaError as e:
+            print(e.data)
+            return 1
 
         if args.show_subgraph_io_summary:
             print_subgraph_io_summary(nng)
 
-        return 0
-    except VelaError as e:
-        print(e.data)
-        return 1
+    return 0
