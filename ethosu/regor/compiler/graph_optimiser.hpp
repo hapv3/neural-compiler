@@ -197,6 +197,22 @@ public:
             }
         }
     }
+
+    void ReplaceOperation(Operation *const operationToReplace, Operation *const newOperation)
+    {
+        auto oldOperation = operationToReplace->shared_from_this();
+
+        for ( const auto &input : oldOperation->Inputs().pairs() )
+        {
+            newOperation->CopyInput(input.first, input.second);
+        }
+        for ( const auto &output : oldOperation->Outputs().pairs() )
+        {
+            newOperation->CopyOutput(output.first, output.second);
+        }
+        oldOperation->Disconnect();
+    }
+
 #if LOG_TRACE1_ON
     Operation *VisitOperatorLog(Graph *const graph, Operation *const operation);
     Tensor *VisitTensorLog(Graph *const graph, Tensor *const tensor);

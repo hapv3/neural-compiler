@@ -110,8 +110,6 @@ private:
     // Move Split/slice op to consumer
     void MoveToConsumer(const Operation *const operation, Operation *const cons);
 
-    static void ReplaceOperation(Operation *const operationToReplace, Operation *const newOperation);
-
     Operation *MakeDepthwiseMeanOp(const TensorConnection *ifmConn, const Shape &ifmShape4D, const Shape &readShape,
         const Shape &readOffset, const Shape &ofmShape4D, int w, int h, const std::string &name, std::shared_ptr<Tensor> &weightTensor,
         std::shared_ptr<Tensor> biasTensor, const Quantization &ifmQuant, const Quantization &weightQuant, const Quantization &ofmQuant);
@@ -162,13 +160,10 @@ private:
     Operation *CheckReshapeOpsRemoved(Graph *const graph, Operation *const operation);
 
     Operation *ConvertSoftmaxOps(Graph *const graph, Operation *const operation);
-    Operation *RewriteFullyConnectedInput(Graph *const graph, Operation *const operation);
 
     // Unroll convolution if stride is too great
     Operation *UnrollConv(Graph *const, Operation *const operation);
 
-    // Must be called after RewriteFullyConnectedInput
-    Operation *ConvertBatchedFullyConnected(Graph *const graph, Operation *const operation);
     Operation *ConvertMeanOps(Graph *const, Operation *const operation);
 
     // Converts int8/uint8 Sigmoid and Tanh to a LUT based solution
@@ -257,9 +252,7 @@ public:
                 &TFLiteGraphOptimiser::FixupDilationGT2,
                 &TFLiteGraphOptimiser::FixupBias,
                 &TFLiteGraphOptimiser::RewriteDepthwise,
-                &TFLiteGraphOptimiser::RewriteFullyConnectedInput,
                 &TFLiteGraphOptimiser::ConvertArgMax,
-                &TFLiteGraphOptimiser::ConvertBatchedFullyConnected,
                 &TFLiteGraphOptimiser::ConvertExpToLUT,
                 &TFLiteGraphOptimiser::ConvertTanhSigmoidToLUT,
                 &TFLiteGraphOptimiser::ConvertSoftmaxOps,

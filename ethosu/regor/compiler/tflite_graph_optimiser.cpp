@@ -410,20 +410,6 @@ void TFLiteGraphOptimiser::MoveToConsumer(const Operation *const operation, Oper
     }
 }
 
-void TFLiteGraphOptimiser::ReplaceOperation(Operation *const operationToReplace, Operation *const newOperation)
-{
-    auto oldOperation = operationToReplace->shared_from_this();
-
-    for ( const auto &input : oldOperation->Inputs().pairs() )
-    {
-        newOperation->CopyInput(input.first, input.second);
-    }
-    for ( const auto &output : oldOperation->Outputs().pairs() )
-    {
-        newOperation->CopyOutput(output.first, output.second);
-    }
-    oldOperation->Disconnect();
-}
 
 Operation *TFLiteGraphOptimiser::MakeDepthwiseMeanOp(const TensorConnection *ifmConn, const Shape &ifmShape4D, const Shape &readShape,
     const Shape &readOffset, const Shape &ofmShape4D, int w, int h, const std::string &name, std::shared_ptr<Tensor> &weightTensor,
@@ -2039,66 +2025,6 @@ Operation *TFLiteGraphOptimiser::ConvertSoftmaxOps(Graph *const graph, Operation
     return _softmax->ConvertOp(operation);
 }
 
-Operation *TFLiteGraphOptimiser::RewriteFullyConnectedInput(Graph *const graph, Operation *const operation)
-{
-    UNUSED(graph);
-    if ( operation->Type() == OpType::FullyConnected )
-    {
-        auto weights = operation->Input(TensorUsage::Weights);
-        assert(weights != nullptr);
-        auto nInElems = weights->shape.Depth();
-        auto ifm = operation->Input(TensorUsage::IFM0);
-        auto &ifmShape = ifm->slice.shape.IsEmpty() ? ifm->shape : ifm->slice.shape;
-        auto elms = ifmShape.Elements();
-        auto batchSize = elms / nInElems;
-        assert(batchSize * nInElems == elms);
-        ifmShape = Shape(batchSize, 1, 1, nInElems);
-    }
-    return operation;
-}
-
-// Must be called after RewriteFullyConnectedInput
-Operation *TFLiteGraphOptimiser::ConvertBatchedFullyConnected(Graph *const graph, Operation *const operation)
-{
-    UNUSED(graph);
-    auto returnOp = operation;
-    if ( operation->Type() == OpType::FullyConnected )
-    {
-        auto ifm = operation->Input(TensorUsage::IFM0);
-        // Check if the first dimension indicates batching
-        auto &ifmShape = ifm->slice.shape.IsEmpty() ? ifm->shape : ifm->slice.shape;
-        int n = ifmShape.Batch();
-        if ( n > 1 )
-        {
-            assert(ifmShape.Height() == 1 && ifmShape.Width() == 1);
-            int h = 1;
-            int w = n;
-            // More square H/W gives better performance up to a point
-            for ( int x = 2; x <= 16 && x * x <= n; ++x )
-            {
-                if ( n % x == 0 )
-                {
-                    h = x;
-                    w = n / x;
-                }
-            }
-            ifmShape = Shape(1, h, w, ifmShape.Depth());
-            auto ofm = operation->Output(TensorUsage::OFM);
-            ofm->shape = Shape(1, h, w, ofm->shape.Depth());
-            if ( h > 4 || w > 4 )
-            {
-                // Ended up with shape that requires the weights to be reread.
-                // Convert op to conv2d since this enables weight buffering.
-                auto newOp = std::make_shared<Operation>(OpType::Conv2DBias);
-                newOp->SetRounding(ifm->tensor->Type() == DataType::Int16 ? RoundMode::NATURAL : RoundMode::DBL);
-                ReplaceOperation(operation, newOp.get());
-                returnOp = newOp.get();
-                RecordOptimisation(operation, returnOp);
-            }
-        }
-    }
-    return returnOp;
-}
 
 Operation *TFLiteGraphOptimiser::UnrollConv(Graph *const, Operation *const operation)
 {

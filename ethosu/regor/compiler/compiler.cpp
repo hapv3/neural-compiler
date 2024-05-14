@@ -351,10 +351,20 @@ std::unique_ptr<Graph> Compiler::CompileGraph(std::unique_ptr<Graph> &graph,
             return nullptr;
         }
     }
+    if ( graph->Notation() == GraphNotation::TFLite )
+    {
+        // Run GraphNotation::TFLite Preprocess/optimise step
+        std::unique_ptr<GraphOptimiser> optimiser = GraphOptimiser::MakeGraphOptimiser(
+            GraphNotation::TFLite, _architecture.get(), _graphOptimiserOptions, _optDb.get());
+        if ( optimiser )
+        {
+            optimiser->Process(graph.get());
+        }
+    }
 
-    // Preprocess/optimise the graph
+    // Run GraphNotation::GraphAPI Preprocess/optimise step
     std::unique_ptr<GraphOptimiser> optimiser = GraphOptimiser::MakeGraphOptimiser(
-        graph->Notation(), _architecture.get(), _graphOptimiserOptions, _optDb.get());
+        GraphNotation::GraphAPI, _architecture.get(), _graphOptimiserOptions, _optDb.get());
     if ( optimiser )
     {
         optimiser->Process(graph.get());

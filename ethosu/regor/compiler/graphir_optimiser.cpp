@@ -161,6 +161,40 @@ Operation *GraphIrOptimiser::RewriteFullyConnected(Graph *const graph, Operation
             weights->tensor->Reshape(Shape(shape[0], 1, 1, shape[-1]));
         }
         assert(weights->tensor->AxisOrder() == AxisOrder::OHWI);
+
+        // Rewrite input shape to batched shape
+        auto nInElems = weights->shape.Depth();
+        auto ifm = operation->Input(TensorUsage::IFM0);
+        auto &ifmShape = ifm->slice.shape.IsEmpty() ? ifm->shape : ifm->slice.shape;
+        auto elems = ifmShape.Elements();
+        auto batchSize = elems / nInElems;
+        assert(batchSize * nInElems == elems);
+        ifmShape = Shape(batchSize, 1, 1, nInElems);
+
+        // Check if the first dimension indicates batching
+        int n = ifmShape.Batch();
+        if ( n > 1 )
+        {
+            // More square H/W gives better performance up to a point
+            int w = std::max(n / 16, int(std::ceil(std::sqrt(n))));
+            while ( n % w != 0 )
+                w++;
+            int h = n / w;
+
+            ifmShape = Shape(1, h, w, ifmShape.Depth());
+            auto ofm = operation->Output(TensorUsage::OFM);
+            ofm->shape = Shape(1, h, w, ofm->shape.Depth());
+            if ( h > 4 || w > 4 )
+            {
+                // Ended up with shape that requires the weights to be reread.
+                // Convert op to conv2d since this enables weight buffering.
+                auto newOp = std::make_shared<Operation>(OpType::Conv2DBias);
+                newOp->SetRounding(ifm->tensor->Type() == DataType::Int16 ? RoundMode::NATURAL : RoundMode::DBL);
+                ReplaceOperation(operation, newOp.get());
+                returnOp = newOp.get();
+                RecordOptimisation(operation, returnOp);
+            }
+        }
     }
 
     return returnOp;
