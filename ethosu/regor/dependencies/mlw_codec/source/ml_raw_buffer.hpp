@@ -134,6 +134,7 @@ public:
     {
         int count = (((_used + align_bytes - 1) / align_bytes) * align_bytes) - _used;
         TYPE *p = reserve(count);
+        assert(p);
         use(count);
         while (count--)
         {

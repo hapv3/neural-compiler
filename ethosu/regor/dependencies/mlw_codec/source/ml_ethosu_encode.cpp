@@ -40,7 +40,7 @@ ML_ENCODER_DLL_EXPORT int32_t ml_encode_ethosu_stream(ml_encode_result_t *result
     assert(result && ep);
     if ( !(result && ep && src) )
     {
-        return 0;
+        return -1;
     }
 
     mle_context_t *ctx = mle_create_context(MLW_ENCODE_SYNTAX_ETHOSU);
@@ -69,7 +69,13 @@ ML_ENCODER_DLL_EXPORT int32_t ml_encode_ethosu_stream(ml_encode_result_t *result
     // Repeatedly ask for values until the source function signals end-of-stream.
     while ( !state.eos )
     {
-        int16_t* buf_write = buffer.reserve(request_size);
+        int16_t *buf_write = buffer.reserve(request_size);
+        if ( !buf_write )
+        {
+            // Memory allocation failed
+            mle_destroy_context(ctx);
+            return -1;
+        }
         int received = (*src)(MLW_SOURCE_QUERY_WEIGHTS, &state, buf_write, buffer.capacity() - buffer.used(), user_arg);
         buffer.use(received);
 

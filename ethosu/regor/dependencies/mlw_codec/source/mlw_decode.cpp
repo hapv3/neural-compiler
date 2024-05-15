@@ -267,6 +267,7 @@ static int ml_decode_internal(raw_buffer_t<int16_t> &outbuf, bitbuf_t &bb, palet
         // Interleave non-zero and zeros into the outbuf buffer
         // Increase the outbuffer to fit the new slice
         int16_t *p = outbuf.reserve(w_cnt + total_zcnt);
+        assert(p);
 
         // Insert initial zeros
         if ( ( slice_len != ETHOSU_SLICELEN_BITS || new_palette ) && use_zero_runs )
