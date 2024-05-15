@@ -148,7 +148,7 @@ void RescaleElementwise(HLCOperation *op)
                 }
             }
         }
-        if ( ifm1Quant != nullptr && ifm1Quant->type == QuantizationType::TFLITE )
+        if ( ifm1Quant->type == QuantizationType::TFLITE )
         {
             ifm1Quant->scales.clear();
             ifm1Quant->scales.push_back({int32_t(opaScale), opaShift});
@@ -161,7 +161,7 @@ void RescaleElementwise(HLCOperation *op)
             ifm2Quant->type = QuantizationType::EXPLICIT;
         }
     }
-    if ( ofmQuant != nullptr && ofmQuant->type == QuantizationType::TFLITE )
+    if ( ofmQuant->type == QuantizationType::TFLITE )
     {
         ofmQuant->scales.clear();
         ofmQuant->scales.push_back(outScale);
