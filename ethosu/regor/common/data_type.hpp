@@ -167,6 +167,7 @@ inline constexpr bool IsVariablySized(DataType type)
 
 inline constexpr int DataTypeStorageSizeBits(DataType type)
 {
+    assert(!IsVariablySized(type));
     unsigned bits = unsigned(type & 0x00FFu);
     // Interpret packed word size as the largest set bit
     if ( IsPacked(type) )
@@ -174,18 +175,20 @@ inline constexpr int DataTypeStorageSizeBits(DataType type)
         assert(bits > 0);
         return 1 << (31 - Clz(bits));
     }
-    return (!IsVariablySized(type) ? std::max(int(bits), 8) : -1);
+    return std::max(int(bits), 8);
 }
 
 inline constexpr int DataTypeSizeBits(DataType type)
 {
+    assert(!IsVariablySized(type));
     unsigned bits = unsigned(type & 0x00FFu);
     if ( IsPacked(type) )
     {
         assert(bits > 0);
         bits ^= 1 << (31 - Clz(bits));  // Strip container word
     }
-    return (!IsVariablySized(type) ? int(bits) : -1);
+    assert(bits > 0);
+    return int(bits);
 }
 
 inline constexpr int DataTypeStorageSizeBytes(DataType type, int elements)
