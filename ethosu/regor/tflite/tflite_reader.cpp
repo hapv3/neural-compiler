@@ -115,9 +115,11 @@ void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::uniqu
 
     std::unordered_map<UniqueId, Quantization> tensorQuantization{};
     std::vector<tflite::BuiltinOperator> opcodes;
-    opcodes.reserve(model->operator_codes()->size());
+    auto tflite_operator_codes = model->operator_codes();
+    assert(tflite_operator_codes);
+    opcodes.reserve(tflite_operator_codes->size());
 
-    for ( const auto &opcode : *model->operator_codes() )
+    for ( const auto &opcode : *tflite_operator_codes )
     {
         if ( unsigned(opcode->builtin_code()) )
         {
@@ -130,10 +132,11 @@ void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::uniqu
     }
 
     std::vector<std::shared_ptr<Buffer>> buffers;
-    assert(model->buffers());
-    buffers.reserve(model->buffers()->size());
+    auto tflite_buffers = model->buffers();
+    assert(tflite_buffers);
+    buffers.reserve(tflite_buffers->size());
 
-    for ( const auto &tflite_buffer : *model->buffers() )
+    for ( const auto &tflite_buffer : *tflite_buffers )
     {
         if ( tflite_buffer->data() )
         {
@@ -146,36 +149,41 @@ void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::uniqu
         }
     }
 
-    assert(model->subgraphs());
-    for ( const auto &tflite_subgraph : *model->subgraphs() )
+    auto tflite_subgraphs = model->subgraphs();
+    assert(tflite_subgraphs);
+    for ( const auto &tflite_subgraph : *tflite_subgraphs )
     {
         std::vector<std::shared_ptr<Tensor>> tensors;
         std::vector<std::shared_ptr<Operation>> operations;
         assert(tflite_subgraph);
-        assert(tflite_subgraph->tensors());
-        assert(tflite_subgraph->operators());
-        tensors.reserve(tflite_subgraph->tensors()->size());
-        operations.reserve(tflite_subgraph->operators()->size());
+        auto tflite_tensors = tflite_subgraph->tensors();
+        assert(tflite_tensors);
+        auto tflite_operators = tflite_subgraph->operators();
+        assert(tflite_operators);
+        tensors.reserve(tflite_tensors->size());
+        operations.reserve(tflite_operators->size());
 
         // Operators refer to tensors, so create tensors before operations
-        for ( const auto &tflite_tensor : *tflite_subgraph->tensors() )
+        for ( const auto &tflite_tensor : *tflite_tensors )
         {
             tensors.push_back(ParseTensor(tflite_tensor, buffers.at(tflite_tensor->buffer()), tensorQuantization));
         }
 
         // Create operations
         int ext_key = 0;
-        for ( const auto &tflite_operator : *tflite_subgraph->operators() )
+        for ( const auto &tflite_operator : *tflite_operators )
         {
             const OpType op_type = TfLiteMapping::BuiltinOperatorToOpType(opcodes.at(tflite_operator->opcode_index()));
             auto operation = std::make_shared<Operation>(op_type);
 
             // Connect operation to its input tensors
             assert(tflite_operator);
-            assert(tflite_operator->inputs());
-            assert(tflite_operator->outputs());
-            const auto &input_tensors = *tflite_operator->inputs();  // A vector of indices into the `tensors` vector
-            int indirect_index = 0;                                  // An index into `input_tensors`
+            auto tflite_inputs = tflite_operator->inputs();
+            assert(tflite_inputs);
+            auto tflite_outputs = tflite_operator->outputs();
+            assert(tflite_outputs);
+            const auto &input_tensors = *tflite_inputs;  // A vector of indices into the `tensors` vector
+            int indirect_index = 0;                      // An index into `input_tensors`
             int ifm_count = 0;
             Shape largestInput;
             for ( const auto &map_entry : TfLiteMapping::InputTensorIndices(op_type) )
@@ -221,7 +229,7 @@ void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::uniqu
 
             // Connect operation to its output tensors
             int ofm_count = 0;
-            for ( const int tensor_index : *tflite_operator->outputs() )
+            for ( const int tensor_index : *tflite_outputs )
             {
                 const auto &ofm = tensors.at(tensor_index);
                 // Correct OFMs with no dimension
