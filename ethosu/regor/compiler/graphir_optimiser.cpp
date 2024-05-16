@@ -200,6 +200,21 @@ Operation *GraphIrOptimiser::RewriteFullyConnected(Graph *const graph, Operation
     return returnOp;
 }
 
+// Fixup Pool strides when the kernel size, IFM shape and stride are equal.
+Operation *GraphIrOptimiser::FixupPoolStrides(Graph *const, Operation *const operation)
+{
+    if ( IsPooling(operation->Type()) )
+    {
+        auto kernel = operation->Kernel();
+        const auto ifm = operation->Input(TensorUsage::IFM);
+        if ( kernel->Size() == kernel->Stride() && kernel->Stride() == ifm->shape.WH<int>() && kernel->Padding().IsZero() )
+        {
+            operation->SetKernel(std::make_unique<Kernel>(kernel->WithStride({1, 1})));
+        }
+    }
+    return operation;
+}
+
 GraphIrOptimiser::GraphIrOptimiser(Architecture *arch, const GraphOptimiserOptions &options, OptimiserDatabase *db) :
         GraphOptimiser(arch, options, db)
 {
