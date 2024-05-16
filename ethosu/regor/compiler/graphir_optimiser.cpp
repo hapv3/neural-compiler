@@ -147,6 +147,7 @@ Operation *GraphIrOptimiser::RemoveReshape(Graph *const graph, Operation *const 
 
 Operation *GraphIrOptimiser::RewriteFullyConnected(Graph *const graph, Operation *const operation)
 {
+    UNUSED(graph);
     Operation *returnOp = operation;
     OpType opType = operation->Type();
     if ( opType == OpType::FullyConnected )
