@@ -211,7 +211,7 @@ void SchedulerPacking::SchedulerPacking::PackOperations()
 
             LOG_TRACE1("\t{0}: {1} - OFM [{2}] <- (IFM0 [{3}], IFM1 [{4}], Primary={5})\n", primaryOp->Index(),
                 OpTypeToString(primaryOp->Type()), primaryOp->OFM()->shape.ToString(), primaryOp->IFM(0)->shape.ToString(),
-                primaryOp->IFM(1) ? primaryOp->IFM(1)->shape.ToString() : "", primaryOp->PrimaryIfmIndex());
+                primaryOp->TryIFM(1) ? primaryOp->IFM(1)->shape.ToString() : "", primaryOp->PrimaryIfmIndex());
         }
         write++;
     }
@@ -323,6 +323,12 @@ int SchedulerPacking::CanPack(const SchedulerOperation *schedOp, const Scheduler
     // Previous op in execution order doesn't connect to this one
     if ( prevOFM != ifmTensor && prevOFM != ifm2Tensor )
     {
+        return 0;
+    }
+
+    if ( IsActivation(prevOp->Type()) )
+    {
+        // Can not fuse anything to an activation
         return 0;
     }
 
