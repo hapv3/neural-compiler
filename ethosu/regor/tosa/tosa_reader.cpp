@@ -324,20 +324,19 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                 const auto type = TosaMapping::TensorTypeToDataType(tosa_tensor->type());
 
                 Shape shape;  // Defaults to shapeless
-                if ( tosa_tensor->shape() && tosa_tensor->shape()->size() )
+                const auto &tensorShape = tosa_tensor->shape();
+                if ( tensorShape && tensorShape->size() )
                 {
-                    shape = Shape(tosa_tensor->shape()->data(), tosa_tensor->shape()->size());
+                    shape = Shape(tensorShape->data(), tensorShape->size());
                 }
-
-                if ( tosa_tensor->data() && tosa_tensor->data()->size() )
+                const auto &tensorData = tosa_tensor->data();
+                if ( tensorData && tensorData->size() )
                 {
-                    buffer = builder->CreateBuffer(
-                        tosa_tensor->data()->size(), GraphApi::BufferMapping::Alias, tosa_tensor->data());
+                    buffer = builder->CreateBuffer(tensorData->size(), GraphApi::BufferMapping::Alias, tensorData->Data());
                 }
 
                 GraphApi::GraphShape tosaShape;
-                assert(shape.Size() <= GraphApi::MAX_TENSOR_DIMS);
-                tosaShape.count = shape.ToNHWC(tosaShape.axisNHWC, shape.Size());
+                tosaShape.count = shape.ToNHWC(tosaShape.axisNHWC, std::size(tosaShape.axisNHWC));
 
                 auto tensor = builder->CreateTensor(name, tosaShape, GraphApi::GraphTensorLayout::Linear, type, buffer);
 
@@ -352,6 +351,7 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
             for ( int tosa_op_index = 0; tosa_op_index < int(tosa_operators.size()); tosa_op_index++ )
             {
                 const auto &tosa_operator = SafeDeref(tosa_operators[tosa_op_index]);
+                if ( tosa_operator.op() == tosaFb::Op::CONST ) continue;
                 // Connect operation to its input tensors
                 const auto &input_tensors_fb = SafeDeref(tosa_operator.inputs());
                 std::vector<std::string> input_tensors;
@@ -363,7 +363,6 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                 // Kernel
                 GraphApi::GraphKernel kernel = {};
                 GraphApi::GraphKernel *kernelPtr = nullptr;
-
                 switch ( tosa_operator.op() )
                 {
                     case tosaFb::Op::DEPTHWISE_CONV2D:

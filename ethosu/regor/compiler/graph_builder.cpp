@@ -103,6 +103,7 @@ static constexpr std::pair<tosa::Op, regor::OpType> s_aTosaMapping[] = {
     {tosa::Op::RESIZE,     OpType::Resize},
     {tosa::Op::CAST,       OpType::Cast},
     {tosa::Op::RESCALE,    OpType::Rescale},
+    {tosa::Op::CONST,      OpType::Const},
     {tosa::Op::IDENTITY,   OpType::Identity},
     {tosa::Op::CUSTOM,     OpType::Custom},
     {tosa::Op::COND_IF,    OpType::If},
@@ -189,10 +190,9 @@ GraphBuilder::~GraphBuilder()
 
 bool GraphBuilder::RequireSyntaxVersion(uint32_t version, int32_t level)
 {
-    _syntaxVersion = version | uint32_t(level);
+    _syntaxVersion = (version & 0xFFFFFF00) | uint32_t(level);
 
-    if ( _syntaxVersion > (GraphApi::VERSION_TOSA_0_80 | GraphApi::PROFILE_BASELINE | 0xFF) )  // 0.60.Baseline, ignore
-                                                                                               // patch
+    if ( _syntaxVersion > (GraphApi::VERSION_TOSA_0_80 | GraphApi::PROFILE_BASELINE) )  // 0.80.Baseline
     {
         return false;
     }

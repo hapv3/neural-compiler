@@ -539,10 +539,11 @@ public:
     }
 
     template<typename TYPE>
-    int ToNHWC(TYPE *buffer, int length) const
+    int ToNHWC(TYPE *buffer, size_t length) const
     {
+        length = std::min(length, size_t(Size()));
         auto *local = Storage() + _last;
-        for ( int i = 0; i < length; i++ )
+        for ( size_t i = 0; i < length; i++ )
         {
             *buffer++ = TYPE(local[-i]);
         }
