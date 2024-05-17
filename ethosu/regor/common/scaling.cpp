@@ -40,6 +40,8 @@ QuantizedScale::QuantizedScale(double scale_, bool reduced)
     double significand = std::frexp(scale_, &exponent);
     // convert from left to right-shift
     scale = int32_t(std::round(significand * double(1LL << leftShift)));
+    // make sure reduced scale does not overflow
+    if ( reduced ) scale = ClampToType<int16_t>(scale);
     shift = leftShift - exponent;
     // if shift is out of bounds [0,63], try to get back within bounds
     if ( shift > 63 && scale > std::exp2(shift - 63) )

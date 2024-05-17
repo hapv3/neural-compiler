@@ -431,8 +431,6 @@ std::unique_ptr<IVolumeScaleSource> EthosU55WeightEncoder::GetScaleSource(
 Quantization EthosU55WeightEncoder::MakeExplicit(const Quantization &ifmQ, const Quantization &weightQ,
     const Quantization &ofmQ, DataType scaleType, DataType ifmType)
 {
-    if ( scaleType == DataType::Int64 && DataTypeSizeBits(ifmType) == 16 ) scaleType = DataType::Int32;
-
     return ethosU55Scaling::RescalePerChannel(ifmQ, weightQ, ofmQ, scaleType, ifmType);
 }
 
