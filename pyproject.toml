@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -33,9 +33,10 @@ classifiers = [
     "Topic :: Software Development :: Compilers",
 ]
 keywords = ["ethos-u", "vela compiler", "tflite", "npu"]
+# Third-party dependency versions are restricted based upon compatibility and security concerns.
 dependencies = [
     "flatbuffers==23.5.26",
-    "numpy",
+    "numpy>1.10.0",
     "lxml>=4.5.2"
 ]
 dynamic = ["readme", "version"]
