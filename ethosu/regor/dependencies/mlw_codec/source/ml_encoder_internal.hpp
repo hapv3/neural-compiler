@@ -96,6 +96,8 @@ struct mle_slice_debug_t
 struct mle_context_t
 {
     palette_t palette;
+    uint64_t weights_used[512 / 64] = {0};
+    int  distinct_weights = 0;
     int  syntax = 0;
     int  zero_count = 0;
     int  slicelen_bits = ETHOSU_SLICELEN_BITS;

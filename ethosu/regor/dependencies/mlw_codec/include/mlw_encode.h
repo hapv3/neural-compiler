@@ -99,6 +99,7 @@ extern "C"
     // Baseline encode
     mle_context_t *mle_create_context(int syntax);
     int      mle_context_query_zeroes(mle_context_t *ctx);
+    int      mle_context_query_weights_used(mle_context_t *ctx, uint64_t weights_used[512 / 64]);
     void     mle_context_set_allocator(mle_context_t *ctx, void* (*realloc_func)(void*, size_t, int purpose));
     void     mle_destroy_context(mle_context_t *ctx);
     int      mle_encode(mle_context_t *ctx, ml_encode_result_t *result, const int16_t *inbuf, int inbuf_size, unsigned mlw_encode_flags);

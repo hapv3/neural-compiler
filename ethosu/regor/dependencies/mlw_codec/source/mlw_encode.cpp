@@ -178,7 +178,7 @@ static void create_inverse_palette(palette_t *p)
 
 // If palette_size is 512, then palette is not used (in that case the palette is setup
 // with the standard alternating unsigned to signed mapping)
-static void update_palette(palette_t *p, const int16_t *weights, int weights_count, bool partial_data, bool disable_lut, bool disable_zruns)
+static void update_palette(mle_context_t *ctx, palette_t *p, const int16_t *weights, int weights_count, bool partial_data, bool disable_lut, bool disable_zruns)
 {
     int(&freq)[512] = p->freq;
 
@@ -189,7 +189,16 @@ static void update_palette(palette_t *p, const int16_t *weights, int weights_cou
     // Calculate frequencies of the given weight stream
     for ( int i = 0; i < weights_count; i++ )
     {
-        freq[weights[i] + 256]++;
+        unsigned weight = weights[i] + 256;
+        freq[weight]++;
+
+        uint64_t &mask = ctx->weights_used[weight / 64];
+        if (mask & (1ull << (weight % 64)) == 0)
+        {
+            ctx->distinct_weights++;
+            mask |= 1ull << (weight % 64);
+        }
+
         if ( weights[i] == 0 )
         {
             total_zeroes++;
@@ -817,8 +826,7 @@ palette_t *ml_encode_palette(mle_context_t *ctx, const int16_t *weights, int enc
         bool disable_zruns = (mlw_encode_flags & MLW_ENCODE_NO_ZERO_RUNS) != 0;
 
         assert( analyse_count >= encode_count && "Must analyse at least as much as is encoded");
-
-        update_palette(&ctx->palette, weights, analyse_count, partial_data, disable_lut, disable_zruns);
+        update_palette(ctx, &ctx->palette, weights, analyse_count, partial_data, disable_lut, disable_zruns);
         ctx->palette_valid = true;
         if ( !(mlw_encode_flags & MLW_ENCODE_DPIC_FORCE_PARAMS) )
         {
@@ -895,6 +903,13 @@ ML_ENCODER_DLL_EXPORT int mle_context_query_zeroes(mle_context_t *ctx)
 {
     assert( ctx );
     return ctx->zero_count;
+}
+
+ML_ENCODER_DLL_EXPORT int mle_context_query_weights_used(mle_context_t *ctx, uint64_t weights_used[512 / 64])
+{
+    assert( ctx );
+    std::copy(std::begin(ctx->weights_used), std::end(ctx->weights_used), weights_used);
+    return ctx->distinct_weights;
 }
 
 ML_ENCODER_DLL_EXPORT void mle_context_set_allocator(mle_context_t *ctx, void* (*realloc_func)(void*, size_t, int))
