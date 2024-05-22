@@ -88,7 +88,7 @@ int16_t DownScaleInt32ToInt16Multiplier(int32_t multiplier)
     }
     else
     {
-        mul16 = int16_t((multiplier + kRoundingOffset) >> 16);
+        mul16 = int16_t((multiplier + kRoundingOffset) / 65536);
     }
 
     return mul16;
