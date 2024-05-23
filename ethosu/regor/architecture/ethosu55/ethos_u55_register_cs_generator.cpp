@@ -28,7 +28,8 @@
 #include "ethos_u55.hpp"
 #include "ethos_u55_scaling.hpp"
 #define NPU_DISASSEMBLE
-#define NPU_NAMESPACE ethosu65
+#define NPU_NAMESPACE ethosu55
+// Note: Ethos-U55 and Ethos-U65 share interface definitions
 #include "architecture/ethosu65/ethos_u65_interface.hpp"
 
 #include <cstdint>
@@ -38,7 +39,7 @@
 
 namespace regor
 {
-using namespace ethosu65;
+using namespace ethosu55;
 
 void EthosU55Emitter::Emit(uint32_t instr)
 {
@@ -83,12 +84,12 @@ bool EthosU55Emitter::SetRegister(uint16_t reg, uint64_t value)
 
 bool EthosU55Emitter::IsCmd0(uint16_t key)
 {
-    return (key >> 14) == uint16_t(ethosu65::cmd_ctrl::CMD0_CTRL);
+    return (key >> 14) == uint16_t(cmd_ctrl::CMD0_CTRL);
 }
 
 bool EthosU55Emitter::IsCmd1(uint16_t key)
 {
-    return (key >> 14) == uint16_t(ethosu65::cmd_ctrl::CMD1_CTRL);
+    return (key >> 14) == uint16_t(cmd_ctrl::CMD1_CTRL);
 }
 
 bool EthosU55Emitter::IsOp(uint16_t key)

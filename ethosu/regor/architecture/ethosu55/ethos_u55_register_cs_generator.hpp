@@ -121,7 +121,7 @@ struct LutSlot
 };
 
 /// <summary>
-/// Generates register command streams for Ethos U55 and Ethos U65.
+/// Generates register command streams for Ethos-U55.
 /// </summary>
 class EthosU55RCSGenerator : public EthosURegisterCSGenerator<EthosU55RCSGenerator>
 {
