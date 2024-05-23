@@ -106,7 +106,8 @@ static void SetKernel(const std::shared_ptr<Operation> &operation, const Point2i
 const tflite::Model *TfLiteReader::LoadModel(const void *input, size_t size)
 {
     const uint8_t *buffer = static_cast<const uint8_t *>(input);
-    flatbuffers::Verifier verifier(buffer, size);
+    flatbuffers::Verifier::Options options;
+    flatbuffers::Verifier verifier(buffer, size, options);
 
     if ( !tflite::VerifyModelBuffer(verifier) )
     {
