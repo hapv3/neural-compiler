@@ -149,8 +149,7 @@ public:
 namespace
 {
 
-const std::array<BuiltinOperator, 3> convolutionOps = {
-    BuiltinOperator::CONV_2D, BuiltinOperator::DEPTHWISE_CONV_2D, BuiltinOperator::TRANSPOSE_CONV};
+const std::array<BuiltinOperator, 1> convolutionOps = {BuiltinOperator::CONV_2D};
 
 const std::array<BuiltinOperator, 2> poolingOps = {BuiltinOperator::AVERAGE_POOL_2D, BuiltinOperator::MAX_POOL_2D};
 
@@ -343,6 +342,27 @@ void ConstraintConvGroupsNumFilters(const Operator &op, const SubGraph &subgraph
     {
         std::string constraint = "Number of filter kernels must be equally divisible by the number of convolution groups";
         std::string extra = fmt::format("Conv Groups = {}, filter kernels = {}", numConvGroups, kernelOc);
+        throw InvalidTfLiteException(constraint, extra, op, subgraph, builtinOperator);
+    }
+}
+
+void ConstraintDepthwiseConvOfmDepth(const Operator &op, const SubGraph &subgraph, const BuiltinOperator &builtinOperator, BufferOffsetRef)
+{
+    auto ifm = TensorFromUsage(regor::TensorUsage::IFM, op, builtinOperator, *subgraph.tensors());
+    auto ofm = TensorFromUsage(regor::TensorUsage::OFM, op, builtinOperator, *subgraph.tensors());
+    auto ifmDepth = ShapeFromTens(ifm)[-1];
+    auto ofmDepth = ShapeFromTens(ofm)[-1];
+
+    int depth_multiplier = CheckedPtr(op.builtin_options_as_DepthwiseConv2DOptions())->depth_multiplier();
+
+    if ( ifmDepth < 0 || ofmDepth < 0 )
+    {
+        throw std::runtime_error("Error: Out of bounds\n");
+    }
+    if ( ifmDepth * depth_multiplier != ofmDepth )
+    {
+        std::string constraint = "OFM depth must be a equal to IFM depth times depth multiplier";
+        std::string extra = fmt::format("OFM depth = {}, IFM depth = {} and depth multiplier = {}", ofmDepth, ifmDepth, depth_multiplier);
         throw InvalidTfLiteException(constraint, extra, op, subgraph, builtinOperator);
     }
 }
@@ -915,6 +935,10 @@ regor::ordered_map<BuiltinOperator, OpCheckVec> GetSpecificConstraints()
         specificOpConstraints[opType].emplace_back(&ConstraintMatchingInOutQuant);
         specificOpConstraints[opType].emplace_back(&ConstraintMatchingInOutElements);
     }
+
+    // DepthwiseSpecificChecks
+    specificOpConstraints[BuiltinOperator::DEPTHWISE_CONV_2D].emplace_back(&ConstraintDepthwiseConvOfmDepth);
+
     // SoftmaxSpecificChecks
     specificOpConstraints[BuiltinOperator::SOFTMAX].emplace_back(&ConstraintMatchingShapes);
     specificOpConstraints[BuiltinOperator::SOFTMAX].emplace_back(&ConstraintSoftmaxInOutTypes);
