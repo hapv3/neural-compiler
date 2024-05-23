@@ -427,15 +427,7 @@ public:
     }
 
 public:
-    bool operator==(const BufferView &other) const
-    {
-        return std::tie(_elementBits, _baseOffset, _axisElements, _strideBytes, _buffer->Hash()) ==
-               std::tie(other._elementBits, other._baseOffset, other._axisElements, other._strideBytes, other._buffer->Hash());
-    }
-
     bool HasBuffer() const { return _buffer != nullptr; }
-    int ElementBits() const { return _elementBits; }
-    int FirstElement() const { return _baseOffset; }
     const Shape &ViewShape() const { return _axisElements; }
     const Shape &StrideBytes() const { return _strideBytes; }
 
@@ -471,18 +463,6 @@ public:
     int BufferSize() const { return _buffer->Size(); }
 
     const class Buffer *Buffer() const { return _buffer.get(); }
-};
-
-/// <summary>
-/// Hash function of a view of buffer memory
-/// </summary>
-struct BufferViewHash
-{
-    std::size_t operator()(const BufferView &key) const
-    {
-        return SimpleHash32(
-            key.ElementBits(), key.FirstElement(), key.ViewShape(), key.StrideBytes(), key.Buffer()->Hash().Hash32());
-    }
 };
 
 }  // namespace regor

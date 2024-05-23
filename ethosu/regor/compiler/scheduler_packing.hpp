@@ -47,7 +47,6 @@ protected:
     Architecture *_arch = nullptr;
     std::vector<std::unique_ptr<SchedulerOperation>> _schedList;
     std::unordered_map<Tensor *, std::shared_ptr<SchedulerTensor>> _tensorMap;
-    std::unordered_map<BufferView, UniqueId, BufferViewHash> _equivalenceIdMap;
 
 public:
     SchedulerPacking(Architecture *arch);

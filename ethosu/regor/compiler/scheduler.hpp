@@ -263,6 +263,7 @@ private:
     int _minMemoryRequired = 0;
     bool _spilling = false;
     std::unordered_map<TensorCacheKey, WeightScaleTensors, TensorCacheHash> _tensorCache;
+    std::unordered_map<Hash128, UniqueId> _equivalenceIdMap;
 
 public:
     Scheduler(Architecture *arch, const SchedulerOptions &options, const std::string &name,

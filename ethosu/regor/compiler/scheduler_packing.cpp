@@ -390,17 +390,6 @@ void SchedulerPacking::InitSchedulerTensor(SchedulerTensor *schedTensor, Tensor 
     schedTensor->isGraphInput = graph->IsInput(tensor);
     schedTensor->isGraphOutput = graph->IsOutput(tensor);
     schedTensor->uid = tensor->Uid();
-
-    if ( schedTensor->IsConstant() )
-    {
-        // Insert BufferView hash and equivalenceId into map
-        auto entry = _equivalenceIdMap.emplace(schedTensor->bufferView, schedTensor->equivalenceId);
-        if ( !entry.second )
-        {
-            // BufferView hash was already in the map, reuse stored equivalenceId
-            schedTensor->equivalenceId = entry.first->second;
-        }
-    }
 }
 
 std::unique_ptr<SchedulerOperation> SchedulerPacking::MakeSchedulerOperation(Operation *op, const Graph *graph)

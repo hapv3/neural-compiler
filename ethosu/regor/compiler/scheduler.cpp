@@ -1700,6 +1700,14 @@ WeightScaleTensors Scheduler::TryEncodeWeightAndScaleTensor(IWeightEncodingConfi
     npuTensor->storageShape = encodedTensor->StorageShape();
     npuTensor->allocatedSize = encodedTensor->View().BufferSize();
 
+    // Insert encoded weights hash and equivalenceId into map
+    auto entry = _equivalenceIdMap.emplace(buf->Hash(), npuTensor->equivalenceId);
+    if ( !entry.second )
+    {
+        // Encoded weights hash was already in the map, reuse stored equivalenceId
+        npuTensor->equivalenceId = entry.first->second;
+    }
+
     WeightScaleTensors result;
     result.scaleHash = HashVector32(ofmQuantization.scales);
 
