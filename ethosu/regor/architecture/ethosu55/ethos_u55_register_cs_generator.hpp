@@ -35,10 +35,10 @@
 
 namespace regor
 {
-class Emitter
+class EthosU55Emitter
 {
 public:
-    Emitter() = default;
+    EthosU55Emitter() = default;
     void Emit(uint32_t instr);
     void Emit(uint64_t instr);
     void Clear();
@@ -263,7 +263,7 @@ private:
     ArchEthosU55 *_arch;
     // For stripes that use LUT: the LUT slot to be used
     std::unordered_map<const HLCStripe *, int> _stripeToLutSlot;
-    Emitter _emit;
+    EthosU55Emitter _emit;
 };
 
 }  // namespace regor

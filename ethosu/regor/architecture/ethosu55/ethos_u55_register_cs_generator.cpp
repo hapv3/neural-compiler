@@ -40,7 +40,7 @@ namespace regor
 {
 using namespace ethosu65;
 
-void Emitter::Emit(uint32_t instr)
+void EthosU55Emitter::Emit(uint32_t instr)
 {
     uint16_t cmd = instr & 0xFFFF;
     assert(IsCmd0(cmd));
@@ -51,7 +51,7 @@ void Emitter::Emit(uint32_t instr)
     }
 }
 
-void Emitter::Emit(uint64_t instr)
+void EthosU55Emitter::Emit(uint64_t instr)
 {
     uint16_t cmd = instr & 0xFFFF;
     assert(IsCmd1(cmd));
@@ -63,14 +63,14 @@ void Emitter::Emit(uint64_t instr)
     }
 }
 
-void Emitter::Clear()
+void EthosU55Emitter::Clear()
 {
     _stream.clear();
     _registers.clear();
 }
 
 
-bool Emitter::SetRegister(uint16_t reg, uint64_t value)
+bool EthosU55Emitter::SetRegister(uint16_t reg, uint64_t value)
 {
     auto item = _registers.find(reg);
     bool isChanged = item == _registers.end() || item->second != value;
@@ -81,17 +81,17 @@ bool Emitter::SetRegister(uint16_t reg, uint64_t value)
     return isChanged;
 }
 
-bool Emitter::IsCmd0(uint16_t key)
+bool EthosU55Emitter::IsCmd0(uint16_t key)
 {
     return (key >> 14) == uint16_t(ethosu65::cmd_ctrl::CMD0_CTRL);
 }
 
-bool Emitter::IsCmd1(uint16_t key)
+bool EthosU55Emitter::IsCmd1(uint16_t key)
 {
     return (key >> 14) == uint16_t(ethosu65::cmd_ctrl::CMD1_CTRL);
 }
 
-bool Emitter::IsOp(uint16_t key)
+bool EthosU55Emitter::IsOp(uint16_t key)
 {
     return IsCmd0(key) ? (key & (1 << 8)) == 0 : (key & (1 << 8)) != 0;
 }
