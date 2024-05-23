@@ -148,6 +148,19 @@ constexpr std::string_view PlatformTypeName()
 #error No type hash for this target
 #endif
 
+static constexpr uint32_t REGOR_FNV_SEED = 0x811c9dc5;
+static constexpr uint32_t REGOR_FNV_PRIME = 0x01000193;
+
+constexpr inline uint32_t FNVHashBytes(const char *p, int length, uint32_t hash = REGOR_FNV_SEED)
+{
+    while ( length-- )
+    {
+        hash ^= uint8_t(*p++);
+        hash *= REGOR_FNV_PRIME;
+    }
+    return hash;
+}
+
 template<typename TYPE, bool NO_NAMESPACE>
 static constexpr uint32_t PlatformTypeHash()
 {
@@ -161,12 +174,7 @@ static constexpr uint32_t PlatformTypeHash()
         while ( *p == ':' )
             p++;
     }
-    uint32_t hash = 0x811c9dc5;  // FNV-1a SEED
-    while ( p < e )
-    {
-        hash = (hash ^ uint8_t(*p++)) * 0x01000193;  // FNV-1a PRIME
-    }
-    return hash;
+    return FNVHashBytes(p, int(e - p));
 }
 
 }  // namespace regor

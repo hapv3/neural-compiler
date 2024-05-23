@@ -280,54 +280,6 @@ inline int NeededTotalPadding(int inputSize, int stride, int filterSize)
     return NeededTotalPadding(inputSize, inputSize, stride, filterSize);
 }
 
-template<typename VALUE>
-uint32_t SimpleHash32(const VALUE &value)
-{
-    return uint32_t(value);
-}
-
-template<typename VALUE, typename... REST>
-uint32_t SimpleHash32(const VALUE &value, REST &&...rest)
-{
-    return SimpleHash32(std::forward<REST>(rest)...) * 31 + uint32_t(value);
-}
-
-template<typename VALUE>
-uint64_t SimpleHash64(const VALUE &value)
-{
-    return uint64_t(value);
-}
-
-template<typename VALUE, typename... REST>
-uint64_t SimpleHash64(const VALUE &value, REST &&...rest)
-{
-    return SimpleHash64(std::forward<REST>(rest)...) * 31 + uint64_t(value);
-}
-
-static constexpr uint32_t REGOR_FNV_SEED = 0x811c9dc5;
-static constexpr uint32_t REGOR_FNV_PRIME = 0x01000193;
-
-inline uint32_t FNVHashBytes(uint32_t hash, const uint8_t *p, int length)
-{
-    while ( length-- )
-    {
-        hash ^= *p++;
-        hash *= REGOR_FNV_PRIME;
-    }
-    return hash;
-}
-
-template<typename TYPE>
-uint32_t HashVector32(const std::vector<TYPE> &values)
-{
-    uint32_t hash = REGOR_FNV_SEED;
-    for ( auto const x : values )
-    {
-        hash = FNVHashBytes(hash, reinterpret_cast<const uint8_t *>(&x), sizeof(x));
-    }
-    return hash;
-}
-
 template<typename TYPE>
 std::make_unsigned_t<TYPE> ToUnsigned(TYPE x)
 {

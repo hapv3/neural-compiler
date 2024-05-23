@@ -18,9 +18,12 @@
 
 #pragma once
 
+#include "common.hpp"
+
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
+#include <cstring>
 
 namespace regor
 {
@@ -91,6 +94,41 @@ struct HashT
         return hash;
     }
 };
+
+template<typename VALUE>
+uint32_t SimpleHash32(const VALUE &value)
+{
+    return uint32_t(value);
+}
+
+template<typename VALUE, typename... REST>
+uint32_t SimpleHash32(const VALUE &value, REST &&...rest)
+{
+    return SimpleHash32(std::forward<REST>(rest)...) * 31 + uint32_t(value);
+}
+
+template<typename VALUE>
+uint64_t SimpleHash64(const VALUE &value)
+{
+    return uint64_t(value);
+}
+
+template<typename VALUE, typename... REST>
+uint64_t SimpleHash64(const VALUE &value, REST &&...rest)
+{
+    return SimpleHash64(std::forward<REST>(rest)...) * 31 + uint64_t(value);
+}
+
+template<typename TYPE>
+uint32_t HashVector32(const std::vector<TYPE> &values)
+{
+    uint32_t hash = REGOR_FNV_SEED;
+    for ( auto const x : values )
+    {
+        hash = FNVHashBytes(reinterpret_cast<const char *>(&x), sizeof(x), hash);
+    }
+    return hash;
+}
 
 using Hash128 = HashT<128>;
 
