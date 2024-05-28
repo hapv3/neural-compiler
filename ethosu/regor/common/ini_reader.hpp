@@ -249,7 +249,7 @@ public:
         return true;
     }
 
-    template<typename TYPE>
+    template<typename TYPE, std::enable_if_t<std::is_arithmetic<TYPE>::value, bool> = true>
     bool Read(std::vector<TYPE> &out)
     {
         assert(_parseState == ParseState::Value);
