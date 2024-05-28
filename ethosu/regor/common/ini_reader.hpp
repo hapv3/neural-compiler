@@ -150,7 +150,7 @@ public:
 
     bool Read(bool &value)
     {
-        if ( !SkipWhite() )
+        if ( !SkipSpace() )
         {
             return false;
         }
@@ -165,6 +165,8 @@ public:
         else if ( Expect("0") ) value = false;
         else return false;
 
+        // Allow comma-separated value reads
+        if ( SkipSpace() ) Expect(',');
         return true;
     }
 

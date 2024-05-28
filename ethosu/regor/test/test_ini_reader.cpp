@@ -40,7 +40,8 @@ quoted_string="value"
 quoted_empty_string=""
 quoted_escaped_string="\"escaped\" value"
 optionally_quoted=value1"value2
-array=1 ,3, 4,5,6
+intarray=1 ,3, 4,5,6
+boolarray=true ,false, true,false,true
 half=0.5
 negativehalf=-0.5
 scientific=1e9
@@ -150,10 +151,24 @@ TEST_CASE("ini_reader")
     REQUIRE(value == "value1\"value2");
     reader.End();
     REQUIRE(reader.Begin(key));
-    REQUIRE(key == "array");
-    auto arr = reader.Get<std::vector<int>>();
-    REQUIRE(arr.size() == 5);
-    REQUIRE(arr[2] == 4);
+    REQUIRE(key == "intarray");
+    auto intarr = reader.Get<std::vector<int>>();
+    REQUIRE(intarr.size() == 5);
+    REQUIRE(intarr[0] == 1);
+    REQUIRE(intarr[1] == 3);
+    REQUIRE(intarr[2] == 4);
+    REQUIRE(intarr[3] == 5);
+    REQUIRE(intarr[4] == 6);
+    reader.End();
+    REQUIRE(reader.Begin(key));
+    REQUIRE(key == "boolarray");
+    auto boolarr = reader.Get<std::vector<bool>>();
+    REQUIRE(boolarr.size() == 5);
+    REQUIRE(boolarr[0] == true);
+    REQUIRE(boolarr[1] == false);
+    REQUIRE(boolarr[2] == true);
+    REQUIRE(boolarr[3] == false);
+    REQUIRE(boolarr[4] == true);
     reader.End();
     float floatVal;
     REQUIRE(reader.Begin(key));
