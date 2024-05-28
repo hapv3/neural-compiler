@@ -101,7 +101,7 @@ public:
                 _parseState = ParseState::None;
                 return false;
             }
-            while ( Expect('.') )
+            while ( !EOS() && Expect('.') )
             {
                 key += ".";
                 std::string tmp;
@@ -185,8 +185,7 @@ public:
         _pos = ptr;
 
         // Allow comma-separated value reads
-        SkipSpace();
-        Expect(',');
+        if ( SkipSpace() ) Expect(',');
         return true;
     }
 
@@ -207,8 +206,7 @@ public:
         _pos = ptr;
 
         // Allow comma-separated value reads
-        SkipSpace();
-        Expect(',');
+        if ( SkipSpace() ) Expect(',');
         return true;
     }
 
@@ -230,8 +228,7 @@ public:
         _pos = end;
 
         // Allow comma-separated value reads
-        SkipSpace();
-        Expect(',');
+        if ( SkipSpace() ) Expect(',');
         return true;
     }
 
@@ -277,6 +274,8 @@ public:
     ssize_t Position() const { return _pos - _source; }
 
 private:
+    bool EOS() const { return _pos >= _end; }
+
     bool SkipCommentSpace()
     {
         // Skip whitespace and comments
@@ -295,6 +294,6 @@ private:
                 return false;
             }
         }
-        return true;
+        return !EOS();
     }
 };

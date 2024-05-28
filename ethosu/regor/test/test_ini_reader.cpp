@@ -39,6 +39,7 @@ but_keys[must]=not
 quoted_string="value"
 quoted_empty_string=""
 quoted_escaped_string="\"escaped\" value"
+optionally_quoted=value1"value2
 array=1 ,3, 4,5,6
 half=0.5
 
@@ -142,6 +143,12 @@ TEST_CASE("ini_reader")
     REQUIRE(value == "\"escaped\" value");
     reader.End();
     REQUIRE(reader.Begin(key));
+    REQUIRE(key == "optionally_quoted");
+    REQUIRE(reader.Read(value));
+    REQUIRE(value == "value1\"value2");
+    reader.End();
+    REQUIRE(reader.Begin(key));
+    REQUIRE(key == "array");
     auto arr = reader.Get<std::vector<int>>();
     REQUIRE(arr.size() == 5);
     REQUIRE(arr[2] == 4);

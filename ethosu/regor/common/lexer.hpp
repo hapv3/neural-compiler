@@ -67,7 +67,7 @@ public:
         {
             p++;
         }
-        if ( consume && (*p == term) )
+        if ( consume && (p < _end) && (*p == term) )
         {
             p++;
         }
@@ -113,7 +113,7 @@ public:
         }
 
         const char *p = _pos;
-        if ( *p != '_' && !std::isalpha(*p) )
+        if ( p < _end && *p != '_' && !std::isalpha(*p) )
         {
             return false;
         }
@@ -131,6 +131,8 @@ public:
 
     bool GetString(std::string &text, char quote, char escape, char term)
     {
+        if ( _pos >= _end ) return false;
+
         text.reserve(16);
         text.clear();
 
@@ -139,11 +141,11 @@ public:
         const char *p = _pos;
         while ( (p < _end) && (*p != term) )
         {
-            // Handle escaping first to allow quotes and terminator
-            // in string.
+            // Handle escaping first to allow quotes and terminator in string.
             if ( (*p == escape) && (p < _end) )
             {
                 p++;
+                if ( p == _end ) break;
             }
             else if ( quoted )
             {
