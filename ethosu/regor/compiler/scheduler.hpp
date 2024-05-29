@@ -291,7 +291,7 @@ private:
 
     void MoveConstantData(Schedule *refSchedule);
 
-    void AllocateAddresses(Schedule *schedule);
+    bool AllocateAddresses(Schedule *schedule);
 
     void UpdateOpMemorySnapshot(Schedule *schedule);
 

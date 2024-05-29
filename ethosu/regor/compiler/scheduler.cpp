@@ -123,7 +123,10 @@ std::shared_ptr<Schedule> Scheduler::Process()
         PrintSchedule(chosenSchedule.get());
     }
 
-    AllocateAddresses(chosenSchedule.get());
+    if ( !AllocateAddresses(chosenSchedule.get()) )
+    {
+        throw std::runtime_error("Failed to allocate tensors\n");
+    }
 
     return chosenSchedule;
 }
@@ -597,7 +600,7 @@ void Scheduler::MoveConstantData(Schedule *refSchedule)
 }
 
 
-void Scheduler::AllocateAddresses(Schedule *schedule)
+bool Scheduler::AllocateAddresses(Schedule *schedule)
 {
     const auto verbose = _options.verboseAllocation;
     AllocateTensors(_ops, schedule, _arch->FeatureMapMemory(), TensorAllocator::HillClimb, AlignmentQuantum, verbose);
@@ -605,7 +608,10 @@ void Scheduler::AllocateAddresses(Schedule *schedule)
     {
         const auto limit = _options.optimizationStagingLimit;
         AllocateTensors(_ops, schedule, _arch->StagingMemory(), TensorAllocator::HillClimb, AlignmentQuantum, verbose, limit);
+
+        return schedule->memoryUsage[_arch->StagingMemory()] < limit;
     }
+    return true;
 }
 
 

@@ -376,7 +376,16 @@ std::unique_ptr<Graph> Compiler::CompileGraph(std::unique_ptr<Graph> &graph,
 
     // Schedule the linearised operation sequence
     Scheduler scheduler(_architecture.get(), _schedulerOptions, "graph", scheduleOps);
-    auto schedule = scheduler.Process();
+    std::shared_ptr<Schedule> schedule;
+    try
+    {
+        schedule = scheduler.Process();
+    }
+    catch ( const std::runtime_error &e )
+    {
+        SetLastError(e.what());
+        return nullptr;
+    }
 
     scheduler.AllocateReadOnlyAddresses(schedule.get(), readOnlyAllocator);
 
