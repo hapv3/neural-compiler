@@ -435,14 +435,25 @@ Quantization EthosU55WeightEncoder::MakeExplicit(const Quantization &ifmQ, const
 }
 
 
-WeightsInfo EthosU55WeightEncoder::EncodeWeights(
-    IWeightEncodingConfig *config, IWeightSource *source, std::vector<uint8_t> &result, bool measureOnly)
+WeightsInfo EthosU55WeightEncoder::EncodeWeights(IWeightEncodingConfig *config, IWeightSource *source, std::vector<uint8_t> &result)
 {
     [[maybe_unused]] EthosUEncodingConfig *cfg = static_cast<EthosUEncodingConfig *>(config);
     assert(cfg->Format() == WeightFormat::Default);
-    unsigned flags = measureOnly ? MLW_ENCODE_NO_BITSTREAM : MLW_ENCODE_FLAG_NONE;
+    unsigned flags = MLW_ENCODE_FLAG_NONE;
     auto res = mle_encode_proxy(source, 128 * 1024, result, flags);
-    return {res.elements_read, res.bytes_written, res.zero_count};
+    WeightsInfo weightsInfo;
+    weightsInfo.sourceSize = res.elements_read;
+    weightsInfo.encodedSize = res.bytes_written;
+    weightsInfo.zeroCount = res.zero_count;
+    if ( res.distinct_values > 0 )
+    {
+        weightsInfo.distinctValues = res.distinct_values;
+        for ( int i = 0; i < 8; i++ )
+        {
+            weightsInfo.weightsUsed[i] = res.distinct_weights[i];
+        }
+    }
+    return weightsInfo;
 }
 
 

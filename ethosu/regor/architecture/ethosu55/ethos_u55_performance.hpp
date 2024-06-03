@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -47,9 +47,12 @@ public:
 
 public:
     CycleCost MeasureCycleCost(const PerformanceQuery &query, const std::vector<FusionQuery> &fused) override;
+    CycleCost MeasureCycleCostForSparsity(const PerformanceQuery &query, const std::vector<FusionQuery> &fused) override;
     int64_t MemToMemCycles(const ArchitectureMemory *dest, const ArchitectureMemory *source, int sizeBytes) override;
     ElementAccess MeasureElementAccess(const PerformanceQuery &query) override;
     ElementAccess ElementTransferToBytes(const PerformanceQuery &query, const ElementAccess &access) override;
+    int64_t WeightDecodeCycles(const PerformanceQuery &query, const WeightStats &weights, Flags<WeightFormat> format,
+        ArchitectureMemory *weightsMemory) override;
 
 private:
     int64_t EstimateConvCycles(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);

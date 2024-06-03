@@ -47,9 +47,9 @@ MlwEncodeResult mle_encode_proxy(IWeightSource *source, int chunkSize, std::vect
 {
     assert(sResult == nullptr);
     sResult = &output;
+    MlwEncodeResult encodeResult;
     auto output_size = output.size();
     ml_encode_result_t res;
-    int zeroCount = 0;
     ml_ethosu_encode_params_t params;
     params.encoder_flags = encodeFlags;
     params.source_buffering_hint = chunkSize;
@@ -70,7 +70,8 @@ MlwEncodeResult mle_encode_proxy(IWeightSource *source, int chunkSize, std::vect
         mle_context_t *ctx = nullptr;
         auto ret = ml_encode_ethosu_stream(&res, &params, weight_func, source, &ctx);
         if ( ret < 0 ) throw std::runtime_error("mlw encode failed");
-        zeroCount = mle_context_query_zeroes(ctx);
+        encodeResult.zero_count = mle_context_query_zeroes(ctx);
+        encodeResult.distinct_values = mle_context_query_weights_used(ctx, encodeResult.distinct_weights);
         mle_destroy_context(ctx);
     }
     catch ( const std::runtime_error & )
@@ -82,17 +83,20 @@ MlwEncodeResult mle_encode_proxy(IWeightSource *source, int chunkSize, std::vect
     res.encoded_data = nullptr;  // Data owned by output
     mle_free(&res);
     output.resize(output_size + res.encoded_length);
-    return {res.source_length, res.encoded_length, zeroCount};
+    encodeResult.bytes_written = res.encoded_length;
+    encodeResult.elements_read = res.source_length;
+    return encodeResult;
 }
 
 MlwEncodeResult mle_encode_fwd_proxy(IWeightSource *source, int chunkSize, std::vector<uint8_t> &output, unsigned encodeFlags)
 {
     assert(sResult == nullptr);
     sResult = &output;
+    MlwEncodeResult encodeResult;
     auto output_size = output.size();
     int count = 0;
     int totalCount = 0;
-    int zeroCount = 0;
+
     std::vector<int16_t> weights;
 
     try
@@ -112,14 +116,19 @@ MlwEncodeResult mle_encode_fwd_proxy(IWeightSource *source, int chunkSize, std::
     }
 
     ml_encode_result_t res;
+    res.encoded_length = 0;
+    res.source_length = 0;
     mle_context_t *ctx = mle_create_context(MLW_ENCODE_SYNTAX_ETHOSU_FWD);
     mle_context_set_allocator(ctx, reallocFunc);
     mle_encode(ctx, &res, weights.data(), totalCount, encodeFlags);
-    zeroCount = mle_context_query_zeroes(ctx);
+    encodeResult.zero_count = mle_context_query_zeroes(ctx);
+    encodeResult.distinct_values = mle_context_query_weights_used(ctx, encodeResult.distinct_weights);
     res.encoded_data = nullptr;  // Data owned by output
     mle_destroy_context(ctx);
     mle_free(&res);
     output.resize(output_size + res.encoded_length);
     sResult = nullptr;
-    return {totalCount, res.encoded_length, zeroCount};
+    encodeResult.bytes_written = res.encoded_length;
+    encodeResult.elements_read = res.source_length;
+    return encodeResult;
 }

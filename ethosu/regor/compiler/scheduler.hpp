@@ -56,6 +56,12 @@ struct SchedulerOptions
     bool verboseAllocation = false;
 };
 
+struct WeightScaleEncoding
+{
+    std::unique_ptr<ArchitectureOpConfig> blockConfig;
+    WeightScaleTensors weightScales;
+};
+
 /// <summary>
 /// Metadata for each scheduled operation (unique per schedule)
 /// </summary>
@@ -320,6 +326,8 @@ private:
 
     CycleCost EstimateOpPerformance(SchedulerOperation *op, ArchitectureOpConfig *config, int ofm_depth);
 
+    CycleCost EstimateOpPerformanceForSparsity(SchedulerOperation *op, ArchitectureOpConfig *config, int ofm_depth);
+
     ElementAccess EstimateOpElementAccess(SchedulerOperation *op, ArchitectureOpConfig *config, int ofm_depth);
 
     void PrintSchedule(Schedule *schedule);
@@ -333,10 +341,8 @@ private:
         const SchedulerTensor *weightTens, const SchedulerTensor *scaleTens, const Quantization &weightQuantization,
         const Quantization &ofmQuantization, bool doWeights, bool doScales);
 
-    WeightsInfo AnalyzeWeights(IWeightEncodingConfig *encodingParams, const SchedulerTensor *weightTens, const Quantization &weightQuantization);
-
-    Flags<WeightFormat> BestWeightFormat(
-        SchedulerOperation *op, Shape &ifmShape, Shape &ifm2Shape, Shape &ofmShape, Flags<WeightFormat> weightFormat);
+    WeightScaleEncoding EncodeBestWeightFormat(SchedulerOperation *op, Shape &ifmShape, Shape &ifm2Shape,
+        Shape &ofmShape, Flags<WeightFormat> supportedFormats);
 };
 
 void ParseSchedulerOptions(SchedulerOptions &opt, IniReader &reader);

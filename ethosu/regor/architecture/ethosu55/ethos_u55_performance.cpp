@@ -46,6 +46,11 @@ EthosU55Performance::EthosU55Performance(ArchEthosU55 *arch, const EthosU55PerfI
     _perfInfo = perfInfo;
 }
 
+CycleCost EthosU55Performance::MeasureCycleCostForSparsity(const PerformanceQuery &query, const std::vector<FusionQuery> &fused)
+{
+    return MeasureCycleCost(query, fused);
+}
+
 CycleCost EthosU55Performance::MeasureCycleCost(const PerformanceQuery &query, const std::vector<FusionQuery> &fused)
 {
     CycleCost cycles;
@@ -527,5 +532,11 @@ ElementAccess EthosU55Performance::ElementTransferToBytes(const PerformanceQuery
     return result;
 }
 
-
+int64_t EthosU55Performance::WeightDecodeCycles(
+    const PerformanceQuery &, const WeightStats &weights, Flags<WeightFormat>, ArchitectureMemory *weightsMemory)
+{
+    int64_t dmaCycles = int64_t(float(weights.encodedSize) / weightsMemory->Bandwidth());
+    dmaCycles += weightsMemory->ReadLatency();
+    return dmaCycles;
+}
 }  // namespace regor

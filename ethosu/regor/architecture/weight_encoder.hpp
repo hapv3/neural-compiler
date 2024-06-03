@@ -22,8 +22,10 @@
 #include "compiler/scheduler_operation.hpp"
 #include "mlw_encode.hpp"
 
+#include <bitset>
 #include <cstdint>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace regor
@@ -97,8 +99,11 @@ public:
     int maxRangeBytes = 0;
     int doubleBufferSize = 0;
     int doubleBufferOffset = 0;
+    int totalSourceBytes = 0;
     int totalWeightBytes = 0;
     int subStreams = 0;
+    int distinctWeights = 0;
+    int zeroCount;
     std::unordered_map<int, WeightRange> encodedRanges;
     std::unique_ptr<IWeightEncodingConfig> config;
 };
@@ -127,7 +132,9 @@ struct WeightsInfo
     int sourceSize = 0;
     int encodedSize = 0;
     int zeroCount = 0;
+    int distinctValues = 0;
     int streams = 0;
+    std::bitset<64> weightsUsed[8];
 };
 
 /// <summary>
@@ -152,8 +159,7 @@ public:
     virtual Quantization MakeExplicit(const Quantization &ifmQ, const Quantization &weightQ, const Quantization &ofmQ,
         DataType scaleType, DataType ifmType) = 0;
 
-    virtual WeightsInfo EncodeWeights(
-        IWeightEncodingConfig *config, IWeightSource *source, std::vector<uint8_t> &result, bool measureOnly) = 0;
+    virtual WeightsInfo EncodeWeights(IWeightEncodingConfig *config, IWeightSource *source, std::vector<uint8_t> &result) = 0;
     virtual int EncodeScales(IWeightEncodingConfig *config, IScaleSource *source, std::vector<uint8_t> &result, bool measureOnly) = 0;
 };
 

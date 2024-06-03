@@ -230,6 +230,14 @@ struct PerformanceQuery
     ArchitectureMemory *constMemory;
 };
 
+struct WeightStats
+{
+    size_t size;
+    size_t encodedSize;
+    size_t zeroCount;
+    int distinctWeights;
+};
+
 /// <summary>
 /// Information for querying performance for HW fused operations
 /// </summary>
@@ -271,9 +279,12 @@ class ArchitecturePerformance
 public:
     virtual ~ArchitecturePerformance() = default;
     virtual CycleCost MeasureCycleCost(const PerformanceQuery &query, const std::vector<FusionQuery> &fused) = 0;
+    virtual CycleCost MeasureCycleCostForSparsity(const PerformanceQuery &query, const std::vector<FusionQuery> &fused) = 0;
     virtual int64_t MemToMemCycles(const ArchitectureMemory *dest, const ArchitectureMemory *source, int sizeBytes) = 0;
     virtual ElementAccess MeasureElementAccess(const PerformanceQuery &query) = 0;
     virtual ElementAccess ElementTransferToBytes(const PerformanceQuery &query, const ElementAccess &access) = 0;
+    virtual int64_t WeightDecodeCycles(const PerformanceQuery &query, const WeightStats &weights,
+        Flags<WeightFormat> format, ArchitectureMemory *weightsMemory) = 0;
 };
 
 enum class IniParseResult

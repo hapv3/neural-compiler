@@ -80,7 +80,7 @@ public:
     Quantization MakeExplicit(const Quantization &ifmQ, const Quantization &weightQ, const Quantization &ofmQ,
         DataType scaleType, DataType ifmType);
 
-    WeightsInfo EncodeWeights(IWeightEncodingConfig *config, IWeightSource *source, std::vector<uint8_t> &result, bool measureOnly);
+    WeightsInfo EncodeWeights(IWeightEncodingConfig *config, IWeightSource *source, std::vector<uint8_t> &result);
 
     int EncodeScales(IWeightEncodingConfig *config, IScaleSource *source, std::vector<uint8_t> &result, bool measureOnly);
 

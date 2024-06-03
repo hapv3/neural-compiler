@@ -23,9 +23,9 @@
 
 enum class WeightFormat : uint16_t
 {
-    Default = 0,
-    Fast = 1,
-    Sparse2_4 = 2
+    Default = 1 << 0,
+    Fast = 1 << 1,
+    Sparse2_4 = 1 << 2
 };
 
 inline constexpr bool operator&(WeightFormat type, WeightFormat mask)
@@ -35,9 +35,11 @@ inline constexpr bool operator&(WeightFormat type, WeightFormat mask)
 
 struct MlwEncodeResult
 {
-    int elements_read;
-    int bytes_written;
-    int zero_count;
+    int elements_read = 0;
+    int bytes_written = 0;
+    int zero_count = 0;
+    int distinct_values = 0;
+    uint64_t distinct_weights[512 / 64]{0};
 };
 
 class IWeightSource;

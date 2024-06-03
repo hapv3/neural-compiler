@@ -48,6 +48,15 @@ EthosU85Performance::EthosU85Performance(ArchEthosU85 *arch, const EthosU85PerfI
     _perfInfo = perfInfo;
 }
 
+CycleCost EthosU85Performance::MeasureCycleCostForSparsity(const PerformanceQuery &query, const std::vector<FusionQuery> &)
+{
+    // Temporary until we have a better performance estimate for U85
+    CycleCost cycles;
+    EthosU85OpConfig *opConfig = static_cast<EthosU85OpConfig *>(query.config);
+    cycles.opCycles = opConfig->OptimalDepthGranule();  // Maybe can find a better metric? MLBEDSW-9227
+    return cycles;
+}
+
 CycleCost EthosU85Performance::MeasureCycleCost(const PerformanceQuery &query, const std::vector<FusionQuery> &fused)
 {
     CycleCost cycles;
@@ -514,6 +523,28 @@ ElementAccess EthosU85Performance::ElementTransferToBytes(const PerformanceQuery
     result.constRead[1] = 0;
 
     return result;
+}
+
+int64_t EthosU85Performance::WeightDecodeCycles(
+    const PerformanceQuery &, const WeightStats &weights, Flags<WeightFormat> format, ArchitectureMemory *weightsMemory)
+{
+    using WF = Flags<WeightFormat>;
+    int weightsPerCycle;
+    if ( format & WF(WeightFormat::Fast) )
+    {
+        weightsPerCycle = (weights.distinctWeights < 16) ? 64 : 32;
+    }
+    else
+    {
+        float zeroRate = std::min(float(weights.zeroCount) / weights.size, 0.9f);
+        zeroRate = std::max(zeroRate, 0.5f);
+        int weightsPerCore = 8 + (zeroRate - 0.5) * (32 - 8) / 0.4;
+        weightsPerCycle = weightsPerCore * _arch->_cores;
+    }
+    int64_t decodeCycles = weights.size / weightsPerCycle;
+    int64_t dmaCycles = int64_t(float(weights.encodedSize) / weightsMemory->Bandwidth());
+    dmaCycles += weightsMemory->ReadLatency();
+    return std::max(decodeCycles, dmaCycles);
 }
 
 }  // namespace regor

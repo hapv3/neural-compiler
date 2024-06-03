@@ -31,6 +31,7 @@
 
 #include <cassert>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace regor
@@ -343,103 +344,171 @@ std::unique_ptr<ArchitectureOpConfig> GetOpConfig(Architecture *arch, SchedulerO
     return arch->GetOpConfig(op->Type(), query);
 }
 
-struct EncodingResult
+Shape GetOhwiShape(const SchedulerTensor *weightTens)
 {
-    Flags<WeightFormat> format;
-    int size = std::numeric_limits<int>::max();
-    int optimalDepth = 0;
-};
-
-Flags<WeightFormat> ChooseBestWeightFormat(Architecture *arch, SchedulerOperation *, OptimizationStrategy strategy,
-    int maxStreams, std::vector<EncodingResult> &encodingResults)
-{
-    EncodingResult *bestResult = nullptr;
-    // Prefer fast decoder if weights are in fast memory.
-    bool preferFast = (arch->ReadonlyMemory().memory->Bandwidth() == arch->StagingMemory().memory->Bandwidth()) && (strategy != OptimizationStrategy::Size);
-    // Standard decoder is faster if we have 4 instances
-    bool avoidFast = maxStreams > 2;
-    // If buffering is improved, we may want to allow larger diff here
-    constexpr float maxFastSizeRatio{1.01f};
-    constexpr float maxSparseSizeRatio{1.01f};
-    for ( auto &encodingResult : encodingResults )
+    const auto &weightView = weightTens->bufferView;
+    Shape ohwiShape = weightView.ViewShape();
+    if ( weightTens->srcTensor->AxisOrder() == AxisOrder::IHWO )
     {
-        bool isFast = (encodingResult.format & WeightFormat::Fast);
-        if ( !bestResult )
+        ohwiShape = ohwiShape.Extract(3, 1, 2, 0);
+    }
+    return ohwiShape;
+}
+
+Shape GetOhwiStrides(const SchedulerTensor *weightTens)
+{
+    const auto &weightView = weightTens->bufferView;
+    Shape ohwiStrides = weightView.StrideBytes() * 8 / DataTypeSizeBits(weightTens->dataType);
+    if ( weightTens->srcTensor->AxisOrder() == AxisOrder::IHWO )
+    {
+        ohwiStrides = ohwiStrides.Extract(3, 1, 2, 0);
+    }
+    return ohwiStrides;
+}
+
+WeightScaleEncoding ChooseBestWeightFormat(Architecture *arch, SchedulerOperation *op,
+    OptimizationStrategy optimizationStrategy, std::vector<WeightScaleEncoding> &encodingResults)
+{
+    WeightScaleEncoding *bestResult = nullptr;
+
+    if ( optimizationStrategy == OptimizationStrategy::Size )
+    {
+        auto compare = [](const WeightScaleEncoding &a, const WeightScaleEncoding &b) {
+            return a.weightScales.npuWeightsTensor->totalWeightBytes < b.weightScales.npuWeightsTensor->totalWeightBytes;
+        };
+        bestResult = &*std::min_element(encodingResults.begin(), encodingResults.end(), compare);
+    }
+    else
+    {
+        auto minCycles = std::numeric_limits<int64_t>::max();
+        for ( auto &encodingResult : encodingResults )
         {
-            bestResult = &encodingResult;
-            continue;
-        }
-        if ( (bestResult->format & WeightFormat::Fast) != isFast )
-        {
-            if ( isFast && !avoidFast && (preferFast || encodingResult.size <= bestResult->size * maxFastSizeRatio) )
+            WeightStats weightStats;
+            auto weightTensor = encodingResult.weightScales.npuWeightsTensor;
+            weightStats.size = weightTensor->totalSourceBytes;
+            weightStats.encodedSize = weightTensor->totalWeightBytes;
+            weightStats.zeroCount = weightTensor->zeroCount;
+            weightStats.distinctWeights = weightTensor->distinctWeights;
+            auto query = Scheduler::InitPerfQuery(op, nullptr, -1);
+            auto cycles = arch->Performance()->WeightDecodeCycles(
+                query, weightStats, WeightFormat::Default, weightTensor->memArea.memory);
+            if ( cycles < minCycles )
             {
                 bestResult = &encodingResult;
-                continue;
-            }
-            if ( !isFast && (avoidFast || (!preferFast && encodingResult.size <= bestResult->size * maxFastSizeRatio)) )
-            {
-                bestResult = &encodingResult;
-                continue;
-            }
-        }
-        if ( !(bestResult->format & WeightFormat::Sparse2_4) && (encodingResult.format & WeightFormat::Sparse2_4) )
-        {
-            if ( (encodingResult.optimalDepth <= bestResult->optimalDepth) &&  // Sparsity can give different block
-                                                                               // config
-                 (encodingResult.size <= bestResult->size * maxSparseSizeRatio) )
-            {
-                bestResult = &encodingResult;
+                minCycles = cycles;
             }
         }
     }
-    return bestResult->format;
+    return std::move(*bestResult);
 }
 
+bool UseFastDecoder(regor::Architecture *arch, SchedulerOperation *op, OptimizationStrategy optimizationStrategy, NpuWeightTensor *weightTensor)
+{
+    int fastSizeDivisor = 1;
+    if ( weightTensor->distinctWeights > 0 && weightTensor->distinctWeights <= 16 )
+    {
+        fastSizeDivisor = weightTensor->distinctWeights <= 4 ? 4 : 2;
+    }
+    int fastWeightSize = 32 + weightTensor->totalSourceBytes / fastSizeDivisor;
+    if ( optimizationStrategy == OptimizationStrategy::Size )
+    {
+        return fastWeightSize < weightTensor->totalWeightBytes;
+    }
+    WeightStats weightStats;
+    weightStats.size = weightTensor->totalSourceBytes;
+    weightStats.encodedSize = weightTensor->totalWeightBytes;
+    weightStats.zeroCount = weightTensor->zeroCount;
+    weightStats.distinctWeights = weightTensor->distinctWeights;
+    auto query = Scheduler::InitPerfQuery(op, nullptr, -1);
+    auto defaultCycles = arch->Performance()->WeightDecodeCycles(
+        query, weightStats, WeightFormat::Default, weightTensor->memArea.memory);
+    weightStats.encodedSize = fastWeightSize;
+    auto fastCycles = arch->Performance()->WeightDecodeCycles(
+        query, weightStats, WeightFormat::Fast, weightTensor->memArea.memory);
+    return fastCycles < defaultCycles;
+}
+
+std::unique_ptr<ArchitectureOpConfig> MaybeGetSparsityConfig(regor::Architecture *arch, SchedulerOperation *op,
+    Shape &ifmShape, Shape &ifm2Shape, Shape &ofmShape, Flags<WeightFormat> supportedFormat)
+{
+    using WF = Flags<WeightFormat>;
+    std::unique_ptr<ArchitectureOpConfig> blockConfigSparse;
+    if ( supportedFormat & WF(WeightFormat::Sparse2_4) )
+    {
+        blockConfigSparse = GetOpConfig(arch, op, ifmShape, ifm2Shape, ofmShape, WF(WeightFormat::Default, WeightFormat::Sparse2_4));
+    }
+    return blockConfigSparse;
+}
 }  // namespace
 
-Flags<WeightFormat> Scheduler::BestWeightFormat(
+
+WeightScaleEncoding Scheduler::EncodeBestWeightFormat(
     SchedulerOperation *op, Shape &ifmShape, Shape &ifm2Shape, Shape &ofmShape, Flags<WeightFormat> supportedFormats)
 {
     using WF = Flags<WeightFormat>;
+    // We assume that block config depends only on the sparsity bit in the weight format.
+    std::unique_ptr<ArchitectureOpConfig> blockConfigDefault = GetOpConfig(
+        _arch, op, ifmShape, ifm2Shape, ofmShape, WF(WeightFormat::Default));
+    std::unique_ptr<ArchitectureOpConfig> blockConfigSparse = MaybeGetSparsityConfig(_arch, op, ifmShape, ifm2Shape, ofmShape, supportedFormats);
 
-    std::vector<EncodingResult> encodingResults;
+    if ( blockConfigSparse )
+    {
+        auto perfDefault = EstimateOpPerformanceForSparsity(op, blockConfigDefault.get(), op->OFM()->shape.Depth());
+        auto perfSparse = EstimateOpPerformanceForSparsity(op, blockConfigSparse.get(), op->OFM()->shape.Depth());
+        if ( perfSparse.opCycles > perfDefault.opCycles )
+        {
+            supportedFormats &= ~WF(WeightFormat::Sparse2_4);
+        }
+    }
+
+    std::vector<WeightScaleEncoding> encodingResults;
     auto weights = op->Input(TensorUsage::Weights);
+    auto scales = op->Input(TensorUsage::Scales);
+    WeightsRef weightsRef = {&weights->tensor->bufferView, weights->tensor->srcTensor->AxisOrder(), weights->tensor->dataType};
     auto ifm = op->IFM(op->PrimaryIfmIndex());
     auto ifmType = ifm->tensor->dataType;
-    int maxStreams = 0;
-    //  WF(WeightFormat::Default) needs to be first, FWD doesn't count zeroes.
-    for ( auto weightFormat : {WF(WeightFormat::Default), WF(WeightFormat::Fast),
-              WF(WeightFormat::Default, WeightFormat::Sparse2_4), WF(WeightFormat::Fast, WeightFormat::Sparse2_4)} )
+    std::vector<int> depthOffsets{0, ofmShape.Untranspose(op->OFM()->transpose).Depth()};
+
+
+    std::vector<WF> formatList = {WF(WeightFormat::Default, WeightFormat::Sparse2_4), WF(WeightFormat::Default),
+        WF(WeightFormat::Fast, WeightFormat::Sparse2_4), WF(WeightFormat::Fast)};
+
+    for ( auto weightFormat : formatList )
     {
         if ( (weightFormat & supportedFormats) != weightFormat ) continue;
-        EncodingResult result{weightFormat};
-        std::unique_ptr<ArchitectureOpConfig> blockConfig = GetOpConfig(_arch, op, ifmShape, ifm2Shape, ofmShape, weightFormat);
-        result.optimalDepth = blockConfig->OptimalDepthGranule();
-        WeightsRef weightsRef = {&weights->tensor->bufferView, weights->tensor->srcTensor->AxisOrder(), weights->tensor->dataType};
+        bool checkFastDecoder = !(weightFormat & WF(WeightFormat::Fast)) && (supportedFormats & WF(WeightFormat::Fast));
 
-        std::vector<int> depthOffsets{0, ofmShape.Untranspose(op->OFM()->transpose).Depth()};
+        auto *blockConfig = (weightFormat & WF(WeightFormat::Sparse2_4)) ? blockConfigSparse.get() : blockConfigDefault.get();
         auto encodingParams = _arch->WeightEncoder()->GetEncodingConfig(
-            blockConfig.get(), weightsRef, op->Kernel(), ifmType, depthOffsets, weightFormat);
+            blockConfig, weightsRef, op->Kernel(), ifmType, depthOffsets, weightFormat);
+
         try
         {
-            auto weightInfo = AnalyzeWeights(encodingParams.get(), weights->tensor.get(), weights->quantization);
+            WeightScaleEncoding encoding;
+            encoding.weightScales = EncodeWeightAndScaleTensor(std::move(encodingParams), weights->tensor.get(),
+                scales->tensor.get(), weights->quantization, op->OFM()->quantization);
 
-            result.size = weightInfo.encodedSize;
-            if ( weightInfo.streams > maxStreams ) maxStreams = weightInfo.streams;
-            if ( weightFormat == WF(WeightFormat::Default) && weightInfo.zeroCount < DivRoundUp(weightInfo.sourceSize, 2) )
+            if ( checkFastDecoder &&
+                 !UseFastDecoder(_arch, op, _options.optimizationStrategy, encoding.weightScales.npuWeightsTensor.get()) )
             {
-                // Can't be Sparse2_4 if less than half of the weights are zero
-                supportedFormats &= ~WF(WeightFormat::Sparse2_4);
+                supportedFormats &= ~WF(WeightFormat::Fast);
             }
+            encodingResults.emplace_back(std::move(encoding));
         }
         catch ( const WeightEncodeException & )
         {
+            if ( weightFormat & WF(WeightFormat::Sparse2_4) )
+            {
+                supportedFormats &= ~WF(WeightFormat::Sparse2_4);
+            }
             continue;
         }
-        encodingResults.emplace_back(result);
     }
     assert(!encodingResults.empty());
-    return ChooseBestWeightFormat(_arch, op, _options.optimizationStrategy, maxStreams, encodingResults);
+    auto bestEncoding = ChooseBestWeightFormat(_arch, op, _options.optimizationStrategy, encodingResults);
+    bestEncoding.blockConfig =
+        (bestEncoding.weightScales.npuWeightsTensor->config->Format() & WF(WeightFormat::Sparse2_4)) ? std::move(blockConfigSparse) : std::move(blockConfigDefault);
+    return bestEncoding;
 }
 
 std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(
@@ -492,47 +561,28 @@ std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(
     WeightScaleTensors weightScales;
     auto weights = op->TryInput(TensorUsage::Weights);
     if ( !weights || !weights->tensor->IsConstant() ) weightFormat = WeightFormat::Default;
-    if ( weightFormat != WeightFormat::Default )
-        weightFormat = BestWeightFormat(op, ifmShape, ifm2Shape, ofmShape, weightFormat);
-    // Potentially repeat until weight encoding successful
+
+
     std::unique_ptr<ArchitectureOpConfig> blockConfig;
-    do
+    if ( weights )
+    {
+        if ( op->OFM()->quantization.type != QuantizationType::EXPLICIT )
+        {
+            auto scales = op->Input(TensorUsage::Scales);
+            auto temp = _arch->WeightEncoder()->MakeExplicit(ifm->quantization, weights->quantization,
+                op->OFM()->quantization, scales->tensor->dataType, ifm->tensor->dataType);
+            op->OFM()->quantization = std::move(temp);
+            assert(op->OFM()->quantization.type == QuantizationType::EXPLICIT);
+        }
+        auto weightEncoding = EncodeBestWeightFormat(op, ifmShape, ifm2Shape, ofmShape, weightFormat);
+        blockConfig = std::move(weightEncoding.blockConfig);
+        weightScales = weightEncoding.weightScales;
+    }
+    else
     {
         blockConfig = parentInfo ? parentInfo->Config()->Clone() : GetOpConfig(_arch, op, ifmShape, ifm2Shape, ofmShape, weightFormat);
-
-        if ( weights == nullptr || !weights->tensor->IsConstant() ) break;
-
-        auto scales = op->Input(TensorUsage::Scales);
-
-        WeightsRef weightsRef = {&weights->tensor->bufferView, weights->tensor->srcTensor->AxisOrder(), weights->tensor->dataType};
-
-        std::vector<int> depthOffsets{0, ofmShape.Untranspose(op->OFM()->transpose).Depth()};
-
-        auto encodingParams = _arch->WeightEncoder()->GetEncodingConfig(
-            blockConfig.get(), weightsRef, op->Kernel(), ifm->tensor->dataType, depthOffsets, weightFormat);
-
-        try
-        {
-            if ( op->OFM()->quantization.type != QuantizationType::EXPLICIT )
-            {
-                auto temp = _arch->WeightEncoder()->MakeExplicit(ifm->quantization, weights->quantization,
-                    op->OFM()->quantization, scales->tensor->dataType, ifm->tensor->dataType);
-                op->OFM()->quantization = std::move(temp);
-                assert(op->OFM()->quantization.type == QuantizationType::EXPLICIT);
-            }
-
-            weightScales = EncodeWeightAndScaleTensor(std::move(encodingParams), weights->tensor.get(),
-                scales->tensor.get(), weights->quantization, op->OFM()->quantization);
-            break;
-        }
-        catch ( const WeightEncodeException & )
-        {
-            if ( weightFormat & WeightFormat::Sparse2_4 ) weightFormat ^= WeightFormat::Sparse2_4;
-            else if ( weightFormat & WeightFormat::Fast ) weightFormat ^= WeightFormat::Fast;
-            else break;
-        }
-    } while ( true );
-    if ( weights == nullptr && op->OFM()->quantization.scales.size() > 1 )
+    }
+    if ( !weights && op->OFM()->quantization.scales.size() > 1 )
     {
         WeightsRef weightsRef;
         weightsRef.isScales = true;
@@ -1423,6 +1473,17 @@ CycleCost Scheduler::EstimateOpPerformance(SchedulerOperation *op, ArchitectureO
     return cycleCost;
 }
 
+CycleCost Scheduler::EstimateOpPerformanceForSparsity(SchedulerOperation *op, ArchitectureOpConfig *config, int ofm_depth)
+{
+    CycleCost cycleCost;
+    assert(op->IsNpuOp());
+
+    PerformanceQuery query = InitPerfQuery(op, config, ofm_depth);
+    std::vector<FusionQuery> fused = InitFusionQuery(op);
+    cycleCost = _arch->Performance()->MeasureCycleCostForSparsity(query, fused);
+    return cycleCost;
+}
+
 ElementAccess Scheduler::EstimateOpElementAccess(SchedulerOperation *op, ArchitectureOpConfig *config, int ofm_depth)
 {
     // TODO MLBEDSW-7954: Account for chaining in performance estimation
@@ -1664,21 +1725,12 @@ WeightScaleTensors Scheduler::TryEncodeWeightAndScaleTensor(IWeightEncodingConfi
     if ( weightTens )
     {
         npuTensor->memArea = weightTens->memArea;
+        ohwiStrides = GetOhwiStrides(weightTens);
+        ohwiShape = GetOhwiShape(weightTens);
+
         const auto &weightView = weightTens->bufferView;
-        Shape wshape = weightView.ViewShape();
-        auto strides = weightView.StrideBytes() * 8 / DataTypeSizeBits(weightTens->dataType);
         weightsData = weightView.Buffer()->Data<uint8_t>();
 
-        if ( weightTens->srcTensor->AxisOrder() == AxisOrder::IHWO )
-        {
-            ohwiStrides = strides.Extract(3, 1, 2, 0);
-            ohwiShape = wshape.Extract(3, 1, 2, 0);
-        }
-        else
-        {
-            ohwiStrides = std::move(strides);
-            ohwiShape = std::move(wshape);
-        }
         channels = ohwiShape[0];
 
         // Set up weight source
@@ -1698,10 +1750,12 @@ WeightScaleTensors Scheduler::TryEncodeWeightAndScaleTensor(IWeightEncodingConfi
     if ( doScales )
         scaleSource = _arch->WeightEncoder()->GetScaleSource(encodingParams, scaleTens->dataType, ofmQuantization);
 
+    int totalSourceBytes = 0;
     int totalWeightBytes = 0;
     int subStreams = 1;
     int scaleStreamsRequired = 1;
     int streamsRequired = _arch->WeightEncoder()->StreamsRequired(encodingParams, ohwiShape, scaleStreamsRequired);
+    std::bitset<64> distinctWeights[8];
 
     if ( weightTens == nullptr ) streamsRequired = scaleStreamsRequired;
 
@@ -1754,10 +1808,21 @@ WeightScaleTensors Scheduler::TryEncodeWeightAndScaleTensor(IWeightEncodingConfi
                 // Encode Weights
                 ohwiShape[0] = depthLength;
                 weightSource->SetSource(weightsData, depthOffset, ohwiShape, ohwiStrides, stream);
-                int len =
-                    _arch->WeightEncoder()->EncodeWeights(encodingParams, weightSource.get(), encodedStream, false).encodedSize;
-                range.weightBytes = len;
-                totalWeightBytes += len;
+                auto weightInfo = _arch->WeightEncoder()->EncodeWeights(encodingParams, weightSource.get(), encodedStream);
+                range.weightBytes = weightInfo.encodedSize;
+                totalWeightBytes += weightInfo.encodedSize;
+                totalSourceBytes += weightInfo.sourceSize;
+                int popcount = 0;
+
+                // Stop counting when we know 4-bit palette mode can't be used,
+                // no need to have exact popcount.
+                for ( int i = 0; i < 8 && popcount <= 16; i++ )
+                {
+                    distinctWeights[i] |= weightInfo.weightsUsed[i];
+                    popcount += distinctWeights[i].count();
+                }
+                npuTensor->distinctWeights = popcount;
+                npuTensor->zeroCount += weightInfo.zeroCount;
             }
 
             assert(encodedStream.size() % 16 == 0);
@@ -1788,6 +1853,7 @@ WeightScaleTensors Scheduler::TryEncodeWeightAndScaleTensor(IWeightEncodingConfi
     npuTensor->maxRangeBytes = std::max(maxBufferLen[0], maxBufferLen[1]);
     npuTensor->doubleBufferSize = maxBufferLen[0] + maxBufferLen[1];
     npuTensor->doubleBufferOffset = maxBufferLen[0];
+    npuTensor->totalSourceBytes = totalSourceBytes;
     npuTensor->totalWeightBytes = totalWeightBytes;
     npuTensor->subStreams = subStreams;
     npuTensor->storageShape = encodedTensor->StorageShape();
@@ -1816,70 +1882,4 @@ WeightScaleTensors Scheduler::TryEncodeWeightAndScaleTensor(IWeightEncodingConfi
     return result;
 }
 
-WeightsInfo Scheduler::AnalyzeWeights(IWeightEncodingConfig *encodingParams, const SchedulerTensor *weightTens, const Quantization &weightQuantization)
-{
-
-    WeightsInfo result;
-    std::vector<uint8_t> encodedStream;
-
-    const auto &weightView = weightTens->bufferView;
-    Shape wshape = weightView.ViewShape();
-    auto strides = weightView.StrideBytes() * 8 / DataTypeSizeBits(weightTens->dataType);
-
-    Shape ohwiStrides;
-    Shape ohwiShape;
-    if ( weightTens->srcTensor->AxisOrder() == AxisOrder::IHWO )
-    {
-        ohwiStrides = strides.Extract(3, 1, 2, 0);
-        ohwiShape = wshape.Extract(3, 1, 2, 0);
-    }
-    else
-    {
-        ohwiStrides = std::move(strides);
-        ohwiShape = std::move(wshape);
-    }
-
-    // Set up weight source
-    SchedulerTransformParam param;
-    param.zeroPoints = weightQuantization.zeroPoints.data();
-    param.zeroCount = int(weightQuantization.zeroPoints.size());
-
-    auto zeroOffsetFunc = (weightTens->srcTensor->AxisOrder() == AxisOrder::IHWO) ? ApplyZeroPointIHWO : ApplyZeroPointOHWI;
-    auto weightSource = _arch->WeightEncoder()->GetWeightSource(encodingParams, weightTens->dataType, zeroOffsetFunc, &param);
-
-    auto weightsData = weightView.Buffer()->Data<uint8_t>();
-    int fullOfmDepth = ohwiShape[0];
-    int subStreams = 1;
-    int scaleStreamsRequired = 1;
-    const int streamsRequired = _arch->WeightEncoder()->StreamsRequired(encodingParams, ohwiShape, scaleStreamsRequired);
-    // Note: in case of multiple cores, each core's weights are interleaved in O-dimension
-    auto const &depthOffsets = encodingParams->DepthOffsets();
-    const int nrDepthOffsets = int(depthOffsets.size());
-    for ( int idx = 0; idx < nrDepthOffsets - 1; ++idx )
-    {
-        int depthOffset = depthOffsets[idx];
-
-        // Do not generate for offsets outside the OFM
-        assert(depthOffset >= 0 && depthOffset < fullOfmDepth);
-        int depthLength = depthOffsets[idx + 1] - depthOffset;
-
-        int bufferStartOffset = int(encodedStream.size());
-
-        // For each stream, deinterleave weights/scales from the larger volume
-        // and generate separate compressed streams.
-        for ( int stream = 0; stream < streamsRequired; ++stream )
-        {
-            int key = WeightKey(stream, depthOffset);
-            // Encode Weights
-            ohwiShape[0] = depthLength;
-            weightSource->SetSource(weightsData, depthOffset, ohwiShape, ohwiStrides, stream);
-            auto weightInfo = _arch->WeightEncoder()->EncodeWeights(encodingParams, weightSource.get(), encodedStream, true);
-            result.sourceSize += weightInfo.sourceSize;
-            result.encodedSize += weightInfo.encodedSize;
-            result.zeroCount += weightInfo.zeroCount;
-        }
-    }
-    result.streams = streamsRequired;
-    return result;
-}
 }  // namespace regor
