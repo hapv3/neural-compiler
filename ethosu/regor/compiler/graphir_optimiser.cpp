@@ -52,6 +52,12 @@ Operation *GraphIrOptimiser::ConvertAttributes(Graph *const graph, Operation *co
         auto roundMode = operation->attr.rescale.double_round ? RoundMode::DBL : RoundMode::NATURAL;
         operation->SetRounding(roundMode);
     }
+    if ( opType == OpType::Clamp )
+    {
+        TensorConnection *ofmConn = operation->Output(TensorUsage::OFM);
+        ofmConn->quantization.quantMin = {int(operation->attr.clamp.min)};
+        ofmConn->quantization.quantMax = {int(operation->attr.clamp.max)};
+    }
     return operation;
 }
 

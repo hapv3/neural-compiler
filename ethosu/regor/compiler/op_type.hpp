@@ -109,7 +109,6 @@ enum class OpType : uint16_t
     BidirectionalSequenceRnn,
     BlockLSTM,
     Call,
-    Clip,
     ConcatEmbeddings,
     ConcatTFLite,
     Const,
@@ -265,7 +264,7 @@ constexpr inline bool IsDma(OpType opType)
 constexpr inline bool IsActivation(OpType opType)
 {
     return opType == OpType::Relu || opType == OpType::Relu6 || opType == OpType::ReluN || opType == OpType::ReluN1To1 ||
-           opType == OpType::Prelu || opType == OpType::Clip || opType == OpType::Sigmoid || opType == OpType::Tanh || opType == OpType::LUT;
+           opType == OpType::Prelu || opType == OpType::Clamp || opType == OpType::Sigmoid || opType == OpType::Tanh || opType == OpType::LUT;
 }
 
 constexpr inline bool IsConcatenation(OpType opType)
