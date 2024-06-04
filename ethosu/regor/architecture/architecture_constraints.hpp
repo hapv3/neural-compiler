@@ -64,6 +64,7 @@ struct ResizeSupportQuery
 struct ExecutionQuery
 {
     OpType opType;
+    OpType targetType;
     DataType type;
     TensorUsage usage;
     TransposeType transposeType;
@@ -84,6 +85,10 @@ class IArchitectureConstraints
 {
 public:
     virtual ~IArchitectureConstraints() = default;
+
+    virtual bool SupportsTranspose(OpType opType, TransposeType transposeType) = 0;
+    virtual bool SupportsReverse(OpType opType, ReverseType reverseType) = 0;
+
     bool CanExecute(const ExecutionQuery &query)
     {
         bool valid = true;
@@ -96,10 +101,10 @@ public:
                 valid = SupportsMatMul(query.opType);
                 break;
             case OpType::Transpose:
-                valid = SupportsTranspose(query.opType, query.transposeType);
+                valid = SupportsTranspose(query.targetType, query.transposeType);
                 break;
             case OpType::Reverse:
-                valid = SupportsReverse(query.opType, query.reverseType);
+                valid = SupportsReverse(query.targetType, query.reverseType);
                 break;
             case OpType::Gather:
                 valid = SupportsGather(query.opType);
@@ -128,8 +133,6 @@ public:
 protected:
     virtual bool SupportsLeakyRelu(bool quantized, DataType type) = 0;
     virtual bool SupportsMatMul(OpType opType) = 0;
-    virtual bool SupportsTranspose(OpType opType, TransposeType transposeType) = 0;
-    virtual bool SupportsReverse(OpType opType, ReverseType reverseType) = 0;
     virtual bool SupportsGather(OpType opType) = 0;
     virtual bool SupportsScatter(OpType opType) = 0;
     virtual bool SupportsSigmoidTanhLutInt16(OpType opType) = 0;

@@ -1012,12 +1012,9 @@ Operation *TFLiteGraphOptimiser::RemoveTranspose(Graph *const graph, Operation *
             Operation *prevOp = ifm->Writers()[0].get();
             OpType prevOpType = prevOp->Type();
             auto prevOfmConn = prevOp->Output(TensorUsage::OFM);
-            ExecutionQuery query{};
-            query.opType = prevOpType;
-            query.transposeType = transposeType;
 
             if ( IsNone(prevOfmConn->transpose) && prevOfmConn->reverse == ReverseType::None &&
-                 prevOfmConn->shape == ifmShape && _constraints->CanExecute(query) )
+                 prevOfmConn->shape == ifmShape && _constraints->SupportsTranspose(prevOpType, transposeType) )
             {
                 // Set transpose type and shape on main op's OFM connection
                 prevOp->Output(TensorUsage::OFM)->shape = Shape::PadAxes(ofmShape, 4, 1);
@@ -1027,10 +1024,6 @@ Operation *TFLiteGraphOptimiser::RemoveTranspose(Graph *const graph, Operation *
                 mainOp = prevOp;
             }
         }
-
-        ExecutionQuery query{};
-        query.opType = OpType::MemoryCopy;
-        query.transposeType = transposeType;
 
         // If the transpose type is not supported (for example it's transposing in the batch dimension), try to
         // rearrange the IFM and OFM shapes by moving any dimension that is 1 to the left. Then recalculate the
@@ -1047,7 +1040,7 @@ Operation *TFLiteGraphOptimiser::RemoveTranspose(Graph *const graph, Operation *
         // 1x8x128x32 + [2, 0, 1, 3] -> 128x1x8x32
         // Compact, with supported permutation vector:
         // 1x8x128x32 + [0, 2, 1, 3] ("NWHC") -> 1x128x8x32
-        if ( !mainOp && !_constraints->CanExecute(query) )
+        if ( !mainOp && !_constraints->SupportsTranspose(OpType::MemoryCopy, transposeType) )
         {
             const auto paddedIfmShape = Shape::PadAxes(ifmShape, 4, 1);
             const auto paddedOfmShape = Shape::PadAxes(ofmShape, 4, 1);
@@ -1079,10 +1072,7 @@ Operation *TFLiteGraphOptimiser::RemoveTranspose(Graph *const graph, Operation *
 
             // Use the compacted mask if supported
             TransposeType compactTransposeType = TransposeType(compactMask);
-
-            query.transposeType = compactTransposeType;
-
-            if ( _constraints->CanExecute(query) )
+            if ( _constraints->SupportsTranspose(OpType::MemoryCopy, compactTransposeType) )
             {
                 // Build new IFM shape with the rearranged dimensions
                 std::vector<int> newIfmShape;
@@ -1103,7 +1093,9 @@ Operation *TFLiteGraphOptimiser::RemoveTranspose(Graph *const graph, Operation *
                 transposeType = compactTransposeType;
             }
         }
-
+        ExecutionQuery query{};
+        query.opType = opType;
+        query.targetType = OpType::MemoryCopy;
         query.transposeType = transposeType;
 
         if ( !mainOp && _constraints->CanExecute(query) )
@@ -1197,11 +1189,9 @@ Operation *TFLiteGraphOptimiser::RemoveReverse(Graph *const graph, Operation *co
             Operation *prevOp = ifm->Writers()[0].get();
             OpType prevOpType = prevOp->Type();
             auto prevOfmConn = prevOp->Output(TensorUsage::OFM);
-            ExecutionQuery query{};
-            query.opType = prevOpType;
-            query.reverseType = reverseType;
+
             if ( prevOfmConn->reverse == ReverseType::None && IsNone(prevOfmConn->transpose) &&
-                 prevOfmConn->shape == ifmShape && _constraints->CanExecute(query) )
+                 prevOfmConn->shape == ifmShape && _constraints->SupportsReverse(prevOpType, reverseType) )
             {
                 // Set reverse type and shape on main op's OFM connection
                 prevOp->Output(TensorUsage::OFM)->shape = Shape::PadAxes(ofmShape, 4, 1);
@@ -1211,9 +1201,9 @@ Operation *TFLiteGraphOptimiser::RemoveReverse(Graph *const graph, Operation *co
                 mainOp = prevOp;
             }
         }
-
         ExecutionQuery query{};
-        query.opType = OpType::MemoryCopy;
+        query.opType = operation->Type();
+        query.targetType = OpType::MemoryCopy;
         query.reverseType = reverseType;
 
         if ( !mainOp && _constraints->CanExecute(query) )
