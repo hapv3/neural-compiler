@@ -386,8 +386,6 @@ private:
         {
             // Likely TFLite output
 
-            assert(fmt == REGOR_INPUTFORMAT_TFLITE && "Only 1 output blob expected for TFLite input");
-
             PyRegorCompiledTFLiteModel tfl;
             tfl.SetPerfReport(GetPerfReport());
             tfl.SetOptDatabase(GetOptDatabase());
