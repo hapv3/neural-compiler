@@ -153,6 +153,7 @@ void FastStorageAllocator::AllocateFeatureMaps(const std::vector<std::unique_ptr
     if ( maxUsage <= _stagingLimit )
     {
         // All feature maps fit in fast storage
+        ElementwiseSanitizer(schedOps, schedule, fastStorage, lrGraph);
         return;
     }
     // Not all feature maps fit in fast storage
