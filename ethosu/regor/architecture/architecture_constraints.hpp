@@ -66,6 +66,7 @@ struct ExecutionQuery
     OpType opType;
     OpType targetType;
     DataType ifmType;
+    Shape ifmShape;
     TransposeType transposeType;
     ReverseType reverseType;
     ResizeSupportQuery resizeQuery;
@@ -85,7 +86,7 @@ class IArchitectureConstraints
 public:
     virtual ~IArchitectureConstraints() = default;
 
-    virtual bool SupportsTranspose(OpType opType, TransposeType transposeType) = 0;
+    virtual bool SupportsTransposeHW(OpType opType, TransposeType transposeType) = 0;
     virtual bool SupportsReverse(OpType opType, ReverseType reverseType) = 0;
 
     bool CanExecute(const ExecutionQuery &query)
@@ -100,7 +101,7 @@ public:
                 valid = SupportsMatMul(query.opType);
                 break;
             case OpType::Transpose:
-                valid = SupportsTranspose(query.targetType, query.transposeType);
+                valid = SupportsTranspose(query.targetType, query.transposeType, query.ifmShape);
                 break;
             case OpType::ReverseV2:
                 valid = SupportsReverse(query.targetType, query.reverseType);
@@ -134,6 +135,7 @@ protected:
     virtual bool SupportsMatMul(OpType opType) = 0;
     virtual bool SupportsGather(OpType opType) = 0;
     virtual bool SupportsScatter(OpType opType) = 0;
+    virtual bool SupportsTranspose(OpType opType, TransposeType transposeType, Shape ifmShape) = 0;
     virtual bool SupportsSigmoidTanhLutInt16(OpType opType) = 0;
     virtual bool SupportsResize(const ResizeSupportQuery &query) = 0;
     virtual bool SupportsArgMax(OpType opType) = 0;

@@ -29,7 +29,8 @@ public:
 
     bool SupportsLeakyRelu(bool quantized, DataType type) override;
     bool SupportsMatMul(OpType opType) override;
-    bool SupportsTranspose(OpType opType, TransposeType transposeType) override;
+    bool SupportsTranspose(OpType opType, TransposeType transposeType, Shape ifmShape) override;
+    bool SupportsTransposeHW(OpType opType, TransposeType transposeType) override;
     bool SupportsReverse(OpType opType, ReverseType reverseType) override;
     bool SupportsGather(OpType opType) override;
     bool SupportsScatter(OpType opType) override;

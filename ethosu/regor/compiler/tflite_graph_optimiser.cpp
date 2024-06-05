@@ -1007,7 +1007,7 @@ Operation *TFLiteGraphOptimiser::RemoveTranspose(Graph *const graph, Operation *
             auto prevOfmConn = prevOp->Output(TensorUsage::OFM);
 
             if ( IsNone(prevOfmConn->transpose) && prevOfmConn->reverse == ReverseType::None &&
-                 prevOfmConn->shape == ifmShape && _constraints->SupportsTranspose(prevOpType, transposeType) )
+                 prevOfmConn->shape == ifmShape && _constraints->SupportsTransposeHW(prevOpType, transposeType) )
             {
                 // Set transpose type and shape on main op's OFM connection
                 prevOp->Output(TensorUsage::OFM)->shape = Shape::PadAxes(ofmShape, 4, 1);
@@ -1033,7 +1033,7 @@ Operation *TFLiteGraphOptimiser::RemoveTranspose(Graph *const graph, Operation *
         // 1x8x128x32 + [2, 0, 1, 3] -> 128x1x8x32
         // Compact, with supported permutation vector:
         // 1x8x128x32 + [0, 2, 1, 3] ("NWHC") -> 1x128x8x32
-        if ( !mainOp && !_constraints->SupportsTranspose(OpType::MemoryCopy, transposeType) )
+        if ( !mainOp && !_constraints->SupportsTransposeHW(OpType::MemoryCopy, transposeType) )
         {
             const auto paddedIfmShape = Shape::PadAxes(ifmShape, 4, 1);
             const auto paddedOfmShape = Shape::PadAxes(ofmShape, 4, 1);
@@ -1065,7 +1065,7 @@ Operation *TFLiteGraphOptimiser::RemoveTranspose(Graph *const graph, Operation *
 
             // Use the compacted mask if supported
             TransposeType compactTransposeType = TransposeType(compactMask);
-            if ( _constraints->SupportsTranspose(OpType::MemoryCopy, compactTransposeType) )
+            if ( _constraints->SupportsTransposeHW(OpType::MemoryCopy, compactTransposeType) )
             {
                 // Build new IFM shape with the rearranged dimensions
                 std::vector<int> newIfmShape;

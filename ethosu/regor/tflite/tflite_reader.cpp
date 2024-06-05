@@ -850,11 +850,13 @@ ExecutionQuery TfLiteReader::OperationToExecQuery(const Operation &operation)
         }
         case OpType::Transpose:
         {
+            query.ifmShape = operation.Input(TensorUsage::IFM0)->shape;
             query.targetType = OpType::MemoryCopy;
             query.transposeType = CalculateTransposeType(operation);
             break;
         }
         case OpType::ReverseV2:
+            query.targetType = OpType::MemoryCopy;
             query.reverseType = CalculateReverseType(operation);
             break;
         case OpType::ResizeBilinear:
