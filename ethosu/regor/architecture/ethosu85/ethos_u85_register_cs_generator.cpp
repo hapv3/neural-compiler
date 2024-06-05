@@ -1752,7 +1752,7 @@ void EthosU85RCSGenerator::GenerateDMA(const HLCDMA *dma, MemoryAccesses &memory
     {
         // Registers for indexed operation
         Emit(isa::npu_set_dma0_idx_region_t(ToRegion(dma->idxMemArea)));
-        assert(dma->idxMax > 0);
+        assert(dma->idxMax >= 0);
         Emit(isa::npu_set_dma0_idx_max_t(dma->idxMax));
         Emit(isa::npu_set_dma0_idx_t(dma->idxAddress));
     }
