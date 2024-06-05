@@ -32,6 +32,7 @@ enum class AxisOrder : uint16_t
     OHWI = int16_t(GraphApi::AxisOrder::OHWI),
     IHWO = int16_t(GraphApi::AxisOrder::IHWO),
     OI = int16_t(GraphApi::AxisOrder::OI),
+    HWCM = int16_t(GraphApi::AxisOrder::HWCM),
 };
 
 /// <summary>

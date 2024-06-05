@@ -352,6 +352,10 @@ Shape GetOhwiShape(const SchedulerTensor *weightTens)
     {
         ohwiShape = ohwiShape.Extract(3, 1, 2, 0);
     }
+    else if ( weightTens->srcTensor->AxisOrder() == AxisOrder::HWCM )
+    {
+        ohwiShape = ohwiShape.Extract(2, 0, 1, 3);
+    }
     return ohwiShape;
 }
 
@@ -362,6 +366,10 @@ Shape GetOhwiStrides(const SchedulerTensor *weightTens)
     if ( weightTens->srcTensor->AxisOrder() == AxisOrder::IHWO )
     {
         ohwiStrides = ohwiStrides.Extract(3, 1, 2, 0);
+    }
+    else if ( weightTens->srcTensor->AxisOrder() == AxisOrder::HWCM )
+    {
+        ohwiStrides = ohwiStrides.Extract(2, 0, 1, 3);
     }
     return ohwiStrides;
 }
@@ -1737,7 +1745,7 @@ WeightScaleTensors Scheduler::TryEncodeWeightAndScaleTensor(IWeightEncodingConfi
         param.zeroPoints = weightQuantization.zeroPoints.data();
         param.zeroCount = int(weightQuantization.zeroPoints.size());
 
-        auto zeroOffsetFunc = (weightTens->srcTensor->AxisOrder() == AxisOrder::IHWO) ? ApplyZeroPointIHWO : ApplyZeroPointOHWI;
+        auto zeroOffsetFunc = (weightTens->srcTensor->AxisOrder() == AxisOrder::OHWI) ? ApplyZeroPointOHWI : ApplyZeroPointIHWO;
         weightSource = _arch->WeightEncoder()->GetWeightSource(encodingParams, weightTens->dataType, zeroOffsetFunc, &param);
     }
     else

@@ -91,6 +91,10 @@ std::unique_ptr<IWeightEncodingConfig> EthosU55WeightEncoder::GetEncodingConfig(
     {
         ohwiStrides = ohwiStrides.Extract(3, 1, 2, 0);
     }
+    else if ( weights.axisOrder == AxisOrder::HWCM )
+    {
+        ohwiStrides = ohwiStrides.Extract(2, 0, 1, 3);
+    }
     params->ohwiStrides = std::move(ohwiStrides);
     params->ohwiStrides[0] = params->ohwiStrides[0] * _arch->_cores;
     params->Rehash();
