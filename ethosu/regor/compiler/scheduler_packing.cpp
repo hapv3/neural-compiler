@@ -487,6 +487,8 @@ std::vector<std::unique_ptr<SchedulerOperation>> SchedulerPacking::DecomposeSche
 
 ArchResampling SchedulerPacking::ResamplingMode(TensorUsage usage, OpType opType) const
 {
+    UNUSED(usage);
+    UNUSED(opType);
     return ArchResampling::None;
 }
 

@@ -389,6 +389,7 @@ static std::shared_ptr<SchedulerTensor> ReverseHW(SchedulerTensor *tensor)
 // Decompose Transpose Conv2D into Conv2D
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTransposeConv2D(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
 {
+    UNUSED(arch);
     std::vector<std::unique_ptr<SchedulerOperation>> result;
 
     auto ifmConn = op->Input(TensorUsage::IFM);
