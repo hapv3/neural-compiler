@@ -1209,38 +1209,46 @@ std::shared_ptr<Schedule> Scheduler::OptimizeSubSchedule(const CascadeInfo &casc
     Shape finalOFMShape = subOps.back()->OFM()->shape;
     const int maxStripeHeight = (finalOFMShape.Height() + 1) / 2;
 
+    // Skip testing the min stripe used in the MIN schedule since that will be used
+    // anyway if no new cascades are created below
+    SchedulerOpInfo *minCost = refSchedule->Cost(subOps.back().get());
+    const int minStripeHeight = minCost->stripe.Height() + 1;
+
     std::vector<Shape> possibleStripes;
     possibleStripes.reserve(maxStripeHeight);
-    for ( int h = 1; h <= maxStripeHeight; h++ )
+    for ( int h = minStripeHeight; h <= maxStripeHeight; h++ )
     {
         possibleStripes.push_back(finalOFMShape.With(-3, h));
     }
 
     // Propose different striping - the possible stripes are proposed similarly to a binary search
     std::shared_ptr<Schedule> bestSchedule;
-    int first = 0, last = int(possibleStripes.size());
 
 #if LOG_TRACE1_ON
     LOG_INDENT(Logging::Out);
 #endif
 
-    while ( first < last )
+    int maxCascadeSize = 0;
+    for ( auto &proposedStripe : possibleStripes )
     {
-        int index = first + (last - first) / 2;
-        const Shape &proposedStripe = possibleStripes[index];
-
         auto proposedSchedule = ProposeScheduleStriping(
             proposedStripe, fmt::format("_OPT_{}", proposedStripe.Height()), bufferedSubSchedule.get());
 
         cascadeBuilder.BuildCascades(proposedSchedule.get(), _maxSchedule.get(), stagingLimitBytes);
 
+        int cascadeSize = proposedSchedule->cascades.size();
+        if ( maxCascadeSize == 0 )
+        {
+            // First iteration - used as limit to prevent splitting up the cascades
+            // Long cascades are better in order to reduce IFM/OFM dram bandwidth
+            maxCascadeSize = cascadeSize;
+        }
+
         // Check if proposal fits
         Address proposedMemUsage = EstimateScheduleMemoryUsage(proposedSchedule.get(), nonLocalMemUsage);
 
-        if ( proposedMemUsage <= stagingLimitBytes )
+        if ( proposedMemUsage <= stagingLimitBytes && cascadeSize <= maxCascadeSize )
         {
-            // Ignore all possible stripes smaller than this
-            first = index + 1;
             bestSchedule = proposedSchedule;
             // No cascading required - early exit
             if ( proposedSchedule->cascades.empty() )
@@ -1250,8 +1258,7 @@ std::shared_ptr<Schedule> Scheduler::OptimizeSubSchedule(const CascadeInfo &casc
         }
         else
         {
-            // Proposal doesn't fit within the limit - ignore all possible stripes larger than this
-            last = index;
+            break;
         }
     }
 

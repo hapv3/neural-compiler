@@ -201,10 +201,12 @@ void CascadeBuilder::BuildCascades(Schedule *refSchedule, Schedule *fallbackSche
             refCost = refSchedule->Cost(currentOp);
 
             auto currentIfm = currentOp->IFM(currentOp->PrimaryIfmIndex());
+            auto producerOfm = producer->OFM();
 
             if ( costs.find(*currentOp) != costs.end() || (refCost == nullptr) ||
-                 !IsCascadable(currentOp, currentIfm->tensor.get(), refCost) ||
-                 producer->OFM()->shape != currentIfm->shape || currentIfm->requireFullTensor )
+                 !IsCascadable(currentOp, currentIfm->tensor.get(), refCost) || producer->OFM()->shape != currentIfm->shape ||
+                 currentIfm->requireFullTensor || producerOfm->requireFullTensor ||
+                 currentIfm->tensor->needsLinearFormat || producerOfm->tensor->needsLinearFormat )
             {
                 // Current op has already been processed or cannot be cascaded
                 break;
@@ -336,12 +338,6 @@ bool CascadeBuilder::IsCascadable(const SchedulerOperation *op, SchedulerTensor 
         return false;
     }
 
-    // Cascadable operations currently need to support NHCWB16
-    if ( ifm->needsLinearFormat )
-    {
-        return false;
-    }
-
     if ( IsDma(op->Type()) )
     {
         return false;
@@ -353,7 +349,9 @@ bool CascadeBuilder::IsCascadable(const SchedulerOperation *op, SchedulerTensor 
         return false;
     }
 
-    return (cost->stripe.Height() < op->OFM()->shape.Height()) && (IsConvolution(type) || IsElementwise(type) || IsPooling(type));
+    // ReduceSum: sum over the entire IFM - full shape needed
+    return (cost->stripe.Height() < op->OFM()->shape.Height()) &&
+           (IsConvolution(type) || IsElementwise(type) || (IsPooling(type) && type != OpType::ReduceSum));
 }
 
 
