@@ -264,6 +264,53 @@ Operation *GraphIrOptimiser::FixupPoolStrides(Graph *const, Operation *const ope
     return operation;
 }
 
+// Rewrite TOSA Table to GraphIR LUT
+Operation *GraphIrOptimiser::RewriteTable(Graph *const graph, Operation *const operation)
+{
+    UNUSED(graph);
+    Operation *returnOp = operation;
+    const OpType opType = operation->Type();
+    if ( opType == OpType::Table )
+    {
+        const auto ifmConn = operation->Input(TensorUsage::IFM);
+        const auto lutConn = operation->Input(TensorUsage::Params);
+        const auto ofmConn = operation->Output(TensorUsage::OFM);
+        assert(ifmConn);
+        assert(lutConn);
+        assert(ofmConn);
+
+        std::shared_ptr<Tensor> newLutTensor;
+        const auto newLutTensorType = lutConn->tensor->Type();
+        assert(newLutTensorType == DataType::Int8 || newLutTensorType == DataType::Int16);
+        if ( newLutTensorType == DataType::Int8 )
+        {
+            // For int8, TOSA Table is same as GraphIR LUT
+            newLutTensor = lutConn->tensor;
+        }
+        else
+        {
+            // For int16, we need to recalculate the LUT tensor
+            const auto view = lutConn->tensor->View();
+            assert(view.ViewShape() == Shape(513));
+            const auto values = view.Values<int16_t>();
+            auto newLut = std::make_unique<int16_t[]>(1024);
+            for ( int i = 0; i < 512; i++ )
+            {
+                newLut[2 * i] = values[i];                      // Base
+                newLut[2 * i + 1] = values[i + 1] - values[i];  // Slope
+            }
+            newLutTensor = CreateConstTensor("LUT", newLutTensorType, std::make_shared<Buffer>(std::move(newLut), 1024));
+        }
+
+        // Replace TOSA Table op with GraphIR LUT op
+        returnOp = CreateLUT(ifmConn->tensor, newLutTensor, ifmConn->quantization, ofmConn->quantization,
+            newLutTensor->Type(), &ifmConn->shape, ofmConn->tensor, ifmConn->slice, ofmConn->slice);
+        returnOp->SetRounding(RoundMode::NATURAL);
+        operation->Disconnect();
+    }
+    return returnOp;
+}
+
 GraphIrOptimiser::GraphIrOptimiser(IArchitectureConstraints *constraints, const GraphOptimiserOptions &options, OptimiserDatabase *db) :
         GraphOptimiser(constraints, options, db)
 {

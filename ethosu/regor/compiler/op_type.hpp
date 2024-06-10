@@ -58,7 +58,7 @@ enum class OpType : uint16_t
     Mul,
     Pow,
     Sub,
-    LUT,
+    Table,
     Abs,
     Not,
     Ceil,
@@ -98,6 +98,7 @@ enum class OpType : uint16_t
     // Regor Internal Operators
     MemoryCopy,
     Passthrough,
+    LUT,
 
     // Compatibility Operators
     AddN,

@@ -69,7 +69,7 @@ static constexpr std::pair<tosa::Op, regor::OpType> s_aTosaMapping[] = {
     {tosa::Op::MUL,   OpType::Mul},
     {tosa::Op::POW,   OpType::Pow},
     {tosa::Op::SUB,   OpType::Sub},
-    {tosa::Op::TABLE, OpType::LUT},
+    {tosa::Op::TABLE, OpType::Table},
     {tosa::Op::ABS,   OpType::Abs},
     {tosa::Op::BITWISE_NOT, OpType::Not},
     {tosa::Op::CEIL,  OpType::Ceil},

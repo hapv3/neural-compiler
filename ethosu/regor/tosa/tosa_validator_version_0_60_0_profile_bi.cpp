@@ -2776,7 +2776,7 @@ void ValidateOperator_Version_0_60_0_Profile_BI(const GraphApi::GraphOperation *
         case regor::OpType::Sub:
             ValidateOperator_SUB(op, context);
             break;
-        case regor::OpType::LUT:
+        case regor::OpType::Table:
             ValidateOperator_TABLE(op, context);
             break;
         case regor::OpType::Abs:

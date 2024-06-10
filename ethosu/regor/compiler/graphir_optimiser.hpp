@@ -47,6 +47,7 @@ private:
     Operation *RewriteFullyConnected(Graph *const graph, Operation *const operation);
     Operation *FixupPoolStrides(Graph *const, Operation *const operation);
     Operation *RewriteRescale(Graph *const graph, Operation *const operation);
+    Operation *RewriteTable(Graph *const graph, Operation *const operation);
 
 public:
     // The graph optimisation steps.
@@ -83,7 +84,7 @@ public:
                 &GraphIrOptimiser::RewriteFullyConnected,
                 &GraphIrOptimiser::FixupPoolStrides,
                 &GraphIrOptimiser::RewriteRescale,
-
+                &GraphIrOptimiser::RewriteTable,
             }
         },
         {

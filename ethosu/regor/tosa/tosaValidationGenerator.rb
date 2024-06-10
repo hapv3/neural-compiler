@@ -49,7 +49,7 @@ REGOR_OP_NAMES = {
   'MUL': 'OpType::Mul',
   'POW': 'OpType::Pow',
   'SUB': 'OpType::Sub',
-  'TABLE': 'OpType::LUT',
+  'TABLE': 'OpType::Table',
   'ABS': 'OpType::Abs',
   'BITWISE_NOT': 'OpType::Not',
   'CEIL': 'OpType::Ceil',

@@ -708,7 +708,16 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         if ( input_tensors.size() == 1 )
                         {
                             std::string name = "table_param" + std::to_string(tosa_op_index);
-                            tensors[name] = CreateParamTensor(tosa_attr.table(), builder, name);
+                            auto type = types.at(input_tensors[0]);
+                            assert(type == GraphApi::GraphDataType::Int8 || type == GraphApi::GraphDataType::Int16);
+                            if ( type == GraphApi::GraphDataType::Int8 )
+                            {
+                                tensors[name] = CreateParamTensor<int8_t>(tosa_attr.table(), builder, name);
+                            }
+                            else
+                            {
+                                tensors[name] = CreateParamTensor<int16_t>(tosa_attr.table(), builder, name);
+                            }
                             input_tensors.push_back(std::move(name));
                         }
                     }
