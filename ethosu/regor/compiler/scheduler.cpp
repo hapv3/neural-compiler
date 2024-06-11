@@ -838,7 +838,7 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
             int bufferingBytes = (bufferingDepth / refCost->stripe.Depth()) * fullWeightsBytes;
             if ( bufferingBytes > halfBufferLimit )
             {
-                bufferingDepth = (halfBufferLimit / fullWeightsBytes) * refCost->stripe.Depth();
+                bufferingDepth = (halfBufferLimit * refCost->stripe.Depth()) / fullWeightsBytes;
             }
 
             while ( true )
