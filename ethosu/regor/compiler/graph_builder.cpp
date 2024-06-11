@@ -31,13 +31,13 @@
 namespace regor
 {
 
+namespace
+{
+
 TensorUsage GraphAPIUsageToTensorUsage(GraphApi::GraphTensorUsage usage)
 {
     return regor::TensorUsage(usage);  // currently 1:1 mapping required
 }
-
-namespace
-{
 
 // clang-format off
 static constexpr std::pair<tosa::Op, regor::OpType> s_aTosaMapping[] = {
@@ -216,6 +216,11 @@ GraphApi::GraphOperation *GraphBuilder::CreateOp(tosa::Op tosaType, const GraphK
     else
     {
         op->SetKernel(std::make_unique<Kernel>(Point2i(1, 1), Point2i(1, 1), Point2i(1, 1)));
+    }
+    if ( op->Rounding() == RoundMode::AUTO && IsPooling(type) )
+    {
+        // Set a good default for pool operations
+        op->SetRounding(RoundMode::NATURAL);
     }
     _operations.push_back(op);
 
@@ -486,7 +491,14 @@ void GraphBuilder::SetZeroPoint(GraphOperation *graphOp, GraphTensorUsage tensor
     if ( conn )
     {
         conn->quantization.zeroPoints = {int64_t(zeroPoint)};
+        conn->quantization.forceZeroPoint = true;
     }
+}
+
+void GraphBuilder::SetRounding(GraphOperation *graphOp, GraphRoundMode roundMode)
+{
+    auto op = static_cast<Operation *>(graphOp);
+    op->SetRounding(regor::RoundMode(roundMode));
 }
 
 void GraphBuilder::SetAxisOrder(GraphTensor *graphTensor, GraphApi::AxisOrder order)

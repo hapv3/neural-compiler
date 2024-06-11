@@ -31,7 +31,7 @@ static constexpr int MAX_TENSOR_DIMS = 6;  // Covers 3D padding
 /// <summary>
 /// Classification for how a Tensor is consumed by an operator
 /// </summary>
-enum class GraphTensorUsage : int32_t
+enum class GraphTensorUsage : uint32_t
 {
     None = 0,
     IFM = 0x01,
@@ -42,12 +42,14 @@ enum class GraphTensorUsage : int32_t
     LUT = 0x06,
     State = 0x07,
     UserDefined = 0x1E,
+    Last,
     TypeMask = 0x1F,
     IndexShift = 8,
-    IndexMask = 0xFF00,
+    IndexMask = 0xFFFFF00,
     IFM0 = IFM,
     IFM1 = 0x0100 | IFM,
     IFM2 = 0x0200 | IFM,
+    Params0 = Params,
     Params1 = 0x100 | Params,
 };
 
@@ -95,6 +97,19 @@ enum class GraphTensorLayout : int8_t
     NHCWB16 = 1,
 };
 
+/// <summary>
+// Operation round mode
+/// </summary>
+enum class GraphRoundMode : uint8_t
+{
+    Double = 0,
+    Truncate = 1,
+    Natural = 2,
+    TruncateToLower = 3,
+    DoubleAsymmetric = 4,
+    Symmetric = 5,
+    Auto = 0xff
+};
 
 /// <summary>
 /// Graph base axis shape
@@ -243,7 +258,6 @@ struct GraphOperation
     } attr;
 
     virtual ~GraphOperation() = default;
-    virtual void SetZeroPoint(GraphTensorUsage tensor, double zeroPoint) = 0;
 };
 
 /// <summary>
@@ -288,6 +302,7 @@ struct IGraphBuilder
     virtual bool Set(GraphOperation *op, OpAttr attr, const Point2 &value) = 0;
     virtual bool Set(GraphOperation *op, OpAttr attr, const char *value) = 0;
     virtual void SetZeroPoint(GraphOperation *op, GraphTensorUsage tensor, double zeroPoint) = 0;
+    virtual void SetRounding(GraphOperation *op, GraphRoundMode roundMode) = 0;
     virtual void SetAxisOrder(GraphTensor *tensor, AxisOrder order) = 0;
     virtual void SetAxisStrides(GraphTensor *tensor, const GraphShape *axisStrides) = 0;
 };

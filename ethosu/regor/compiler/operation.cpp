@@ -168,11 +168,4 @@ bool Operation::HasScaling() const
     return scaled;
 }
 
-void Operation::SetZeroPoint(GraphApi::GraphTensorUsage graphUsage, double zeroPoint)
-{
-    auto usage = GraphAPIUsageToTensorUsage(graphUsage);
-    auto &connections = (usage & regor::TensorUsage::TypeMask) == regor::TensorUsage::OFM ? _outputs : _inputs;
-    connections.at(usage).quantization.zeroPoints = {int64_t(zeroPoint)};
-}
-
 }  // namespace regor

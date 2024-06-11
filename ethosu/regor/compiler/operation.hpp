@@ -189,9 +189,6 @@ public:
     bool IsDisconnected() const;
     bool HasScaling() const;
 
-    // Inherited via GraphOperation
-    void SetZeroPoint(GraphApi::GraphTensorUsage tensor, double zeroPoint) override;
-
     template<typename TYPE>
     TYPE *Attribute()
     {

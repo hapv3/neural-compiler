@@ -495,6 +495,9 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         kernel.strideYXZ[0] = (*attr.stride())[0];
                         kernel.strideYXZ[1] = (*attr.stride())[1];
                         kernel.strideYXZ[2] = 1;
+                        kernel.dilationYXZ[0] = 1;
+                        kernel.dilationYXZ[1] = 1;
+                        kernel.dilationYXZ[2] = 1;
                     }
                     break;
                     case tosaFb::Op::PAD:
@@ -755,7 +758,7 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                             if ( usage == GraphApi::GraphTensorUsage::IFM )
                             {
                                 const auto &tosa_attr = TosaAttr<tosaFb::Op::AVG_POOL2D>::Get(tosa_operator);
-                                op->SetZeroPoint(usage, double(tosa_attr.input_zp()));
+                                builder->SetZeroPoint(op, usage, double(tosa_attr.input_zp()));
                             }
                             break;
                         case tosaFb::Op::CONV2D:
@@ -766,24 +769,24 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                             if ( usage == GraphApi::GraphTensorUsage::IFM )
                             {
                                 const auto &tosa_attr = TosaAttr<tosaFb::Op::CONV2D>::Get(tosa_operator);
-                                op->SetZeroPoint(usage, double(tosa_attr.input_zp()));
+                                builder->SetZeroPoint(op, usage, double(tosa_attr.input_zp()));
                             }
                             if ( usage == GraphApi::GraphTensorUsage::Weights )
                             {
                                 const auto &tosa_attr = TosaAttr<tosaFb::Op::CONV2D>::Get(tosa_operator);
-                                op->SetZeroPoint(usage, double(tosa_attr.weight_zp()));
+                                builder->SetZeroPoint(op, usage, double(tosa_attr.weight_zp()));
                             }
                             break;
                         case tosaFb::Op::FULLY_CONNECTED:
                             if ( usage == GraphApi::GraphTensorUsage::IFM )
                             {
                                 const auto &tosa_attr = TosaAttr<tosaFb::Op::FULLY_CONNECTED>::Get(tosa_operator);
-                                op->SetZeroPoint(usage, double(tosa_attr.input_zp()));
+                                builder->SetZeroPoint(op, usage, double(tosa_attr.input_zp()));
                             }
                             if ( usage == GraphApi::GraphTensorUsage::Weights )
                             {
                                 const auto &tosa_attr = TosaAttr<tosaFb::Op::FULLY_CONNECTED>::Get(tosa_operator);
-                                op->SetZeroPoint(usage, double(tosa_attr.weight_zp()));
+                                builder->SetZeroPoint(op, usage, double(tosa_attr.weight_zp()));
                                 builder->SetAxisOrder(tensors.at(input_tensors[i]), GraphApi::AxisOrder::OI);
                             }
                             break;
@@ -791,38 +794,38 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                             if ( usage == GraphApi::GraphTensorUsage::IFM0 )
                             {
                                 const auto &tosa_attr = TosaAttr<tosaFb::Op::MATMUL>::Get(tosa_operator);
-                                op->SetZeroPoint(usage, double(tosa_attr.a_zp()));
+                                builder->SetZeroPoint(op, usage, double(tosa_attr.a_zp()));
                             }
                             if ( usage == GraphApi::GraphTensorUsage::IFM1 )
                             {
                                 const auto &tosa_attr = TosaAttr<tosaFb::Op::MATMUL>::Get(tosa_operator);
-                                op->SetZeroPoint(usage, double(tosa_attr.b_zp()));
+                                builder->SetZeroPoint(op, usage, double(tosa_attr.b_zp()));
                             }
                             break;
                         case tosaFb::Op::TRANSPOSE_CONV2D:
                             if ( usage == GraphApi::GraphTensorUsage::IFM )
                             {
                                 const auto &tosa_attr = TosaAttr<tosaFb::Op::TRANSPOSE_CONV2D>::Get(tosa_operator);
-                                op->SetZeroPoint(usage, double(tosa_attr.input_zp()));
+                                builder->SetZeroPoint(op, usage, double(tosa_attr.input_zp()));
                             }
                             if ( usage == GraphApi::GraphTensorUsage::Weights )
                             {
                                 const auto &tosa_attr = TosaAttr<tosaFb::Op::TRANSPOSE_CONV2D>::Get(tosa_operator);
-                                op->SetZeroPoint(usage, double(tosa_attr.weight_zp()));
+                                builder->SetZeroPoint(op, usage, double(tosa_attr.weight_zp()));
                             }
                             break;
                         case tosaFb::Op::NEGATE:
                             if ( usage == GraphApi::GraphTensorUsage::IFM )
                             {
                                 const auto &tosa_attr = TosaAttr<tosaFb::Op::NEGATE>::Get(tosa_operator);
-                                op->SetZeroPoint(usage, double(tosa_attr.input1_zp()));
+                                builder->SetZeroPoint(op, usage, double(tosa_attr.input1_zp()));
                             }
                             break;
                         case tosaFb::Op::RESCALE:
                             if ( usage == GraphApi::GraphTensorUsage::IFM )
                             {
                                 const auto &tosa_attr = TosaAttr<tosaFb::Op::RESCALE>::Get(tosa_operator);
-                                op->SetZeroPoint(usage, double(tosa_attr.input_zp()));
+                                builder->SetZeroPoint(op, usage, double(tosa_attr.input_zp()));
                             }
                             break;
                         default:
@@ -843,21 +846,21 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                             if ( usage == GraphApi::GraphTensorUsage::OFM )
                             {
                                 const auto &tosa_attr = TosaAttr<tosaFb::Op::AVG_POOL2D>::Get(tosa_operator);
-                                op->SetZeroPoint(usage, double(tosa_attr.output_zp()));
+                                builder->SetZeroPoint(op, usage, double(tosa_attr.output_zp()));
                             }
                             break;
                         case tosaFb::Op::NEGATE:
                             if ( usage == GraphApi::GraphTensorUsage::OFM )
                             {
                                 const auto &tosa_attr = TosaAttr<tosaFb::Op::NEGATE>::Get(tosa_operator);
-                                op->SetZeroPoint(usage, double(tosa_attr.output_zp()));
+                                builder->SetZeroPoint(op, usage, double(tosa_attr.output_zp()));
                             }
                             break;
                         case tosaFb::Op::RESCALE:
                             if ( usage == GraphApi::GraphTensorUsage::OFM )
                             {
                                 const auto &tosa_attr = TosaAttr<tosaFb::Op::RESCALE>::Get(tosa_operator);
-                                op->SetZeroPoint(usage, double(tosa_attr.output_zp()));
+                                builder->SetZeroPoint(op, usage, double(tosa_attr.output_zp()));
                             }
                             break;
                         default:
