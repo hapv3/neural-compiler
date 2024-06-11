@@ -379,7 +379,7 @@ int EthosU85RCSGenerator::GetDoubleBufferOffset(HLCWeights *weights, int rangeIn
         int depthIndex = rangeIndex / weights->subStreams;
         if ( depthIndex % 2 == 1 )
         {
-            doubleBufferOffset = weights->maxRangeBytes;
+            doubleBufferOffset = weights->doubleBufferOffset;
         }
     }
     return doubleBufferOffset;

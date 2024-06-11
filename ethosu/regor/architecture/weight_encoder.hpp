@@ -95,6 +95,8 @@ public:
 
     /** Required size in bytes if double buffering is applied */
     int maxRangeBytes = 0;
+    int doubleBufferSize = 0;
+    int doubleBufferOffset = 0;
     int totalWeightBytes = 0;
     int subStreams = 0;
     std::unordered_map<int, WeightRange> encodedRanges;

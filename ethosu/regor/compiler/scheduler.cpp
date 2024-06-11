@@ -939,6 +939,7 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
     // Determine whether the weights need to be double buffered
     int encodedWeightsSize = encodedWeightScales.npuWeightsTensor->AllocationSizeBytes();
     weightBufferSize = std::min(encodedWeightsSize, encodedWeightScales.npuWeightsTensor->maxRangeBytes);
+    int doubleBufferSize = encodedWeightScales.npuWeightsTensor->doubleBufferSize;
 
     // Only buffer weights if there's still space left for the buffer
     if ( weightBufferSize <= bufferLimitBytes )
@@ -947,9 +948,9 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
 
         // Determine whether to double buffer or single buffer
         Buffering buffering = Buffering::Single;
-        if ( (weightBufferSize * 2 <= bufferLimitBytes) && (weightBufferSize < encodedWeightsSize) )
+        if ( (doubleBufferSize <= bufferLimitBytes) && (weightBufferSize < encodedWeightsSize) )
         {
-            weightBufferSize = weightBufferSize * 2;
+            weightBufferSize = doubleBufferSize;
             buffering = Buffering::Double;
         }
 
@@ -1638,7 +1639,7 @@ WeightScaleTensors Scheduler::TryEncodeWeightAndScaleTensor(IWeightEncodingConfi
     // Create tensor to hold encoded output
     auto npuTensor = std::make_shared<NpuWeightTensor>();
     int rangeIndex = 0;
-    int maxSingleBufferLen = 0;
+    int maxBufferLen[2] = {};
     std::vector<uint8_t> encodedStream;
     Shape ohwiShape;
     int channels;
@@ -1754,7 +1755,7 @@ WeightScaleTensors Scheduler::TryEncodeWeightAndScaleTensor(IWeightEncodingConfi
         }
 
         // Remember maximum encoded length for DoubleBuffering
-        maxSingleBufferLen = std::max(maxSingleBufferLen, int(encodedStream.size()) - bufferStartOffset);
+        maxBufferLen[idx % 2] = std::max(maxBufferLen[idx % 2], int(encodedStream.size()) - bufferStartOffset);
     }
 
     // Reduce stored memory usage as much as possible
@@ -1773,7 +1774,9 @@ WeightScaleTensors Scheduler::TryEncodeWeightAndScaleTensor(IWeightEncodingConfi
     encodedTensor->SetBuffer(buf);
 
     npuTensor->srcTensor = encodedTensor;
-    npuTensor->maxRangeBytes = maxSingleBufferLen;
+    npuTensor->maxRangeBytes = std::max(maxBufferLen[0], maxBufferLen[1]);
+    npuTensor->doubleBufferSize = maxBufferLen[0] + maxBufferLen[1];
+    npuTensor->doubleBufferOffset = maxBufferLen[0];
     npuTensor->totalWeightBytes = totalWeightBytes;
     npuTensor->subStreams = subStreams;
     npuTensor->storageShape = encodedTensor->StorageShape();

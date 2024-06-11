@@ -270,7 +270,7 @@ static std::unique_ptr<HLCWeights> MakeWeights(NpuWeightTensor *srcTensor, Buffe
     weights->buffering = buffering;
     // Same function is used for generating scales - scales have no config or weight format, so set to default
     weights->format = srcTensor->config ? srcTensor->config->Format() : Flags(WeightFormat::Default);
-    weights->maxRangeBytes = srcTensor->maxRangeBytes;
+    weights->doubleBufferOffset = srcTensor->doubleBufferOffset;
     weights->subStreams = srcTensor->subStreams;
     weights->encodedRanges = srcTensor->encodedRanges;
     return weights;
@@ -540,7 +540,7 @@ static std::unique_ptr<HLCDMA> GenerateWeightDMA(NpuWeightTensor *weightTens, co
     dma->destAddress = bufConn.tensor->allocatedAddress;
     if ( bufConn.buffering == Buffering::Double && depthIndex % 2 == 1 )
     {
-        dma->destAddress += weightTens->maxRangeBytes;
+        dma->destAddress += weightTens->doubleBufferOffset;
     }
     return dma;
 }

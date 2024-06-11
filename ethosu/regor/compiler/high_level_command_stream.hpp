@@ -97,7 +97,7 @@ struct HLCWeights
     Buffering buffering;
     Flags<WeightFormat> format;
     Address address = -1;
-    int maxRangeBytes;  // When double buffering: size of a single buffer
+    int doubleBufferOffset;  // When double buffering: offset to second buffer
     int subStreams = 1;
     std::unordered_map<int, WeightRange> encodedRanges;
 
