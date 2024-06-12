@@ -165,8 +165,8 @@ template<typename TYPE, bool NO_NAMESPACE>
 static constexpr uint32_t PlatformTypeHash()
 {
     const std::string_view name = PlatformTypeName<TYPE>();
-    auto p = name.begin();
-    auto e = name.end();
+    auto p = name.data();
+    auto e = p + name.length();
     if constexpr ( NO_NAMESPACE )
     {
         while ( *p != ':' )

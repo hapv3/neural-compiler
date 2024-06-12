@@ -545,9 +545,9 @@ public:
         auto *local = Storage() + _last;
         for ( size_t i = 0; i < length; i++ )
         {
-            *buffer++ = TYPE(local[-i]);
+            *buffer++ = TYPE(local[-int(i)]);
         }
-        return length;
+        return int(length);
     }
 
     template<typename TYPE>

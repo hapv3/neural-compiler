@@ -88,7 +88,7 @@ void FastStorageComponentAllocator::AllocateExhaustive(int ix, int score)
         auto entry = _elementAccessLrs->find(lr);
         if ( entry != _elementAccessLrs->end() )
         {
-            lrScore = entry->second;
+            lrScore = int(entry->second);
         }
         UpdateMemUsage(_baseMemUsage, lr, true);
 

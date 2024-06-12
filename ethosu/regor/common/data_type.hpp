@@ -254,7 +254,7 @@ inline constexpr int64_t IntegerMin(DataType type)
     if ( IsSignedInteger(type) )
     {
         int size = DataTypeSizeBits(type);
-        return -(1ULL << (size - 1));
+        return -1 * (1ULL << (size - 1));
     }
     return 0;
 }

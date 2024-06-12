@@ -537,8 +537,8 @@ Operation *TFLiteGraphOptimiser::ConvertToInterpolatingLUT16(Operation *op, std:
     double ofmScale(ofmConn->quantization.scales[0].Dequantize());
     auto zpIn = ifmConn->quantization.zeroPoints[0];
     auto zpOut = ofmConn->quantization.zeroPoints[0];
-    double qMin = IntegerMin(DataType::Int16);
-    double qMax = IntegerMax(DataType::Int16);
+    double qMin = std::numeric_limits<int16_t>::min();
+    double qMax = std::numeric_limits<int16_t>::max();
     double inputMin = ifmScale * (qMin - zpIn);
     double inputMax = ifmScale * (qMax - zpIn);
     double outputMin = ofmScale * (qMin - zpOut);
