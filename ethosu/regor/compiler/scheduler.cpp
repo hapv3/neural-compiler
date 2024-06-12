@@ -634,7 +634,7 @@ bool Scheduler::AllocateAddresses(Schedule *schedule)
         const auto limit = _options.optimizationStagingLimit;
         AllocateTensors(_ops, schedule, _arch->StagingMemory(), TensorAllocator::HillClimb, AlignmentQuantum, verbose, limit);
 
-        return schedule->memoryUsage[_arch->StagingMemory()] < limit;
+        return schedule->memoryUsage[_arch->StagingMemory()] <= limit;
     }
     return true;
 }
