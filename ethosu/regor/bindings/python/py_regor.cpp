@@ -270,7 +270,7 @@ public:
             for ( const auto &acc : access )
             {
                 std::string name = acc.memoryName;
-                pyPerf.memories[name].accesses[name] = {acc.accessType, acc.bytesRead, acc.bytesWritten, acc.accessCycles};
+                pyPerf.memories[name].accesses[acc.accessType] = {acc.accessType, acc.bytesRead, acc.bytesWritten, acc.accessCycles};
             }
         }
         return pyPerf;
