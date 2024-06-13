@@ -2,9 +2,10 @@
 //
 // To reproduce:
 //   flatc version 23.5.26
-//   schema.fbs v0.60.0
+//   schema.fbs v0.80.0 (2f3f1225db5280209cc42b8564b64c97)
 //   sed -i 's/namespace tosa/namespace tosaFb/g' schema.fbs
 //   flatc --cpp --scoped-enums --reflect-names schema.fbs
+//   clang-format -i tosa_generated.h
 
 
 #ifndef FLATBUFFERS_GENERATED_TOSA_TOSAFB_H_
@@ -174,27 +175,28 @@ enum class DType : uint32_t
     UINT16 = 9,
     FP16 = 10,
     BF16 = 11,
+    SHAPE = 12,
     MIN = UNKNOWN,
-    MAX = BF16
+    MAX = SHAPE
 };
 
-inline const DType (&EnumValuesDType())[12]
+inline const DType (&EnumValuesDType())[13]
 {
     static const DType values[] = {DType::UNKNOWN, DType::BOOL, DType::UINT8, DType::INT4, DType::INT8, DType::INT16,
-        DType::INT32, DType::INT48, DType::FP32, DType::UINT16, DType::FP16, DType::BF16};
+        DType::INT32, DType::INT48, DType::FP32, DType::UINT16, DType::FP16, DType::BF16, DType::SHAPE};
     return values;
 }
 
 inline const char *const *EnumNamesDType()
 {
-    static const char *const names[13] = {"UNKNOWN", "BOOL", "UINT8", "INT4", "INT8", "INT16", "INT32", "INT48", "FP32",
-        "UINT16", "FP16", "BF16", nullptr};
+    static const char *const names[14] = {"UNKNOWN", "BOOL", "UINT8", "INT4", "INT8", "INT16", "INT32", "INT48", "FP32",
+        "UINT16", "FP16", "BF16", "SHAPE", nullptr};
     return names;
 }
 
 inline const char *EnumNameDType(DType e)
 {
-    if ( ::flatbuffers::IsOutRange(e, DType::UNKNOWN, DType::BF16) ) return "";
+    if ( ::flatbuffers::IsOutRange(e, DType::UNKNOWN, DType::SHAPE) ) return "";
     const size_t index = static_cast<size_t>(e);
     return EnumNamesDType()[index];
 }
@@ -300,40 +302,42 @@ enum class Op : uint32_t
     WHILE_LOOP = 68,
     FFT2D = 69,
     RFFT2D = 70,
+    ERF = 71,
+    DIM = 72,
     MIN = UNKNOWN,
-    MAX = RFFT2D
+    MAX = DIM
 };
 
-inline const Op (&EnumValuesOp())[71]
+inline const Op (&EnumValuesOp())[73]
 {
     static const Op values[] = {Op::UNKNOWN, Op::ARGMAX, Op::AVG_POOL2D, Op::CONV2D, Op::CONV3D, Op::DEPTHWISE_CONV2D,
         Op::FULLY_CONNECTED, Op::MATMUL, Op::MAX_POOL2D, Op::TRANSPOSE_CONV2D, Op::CLAMP, Op::RESERVED, Op::SIGMOID, Op::TANH,
         Op::ADD, Op::ARITHMETIC_RIGHT_SHIFT, Op::BITWISE_AND, Op::BITWISE_OR, Op::BITWISE_XOR, Op::INTDIV, Op::LOGICAL_AND,
-        Op::LOGICAL_LEFT_SHIFT, Op::LOGICAL_RIGHT_SHIFT, Op::LOGICAL_OR, Op::LOGICAL_XOR, Op::MAXIMUM, Op::MINIMUM,
-        Op::MUL, Op::POW, Op::SUB, Op::TABLE, Op::ABS, Op::BITWISE_NOT, Op::CEIL, Op::CLZ, Op::EXP, Op::FLOOR, Op::LOG,
-        Op::LOGICAL_NOT, Op::NEGATE, Op::RECIPROCAL, Op::RSQRT, Op::SELECT, Op::EQUAL, Op::GREATER, Op::GREATER_EQUAL,
-        Op::REDUCE_ANY, Op::REDUCE_ALL, Op::REDUCE_MAX, Op::REDUCE_MIN, Op::REDUCE_PRODUCT, Op::REDUCE_SUM, Op::CONCAT,
-        Op::PAD, Op::RESHAPE, Op::REVERSE, Op::SLICE, Op::TILE, Op::TRANSPOSE, Op::GATHER, Op::SCATTER, Op::RESIZE,
-        Op::CAST, Op::RESCALE, Op::CONST, Op::IDENTITY, Op::CUSTOM, Op::COND_IF, Op::WHILE_LOOP, Op::FFT2D, Op::RFFT2D};
+        Op::LOGICAL_LEFT_SHIFT, Op::LOGICAL_RIGHT_SHIFT, Op::LOGICAL_OR, Op::LOGICAL_XOR, Op::MAXIMUM, Op::MINIMUM, Op::MUL,
+        Op::POW, Op::SUB, Op::TABLE, Op::ABS, Op::BITWISE_NOT, Op::CEIL, Op::CLZ, Op::EXP, Op::FLOOR, Op::LOG, Op::LOGICAL_NOT,
+        Op::NEGATE, Op::RECIPROCAL, Op::RSQRT, Op::SELECT, Op::EQUAL, Op::GREATER, Op::GREATER_EQUAL, Op::REDUCE_ANY,
+        Op::REDUCE_ALL, Op::REDUCE_MAX, Op::REDUCE_MIN, Op::REDUCE_PRODUCT, Op::REDUCE_SUM, Op::CONCAT, Op::PAD, Op::RESHAPE,
+        Op::REVERSE, Op::SLICE, Op::TILE, Op::TRANSPOSE, Op::GATHER, Op::SCATTER, Op::RESIZE, Op::CAST, Op::RESCALE,
+        Op::CONST, Op::IDENTITY, Op::CUSTOM, Op::COND_IF, Op::WHILE_LOOP, Op::FFT2D, Op::RFFT2D, Op::ERF, Op::DIM};
     return values;
 }
 
 inline const char *const *EnumNamesOp()
 {
-    static const char *const names[72] = {"UNKNOWN", "ARGMAX", "AVG_POOL2D", "CONV2D", "CONV3D", "DEPTHWISE_CONV2D",
+    static const char *const names[74] = {"UNKNOWN", "ARGMAX", "AVG_POOL2D", "CONV2D", "CONV3D", "DEPTHWISE_CONV2D",
         "FULLY_CONNECTED", "MATMUL", "MAX_POOL2D", "TRANSPOSE_CONV2D", "CLAMP", "RESERVED", "SIGMOID", "TANH", "ADD",
         "ARITHMETIC_RIGHT_SHIFT", "BITWISE_AND", "BITWISE_OR", "BITWISE_XOR", "INTDIV", "LOGICAL_AND", "LOGICAL_LEFT_SHIFT",
         "LOGICAL_RIGHT_SHIFT", "LOGICAL_OR", "LOGICAL_XOR", "MAXIMUM", "MINIMUM", "MUL", "POW", "SUB", "TABLE", "ABS",
         "BITWISE_NOT", "CEIL", "CLZ", "EXP", "FLOOR", "LOG", "LOGICAL_NOT", "NEGATE", "RECIPROCAL", "RSQRT", "SELECT",
         "EQUAL", "GREATER", "GREATER_EQUAL", "REDUCE_ANY", "REDUCE_ALL", "REDUCE_MAX", "REDUCE_MIN", "REDUCE_PRODUCT",
-        "REDUCE_SUM", "CONCAT", "PAD", "RESHAPE", "REVERSE", "SLICE", "TILE", "TRANSPOSE", "GATHER", "SCATTER",
-        "RESIZE", "CAST", "RESCALE", "CONST", "IDENTITY", "CUSTOM", "COND_IF", "WHILE_LOOP", "FFT2D", "RFFT2D", nullptr};
+        "REDUCE_SUM", "CONCAT", "PAD", "RESHAPE", "REVERSE", "SLICE", "TILE", "TRANSPOSE", "GATHER", "SCATTER", "RESIZE",
+        "CAST", "RESCALE", "CONST", "IDENTITY", "CUSTOM", "COND_IF", "WHILE_LOOP", "FFT2D", "RFFT2D", "ERF", "DIM", nullptr};
     return names;
 }
 
 inline const char *EnumNameOp(Op e)
 {
-    if ( ::flatbuffers::IsOutRange(e, Op::UNKNOWN, Op::RFFT2D) ) return "";
+    if ( ::flatbuffers::IsOutRange(e, Op::UNKNOWN, Op::DIM) ) return "";
     const size_t index = static_cast<size_t>(e);
     return EnumNamesOp()[index];
 }
@@ -1268,7 +1272,9 @@ struct RescaleAttribute FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table
         VT_SHIFT = 10,
         VT_SCALE32 = 12,
         VT_DOUBLE_ROUND = 14,
-        VT_PER_CHANNEL = 16
+        VT_PER_CHANNEL = 16,
+        VT_INPUT_UNSIGNED = 18,
+        VT_OUTPUT_UNSIGNED = 20
     };
     int32_t input_zp() const { return GetField<int32_t>(VT_INPUT_ZP, 0); }
     int32_t output_zp() const { return GetField<int32_t>(VT_OUTPUT_ZP, 0); }
@@ -1283,13 +1289,16 @@ struct RescaleAttribute FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table
     bool scale32() const { return GetField<uint8_t>(VT_SCALE32, 0) != 0; }
     bool double_round() const { return GetField<uint8_t>(VT_DOUBLE_ROUND, 0) != 0; }
     bool per_channel() const { return GetField<uint8_t>(VT_PER_CHANNEL, 0) != 0; }
+    bool input_unsigned() const { return GetField<uint8_t>(VT_INPUT_UNSIGNED, 0) != 0; }
+    bool output_unsigned() const { return GetField<uint8_t>(VT_OUTPUT_UNSIGNED, 0) != 0; }
     bool Verify(::flatbuffers::Verifier &verifier) const
     {
         return VerifyTableStart(verifier) && VerifyField<int32_t>(verifier, VT_INPUT_ZP, 4) &&
                VerifyField<int32_t>(verifier, VT_OUTPUT_ZP, 4) && VerifyOffset(verifier, VT_MULTIPLIER) &&
                verifier.VerifyVector(multiplier()) && VerifyOffset(verifier, VT_SHIFT) && verifier.VerifyVector(shift()) &&
                VerifyField<uint8_t>(verifier, VT_SCALE32, 1) && VerifyField<uint8_t>(verifier, VT_DOUBLE_ROUND, 1) &&
-               VerifyField<uint8_t>(verifier, VT_PER_CHANNEL, 1) && verifier.EndTable();
+               VerifyField<uint8_t>(verifier, VT_PER_CHANNEL, 1) && VerifyField<uint8_t>(verifier, VT_INPUT_UNSIGNED, 1) &&
+               VerifyField<uint8_t>(verifier, VT_OUTPUT_UNSIGNED, 1) && verifier.EndTable();
     }
 };
 
@@ -1320,6 +1329,14 @@ struct RescaleAttributeBuilder
     {
         fbb_.AddElement<uint8_t>(RescaleAttribute::VT_PER_CHANNEL, static_cast<uint8_t>(per_channel), 0);
     }
+    void add_input_unsigned(bool input_unsigned)
+    {
+        fbb_.AddElement<uint8_t>(RescaleAttribute::VT_INPUT_UNSIGNED, static_cast<uint8_t>(input_unsigned), 0);
+    }
+    void add_output_unsigned(bool output_unsigned)
+    {
+        fbb_.AddElement<uint8_t>(RescaleAttribute::VT_OUTPUT_UNSIGNED, static_cast<uint8_t>(output_unsigned), 0);
+    }
     explicit RescaleAttributeBuilder(::flatbuffers::FlatBufferBuilder &_fbb) : fbb_(_fbb)
     {
         start_ = fbb_.StartTable();
@@ -1334,26 +1351,31 @@ struct RescaleAttributeBuilder
 
 inline ::flatbuffers::Offset<RescaleAttribute> CreateRescaleAttribute(::flatbuffers::FlatBufferBuilder &_fbb,
     int32_t input_zp = 0, int32_t output_zp = 0, ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> multiplier = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> shift = 0, bool scale32 = false, bool double_round = false, bool per_channel = false)
+    ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> shift = 0, bool scale32 = false, bool double_round = false,
+    bool per_channel = false, bool input_unsigned = false, bool output_unsigned = false)
 {
     RescaleAttributeBuilder builder_(_fbb);
     builder_.add_shift(shift);
     builder_.add_multiplier(multiplier);
     builder_.add_output_zp(output_zp);
     builder_.add_input_zp(input_zp);
+    builder_.add_output_unsigned(output_unsigned);
+    builder_.add_input_unsigned(input_unsigned);
     builder_.add_per_channel(per_channel);
     builder_.add_double_round(double_round);
     builder_.add_scale32(scale32);
     return builder_.Finish();
 }
 
-inline ::flatbuffers::Offset<RescaleAttribute> CreateRescaleAttributeDirect(::flatbuffers::FlatBufferBuilder &_fbb,
-    int32_t input_zp = 0, int32_t output_zp = 0, const std::vector<int32_t> *multiplier = nullptr,
-    const std::vector<int32_t> *shift = nullptr, bool scale32 = false, bool double_round = false, bool per_channel = false)
+inline ::flatbuffers::Offset<RescaleAttribute>
+CreateRescaleAttributeDirect(::flatbuffers::FlatBufferBuilder &_fbb, int32_t input_zp = 0, int32_t output_zp = 0,
+    const std::vector<int32_t> *multiplier = nullptr, const std::vector<int32_t> *shift = nullptr, bool scale32 = false,
+    bool double_round = false, bool per_channel = false, bool input_unsigned = false, bool output_unsigned = false)
 {
     auto multiplier__ = multiplier ? _fbb.CreateVector<int32_t>(*multiplier) : 0;
     auto shift__ = shift ? _fbb.CreateVector<int32_t>(*shift) : 0;
-    return tosaFb::CreateRescaleAttribute(_fbb, input_zp, output_zp, multiplier__, shift__, scale32, double_round, per_channel);
+    return tosaFb::CreateRescaleAttribute(_fbb, input_zp, output_zp, multiplier__, shift__, scale32, double_round,
+        per_channel, input_unsigned, output_unsigned);
 }
 
 struct MulAttribute FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table
@@ -1929,10 +1951,10 @@ struct Version FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table
         VT__PATCH = 8,
         VT__DRAFT = 10
     };
-    int32_t _major() const { return GetField<int32_t>(VT__MAJOR, 0); }
-    int32_t _minor() const { return GetField<int32_t>(VT__MINOR, 60); }
-    int32_t _patch() const { return GetField<int32_t>(VT__PATCH, 0); }
-    bool _draft() const { return GetField<uint8_t>(VT__DRAFT, 0) != 0; }
+    int32_t _major() const { return GetField<int32_t>(VT__MAJOR, -1); }
+    int32_t _minor() const { return GetField<int32_t>(VT__MINOR, -1); }
+    int32_t _patch() const { return GetField<int32_t>(VT__PATCH, -1); }
+    bool _draft() const { return GetField<uint8_t>(VT__DRAFT, 1) != 0; }
     bool Verify(::flatbuffers::Verifier &verifier) const
     {
         return VerifyTableStart(verifier) && VerifyField<int32_t>(verifier, VT__MAJOR, 4) && VerifyField<int32_t>(verifier, VT__MINOR, 4) &&
@@ -1945,10 +1967,10 @@ struct VersionBuilder
     typedef Version Table;
     ::flatbuffers::FlatBufferBuilder &fbb_;
     ::flatbuffers::uoffset_t start_;
-    void add__major(int32_t _major) { fbb_.AddElement<int32_t>(Version::VT__MAJOR, _major, 0); }
-    void add__minor(int32_t _minor) { fbb_.AddElement<int32_t>(Version::VT__MINOR, _minor, 60); }
-    void add__patch(int32_t _patch) { fbb_.AddElement<int32_t>(Version::VT__PATCH, _patch, 0); }
-    void add__draft(bool _draft) { fbb_.AddElement<uint8_t>(Version::VT__DRAFT, static_cast<uint8_t>(_draft), 0); }
+    void add__major(int32_t _major) { fbb_.AddElement<int32_t>(Version::VT__MAJOR, _major, -1); }
+    void add__minor(int32_t _minor) { fbb_.AddElement<int32_t>(Version::VT__MINOR, _minor, -1); }
+    void add__patch(int32_t _patch) { fbb_.AddElement<int32_t>(Version::VT__PATCH, _patch, -1); }
+    void add__draft(bool _draft) { fbb_.AddElement<uint8_t>(Version::VT__DRAFT, static_cast<uint8_t>(_draft), 1); }
     explicit VersionBuilder(::flatbuffers::FlatBufferBuilder &_fbb) : fbb_(_fbb) { start_ = fbb_.StartTable(); }
     ::flatbuffers::Offset<Version> Finish()
     {
@@ -1958,8 +1980,8 @@ struct VersionBuilder
     }
 };
 
-inline ::flatbuffers::Offset<Version> CreateVersion(::flatbuffers::FlatBufferBuilder &_fbb, int32_t _major = 0,
-    int32_t _minor = 60, int32_t _patch = 0, bool _draft = false)
+inline ::flatbuffers::Offset<Version> CreateVersion(::flatbuffers::FlatBufferBuilder &_fbb, int32_t _major = -1,
+    int32_t _minor = -1, int32_t _patch = -1, bool _draft = true)
 {
     VersionBuilder builder_(_fbb);
     builder_.add__patch(_patch);
@@ -1978,7 +2000,9 @@ struct TosaTensor FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table
         VT_NAME = 4,
         VT_SHAPE = 6,
         VT_TYPE = 8,
-        VT_DATA = 10
+        VT_DATA = 10,
+        VT_VARIABLE = 12,
+        VT_IS_UNRANKED = 14
     };
     const ::flatbuffers::String *name() const { return GetPointer<const ::flatbuffers::String *>(VT_NAME); }
     const ::flatbuffers::Vector<int32_t> *shape() const
@@ -1990,11 +2014,14 @@ struct TosaTensor FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table
     {
         return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_DATA);
     }
+    bool variable() const { return GetField<uint8_t>(VT_VARIABLE, 0) != 0; }
+    bool is_unranked() const { return GetField<uint8_t>(VT_IS_UNRANKED, 0) != 0; }
     bool Verify(::flatbuffers::Verifier &verifier) const
     {
         return VerifyTableStart(verifier) && VerifyOffset(verifier, VT_NAME) && verifier.VerifyString(name()) &&
                VerifyOffset(verifier, VT_SHAPE) && verifier.VerifyVector(shape()) && VerifyField<uint32_t>(verifier, VT_TYPE, 4) &&
-               VerifyOffset(verifier, VT_DATA) && verifier.VerifyVector(data()) && verifier.EndTable();
+               VerifyOffset(verifier, VT_DATA) && verifier.VerifyVector(data()) && VerifyField<uint8_t>(verifier, VT_VARIABLE, 1) &&
+               VerifyField<uint8_t>(verifier, VT_IS_UNRANKED, 1) && verifier.EndTable();
     }
 };
 
@@ -2016,6 +2043,14 @@ struct TosaTensorBuilder
     {
         fbb_.AddOffset(TosaTensor::VT_DATA, data);
     }
+    void add_variable(bool variable)
+    {
+        fbb_.AddElement<uint8_t>(TosaTensor::VT_VARIABLE, static_cast<uint8_t>(variable), 0);
+    }
+    void add_is_unranked(bool is_unranked)
+    {
+        fbb_.AddElement<uint8_t>(TosaTensor::VT_IS_UNRANKED, static_cast<uint8_t>(is_unranked), 0);
+    }
     explicit TosaTensorBuilder(::flatbuffers::FlatBufferBuilder &_fbb) : fbb_(_fbb) { start_ = fbb_.StartTable(); }
     ::flatbuffers::Offset<TosaTensor> Finish()
     {
@@ -2025,20 +2060,24 @@ struct TosaTensorBuilder
     }
 };
 
-inline ::flatbuffers::Offset<TosaTensor> CreateTosaTensor(::flatbuffers::FlatBufferBuilder &_fbb,
-    ::flatbuffers::Offset<::flatbuffers::String> name = 0, ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> shape = 0,
-    tosaFb::DType type = tosaFb::DType::UNKNOWN, ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> data = 0)
+inline ::flatbuffers::Offset<TosaTensor>
+CreateTosaTensor(::flatbuffers::FlatBufferBuilder &_fbb, ::flatbuffers::Offset<::flatbuffers::String> name = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> shape = 0, tosaFb::DType type = tosaFb::DType::UNKNOWN,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> data = 0, bool variable = false, bool is_unranked = false)
 {
     TosaTensorBuilder builder_(_fbb);
     builder_.add_data(data);
     builder_.add_type(type);
     builder_.add_shape(shape);
     builder_.add_name(name);
+    builder_.add_is_unranked(is_unranked);
+    builder_.add_variable(variable);
     return builder_.Finish();
 }
 
-inline ::flatbuffers::Offset<TosaTensor> CreateTosaTensorDirect(::flatbuffers::FlatBufferBuilder &_fbb, const char *name = nullptr,
-    const std::vector<int32_t> *shape = nullptr, tosaFb::DType type = tosaFb::DType::UNKNOWN, const std::vector<uint8_t> *data = nullptr)
+inline ::flatbuffers::Offset<TosaTensor> CreateTosaTensorDirect(::flatbuffers::FlatBufferBuilder &_fbb,
+    const char *name = nullptr, const std::vector<int32_t> *shape = nullptr, tosaFb::DType type = tosaFb::DType::UNKNOWN,
+    const std::vector<uint8_t> *data = nullptr, bool variable = false, bool is_unranked = false)
 {
     auto name__ = name ? _fbb.CreateString(name) : 0;
     auto shape__ = shape ? _fbb.CreateVector<int32_t>(*shape) : 0;
@@ -2047,7 +2086,7 @@ inline ::flatbuffers::Offset<TosaTensor> CreateTosaTensorDirect(::flatbuffers::F
         _fbb.ForceVectorAlignment(data->size(), sizeof(uint8_t), 8);
     }
     auto data__ = data ? _fbb.CreateVector<uint8_t>(*data) : 0;
-    return tosaFb::CreateTosaTensor(_fbb, name__, shape__, type, data__);
+    return tosaFb::CreateTosaTensor(_fbb, name__, shape__, type, data__, variable, is_unranked);
 }
 
 struct TosaOperator FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table
@@ -2534,7 +2573,8 @@ struct TosaGraph FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table
     }
     bool Verify(::flatbuffers::Verifier &verifier) const
     {
-        return VerifyTableStart(verifier) && VerifyOffset(verifier, VT_VERSION) && verifier.VerifyTable(version()) && VerifyOffset(verifier, VT_REGIONS) &&
+        return VerifyTableStart(verifier) && VerifyOffsetRequired(verifier, VT_VERSION) &&
+               verifier.VerifyTable(version()) && VerifyOffset(verifier, VT_REGIONS) &&
                verifier.VerifyVector(regions()) && verifier.VerifyVectorOfTables(regions()) && verifier.EndTable();
     }
 };
@@ -2554,6 +2594,7 @@ struct TosaGraphBuilder
     {
         const auto end = fbb_.EndTable(start_);
         auto o = ::flatbuffers::Offset<TosaGraph>(end);
+        fbb_.Required(o, TosaGraph::VT_VERSION);
         return o;
     }
 };
@@ -2717,12 +2758,13 @@ inline const ::flatbuffers::TypeTable *DTypeTypeTable()
 {
     static const ::flatbuffers::TypeCode type_codes[] = {{::flatbuffers::ET_UINT, 0, 0}, {::flatbuffers::ET_UINT, 0, 0},
         {::flatbuffers::ET_UINT, 0, 0}, {::flatbuffers::ET_UINT, 0, 0}, {::flatbuffers::ET_UINT, 0, 0},
-        {::flatbuffers::ET_UINT, 0, 0}, {::flatbuffers::ET_UINT, 0, 0}, {::flatbuffers::ET_UINT, 0, 0}, {::flatbuffers::ET_UINT, 0, 0},
-        {::flatbuffers::ET_UINT, 0, 0}, {::flatbuffers::ET_UINT, 0, 0}, {::flatbuffers::ET_UINT, 0, 0}};
+        {::flatbuffers::ET_UINT, 0, 0}, {::flatbuffers::ET_UINT, 0, 0}, {::flatbuffers::ET_UINT, 0, 0},
+        {::flatbuffers::ET_UINT, 0, 0}, {::flatbuffers::ET_UINT, 0, 0}, {::flatbuffers::ET_UINT, 0, 0},
+        {::flatbuffers::ET_UINT, 0, 0}, {::flatbuffers::ET_UINT, 0, 0}};
     static const ::flatbuffers::TypeFunction type_refs[] = {tosaFb::DTypeTypeTable};
-    static const char *const names[] = {
-        "UNKNOWN", "BOOL", "UINT8", "INT4", "INT8", "INT16", "INT32", "INT48", "FP32", "UINT16", "FP16", "BF16"};
-    static const ::flatbuffers::TypeTable tt = {::flatbuffers::ST_ENUM, 12, type_codes, type_refs, nullptr, nullptr, names};
+    static const char *const names[] = {"UNKNOWN", "BOOL", "UINT8", "INT4", "INT8", "INT16", "INT32", "INT48", "FP32",
+        "UINT16", "FP16", "BF16", "SHAPE"};
+    static const ::flatbuffers::TypeTable tt = {::flatbuffers::ST_ENUM, 13, type_codes, type_refs, nullptr, nullptr, names};
     return &tt;
 }
 
@@ -2761,7 +2803,8 @@ inline const ::flatbuffers::TypeTable *OpTypeTable()
         {::flatbuffers::ET_UINT, 0, 0}, {::flatbuffers::ET_UINT, 0, 0}, {::flatbuffers::ET_UINT, 0, 0},
         {::flatbuffers::ET_UINT, 0, 0}, {::flatbuffers::ET_UINT, 0, 0}, {::flatbuffers::ET_UINT, 0, 0},
         {::flatbuffers::ET_UINT, 0, 0}, {::flatbuffers::ET_UINT, 0, 0}, {::flatbuffers::ET_UINT, 0, 0},
-        {::flatbuffers::ET_UINT, 0, 0}, {::flatbuffers::ET_UINT, 0, 0}, {::flatbuffers::ET_UINT, 0, 0}};
+        {::flatbuffers::ET_UINT, 0, 0}, {::flatbuffers::ET_UINT, 0, 0}, {::flatbuffers::ET_UINT, 0, 0},
+        {::flatbuffers::ET_UINT, 0, 0}, {::flatbuffers::ET_UINT, 0, 0}};
     static const ::flatbuffers::TypeFunction type_refs[] = {tosaFb::OpTypeTable};
     static const char *const names[] = {"UNKNOWN", "ARGMAX", "AVG_POOL2D", "CONV2D", "CONV3D", "DEPTHWISE_CONV2D",
         "FULLY_CONNECTED", "MATMUL", "MAX_POOL2D", "TRANSPOSE_CONV2D", "CLAMP", "RESERVED", "SIGMOID", "TANH", "ADD",
@@ -2769,9 +2812,9 @@ inline const ::flatbuffers::TypeTable *OpTypeTable()
         "LOGICAL_RIGHT_SHIFT", "LOGICAL_OR", "LOGICAL_XOR", "MAXIMUM", "MINIMUM", "MUL", "POW", "SUB", "TABLE", "ABS",
         "BITWISE_NOT", "CEIL", "CLZ", "EXP", "FLOOR", "LOG", "LOGICAL_NOT", "NEGATE", "RECIPROCAL", "RSQRT", "SELECT",
         "EQUAL", "GREATER", "GREATER_EQUAL", "REDUCE_ANY", "REDUCE_ALL", "REDUCE_MAX", "REDUCE_MIN", "REDUCE_PRODUCT",
-        "REDUCE_SUM", "CONCAT", "PAD", "RESHAPE", "REVERSE", "SLICE", "TILE", "TRANSPOSE", "GATHER", "SCATTER",
-        "RESIZE", "CAST", "RESCALE", "CONST", "IDENTITY", "CUSTOM", "COND_IF", "WHILE_LOOP", "FFT2D", "RFFT2D"};
-    static const ::flatbuffers::TypeTable tt = {::flatbuffers::ST_ENUM, 71, type_codes, type_refs, nullptr, nullptr, names};
+        "REDUCE_SUM", "CONCAT", "PAD", "RESHAPE", "REVERSE", "SLICE", "TILE", "TRANSPOSE", "GATHER", "SCATTER", "RESIZE",
+        "CAST", "RESCALE", "CONST", "IDENTITY", "CUSTOM", "COND_IF", "WHILE_LOOP", "FFT2D", "RFFT2D", "ERF", "DIM"};
+    static const ::flatbuffers::TypeTable tt = {::flatbuffers::ST_ENUM, 73, type_codes, type_refs, nullptr, nullptr, names};
     return &tt;
 }
 
@@ -2891,10 +2934,11 @@ inline const ::flatbuffers::TypeTable *ClampAttributeTypeTable()
 inline const ::flatbuffers::TypeTable *RescaleAttributeTypeTable()
 {
     static const ::flatbuffers::TypeCode type_codes[] = {{::flatbuffers::ET_INT, 0, -1}, {::flatbuffers::ET_INT, 0, -1},
-        {::flatbuffers::ET_INT, 1, -1}, {::flatbuffers::ET_INT, 1, -1}, {::flatbuffers::ET_BOOL, 0, -1},
-        {::flatbuffers::ET_BOOL, 0, -1}, {::flatbuffers::ET_BOOL, 0, -1}};
-    static const char *const names[] = {"input_zp", "output_zp", "multiplier", "shift", "scale32", "double_round", "per_channel"};
-    static const ::flatbuffers::TypeTable tt = {::flatbuffers::ST_TABLE, 7, type_codes, nullptr, nullptr, nullptr, names};
+        {::flatbuffers::ET_INT, 1, -1}, {::flatbuffers::ET_INT, 1, -1}, {::flatbuffers::ET_BOOL, 0, -1}, {::flatbuffers::ET_BOOL, 0, -1},
+        {::flatbuffers::ET_BOOL, 0, -1}, {::flatbuffers::ET_BOOL, 0, -1}, {::flatbuffers::ET_BOOL, 0, -1}};
+    static const char *const names[] = {"input_zp", "output_zp", "multiplier", "shift", "scale32", "double_round",
+        "per_channel", "input_unsigned", "output_unsigned"};
+    static const ::flatbuffers::TypeTable tt = {::flatbuffers::ST_TABLE, 9, type_codes, nullptr, nullptr, nullptr, names};
     return &tt;
 }
 
@@ -2999,10 +3043,11 @@ inline const ::flatbuffers::TypeTable *VersionTypeTable()
 inline const ::flatbuffers::TypeTable *TosaTensorTypeTable()
 {
     static const ::flatbuffers::TypeCode type_codes[] = {{::flatbuffers::ET_STRING, 0, -1},
-        {::flatbuffers::ET_INT, 1, -1}, {::flatbuffers::ET_UINT, 0, 0}, {::flatbuffers::ET_UCHAR, 1, -1}};
+        {::flatbuffers::ET_INT, 1, -1}, {::flatbuffers::ET_UINT, 0, 0}, {::flatbuffers::ET_UCHAR, 1, -1},
+        {::flatbuffers::ET_BOOL, 0, -1}, {::flatbuffers::ET_BOOL, 0, -1}};
     static const ::flatbuffers::TypeFunction type_refs[] = {tosaFb::DTypeTypeTable};
-    static const char *const names[] = {"name", "shape", "type", "data"};
-    static const ::flatbuffers::TypeTable tt = {::flatbuffers::ST_TABLE, 4, type_codes, type_refs, nullptr, nullptr, names};
+    static const char *const names[] = {"name", "shape", "type", "data", "variable", "is_unranked"};
+    static const ::flatbuffers::TypeTable tt = {::flatbuffers::ST_TABLE, 6, type_codes, type_refs, nullptr, nullptr, names};
     return &tt;
 }
 
