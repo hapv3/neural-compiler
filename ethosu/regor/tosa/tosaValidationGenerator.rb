@@ -1,4 +1,4 @@
-#!ruby
+#!/usr/bin/env ruby
 #
 # SPDX-FileCopyrightText: Copyright 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
