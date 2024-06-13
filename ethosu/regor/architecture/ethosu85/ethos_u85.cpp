@@ -535,141 +535,84 @@ static int GranularScale(int range, int granule, double ratio)
     return granules * granule;
 }
 
-static Shape FitVolumeByAspect(
-    const Shape &shape, int fitVolume, const Shape &granule, const Shape &limit, const std::array<int, 3> &priority)
+static int GranularTile(int range, int granule, int tile)
 {
-    LOG_TRACE2("FitVolumeByAspect: {} into {} granule {}, limit {}\n", shape.ToString(), fitVolume, granule.ToString(),
-        limit.ToString());
-    LOG_INDENT(Logging::Out);
-    assert(shape.Size() >= 3);
-    assert(priority[0] + priority[1] + priority[2] == -6);  // Simple axis presence check
+    assert(range >= 0 && granule > 0 && tile > 0);
+    assert((tile % granule) == 0 && "tile must be multiple of granule");
 
-    // Extract axes by their priority
-    int primary = shape[priority[0]];
-    int secondary = shape[priority[1]];
-    int tertiary = shape[priority[2]];
-    int pgranule = granule[priority[0]];
-    int sgranule = granule[priority[1]];
-    int tgranule = granule[priority[2]];
-    int plimit = limit[priority[0]];
-    int slimit = limit[priority[1]];
-    int tlimit = limit[priority[2]];
+    int tiles = range / tile;
+    if ( range % tile == 0 ) return tile;
 
-    // Fit a roughly aspect-correct 'shape' into 'fitVolume'
-    int sval, tval;
-    int pval = std::clamp(primary, 1, plimit);
-    pval = RoundAway(pval, pgranule);
+    return std::max(RoundAway(range / (tiles + 1), granule), granule);
+}
 
-    // Planar area (depends on chosen axes)
-    int area = std::max(fitVolume / pval, 1);
-    assert(secondary > 0);
-    double aspect = double(tertiary) / secondary;
-
-    // Casting to int rounds down, making tval the smallest axis
-    tval = int(std::sqrt(area * aspect));
-    tval = std::clamp(tval, 1, tlimit);
-
-    // Divide before rounding tval to push sval upwards
-    sval = area / tval;
-    sval = std::clamp(sval, 1, slimit);
-
-    // Round to granule
-    sval = RoundAway(sval, sgranule);
-    tval = RoundAway(tval, tgranule);
-
-    Shape result(1, 1, 1);
-    result[priority[0]] = pval;
-    result[priority[1]] = sval;
-    result[priority[2]] = tval;
-
-    LOG_TRACE2("Pre-fitted shape: {}\n", result.ToString());
-
-    // The result MUST NOT exceed the requested volume
-    // TODO: Crude loop - WORKS but needs improvement
-    int elements = pval * sval * tval;
-    while ( elements > fitVolume )
+static int Reapportion(int value, int maxLimit, int required, int &avail, int minAvail)
+{
+    assert(required > 0 && minAvail > 0 && value > 0);
+    int excess = std::min(std::min(avail / required, avail / minAvail), maxLimit / value);
+    if ( excess >= 2 )
     {
-        double ratio = double(fitVolume) / elements;
-        if ( tval > tgranule )
-        {
-            tval = GranularScale(tval, tgranule, ratio);
-        }
-        else if ( sval > sgranule )
-        {
-            sval = GranularScale(sval, sgranule, ratio);
-        }
-        else if ( pval > pgranule )
-        {
-            pval = GranularScale(pval, pgranule, ratio);
-        }
-        else break;  // Give up
-        elements = pval * sval * tval;
+        avail /= excess;
+        value *= excess;
     }
-
-    result[priority[0]] = pval;
-    result[priority[1]] = sval;
-    result[priority[2]] = tval;
-    LOG_TRACE2("Fitted Shape: {}\n", result.ToString());
-    return result;
+    return value;
 }
 
 Shape ArchEthosU85::FindElementwiseConfig(const ArchitectureConfigQuery &query, const FindConfigCommon &common)
 {
-    LOG_TRACE2("Elementwise OFM {}\n", query.ofmShape.ToString());
+    LOG_TRACE2("Elementwise: OFM {}, ifm[0]={}, ifm[1]={}\n", query.ofmShape.ToString(), query.ifmShape[0].ToString(),
+        query.ifmShape[1].ToString());
     LOG_INDENT(Logging::Out);
-    assert(query.ifmBits > 0);
-    const Shape ofmShape = Shape::PadAxes(Shape::RoundAway(query.ofmShape, common.ublock), 3, 1);
+    assert(query.ifmBits >= 8);
+    assert(common.granule.Depth() && common.ublock.Height());
+    const Shape ofmShape = Shape::PadAxes(Shape::RoundAway(query.ofmShape, common.granule), 3, 1);
     Shape ofmBlockLimit = Shape::Min(ofmShape, common.ofmBlockMax);
 
-    // Default to width/depth for HCWB16
-    std::array<int, 3> axisPriority{-2, -1, -3};
-
     const bool isScalar = (query.ifmShape[0].Elements() == 1) || (query.ifmShape[1] && query.ifmShape[1].Elements() == 1);
+    const int cbBricks = (_cbRamSizeBytes / CB_SLOTS) / (BRICK_ELEMENTS * (query.ifmBits / 8));
+    const int obElements = (_obRamSizeBytes * 8) / query.ifmBits;
+    // Width units are still 1-unit wide but represent a proportion of the buffer allocation
+    const int obWidthUnits = obElements / common.granule.Depth();  // One row of depth granules
+    const int cbWidthUnits = cbBricks / common.ublock.Height();    // One row of ublock-height pixels
+
+    // Determine how to tile the block into the ofm shape. Constrain to the smaller of the ofm shape,
+    // block limits and the output buffer size, on the given granularity.
+    int hLimit = GranularTile(ofmShape.Height(), common.granule.Height(), ofmBlockLimit.Height());
+    int wRequired = GranularTile(ofmShape.Width(), common.granule.Width(), std::min(obWidthUnits, ofmBlockLimit.Width()));
+    int wLimit = obWidthUnits;
+    int cLimit = Reapportion(common.granule.Depth(), ofmBlockLimit.Depth(), wRequired, wLimit, common.granule.Width());
+
     // Binary elementwise, potentially broadcast
     if ( !isScalar && query.ifmShape[1] )
     {
-        const int cbBricks = (_cbRamSizeBytes / CB_SLOTS) / (BRICK_ELEMENTS * (query.ifmBits / 8));
         unsigned broadcastMask = query.ifmShape[0].LessMask(query.ofmShape);
         broadcastMask |= query.ifmShape[1].LessMask(query.ofmShape);
+
         // Broadcast in depth first
         if ( broadcastMask & 1 )
         {
-            int hLimit = common.ublock.Height();
-            int wLimit = cbBricks / common.ublock.Height();
-            while ( (wLimit > common.ublock.Width()) && (wLimit > ofmBlockLimit.Width() / 2) && (hLimit < ofmBlockLimit.Height()) )
+            cLimit = GranularTile(ofmShape.Depth(), common.granule.Depth(), ofmBlockLimit.Depth());
+            wLimit = cbWidthUnits;
+            // This is only the depth axis
+            if ( (broadcastMask & 1) == broadcastMask )
             {
-                wLimit = wLimit / 2;
-                hLimit = hLimit * 2;
+                hLimit = Reapportion(common.ublock.Height(), ofmBlockLimit.Height(), wRequired, wLimit, common.granule.Width());
             }
-
-            return Shape(hLimit, wLimit, RoundAway(ofmBlockLimit.Depth(), common.ublock.Depth()));
         }
-        // Broadcast in width first
-        else if ( broadcastMask & 2 )
-        {
-            axisPriority = {-2, -1, -3};
-        }
-        // Broadcast in height first
+        // Broadcast in height
         else if ( broadcastMask & 4 )
         {
-            int cLimit = common.granule.Depth();
-            int wLimit = cbBricks;
-
-            while ( (wLimit > common.ublock.Width()) && (wLimit > ofmBlockLimit.Width() / 2) && (cLimit < ofmBlockLimit.Depth()) )
-            {
-                wLimit = wLimit / 2;
-                cLimit = cLimit * 2;
-            }
-
-            return Shape(ofmBlockLimit.Height(), wLimit, cLimit);
+            wLimit = cbWidthUnits;
+            cLimit = Reapportion(BRICK_ELEMENTS, ofmBlockLimit.Depth(), wRequired, wLimit, common.granule.Width());
+        }
+        // Broadcast in width
+        else if ( broadcastMask & 2 )
+        {
+            // No change
         }
     }
 
-    // As long as the output buffer is kept filled we will fill the pipeline. We size for
-    // at least this many elements which ultimately affects HW striping.
-    const int minOfmElements = 2 * (_obRamSizeBytes * 8) / query.ifmBits;
-    // Fit the ofmShape into the available elements with granule and limit constraints.
-    Shape ofmBlock = FitVolumeByAspect(ofmShape, minOfmElements, common.granule, ofmBlockLimit, axisPriority);
+    Shape ofmBlock(1, hLimit, wLimit, cLimit);
     ofmBlock = Shape::RoundAway(ofmBlock, common.granule);
     LOG_TRACE2("Elementwise choice: ofmBlock = {}\n", ofmBlock.ToString());
     return ofmBlock;
