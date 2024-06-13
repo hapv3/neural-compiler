@@ -126,12 +126,12 @@ void FastStorageAllocator::AllocateFeatureMaps(const std::vector<std::unique_ptr
     _scratchedFms.clear();
     for ( auto &schedOp : schedOps )
     {
-        auto opGroup = schedOp->OpGroup();
         if ( !schedOp->IsNpuOp() )
         {
             continue;
         }
-
+        auto opGroup = schedOp->OpGroup();
+        assert(opGroup != nullptr);
         auto cost = schedule->Cost(schedOp.get());
         if ( cost->cascade == 0 )
         {

@@ -244,7 +244,7 @@ public:
                 auto usage = item.first & TensorUsage::TypeMask;
                 if ( usage == TensorUsage::IFM || usage == TensorUsage::OFM || usage == TensorUsage::LUT )
                 {
-                    if ( _opGroup->NeedsAllocation(item.second.tensor->uid) )
+                    if ( _opGroup == nullptr || _opGroup->NeedsAllocation(item.second.tensor->uid) )
                     {
                         liveTensors.push_back(std::make_pair(item.first, item.second.tensor.get()));
                     }
@@ -261,7 +261,7 @@ public:
                     auto usage = item.first & TensorUsage::TypeMask;
                     if ( usage == TensorUsage::IFM || usage == TensorUsage::OFM || usage == TensorUsage::LUT )
                     {
-                        if ( _opGroup->NeedsAllocation(item.second.tensor->uid) )
+                        if ( _opGroup == nullptr || _opGroup->NeedsAllocation(item.second.tensor->uid) )
                         {
                             liveTensors.push_back(std::make_pair(item.first, item.second.tensor.get()));
                         }

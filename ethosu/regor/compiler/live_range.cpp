@@ -64,29 +64,60 @@ void LiveRangeGraph::ExtractLiveRangesFromCascades(const std::vector<std::unique
         CascadeInfo *cascadeInfo = cascade == 0 ? nullptr : &schedule->cascades[cascade];
         CascadeBuffer *cascadeBuffer = nullptr;
 
-        if ( cascadeInfo == nullptr && schedOp->OpGroup()->NeedsAllocation(schedOp->OFM()->tensor->uid) )
-        {
-            // Check if op have an ifm tensor that can be reused for the ofm
-            auto ifmTens = ReusableIFM(schedOp, targetMemory);
-            if ( ifmTens != nullptr )
-            {
-                // ifm can be reused
-                FuseRanges(ifmTens, schedOp->OFM()->tensor.get());
-            }
-        }
-
         int timeToSet = _currentTime;
-        if ( cascadeInfo != nullptr )
+        if ( schedOp->IsNpuOp() )
         {
-            auto entry = cascadeInfo->buffers.find(*schedOp);
-            if ( entry != cascadeInfo->buffers.end() )
+            if ( cascadeInfo == nullptr )
             {
-                cascadeBuffer = &entry->second;
+                auto opGroup = schedOp->OpGroup();
+                assert(opGroup != nullptr);
+                if ( opGroup->NeedsAllocation(schedOp->OFM()->tensor->uid) )
+                {
+                    // Check if op have an ifm tensor that can be reused for the ofm
+                    auto ifmTens = ReusableIFM(schedOp, targetMemory);
+                    if ( ifmTens != nullptr )
+                    {
+                        // ifm can be reused
+                        FuseRanges(ifmTens, schedOp->OFM()->tensor.get());
+                    }
+                }
             }
-            auto tfcEntry = timeForCascade.find(cascade);
-            if ( tfcEntry != timeForCascade.end() )
+            else
             {
-                timeToSet = tfcEntry->second;
+                auto entry = cascadeInfo->buffers.find(*schedOp);
+                if ( entry != cascadeInfo->buffers.end() )
+                {
+                    cascadeBuffer = &entry->second;
+                }
+                auto tfcEntry = timeForCascade.find(cascade);
+                if ( tfcEntry != timeForCascade.end() )
+                {
+                    timeToSet = tfcEntry->second;
+                }
+                timeForCascade[cascade] = timeToSet;
+            }
+            // Buffered weight tensor
+            auto weightTens = opInfo->bufferedWeightTensor.tensor.get();
+            if ( !ShouldBeIgnored(weightTens, targetMemory) )
+            {
+                auto lr = GetOrCreateRange(weightTens);
+                if ( opInfo->bufferedWeightTensor.preBuffer )
+                {
+                    lr->MarkUsage(timeToSet - 1, 2);
+                }
+                else
+                {
+                    lr->MarkUsage(timeToSet);
+                }
+            }
+            // Read-only weight/scale tensors
+            for ( auto tens : {opInfo->npuWeightsTensor, opInfo->npuScalesTensor} )
+            {
+                if ( !ShouldBeIgnored(tens.get(), targetMemory) )
+                {
+                    auto lr = GetOrCreateRange(tens.get());
+                    lr->MarkUsage(timeToSet);
+                }
             }
         }
         opInfo->timeIndex = timeToSet;
@@ -120,36 +151,9 @@ void LiveRangeGraph::ExtractLiveRangesFromCascades(const std::vector<std::unique
                 lr->size = cascadeBuffer->sizeBytes;
             }
         }
-        // Buffered weight tensor
-        auto weightTens = opInfo->bufferedWeightTensor.tensor.get();
-        if ( !ShouldBeIgnored(weightTens, targetMemory) )
-        {
-            auto lr = GetOrCreateRange(weightTens);
-            if ( opInfo->bufferedWeightTensor.preBuffer )
-            {
-                lr->MarkUsage(timeToSet - 1, 2);
-            }
-            else
-            {
-                lr->MarkUsage(timeToSet);
-            }
-        }
-        // Read-only weight/scale tensors
-        for ( auto tens : {opInfo->npuWeightsTensor, opInfo->npuScalesTensor} )
-        {
-            if ( !ShouldBeIgnored(tens.get(), targetMemory) )
-            {
-                auto lr = GetOrCreateRange(tens.get());
-                lr->MarkUsage(timeToSet);
-            }
-        }
         if ( timeToSet == _currentTime )
         {
             _currentTime += 2;
-        }
-        if ( cascade != 0 )
-        {
-            timeForCascade[cascade] = timeToSet;
         }
     }
     for ( auto lr : graphOutputRanges )
