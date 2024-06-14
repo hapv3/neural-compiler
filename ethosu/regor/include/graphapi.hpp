@@ -61,7 +61,7 @@ constexpr inline GraphTensorUsage MakeTensorUsage(GraphTensorUsage type, int ind
 /// <summary>
 /// Tensor axis ordering
 /// </summary>
-enum class AxisOrder : int16_t
+enum class AxisOrder : uint16_t
 {
     Unknown = 0,
     OHWI = 1,
@@ -72,7 +72,7 @@ enum class AxisOrder : int16_t
 /// <summary>
 /// Tensor data types
 /// </summary>
-enum class GraphDataType : int16_t
+enum class GraphDataType : uint16_t
 {
     Bool8 = 1,
     Int4Packed8,
@@ -91,7 +91,7 @@ enum class GraphDataType : int16_t
     Float32,
 };
 
-enum class GraphTensorLayout : int8_t
+enum class GraphTensorLayout : uint8_t
 {
     Linear = 0,
     NHCWB16 = 1,

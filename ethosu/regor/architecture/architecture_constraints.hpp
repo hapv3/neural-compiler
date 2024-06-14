@@ -33,7 +33,8 @@
 namespace regor
 {
 
-enum class TensorFormat : int16_t;
+enum class TensorFormat : uint16_t;
+
 /// <summary>
 /// Simple Architecture feature map properties
 /// </summary>

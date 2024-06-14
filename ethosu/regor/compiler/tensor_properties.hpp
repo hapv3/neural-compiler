@@ -26,7 +26,7 @@ namespace regor
 {
 
 // Aliased by value (using/typedef doesn't work)
-enum class AxisOrder : int16_t
+enum class AxisOrder : uint16_t
 {
     Unknown = int16_t(GraphApi::AxisOrder::Unknown),
     OHWI = int16_t(GraphApi::AxisOrder::OHWI),

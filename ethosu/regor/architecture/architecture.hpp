@@ -45,7 +45,7 @@ class IArchitectureConstraints;
 
 using Address = int64_t;
 
-enum class TensorFormat : int16_t
+enum class TensorFormat : uint16_t
 {
     Unknown = 0,
     NHWC = 1,
