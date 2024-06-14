@@ -671,7 +671,7 @@ void HLCStreamGenerator::GenerateCommands(SchedulerOperation *op, const std::sha
 {
     auto opType = op->Type();
 
-    if ( IsDma(opType) )
+    if ( opType == OpType::Scatter || opType == OpType::Gather )
     {
         GenerateHLCDMACommands(op, hlcOp, cmds);
     }

@@ -1590,7 +1590,7 @@ void EthosU85RCSGenerator::GenerateOperationCode(const HLCOperation *op)
             Emit(isa::npu_op_elementwise_t(item->second));
         }
     }
-    else if ( IsDma(opType) )
+    else if ( opType == OpType::Scatter || opType == OpType::Gather )
     {
         Emit(isa::npu_op_dma_start_t());
     }

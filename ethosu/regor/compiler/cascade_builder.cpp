@@ -338,11 +338,6 @@ bool CascadeBuilder::IsCascadable(const SchedulerOperation *op, SchedulerTensor 
         return false;
     }
 
-    if ( IsDma(op->Type()) )
-    {
-        return false;
-    }
-
     if ( op->IsReordering() )
     {
         LOG_TRACE1("Not cascading Transpose/Reverse");

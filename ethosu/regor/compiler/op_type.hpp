@@ -257,11 +257,6 @@ constexpr inline bool IsVectorProduct(OpType opType)
            opType == OpType::UnidirectionalSequenceLstm || opType == OpType::UnidirectionalSequenceRnn;
 }
 
-constexpr inline bool IsDma(OpType opType)
-{
-    return opType == OpType::Scatter || opType == OpType::ScatterNd || opType == OpType::Gather || opType == OpType::GatherV2 || opType == OpType::GatherNd;
-}
-
 constexpr inline bool IsActivation(OpType opType)
 {
     return opType == OpType::Relu || opType == OpType::Relu6 || opType == OpType::ReluN || opType == OpType::ReluN1To1 ||
