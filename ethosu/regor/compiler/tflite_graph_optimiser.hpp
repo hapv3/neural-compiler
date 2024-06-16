@@ -176,6 +176,9 @@ private:
     // Converts HardSwish to a LUT based solution.
     Operation *ConvertHardSwishToLUT(Graph *const graph, Operation *const operation);
 
+    // Converts 8-bit LeakyRelu to a LUT based solution.
+    Operation *Convert8bitLeakyReluToLUT(Graph *const graph, Operation *const operation, float alpha);
+
     // Converts RSqrt to a LUT based solution.
     Operation *ConvertRSqrtToLUT(Graph *const graph, Operation *const operation);
 

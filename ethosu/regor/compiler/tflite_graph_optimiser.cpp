@@ -2639,7 +2639,6 @@ Operation *TFLiteGraphOptimiser::ConvertLeakyRelu(Graph *const graph, Operation 
         query.quantScalingInvalidOrUnequal = quantScalingInvalidOrUnequal;
         query.ifmType = ifm->Type();
 
-
         if ( alpha == 0 || std::isinf(1 / alpha) )
         {
             // alpha == 0 can be converted to ReLU
@@ -2655,21 +2654,17 @@ Operation *TFLiteGraphOptimiser::ConvertLeakyRelu(Graph *const graph, Operation 
             RecordOptimisation(operation, absOp);
             returnOp = absOp;
         }
+        else if ( (ifm->Type() == DataType::Int8 || ifm->Type() == DataType::UInt8) )
+        {
+            // convert to 8-bit LUT
+            assert(ifm->Type() == ofm->Type());
+            returnOp = Convert8bitLeakyReluToLUT(graph, operation, alpha);
+            RecordOptimisation(operation, returnOp);
+        }
         else if ( alpha < 0 || !_constraints->CanExecute(query) )
         {
-            if ( (ifm->Type() == DataType::Int8 || ifm->Type() == DataType::UInt8) )
-            {
-                // convert to 8-bit LUT
-                assert(ifm->Type() == ofm->Type());
-                returnOp = ConvertToLUT8(
-                    operation, [&alpha](double x) -> double { return x < 0 ? (alpha * x) : x; }, "LeakyReLU");
-                RecordOptimisation(operation, returnOp);
-            }
-            else
-            {
-                // Use 16-bit lowering to Mul + Max or Mul + Min
-                returnOp = ConvertLeakyRelu16bit(*ifmConn, *ofmConn, operation);
-            }
+            // Use 16-bit lowering to Mul + Max or Mul + Min
+            returnOp = ConvertLeakyRelu16bit(*ifmConn, *ofmConn, operation);
         }
     }
 
@@ -2678,6 +2673,60 @@ Operation *TFLiteGraphOptimiser::ConvertLeakyRelu(Graph *const graph, Operation 
         operation->Disconnect();
     }
 
+    return returnOp;
+}
+
+Operation *TFLiteGraphOptimiser::Convert8bitLeakyReluToLUT(Graph *const graph, Operation *const operation, float alpha)
+{
+    UNUSED(graph);
+    auto returnOp = operation;
+    auto opType = operation->Type();
+
+    auto ifmConn = operation->Input(TensorUsage::IFM0);
+    auto ofmConn = operation->Output(TensorUsage::OFM);
+    auto ifm = ifmConn->tensor;
+    auto ofm = ofmConn->tensor;
+    const double ifmScale = ifmConn->quantization.scales.size() ? ifmConn->quantization.scales[0].Dequantize() : 1.0;
+    const double ofmScale = ofmConn->quantization.scales.size() ? ofmConn->quantization.scales[0].Dequantize() : 1.0;
+    const auto zpIn = ifmConn->quantization.zeroPoints.size() ? ifmConn->quantization.zeroPoints[0] : 0;
+    const auto zpOut = ofmConn->quantization.zeroPoints.size() ? ofmConn->quantization.zeroPoints[0] : 0;
+
+    assert(opType == OpType::LeakyRelu);
+    assert(DataTypeSizeBits(ifm->Type()) == 8);
+    assert(ifm->Type() == ofm->Type());
+
+    QuantizedScale identityScale = ElementwiseMulScale(ifmScale, 1.0, ofmScale);
+    QuantizedScale alphaScale = ElementwiseMulScale(ifmScale, alpha, ofmScale);
+    // convert to left shift-positive notation
+    identityScale.shift = 31 - identityScale.shift;
+    alphaScale.shift = 31 - alphaScale.shift;
+
+    int qMin = ifm->Type() == DataType::Int8 ? -128 : 0;
+    int qMax = ifm->Type() == DataType::Int8 ? 127 : 255;
+
+    std::vector<int8_t> lut;
+    lut.reserve(256);
+    for ( int x = qMin; x <= qMax; ++x )
+    {
+        int lutResult;
+        if ( x < zpIn )
+        {
+            lutResult = zpOut + MultiplyByQuantizedMultiplier((x - zpIn), alphaScale);
+        }
+        else
+        {
+            lutResult = zpOut + MultiplyByQuantizedMultiplier((x - zpIn), identityScale);
+        }
+        lutResult = std::min(qMax, std::max(qMin, lutResult));
+        lut.push_back(int8_t(lutResult));
+    }
+    auto lutTens = CreateConstTensor("lrelu", ifmConn->tensor->Type(), std::make_shared<Buffer>(std::move(lut)));
+    // The LUT must be applied without any preceding rescaling (the LUT itself performs the rescale),
+    // so even if the OFM has a different scale than the IFM, the generated OFM scale instructions
+    // should be the same as the IFM
+    returnOp = CreateLUT(ifmConn->tensor, lutTens, ifmConn->quantization, ifmConn->quantization, lutTens->Type(),
+        &ifmConn->shape, ofmConn->tensor, ifmConn->slice, ofmConn->slice);
+    returnOp->SetRounding(RoundMode::NATURAL);
     return returnOp;
 }
 
