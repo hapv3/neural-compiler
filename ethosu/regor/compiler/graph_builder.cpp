@@ -457,6 +457,19 @@ bool GraphBuilder::Set(GraphOperation *graphOp, GraphApi::OpAttr attr, const Gra
     return WriteAttributeValue(op, attr, shape);
 }
 
+bool GraphBuilder::Set(GraphOperation *graphOp, GraphApi::OpAttr attr, const GraphApi::FractionND &value)
+{
+    auto op = static_cast<Operation *>(graphOp);
+    if ( (unsigned(attr) & 0xF) != GraphApi::GRAPHAPI_TYPECODE_FractionND )
+    {
+        assert(false && "Attribute type not FractionND");
+        return false;
+    }
+
+    Point2i xy(value.n, value.d);
+    return WriteAttributeValue(op, attr, xy);
+}
+
 bool GraphBuilder::Set(GraphOperation *graphOp, GraphApi::OpAttr attr, const GraphApi::Point2 &value)
 {
     auto op = static_cast<Operation *>(graphOp);

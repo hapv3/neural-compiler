@@ -82,6 +82,7 @@ public:
     bool Set(GraphOperation *graphOp, GraphApi::OpAttr attr, int32_t value) override;
     bool Set(GraphOperation *graphOp, GraphApi::OpAttr attr, double value) override;
     bool Set(GraphOperation *graphOp, GraphApi::OpAttr attr, const GraphApi::GraphShape &value) override;
+    bool Set(GraphOperation *graphOp, GraphApi::OpAttr attr, const GraphApi::FractionND &value) override;
     bool Set(GraphOperation *graphOp, GraphApi::OpAttr attr, const GraphApi::Point2 &value) override;
     bool Set(GraphOperation *graphOp, GraphApi::OpAttr attr, const char *value) override;
     void SetZeroPoint(GraphOperation *op, GraphTensorUsage usage, double zeroPoint) override;

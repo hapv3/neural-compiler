@@ -299,6 +299,7 @@ struct IGraphBuilder
     virtual bool Set(GraphOperation *op, OpAttr attr, int32_t value) = 0;
     virtual bool Set(GraphOperation *op, OpAttr attr, double value) = 0;
     virtual bool Set(GraphOperation *op, OpAttr attr, const GraphShape &value) = 0;
+    virtual bool Set(GraphOperation *op, OpAttr attr, const FractionND &value) = 0;
     virtual bool Set(GraphOperation *op, OpAttr attr, const Point2 &value) = 0;
     virtual bool Set(GraphOperation *op, OpAttr attr, const char *value) = 0;
     virtual void SetZeroPoint(GraphOperation *op, GraphTensorUsage tensor, double zeroPoint) = 0;
