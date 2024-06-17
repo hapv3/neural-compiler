@@ -52,28 +52,28 @@ bool IsMinMaxReduction(OpType opType, const Kernel *kernel);
 
 static const EthosU85PerfInfo s_EthosU85PerfInfo[] = {
     // Accelerator.Ethos_U85_128
-    {{2.0, 3.0, 3.0, 3.0, 4.0, 6.0, 1.0, 2.0}, {1.0, 1.0, 0.0}},
+    {{0.5, 0.5}, {0.5, 0.5, 0.0}},
     // Accelerator.Ethos_U85_256
-    {{2.0, 3.0, 3.0, 3.0, 4.0, 6.0, 1.0, 2.0}, {1.0, 1.0, 0.0}},
+    {{0.25, 0.25}, {0.25, 0.25, 0.0}},
     // Accelerator.Ethos_U85_512
-    {{1.0, 1.5, 1.5, 1.5, 2.0, 3.0, 0.5, 1.0}, {1.0, 1.0, 0.0}},
+    {{0.125, 0.125}, {0.125, 0.125, 0.0}},
     // Accelerator.Ethos_U85_1024
-    {{0.75, 1.25, 0.75, 0.75, 1.0, 1.5, 0.25, 0.5}, {1.0, 0.5, 0.0}},
+    {{0.0625, 0.125}, {0.0625, 0.0625, 0.0}},
     // Accelerator.Ethos_U85_2048
-    {{0.625, 1.125, 0.5, 0.375, 0.5, 0.75, 0.125, 0.25}, {1.0, 0.25, 0.0}},
+    {{0.03125, 0.0625}, {0.0625, 0.03125, 0.0}},
 };
 
 static const ArchEthosU85::AcceleratorConfig s_EthosU85Configs[] = {
     // Accelerator.Ethos_U85_128
     {128, 1, {Shape(1, 2, 8), Shape(1, 1, 16)}, Shape(1, 2, 8), 2, 8192, 8192, 2048, 768, 1, 0, &s_EthosU85PerfInfo[0]},
     // Accelerator.Ethos_U85_256
-    {256, 1, {Shape(1, 2, 16), Shape(1, 4, 8), Shape(2, 2, 8)}, Shape(2, 2, 8), 3, 16384, 16384, 2048, 1536, 1, 0, &s_EthosU85PerfInfo[0]},
+    {256, 1, {Shape(1, 2, 16), Shape(1, 4, 8), Shape(2, 2, 8)}, Shape(2, 2, 8), 3, 16384, 16384, 2048, 1536, 1, 0, &s_EthosU85PerfInfo[1]},
     // Accelerator.Ethos_U85_512
-    {512, 2, {Shape(2, 2, 16), Shape(1, 4, 16)}, Shape(2, 2, 16), 2, 16384, 32768, 4096, 3072, 1, 0, &s_EthosU85PerfInfo[1]},
+    {512, 2, {Shape(2, 2, 16), Shape(1, 4, 16)}, Shape(2, 2, 16), 2, 16384, 32768, 4096, 3072, 1, 0, &s_EthosU85PerfInfo[2]},
     // Accelerator.Ethos_U85_1024
-    {1024, 4, {Shape(2, 2, 32), Shape(1, 4, 32), Shape(2, 4, 16)}, Shape(4, 2, 16), 3, 16384, 65536, 4096, 6144, 1, 1, &s_EthosU85PerfInfo[2]},
+    {1024, 4, {Shape(2, 2, 32), Shape(1, 4, 32), Shape(2, 4, 16)}, Shape(4, 2, 16), 3, 16384, 65536, 4096, 6144, 1, 1, &s_EthosU85PerfInfo[3]},
     // Accelerator.Ethos_U85_2048
-    {2048, 4, {Shape(2, 2, 64), Shape(1, 4, 64), Shape(4, 4, 16)}, Shape(4, 4, 16), 3, 32768, 131072, 8192, 12288, 2, 1, &s_EthosU85PerfInfo[3]},
+    {2048, 4, {Shape(2, 2, 64), Shape(1, 4, 64), Shape(4, 4, 16)}, Shape(4, 4, 16), 3, 32768, 131072, 8192, 12288, 2, 1, &s_EthosU85PerfInfo[4]},
 };
 
 constexpr int CB_SLOTS = 6;

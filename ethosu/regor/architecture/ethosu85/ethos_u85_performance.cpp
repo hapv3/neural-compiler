@@ -331,39 +331,13 @@ float EthosU85Performance::EstimateOutputCyclesPerElement(const PerformanceQuery
     int ofmBits = DataTypeSizeBits(query.ofmType);
     int outputPerfIndex = 0;
 
-    if ( (npuOp == EthosU85NpuOp::Elementwise) && (ifmBits == 32) )
+    if ( ifmBits == 32 )
     {
-        // Unary op else Binary op
-        outputPerfIndex = query.ifmShape[1].Elements() > 0 ? 1 : 0;
+        outputPerfIndex = 0;
     }
     else if ( query.type == OpType::Mul && ofmBits == 32 )
     {
-        outputPerfIndex = 2;
-    }
-    else if ( (query.type == OpType::Mul) || ((npuOp != EthosU85NpuOp::Elementwise) && opConfig->Acc() == EthosU85Accumulator::Acc48) )
-    {
-        outputPerfIndex = 3;
-    }
-    else if ( query.type == OpType::Add || query.type == OpType::Sub )
-    {
-        if ( false )
-        {
-            // Simple Add/Sub
-            outputPerfIndex = 4;
-        }
-        else
-        {
-            // Advanced Add/Sub TODO: Add as perf selection as operator variant
-            outputPerfIndex = 5;
-        }
-    }
-    else if ( query.type == OpType::MaxPool )
-    {
-        outputPerfIndex = 6;
-    }
-    else
-    {
-        outputPerfIndex = 7;
+        outputPerfIndex = 1;
     }
 
     int activationPerfIndex = 0;

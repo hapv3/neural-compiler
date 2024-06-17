@@ -29,7 +29,7 @@ class ArchEthosU85;
 
 struct EthosU85PerfInfo
 {
-    float outputCycles[8];
+    float outputCycles[2];
     float activationCycles[3];
 };
 
