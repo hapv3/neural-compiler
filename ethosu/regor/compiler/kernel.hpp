@@ -144,6 +144,13 @@ public:
         return tmp;
     }
 
+    Kernel WithDepthMultiplier(int depthMultiplier) const
+    {
+        Kernel tmp(*this);
+        tmp._depthMultiplier = depthMultiplier;
+        return tmp;
+    }
+
     Point2i DilatedWH() const { return (_dilation * (_size - Point2i(1, 1))) + Point2i(1, 1); }
 
     std::string ToString() const

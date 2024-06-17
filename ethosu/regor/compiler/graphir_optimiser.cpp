@@ -1286,7 +1286,7 @@ Operation *GraphIrOptimiser::RewriteDepthwise(Graph *const graph, Operation *con
         const auto weights = operation->Input(TensorUsage::Weights);
         const auto shape = weights->tensor->StorageShape();
         const auto &axisOrder = weights->tensor->AxisOrder();
-        const auto multiplier = axisOrder == AxisOrder::HWCM ? shape[3] : operation->Kernel()->DepthMultiplier();
+        const auto multiplier = operation->Kernel()->DepthMultiplier();
 
         if ( ifm && (ifm->shape.Depth() == 1) && (multiplier != 1) && ofm && (ofm->shape.Depth() == multiplier) )
         {

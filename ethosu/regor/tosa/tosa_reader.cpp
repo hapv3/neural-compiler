@@ -825,7 +825,26 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                 for ( int i = 0; i < int(input_tensors.size()); i++ )
                 {
                     auto usage = usages[i];
-                    builder->AddInput(op, usage, tensors.at(input_tensors[i]));
+                    auto tensor = tensors.at(input_tensors[i]);
+
+                    // Axis order
+                    if ( usage == GraphApi::GraphTensorUsage::Weights )
+                    {
+                        if ( tosa_operator.op() == tosaFb::Op::DEPTHWISE_CONV2D )
+                        {
+                            builder->SetAxisOrder(tensor, GraphApi::AxisOrder::HWCM);
+                        }
+                        else if ( tosa_operator.op() == tosaFb::Op::CONV2D )
+                        {
+                            builder->SetAxisOrder(tensor, GraphApi::AxisOrder::OHWI);
+                        }
+                        else if ( tosa_operator.op() == tosaFb::Op::FULLY_CONNECTED )
+                        {
+                            builder->SetAxisOrder(tensor, GraphApi::AxisOrder::OI);
+                        }
+                    }
+
+                    builder->AddInput(op, usage, tensor);
 
                     // Zero point
                     switch ( tosa_operator.op() )
@@ -851,14 +870,6 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                             {
                                 const auto &tosa_attr = TosaAttr<tosaFb::Op::CONV2D>::Get(tosa_operator);
                                 builder->SetZeroPoint(op, usage, double(tosa_attr.weight_zp()));
-                                if ( tosa_operator.op() == tosaFb::Op::DEPTHWISE_CONV2D )
-                                {
-                                    builder->SetAxisOrder(tensors.at(input_tensors[i]), GraphApi::AxisOrder::HWCM);
-                                }
-                                else if ( tosa_operator.op() == tosaFb::Op::CONV2D )
-                                {
-                                    builder->SetAxisOrder(tensors.at(input_tensors[i]), GraphApi::AxisOrder::OHWI);
-                                }
                             }
                             break;
                         case tosaFb::Op::FULLY_CONNECTED:
@@ -871,7 +882,6 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                             {
                                 const auto &tosa_attr = TosaAttr<tosaFb::Op::FULLY_CONNECTED>::Get(tosa_operator);
                                 builder->SetZeroPoint(op, usage, double(tosa_attr.weight_zp()));
-                                builder->SetAxisOrder(tensors.at(input_tensors[i]), GraphApi::AxisOrder::OI);
                             }
                             break;
                         case tosaFb::Op::MATMUL:

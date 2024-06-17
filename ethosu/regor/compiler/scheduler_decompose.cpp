@@ -35,6 +35,47 @@ bool NeedsDecompose(Architecture *arch, const SchedulerOperation *schedOp)
     return CanDecompose(arch, schedOp) && !CanRunOnHardware(arch, schedOp);
 }
 
+static std::unique_ptr<SchedulerOperation> MakeTransposeOp(
+    const std::shared_ptr<SchedulerTensor> &source, const std::shared_ptr<SchedulerTensor> &dest, const Shape &perm)
+{
+    assert(source->dataType == dest->dataType);
+    assert(source->storageShape.Size() == perm.Size());
+    auto op = std::make_unique<SchedulerOperation>(OpType::Transpose);
+
+    auto kernel = Kernel({1, 1}, {1, 1}, {1, 1});
+    op->SetKernel(&kernel);
+
+    const auto attr = op->Attribute<transpose_attr_t>();
+    attr->perm = perm;
+
+    auto ifmConn = op->AddInput(TensorUsage::IFM);
+    ifmConn->tensor = source;
+    if ( ifmConn->tensor->dataType == DataType::Int64 )
+    {  // Read int64 data as int32 data with dimensions [..., C, 2] by cloning source tensor
+        ifmConn->tensor = std::make_shared<SchedulerTensor>(*source);
+        ifmConn->tensor->dataType = DataType::Int32;
+        ifmConn->tensor->storageShape = source->storageShape.Insert(source->storageShape.Size(), 2);
+        attr->perm = perm.Insert(perm.Size(), perm.Size());  // Update permutation with added dimenson
+    }
+    ifmConn->shape = ifmConn->tensor->storageShape;
+    ifmConn->tensor->consumers.push_back(op.get());
+
+    auto ofmConn = op->AddOutput(TensorUsage::OFM);
+    ofmConn->transpose = TransposeTypeFromShape(attr->perm);
+    ofmConn->tensor = dest;
+    if ( ofmConn->tensor->dataType == DataType::Int64 )
+    {  // Write int64 data as int32, with dimensions from ifm
+        ofmConn->tensor = std::make_shared<SchedulerTensor>(*dest);
+        ofmConn->tensor->dataType = DataType::Int32;
+        ofmConn->tensor->storageShape = ifmConn->shape.Permute(uint32_t(ofmConn->transpose));
+        ofmConn->tensor->producers.clear();
+    }
+    ofmConn->shape = ifmConn->shape.Permute(uint32_t(ofmConn->transpose));
+    ofmConn->tensor->producers.push_back(op.get());
+
+    return op;
+}
+
 static std::unique_ptr<SchedulerOperation> MakeSubOperation(const SchedulerOperation *schedOp, const Kernel *newKernel = nullptr)
 {
     assert(schedOp->SubOps().empty());
@@ -369,6 +410,81 @@ static void InitializeSlice(TensorSlice &slice, const Shape &offset, const Shape
     }
 }
 
+
+// Return a slice of a tensor
+template<typename SRC_TYPE, typename DST_TYPE = SRC_TYPE>
+static std::shared_ptr<SchedulerTensor> SliceT(SchedulerTensor *tensor, const Shape &offset, const Shape &shape, const Shape &readShape)
+{
+    auto paddedInShape = Shape::PadAxes(readShape ? readShape : tensor->bufferView.ViewShape(), shape.Size(), 1);
+    const auto &inBufferView = tensor->bufferView.Reshape(paddedInShape).SubView(offset, shape);
+    const auto &inBufferValues = inBufferView.Values<SRC_TYPE, DST_TYPE>();
+
+    // Create output buffer that will contain the slice
+    const auto size = shape.Elements();
+    auto outBuffer = std::make_shared<Buffer>(std::make_unique<DST_TYPE[]>(size), size);
+    BufferView outBufferView(std::move(outBuffer), 0, 8 * sizeof(DST_TYPE), shape, {});
+    auto outBufferValues = outBufferView.WritableValues<DST_TYPE>();
+
+    // Copy values into the output buffer
+    auto paddedOutShape = Shape::PadAxes(shape, 4, 1);
+    int batch = paddedOutShape.Batch();
+    int height = paddedOutShape.Height();
+    int width = paddedOutShape.Width();
+    int depth = paddedOutShape.Depth();
+    for ( int n = 0; n < batch; n++ )
+    {
+        for ( int h = 0; h < height; h++ )
+        {
+            for ( int w = 0; w < width; w++ )
+            {
+                for ( int c = 0; c < depth; c++ )
+                {
+                    Shape pos({n, h, w, c}, shape.Size());
+                    outBufferValues[pos] = inBufferValues[pos];
+                }
+            }
+        }
+    }
+
+    // Clone tensor with new buffer with new unique ID because now the tensor is different
+    auto clonedTensor = std::make_shared<SchedulerTensor>(*tensor);
+    clonedTensor->bufferView = std::move(outBufferView);
+    clonedTensor->storageShape = shape;
+    clonedTensor->equivalenceId = GenerateUniqueId();
+    clonedTensor->consumers.clear();
+
+    return clonedTensor;
+}
+
+// Return a slice of a tensor
+static std::shared_ptr<SchedulerTensor> Slice(SchedulerTensor *tensor, const Shape &offset, const Shape &shape, Shape readShape = {})
+{
+    assert(tensor->IsConstant());
+    assert(tensor->producers.size() == 0);
+    assert(!readShape || readShape.Elements() == tensor->storageShape.Elements());
+    readShape = readShape ? readShape : tensor->storageShape;
+    assert(Shape(offset + shape, readShape.Size(), 1) <= readShape);
+
+    switch ( tensor->dataType )
+    {
+        case DataType::Int8:
+            return SliceT<int8_t>(tensor, offset, shape, readShape);
+        case DataType::UInt8:
+            return SliceT<uint8_t>(tensor, offset, shape, readShape);
+        case DataType::Int32:
+            return SliceT<int32_t>(tensor, offset, shape, readShape);
+        case DataType::Int48:
+        {
+            auto slice = SliceT<int48_t, int64_t>(tensor, offset, shape, readShape);
+            slice->dataType = DataType::Int64;
+            return slice;
+        }
+        default:
+            assert(false && "Unknown data type");
+            return nullptr;
+    }
+}
+
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv2D(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
 {
     std::vector<std::unique_ptr<SchedulerOperation>> result;
@@ -410,9 +526,12 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
     auto *ofmConn = op->Output(TensorUsage::OFM);
     auto *ifmConn = op->Input(TensorUsage::IFM);
     auto *weightsConn = op->Input(TensorUsage::Weights);
+    auto *biasConn = op->Input(TensorUsage::Scales);
     const auto &ofmShape = ofmConn->SliceShape();
     const auto &ifmShape = ifmConn->SliceShape();
     const auto &weightsShape = weightsConn->shape;
+    const auto &biasShape = biasConn->shape;
+    const int depthMultiplier = weightsShape.Depth();
     auto &ofmSlice = ofmConn->slice;
     auto &ifmSlice = ifmConn->slice;
     auto *kernel = op->Kernel();
@@ -424,11 +543,49 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
     {
         return DecomposeLeadingDimensions(1, arch, std::move(op), DecomposeDepthwiseConv2D);
     }
-    if ( weightsShape.Depth() > 1 )
+    if ( depthMultiplier > 1 )
     {
-        // TODO: MLBEDSW-8789 Handle depthwise convolution with depth multiplier > 1
-        // If we get here, decomposition has failed, the resulting operations will be executed on CPU
-        result.emplace_back(std::move(op));
+        int subOfmDepth = ofmConn->shape.Depth() / depthMultiplier;
+        // Clone ofm tensor with new unique ID for intermediate transposed result
+        auto transposedOfm = std::make_shared<SchedulerTensor>(*ofmConn->tensor);
+        transposedOfm->storageShape = ofmConn->shape.WithBatch(depthMultiplier).WithDepth(subOfmDepth);
+        transposedOfm->equivalenceId = GenerateUniqueId();
+        transposedOfm->consumers.clear();
+        transposedOfm->producers.clear();
+        for ( int multiplier = 0; multiplier < depthMultiplier; multiplier++ )
+        {
+            auto newKernel = kernel->WithDepthMultiplier(1);
+            auto subOp = MakeSubOperation(op.get(), &newKernel);
+            auto subWeightsShape = weightsShape.WithDepth(1);
+            auto subWeightOffset = weightsShape.WithZeros().WithDepth(multiplier);
+            auto subWeightsConn = subOp->Input(TensorUsage::Weights);
+            subWeightsConn->tensor = Slice(weightsConn->tensor.get(), subWeightOffset, subWeightsShape);
+            subWeightsConn->tensor->consumers.push_back(subOp.get());
+            subWeightsConn->shape = subWeightsShape;
+            if ( biasShape.Depth() > 1 )
+            {
+                auto subBiasReadShape = Shape(subOfmDepth, depthMultiplier);
+                auto subBiasShape = Shape(subBiasReadShape.WithDepth(1), biasShape.Size(), 1);
+                auto subBiasOffset = biasShape.WithZeros().WithDepth(multiplier);
+                auto subBiasConn = subOp->Input(TensorUsage::Scales);
+                subBiasConn->tensor = Slice(biasConn->tensor.get(), subBiasOffset, subBiasShape, subBiasReadShape);
+                subBiasConn->tensor->bufferView = subBiasConn->tensor->bufferView.Reshape({subOfmDepth});
+                subBiasConn->tensor->consumers.push_back(subOp.get());
+                subBiasConn->shape = biasShape.WithDepth(subOfmDepth);
+            }
+            auto subOfmConn = subOp->Output(TensorUsage::OFM);
+            subOfmConn->tensor = transposedOfm;
+            subOfmConn->tensor->producers.push_back(subOp.get());
+            subOfmConn->shape = transposedOfm->storageShape;
+            subOfmConn->slice.offset = ofmConn->shape.WithZeros().WithBatch(multiplier);
+            subOfmConn->slice.shape = ofmConn->shape.WithDepth(subOfmDepth);
+            auto subOps = DecomposeDepthwiseConv2D(arch, std::move(subOp));
+            result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
+        }
+        // Need to transpose result [N, H, W, C] -> [H, W, C, N] (and reshape -> [1, H, W, N*C])
+        auto transposeOp = MakeTransposeOp(transposedOfm, ofmConn->tensor, Shape(1, 2, 3, 0));
+        auto subOps = DecomposeTranspose(arch, std::move(transposeOp));
+        result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
         return result;
     }
     if ( CanRunOnHardware(arch, op.get()) )

@@ -428,7 +428,7 @@ std::unique_ptr<IVolumeScaleSource> EthosU55WeightEncoder::GetScaleSource(
     {
         return std::make_unique<EthosUScaleSource<int32_t>>(_arch->_cores, explicitQuant);
     }
-    else if ( scaleType == DataType::Int64 && DataTypeSizeBits(cfg->ifmType) == 16 )
+    else if ( scaleType == DataType::Int64 )
     {
         return std::make_unique<EthosUScaleSource<int64_t>>(_arch->_cores, explicitQuant);
     }

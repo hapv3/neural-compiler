@@ -1714,6 +1714,11 @@ bool EthosU85OpGroup::CanRunOnNPU(const ArchitectureOpGroupQuery &op)
         return false;
     }
 
+    if ( k->DepthMultiplier() > 1 )
+    {
+        return false;
+    }
+
     switch ( npuOp )
     {
         case EthosU85NpuOp::Convolution:

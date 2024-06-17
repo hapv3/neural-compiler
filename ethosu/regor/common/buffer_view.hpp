@@ -19,6 +19,7 @@
 #pragma once
 
 #include "common.hpp"
+#include "data_type.hpp"
 #include "hash.hpp"
 #include "shape.hpp"
 
@@ -29,6 +30,21 @@
 
 namespace regor
 {
+
+template<typename TYPE>
+struct extended_make_unsigned
+{
+    using type = std::make_unsigned_t<TYPE>;
+};
+
+template<>
+struct extended_make_unsigned<int48_t>
+{
+    using type = int48_t;
+};
+
+template<typename TYPE>
+using extended_make_unsigned_t = typename extended_make_unsigned<TYPE>::type;
 
 /// <summary>
 /// Buffer mechanism for local/remote data storage
@@ -44,6 +60,7 @@ class Buffer : public std::enable_shared_from_this<Buffer>
     sep functor(int8_t) \
     sep functor(int16_t) \
     sep functor(int32_t) \
+    sep functor(int48_t) \
     sep functor(int64_t)
 
     union LocalStorage
@@ -217,7 +234,7 @@ public:
         if ( _isLocal )
         {
             // Follow strict reinterpret_cast type aliasing rules
-            assert(IsByte<T>::value || (TypeHash<std::make_unsigned_t<T>>::value == _utypeHash));
+            assert(IsByte<T>::value || (TypeHash<extended_make_unsigned_t<T>>::value == _utypeHash));
             if constexpr ( IsByte<T>::value )
             {
                 switch ( _typeHash )
@@ -231,6 +248,10 @@ public:
                         assert(false);
                         return nullptr;
                 }
+            }
+            else if constexpr ( std::is_same<T, int48_t>::value )
+            {
+                return reinterpret_cast<const T *>(GetLocalVector<int48_t>().data());
             }
             else
             {
@@ -396,7 +417,6 @@ public:
     TYPE operator[](const Shape &offset) const
     {
         size_t index = offset.Dot(_strideBytes);
-        assert(index / _strideBytes.Depth() < _count);
         return _get(_data, index);
     }
 
@@ -602,7 +622,7 @@ public:
     BufferView SubView(const Shape &offset, const Shape &size) const
     {
         assert(_strideBytes && size.Elements() < _axisElements.Elements());
-        int linearOffset = offset.Dot(_strideBytes);
+        int linearOffset = (offset.Dot(_strideBytes) * 8) / _elementBits;
         return BufferView(_buffer, linearOffset, _elementBits, size, _strideBytes);
     }
 
