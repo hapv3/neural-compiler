@@ -226,10 +226,12 @@ def exp_on_negative_values(a):
 
 
 def multiply_by_quantized_multiplier(x, scale, shift):
-    # Multiplies x (int32) by (scale, shift) which have obtained by a call to scaling.quantize_scale,
-    # returns rounded result
+    # Multiplies x by (scale, shift) which have obtained by a call to scaling.quantize_scale returns rounded result.
     shift = 31 - shift
     left_shift = shift if shift > 0 else 0
     right_shift = -shift if shift < 0 else 0
-    mul = saturating_rounding_mul32(x * (1 << left_shift), scale)
+    # Force x to a Python int to avoid potential overflows when its type is unable to represent the result of the
+    # multiplication
+    x_int = int(x)
+    mul = saturating_rounding_mul32(x_int * (1 << left_shift), scale)
     return rounding_divide_by_pot(mul, right_shift)
