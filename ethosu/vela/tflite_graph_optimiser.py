@@ -1544,7 +1544,7 @@ def convert_hardswish_to_lut(op: Operation, arch, nng) -> Operation:
 
             # Rescaled the value into a 16bit fixedpoint relu_value in [-1, 1]
             # Now convert that to a 16bit fixedpoint value in [0, 1]
-            relu_value = (relu_value + (1 << 15)) >> 1
+            relu_value = (int(relu_value) + (1 << 15)) >> 1
             lut_result = fp_math.saturating_mul16(relu_value, input_value_preshift)
             shift = 31 - out_shift
             shift = -shift if shift < 0 else 0
