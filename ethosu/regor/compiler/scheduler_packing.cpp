@@ -451,6 +451,9 @@ std::unique_ptr<SchedulerOperation> SchedulerPacking::MakeSchedulerOperation(Ope
         auto ifm0 = op->Input(TensorUsage::IFM0);
         auto ifm1 = op->Input(TensorUsage::IFM1);
         auto ofm = op->Output(TensorUsage::OFM);
+        assert(ifm0 && "Binary elementwise op must have IFM0");
+        assert(ifm1 && "Binary elementwise op must have IFM1");
+        assert(ofm && "Binary elementwise op must have OFM");
         assert(ifm0->shape.Size() > 0 && "IFM0 must have dimension");
         assert(ifm1->shape.Size() > 0 && "IFM1 must have dimension");
         // Choose the non-const IFM path for binary operations that have

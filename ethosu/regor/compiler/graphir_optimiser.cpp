@@ -25,6 +25,7 @@ namespace regor
 {
 
 using namespace GraphOptimisation;
+
 Tensor *GraphIrOptimiser::ConvertInt48Tensors(Graph *, Tensor *tensor)
 {
     if ( tensor->Type() == DataType::Int48 && !tensor->IsConstant() )
@@ -36,6 +37,59 @@ Tensor *GraphIrOptimiser::ConvertInt48Tensors(Graph *, Tensor *tensor)
         tensor->ChangeType(DataType::UInt64);
     }
     return tensor;
+}
+
+// The internal boolean representation is -1 (true) and 0 (false). To be able to handle the TFLite representation 1
+// (true) and 0 (false), or the TOSA representation non-zero (true) and 0 (false), we need to insert ops that converts
+// graph inputs/outputs.
+Tensor *GraphIrOptimiser::ConvertBool8Tensors(Graph *graph, Tensor *tensor)
+{
+    Tensor *returnTensor = tensor;
+    if ( tensor->Type() == DataType::Bool8 )
+    {
+        if ( tensor->IsConstant() )
+        {
+            auto view = tensor->View();
+            auto &shape = view.ViewShape();
+            auto values = view.WritableValues<int8_t>();
+            for ( int i = 0; i < shape.Elements(); i++ )
+            {
+                // Convert each element to the internal representation -1 (true) and 0 (false)
+                values[i] = values[i] == 0 ? 0 : -1;
+            }
+        }
+        else if ( graph->IsInput(tensor) )
+        {
+            // Replace the IFM of ops consuming the graph input tensor
+            std::shared_ptr<Tensor> graphInputTensor = tensor->shared_from_this();
+            std::shared_ptr<Tensor> newTensor = tensor->Clone();
+            newTensor->SetName(newTensor->Name() + "_int8");
+            ReplaceConsumerInput(nullptr, graphInputTensor->Readers(), graphInputTensor.get(), newTensor);
+
+            // Create and insert an elementwise CMP_NE to convert to internal bool representation
+            auto newOp = std::make_shared<Operation>(OpType::NotEqual);
+            newOp->ConnectInput(TensorUsage::IFM0, graphInputTensor);
+            newOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_zero", 0));
+            newOp->ConnectOutput(TensorUsage::OFM, newTensor);
+            returnTensor = graphInputTensor.get();
+        }
+        else if ( graph->IsOutput(tensor) )
+        {
+            // Replace the OFM of ops producing the graph output tensor
+            std::shared_ptr<Tensor> newTensor = tensor->Clone();
+            newTensor->SetName(newTensor->Name() + "_int8");
+            std::shared_ptr<Tensor> graphOutputTensor = tensor->shared_from_this();
+            ReplaceProducerOutput(graphOutputTensor->Writers(), graphOutputTensor.get(), newTensor);
+
+            // Create and insert an elementwise BITWISE_AND to convert from internal bool representation
+            auto newOp = std::make_shared<Operation>(OpType::And);
+            newOp->ConnectInput(TensorUsage::IFM0, newTensor);
+            newOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_one", 1));
+            newOp->ConnectOutput(TensorUsage::OFM, graphOutputTensor);
+            returnTensor = newTensor.get();
+        }
+    }
+    return returnTensor;
 }
 
 Operation *GraphIrOptimiser::ConvertAttributes(Graph *const graph, Operation *const operation)
