@@ -792,7 +792,7 @@ int EthosU85RCSGenerator::CalcBlockDep(HLCStripe *prevStripe, HLCStripe *stripe)
     }
     const auto &op = stripe->operation;
     const auto &prevOp = prevStripe->operation;
-    auto &prevOfm = prevOp->ofm;
+    auto prevOfm = prevOp->ofm;
 
     if ( prevOp->subOps.size() )
     {
@@ -1673,7 +1673,7 @@ void EthosU85RCSGenerator::GenerateConvolutionOp(const HLCStripe *stripe, Memory
         Emit(isa::npu_set_weight_format_t(weight_format::SWD, weight_sparsity::NONE));  // Reset weight format
     }
 
-    if ( !op->ofm.quantization.scales.empty() && useGlobalScale )
+    if ( !op->ofm.quantization.scales.empty() )
     {
         ofmScale = op->ofm.quantization.scales[0];
         assert(unsigned(ofmScale.shift) < 64);
