@@ -266,18 +266,19 @@ void HillClimbAllocator::AttemptBottleneckFix(std::vector<int> &indices, int ite
     }
     // Pick from non-neighbour list with 30% probability (magic number based on tuning)
     int ix1;
-    if ( rng() % 100 < 30 && !nonNbTurnList.empty() )
+    using dist = std::uniform_int_distribution<int>;
+    if ( dist(0, 100)(rng) < 30 && !nonNbTurnList.empty() )
     {
         // Pick a live range from the "non-neighbour list"
-        ix1 = nonNbTurnList[rng() % nonNbTurnList.size()];
+        ix1 = nonNbTurnList[dist(0, nonNbTurnList.size() - 1)(rng)];
     }
     else
     {
         // Pick any affecting live range.
-        ix1 = turnList[rng() % turnList.size()];
+        ix1 = turnList[dist(0, turnList.size() - 1)(rng)];
     }
     // Note: turnList has always at least 2 elements for bottlenecks
-    int ix2 = turnList[rng() % (turnList.size() - 1)];
+    int ix2 = turnList[dist(0, turnList.size() - 1)(rng)];
     if ( ix1 == ix2 )
     {
         ix2 = turnList[turnList.size() - 1];
@@ -302,8 +303,12 @@ void HillClimbAllocator::AttemptBottleneckFix(std::vector<int> &indices, int ite
                 }
             }
         }
-        ix1 = turnList[rng() % turnList.size()];
-        ix2 = turnList[rng() % turnList.size()];
+        ix1 = turnList[dist(0, turnList.size() - 1)(rng)];
+        ix2 = turnList[dist(0, turnList.size() - 1)(rng)];
+        if ( ix1 == ix2 )
+        {
+            ix2 = turnList[turnList.size() - 1];
+        }
         std::swap(indices[ix1], indices[ix2]);
     }
 }
