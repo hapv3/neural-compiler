@@ -62,6 +62,7 @@ const std::unordered_set<std::string_view> tosaSupportedTypes = {
     "tosa_graph_t",
     "shape_t",
     "acc_size_t",
+    "resize_mode_t",
 };
 
 std::optional<regor::DataType> MapType(const std::string_view &type)
@@ -87,6 +88,7 @@ std::optional<regor::DataType> MapType(const std::string_view &type)
         {"index_t", DataType::Int32},
         {"shape_t", DataType::Int32},
         {"acc_size_t", DataType::Int32},
+        {"resize_mode_t", DataType::Int32},
     };
 
     if ( auto p = typeMap.find(type); p != typeMap.end() ) return p->second;
@@ -112,6 +114,9 @@ const TensorConnection *GetTensorForArgument(const Operation *op, const Argument
         {"values_in", TensorUsage::IFM},
         {"multiplier", TensorUsage::Params},
         {"shift", TensorUsage::Params1},
+        {"scale", TensorUsage::Params},
+        {"offset", TensorUsage::Params1},
+        {"border", TensorUsage::Params2},
     };
 
     switch ( argument.category )
@@ -154,12 +159,12 @@ std::optional<int> GetRankForArgument(const Operation *op, const Argument &argum
 
 std::optional<regor::DataType> GetTypeForArgument(const Operation *op, const Argument &argument)
 {
-
     static const std::unordered_map<std::string_view, DataType> attributeTypeMap{
         {"kernel", DataType::Int32},
         {"stride", DataType::Int32},
         {"pad", DataType::Int32},
         {"dilation", DataType::Int32},
+        {"shape", DataType::Int32},
     };
 
     auto *tensorConnection = GetTensorForArgument(op, argument);

@@ -51,6 +51,7 @@ enum class GraphTensorUsage : uint32_t
     IFM2 = 0x0200 | IFM,
     Params0 = Params,
     Params1 = 0x100 | Params,
+    Params2 = 0x200 | Params,
 };
 
 constexpr inline GraphTensorUsage MakeTensorUsage(GraphTensorUsage type, int index)

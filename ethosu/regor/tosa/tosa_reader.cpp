@@ -279,7 +279,7 @@ TOSA_REGISTER_OP(TILE,                    TileAttribute,                 GraphAp
 TOSA_REGISTER_OP(TRANSPOSE,               TransposeAttribute,            GraphApi::GraphTensorUsage::IFM);
 TOSA_REGISTER_OP(GATHER,                  NONE,                          GraphApi::GraphTensorUsage::IFM);
 TOSA_REGISTER_OP(SCATTER,                 NONE,                          GraphApi::GraphTensorUsage::IFM);
-TOSA_REGISTER_OP(RESIZE,                  ResizeAttribute,               GraphApi::GraphTensorUsage::IFM);
+TOSA_REGISTER_OP(RESIZE,                  ResizeAttribute,               GraphApi::GraphTensorUsage::IFM, GraphApi::GraphTensorUsage::Params, GraphApi::GraphTensorUsage::Params1, GraphApi::GraphTensorUsage::Params2);
 TOSA_REGISTER_OP(CAST,                    NONE,                          GraphApi::GraphTensorUsage::IFM);
 TOSA_REGISTER_OP(RESCALE,                 RescaleAttribute,              GraphApi::GraphTensorUsage::IFM, GraphApi::GraphTensorUsage::Params, GraphApi::GraphTensorUsage::Params1);
 TOSA_REGISTER_OP(CONST,                   NONE,                          );
@@ -670,6 +670,20 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         attr.resize.borderYX[0] = (*tosa_attr.border())[0];
                         attr.resize.borderYX[1] = (*tosa_attr.border())[1];
                         attr.resize.mode = TosaMapping::FBResizeModeToResizeMode(tosa_attr.mode());
+
+                        // If no input tensors for scale/offset/border, create them to be backwards compatible
+                        if ( input_tensors.size() == 1 )
+                        {
+                            std::string name = "scale_param" + std::to_string(tosa_op_index);
+                            tensors[name] = CreateParamTensor<int32_t>(tosa_attr.scale(), builder, name);
+                            input_tensors.push_back(name);
+                            name = "offset_param" + std::to_string(tosa_op_index);
+                            tensors[name] = CreateParamTensor<int32_t>(tosa_attr.offset(), builder, name);
+                            input_tensors.push_back(std::move(name));
+                            name = "border_param" + std::to_string(tosa_op_index);
+                            tensors[name] = CreateParamTensor<int32_t>(tosa_attr.border(), builder, name);
+                            input_tensors.push_back(std::move(name));
+                        }
                     }
                     break;
                     case tosaFb::Op::ARGMAX:
