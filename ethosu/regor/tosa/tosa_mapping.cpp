@@ -117,6 +117,8 @@ static constexpr std::pair<tosaFb::Op, tosa::Op> s_FBOpToOp[] = {
     {tosaFb::Op::WHILE_LOOP, tosa::Op::WHILE_LOOP},
     {tosaFb::Op::FFT2D, tosa::Op::FFT2D},
     {tosaFb::Op::RFFT2D, tosa::Op::RFFT2D},
+    {tosaFb::Op::ERF, tosa::Op::ERF},
+    {tosaFb::Op::DIM, tosa::Op::DIM},
     // clang-format on
 };
 

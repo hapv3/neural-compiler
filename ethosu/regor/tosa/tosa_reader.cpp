@@ -289,6 +289,8 @@ TOSA_REGISTER_OP(COND_IF,                 CondIfAttribute,               GraphAp
 TOSA_REGISTER_OP(WHILE_LOOP,              WhileLoopAttribute,            GraphApi::GraphTensorUsage::IFM);
 TOSA_REGISTER_OP(FFT2D,                   FFTAttribute,                  GraphApi::GraphTensorUsage::IFM, GraphApi::GraphTensorUsage::IFM);
 TOSA_REGISTER_OP(RFFT2D,                  NONE,                          GraphApi::GraphTensorUsage::IFM);
+TOSA_REGISTER_OP(ERF,                     NONE,                          GraphApi::GraphTensorUsage::IFM);
+TOSA_REGISTER_OP(DIM,                     AxisAttribute,                 GraphApi::GraphTensorUsage::IFM);
 // clang-format on
 
 }  // namespace
@@ -322,6 +324,11 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                 const char *name = SafeDeref(tosa_tensor->name()).c_str();
                 tosa_assert(name, "Tensor needs a valid name");
                 const auto type = TosaMapping::TensorTypeToDataType(tosa_tensor->type());
+
+                const bool variable = tosa_tensor->variable();
+                tosa_assert(!variable, "Variable tensors not supported");
+                const bool is_unranked = tosa_tensor->is_unranked();
+                tosa_assert(!is_unranked, "Unranked tensors not supported");
 
                 Shape shape;  // Defaults to shapeless
                 const auto &tensorShape = tosa_tensor->shape();
