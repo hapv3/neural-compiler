@@ -120,7 +120,14 @@ void LiveRangeGraph::ExtractLiveRangesFromCascades(const std::vector<std::unique
                 }
             }
         }
+
+        // Set time index for the op and its subops
         opInfo->timeIndex = timeToSet;
+        for ( auto &subOp : schedOp->SubOps() )
+        {
+            SchedulerOpInfo *subOpInfo = schedule->Cost(subOp.get());
+            subOpInfo->timeIndex = timeToSet;
+        }
 
         // Mark usage for all relevant tensors related to this operation
         for ( auto &liveTensor : schedOp->LiveRangeTensors() )

@@ -200,7 +200,7 @@ public:
 
     int MemoryUsageAt(int timeIndex) const
     {
-        return (timeIndex < int(memorySnapshot.size())) ? memorySnapshot[timeIndex] : 0;
+        return (timeIndex >= 0 && timeIndex < int(memorySnapshot.size())) ? memorySnapshot[timeIndex] : 0;
     }
 
     void DetachCosts(SchedulerCostMap &costs) { costs = std::move(_costMap); }
