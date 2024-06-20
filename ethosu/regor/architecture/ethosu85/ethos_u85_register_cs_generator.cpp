@@ -1864,7 +1864,14 @@ std::shared_ptr<HLCStripe> EthosU85RCSGenerator::MakeStripeForSubOp(HLCStripe *s
     for ( int i = 0; i < int(subOp.ifm.size()); i++ )
     {
         // TODO MLBEDSW-9143 cascading + chaining requires striping area information for suboperations
-        newStripe->ifmAreas.push_back(subOp.ifm[i].shape);
+        if ( subOp.ifm[i].slice.offset.IsValid() && subOp.ifm[i].slice.shape.IsValid() )
+        {
+            newStripe->ifmAreas.emplace_back(subOp.ifm[i].slice.offset, subOp.ifm[i].slice.shape);
+        }
+        else
+        {
+            newStripe->ifmAreas.emplace_back(subOp.ifm[i].shape);
+        }
     }
     newStripe->ofmArea = stripe->ofmArea;
     newStripe->padding = stripe->padding;

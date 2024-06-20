@@ -240,6 +240,7 @@ static void MakeFeatureMap(const SchedulerConnection *schedConn, HLCFeatureMap &
 {
     auto schedTens = schedConn->tensor.get();
     fm.shape = schedConn->shape;
+    fm.slice = schedConn->slice;
     fm.dataType = schedTens->dataType;
     fm.memArea = schedTens->memArea;
     fm.format = schedTens->format;

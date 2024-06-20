@@ -68,6 +68,7 @@ struct HLCFeatureMap
     TensorFormat format = TensorFormat::Unknown;
     MemArea memArea;
     Shape shape;
+    TensorSlice slice;
     Shape strides;
     Point2i stepXY = {1, 1};
     DataType dataType;
