@@ -230,7 +230,8 @@ protected:
     void GenerateResizeOp(HLCStripe *stripe, MemoryAccesses &memoryAccesses);
     bool GenerateStripe(HLCStripe *stripe, MemoryAccesses &memoryAccesses);
     std::shared_ptr<HLCStripe> MakeStripeForSubOp(HLCStripe *stripe, HLCSubOperation &subOp);
-    bool GenerateOpGroup(HLCStripe *stripe, HLCStripe *prevOp, MemoryAccesses &memoryAccesses, std::deque<MemoryAccesses> &outstandingDmaAccesses);
+    bool GenerateOpGroup(HLCStripe *stripe, HLCStripe *prevOp, MemoryAccesses &memoryAccesses,
+        std::deque<MemoryAccesses> &outstandingDmaAccesses, std::vector<std::pair<unsigned, std::string>> &debugInfo);
     // Generates register commands for DMA operations
     void GenerateDMA(const HLCDMA *dma, MemoryAccesses &memoryAccesses);
 

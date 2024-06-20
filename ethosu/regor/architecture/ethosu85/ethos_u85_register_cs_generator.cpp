@@ -1873,7 +1873,7 @@ std::shared_ptr<HLCStripe> EthosU85RCSGenerator::MakeStripeForSubOp(HLCStripe *s
 }
 
 bool EthosU85RCSGenerator::GenerateOpGroup(HLCStripe *stripe, HLCStripe *prevOp, MemoryAccesses &memoryAccesses,
-    std::deque<MemoryAccesses> &outstandingDmaAccesses)
+    std::deque<MemoryAccesses> &outstandingDmaAccesses, std::vector<std::pair<unsigned, std::string>> &debugInfo)
 {
     std::vector<HLCSubOperation> subOps = stripe->operation->subOps;
     assert(stripe->opGroup != nullptr);
@@ -1894,7 +1894,7 @@ bool EthosU85RCSGenerator::GenerateOpGroup(HLCStripe *stripe, HLCStripe *prevOp,
     // TODO MLBEDSW-9144 Compute MemoryAccesses for whole chain
     // and emit DMA waits for the whole chain before the first op.
 
-    // Unroll Opgroup intro stripes and generate commands for each subOp separately
+    // Unroll Opgroup into stripes and generate commands for each subOp separately
     int idx = -1;
     std::shared_ptr<HLCStripe> subStripe = nullptr;
     while ( idx < int(subOps.size()) )
@@ -1918,6 +1918,7 @@ bool EthosU85RCSGenerator::GenerateOpGroup(HLCStripe *stripe, HLCStripe *prevOp,
             }
             idx++;
         }
+        debugInfo.emplace_back(_emit.Position(), stripe->operation->ToString());
         if ( !GenerateStripe(stripe, memoryAccesses) )
         {
             return false;
@@ -2056,12 +2057,7 @@ std::vector<uint32_t> EthosU85RCSGenerator::GenerateCommandStream(std::vector<st
         {
             MemoryAccesses memoryAccesses;
             auto stripe = static_cast<HLCStripe *>(hlc.get());
-            if ( verbose )
-            {
-                debugInfo.emplace_back(emitStart, stripe->operation->ToString());
-            }
-
-            if ( !GenerateOpGroup(stripe, prevOp, memoryAccesses, outstandingDmaAccesses) )
+            if ( !GenerateOpGroup(stripe, prevOp, memoryAccesses, outstandingDmaAccesses, debugInfo) )
             {
                 return std::vector<uint32_t>();
             }
@@ -2081,10 +2077,7 @@ std::vector<uint32_t> EthosU85RCSGenerator::GenerateCommandStream(std::vector<st
         {
             MemoryAccesses dmaAccesses;
             auto dma = static_cast<HLCDMA *>(hlc.get());
-            if ( verbose )
-            {
-                debugInfo.emplace_back(emitStart, dma->ToString());
-            }
+            debugInfo.emplace_back(emitStart, dma->ToString());
             GenerateDMA(dma, dmaAccesses);
             GenerateWaits(true, dmaAccesses, outstandingNpuAccesses);
             UpdateMemoryAccesses(dmaAccesses, outstandingDmaAccesses, maxOutstandingDMAOps);
