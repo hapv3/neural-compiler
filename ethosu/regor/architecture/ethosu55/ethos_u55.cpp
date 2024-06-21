@@ -710,7 +710,7 @@ int EthosU55OpGroup::Add(const ArchitectureOpGroupQuery &op, const std::vector<i
 }
 bool EthosU55OpGroup::NeedsAllocation(UniqueId tensorUID)
 {
-    return _fusedTensors.count(tensorUID) != 0;
+    return _fusedTensors.count(tensorUID) == 0;
 }
 
 // Table of allowed ifm/ofm data type combinations for each HWOp

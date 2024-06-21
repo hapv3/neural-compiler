@@ -759,16 +759,22 @@ void EthosU55RCSGenerator::GenerateActivation(const HLCStripe *stripe, MemoryAcc
     const HLCOperation *op = stripe->operation.get();
     assert(op->subOps.size() <= 1);
     OpType opType = OpType::None;
+    const HLCParameters *parameters = nullptr;
+    assert(stripe->opGroup != nullptr);
+    EthosU55OpGroup *opGroup = static_cast<EthosU55OpGroup *>(stripe->opGroup);
     if ( IsActivation(op->type) )
     {
         // Non-fused activation
         opType = op->type;
+        parameters = &op->parameters;
         assert(op->subOps.empty() || opType == op->subOps[0].type);
     }
-    else if ( !op->subOps.empty() )
+    else if ( !op->subOps.empty() && !opGroup->NeedsAllocation(op->subOps[0].ifm[0].uid) )
     {
         // Fused activation
+        assert(IsActivation(op->subOps[0].type));
         opType = op->subOps[0].type;
+        parameters = &op->subOps[0].parameters;
     }
     auto &ofm = op->ofm;
     int size = std::min(16, DataTypeSizeBits(ofm.dataType));
@@ -798,8 +804,8 @@ void EthosU55RCSGenerator::GenerateActivation(const HLCStripe *stripe, MemoryAcc
     }
     else if ( opType == OpType::LUT )
     {
-        auto &param = op->subOps[0].parameters.lut;
-        size = param.sizeBytes;
+        auto &lutParams = parameters->lut;
+        size = lutParams.sizeBytes;
         assert(size == 256 || size == 1024 || size == 2048);
 
         int tableIndex = 0;
@@ -822,7 +828,7 @@ void EthosU55RCSGenerator::GenerateActivation(const HLCStripe *stripe, MemoryAcc
         }
         auto &layout = static_cast<EthosU55OpConfig *>(op->config)->_layout;
         Address lutStart = Address(layout.lutStart) * _arch->_shram.bankSizeBytes + tableIndex * _arch->_shram.lutSlotSize;
-        memoryAccesses.emplace_back(AccessDirection::Read, _arch->LUTMemory(), lutStart, lutStart + param.sizeBytes);
+        memoryAccesses.emplace_back(AccessDirection::Read, _arch->LUTMemory(), lutStart, lutStart + lutParams.sizeBytes);
     }
     assert(quantizedMin <= std::numeric_limits<int16_t>::max());
     assert(quantizedMax <= std::numeric_limits<int16_t>::max());
@@ -1162,9 +1168,9 @@ EthosU55RCSGenerator::InsertLUTDMACommands(std::vector<std::unique_ptr<HighLevel
             auto stripe = static_cast<HLCStripe *>(hlc.get());
             auto op = stripe->operation;
             auto config = static_cast<EthosU55OpConfig *>(op->config);
-            if ( !op->subOps.empty() && op->subOps[0].type == OpType::LUT )
+            if ( op->type == OpType::LUT || (!op->subOps.empty() && op->subOps[0].type == OpType::LUT) )
             {
-                const auto &srcTens = op->subOps[0].parameters.lut;
+                const auto &srcTens = op->type == OpType::LUT ? op->parameters.lut : op->subOps[0].parameters.lut;
                 assert(config->_layout.lutStart > 0);
                 assert(srcTens.sizeBytes % lutSlotSize == 0);
                 bool alreadyInLutMem;
@@ -1300,8 +1306,6 @@ void EthosU55RCSGenerator::GeneratePoolingOp(HLCStripe *stripe, MemoryAccesses &
     auto pad = stripe->padding;
     auto padSum = pad.top + pad.left + pad.bottom + pad.right;
     bool useGlobalScale = !op->scales;
-
-    assert(!useGlobalScale || (op->type != OpType::MaxPool && padSum == 0));
     if ( _arch->UseAvgPoolNop(op->type) )
     {
         assert(op->kernel.Size() == Point2i(1, 1));
