@@ -1856,6 +1856,7 @@ std::shared_ptr<HLCStripe> EthosU85RCSGenerator::MakeStripeForSubOp(HLCStripe *s
     op->type = subOp.type;
     op->ifm = subOp.ifm;
     op->ofm = subOp.ofm;
+    op->_srcKey = subOp._srcKey;
     if ( IsLUTType(subOp.type) )
     {
         op->parameters.lut = subOp.parameters.lut;
@@ -1886,7 +1887,8 @@ std::shared_ptr<HLCStripe> EthosU85RCSGenerator::MakeStripeForSubOp(HLCStripe *s
 }
 
 bool EthosU85RCSGenerator::GenerateOpGroup(HLCStripe *stripe, HLCStripe *prevOp, MemoryAccesses &memoryAccesses,
-    std::deque<MemoryAccesses> &outstandingDmaAccesses, std::vector<std::pair<unsigned, std::string>> &debugInfo)
+    std::deque<MemoryAccesses> &outstandingDmaAccesses, std::vector<std::pair<unsigned, std::string>> &debugInfo,
+    std::vector<std::tuple<void *, int, int>> *cmdRanges)
 {
     std::vector<HLCSubOperation> subOps = stripe->operation->subOps;
     assert(stripe->opGroup != nullptr);
@@ -1912,6 +1914,7 @@ bool EthosU85RCSGenerator::GenerateOpGroup(HLCStripe *stripe, HLCStripe *prevOp,
     std::shared_ptr<HLCStripe> subStripe = nullptr;
     while ( idx < int(subOps.size()) )
     {
+        int emitStart = _emit.Position();
         if ( idx >= 0 )
         {
             // chained sub operation
@@ -1941,6 +1944,13 @@ bool EthosU85RCSGenerator::GenerateOpGroup(HLCStripe *stripe, HLCStripe *prevOp,
 
         GenerateWaits(false, memoryAccesses, outstandingDmaAccesses);
         GenerateOperationCode(stripe->operation.get());
+
+        // Return command mapping information to the caller
+        if ( cmdRanges )
+        {
+            cmdRanges->emplace_back(stripe->operation->_srcKey, emitStart, _emit.Position());
+        }
+
         if ( isChained )
         {
             // clear chain cache between every chained subOp
@@ -2065,24 +2075,17 @@ std::vector<uint32_t> EthosU85RCSGenerator::GenerateCommandStream(std::vector<st
 
     for ( auto &hlc : cmds )
     {
-        int emitStart = _emit.Position();
         if ( hlc->IsStripe() )
         {
             MemoryAccesses memoryAccesses;
             auto stripe = static_cast<HLCStripe *>(hlc.get());
-            if ( !GenerateOpGroup(stripe, prevOp, memoryAccesses, outstandingDmaAccesses, debugInfo) )
+            if ( !GenerateOpGroup(stripe, prevOp, memoryAccesses, outstandingDmaAccesses, debugInfo, cmdRanges) )
+
             {
                 return std::vector<uint32_t>();
             }
 
             prevOp = stripe;
-
-            // Return command mapping information to the caller
-            int emitEnd = _emit.Position();
-            if ( cmdRanges )
-            {
-                cmdRanges->emplace_back(stripe->operation->_srcKey, emitStart, emitEnd);
-            }
 
             UpdateMemoryAccesses(memoryAccesses, outstandingNpuAccesses, maxOutstandingKernelOps);
         }
@@ -2090,7 +2093,7 @@ std::vector<uint32_t> EthosU85RCSGenerator::GenerateCommandStream(std::vector<st
         {
             MemoryAccesses dmaAccesses;
             auto dma = static_cast<HLCDMA *>(hlc.get());
-            debugInfo.emplace_back(emitStart, dma->ToString());
+            debugInfo.emplace_back(_emit.Position(), dma->ToString());
             GenerateDMA(dma, dmaAccesses);
             GenerateWaits(true, dmaAccesses, outstandingNpuAccesses);
             UpdateMemoryAccesses(dmaAccesses, outstandingDmaAccesses, maxOutstandingDMAOps);

@@ -145,13 +145,15 @@ union HLCParameters
 /// <summary>
 /// Sub operation
 /// </summary>
-struct HLCSubOperation
+class HLCSubOperation
 {
+public:
     OpType type = OpType::None;
     std::vector<HLCFeatureMap> ifm;
     HLCFeatureMap ofm;
     HLCParameters parameters = {};
     HLCRoundMode rounding;
+    void *_srcKey = nullptr;
 };
 
 /// <summary>
@@ -160,19 +162,14 @@ struct HLCSubOperation
 /// There is one HLCOperation for every SchedulerOperation. Each HLCOperation can be
 /// associated with one (= non-cascaded) or more (= cascaded) HLCStripes
 /// </summary>
-struct HLCOperation
+class HLCOperation : public HLCSubOperation
 {
-    OpType type;
+public:
     Kernel kernel;
-    std::vector<HLCFeatureMap> ifm;
-    HLCFeatureMap ofm;
     std::unique_ptr<HLCWeights> weights;
     std::unique_ptr<HLCWeights> scales;
     std::vector<HLCSubOperation> subOps;
-    HLCParameters parameters = {};
-    HLCRoundMode rounding;
     ArchitectureOpConfig *config = nullptr;
-    void *_srcKey = nullptr;
 
 #ifndef NDEBUG
     std::string name;  // name of OFM

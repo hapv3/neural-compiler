@@ -294,6 +294,7 @@ static HLCSubOperation MakeSubOperation(const std::unique_ptr<SchedulerOperation
     }
     MakeFeatureMap(schedOp->OFM(), hlcSubOp.ofm);
     hlcSubOp.rounding = HLCRoundMode(schedOp->Rounding());
+    hlcSubOp._srcKey = schedOp->_srcKey;
 
     if ( schedOp->Type() == OpType::LeakyRelu )
     {
