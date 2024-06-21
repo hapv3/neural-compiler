@@ -656,9 +656,9 @@ def create_mean(input_shape, output_shape, axis, datatype, attrs):
     ifm.quantization = testutil.default_quant_params()
     ofm = Tensor(output_shape, datatype, "out")
     ofm.quantization = testutil.default_quant_params()
-    if type(axis) is list:
+    if isinstance(axis, list):
         indices = create_const_tensor("indices", [len(axis)], DataType.int32, axis)
-    elif type(axis) is int:
+    elif isinstance(axis, int):
         indices = create_const_tensor("indices", [], DataType.int32, axis)
     op = testutil.create_op(Op.Mean, [ifm, indices], ofm, attrs)
     return op
