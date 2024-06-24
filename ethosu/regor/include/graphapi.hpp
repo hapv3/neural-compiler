@@ -213,6 +213,8 @@ struct GraphOperation
             bool scale32;
             bool double_round;
             bool per_channel;
+            bool input_unsigned;
+            bool output_unsigned;
         } rescale;
         struct MulAttributes
         {

@@ -634,11 +634,15 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         attr.rescale.scale32 = tosa_attr.scale32();
                         attr.rescale.double_round = tosa_attr.double_round();
                         attr.rescale.per_channel = tosa_attr.per_channel();
+                        attr.rescale.input_unsigned = tosa_attr.input_unsigned();
+                        attr.rescale.output_unsigned = tosa_attr.output_unsigned();
 
                         if ( input_tensors.size() == 1 )
                         {
                             std::string name = "multiplier_param" + std::to_string(tosa_op_index);
-                            tensors[name] = CreateParamTensor(tosa_attr.multiplier(), builder, name);
+                            if ( tosa_attr.scale32() )
+                                tensors[name] = CreateParamTensor<int32_t>(tosa_attr.multiplier(), builder, name);
+                            else tensors[name] = CreateParamTensor<int16_t>(tosa_attr.multiplier(), builder, name);
                             input_tensors.push_back(name);
                             name = "shift_param" + std::to_string(tosa_op_index);
                             tensors[name] = CreateParamTensor<int8_t>(tosa_attr.shift(), builder, name);

@@ -251,6 +251,13 @@ bool ResolveAndValidateArgument(const regor::Operation *op, const Argument *argu
     }
     auto expectedType = MapType(typeName);
     if ( !expectedType ) return false;
+    if ( op->Type() == OpType::Rescale &&
+         ((argument->category == Category::Input && argument->name == "input" && op->attr.rescale.input_unsigned) ||
+             (argument->category == Category::Output && argument->name == "output" && op->attr.rescale.output_unsigned)) )
+    {
+        // Signedness of IFM/OFM for Rescale depends on the input_unsigned/output_unsigned attributes
+        expectedType = *expectedType & ~unsigned(DataType::Signed);
+    }
     return ValidateArgument(op, argument, *expectedType);
 }
 
