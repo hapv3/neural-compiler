@@ -822,7 +822,7 @@ end
 options = parse_options
 xmlfile = File.new("%s/tosa.xml" % options[:spec])
 xml = REXML::Document.new(xmlfile)
-doc = Asciidoctor.load_file "%s/tosa_spec.adoc" % options[:spec], safe: :safe, attributes: "generated=%s/out/gen pseudocode=%s/pseudocode" % [options[:spec], options[:spec]]
+doc = Asciidoctor.load_file "%s/tosa_spec.adoc" % options[:spec], safe: :safe, attributes: "generated=%s/out/gen pseudocode=%s/pseudocode" % [File.expand_path(options[:spec]), File.expand_path(options[:spec])]
 validator = TosaValidator.new(xml, doc, 'BI', '8K')
 validator.update_argument_checks
 validator.update_error_checks
