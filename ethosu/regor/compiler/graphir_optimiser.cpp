@@ -112,6 +112,12 @@ Operation *GraphIrOptimiser::ConvertAttributes(Graph *const graph, Operation *co
         ofmConn->quantization.quantMin = {int(operation->attr.clamp.min)};
         ofmConn->quantization.quantMax = {int(operation->attr.clamp.max)};
     }
+    if ( opType == OpType::SHL || opType == OpType::SHR )
+    {
+        TensorConnection *ofmConn = operation->Output(TensorUsage::OFM);
+        ofmConn->quantization.quantMin = {std::numeric_limits<int64_t>::min()};
+        ofmConn->quantization.quantMax = {std::numeric_limits<int64_t>::max()};
+    }
     return operation;
 }
 

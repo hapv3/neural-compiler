@@ -914,23 +914,25 @@ void EthosU85RCSGenerator::GenerateActivation(const HLCStripe *stripe, MemoryAcc
     }
 
     auto &ofm = op->ofm;
-    int size = std::min(16, DataTypeSizeBits(ofm.dataType));
-    assert(size > 0 && "Illegal data type");
-    bool isSigned = ToActivationType(ofm.dataType) == activation_type::SIGNED;
-    int64_t quantizedMin = isSigned ? -(1LL << (size - 1)) : 0;
-    int64_t quantizedMax = isSigned ? (1LL << (size - 1)) - 1 : (1 << size) - 1;
-    auto act = activation_function::LUT_NONE;
-    uint32_t tableIndex = 0;
+    // Clamp quantMin/quantMax to valid range, but completely disable clipping if any are at the edge of the range
+    int64_t quantizedMin = std::max(IntegerMin(ofm.dataType), IntegerMin(DataType::Int16));
+    int64_t quantizedMax = std::min(IntegerMax(ofm.dataType), IntegerMax(DataType::UInt16));
     auto clipRange = DataTypeSizeBits(ofm.dataType) > 16 ? activation_clip_range::NONE : activation_clip_range::B16;
     if ( ofm.quantization.quantMin.size() )
     {
-        quantizedMin = std::max(quantizedMin, ofm.quantization.quantMin[0]);
+        if ( ofm.quantization.quantMin[0] > std::numeric_limits<int64_t>::min() )
+            quantizedMin = std::max(quantizedMin, ofm.quantization.quantMin[0]);
+        else clipRange = activation_clip_range::NONE;
     }
     if ( ofm.quantization.quantMax.size() )
     {
-        quantizedMax = std::min(quantizedMax, ofm.quantization.quantMax[0]);
+        if ( ofm.quantization.quantMax[0] < std::numeric_limits<int64_t>::max() )
+            quantizedMax = std::min(quantizedMax, ofm.quantization.quantMax[0]);
+        else clipRange = activation_clip_range::NONE;
     }
 
+    auto act = activation_function::LUT_NONE;
+    uint32_t tableIndex = 0;
     if ( IsLUTType(opType) )
     {
         auto &lutParams = parameters->lut;
