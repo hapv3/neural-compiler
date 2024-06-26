@@ -1598,7 +1598,7 @@ void EthosU85RCSGenerator::GenerateOperationCode(const HLCOperation *op)
     }
     else if ( opType == OpType::Rescale )
     {
-        Emit(isa::npu_op_pool_t(DataTypeSizeBits(op->ifm[0].dataType) >= 32 ? pooling_mode::NONE : pooling_mode::SUM));
+        Emit(isa::npu_op_pool_t(ArchEthosU85::UseNullPool(opType, op->ifm[0].dataType) ? pooling_mode::NONE : pooling_mode::SUM));
     }
     else if ( _arch->UseAvgPoolNop(opType) )
     {

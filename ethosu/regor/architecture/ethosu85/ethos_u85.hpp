@@ -138,6 +138,7 @@ protected:
 private:
     int KeyToOpIndex(int key);
     int ExternalIfms(const ArchitectureOpGroupQuery &op);
+    bool CanStartChain(const ArchitectureOpGroupQuery &op);
     bool Chain(const ArchitectureOpGroupQuery &op, const std::vector<int> &dependsOn, int externalInputs);
     bool Fuse(const ArchitectureOpGroupQuery &op, const std::vector<int> &dependsOn);
 };
@@ -239,6 +240,8 @@ protected:
     uint32_t ConfigRegister(int product);
     // Checks if the operation is to be mapped on AvgPool
     static bool UseAvgPoolNop(OpType type);
+    // Checks if the operation is to be mapped to a NullPool
+    static bool UseNullPool(OpType opType, DataType type);
     static EthosU85NpuOp GetHWOp(OpType type);
 
 private:

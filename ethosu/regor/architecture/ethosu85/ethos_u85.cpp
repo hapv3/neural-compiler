@@ -238,6 +238,11 @@ bool ArchEthosU85::UseAvgPoolNop(OpType type)
     return IsActivation(type) || type == OpType::Quantize || type == OpType::MemoryCopy;
 }
 
+bool ArchEthosU85::UseNullPool(OpType opType, DataType type)
+{
+    return (opType == OpType::Rescale && DataTypeSizeBits(type) >= 32);
+}
+
 static bool ChooseKernelMethod(const Shape &ifmShape, int ifmBits, const Kernel *kernel)
 {
     if ( ifmShape.Depth() <= 8 )
@@ -1065,8 +1070,14 @@ int EthosU85OpGroup::KeyToOpIndex(int key)
     return key;
 }
 
-static constexpr bool CanStartChain(EthosU85NpuOp npuOp)
+bool EthosU85OpGroup::CanStartChain(const ArchitectureOpGroupQuery &op)
 {
+    OpType opType = op.type;
+    EthosU85NpuOp npuOp = ArchEthosU85::GetHWOp(opType);
+    if ( npuOp == EthosU85NpuOp::Pooling && _arch->UseNullPool(opType, op.ifm[0].type) )
+    {
+        return false;
+    }
     return (
         npuOp == EthosU85NpuOp::Convolution || npuOp == EthosU85NpuOp::Depthwise ||
         npuOp == EthosU85NpuOp::Elementwise || npuOp == EthosU85NpuOp::Pooling || npuOp == EthosU85NpuOp::VectorProduct);
@@ -1088,6 +1099,7 @@ int EthosU85OpGroup::ExternalIfms(const ArchitectureOpGroupQuery &op)
 
 bool EthosU85OpGroup::Fuse(const ArchitectureOpGroupQuery &op, const std::vector<int> &dependsOn)
 {
+    assert(_opsCount > 0);
     if ( _opsCount > 1 )
     {
         // TODO MLBEDSW-9142: support fusing on chained ops
@@ -1129,6 +1141,7 @@ bool EthosU85OpGroup::Chain(const ArchitectureOpGroupQuery &op, const std::vecto
 {
     // Op is considered for chaining
     EthosU85NpuOp npuOp = ArchEthosU85::GetHWOp(op.type);
+    assert(_opsCount > 0);
     if ( _supportsChaining == false )
     {
         // primaryOp in opgroup doesnt support chaining
@@ -1210,8 +1223,7 @@ int EthosU85OpGroup::Add(const ArchitectureOpGroupQuery &op, const std::vector<i
 
     if ( _opsCount == 0 )
     {
-        EthosU85NpuOp npuOp = ArchEthosU85::GetHWOp(op.type);
-        _supportsChaining = CanStartChain(npuOp);
+        _supportsChaining = CanStartChain(op);
         _externalIfms = externalInputs;
         _chainLength = 1;
     }
