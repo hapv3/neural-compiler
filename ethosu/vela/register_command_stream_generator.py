@@ -730,7 +730,7 @@ def generate_ofm_scaling_for_pooling(emit: CommandStreamEmitter, pool_op: NpuPoo
             rescale = pool_op.rescale
             rescale_bits = len(bin(round_up_to_int(rescale))) - 2 + 1
             scale, shift = scaling.quantise_pooling_scale(kernel.height * kernel.width, rescale_bits)
-            scale = int(round_away_zero(scale * rescale))
+            scale = int(round_away_zero(scale * np.double(rescale)))
     else:
         # In case avg pool fused with concat or other memory operation, rescaling might be needed.
         # kernel height == kernel width == 1 is always true in this case
@@ -745,7 +745,7 @@ def generate_ofm_scaling_for_pooling(emit: CommandStreamEmitter, pool_op: NpuPoo
                 elif rescale < 1:
                     rescale_bits = -(len(bin(round_up_to_int(1 / rescale))) - 2 - 1)
             scale, shift = scaling.quantise_pooling_scale(kernel.height * kernel.width, rescale_bits)
-            scale = int(round_away_zero(scale * rescale))
+            scale = int(round_away_zero(scale * np.double(rescale)))
         else:
             scale = 1
             shift = 0
