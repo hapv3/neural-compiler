@@ -276,9 +276,9 @@ inline TransposeType CalculateTransposeType(const Operation &operation)
     TransposeType transposeType = TransposeType(mask);
     return transposeType;
 }
+
 inline ReverseType CalculateReverseType(const Operation &operation)
 {
-
     auto ifmConn = operation.Input(TensorUsage::IFM);
     auto paramsConn = operation.Input(TensorUsage::Params);
     auto ofmConn = operation.Output(TensorUsage::OFM);
@@ -314,76 +314,6 @@ inline ReverseType CalculateReverseType(const Operation &operation)
 
     ReverseType reverseType = ReverseType(1 << (axis_max - axis));
     return reverseType;
-}
-
-inline ResizeSupportQuery CalculateResizeSupportQuery(const Operation &operation)
-{
-    auto ifmConn = operation.Input(TensorUsage::IFM);
-    auto ofmConn = operation.Output(TensorUsage::OFM);
-    assert(ifmConn);
-    assert(ofmConn);
-
-    // Get numerators(n) and denominators(d) for the scale fractions
-    int width_n = ofmConn->shape.Width();
-    int width_d = ifmConn->shape.Width();
-    int height_n = ofmConn->shape.Height();
-    int height_d = ifmConn->shape.Height();
-    int heightOffset = 0;
-    int widthOffset = 0;
-
-    // Compute scaling fractions
-    // align-corners use a scale-factor of (n-1)/(d-1)
-    if ( operation.Parameters().resize.alignCorners )
-    {
-        if ( width_d > 1 )
-        {
-            width_n -= 1;
-            width_d -= 1;
-        }
-        if ( height_d > 1 )
-        {
-            height_n -= 1;
-            height_d -= 1;
-        }
-    }
-
-    // reduce scaling fractions with gcd
-    int gcd_w = std::gcd(width_n, width_d);
-    width_n = (width_n / gcd_w);
-    width_d = (width_d / gcd_w);
-
-    int gcd_h = std::gcd(height_n, height_d);
-    height_n = (height_n / gcd_h);
-    height_d = (height_d / gcd_h);
-
-    if ( operation.Parameters().resize.halfPixelCenters )
-    {
-        // make sure fractions are evenly divisible by 2
-        width_n = width_n * 2;
-        width_d = width_d * 2;
-        height_n = height_n * 2;
-        height_d = height_d * 2;
-        // adjust offset for half-pixel-centers
-        widthOffset = (width_d / 2) - (width_n / 2);
-        heightOffset = (height_d / 2) - (height_n / 2);
-    }
-
-    // set up op-support query
-    ResizeSupportQuery resizeQuery;
-    resizeQuery.scaleX = {int16_t(width_n), int16_t(width_d)};
-    resizeQuery.scaleY = {int16_t(height_n), int16_t(height_d)};
-    resizeQuery.offsetX = widthOffset;
-    resizeQuery.offsetY = heightOffset;
-    resizeQuery.ifmShape = ifmConn->shape;
-    if ( operation.Type() == OpType::ResizeBilinear )
-    {
-        resizeQuery.mode = ArchResizeMode::Bilinear;
-    }
-    else
-    {
-        resizeQuery.mode = ArchResizeMode::Nearest;
-    }
-    return resizeQuery;
 }
 
 // Is the scaling of Tensor connection a and b valid and equal.

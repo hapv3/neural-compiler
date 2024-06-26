@@ -298,8 +298,8 @@ static HLCSubOperation MakeSubOperation(const std::unique_ptr<SchedulerOperation
 
     if ( schedOp->Type() == OpType::LeakyRelu )
     {
-        const auto &parameters = schedOp->Parameters();
-        hlcSubOp.parameters.leaky_relu.alpha = parameters.leaky_relu.alpha;
+        const auto *parameters = schedOp->Attribute<leaky_relu_attr_t>();
+        hlcSubOp.parameters.leaky_relu.alpha = parameters->alpha;
     }
     else if ( lutConn != nullptr )
     {
@@ -377,27 +377,30 @@ static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, 
         op->subOps.push_back(std::move(hlcSubOp));
     }
 
-    const auto &parameters = schedOp->Parameters();
-    const auto &attr = schedOp->Attributes();
     const auto &ifmShape = schedOp->IFM(0)->shape;
     switch ( schedOp->Type() )
     {
         case OpType::LeakyRelu:
+        {
             assert(lutConn == nullptr);
-            op->parameters.leaky_relu.alpha = parameters.leaky_relu.alpha;
-            break;
+            const auto *lrelu = schedOp->Attribute<leaky_relu_attr_t>();
+            op->parameters.leaky_relu.alpha = lrelu->alpha;
+        }
+        break;
         case OpType::Resize:
+        {
             assert(lutConn == nullptr);
-            op->parameters.resize.scaleY = attr.resize.scaleY;
-            op->parameters.resize.scaleX = attr.resize.scaleX;
-            op->parameters.resize.offsetY = attr.resize.offsetYX[0];
-            op->parameters.resize.offsetX = attr.resize.offsetYX[1];
+            const auto *resize = schedOp->Attribute<resize_attr_t>();
+            op->parameters.resize.scaleY = resize->scaleY;
+            op->parameters.resize.scaleX = resize->scaleX;
+            op->parameters.resize.offsetY = resize->offset.y;
+            op->parameters.resize.offsetX = resize->offset.x;
             if ( ifmShape.Width() == 1 && ifmShape.Height() == 1 )
             {
                 // 1x1 IFMs can be handled with replicate
                 op->parameters.resize.mode = ArchResizeMode::Replicate;
             }
-            else if ( attr.resize.mode == tosa::ResizeMode::NEAREST )
+            else if ( resize->mode == tosa::ResizeMode::NEAREST )
             {
                 op->parameters.resize.mode = ArchResizeMode::Nearest;
             }
@@ -405,11 +408,15 @@ static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, 
             {
                 op->parameters.resize.mode = ArchResizeMode::Bilinear;
             }
-            break;
+        }
+        break;
         case OpType::ArgMax:
+        {
             assert(lutConn == nullptr);
-            op->parameters.argmax.axis = attr.axis.axis;
-            break;
+            const auto *axis = schedOp->Attribute<axis_attr_t>();
+            op->parameters.argmax.axis = axis->axis;
+        }
+        break;
         default:
             break;
     }

@@ -243,10 +243,10 @@ inline constexpr uint64_t IntegerMax(DataType type)
     return ~0ULL >> (64 - DataTypeSizeBits(type) + int(IsSignedInteger(type)));
 }
 
-static_assert(std::numeric_limits<int8_t>::max() == IntegerMax(DataType::Int8));
-static_assert(std::numeric_limits<int16_t>::max() == IntegerMax(DataType::Int16));
-static_assert(std::numeric_limits<int32_t>::max() == IntegerMax(DataType::Int32));
-static_assert(std::numeric_limits<int64_t>::max() == IntegerMax(DataType::Int64));
+static_assert(uint64_t(std::numeric_limits<int8_t>::max()) == IntegerMax(DataType::Int8));
+static_assert(uint64_t(std::numeric_limits<int16_t>::max()) == IntegerMax(DataType::Int16));
+static_assert(uint64_t(std::numeric_limits<int32_t>::max()) == IntegerMax(DataType::Int32));
+static_assert(uint64_t(std::numeric_limits<int64_t>::max()) == IntegerMax(DataType::Int64));
 
 inline constexpr int64_t IntegerMin(DataType type)
 {

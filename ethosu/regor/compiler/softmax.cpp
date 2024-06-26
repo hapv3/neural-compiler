@@ -226,7 +226,8 @@ void Softmax::RecordOptimisation(Operation *const operation, Operation *op)
 Operation *Softmax::GetGraph8Bit(Operation *const operation, TensorConnection *ifmConn, TensorConnection *ofmConn)
 {
     const auto &ifmQuant = ifmConn->quantization;
-    auto expTable = GenerateExpTable(double(operation->Parameters().softmax.beta), ifmQuant.scales[0].Dequantize());
+    auto *softmax = operation->Attribute<softmax_attr_t>();
+    auto expTable = GenerateExpTable(double(softmax->beta), ifmQuant.scales[0].Dequantize());
     auto noScaleQuant = ifmConn->quantization;
     noScaleQuant.scales.clear();
     auto noScaleQuantZp0 = noScaleQuant;
@@ -262,7 +263,7 @@ Operation *Softmax::GetGraph8Bit(Operation *const operation, TensorConnection *i
     auto right_shift12 = CreateConstTensor("right_shift12", 12);
     op = CreateAsr(ifm_exp, right_shift12, subQuant, noScaleQuant, noScaleQuantZp0);
     op->SetRounding(RoundMode::NATURAL);
-    op->attr.asr.round = true;
+    op->Attribute<asr_attr_t>()->round = true;
     auto rescaled_exp = op->Output(TensorUsage::OFM)->tensor;
     RecordOptimisation(operation, op);
 
@@ -359,7 +360,7 @@ Operation *Softmax::GetGraph8Bit(Operation *const operation, TensorConnection *i
     auto shrOp = std::make_shared<Operation>(OpType::Asr);
     op = shrOp.get();
     op->SetRounding(RoundMode::NATURAL);
-    op->attr.asr.round = true;
+    op->Attribute<asr_attr_t>()->round = true;
     op->ConnectInput(TensorUsage::IFM, scaled_exp).Set(oneScaleQuant);
     op->ConnectInput(TensorUsage::IFM1, right_shift).Set(noScaleQuantZp0);
     if ( ifmConn->tensor->Type() == DataType::Int8 && ofmConn->tensor->Type() == DataType::Int16 )
@@ -371,7 +372,7 @@ Operation *Softmax::GetGraph8Bit(Operation *const operation, TensorConnection *i
         RecordOptimisation(operation, op);
 
         // PASS 27 - ADD
-        int32_t zp(ofmConn->quantization.zeroPoints[0]);
+        int32_t zp = int32_t(ofmConn->quantization.zeroPoints[0]);
         assert(zp == std::numeric_limits<int16_t>::min());
         auto addOp = std::make_shared<Operation>(OpType::Add);
         op = addOp.get();
@@ -407,7 +408,8 @@ Operation *Softmax::GetGraphInt16(Operation *const operation, TensorConnection *
     RecordOptimisation(operation, op);
 
     // PASS 2 - Mul
-    double beta = double(operation->Parameters().softmax.beta);
+    auto *softmax = operation->Attribute<softmax_attr_t>();
+    double beta = double(softmax->beta);
     double mul2_out_range = 10.0 / 65535.0;
     auto quant = ElementwiseMulScale(ifmConn->quantization.scales[0].Dequantize(), beta, mul2_out_range);
     auto scale_quant = ifmConn->quantization;
@@ -477,7 +479,7 @@ Operation *Softmax::GetGraphInt16(Operation *const operation, TensorConnection *
     auto shift = CreateConstTensor("shift_const", 15);
     op = CreateAsr(shifted_sum_minus_one, shift, noScaleQuant, noScaleQuant, noScaleQuant);
     op->SetRounding(RoundMode::NATURAL);
-    op->attr.asr.round = true;
+    op->Attribute<asr_attr_t>()->round = true;
     auto shifted_sum_minus_one_16 = op->Output(TensorUsage::OFM)->tensor;
     RecordOptimisation(operation, op);
 
@@ -506,7 +508,7 @@ Operation *Softmax::GetGraphInt16(Operation *const operation, TensorConnection *
     auto shrOp = std::make_shared<Operation>(OpType::Asr);
     op = shrOp.get();
     op->SetRounding(RoundMode::NATURAL);
-    op->attr.asr.round = true;
+    op->Attribute<asr_attr_t>()->round = true;
     op->ConnectInput(TensorUsage::IFM, mul_ofm).Set(noScaleQuant);
     op->ConnectInput(TensorUsage::IFM1, reciprocal_right_shift).Set(noScaleQuant);
     op->ConnectOutput(TensorUsage::OFM, ofmConn->tensor).Set(ofmConn->quantization).Set(ofmConn->shape);

@@ -21,6 +21,7 @@
 #include "tosa/tosa_argument_checks.hpp"
 
 #include "common/data_type.hpp"
+#include "compiler/attributes.hpp"
 #include "compiler/operation.hpp"
 #include "compiler/tensor_properties.hpp"
 
@@ -251,12 +252,15 @@ bool ResolveAndValidateArgument(const regor::Operation *op, const Argument *argu
     }
     auto expectedType = MapType(typeName);
     if ( !expectedType ) return false;
-    if ( op->Type() == OpType::Rescale &&
-         ((argument->category == Category::Input && argument->name == "input" && op->attr.rescale.input_unsigned) ||
-             (argument->category == Category::Output && argument->name == "output" && op->attr.rescale.output_unsigned)) )
+    if ( op->Type() == OpType::Rescale )
     {
-        // Signedness of IFM/OFM for Rescale depends on the input_unsigned/output_unsigned attributes
-        expectedType = *expectedType & ~unsigned(DataType::Signed);
+        auto *attr = op->Attribute<regor::rescale_attr_t>();
+        if ( ((argument->category == Category::Input && argument->name == "input" && attr->input_unsigned) ||
+                 (argument->category == Category::Output && argument->name == "output" && attr->output_unsigned)) )
+        {
+            // Signedness of IFM/OFM for Rescale depends on the input_unsigned/output_unsigned attributes
+            expectedType = *expectedType & ~unsigned(DataType::Signed);
+        }
     }
     return ValidateArgument(op, argument, *expectedType);
 }
@@ -280,14 +284,16 @@ bool ArgumentsCanBeResolvedAndValidated(const regor::Operation *op, const std::v
         if ( cond == nullptr ) return false;
         auto type = cond->tensor->Type();
         if ( type != DataType::Bool8 && type != DataType::Bool ) return false;
-        if ( strnlen(op->attr.condIf.else_branch, 1) == 0 ) return false;
-        if ( strnlen(op->attr.condIf.then_branch, 1) == 0 ) return false;
+        auto *attr = op->Attribute<regor::cond_attr_t>();
+        if ( attr->then_branch.empty() ) return false;
+        if ( attr->else_branch.empty() ) return false;
         return true;
     }
     if ( op->Type() == regor::OpType::While )
     {
-        if ( strnlen(op->attr.condWhile.body_branch, 1) == 0 ) return false;
-        if ( strnlen(op->attr.condWhile.cond_branch, 1) == 0 ) return false;
+        auto *attr = op->Attribute<regor::while_attr_t>();
+        if ( attr->body_branch.empty() ) return false;
+        if ( attr->cond_branch.empty() ) return false;
         return true;
     }
     if ( ResolveAndValidateArguments(op, arguments) ) return true;

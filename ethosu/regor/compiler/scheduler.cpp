@@ -335,8 +335,9 @@ std::unique_ptr<ArchitectureOpConfig> GetOpConfig(Architecture *arch, SchedulerO
     query.weightFormat = wgtFormat;
     if ( op->Type() == OpType::Resize )
     {
-        query.rescaling.scaleX = op->Attributes().resize.scaleX;
-        query.rescaling.scaleY = op->Attributes().resize.scaleY;
+        const auto *attr = op->Attribute<resize_attr_t>();
+        query.rescaling.scaleX = attr->scaleX;
+        query.rescaling.scaleY = attr->scaleY;
     }
 
     return arch->GetOpConfig(op->Type(), query);

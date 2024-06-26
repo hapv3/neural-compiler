@@ -695,7 +695,7 @@ void EthosU85RCSGenerator::GenerateScalingForElementwise(HLCOperation *op)
             }
             const HLCParameters *params = &op->parameters;
             float alpha = params->leaky_relu.alpha;
-            float ifm1Scale = input1Scale.Dequantize();
+            float ifm1Scale = float(input1Scale.Dequantize());
             input2Scale = QuantizedScale(alpha * ifm1Scale);
             ifmCnt = 2;
         }

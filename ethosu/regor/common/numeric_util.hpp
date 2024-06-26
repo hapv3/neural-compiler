@@ -188,6 +188,23 @@ public:
     }
 };
 
+template<typename TYPE>
+struct Fraction
+{
+public:
+    TYPE n = 0, d = 0;
+
+public:
+    Fraction() = default;
+    Fraction(TYPE numerator, TYPE denominator) : n(numerator), d(denominator) {}
+    template<typename TYPE2>
+    Fraction(const Point2<TYPE2> pt) : n(pt.x), d(pt.y)
+    {
+    }
+
+public:
+    operator Point2<TYPE>() { return Point2<TYPE>(n, d); }
+};
 
 template<typename TYPE>
 TYPE RoundAway(TYPE value, TYPE align)

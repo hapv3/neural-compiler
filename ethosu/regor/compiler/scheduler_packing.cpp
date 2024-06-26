@@ -405,9 +405,7 @@ std::unique_ptr<SchedulerOperation> SchedulerPacking::MakeSchedulerOperation(Ope
     schedOp->SetKernel(op->Kernel());
     schedOp->SetHasScaling(op->HasScaling());
     schedOp->SetRounding(op->Rounding());
-    schedOp->SetParameters(op->Parameters());
-    schedOp->SetAttributes(op->attr);
-    schedOp->_attr = op->AttributeRef();
+    schedOp->SetAttributeRef(op->AttributeRef());
     schedOp->_srcKey = op;
 
     // Get the inputs from the source op and connect with scheduler specific tensor

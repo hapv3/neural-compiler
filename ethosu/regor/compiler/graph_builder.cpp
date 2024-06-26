@@ -325,11 +325,11 @@ const FieldInfo *FindField(const TypeInfo *info, uint32_t id)
     return nullptr;
 }
 
-template<typename TYPE>
+template<typename TYPE, typename DTYPE = TYPE>
 void WriteField(void *p, const TYPE &value)
 {
     assert(p);
-    *reinterpret_cast<TYPE *>(p) = value;
+    *reinterpret_cast<DTYPE *>(p) = value;
 }
 
 template<typename TYPE>
@@ -337,8 +337,18 @@ bool ConvertToType(void *p, [[maybe_unused]] uint8_t destType, const TYPE &value
 {
     if ( destType == FieldTypeId<TYPE>::TYPEID )
     {
-        WriteField(p, value);
+        WriteField<TYPE>(p, value);
         return true;
+    }
+    // Convert From Point2
+    else if constexpr ( FieldTypeId<TYPE>::TYPEID == FieldTypeId<Point2i>::TYPEID )
+    {
+        // To Fraction
+        if ( destType == FieldTypeId<Fraction<int>>::TYPEID )
+        {
+            WriteField<TYPE, Fraction<int>>(p, value);
+            return true;
+        }
     }
     return false;
 }
@@ -478,7 +488,6 @@ bool GraphBuilder::Set(GraphOperation *graphOp, GraphApi::OpAttr attr, const Gra
         assert(false && "Attribute type not Point2");
         return false;
     }
-
     Point2i xy(value.x, value.y);
     return WriteAttributeValue(op, attr, xy);
 }

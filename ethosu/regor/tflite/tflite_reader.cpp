@@ -477,7 +477,7 @@ void TfLiteReader::ParseOperatorOptions(const std::shared_ptr<Operation> &operat
                 const auto &shape = weight_tensor->StorageShape();
                 for ( int i = 1; i < shape.Size() - 1; i++ )
                 {
-                    assert(shape[i] == 1);
+                    if ( shape[i] != 1 ) operation->SetPassthroughOp();
                 }
                 weight_tensor->Reshape(Shape(shape[0], 1, 1, shape[-1]));
             }
@@ -514,14 +514,14 @@ void TfLiteReader::ParseOperatorOptions(const std::shared_ptr<Operation> &operat
         case tflite::BuiltinOptions::SoftmaxOptions:
         {
             const auto options = GetBuiltinOptions<tflite::SoftmaxOptions>(tflite_operator);
-            operation->Parameters().softmax.beta = options->beta();
+            operation->Attribute<softmax_attr_t>()->beta = options->beta();
         }
         break;
 
         case tflite::BuiltinOptions::ConcatenationOptions:
         {
             const auto options = GetBuiltinOptions<tflite::ConcatenationOptions>(tflite_operator);
-            operation->Parameters().concat.axis = options->axis();
+            operation->Attribute<axis_attr_t>()->axis = options->axis();
             activation_function = options->fused_activation_function();
         }
         break;
@@ -568,15 +568,21 @@ void TfLiteReader::ParseOperatorOptions(const std::shared_ptr<Operation> &operat
 
             if ( conn == nullptr )
             {
-                // New shape specified as option. Convert to input tensor.
                 auto new_shape = options->new_shape();
-                assert(new_shape);
-                auto tensor = std::make_shared<Tensor>("new_shape", DataType::Int32);
-                tensor->SetStorageShape(Shape(new_shape->size()));
-                auto buffer_base = new_shape->Data();
-                int buffer_size = int(new_shape->size() * (sizeof(int32_t) / sizeof(uint8_t)));
-                tensor->SetBuffer(std::make_shared<Buffer>(buffer_size, buffer_base, true));
-                operation->ConnectInput(TensorUsage::Params, tensor);
+                if ( new_shape )
+                {
+                    // New shape specified as option. Convert to input tensor.
+                    auto tensor = std::make_shared<Tensor>("new_shape", DataType::Int32);
+                    tensor->SetStorageShape(Shape(new_shape->size()));
+                    auto buffer_base = new_shape->Data();
+                    int buffer_size = int(new_shape->size() * (sizeof(int32_t) / sizeof(uint8_t)));
+                    tensor->SetBuffer(std::make_shared<Buffer>(buffer_size, buffer_base, true));
+                    operation->ConnectInput(TensorUsage::Params, tensor);
+                }
+                else
+                {
+                    operation->SetPassthroughOp();
+                }
             }
         }
         break;
@@ -584,46 +590,38 @@ void TfLiteReader::ParseOperatorOptions(const std::shared_ptr<Operation> &operat
         case tflite::BuiltinOptions::PackOptions:
         {
             const auto options = GetBuiltinOptions<tflite::PackOptions>(tflite_operator);
-            operation->Parameters().pack_unpack.axis = options->axis();
+            operation->Attribute<axis_attr_t>()->axis = options->axis();
         }
         break;
 
         case tflite::BuiltinOptions::UnpackOptions:
         {
             const auto options = GetBuiltinOptions<tflite::UnpackOptions>(tflite_operator);
-            operation->Parameters().pack_unpack.axis = options->axis();
+            operation->Attribute<axis_attr_t>()->axis = options->axis();
         }
         break;
 
         case tflite::BuiltinOptions::LeakyReluOptions:
         {
             const auto options = GetBuiltinOptions<tflite::LeakyReluOptions>(tflite_operator);
-            operation->Parameters().leaky_relu.alpha = options->alpha();
+            operation->Attribute<leaky_relu_attr_t>()->alpha = options->alpha();
         }
         break;
 
         case tflite::BuiltinOptions::StridedSliceOptions:
-        {
-            const auto options = GetBuiltinOptions<tflite::StridedSliceOptions>(tflite_operator);
-            operation->Parameters().strided_slice.begin_mask = options->begin_mask();
-            operation->Parameters().strided_slice.end_mask = options->end_mask();
-            operation->Parameters().strided_slice.ellipsis_mask = options->ellipsis_mask();
-            operation->Parameters().strided_slice.new_axis_mask = options->new_axis_mask();
-            operation->Parameters().strided_slice.shrink_axis_mask = options->shrink_axis_mask();
-        }
-        break;
+            break;
 
         case tflite::BuiltinOptions::SplitOptions:
         {
             int num_splits = GetBuiltinOptions<tflite::SplitOptions>(tflite_operator)->num_splits();
-            assert(num_splits == operation->Outputs().size());
+            if ( num_splits != operation->Outputs().size() ) operation->SetPassthroughOp();
         }
         break;
 
         case tflite::BuiltinOptions::SplitVOptions:
         {
             int num_splits = GetBuiltinOptions<tflite::SplitVOptions>(tflite_operator)->num_splits();
-            assert(num_splits == operation->Outputs().size());
+            if ( num_splits != operation->Outputs().size() ) operation->SetPassthroughOp();
         }
         break;
 
@@ -635,28 +633,8 @@ void TfLiteReader::ParseOperatorOptions(const std::shared_ptr<Operation> &operat
         break;
 
         case tflite::BuiltinOptions::ResizeBilinearOptions:
-        {
-            // Convert Parameters tensor to operation attributes
-            const auto options = GetBuiltinOptions<tflite::ResizeBilinearOptions>(tflite_operator);
-            operation->Parameters().resize.alignCorners = options->align_corners();
-            operation->Parameters().resize.halfPixelCenters = options->half_pixel_centers();
-        }
-        break;
-
         case tflite::BuiltinOptions::ResizeNearestNeighborOptions:
-        {
-            // Convert Parameters tensor to operation attributes
-            const auto options = GetBuiltinOptions<tflite::ResizeNearestNeighborOptions>(tflite_operator);
-            operation->Parameters().resize.alignCorners = options->align_corners();
-            operation->Parameters().resize.halfPixelCenters = options->half_pixel_centers();
-            if ( !options->align_corners() )
-            {
-                // Use half-pixel-centers if align-corners is false.
-                // This aligns with reference kernels
-                operation->Parameters().resize.halfPixelCenters = true;
-            }
-        }
-        break;
+            break;
 
         // Options that are not used by the compiler are not loaded in, but can be written out again via passthrough
         case tflite::BuiltinOptions::BatchMatMulOptions:
@@ -764,6 +742,8 @@ void TfLiteReader::ParseOperatorOptions(const std::shared_ptr<Operation> &operat
             LOG_ERROR("TfLiteReader: Unrecognised built-in options type '{}'\n", int(type));
             break;
     }
+    operation->SetPassthrough(tflite_operator);
+
     ExecutionQuery query{};
     bool isValidQuery = true;
     try
@@ -783,8 +763,6 @@ void TfLiteReader::ParseOperatorOptions(const std::shared_ptr<Operation> &operat
     {
         UnFuseActivation(operation, activation_function, optDb);
     }
-
-    operation->SetPassthrough(tflite_operator);
 }
 
 void TfLiteReader::SetOperatorRounding(const std::shared_ptr<Operation> &operation)
@@ -834,6 +812,95 @@ void TfLiteReader::UnFuseActivation(const std::shared_ptr<Operation> &operation,
     }
 }
 
+namespace
+{
+
+ResizeSupportQuery CalculateResizeSupportQuery(const Operation &operation)
+{
+    auto ifmConn = operation.Input(TensorUsage::IFM);
+    auto ofmConn = operation.Output(TensorUsage::OFM);
+    assert(ifmConn);
+    assert(ofmConn);
+
+    // Get numerators(n) and denominators(d) for the scale fractions
+    int width_n = ofmConn->shape.Width();
+    int width_d = ifmConn->shape.Width();
+    int height_n = ofmConn->shape.Height();
+    int height_d = ifmConn->shape.Height();
+    int heightOffset = 0;
+    int widthOffset = 0;
+
+    const tflite::Operator *tflite_operator = static_cast<const tflite::Operator *>(operation.Passthrough());
+    assert(tflite_operator);
+    bool halfPixelCenters = false;
+    bool alignCorners = false;
+    if ( operation.Type() == OpType::ResizeBilinear )
+    {
+        const auto *opt = tflite_operator->builtin_options_as_ResizeBilinearOptions();
+        assert(opt);
+        alignCorners = opt->align_corners();
+        halfPixelCenters = opt->half_pixel_centers();
+    }
+    else
+    {
+        const auto *opt = tflite_operator->builtin_options_as_ResizeNearestNeighborOptions();
+        assert(opt);
+        alignCorners = opt->align_corners();
+        // Use half-pixel-centers if align-corners is false.
+        // This aligns with reference kernels
+        halfPixelCenters = !alignCorners || opt->half_pixel_centers();
+    }
+
+    // Compute scaling fractions
+    // align-corners use a scale-factor of (n-1)/(d-1)
+    if ( alignCorners )
+    {
+        if ( width_d > 1 )
+        {
+            width_n -= 1;
+            width_d -= 1;
+        }
+        if ( height_d > 1 )
+        {
+            height_n -= 1;
+            height_d -= 1;
+        }
+    }
+
+    // reduce scaling fractions with gcd
+    int gcd_w = std::gcd(width_n, width_d);
+    width_n = (width_n / gcd_w);
+    width_d = (width_d / gcd_w);
+
+    int gcd_h = std::gcd(height_n, height_d);
+    height_n = (height_n / gcd_h);
+    height_d = (height_d / gcd_h);
+
+    if ( halfPixelCenters )
+    {
+        // make sure fractions are evenly divisible by 2
+        width_n = width_n * 2;
+        width_d = width_d * 2;
+        height_n = height_n * 2;
+        height_d = height_d * 2;
+        // adjust offset for half-pixel-centers
+        widthOffset = (width_d / 2) - (width_n / 2);
+        heightOffset = (height_d / 2) - (height_n / 2);
+    }
+
+    // set up op-support query
+    ResizeSupportQuery resizeQuery;
+    resizeQuery.scaleX = {int16_t(width_n), int16_t(width_d)};
+    resizeQuery.scaleY = {int16_t(height_n), int16_t(height_d)};
+    resizeQuery.offsetX = widthOffset;
+    resizeQuery.offsetY = heightOffset;
+    resizeQuery.ifmShape = ifmConn->shape;
+    resizeQuery.mode = (operation.Type() == OpType::ResizeBilinear) ? ArchResizeMode::Bilinear : ArchResizeMode::Nearest;
+    return resizeQuery;
+}
+
+}  // namespace
+
 ExecutionQuery TfLiteReader::OperationToExecQuery(const Operation &operation)
 {
     ExecutionQuery query{};
@@ -860,8 +927,6 @@ ExecutionQuery TfLiteReader::OperationToExecQuery(const Operation &operation)
             query.reverseType = CalculateReverseType(operation);
             break;
         case OpType::ResizeBilinear:
-            query.resizeQuery = CalculateResizeSupportQuery(operation);
-            break;
         case OpType::ResizeNearestNeighbor:
             query.resizeQuery = CalculateResizeSupportQuery(operation);
             break;

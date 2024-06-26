@@ -19,6 +19,7 @@
 #include "tosa_reader.hpp"
 
 #include "common/shape.hpp"
+#include "compiler/attributes.hpp"
 #include "compiler/graph_builder.hpp"
 #include "include/graphapi.hpp"
 #include "tosa_mapping.hpp"
@@ -297,6 +298,8 @@ TOSA_REGISTER_OP(DIM,                     AxisAttribute,                 GraphAp
 
 void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuilder> &builders)
 {
+    using GraphApi::OpAttr;
+
     tosa_assert(model);
     const auto &version = SafeDeref(model->version());
     const uint32_t ver_word = (uint32_t(version._major()) << 24) | (uint32_t(version._minor()) << 8) | uint32_t(version._patch());
@@ -564,8 +567,9 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                 auto op = builder->CreateOp(TosaMapping::FBOpToOp(tosa_operator.op()), kernelPtr);
 
                 // Fix op Attributes
-                auto ToApiShape = [](const ::flatbuffers::Vector<int32_t> *in, GraphApi::GraphShape &out)
+                auto ToApiShape = [](const ::flatbuffers::Vector<int32_t> *in) -> GraphApi::GraphShape
                 {
+                    GraphApi::GraphShape out;
                     const auto &buf = SafeDeref(in);
                     tosa_assert(buf.size() <= std::size(out.axisNHWC), "Shape rank exceeds maximum allowed");
                     for ( int i = 0; i < int(buf.size()); i++ )
@@ -573,69 +577,65 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         out.axisNHWC[i] = buf[i];
                     }
                     out.count = buf.size();
+                    return out;
                 };
-                auto SafeCopy = [](const ::flatbuffers::String *in, char(&out)[GraphApi::GraphOperation::MAX_GRAPH_NAME_LEN])
-                {
-                    auto s = SafeDeref(in).str();
-                    tosa_assert(s.copy(out, std::size(out)) == s.size());
-                };
-                auto &attr = op->attr;
+
                 switch ( tosa_operator.op() )
                 {
                     case tosaFb::Op::ARITHMETIC_RIGHT_SHIFT:
                     {
                         const auto &tosa_attr = TosaAttr<tosaFb::Op::ARITHMETIC_RIGHT_SHIFT>::Get(tosa_operator);
-                        attr.asr.round = tosa_attr.round();
+                        builder->Set(op, OpAttr::ASR_ROUND, tosa_attr.round());
                     }
                     break;
                     case tosaFb::Op::CLAMP:
                     {
                         const auto &tosa_attr = TosaAttr<tosaFb::Op::CLAMP>::Get(tosa_operator);
-                        attr.clamp.min = tosa_attr.min_int();
-                        attr.clamp.max = tosa_attr.max_int();
+                        builder->Set(op, OpAttr::CLAMP_MIN, tosa_attr.min_int());
+                        builder->Set(op, OpAttr::CLAMP_MAX, tosa_attr.max_int());
                     }
                     break;
                     case tosaFb::Op::SLICE:
                     {
                         const auto &tosa_attr = TosaAttr<tosaFb::Op::SLICE>::Get(tosa_operator);
-                        ToApiShape(tosa_attr.start(), attr.slice.begin);
-                        ToApiShape(tosa_attr.size(), attr.slice.size);
+                        builder->Set(op, OpAttr::SLICE_BEGIN, ToApiShape(tosa_attr.start()));
+                        builder->Set(op, OpAttr::SLICE_SIZE, ToApiShape(tosa_attr.size()));
                     }
                     break;
                     case tosaFb::Op::MUL:
                     {
                         const auto &tosa_attr = TosaAttr<tosaFb::Op::MUL>::Get(tosa_operator);
-                        attr.mul.shift = tosa_attr.shift();
+                        builder->Set(op, OpAttr::MUL_SHIFT, tosa_attr.shift());
                     }
                     break;
                     case tosaFb::Op::TRANSPOSE:
                     {
                         const auto &tosa_attr = TosaAttr<tosaFb::Op::TRANSPOSE>::Get(tosa_operator);
-                        ToApiShape(tosa_attr.perms(), attr.transpose.perm);
+                        builder->Set(op, OpAttr::TRANSPOSE_PERM, ToApiShape(tosa_attr.perms()));
                     }
                     break;
                     case tosaFb::Op::COND_IF:
                     {
                         const auto &tosa_attr = TosaAttr<tosaFb::Op::COND_IF>::Get(tosa_operator);
-                        SafeCopy(tosa_attr.then_branch(), attr.condIf.then_branch);
-                        SafeCopy(tosa_attr.else_branch(), attr.condIf.else_branch);
+                        builder->Set(op, OpAttr::COND_IF, SafeDeref(tosa_attr.then_branch()).c_str());
+                        builder->Set(op, OpAttr::COND_ELSE, SafeDeref(tosa_attr.else_branch()).c_str());
                     }
                     break;
                     case tosaFb::Op::WHILE_LOOP:
                     {
                         const auto &tosa_attr = TosaAttr<tosaFb::Op::WHILE_LOOP>::Get(tosa_operator);
-                        SafeCopy(tosa_attr.body_branch(), attr.condWhile.body_branch);
-                        SafeCopy(tosa_attr.cond_branch(), attr.condWhile.cond_branch);
+                        builder->Set(op, OpAttr::WHILE_BODY, SafeDeref(tosa_attr.body_branch()).c_str());
+                        builder->Set(op, OpAttr::WHILE_COND, SafeDeref(tosa_attr.cond_branch()).c_str());
                     }
                     break;
                     case tosaFb::Op::RESCALE:
                     {
                         const auto &tosa_attr = TosaAttr<tosaFb::Op::RESCALE>::Get(tosa_operator);
-                        attr.rescale.scale32 = tosa_attr.scale32();
-                        attr.rescale.double_round = tosa_attr.double_round();
-                        attr.rescale.per_channel = tosa_attr.per_channel();
-                        attr.rescale.input_unsigned = tosa_attr.input_unsigned();
-                        attr.rescale.output_unsigned = tosa_attr.output_unsigned();
+                        builder->Set(op, GraphApi::OpAttr::RESCALE_SCALE32, tosa_attr.scale32());
+                        builder->Set(op, GraphApi::OpAttr::RESCALE_ROUND, tosa_attr.double_round());
+                        builder->Set(op, GraphApi::OpAttr::RESCALE_PER_CHANNEL, tosa_attr.per_channel());
+                        builder->Set(op, GraphApi::OpAttr::RESCALE_INPUT_UNSIGNED, tosa_attr.input_unsigned());
+                        builder->Set(op, GraphApi::OpAttr::RESCALE_OUTPUT_UNSIGNED, tosa_attr.output_unsigned());
 
                         if ( input_tensors.size() == 1 )
                         {
@@ -653,7 +653,7 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                     case tosaFb::Op::RESHAPE:
                     {
                         const auto &tosa_attr = TosaAttr<tosaFb::Op::RESHAPE>::Get(tosa_operator);
-                        ToApiShape(tosa_attr.new_shape(), attr.reshape.shape);
+                        builder->Set(op, OpAttr::RESHAPE_SHAPE, ToApiShape(tosa_attr.new_shape()));
                     }
                     break;
                     case tosaFb::Op::RESIZE:
@@ -665,15 +665,17 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         tosa_assert(tosa_attr.offset()->size() == 2);
                         tosa_assert(tosa_attr.border());
                         tosa_assert(tosa_attr.border()->size() == 2);
-                        attr.resize.scaleY.n = (*tosa_attr.scale())[0];
-                        attr.resize.scaleY.d = (*tosa_attr.scale())[1];
-                        attr.resize.scaleX.n = (*tosa_attr.scale())[2];
-                        attr.resize.scaleX.d = (*tosa_attr.scale())[3];
-                        attr.resize.offsetYX[0] = (*tosa_attr.offset())[0];
-                        attr.resize.offsetYX[1] = (*tosa_attr.offset())[1];
-                        attr.resize.borderYX[0] = (*tosa_attr.border())[0];
-                        attr.resize.borderYX[1] = (*tosa_attr.border())[1];
-                        attr.resize.mode = TosaMapping::FBResizeModeToResizeMode(tosa_attr.mode());
+
+                        builder->Set(op, GraphApi::OpAttr::RESIZE_SCALEY,
+                            GraphApi::Point2{(*tosa_attr.scale())[0], (*tosa_attr.scale())[1]});
+                        builder->Set(op, GraphApi::OpAttr::RESIZE_SCALEX,
+                            GraphApi::Point2{(*tosa_attr.scale())[2], (*tosa_attr.scale())[3]});
+                        builder->Set(op, GraphApi::OpAttr::RESIZE_OFFSET,
+                            GraphApi::Point2{(*tosa_attr.offset())[1], (*tosa_attr.offset())[0]});
+                        builder->Set(op, GraphApi::OpAttr::RESIZE_BORDER,
+                            GraphApi::Point2{(*tosa_attr.border())[1], (*tosa_attr.border())[0]});
+                        builder->Set(op, GraphApi::OpAttr::RESIZE_MODE,
+                            int(TosaMapping::FBResizeModeToResizeMode(tosa_attr.mode())));
 
                         // If no input tensors for scale/offset/border, create them to be backwards compatible
                         if ( input_tensors.size() == 1 )
@@ -709,13 +711,13 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                     case tosaFb::Op::REVERSE:
                     {
                         const auto &tosa_attr = TosaAttr<tosaFb::Op::ARGMAX>::Get(tosa_operator);
-                        attr.axis.axis = tosa_attr.axis();
+                        builder->Set(op, GraphApi::OpAttr::AXIS_SELECT, tosa_attr.axis());
                         break;
                     }
                     case tosaFb::Op::TILE:
                     {
                         const auto &tosa_attr = TosaAttr<tosaFb::Op::TILE>::Get(tosa_operator);
-                        ToApiShape(tosa_attr.multiples(), attr.tile.multiples);
+                        builder->Set(op, OpAttr::TILE_MULTIPLES, ToApiShape(tosa_attr.multiples()));
                         break;
                     }
                     break;

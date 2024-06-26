@@ -30,7 +30,7 @@
 namespace regor
 {
 
-Operation::Operation(OpType opType) : _type(opType), _parameters({}), _rounding(RoundMode::AUTO)
+Operation::Operation(OpType opType) : _type(opType), _rounding(RoundMode::AUTO)
 {
     // Default 1x1 kernel for ops without a kernel
     _kernel = std::make_unique<class Kernel>(Point2i(1, 1), Point2i(1, 1), Point2i(1, 1));
@@ -39,7 +39,6 @@ Operation::Operation(OpType opType) : _type(opType), _parameters({}), _rounding(
 Operation::Operation(const Operation &op) : Operation(op._type)
 {
     _kernel = std::make_unique<class Kernel>(*op._kernel.get());
-    _parameters = op._parameters;
     _passthrough = op._passthrough;
 }
 

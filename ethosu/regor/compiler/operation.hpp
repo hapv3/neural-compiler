@@ -45,44 +45,6 @@ enum class RoundMode : uint8_t
     AUTO = 0xff
 };
 
-// Parameters that apply only to particular operation types
-union OpTypeParameters
-{
-    struct
-    {
-        float alpha;
-    } leaky_relu;
-
-    struct
-    {
-        float beta;
-    } softmax;
-
-    struct
-    {
-        int axis;
-    } concat;
-
-    struct
-    {
-        int axis;
-    } pack_unpack;
-
-    struct
-    {
-        int begin_mask;
-        int end_mask;
-        int ellipsis_mask;
-        int new_axis_mask;
-        int shrink_axis_mask;
-    } strided_slice;
-
-    struct
-    {
-        bool alignCorners;
-        bool halfPixelCenters;
-    } resize;
-};
 
 struct TensorSlice
 {
@@ -141,7 +103,6 @@ private:
     OpType _type;
     std::unique_ptr<class Kernel> _kernel;
     DynamicRef _attr;
-    OpTypeParameters _parameters;  // TODO: remove me
     RoundMode _rounding;
     const void *_passthrough = nullptr;  // Original flatbuffer description of this op (if it was loaded from one)
 
@@ -165,9 +126,6 @@ public:
     const class Kernel *Kernel() const { return _kernel.get(); }
     class Kernel *Kernel() { return _kernel.get(); }
     void SetKernel(std::unique_ptr<class Kernel> kernel) { _kernel = std::move(kernel); }
-
-    const OpTypeParameters &Parameters() const { return _parameters; }
-    OpTypeParameters &Parameters() { return _parameters; }
 
     RoundMode Rounding() const { return _rounding; }
     void SetRounding(RoundMode rounding) { _rounding = rounding; }
@@ -202,6 +160,16 @@ public:
         }
 
         return static_cast<TYPE *>(_attr.Instance());
+    }
+
+    template<typename TYPE>
+    const TYPE *Attribute() const
+    {
+        if ( !_attr || (_attr.Info()->Hash() != TypeHash<TYPE>::HASH) )
+        {
+            throw std::runtime_error("requested attribute must be already assigned");
+        }
+        return static_cast<const TYPE *>(_attr.Instance());
     }
 
     DynamicRef *AttributeByKey(uint32_t hash)

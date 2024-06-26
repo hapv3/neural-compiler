@@ -98,19 +98,22 @@ Operation *GraphIrOptimiser::ConvertAttributes(Graph *const graph, Operation *co
     OpType opType = operation->Type();
     if ( opType == OpType::Asr )
     {
-        auto roundMode = operation->attr.asr.round ? RoundMode::NATURAL : RoundMode::TRUNCATE_TO_LOWER;
+        const auto *attr = operation->Attribute<asr_attr_t>();
+        auto roundMode = attr->round ? RoundMode::NATURAL : RoundMode::TRUNCATE_TO_LOWER;
         operation->SetRounding(roundMode);
     }
-    if ( opType == OpType::Rescale )
+    else if ( opType == OpType::Rescale )
     {
-        auto roundMode = operation->attr.rescale.double_round ? RoundMode::DBL : RoundMode::NATURAL;
+        const auto *attr = operation->Attribute<rescale_attr_t>();
+        auto roundMode = attr->double_round ? RoundMode::DBL : RoundMode::NATURAL;
         operation->SetRounding(roundMode);
     }
-    if ( opType == OpType::Clamp )
+    else if ( opType == OpType::Clamp )
     {
+        const auto *attr = operation->Attribute<clamp_attr_t>();
         TensorConnection *ofmConn = operation->Output(TensorUsage::OFM);
-        ofmConn->quantization.quantMin = {int(operation->attr.clamp.min)};
-        ofmConn->quantization.quantMax = {int(operation->attr.clamp.max)};
+        ofmConn->quantization.quantMin = {int64_t(attr->min)};
+        ofmConn->quantization.quantMax = {int64_t(attr->max)};
     }
     if ( opType == OpType::SHL || opType == OpType::SHR )
     {
@@ -131,25 +134,25 @@ Operation *GraphIrOptimiser::ConvertResizeOffsets(Graph *const graph, Operation 
     OpType opType = operation->Type();
     if ( opType == OpType::Resize )
     {
-        auto &attr = operation->attr;
+        auto *attr = operation->Attribute<resize_attr_t>();
         TensorConnection *ifmConn = operation->Input(TensorUsage::IFM);
         Shape ifmStart = ifmConn->shape.WithZeros();
         Shape ifmShape = ifmConn->shape;
-        int offset_h = attr.resize.offsetYX[0];
-        int offset_w = attr.resize.offsetYX[1];
-        int scale_nh = attr.resize.scaleY.n;
-        int scale_nw = attr.resize.scaleX.n;
+        int offset_h = attr->offset.y;
+        int offset_w = attr->offset.x;
+        int scale_nh = attr->scaleY.n;
+        int scale_nw = attr->scaleX.n;
         if ( offset_h >= scale_nh )
         {
             ifmStart[1] += offset_h / scale_nh;
             ifmShape[1] -= ifmStart[1];
-            attr.resize.offsetYX[0] = offset_h % scale_nh;
+            attr->offset.y = offset_h % scale_nh;
         }
         if ( offset_w >= scale_nw )
         {
             ifmStart[2] += offset_w / scale_nw;
             ifmShape[2] -= ifmStart[2];
-            attr.resize.offsetYX[1] = offset_w % scale_nw;
+            attr->offset.x = offset_w % scale_nw;
         }
         TensorSlice slice{std::move(ifmStart), std::move(ifmShape)};
         ifmConn->Set(slice);
@@ -288,16 +291,17 @@ Operation *GraphIrOptimiser::RewriteRescale(Graph *const, Operation *const opera
         assert(mulT == DataType::Int16 || mulT == DataType::Int32);
         assert(shiftT == DataType::Int8);
         std::vector<QuantizedScale> newScale;
-        int channels = operation->attr.rescale.per_channel ? ofmConn->shape.Depth() : 1;
+        auto *attr = operation->Attribute<rescale_attr_t>();
+        int channels = attr->per_channel ? ofmConn->shape.Depth() : 1;
         for ( int i = 0; i < channels; i++ )
         {
             QuantizedScale qScale;
             int32_t scale = mulT == DataType::Int32 ? mulView.Values<int32_t>()[i] : mulView.Values<int16_t>()[i];
             int32_t shift = shiftView.Values<int8_t>()[i];
-            assert(operation->attr.rescale.scale32 || static_cast<int16_t>(scale) == scale);
+            assert(attr->scale32 || static_cast<int16_t>(scale) == scale);
             assert(static_cast<int8_t>(shift) == shift);
 
-            qScale.scale = operation->attr.rescale.scale32 ? scale : static_cast<int16_t>(scale);
+            qScale.scale = attr->scale32 ? scale : static_cast<int16_t>(scale);
             qScale.shift = shift;
             newScale.emplace_back(qScale);
         }

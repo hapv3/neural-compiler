@@ -82,8 +82,8 @@ struct slice_attr_t
 
 struct resize_attr_t
 {
-    Point2i scaleX;  // X/Y (x=numerator/y=denominator)
-    Point2i scaleY;  // X/Y (x=numerator/y=denominator)
+    Fraction<int> scaleX;
+    Fraction<int> scaleY;
     Point2i offset;
     Point2i border;
     tosa::ResizeMode mode;
@@ -111,10 +111,14 @@ struct rescale_attr_t
     bool scale32;
     bool double_round;
     bool per_channel;
+    bool input_unsigned;
+    bool output_unsigned;
     BEGIN_FIELD_TABLE(rescale_attr_t)
         ATTR_FIELD(scale32, 0)
         ATTR_FIELD(double_round, 1)
         ATTR_FIELD(per_channel, 2)
+        ATTR_FIELD(input_unsigned, 3)
+        ATTR_FIELD(output_unsigned, 4)
     END_FIELD_TABLE()
 };
 

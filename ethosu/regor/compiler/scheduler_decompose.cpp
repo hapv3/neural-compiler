@@ -40,8 +40,8 @@ static std::unique_ptr<SchedulerOperation> MakeSubOperation(const SchedulerOpera
     subOp->SetHasScaling(schedOp->HasScaling());
     subOp->_srcKey = schedOp->_srcKey;
     subOp->SetPrimaryIfmIndex(schedOp->PrimaryIfmIndex());
-    subOp->SetParameters(schedOp->Parameters());
     subOp->SetRounding(schedOp->Rounding());
+    subOp->SetAttributeRef(schedOp->_attr);
     subOp->SetAccumulatorMode(schedOp->AccumulatorMode());
     for ( const auto *list : {&schedOp->inputs, &schedOp->outputs} )
     {

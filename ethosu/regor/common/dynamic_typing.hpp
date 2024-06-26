@@ -95,12 +95,17 @@ struct FieldTypeId<std::string>
 template<>
 struct FieldTypeId<Point2i>
 {
-    static constexpr uint8_t TYPEID = 0x1F;
+    static constexpr uint8_t TYPEID = 0x20;
 };
 template<>
 struct FieldTypeId<Shape>
 {
-    static constexpr uint8_t TYPEID = 0x2F;
+    static constexpr uint8_t TYPEID = 0x21;
+};
+template<>
+struct FieldTypeId<Fraction<int>>
+{
+    static constexpr uint8_t TYPEID = 0x22;
 };
 
 template<typename TYPE>
@@ -205,14 +210,14 @@ public:
 
     DynamicRef &operator=(const DynamicRef &other)
     {
-        if ( _instance )
-        {
-            assert(_info);
-            _info->Delete(_instance);
-            _instance = nullptr;
-        }
         if ( &other != this && other._instance )
         {
+            if ( _instance )
+            {
+                assert(_info);
+                _info->Delete(_instance);
+                _instance = nullptr;
+            }
             _info = other._info;
             _instance = _info->AddRef(other._instance);
             assert(_instance);
@@ -232,6 +237,7 @@ public:
     }
     operator bool() const { return _info && _instance; }
     void *Instance() { return _instance; }
+    const void *Instance() const { return _instance; }
     const TypeInfo *Info() const { return _info; }
 };
 

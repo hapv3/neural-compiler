@@ -20,6 +20,7 @@
 
 #include "common/logging.hpp"
 
+#include "compiler/attributes.hpp"
 #include "flatbuffer_utils.hpp"
 #include "tflite_mapping.hpp"
 
@@ -117,7 +118,7 @@ std::unique_ptr<const uint8_t[]> TfLiteWriter::Serialise(const std::vector<std::
             }
             else
             {
-                opcode_index = _serialised_opcodes.size();
+                opcode_index = int(_serialised_opcodes.size());
                 _serialised_opcodes.push_back(tflite::CreateOperatorCodeDirect(_flatbuffer,
                     opcode_desc.deprecated_builtin_code, opcode_desc.custom_code, opcode_desc.version, opcode_desc.type));
 
@@ -456,7 +457,8 @@ flatbuffers::Offset<void> TfLiteWriter::SerialiseOptions(const Operation *operat
 
         case tflite::BuiltinOptions::SoftmaxOptions:
         {
-            offset = tflite::CreateSoftmaxOptions(_flatbuffer, operation->Parameters().softmax.beta).Union();
+            const auto *softmax = operation->Attribute<softmax_attr_t>();
+            offset = tflite::CreateSoftmaxOptions(_flatbuffer, softmax->beta).Union();
         }
         break;
 
@@ -465,7 +467,8 @@ flatbuffers::Offset<void> TfLiteWriter::SerialiseOptions(const Operation *operat
             assert(passthrough->builtin_options_as_ConcatenationOptions());
             tflite::ActivationFunctionType fused_activation_function =
                 passthrough->builtin_options_as_ConcatenationOptions()->fused_activation_function();
-            const auto typed_offset = tflite::CreateConcatenationOptions(_flatbuffer, operation->Parameters().concat.axis, fused_activation_function);
+            const auto *axis = operation->Attribute<axis_attr_t>();
+            const auto typed_offset = tflite::CreateConcatenationOptions(_flatbuffer, axis->axis, fused_activation_function);
             offset = typed_offset.Union();
         }
         break;
@@ -535,23 +538,26 @@ flatbuffers::Offset<void> TfLiteWriter::SerialiseOptions(const Operation *operat
 
         case tflite::BuiltinOptions::PackOptions:
         {
-            const auto typed_offset = tflite::CreatePackOptions(_flatbuffer,
-                GetBuiltinOptions<tflite::PackOptions>(passthrough)->values_count(), operation->Parameters().pack_unpack.axis);
+            const axis_attr_t *attr = operation->Attribute<axis_attr_t>();  // Parameters().pack_unpack.axis;
+            const auto typed_offset = tflite::CreatePackOptions(
+                _flatbuffer, GetBuiltinOptions<tflite::PackOptions>(passthrough)->values_count(), attr->axis);
             offset = typed_offset.Union();
         }
         break;
 
         case tflite::BuiltinOptions::UnpackOptions:
         {
-            const auto typed_offset = tflite::CreateUnpackOptions(_flatbuffer,
-                GetBuiltinOptions<tflite::UnpackOptions>(passthrough)->num(), operation->Parameters().pack_unpack.axis);
+            const axis_attr_t *attr = operation->Attribute<axis_attr_t>();  // Parameters().pack_unpack.axis;
+            const auto typed_offset = tflite::CreateUnpackOptions(
+                _flatbuffer, GetBuiltinOptions<tflite::UnpackOptions>(passthrough)->num(), attr->axis);
             offset = typed_offset.Union();
         }
         break;
 
         case tflite::BuiltinOptions::LeakyReluOptions:
         {
-            offset = tflite::CreateLeakyReluOptions(_flatbuffer, operation->Parameters().leaky_relu.alpha).Union();
+            const leaky_relu_attr_t *attr = operation->Attribute<leaky_relu_attr_t>();  // Parameters().pack_unpack.axis;
+            offset = tflite::CreateLeakyReluOptions(_flatbuffer, attr->alpha).Union();
         }
         break;
 
@@ -564,10 +570,10 @@ flatbuffers::Offset<void> TfLiteWriter::SerialiseOptions(const Operation *operat
 
         case tflite::BuiltinOptions::StridedSliceOptions:
         {
-            const auto typed_offset = tflite::CreateStridedSliceOptions(_flatbuffer,
-                operation->Parameters().strided_slice.begin_mask, operation->Parameters().strided_slice.end_mask,
-                operation->Parameters().strided_slice.ellipsis_mask, operation->Parameters().strided_slice.new_axis_mask,
-                operation->Parameters().strided_slice.shrink_axis_mask);
+            const auto options = GetBuiltinOptions<tflite::StridedSliceOptions>(passthrough);
+            assert(options);
+            const auto typed_offset = tflite::CreateStridedSliceOptions(_flatbuffer, options->begin_mask(),
+                options->end_mask(), options->ellipsis_mask(), options->new_axis_mask(), options->shrink_axis_mask());
             offset = typed_offset.Union();
         }
         break;

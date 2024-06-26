@@ -129,8 +129,8 @@ union HLCParameters
 
     struct
     {
-        GraphApi::FractionND scaleY;
-        GraphApi::FractionND scaleX;
+        Fraction<int> scaleY;
+        Fraction<int> scaleX;
         int offsetY;
         int offsetX;
         ArchResizeMode mode;

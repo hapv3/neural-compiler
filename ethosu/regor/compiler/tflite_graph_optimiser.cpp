@@ -109,7 +109,8 @@ Operation *TFLiteGraphOptimiser::ConvertLeakyRelu16bit(TensorConnection &ifmConn
 
     auto ifm = ifmConn.tensor.get();
     auto ofm = ofmConn.tensor.get();
-    float alpha = operation->Parameters().leaky_relu.alpha;
+    auto *lrelu = operation->Attribute<leaky_relu_attr_t>();
+    float alpha = lrelu->alpha;
     int scalar = 1;
 
     auto alphaQuant = ifmConn.quantization;
@@ -181,11 +182,11 @@ int TFLiteGraphOptimiser::GetAxis(const Operation *const operation)
     {
         case OpType::Concat:
         case OpType::ConcatTFLite:
-            axis = operation->Parameters().concat.axis;
+            axis = operation->Attribute<axis_attr_t>()->axis;
             break;
         case OpType::Pack:
         case OpType::Unpack:
-            axis = operation->Parameters().pack_unpack.axis;
+            axis = operation->Attribute<axis_attr_t>()->axis;
             break;
         case OpType::Split:
         {
@@ -233,9 +234,14 @@ void TFLiteGraphOptimiser::SetStridedSliceOffsetValues(
     auto *beginConn = operation->Input(TensorUsage::Params0);
     auto *endConn = operation->Input(TensorUsage::Params1);
 
+    const tflite::Operator *passthrough = static_cast<const tflite::Operator *>(operation->Passthrough());
+    assert(passthrough);
+    auto *opt = passthrough->builtin_options_as_StridedSliceOptions();
+    assert(opt);
+
     // strides tensor not used.
-    auto beginMask = operation->Parameters().strided_slice.begin_mask;
-    auto endMask = operation->Parameters().strided_slice.end_mask;
+    auto beginMask = opt->begin_mask();
+    auto endMask = opt->end_mask();
 
     readShape = ifmConn->shape;
 
@@ -341,8 +347,12 @@ Shape TFLiteGraphOptimiser::MakePackUnpackDesiredShape(int axis, const Shape &ba
 // returns the Desired shape.
 Shape TFLiteGraphOptimiser::MakeStridedSliceDesiredShape(Operation *const operation, const Shape &baseShape)
 {
-    auto newMask = unsigned(operation->Parameters().strided_slice.new_axis_mask);
-    auto shrinkMask = unsigned(operation->Parameters().strided_slice.shrink_axis_mask);
+    const tflite::Operator *passthrough = static_cast<const tflite::Operator *>(operation->Passthrough());
+    assert(passthrough);
+    auto *opt = passthrough->builtin_options_as_StridedSliceOptions();
+    assert(opt);
+    unsigned newMask = unsigned(opt->new_axis_mask());
+    unsigned shrinkMask = unsigned(opt->shrink_axis_mask());
 
     if ( newMask == 0 && shrinkMask == 0 )
     {
@@ -793,13 +803,18 @@ Operation *TFLiteGraphOptimiser::RewriteSplit(Graph *const graph, Operation *con
 
         if ( opType == OpType::StridedSlice )
         {
+            const tflite::Operator *passthrough = static_cast<const tflite::Operator *>(operation->Passthrough());
+            assert(passthrough);
+            auto *opt = passthrough->builtin_options_as_StridedSliceOptions();
+            assert(opt);
             // StridedSlice ellipsis_mask not supported.
             // StridedSlice new_axis_mask and shrink_axis_mask cannot both be set.
-            const auto ellipsis_mask = operation->Parameters().strided_slice.ellipsis_mask;
-            const auto new_axis_mask = operation->Parameters().strided_slice.new_axis_mask;
-            const auto shrink_axis_mask = operation->Parameters().strided_slice.shrink_axis_mask;
+            const auto ellipsis_mask = opt->ellipsis_mask();
+            const auto new_axis_mask = opt->new_axis_mask();
+            const auto shrink_axis_mask = opt->shrink_axis_mask();
             if ( ellipsis_mask != 0 || (new_axis_mask != 0 && shrink_axis_mask != 0) )
             {
+                returnOp->SetPassthroughOp();
                 return returnOp;
             }
         }
@@ -808,6 +823,7 @@ Operation *TFLiteGraphOptimiser::RewriteSplit(Graph *const graph, Operation *con
         auto ifmType = ifmConn->tensor->Type();
         if ( ifmType != DataType::Int8 && ifmType != DataType::UInt8 && ifmType != DataType::Int16 )
         {
+            returnOp->SetPassthroughOp();
             return returnOp;
         }
 
@@ -815,6 +831,7 @@ Operation *TFLiteGraphOptimiser::RewriteSplit(Graph *const graph, Operation *con
         auto ofmType = ofmConn->tensor->Type();
         if ( ofmType != DataType::Int8 && ofmType != DataType::UInt8 && ofmType != DataType::Int16 )
         {
+            returnOp->SetPassthroughOp();
             return returnOp;
         }
 
@@ -1450,9 +1467,31 @@ Operation *TFLiteGraphOptimiser::ConvertResize(Graph *const graph, Operation *co
         int heightOffset = 0;
         int widthOffset = 0;
 
+        const tflite::Operator *passthrough = static_cast<const tflite::Operator *>(operation->Passthrough());
+        assert(passthrough);
+        bool halfPixelCenters = false;
+        bool alignCorners = false;
+        if ( opType == OpType::ResizeBilinear )
+        {
+            const auto *opt = passthrough->builtin_options_as_ResizeBilinearOptions();
+            assert(opt);
+            alignCorners = opt->align_corners();
+            halfPixelCenters = opt->half_pixel_centers();
+        }
+        else
+        {
+            assert(opType == OpType::ResizeNearestNeighbor);
+            const auto *opt = passthrough->builtin_options_as_ResizeNearestNeighborOptions();
+            assert(opt);
+            alignCorners = opt->align_corners();
+            // Use half-pixel-centers if align-corners is false.
+            // This aligns with reference kernels
+            halfPixelCenters = !alignCorners || opt->half_pixel_centers();
+        }
+
         // Compute scaling fractions
         // align-corners use a scale-factor of (n-1)/(d-1)
-        if ( operation->Parameters().resize.alignCorners )
+        if ( alignCorners )
         {
             if ( width_d > 1 )
             {
@@ -1475,7 +1514,7 @@ Operation *TFLiteGraphOptimiser::ConvertResize(Graph *const graph, Operation *co
         height_n = (height_n / gcd_h);
         height_d = (height_d / gcd_h);
 
-        if ( operation->Parameters().resize.halfPixelCenters )
+        if ( halfPixelCenters )
         {
             // make sure fractions are evenly divisible by 2
             width_n = width_n * 2;
@@ -1515,21 +1554,14 @@ Operation *TFLiteGraphOptimiser::ConvertResize(Graph *const graph, Operation *co
             resizeOp->SetRounding(RoundMode::SYMMETRIC);
             resizeOp->CopyInput(TensorUsage::IFM, *ifmConn);
             resizeOp->CopyOutput(TensorUsage::OFM, *ofmConn);
-            resizeOp->Parameters() = operation->Parameters();
 
             // write operator attributes
-            auto &attr = resizeOp->attr;
-            attr.resize.scaleX = {int16_t(width_n), int16_t(width_d)};
-            attr.resize.scaleY = {int16_t(height_n), int16_t(height_d)};
-            attr.resize.offsetYX[0] = heightOffset;
-            attr.resize.offsetYX[1] = widthOffset;
-            attr.resize.borderYX[0] = 0;
-            attr.resize.borderYX[1] = 0;
-            attr.resize.mode = tosa::ResizeMode::NEAREST;
-            if ( opType == OpType::ResizeBilinear )
-            {
-                attr.resize.mode = tosa::ResizeMode::BILINEAR;
-            }
+            auto *attr = resizeOp->Attribute<resize_attr_t>();
+            attr->scaleX = {width_n, width_d};
+            attr->scaleY = {height_n, height_d};
+            attr->offset = {widthOffset, heightOffset};
+            attr->border = {0, 0};
+            attr->mode = (opType == OpType::ResizeBilinear) ? tosa::ResizeMode::BILINEAR : tosa::ResizeMode::NEAREST;
 
             int shift = 0;
             if ( opType == OpType::ResizeBilinear && (ifmConn->shape.Width() > 1 || ifmConn->shape.Height() > 1) )
@@ -1591,7 +1623,7 @@ Operation *TFLiteGraphOptimiser::ConvertArgMax(Graph *const graph, Operation *co
             ofmConn->shape = Shape(1, ifmHeight, 1, 1);
             axis_4D = 2;
         }
-        operation->attr.axis.axis = axis_4D;
+        operation->Attribute<axis_attr_t>()->axis = axis_4D;
         int kernelH = axis_4D == 1 ? ifmHeight : 1;
         int kernelW = axis_4D == 2 ? ifmWidth : 1;
         std::unique_ptr<Kernel> kernel = std::make_unique<Kernel>(Point2i(kernelW, kernelH), Point2i(1, 1), Point2i(1, 1));
@@ -1641,7 +1673,7 @@ Operation *TFLiteGraphOptimiser::ConvertArgMax(Graph *const graph, Operation *co
                 splitOfmConn->quantization.scales.push_back(QuantizedScale(1, 16));
                 splitOfmConn->quantization.zeroPoints.push_back(0);
                 argmaxSplit->SetRounding(RoundMode::TRUNCATE_TO_LOWER);
-                argmaxSplit->attr.axis.axis = axis_4D;
+                argmaxSplit->Attribute<axis_attr_t>()->axis = axis_4D;
                 argmaxSplit->SetKernel(std::make_unique<Kernel>(Point2i(kernelW, kernelH), Point2i(1, 1), Point2i(1, 1)));
                 offset += splitHeight;
                 RecordOptimisation(operation, argmaxSplit.get());
@@ -2631,7 +2663,8 @@ Operation *TFLiteGraphOptimiser::ConvertLeakyRelu(Graph *const graph, Operation 
     // TODO MLBEDSW-8770: Investigate performance of leakyReLU optimisations
     if ( opType == OpType::LeakyRelu && ifmConn != nullptr && ofmConn != nullptr )
     {
-        float alpha = operation->Parameters().leaky_relu.alpha;
+        const auto *attr = operation->Attribute<leaky_relu_attr_t>();
+        float alpha = attr->alpha;
         auto ifm = ifmConn->tensor.get();
         auto ofm = ofmConn->tensor.get();
         bool quantScalingInvalidOrUnequal = !IsScalingValidAndEqual(*ifmConn, *ofmConn);
@@ -2711,11 +2744,11 @@ Operation *TFLiteGraphOptimiser::Convert8bitLeakyReluToLUT(Graph *const graph, O
         int lutResult;
         if ( x < zpIn )
         {
-            lutResult = zpOut + MultiplyByQuantizedMultiplier((x - zpIn), alphaScale);
+            lutResult = int(zpOut + MultiplyByQuantizedMultiplier(int(x - zpIn), alphaScale));
         }
         else
         {
-            lutResult = zpOut + MultiplyByQuantizedMultiplier((x - zpIn), identityScale);
+            lutResult = int(zpOut + MultiplyByQuantizedMultiplier(int(x - zpIn), identityScale));
         }
         lutResult = std::min(qMax, std::max(qMin, lutResult));
         lut.push_back(int8_t(lutResult));

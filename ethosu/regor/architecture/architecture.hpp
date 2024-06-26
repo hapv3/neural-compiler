@@ -205,8 +205,8 @@ struct ArchitectureConfigQuery
     bool accOutputEnabled = true;
     struct Rescale
     {
-        GraphApi::FractionND scaleY = {1, 1};
-        GraphApi::FractionND scaleX = {1, 1};
+        Fraction<int> scaleY{1, 1};
+        Fraction<int> scaleX{1, 1};
     } rescaling;
 };
 

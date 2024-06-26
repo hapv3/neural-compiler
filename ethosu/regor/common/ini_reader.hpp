@@ -222,7 +222,9 @@ public:
         assert(_parseState == ParseState::Value);
 
         char *end;
+        errno = 0;
         value = std::strtof(_pos, &end);
+        if ( errno || (value == HUGE_VAL) ) return false;
         if ( end == _pos )
         {
             return false;

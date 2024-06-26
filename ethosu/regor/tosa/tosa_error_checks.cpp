@@ -21,6 +21,7 @@
 #include "tosa_error_checks.hpp"
 
 #include "common/ordered_map.hpp"
+#include "compiler/attributes.hpp"
 #include "compiler/graph.hpp"
 #include "compiler/operation.hpp"
 
@@ -69,7 +70,8 @@ void ErrorIfCheck_ai0sdq9wgm72(const regor::Operation *op, [[maybe_unused]] cons
     // Operators: ARGMAX,
     static constexpr char constraint[] = "ERROR_IF(axis < 0 || axis >= rank(shape1) || rank(shape1) > 4)";
     const auto rank = op->Input(TensorUsage::IFM)->shape.Size();
-    const auto axis = op->attr.axis.axis;
+    auto *attr = op->Attribute<regor::axis_attr_t>();
+    const auto axis = attr->axis;
     if ( axis < 0 || axis >= rank || rank > 4 ) throw std::invalid_argument(constraint);
 }
 
@@ -78,7 +80,8 @@ void ErrorIfCheck_gpp861oen43y(const regor::Operation *op, [[maybe_unused]] cons
     // Operators: ARGMAX,
     static constexpr char constraint[] = "ERROR_IF(flatten(left_shape, right_shape) != shape)";
     const auto &inputShape = op->Input(TensorUsage::IFM)->shape;
-    const auto &expectedOutputShape = inputShape.Size() > 1 ? inputShape.Erase(op->attr.axis.axis) : Shape{1};
+    auto *attr = op->Attribute<regor::axis_attr_t>();
+    const auto &expectedOutputShape = inputShape.Size() > 1 ? inputShape.Erase(attr->axis) : Shape{1};
     const auto &outputShape = op->Output(TensorUsage::OFM)->shape;
     if ( outputShape != expectedOutputShape ) throw std::invalid_argument(constraint);
 }
@@ -687,7 +690,8 @@ void ErrorIfCheck_xod9coigx1x2(const regor::Operation *op, [[maybe_unused]] cons
 {
     // Operators: CLAMP,
     static constexpr char constraint[] = "ERROR_IF(max_val < min_val)";
-    if ( op->attr.clamp.max < op->attr.clamp.min ) throw std::invalid_argument(constraint);
+    auto *attr = op->Attribute<regor::clamp_attr_t>();
+    if ( attr->max < attr->min ) throw std::invalid_argument(constraint);
 }
 
 static bool broadcastOk(const Shape &outShape, const Shape &inShape)
@@ -731,7 +735,8 @@ void ErrorIfCheck_2gdayq6ofi7wx(const regor::Operation *op, [[maybe_unused]] con
     // Operators: MUL,
     static constexpr char constraint[] = "ERROR_IF(in_t != int32_t && shift > 0)";
     auto in_t = op->IFM(0)->Type();
-    if ( in_t != DataType::Int32 && op->attr.mul.shift > 0 ) throw std::invalid_argument(constraint);
+    auto *attr = op->Attribute<regor::mul_attr_t>();
+    if ( in_t != DataType::Int32 && attr->shift > 0 ) throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_38qvty7pudfz2(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -759,7 +764,9 @@ void ErrorIfCheck_3tg4p2a5te0jy(const regor::Operation *op, [[maybe_unused]] con
     // Operators: REDUCE_ALL, REDUCE_ANY, REDUCE_MAX, REDUCE_MIN, REDUCE_PRODUCT, REDUCE_SUM,
     static constexpr char constraint[] = "ERROR_IF(axis < 0 || axis >= rank(shape1))";
     const auto rank = op->Input(TensorUsage::IFM)->shape.Size();
-    if ( op->attr.axis.axis < 0 || op->attr.axis.axis >= rank ) throw std::invalid_argument(constraint);
+    const auto &inputShape = op->Input(TensorUsage::IFM)->shape;
+    auto *attr = op->Attribute<regor::axis_attr_t>();
+    if ( attr->axis < 0 || attr->axis >= rank ) throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_33exz9gn2i1wy(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -767,7 +774,8 @@ void ErrorIfCheck_33exz9gn2i1wy(const regor::Operation *op, [[maybe_unused]] con
     // Operators: REDUCE_ALL, REDUCE_ANY, REDUCE_MAX, REDUCE_MIN, REDUCE_PRODUCT, REDUCE_SUM,
     static constexpr char constraint[] = "ERROR_IF(shape[axis] != 1)";
     const auto &shape = op->Output(TensorUsage::OFM)->shape;
-    if ( shape[op->attr.axis.axis] != 1 ) throw std::invalid_argument(constraint);
+    auto *attr = op->Attribute<regor::axis_attr_t>();
+    if ( shape[attr->axis] != 1 ) throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_14slfd7r77hgh(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -775,7 +783,8 @@ void ErrorIfCheck_14slfd7r77hgh(const regor::Operation *op, [[maybe_unused]] con
     // Operators: CONCAT,
     static constexpr char constraint[] = "ERROR_IF(axis < 0 || axis >= rank(shapes1[0]))";
     const auto rank = op->Input(TensorUsage::IFM)->shape.Size();
-    if ( op->attr.axis.axis < 0 || op->attr.axis.axis >= rank ) throw std::invalid_argument(constraint);
+    auto *attr = op->Attribute<regor::axis_attr_t>();
+    if ( attr->axis < 0 || attr->axis >= rank ) throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_1fzhf02pkiw9z(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -784,7 +793,7 @@ void ErrorIfCheck_1fzhf02pkiw9z(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "ERROR_IF(shape[axis] != sum(shape1[k][axis] for all k))";
     const auto &shape = op->Output(TensorUsage::OFM)->shape;
     const auto &inputs = op->Inputs();
-    auto axis = op->attr.axis.axis;
+    auto axis = op->Attribute<regor::axis_attr_t>()->axis;
     int64_t sum = 0;
     for ( const auto &input : inputs )
     {
@@ -821,11 +830,12 @@ void ErrorIfCheck_dctmd6sgn5n0(const regor::Operation *op, [[maybe_unused]] cons
     bool checkOk = true;
     const auto &inputs = op->Inputs();
     auto rank = inputs.front().shape.Size();
+    auto *attr = op->Attribute<regor::axis_attr_t>();
     for ( const auto &input : inputs )
     {
         for ( int i = 0; i < rank; i++ )
         {
-            if ( i != op->attr.axis.axis && input.shape[i] != inputs.front().shape[i] )
+            if ( i != attr->axis && input.shape[i] != inputs.front().shape[i] )
             {
                 checkOk = false;
                 break;
@@ -893,8 +903,8 @@ void ErrorIfCheck_3hthyoock2ew5(const regor::Operation *op, [[maybe_unused]] con
     // Operators: REVERSE,
     static constexpr char constraint[] = "ERROR_IF(axis < 0 || axis >= rank(shape))";
     const auto rank = op->Input(TensorUsage::IFM)->shape.Size();
-    if ( op->attr.axis.axis < 0 || op->attr.axis.axis >= rank ) throw std::invalid_argument(constraint);
-    ;
+    auto *attr = op->Attribute<regor::axis_attr_t>();
+    if ( attr->axis < 0 || attr->axis >= rank ) throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_1nifeiq9rvmb8(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -902,8 +912,8 @@ void ErrorIfCheck_1nifeiq9rvmb8(const regor::Operation *op, [[maybe_unused]] con
     // Operators: SLICE,
     static constexpr char constraint[] = "ERROR_IF(rank(shape1) != length(start) || rank(shape1) != length(size))";
     const auto rank = op->Input(TensorUsage::IFM)->shape.Size();
-    if ( rank != op->attr.slice.begin.count || rank != op->attr.slice.size.count )
-        throw std::invalid_argument(constraint);
+    auto *attr = op->Attribute<regor::slice_attr_t>();
+    if ( rank != attr->begin.Size() || rank != attr->size.Size() ) throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_21rq6kn6p1yle(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -921,9 +931,10 @@ void ErrorIfCheck_3rghkieqip43o(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "ERROR_IF(start[index] < 0)";
     bool checkOk = true;
     const auto rank = op->Input(TensorUsage::IFM)->shape.Size();
+    auto *attr = op->Attribute<regor::slice_attr_t>();
     for ( int i = 0; i < rank; i++ )
     {
-        if ( op->attr.slice.begin.axisNHWC[i] < 0 )
+        if ( attr->begin[i] < 0 )
         {
             checkOk = false;
             break;
@@ -938,9 +949,10 @@ void ErrorIfCheck_1cyv9n59wyyyc(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "ERROR_IF(size[index] <= 0)";
     bool checkOk = true;
     const auto rank = op->Input(TensorUsage::IFM)->shape.Size();
+    auto *attr = op->Attribute<regor::slice_attr_t>();
     for ( int i = 0; i < rank; i++ )
     {
-        if ( op->attr.slice.size.axisNHWC[i] < 0 )
+        if ( attr->size[i] < 0 )
         {
             checkOk = false;
             break;
@@ -956,9 +968,10 @@ void ErrorIfCheck_3oy2tclc6uhsu(const regor::Operation *op, [[maybe_unused]] con
     bool checkOk = true;
     const auto &shape = op->Input(TensorUsage::IFM)->shape;
     const auto rank = shape.Size();
+    auto *attr = op->Attribute<regor::slice_attr_t>();
     for ( int i = 0; i < rank; i++ )
     {
-        int64_t sliceSize = op->attr.slice.begin.axisNHWC[i] + op->attr.slice.size.axisNHWC[i];
+        int64_t sliceSize = attr->begin[i] + attr->size[i];
         if ( sliceSize > shape[i] )
         {
             checkOk = false;
@@ -974,9 +987,10 @@ void ErrorIfCheck_gpp3enlp1ddg(const regor::Operation *op, [[maybe_unused]] cons
     static constexpr char constraint[] = "ERROR_IF(shape[index] != size[index])";
     const auto &shape = op->Output(TensorUsage::OFM)->shape;
     const auto rank = shape.Size();
+    auto *attr = op->Attribute<regor::slice_attr_t>();
     for ( int i = 0; i < rank; i++ )
     {
-        if ( shape[i] != op->attr.slice.size.axisNHWC[i] ) throw std::invalid_argument(constraint);
+        if ( shape[i] != attr->size[i] ) throw std::invalid_argument(constraint);
     }
 }
 
@@ -985,9 +999,8 @@ void ErrorIfCheck_ix9div4ld46q(const regor::Operation *op, [[maybe_unused]] cons
     // Operators: SLICE,
     static constexpr char constraint[] = "ERROR_IF(shapeCheck(size, [rank(shape1)], start, [rank(shape1)]))";
     auto rank = op->Input(TensorUsage::IFM)->shape.Size();
-
-    if ( op->attr.slice.size.count != rank || op->attr.slice.begin.count != rank )
-        throw std::invalid_argument(constraint);
+    auto *attr = op->Attribute<regor::slice_attr_t>();
+    if ( attr->size.Size() != rank || attr->begin.Size() != rank ) throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_3estuseky2gm2(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -996,13 +1009,13 @@ void ErrorIfCheck_3estuseky2gm2(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "ERROR_IF(shape1[i] * multiples[i] != shape[i])";
     const auto &shape = op->Output(TensorUsage::OFM)->shape;
     const auto &shape1 = op->Input(TensorUsage::IFM)->shape;
-    const auto &multiples = op->attr.tile.multiples;
-    if ( multiples.count != shape.Size() ) throw std::invalid_argument(constraint);
+    const auto &multiples = op->Attribute<regor::tile_attr_t>()->multiples;
+    if ( multiples.Size() != shape.Size() ) throw std::invalid_argument(constraint);
     for ( int i = 0; i < shape.Size(); i++ )
     {
         int64_t shape1Dim = shape1[i];
-        if ( shape1Dim < 0 || multiples.axisNHWC[i] < 0 || shape[i] ) throw std::invalid_argument(constraint);
-        int64_t result = shape1Dim * multiples.axisNHWC[i];
+        if ( shape1Dim < 0 || multiples[i] < 0 || shape[i] ) throw std::invalid_argument(constraint);
+        int64_t result = shape1Dim * multiples[i];
         if ( result > std::numeric_limits<int32_t>::max() ) throw std::invalid_argument(constraint);
         if ( static_cast<int32_t>(result) != shape[i] ) throw std::invalid_argument(constraint);
     }
@@ -1013,10 +1026,10 @@ void ErrorIfCheck_5bq1fx1llv8(const regor::Operation *op, [[maybe_unused]] const
     // Operators: TRANSPOSE,
     static constexpr char constraint[] = "ERROR_IF(index >= rank(shape1))";
     auto rank = op->Input(TensorUsage::IFM)->shape.Size();
-    const auto &perm = op->attr.transpose.perm;
-    for ( int i = 0; i < perm.count; i++ )
+    const auto &perm = op->Attribute<regor::transpose_attr_t>()->perm;
+    for ( int i = 0; i < perm.Size(); i++ )
     {
-        if ( perm.axisNHWC[i] >= rank ) throw std::invalid_argument(constraint);
+        if ( perm[i] >= rank ) throw std::invalid_argument(constraint);
     }
 }
 
@@ -1024,10 +1037,10 @@ void ErrorIfCheck_ckwpttzajw06(const regor::Operation *op, [[maybe_unused]] cons
 {
     // Operators: TRANSPOSE,
     static constexpr char constraint[] = "ERROR_IF(index < 0)";
-    const auto &perm = op->attr.transpose.perm;
-    for ( int i = 0; i < perm.count; i++ )
+    const auto &perm = op->Attribute<regor::transpose_attr_t>()->perm;
+    for ( int i = 0; i < perm.Size(); i++ )
     {
-        if ( perm.axisNHWC[i] < 0 ) throw std::invalid_argument(constraint);
+        if ( perm[i] < 0 ) throw std::invalid_argument(constraint);
     }
 }
 
@@ -1035,13 +1048,14 @@ void ErrorIfCheck_2n1ratxgd89tx(const regor::Operation *op, [[maybe_unused]] con
 {
     // Operators: TRANSPOSE,
     static constexpr char constraint[] = "ERROR_IF(indexes_used[index] == true)";
-    const auto &perm = op->attr.transpose.perm;
-    bool indexes_used[GraphApi::MAX_TENSOR_DIMS]{};
-    for ( int i = 0; i < perm.count; i++ )
+    auto rank = op->Input(TensorUsage::IFM)->shape.Size();
+    const auto &perm = op->Attribute<regor::transpose_attr_t>()->perm;
+    Shape indexes_used(nullptr, rank);
+    for ( int i = 0; i < perm.Size(); i++ )
     {
-        if ( perm.axisNHWC[i] >= GraphApi::MAX_TENSOR_DIMS || indexes_used[perm.axisNHWC[i]] )
+        if ( (perm[i] < 0 || perm[i] >= indexes_used.Size()) || indexes_used[perm[i]] )
             throw std::invalid_argument(constraint);
-        indexes_used[perm.axisNHWC[i]] = true;
+        indexes_used[perm[i]] = 1;
     }
 }
 
@@ -1051,11 +1065,11 @@ void ErrorIfCheck_aizwrn95lb0l(const regor::Operation *op, [[maybe_unused]] cons
     static constexpr char constraint[] = "ERROR_IF(shape1[perms[i]] != shape[i])";
     const auto &shape = op->Output(TensorUsage::OFM)->shape;
     const auto &shape1 = op->Input(TensorUsage::IFM)->shape;
-    const auto &perm = op->attr.transpose.perm;
-    for ( int i = 0; i < perm.count; i++ )
+    const auto &perm = op->Attribute<regor::transpose_attr_t>()->perm;
+    for ( int i = 0; i < perm.Size(); i++ )
     {
-        if ( perm.axisNHWC[i] >= shape.Size() ) throw std::invalid_argument(constraint);
-        if ( shape1[perm.axisNHWC[i]] != shape[i] ) throw std::invalid_argument(constraint);
+        if ( perm[i] < 0 || perm[i] >= shape.Size() ) throw std::invalid_argument(constraint);
+        if ( shape1[perm[i]] != shape[i] ) throw std::invalid_argument(constraint);
     }
 }
 
@@ -1162,11 +1176,11 @@ void ErrorIfCheck_1obslcewwn583(const regor::Operation *op, [[maybe_unused]] con
 {
     // Operators: RESIZE,
     static constexpr char constraint[] = "ERROR_IF(scale_y_n <= 0 || scale_y_d <= 0 || scale_x_n <= 0 || scale_x_d <= 0)";
-    const auto &attr = op->attr;
-    auto scale_y_d = attr.resize.scaleY.d;
-    auto scale_y_n = attr.resize.scaleY.n;
-    auto scale_x_d = attr.resize.scaleX.d;
-    auto scale_x_n = attr.resize.scaleX.n;
+    const auto *attr = op->Attribute<regor::resize_attr_t>();
+    auto scale_y_d = attr->scaleY.d;
+    auto scale_y_n = attr->scaleY.n;
+    auto scale_x_d = attr->scaleX.d;
+    auto scale_x_n = attr->scaleX.n;
     if ( scale_y_n <= 0 || scale_y_d <= 0 || scale_x_n <= 0 || scale_x_d <= 0 ) throw std::invalid_argument(constraint);
 }
 
@@ -1174,9 +1188,9 @@ void ErrorIfCheck_3oxfjen91qb6l(const regor::Operation *op, [[maybe_unused]] con
 {
     // Operators: RESIZE,
     static constexpr char constraint[] = "ERROR_IF(scale_y_n > (1 << 11) || scale_x_n > (1 << 11))";
-    const auto &attr = op->attr;
-    auto scale_y_n = attr.resize.scaleY.n;
-    auto scale_x_n = attr.resize.scaleX.n;
+    const auto *attr = op->Attribute<regor::resize_attr_t>();
+    auto scale_y_n = attr->scaleY.n;
+    auto scale_x_n = attr->scaleX.n;
     if ( scale_y_n > (1 << 11) || scale_x_n > (1 << 11) ) throw std::invalid_argument(constraint);
 }
 
@@ -1184,11 +1198,11 @@ void ErrorIfCheck_1uo0z247e42af(const regor::Operation *op, [[maybe_unused]] con
 {
     // Operators: RESIZE,
     static constexpr char constraint[] = "ERROR_IF(scale_y_d >= 16 * scale_y_n || scale_x_d >= 16 * scale_x_n)";
-    const auto &attr = op->attr;
-    auto scale_y_d = attr.resize.scaleY.d;
-    auto scale_y_n = attr.resize.scaleY.n;
-    auto scale_x_d = attr.resize.scaleX.d;
-    auto scale_x_n = attr.resize.scaleX.n;
+    const auto *attr = op->Attribute<regor::resize_attr_t>();
+    auto scale_y_d = attr->scaleY.d;
+    auto scale_y_n = attr->scaleY.n;
+    auto scale_x_d = attr->scaleX.d;
+    auto scale_x_n = attr->scaleX.n;
     if ( scale_y_d >= 16 * scale_y_n || scale_x_d >= 16 * scale_x_n ) throw std::invalid_argument(constraint);
 }
 
@@ -1196,9 +1210,9 @@ void ErrorIfCheck_1eovh9pyc6tyw(const regor::Operation *op, [[maybe_unused]] con
 {
     // Operators: RESIZE,
     static constexpr char constraint[] = "ERROR_IF(offset_y < -scale_y_n || offset_y >= 16 * scale_y_n)";
-    const auto &attr = op->attr;
-    auto offset_y = attr.resize.offsetYX[0];
-    auto scale_y_n = attr.resize.scaleY.n;
+    const auto *attr = op->Attribute<regor::resize_attr_t>();
+    auto offset_y = attr->offset.y;
+    auto scale_y_n = attr->scaleY.n;
     if ( offset_y < -scale_y_n || offset_y >= 16 * scale_y_n ) throw std::invalid_argument(constraint);
 }
 
@@ -1206,9 +1220,9 @@ void ErrorIfCheck_24jsin2zkf4ug(const regor::Operation *op, [[maybe_unused]] con
 {
     // Operators: RESIZE,
     static constexpr char constraint[] = "ERROR_IF(offset_x < -scale_x_n || offset_x >= 16 * scale_x_n)";
-    const auto &attr = op->attr;
-    auto offset_x = attr.resize.offsetYX[1];
-    auto scale_x_n = attr.resize.scaleX.n;
+    const auto *attr = op->Attribute<regor::resize_attr_t>();
+    auto offset_x = attr->offset.x;
+    auto scale_x_n = attr->scaleX.n;
     if ( offset_x < -scale_x_n || offset_x >= 16 * scale_x_n ) throw std::invalid_argument(constraint);
 }
 
@@ -1216,9 +1230,9 @@ void ErrorIfCheck_12uj5fltk5rbo(const regor::Operation *op, [[maybe_unused]] con
 {
     // Operators: RESIZE,
     static constexpr char constraint[] = "ERROR_IF(border_y < -16 * scale_y_n || border_y >= scale_y_n)";
-    const auto &attr = op->attr;
-    auto border_y = attr.resize.borderYX[0];
-    auto scale_y_n = attr.resize.scaleY.n;
+    const auto *attr = op->Attribute<regor::resize_attr_t>();
+    auto border_y = attr->border.y;
+    auto scale_y_n = attr->scaleY.n;
     if ( border_y < -16 * scale_y_n || border_y >= scale_y_n ) throw std::invalid_argument(constraint);
 }
 
@@ -1226,9 +1240,9 @@ void ErrorIfCheck_1py9f91imwjxe(const regor::Operation *op, [[maybe_unused]] con
 {
     // Operators: RESIZE,
     static constexpr char constraint[] = "ERROR_IF(border_x < -16 * scale_x_n || border_x >= scale_x_n)";
-    const auto &attr = op->attr;
-    auto border_x = attr.resize.borderYX[1];
-    auto scale_x_n = attr.resize.scaleX.n;
+    const auto *attr = op->Attribute<regor::resize_attr_t>();
+    auto border_x = attr->border.x;
+    auto scale_x_n = attr->scaleX.n;
     if ( border_x < -16 * scale_x_n || border_x >= scale_x_n ) throw std::invalid_argument(constraint);
 }
 
@@ -1238,18 +1252,18 @@ void ErrorIfCheck_fn614zzdrdfd(const regor::Operation *op, [[maybe_unused]] cons
     static constexpr char constraint[] = "ERROR_IF(OH != idiv_check((IH - 1) * scale_y_n - offset_y + border_y, scale_y_d) + 1)";
     auto IH = op->Input(TensorUsage::IFM)->shape.Height();
     auto OH = op->Output(TensorUsage::OFM)->shape.Height();
-    const auto &attr = op->attr;
-    auto scale_y_n = attr.resize.scaleY.n;
-    auto scale_y_d = attr.resize.scaleY.d;
+    const auto *attr = op->Attribute<regor::resize_attr_t>();
+    auto scale_y_n = attr->scaleY.n;
+    auto scale_y_d = attr->scaleY.d;
     if ( scale_y_n > (1 << 11) || scale_y_d >= 16 * scale_y_n ) throw std::invalid_argument(constraint);
-    auto offset_y = attr.resize.offsetYX[0];
+    auto offset_y = attr->offset.y;
     if ( offset_y < -scale_y_n || offset_y >= 16 * scale_y_n ) throw std::invalid_argument(constraint);
     if ( IH < 1 || IH >= std::numeric_limits<int16_t>::max() || scale_y_n <= 0 || scale_y_d <= 0 )
         throw std::invalid_argument(constraint);
     int64_t term1 = (IH - 1LL) * scale_y_n;
     if ( term1 >= std::numeric_limits<int64_t>::max() - 2LL * std::numeric_limits<int>::max() - 1 )
         throw std::invalid_argument(constraint);
-    int64_t numerator = term1 - offset_y + attr.resize.borderYX[0];
+    int64_t numerator = term1 - offset_y + attr->border.y;
     if ( numerator % scale_y_d != 0 ) throw std::invalid_argument(constraint);
     if ( OH != numerator / scale_y_d + 1 ) throw std::invalid_argument(constraint);
 }
@@ -1260,18 +1274,18 @@ void ErrorIfCheck_338aejy0aeqeg(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "ERROR_IF(OW != idiv_check((IW - 1) * scale_x_n - offset_x + border_x, scale_x_d) + 1)";
     auto IW = op->Input(TensorUsage::IFM)->shape.Width();
     auto OW = op->Output(TensorUsage::OFM)->shape.Width();
-    const auto &attr = op->attr;
-    auto scale_x_n = attr.resize.scaleX.n;
-    auto scale_x_d = attr.resize.scaleX.d;
+    const auto *attr = op->Attribute<regor::resize_attr_t>();
+    auto scale_x_n = attr->scaleX.n;
+    auto scale_x_d = attr->scaleX.d;
     if ( scale_x_n > (1 << 11) || scale_x_d >= 16 * scale_x_n ) throw std::invalid_argument(constraint);
-    auto offset_x = attr.resize.offsetYX[1];
+    auto offset_x = attr->offset.x;
     if ( offset_x < -scale_x_n || offset_x >= 16 * scale_x_n ) throw std::invalid_argument(constraint);
     if ( IW < 1 || IW >= std::numeric_limits<int16_t>::max() || scale_x_n <= 0 || scale_x_d <= 0 )
         throw std::invalid_argument(constraint);
     int64_t term1 = (IW - 1LL) * scale_x_n;
     if ( term1 >= std::numeric_limits<int64_t>::max() - 2LL * std::numeric_limits<int>::max() )
         throw std::invalid_argument(constraint);
-    int64_t numerator = term1 - offset_x + attr.resize.borderYX[1];
+    int64_t numerator = term1 - offset_x + attr->border.x;
     if ( numerator % scale_x_d != 0 ) throw std::invalid_argument(constraint);
     if ( OW != numerator / scale_x_d + 1 ) throw std::invalid_argument(constraint);
 }
@@ -1323,14 +1337,17 @@ void ErrorIfCheck_22dev8it3bz2g(const regor::Operation *op, [[maybe_unused]] con
     // Operators: RESCALE,
     static constexpr char constraint[] = "ERROR_IF(scale32 && in_t == int48_t)";
     auto in_t = op->IFM(0)->Type();
-    if ( op->attr.rescale.scale32 && in_t == DataType::Int48 ) throw std::invalid_argument(constraint);
+    const auto *attr = op->Attribute<regor::rescale_attr_t>();
+    if ( attr->scale32 && in_t == DataType::Int48 ) throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_3ms1pbkpa2td9(const regor::Operation *op, [[maybe_unused]] const Context &context)
 {
     // Operators: RESCALE,
     static constexpr char constraint[] = "ERROR_IF(!scale32 && double_round)";
-    if ( !op->attr.rescale.scale32 && op->attr.rescale.double_round ) throw std::invalid_argument(constraint);
+    const auto *attr = op->Attribute<regor::rescale_attr_t>();
+
+    if ( !attr->scale32 && attr->double_round ) throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_31ty7f0kcbfxg(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -1341,7 +1358,8 @@ void ErrorIfCheck_31ty7f0kcbfxg(const regor::Operation *op, [[maybe_unused]] con
     const auto &shiftShape = op->Input(TensorUsage::Params)->shape;
     const auto &multiplierShape = op->Input(TensorUsage::Params1)->shape;
     auto outRank = shape.Size();
-    auto NC = op->attr.rescale.per_channel ? (outRank > 0 ? shape[outRank - 1] : 1) : 1;
+    const auto *attr = op->Attribute<regor::rescale_attr_t>();
+    auto NC = attr->per_channel ? (outRank > 0 ? shape[outRank - 1] : 1) : 1;
     if ( shiftShape[0] != NC || multiplierShape[0] != NC ) throw std::invalid_argument(constraint);  // NC
 }
 
@@ -1386,7 +1404,7 @@ void ErrorIfCheck_1bm39avugkqqd(const regor::Operation *op, [[maybe_unused]] con
 {
     // Operators: COND_IF,
     static constexpr char constraint[] = "ERROR_IF(tensor_list_shape(input_list) != tosa_input_shape(then_graph))";
-    const auto *then_graph = context.GetGraph(op->attr.condIf.then_branch);
+    const auto *then_graph = context.GetGraph(op->Attribute<regor::cond_attr_t>()->then_branch.c_str());
     if ( !ShapeListsMatch(op->Inputs(), then_graph->Inputs(), true) ) throw std::invalid_argument(constraint);
 }
 
@@ -1394,7 +1412,7 @@ void ErrorIfCheck_3tv3oatlz37e2(const regor::Operation *op, [[maybe_unused]] con
 {
     // Operators: COND_IF,
     static constexpr char constraint[] = "ERROR_IF(tensor_list_shape(input_list) != tosa_input_shape(else_graph))";
-    const auto *else_graph = context.GetGraph(op->attr.condIf.else_branch);
+    const auto *else_graph = context.GetGraph(op->Attribute<regor::cond_attr_t>()->else_branch.c_str());
     if ( !ShapeListsMatch(op->Inputs(), else_graph->Inputs(), true) ) throw std::invalid_argument(constraint);
 }
 
@@ -1402,7 +1420,7 @@ void ErrorIfCheck_n7biu53x2n6k(const regor::Operation *op, [[maybe_unused]] cons
 {
     // Operators: COND_IF,
     static constexpr char constraint[] = "ERROR_IF(tensor_list_shape(output_list) != tosa_output_shape(then_graph))";
-    const auto *then_graph = context.GetGraph(op->attr.condIf.then_branch);
+    const auto *then_graph = context.GetGraph(op->Attribute<regor::cond_attr_t>()->then_branch.c_str());
     if ( !ShapeListsMatch(op->Outputs(), then_graph->Outputs()) ) throw std::invalid_argument(constraint);
 }
 
@@ -1410,7 +1428,7 @@ void ErrorIfCheck_2fd4dk1zw032u(const regor::Operation *op, [[maybe_unused]] con
 {
     // Operators: COND_IF,
     static constexpr char constraint[] = "ERROR_IF(tensor_list_shape(output_list) != tosa_output_shape(else_graph))";
-    const auto *else_graph = context.GetGraph(op->attr.condIf.else_branch);
+    const auto *else_graph = context.GetGraph(op->Attribute<regor::cond_attr_t>()->else_branch.c_str());
     if ( !ShapeListsMatch(op->Outputs(), else_graph->Outputs()) ) throw std::invalid_argument(constraint);
 }
 
@@ -1433,7 +1451,7 @@ void ErrorIfCheck_12uu5ff3t3lv8(const regor::Operation *op, [[maybe_unused]] con
 {
     // Operators: WHILE_LOOP,
     static constexpr char constraint[] = "ERROR_IF(tensor_list_shape(input_list) != tosa_input_shape(cond_graph))";
-    const auto *cond_graph = context.GetGraph(op->attr.condWhile.cond_branch);
+    const auto *cond_graph = context.GetGraph(op->Attribute<regor::while_attr_t>()->cond_branch.c_str());
     if ( !ShapeListsMatch(op->Inputs(), cond_graph->Inputs()) ) throw std::invalid_argument(constraint);
 }
 
@@ -1441,7 +1459,7 @@ void ErrorIfCheck_3puzf7van5acf(const regor::Operation *op, [[maybe_unused]] con
 {
     // Operators: WHILE_LOOP,
     static constexpr char constraint[] = "ERROR_IF(tensor_list_shape(input_list) != tosa_input_shape(body_graph))";
-    const auto *body_graph = context.GetGraph(op->attr.condWhile.body_branch);
+    const auto *body_graph = context.GetGraph(op->Attribute<regor::while_attr_t>()->body_branch.c_str());
     if ( !ShapeListsMatch(op->Inputs(), body_graph->Inputs()) ) throw std::invalid_argument(constraint);
 }
 
@@ -1449,7 +1467,7 @@ void ErrorIfCheck_8tihij7a5ep0(const regor::Operation *op, [[maybe_unused]] cons
 {
     // Operators: WHILE_LOOP,
     static constexpr char constraint[] = "ERROR_IF(tensor_list_shape(input_list) != tosa_output_shape(body_graph))";
-    const auto *body_graph = context.GetGraph(op->attr.condWhile.body_branch);
+    const auto *body_graph = context.GetGraph(op->Attribute<regor::while_attr_t>()->body_branch.c_str());
     if ( !ShapeListsMatch(op->Inputs(), body_graph->Outputs()) ) throw std::invalid_argument(constraint);
 }
 
@@ -1457,7 +1475,7 @@ void ErrorIfCheck_3lu68v2531bjz(const regor::Operation *op, [[maybe_unused]] con
 {
     // Operators: WHILE_LOOP,
     static constexpr char constraint[] = "ERROR_IF(tensor_size(tosa_output_shape(cond_graph)) != 1)";
-    const auto *cond_graph = context.GetGraph(op->attr.condWhile.cond_branch);
+    const auto *cond_graph = context.GetGraph(op->Attribute<regor::while_attr_t>()->cond_branch.c_str());
     const auto &condOutputs = cond_graph->Outputs();
     if ( condOutputs.size() != 1 || condOutputs.front()->StorageShape().Elements() != 1 )
         throw std::invalid_argument(constraint);
@@ -1467,7 +1485,7 @@ void ErrorIfCheck_1fzl0zyxyd88z(const regor::Operation *op, [[maybe_unused]] con
 {
     // Operators: WHILE_LOOP,
     static constexpr char constraint[] = "ERROR_IF(tosa_output_type(cond_graph) != bool_t)";
-    const auto *cond_graph = context.GetGraph(op->attr.condWhile.cond_branch);
+    const auto *cond_graph = context.GetGraph(op->Attribute<regor::while_attr_t>()->cond_branch.c_str());
     const auto &condOutputs = cond_graph->Outputs();
     if ( condOutputs.size() != 1 ) throw std::invalid_argument(constraint);
     auto type = condOutputs.front()->Type();
@@ -1631,8 +1649,8 @@ void ErrorIfCheck_5y7ov1oeymoa(const regor::Operation *op, [[maybe_unused]] cons
     // Operators: CONCAT,
     static constexpr char constraint[] = "ERROR_IF(axis < 0 || axis >= max(1,rank(shapes1[0])))";
     const auto rank = op->Input(TensorUsage::IFM)->shape.Size();
-    if ( op->attr.axis.axis < 0 || op->attr.axis.axis >= std::max<int>(1, rank) )
-        throw std::invalid_argument(constraint);
+    auto *attr = op->Attribute<regor::axis_attr_t>();
+    if ( attr->axis < 0 || attr->axis >= std::max<int>(1, rank) ) throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_oln8qpyh6lba(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -1641,7 +1659,7 @@ void ErrorIfCheck_oln8qpyh6lba(const regor::Operation *op, [[maybe_unused]] cons
     static constexpr char constraint[] = "ERROR_IF(shape[axis] != sum(shape_dim(shapes1[k], axis) for all k))";
     const auto &shape = op->Output(TensorUsage::OFM)->shape;
     const auto &inputs = op->Inputs();
-    auto axis = op->attr.axis.axis;
+    auto axis = op->Attribute<regor::axis_attr_t>()->axis;
     int64_t sum = 0;
     for ( const auto &input : inputs )
     {
@@ -1666,7 +1684,7 @@ void ErrorIfCheck_3bzibvkt1zqng(const regor::Operation *op, [[maybe_unused]] con
 {
     // Operators: CONCAT,
     static constexpr char constraint[] = "ERROR_IF(index != axis && input_shape[index] != shapes1[0][index])";
-    auto axis = op->attr.axis.axis;
+    auto axis = op->Attribute<regor::axis_attr_t>()->axis;
     const auto &inputs = op->Inputs();
     const auto &shape0 = inputs.front().shape;
     for ( const auto &input : inputs )
@@ -1685,7 +1703,7 @@ void ErrorIfCheck_171if2aq7ntnm(const regor::Operation *op, [[maybe_unused]] con
     // Operators: DIM,
     static constexpr char constraint[] = "ERROR_IF(axis >= rank(shape))";
     const auto rank = op->Input(TensorUsage::IFM)->shape.Size();
-    auto axis = op->attr.axis.axis;
+    auto axis = op->Attribute<regor::axis_attr_t>()->axis;
     if ( axis >= rank ) throw std::invalid_argument(constraint);
 }
 
@@ -1736,7 +1754,8 @@ void ErrorIfCheck_3rzfyy6qi1bly(const regor::Operation *op, [[maybe_unused]] con
     // Operators: RESCALE,
     static constexpr char constraint[] = "ERROR_IF(scale32 && in_t == i48_t)";
     auto in_t = op->IFM(0)->Type();
-    if ( op->attr.rescale.scale32 && DataTypeSizeBits(in_t) == 48 ) throw std::invalid_argument(constraint);
+    const auto *attr = op->Attribute<regor::rescale_attr_t>();
+    if ( attr->scale32 && DataTypeSizeBits(in_t) == 48 ) throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_23cyq2l8quj8p(const regor::Operation *op, [[maybe_unused]] const Context &context)

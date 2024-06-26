@@ -127,8 +127,6 @@ public:
     bool _hasScaling = false;
     void *_srcKey = nullptr;
     int _primaryIfmIndex = 0;
-    OpTypeParameters _parameters;
-    Operation::Attributes _attributes;
     RoundMode _rounding = RoundMode::DBL;
     AccumulatorControl _accumulatorControl;
     DynamicRef _attr;
@@ -143,7 +141,7 @@ private:
     UniqueId _uid;
 
 public:
-    SchedulerOperation(OpType opType) : _type(opType), _parameters({}) { _uid = GenerateUniqueId(); }
+    SchedulerOperation(OpType opType) : _type(opType) { _uid = GenerateUniqueId(); }
     ~SchedulerOperation() { Disconnect(); }
 
 public:
@@ -174,22 +172,31 @@ public:
     int PrimaryIfmIndex() const { return _primaryIfmIndex; }
     void SetPrimaryIfmIndex(int index) { _primaryIfmIndex = index; }
 
-    const OpTypeParameters &Parameters() const { return _parameters; }
-    OpTypeParameters &Parameters() { return _parameters; }
-    void SetParameters(OpTypeParameters parameters) { _parameters = parameters; }
-
-    const Operation::Attributes &Attributes() const { return _attributes; }
-    Operation::Attributes &Attributes() { return _attributes; }
-    void SetAttributes(Operation::Attributes attributes) { _attributes = attributes; }
+    void SetAttributeRef(DynamicRef attr) { _attr = attr; }
 
     template<typename TYPE>
     TYPE *Attribute()
     {
-        if ( _attr && _attr.Info()->Hash() == TypeHash<TYPE>::HASH )
+        if ( !_attr )
         {
-            return static_cast<TYPE *>(_attr.Instance());
+            _attr = CreateAttribute(TypeHash<TYPE>::HASH);
         }
-        return nullptr;
+        else if ( _attr.Info()->Hash() != TypeHash<TYPE>::HASH )
+        {
+            throw std::runtime_error("attribute already assigned for this operator");
+        }
+
+        return static_cast<TYPE *>(_attr.Instance());
+    }
+
+    template<typename TYPE>
+    const TYPE *Attribute() const
+    {
+        if ( !_attr || (_attr.Info()->Hash() != TypeHash<TYPE>::HASH) )
+        {
+            throw std::runtime_error("requested attribute must be already assigned");
+        }
+        return static_cast<const TYPE *>(_attr.Instance());
     }
 
     // Input connections

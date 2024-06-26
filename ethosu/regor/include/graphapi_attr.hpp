@@ -84,6 +84,8 @@ enum class OpAttr : uint32_t
     RESCALE_SCALE32 = GRAPHAPI_MAKE_ATTR(rescale, bool, 0),
     RESCALE_ROUND = GRAPHAPI_MAKE_ATTR(double_round, bool, 1),
     RESCALE_PER_CHANNEL = GRAPHAPI_MAKE_ATTR(per_channel, bool, 2),
+    RESCALE_INPUT_UNSIGNED = GRAPHAPI_MAKE_ATTR(input_unsigned, bool, 3),
+    RESCALE_OUTPUT_UNSIGNED = GRAPHAPI_MAKE_ATTR(output_unsigned, bool, 4),
     // Mul
     MUL_SHIFT = GRAPHAPI_MAKE_ATTR(mul, int32, 0),
     // Asr
