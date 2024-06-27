@@ -718,7 +718,7 @@ def generate_ofm_scaling_for_pooling(emit: CommandStreamEmitter, pool_op: NpuPoo
         ofm_scale_f64 = np.double(ofm_quant.scale_f32)
         scale, shift = scaling.quantise_scale(ifm_scale_f64 / ofm_scale_f64)
     elif pool_op.rescale is not None:
-        if type(pool_op.rescale) == ExplicitScaling:
+        if isinstance(pool_op.rescale, ExplicitScaling):
             # Note: reuse of rescale for explicit scaling to not expose this in the external API
             explicit_scaling = pool_op.rescale
             assert explicit_scaling.per_channel is False
@@ -730,7 +730,7 @@ def generate_ofm_scaling_for_pooling(emit: CommandStreamEmitter, pool_op: NpuPoo
             rescale = pool_op.rescale
             rescale_bits = len(bin(round_up_to_int(rescale))) - 2 + 1
             scale, shift = scaling.quantise_pooling_scale(kernel.height * kernel.width, rescale_bits)
-            scale = int(round_away_zero(scale * rescale))
+            scale = int(round_away_zero(scale * np.double(rescale)))
     else:
         # In case avg pool fused with concat or other memory operation, rescaling might be needed.
         # kernel height == kernel width == 1 is always true in this case
@@ -745,7 +745,7 @@ def generate_ofm_scaling_for_pooling(emit: CommandStreamEmitter, pool_op: NpuPoo
                 elif rescale < 1:
                     rescale_bits = -(len(bin(round_up_to_int(1 / rescale))) - 2 - 1)
             scale, shift = scaling.quantise_pooling_scale(kernel.height * kernel.width, rescale_bits)
-            scale = int(round_away_zero(scale * rescale))
+            scale = int(round_away_zero(scale * np.double(rescale)))
         else:
             scale = 1
             shift = 0
@@ -973,7 +973,7 @@ def generate_pooling_op(emit: CommandStreamEmitter, npu_op: NpuPoolingOperation,
         npu_op.sub_op_type in (NpuPoolingOp.AVERAGE, NpuPoolingOp.REDUCE_SUM) and sum(npu_op.padding) == 0
     )
     # Note: reuse of rescale for explicit scaling to not expose this in the external API
-    if npu_op.rescale is not None and type(npu_op.rescale) == ExplicitScaling:
+    if npu_op.rescale is not None and isinstance(npu_op.rescale, ExplicitScaling):
         use_global_scale = not npu_op.rescale.per_channel
     generate_common(emit, npu_op, NpuBlockTraversal.DEPTH_FIRST, arch, use_global_scale=use_global_scale)
     # Pooling op specific

@@ -22,6 +22,24 @@ main feature changes, interface changes and reported defects that have been
 fixed.  The version numbering adheres to the
 [semantic versioning](https://semver.org/) scheme.
 
+## Release 3.12.0 - 20/05/2024
+
+**Main feature changes:**
+
+* Extended operator support: STRIDED_SLICE with strides in H/W > 1
+* Upgrade TensorFlow Lite support to version 2.16
+
+**Interface changes:**
+
+* None
+
+**Reported defect fixes:**
+
+* Fixed CONCAT operators split between multiple subgraphs (MLCE-1223 & MLCE-1252)
+* Fixed issue with combining STRIDED_SLICE operation with elementwise broadcasting (MLCE-1223)
+* Fixed issue with LUT index calculation and STRIDED_SLICE optimisation (MLCE-1253)
+
+
 ## Release 3.11.0 - 19/02/2024
 
 **Main feature changes:**

@@ -80,7 +80,7 @@ class TFLiteSubgraph:
 
     def parse_tensor(self, tens_data):
         np_shape = tens_data.ShapeAsNumpy()
-        shape = list(np_shape) if type(np_shape) is np.ndarray else []
+        shape = list(np_shape) if isinstance(np_shape, np.ndarray) else []
         name = decode_str(tens_data.Name())
         tens_dtype = tens_data.Type()
         dtype = datatype_map[tens_dtype]

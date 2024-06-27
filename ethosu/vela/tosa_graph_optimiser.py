@@ -87,16 +87,19 @@ def add_padding_fields(op, arch, nng):
     return op
 
 
-# Counts leading zeroes for a (int32)
+# Counts leading zeroes for positive values only
 def count_leading_zeros(a):
-    lz = int(32)
-    if a != 0:
-        mask = 1 << (32 - 1)
+    assert a >= 0
+    if a == 0:
+        return 32
+    else:
+        mask = np.uint32(1 << (32 - 1))
+        a_ui32 = np.uint32(a)  # Force the input type to match that of the mask to avoid potential numpy issues
         lz = 0
-        while (mask & a) == 0:
+        while (mask & a_ui32) == 0:
             mask = mask >> 1
             lz = lz + 1
-    return lz
+        return lz
 
 
 def calc_scaling_avgpool(op, arch, nng):

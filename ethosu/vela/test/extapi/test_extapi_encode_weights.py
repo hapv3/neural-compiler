@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2020, 2022 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2020, 2022, 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -64,4 +64,4 @@ def test_encode_weights(
         is_depthwise=is_depthwise,
         block_traversal=block_traversal,
     )
-    assert type(encoded_stream) == bytearray
+    assert isinstance(encoded_stream, bytearray)

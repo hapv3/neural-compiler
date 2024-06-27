@@ -146,7 +146,9 @@ class LiveRangeGraph:
         return self.current_time + 1
 
     def get_temporal_memory_usage(self, target_mem_area):
-        usage = np.zeros(self.get_endtime() + 1, dtype=np.int32)
+        # Type needs to represent the maximum possible address that Ethos-U supports because when scheduling we start
+        # with the maximum value and then choose schedules with a lower usage
+        usage = np.zeros(self.get_endtime() + 1, dtype=np.int64)
         for lr in self.lrs:
             if lr.mem_area == target_mem_area:
                 # End time is inclusive
