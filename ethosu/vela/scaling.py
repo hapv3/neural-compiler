@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2020 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2020, 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -18,6 +18,8 @@
 # Contains various scaling calculations for weights, elementwise operations, pooling etc.
 import math
 from enum import IntEnum
+
+import numpy as np
 
 from .numeric_util import round_away_zero
 
@@ -68,18 +70,18 @@ def quantise_pooling_scale(nr_kernel_elements, rescale_bits=0):
 
 # Calculate elementwise Mul OFM scale+shift
 def elementwise_mul_scale(input_scale, input2_scale, output_scale):
-    output_rescale = (input_scale * input2_scale) / output_scale
+    output_rescale = (np.double(input_scale) * input2_scale) / output_scale
     out_scale, out_shift = quantise_scale(output_rescale)
     return out_scale, out_shift
 
 
 # Simplified version of calculating elementwise Add/Sub scales
 def simplified_elementwise_add_sub_scale(input1_scale, input2_scale, output_scale, input_shift=16):
-    max_input_scale = max(input1_scale, input2_scale)
+    max_input_scale = np.double(max(input1_scale, input2_scale))
 
-    input1_rescale = input1_scale * (1 << input_shift) / (2 * max_input_scale)
-    input2_rescale = input2_scale * (1 << input_shift) / (2 * max_input_scale)
-    output_rescale = (2 * max_input_scale) / (output_scale * (1 << input_shift))
+    input1_rescale = np.double(input1_scale) * (1 << input_shift) / (2 * max_input_scale)
+    input2_rescale = np.double(input2_scale) * (1 << input_shift) / (2 * max_input_scale)
+    output_rescale = (2 * max_input_scale) / (np.double(output_scale) * (1 << input_shift))
 
     out_scale, out_shift = quantise_scale(output_rescale)
 
