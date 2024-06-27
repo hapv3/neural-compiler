@@ -841,10 +841,11 @@ class TFLiteSupportedOperators:
 
     @staticmethod
     def constraint_stridedslice_stride_values(op):
-        "All Strides values must be 1"
+        "Batch and channel stride values must be 1"
         strides = op.inputs[3]
-        valid = all(stride == 1 for stride in strides.values)
-        return valid, f"Op has strides values {strides.values}"
+        s_c = strides.values[-1]
+        s_n = strides.values[0] if len(strides.values) > 3 else 1
+        return s_n == s_c == 1, f"Op has strides values {strides.values}"
 
     @staticmethod
     def constraint_stridedslice_offset_false(op):

@@ -542,7 +542,9 @@ def create_strided_slice():
 def test_constraint_stridedslice_stride_values():
     # Unsupported strides
     op = create_strided_slice()
-    op.inputs[3].values = [1, 1, 2, 1]
+    op.inputs[3].values = [1, 2, 2, 1]
+    assert support.is_operator_supported(op)
+    op.inputs[3].values = [2, 1, 1, 1]
     assert not support.is_operator_supported(op)
 
 
@@ -654,9 +656,9 @@ def create_mean(input_shape, output_shape, axis, datatype, attrs):
     ifm.quantization = testutil.default_quant_params()
     ofm = Tensor(output_shape, datatype, "out")
     ofm.quantization = testutil.default_quant_params()
-    if type(axis) is list:
+    if isinstance(axis, list):
         indices = create_const_tensor("indices", [len(axis)], DataType.int32, axis)
-    elif type(axis) is int:
+    elif isinstance(axis, int):
         indices = create_const_tensor("indices", [], DataType.int32, axis)
     op = testutil.create_op(Op.Mean, [ifm, indices], ofm, attrs)
     return op

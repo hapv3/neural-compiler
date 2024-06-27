@@ -34,9 +34,10 @@ classifiers = [
     "Topic :: Software Development :: Compilers",
 ]
 keywords = ["ethos-u", "vela compiler", "tflite", "npu"]
+# Third-party dependency versions are restricted based upon compatibility and security concerns.
 dependencies = [
     "flatbuffers==23.5.26",
-    "numpy",
+    "numpy>1.10.0",
     "lxml>=4.5.2"
 ]
 dynamic = ["readme", "version"]
