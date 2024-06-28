@@ -190,7 +190,7 @@ Address HillClimbAllocator::AllocateIndices(const std::vector<int> &indices)
 void HillClimbAllocator::SortIndicesOnPrio(std::vector<int> &indices) const
 {
     std::sort(indices.begin(), indices.end(),
-        [this](int const &a, int const &b)
+        [&lrUrgency = lrUrgency, &lrs = lrs](int const &a, int const &b)
         {
             // urgent first
             if ( lrUrgency[a] != lrUrgency[b] )

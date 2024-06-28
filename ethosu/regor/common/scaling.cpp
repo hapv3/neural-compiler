@@ -79,17 +79,5 @@ QuantizedScale ElementwiseMulScale(const double inputScale, const double input2S
 // Convert int32_t multiplier to int16_t with rounding.
 int16_t DownScaleInt32ToInt16Multiplier(int32_t multiplier)
 {
-    static constexpr int32_t kRoundingOffset = 1 << 15;
-    int16_t mul16;
-
-    if ( multiplier >= std::numeric_limits<int32_t>::max() - kRoundingOffset )
-    {
-        mul16 = std::numeric_limits<int16_t>::max();
-    }
-    else
-    {
-        mul16 = int16_t((multiplier + kRoundingOffset) / 65536);
-    }
-
-    return mul16;
+    return ClampToType<int16_t>(((multiplier / 32768) + 1) / 2);
 }
