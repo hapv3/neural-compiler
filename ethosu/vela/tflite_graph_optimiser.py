@@ -185,8 +185,9 @@ def rewrite_split_ops(tens, arch, nng):
         new_op.ifm_shapes.append(Shape4D(inp.shape))
         new_op.ofm_shapes.append(split_op.ofm_shapes[ofm_shape_idx])
         # Set stride multiplier in H/W if a stride tensor is provided
-        s_h, s_w = (strides_tens.values[-3], strides_tens.values[-2]) if strides_tens else (1, 1)
-        new_op.ifm_stride_multiplier[0] = [1, s_h, s_w]  # C/H/W
+        if strides_tens:
+            _, s_h, s_w, _ = full_shape(4, list(strides_tens.values), 1)
+            new_op.ifm_stride_multiplier[0] = [1, s_h, s_w]  # C/H/W
         DebugDatabase.add_optimised(split_op, new_op)
 
     return tens
