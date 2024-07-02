@@ -145,9 +145,8 @@ union HLCParameters
 /// <summary>
 /// Sub operation
 /// </summary>
-class HLCSubOperation
+struct HLCSubOperation
 {
-public:
     OpType type = OpType::None;
     std::vector<HLCFeatureMap> ifm;
     HLCFeatureMap ofm;
@@ -162,9 +161,8 @@ public:
 /// There is one HLCOperation for every SchedulerOperation. Each HLCOperation can be
 /// associated with one (= non-cascaded) or more (= cascaded) HLCStripes
 /// </summary>
-class HLCOperation : public HLCSubOperation
+struct HLCOperation : HLCSubOperation
 {
-public:
     Kernel kernel;
     std::unique_ptr<HLCWeights> weights;
     std::unique_ptr<HLCWeights> scales;

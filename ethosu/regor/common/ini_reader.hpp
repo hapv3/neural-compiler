@@ -221,12 +221,13 @@ public:
 
         assert(_parseState == ParseState::Value);
 
-        auto [ptr, ec] = std::from_chars(_pos, _end, value);
-        if ( _pos == ptr )
+        char *end;
+        value = std::strtof(_pos, &end);
+        if ( end == _pos )
         {
             return false;
         }
-        _pos = ptr;
+        _pos = end;
 
         // Allow comma-separated value reads
         if ( SkipSpace() ) Expect(',');
