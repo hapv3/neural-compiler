@@ -711,7 +711,7 @@ def generate_ofm_scaling_for_pooling(emit: CommandStreamEmitter, pool_op: NpuPoo
         else:
             rescale_bits = len(bin(round_up_to_int(rescale))) - 2 + 1
             scale, shift = scaling.quantise_pooling_scale(kernel.height * kernel.width, rescale_bits)
-            scale = int(round_away_zero(scale * rescale))
+            scale = int(round_away_zero(scale * np.double(rescale)))
     elif pool_op.fused_quantize:
         # Quantize op requires different scaling
         ifm_scale_f64 = np.double(ifm_quant.scale_f32)
