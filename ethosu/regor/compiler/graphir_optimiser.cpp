@@ -178,9 +178,10 @@ Operation *GraphIrOptimiser::RemoveReshape(Graph *const graph, Operation *const 
         bool isIfmSgOfm = IsTensorInVector(graph->Outputs(), ifm);
 
         // TODO: MLBEDSW-9069: Check CPU operator producer/consumer
-
+        assert(ifm->Readers().size() == 1 || (ifm->StorageShape() == ofm->StorageShape() && ifm->AxisOrder() == ofm->AxisOrder()));
         // Inserts a copy op if needed before removing reshapes.
-        if ( (isIfmSgIfm || isIfmSgOfm) && (isOfmSgOfm) )
+        if ( ((isIfmSgIfm || isIfmSgOfm) && (isOfmSgOfm)) ||
+             ((ifm->Readers().size() > 1) && (ifm->StorageShape() != ofm->StorageShape() || ifm->AxisOrder() != ofm->AxisOrder())) )
         {
             auto copyOp = InsertCopyOpAfterTensor(ifmConn->tensor, ifmConn->quantization);
             // reset the ifm to reflect the reshape's new ifm
@@ -209,6 +210,11 @@ Operation *GraphIrOptimiser::RemoveReshape(Graph *const graph, Operation *const 
             // Bypass by replacing ofm with ifm.
             // Set IFM as input to OFM consumers.
             ReplaceConsumerInput(nullptr, ofm->Readers(), ofm, ifmConn->tensor);
+            assert(ifm->AxisOrder() == AxisOrder::Unknown || ifm->AxisOrder() == ofm->AxisOrder());
+            // This is needed as we use the weight tensor, and not the tensor connection,
+            // during weight encode. MLBEDSW-9267
+            ifmConn->tensor->SetAxisOrder(ofm->AxisOrder());
+            ifmConn->tensor->Reshape(ofm->StorageShape());
         }
         // Remove the reshape from ifm readers and ofm writers.
         // Note the Inputs/Outputs on operation should still be intact to not break the traversal.
