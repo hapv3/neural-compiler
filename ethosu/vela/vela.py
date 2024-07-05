@@ -396,6 +396,9 @@ def get_compiler_config(
     show_cpu_operations: bool,
     output_format: str,
     disable_chaining: bool,
+    disable_fwd: bool,
+    disable_cascading: bool,
+    disable_buffering: bool,
 ) -> str:
     """Build compiler config file."""
     config = "\n[compiler]\n"
@@ -409,8 +412,6 @@ def get_compiler_config(
         config += "output_format=Raw\n"
     else:
         config += "output_format=TFLite\n"
-    if disable_chaining:
-        config += "disable_chaining=true\n"
 
     config += "\n[scheduler]\n"
     config += f"optimize={optimize}\n"
@@ -419,6 +420,16 @@ def get_compiler_config(
         config += "verbose=true\n"
     if verbose_allocation:
         config += "verbose_allocation=true\n"
+    config += "disable_feature="
+    if disable_chaining:
+        config += "Grouping|"
+    if disable_fwd:
+        config += "FWD|"
+    if disable_cascading:
+        config += "Cascading|"
+    if disable_buffering:
+        config += "WeightBuffering|"
+    config = config.rstrip("|") + "\n"
 
     config += "\n[graph]\n"
     if verbose_graph:
@@ -620,6 +631,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     # debug options
     parser.add_argument("--debug-force-regor", action="store_true", help="Debug: Force the use of the regor")
     parser.add_argument("--disable-chaining", action="store_true", default=False)
+    parser.add_argument("--disable-fwd", action="store_true", default=False)
+    parser.add_argument("--disable-cascading", action="store_true", default=False)
+    parser.add_argument("--disable-buffering", action="store_true", default=False)
 
     args = parser.parse_args(argv)
 
@@ -742,6 +756,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             args.show_cpu_operations,
             args.output_format,
             args.disable_chaining,
+            args.disable_fwd,
+            args.disable_cascading,
+            args.disable_buffering,
         )
 
         process_regor(

@@ -45,6 +45,16 @@ enum class OptimizationStrategy
     Performance,
 };
 
+enum class SchedulerFeature : uint16_t
+{
+    WeightBuffering,
+    Cascading,
+    Grouping,
+    FWD,
+    Sparsity,
+    FMStaging,
+};
+
 /// <summary>
 /// Scheduling options
 /// </summary>
@@ -54,6 +64,7 @@ struct SchedulerOptions
     Address optimizationStagingLimit = 0;
     bool verboseSchedule = false;
     bool verboseAllocation = false;
+    Flags<SchedulerFeature> disabled;
 };
 
 struct WeightScaleEncoding

@@ -46,6 +46,7 @@ enum class OutputFormat : uint16_t
     Raw,
 };
 
+
 /// <summary>
 /// Compilation options
 /// </summary>
@@ -55,7 +56,6 @@ struct CompilerOptions
     bool verboseRegisterCommandStream = false;
     bool debugDatabase = false;
     bool perfReport = true;
-    bool disableChaining = false;
     OutputFormat outputFormat = OutputFormat::TFLite;
 };
 

@@ -133,9 +133,9 @@ bool Compiler::ParseOptions(const char *text, size_t size)
                     flags.Parse(reader.Get<std::string>());
                     _compilerOptions.outputFormat = flags;
                 }
-                else if ( key == "disable_chaining" )
+                else
                 {
-                    _compilerOptions.disableChaining = reader.Get<bool>();
+                    LOG_TRACE0("Unknown 'compiler' configuration key: {}\n", key);
                 }
                 reader.End();
             }
@@ -375,7 +375,7 @@ std::unique_ptr<Graph> Compiler::CompileGraph(std::unique_ptr<Graph> &graph,
     }
 
     // Pack/linearise graph Operations into SchedulerOperations
-    SchedulerPacking packing(_architecture.get(), _compilerOptions.disableChaining);
+    SchedulerPacking packing(_architecture.get(), _schedulerOptions.disabled.All(SchedulerFeature::Grouping));
     auto scheduleOps = packing.Process(graph.get());
 
     // Schedule the linearised operation sequence

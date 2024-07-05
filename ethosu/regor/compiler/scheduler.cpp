@@ -34,6 +34,16 @@
 #include <optional>
 #include <vector>
 
+
+BEGIN_ENUM_TABLE(regor::SchedulerFeature)
+    ADD_ENUM_NAME(WeightBuffering)
+    ADD_ENUM_NAME(Cascading)
+    ADD_ENUM_NAME(Grouping)
+    ADD_ENUM_NAME(FWD)
+    ADD_ENUM_NAME(Sparsity)
+    ADD_ENUM_NAME(FMStaging)
+END_ENUM_TABLE()
+
 namespace regor
 {
 
@@ -89,28 +99,36 @@ std::shared_ptr<Schedule> Scheduler::Process()
         initialStagingLimit = peakMemoryUsage;
     }
 
-    // Build cascades from min schedule
-    std::unordered_map<UniqueId, int> nonLocal;
-    CascadeBuilder cascadeBuilder(_ops, nonLocal, _spilling);
-    cascadeBuilder.BuildCascades(minSchedule.get(), _maxSchedule.get(), initialStagingLimit);
-    UpdateOpMemorySnapshot(minSchedule.get());
+    std::shared_ptr<Schedule> chosenSchedule = _maxSchedule;
 
-    std::shared_ptr<Schedule> chosenSchedule = minSchedule;
-
-    if ( _options.optimizationStrategy == OptimizationStrategy::Performance )
+    if ( !_options.disabled.All(SchedulerFeature::Cascading) )
     {
-        // Create an optimized schedule
-        auto optSchedule = OptimizeSchedule(minSchedule.get(), optMaxSchedule);
-        UpdateOpMemorySnapshot(optSchedule.get());
-        chosenSchedule = std::move(optSchedule);
+        // Build cascades from min schedule
+        std::unordered_map<UniqueId, int> nonLocal;
+        CascadeBuilder cascadeBuilder(_ops, nonLocal, _spilling);
+        cascadeBuilder.BuildCascades(minSchedule.get(), _maxSchedule.get(), initialStagingLimit);
+        UpdateOpMemorySnapshot(minSchedule.get());
+
+        chosenSchedule = minSchedule;
+
+        if ( _options.optimizationStrategy == OptimizationStrategy::Performance )
+        {
+            // Create an optimized schedule
+            auto optSchedule = OptimizeSchedule(minSchedule.get(), optMaxSchedule);
+            chosenSchedule = std::move(optSchedule);
+        }
     }
 
-    CoalesceWeightBufferTensors(chosenSchedule.get());
+    if ( !_options.disabled.All(SchedulerFeature::WeightBuffering) )
+    {
+        CoalesceWeightBufferTensors(chosenSchedule.get());
+    }
+
     UpdateOpMemorySnapshot(chosenSchedule.get());
 
     ApplySchedule(chosenSchedule.get());
 
-    if ( _spilling )
+    if ( _spilling && !_options.disabled.All(SchedulerFeature::FMStaging) )
     {
         // Use fast storage for feature maps
         FastStorageAllocator allocator;
@@ -566,6 +584,10 @@ std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(
 
     auto weightFormat = _arch->SupportedWeightFormat(op->Type());
 
+    // Disable specific weight formats if requested
+    if ( _options.disabled.All(SchedulerFeature::FWD) ) weightFormat.Unset(WeightFormat::Fast);
+    if ( _options.disabled.All(SchedulerFeature::Sparsity) ) weightFormat.Unset(WeightFormat::Sparse2_4);
+
     WeightScaleTensors weightScales;
     auto weights = op->TryInput(TensorUsage::Weights);
     if ( !weights || !weights->tensor->IsConstant() ) weightFormat = WeightFormat::Default;
@@ -867,17 +889,18 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
     auto fullWeightScales = EncodeWeightAndScaleTensor(
         std::move(encodingParams), weightTens, scaleTens, weights->quantization, ofm->quantization);
 
-    int fullWeightsBytes = fullWeightScales.npuWeightsTensor->AllocationSizeBytes();
-
     // No buffering required - take all the weights from permanent storage
     if ( schedOp->Type() == OpType::FullyConnected || !needsDMA ||
          _arch->CanSubdivide(schedOp->Type()) == AxisMask::None || ofm->reverse == ReverseType::C ||
-         (ofm->transpose != TransposeType::None && (ofm->transpose & TransposeType::MaskC) != TransposeType::C) )
+         (ofm->transpose != TransposeType::None && (ofm->transpose & TransposeType::MaskC) != TransposeType::C) ||
+         _options.disabled.All(SchedulerFeature::WeightBuffering) )
     {
         cost->ofmDepthSlices = std::move(ofmFullDepthSlices);
         cost->SetWeightScaleTensors(fullWeightScales.npuWeightsTensor, fullWeightScales.npuScalesTensor);
         return;
     }
+
+    int fullWeightsBytes = fullWeightScales.npuWeightsTensor->AllocationSizeBytes();
 
     auto encodedWeightScales = fullWeightScales;
 
@@ -1616,6 +1639,14 @@ void ParseSchedulerOptions(SchedulerOptions &opt, IniReader &reader)
                 {
                     opt.optimizationStagingLimit *= 1024 * 1024;
                 }
+            }
+        }
+        else if ( key == "disable_feature" )
+        {
+            std::string value = reader.Get<std::string>();
+            if ( !opt.disabled.Parse(value) )
+            {
+                LOG_WARN("Unrecognised disable_feature not in [{}]\n", AllFlagsToString<SchedulerFeature>());
             }
         }
 

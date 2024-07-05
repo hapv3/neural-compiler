@@ -44,7 +44,7 @@ static ENUM OrFlags(ENUM a, ARGS... rest)
 }
 
 static std::string EnumFlagsToString(unsigned value, const EnumNameEntry *table, int tableLength);
-static unsigned StringToEnumFlags(Lexer &lexer, const EnumNameEntry *table, int tableLength);
+static bool StringToEnumFlags(unsigned &value, const std::string &text, const EnumNameEntry *table, int tableLength);
 
 /// <summary>
 /// Enumerated flags wrapper
@@ -180,12 +180,18 @@ public:
         return EnumFlagsToString(_raw, table, length);
     }
 
-    void Parse(const std::string &text)
+    bool Parse(const std::string &text)
     {
-        int length = 0;
-        const EnumNameEntry *table = GetTable(length);
-        Lexer lexer(text.data(), int(text.size()));
-        _raw = StringToEnumFlags(lexer, table, length);
+        unsigned value = 0;
+        bool ok = text.empty();
+        if ( !ok )
+        {
+            int length = 0;
+            const EnumNameEntry *table = GetTable(length);
+            ok = StringToEnumFlags(value, text, table, length);
+        }
+        _raw = TYPE(value);
+        return ok;
     }
 
 private:
@@ -197,6 +203,25 @@ private:
         return GetEnumTable(ENUM(0), length);
     }
 };
+
+template<typename ENUM>
+static std::string AllFlagsToString()
+{
+    std::string tmp;
+    tmp.reserve(32);
+    int length = 0;
+    extern const EnumNameEntry *GetEnumTable(ENUM, int &);
+    const EnumNameEntry *table = GetEnumTable(ENUM(0), length);
+    for ( int i = 0; i < length; i++ )
+    {
+        const auto *sz = table[i].name;
+        assert(sz);
+        tmp += sz;
+        tmp += '|';
+    }
+    return tmp;
+}
+
 
 static std::string EnumToString(unsigned value, const EnumNameEntry *table, int tableLength)
 {
@@ -247,9 +272,10 @@ static std::string EnumToString(ENUM value)
     return EnumToString(unsigned(value), table, length);
 }
 
-static unsigned StringToEnumFlags(Lexer &lexer, const EnumNameEntry *table, int tableLength)
+static bool StringToEnumFlags(unsigned &value, const std::string &text, const EnumNameEntry *table, int tableLength)
 {
-    unsigned value = 0;
+    Lexer lexer(text.data(), text.size());
+    value = 0;
     std::string ident;
     bool isXor = false;
     while ( true )
@@ -260,13 +286,17 @@ static unsigned StringToEnumFlags(Lexer &lexer, const EnumNameEntry *table, int 
         }
         if ( lexer.GetIdent(ident, false) )
         {
-            auto pos = std::find_if(
-                table, table + tableLength, [&ident](const EnumNameEntry &v) { return ident == v.name; });
-            if ( pos != table + tableLength )
-            {
-                value = isXor ? (value ^ pos->value) : (value | pos->value);
-                isXor = false;
-            }
+            auto pos = std::find_if(table, table + tableLength,
+                [&ident](const EnumNameEntry &v)
+                {
+                    assert(v.name);
+                    return ident.compare(v.name) == 0;
+                });
+
+            if ( pos == table + tableLength ) return false;
+
+            value = isXor ? (value ^ pos->value) : (value | pos->value);
+            isXor = false;
         }
         if ( !lexer.SkipSpace() )
         {
@@ -278,10 +308,10 @@ static unsigned StringToEnumFlags(Lexer &lexer, const EnumNameEntry *table, int 
         }
         else if ( !lexer.Expect('|') )
         {
-            break;
+            return false;
         }
     }
-    return value;
+    return true;
 }
 
 template<typename ENUM, std::enable_if_t<std::is_enum_v<ENUM>, int> = 0>
