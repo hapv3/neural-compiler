@@ -57,8 +57,12 @@ class TFLiteSubgraph:
         for idx in range(subgraph.OperatorsLength()):
             self.parse_operator(idx, subgraph.Operators(idx))
 
-        self.outputs = self.get_tensors_from_indices_remove_duplicates(subgraph.OutputsAsNumpy(), "output")
-        self.inputs = self.get_tensors_from_indices_remove_duplicates(subgraph.InputsAsNumpy(), "input")
+        self.outputs = []
+        if subgraph.OutputsLength():
+            self.outputs = self.get_tensors_from_indices_remove_duplicates(subgraph.OutputsAsNumpy(), "output")
+        self.inputs = []
+        if subgraph.InputsLength():
+            self.inputs = self.get_tensors_from_indices_remove_duplicates(subgraph.InputsAsNumpy(), "input")
         fixup_tensors(self.inputs, self.tensors)
 
         self.outputs.extend(self.virtual_outputs)
@@ -118,8 +122,12 @@ class TFLiteSubgraph:
 
     def parse_operator(self, op_index, op_data):
         op_type, opt_serializer, custom_code, indices, version = self.graph.operator_codes[op_data.OpcodeIndex()]
-        inputs = [self.tensors[idx] if idx != -1 else None for idx in op_data.InputsAsNumpy()]
-        outputs = [self.tensors[idx] if idx != -1 else None for idx in op_data.OutputsAsNumpy()]
+        inputs = []
+        if op_data.InputsLength():
+            inputs = [self.tensors[idx] if idx != -1 else None for idx in op_data.InputsAsNumpy()]
+        outputs = []
+        if op_data.OutputsLength():
+            outputs = [self.tensors[idx] if idx != -1 else None for idx in op_data.OutputsAsNumpy()]
         intermediates = []
         if op_data.IntermediatesLength():
             intermediates = [self.tensors[idx] if idx != -1 else None for idx in op_data.IntermediatesAsNumpy()]

@@ -319,11 +319,18 @@ class TFLiteSerialiser:
                     attrs["depth_multiplier"] = attrs["channel_multiplier"]
                 attrs["fused_activation_function"] = op.activation.op_type if op.activation is not None else None
 
-            # Serialize VarHandleOptions (only op that have attributes with type String)
+            # Serialize VarHandleOptions has attributes of type string or byte. However, it could also be None if the
+            # input op didn't contain a value for the attribute
             if "container" in attrs:
-                attrs["container"] = builder.CreateString(attrs["container"])
+                if attrs["container"] is None:
+                    del attrs["container"]
+                else:
+                    attrs["container"] = builder.CreateString(attrs["container"])
             if "shared_name" in attrs:
-                attrs["shared_name"] = builder.CreateString(attrs["shared_name"])
+                if attrs["shared_name"] is None:
+                    del attrs["shared_name"]
+                else:
+                    attrs["shared_name"] = builder.CreateString(attrs["shared_name"])
 
             builtin_opt_offset, custom_opt_offset = opt_serializer.serialize(builder, attrs)
 
