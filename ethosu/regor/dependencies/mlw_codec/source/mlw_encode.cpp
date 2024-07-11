@@ -192,11 +192,12 @@ static void update_palette(mle_context_t *ctx, palette_t *p, const int16_t *weig
         unsigned weight = weights[i] + 256;
         freq[weight]++;
 
-        uint64_t &mask = ctx->weights_used[weight / 64];
-        if (mask & (1ull << (weight % 64)) == 0)
+        uint64_t &value = ctx->weights_used[weight / 64];
+        uint64_t mask = (1ull << (weight % 64));
+        if ((value & mask) == 0)
         {
             ctx->distinct_weights++;
-            mask |= 1ull << (weight % 64);
+            value |= mask;
         }
 
         if ( weights[i] == 0 )
