@@ -103,17 +103,14 @@ template<typename TYPE>
 constexpr std::string_view PlatformTypeName()
 {
     const char *p = PlatformRootName<TYPE>();
-    while ( *p++ != '=' )
-    {
-    };
-    while ( *p == ' ' )
-    {
+    while ( (*p != 0) && (*p != '=') )
         p++;
-    };
-    std::size_t i = 0;
-    while ( (p[i] != 0) && (p[i] != ']') && (*p != ';') )
-        i++;
-    return std::string_view(p, i);
+    while ( *p == '=' || *p == ' ' )
+        p++;
+    const char *s = p;
+    while ( (*p != 0) && (*p != ']') && (*p != ';') )
+        p++;
+    return std::string_view(s, size_t(p - s));
 }
 
 #elif _MSC_VER
@@ -169,10 +166,11 @@ static constexpr uint32_t PlatformTypeHash()
     auto e = p + name.length();
     if constexpr ( NO_NAMESPACE )
     {
-        while ( *p != ':' )
+        while ( (*p != 0) && (*p != ':') )
             p++;
         while ( *p == ':' )
             p++;
+        if ( *p == 0 ) p = name.data();  // No namespace
     }
     return FNVHashBytes(p, int(e - p));
 }
