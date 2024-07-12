@@ -99,7 +99,7 @@ template<>
 double ToDouble<GraphApi::GraphDataType::Float32, const ::flatbuffers::Vector<uint8_t> *>(const ::flatbuffers::Vector<uint8_t> *v)
 {
     const auto &buf = SafeDeref(v);
-    tosa_assert(buf.size() == 6, "Malformed constant buffer");
+    tosa_assert(buf.size() == 4, "Malformed constant buffer");
     uint32_t u = 0;
     for ( int i = 0; i < 4; i++ )
     {
@@ -112,7 +112,7 @@ template<>
 double ToDouble<GraphApi::GraphDataType::Float16, const ::flatbuffers::Vector<uint8_t> *>(const ::flatbuffers::Vector<uint8_t> *v)
 {
     const auto &buf = SafeDeref(v);
-    tosa_assert(buf.size() == 6, "Malformed constant buffer");
+    tosa_assert(buf.size() == 2, "Malformed constant buffer");
     uint32_t u = 0;
     for ( int i = 0; i < 2; i++ )
     {
@@ -133,7 +133,7 @@ template<>
 double ToDouble<GraphApi::GraphDataType::BFloat16, const ::flatbuffers::Vector<uint8_t> *>(const ::flatbuffers::Vector<uint8_t> *v)
 {
     const auto &buf = SafeDeref(v);
-    tosa_assert(buf.size() == 6, "Malformed constant buffer");
+    tosa_assert(buf.size() == 2, "Malformed constant buffer");
     uint32_t u = 0;
     for ( int i = 0; i < 2; i++ )
     {
@@ -591,8 +591,36 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                     case tosaFb::Op::CLAMP:
                     {
                         const auto &tosa_attr = TosaAttr<tosaFb::Op::CLAMP>::Get(tosa_operator);
-                        builder->Set(op, OpAttr::CLAMP_MIN, tosa_attr.min_int());
-                        builder->Set(op, OpAttr::CLAMP_MAX, tosa_attr.max_int());
+                        double clamp_min = tosa_attr.min_int();
+                        double clamp_max = tosa_attr.max_int();
+                        if ( tosa_attr.min_fp() != nullptr )
+                        {
+                            tosa_assert(input_tensors.size() > 0);
+                            auto type = types.at(input_tensors[0]);
+                            switch ( type )
+                            {
+                                case GraphApi::GraphDataType::Int48:
+                                    clamp_min = ToDouble<GraphApi::GraphDataType::Int48>(tosa_attr.min_fp());
+                                    clamp_max = ToDouble<GraphApi::GraphDataType::Int48>(tosa_attr.max_fp());
+                                    break;
+                                case GraphApi::GraphDataType::Float32:
+                                    clamp_min = ToDouble<GraphApi::GraphDataType::Float32>(tosa_attr.min_fp());
+                                    clamp_max = ToDouble<GraphApi::GraphDataType::Float32>(tosa_attr.max_fp());
+                                    break;
+                                case GraphApi::GraphDataType::Float16:
+                                    clamp_min = ToDouble<GraphApi::GraphDataType::Float16>(tosa_attr.min_fp());
+                                    clamp_max = ToDouble<GraphApi::GraphDataType::Float16>(tosa_attr.max_fp());
+                                    break;
+                                case GraphApi::GraphDataType::BFloat16:
+                                    clamp_min = ToDouble<GraphApi::GraphDataType::BFloat16>(tosa_attr.min_fp());
+                                    clamp_max = ToDouble<GraphApi::GraphDataType::BFloat16>(tosa_attr.max_fp());
+                                    break;
+                                default:  // empty
+                                    break;
+                            }
+                        }
+                        builder->Set(op, OpAttr::CLAMP_MIN, clamp_min);
+                        builder->Set(op, OpAttr::CLAMP_MAX, clamp_max);
                     }
                     break;
                     case tosaFb::Op::SLICE:
