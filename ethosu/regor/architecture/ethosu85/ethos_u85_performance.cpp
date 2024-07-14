@@ -61,18 +61,19 @@ CycleCost EthosU85Performance::MeasureCycleCost(const PerformanceQuery &query, c
 {
     CycleCost cycles;
     auto npuOp = _arch->GetHWOp(query.type);
-
+    const bool sparse = query.weightFormat & WeightFormat::Sparse2_4;
     // Convolution/Vector product cycle calculation
     if ( OpUsesMacs(npuOp) )
     {
         if ( (npuOp == EthosU85NpuOp::Depthwise) || (npuOp == EthosU85NpuOp::Pooling) )
         {
-            cycles.macs = int64_t(query.kernel->ElementsWH()) * query.ofmShape.Elements() * 1;
+            cycles.macs = int64_t(query.kernel->ElementsWH()) * query.ofmShape.Elements();
         }
         else
         {
             cycles.macs = int64_t(query.kernel->ElementsWH()) * query.ofmShape.Elements() * query.ifmShape[0].Depth();
         }
+        cycles.macs /= sparse ? 2 : 1;
 
         cycles.opCycles = EstimateConvCycles(query, fused);
     }
@@ -172,7 +173,9 @@ int64_t EthosU85Performance::EstimateConvCycles(const PerformanceQuery &query, c
                       npuOp == EthosU85NpuOp::VectorProduct || npuOp == EthosU85NpuOp::ReduceSum )
             {
                 numKernelSteps = subKernelElements;
-                cycles = std::max(cyclesWb, 4 * numUBlocks.ElementsWH()) * numKernelSteps * numUBlocks.Depth();
+                cycles = std::max(cyclesWb, query.ifmShape->Depth() / 8 * numUBlocks.ElementsWH()) * numKernelSteps *
+                         numUBlocks.Depth() * (ifmBits / 8);
+                cycles /= query.weightFormat & WeightFormat::Sparse2_4 ? 2 : 1;
             }
             else
             {
@@ -213,8 +216,6 @@ int64_t EthosU85Performance::EstimateConvCycles(const PerformanceQuery &query, c
     {
         cyclesDpuBlk *= DivRoundUp(query.ifmShape[0].Depth(), ifmBlock.Depth());
     }
-
-    cyclesDpuBlk /= _arch->_cores;
 
     // Estimate output cycles
     int numOfmBlks = Shape::DivRoundUp(query.ofmShape, ofmBlock).Elements();

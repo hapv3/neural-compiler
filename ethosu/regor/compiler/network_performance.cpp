@@ -178,7 +178,8 @@ PerformanceResult NetworkPerformance::EstimateFullOpPerformance(
     SchedulerOperation *schedOp, SchedulerOpInfo *cost, SchedulerOperation *prevOp, SchedulerOpInfo *prevCost)
 {
     UNUSED(prevOp);
-    PerformanceQuery query = Scheduler::InitPerfQuery(schedOp, cost->Config(), -1);
+    auto wgtFormat = cost->npuWeightsTensor ? cost->npuWeightsTensor->config->Format() : Flags<WeightFormat>(WeightFormat::Default);
+    PerformanceQuery query = Scheduler::InitPerfQuery(schedOp, cost->Config(), -1, wgtFormat);
     std::vector<FusionQuery> fused = Scheduler::InitFusionQuery(schedOp);
 
     CycleCost cycles = _arch->Performance()->MeasureCycleCost(query, fused);

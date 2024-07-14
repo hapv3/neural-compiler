@@ -228,6 +228,7 @@ struct PerformanceQuery
     TensorFormat ofmFormat;
     Shape constShape;
     ArchitectureMemory *constMemory;
+    WeightFormat weightFormat;
 };
 
 struct WeightStats

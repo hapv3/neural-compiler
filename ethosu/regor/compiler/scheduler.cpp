@@ -415,7 +415,7 @@ WeightScaleEncoding ChooseBestWeightFormat(Architecture *arch, SchedulerOperatio
             weightStats.encodedSize = weightTensor->totalWeightBytes;
             weightStats.zeroCount = weightTensor->zeroCount;
             weightStats.distinctWeights = weightTensor->distinctWeights;
-            auto query = Scheduler::InitPerfQuery(op, nullptr, -1);
+            auto query = Scheduler::InitPerfQuery(op, nullptr);
             auto cycles = arch->Performance()->WeightDecodeCycles(
                 query, weightStats, weightTensor->config->Format(), weightTensor->memArea.memory);
             if ( cycles < minCycles )
@@ -445,7 +445,7 @@ bool UseFastDecoder(regor::Architecture *arch, SchedulerOperation *op, Optimizat
     weightStats.encodedSize = weightTensor->totalWeightBytes;
     weightStats.zeroCount = weightTensor->zeroCount;
     weightStats.distinctWeights = weightTensor->distinctWeights;
-    auto query = Scheduler::InitPerfQuery(op, nullptr, -1);
+    auto query = Scheduler::InitPerfQuery(op, nullptr);
     auto defaultCycles = arch->Performance()->WeightDecodeCycles(
         query, weightStats, WeightFormat::Default, weightTensor->memArea.memory);
     weightStats.encodedSize = fastWeightSize;
@@ -1425,7 +1425,7 @@ void Scheduler::CoalesceWeightBufferTensors(Schedule *schedule)
 }
 
 
-PerformanceQuery Scheduler::InitPerfQuery(SchedulerOperation *op, ArchitectureOpConfig *config, int ofmDepth = -1)
+PerformanceQuery Scheduler::InitPerfQuery(SchedulerOperation *op, ArchitectureOpConfig *config, int ofmDepth, WeightFormat wgtFormat)
 {
     PerformanceQuery query = {};
     query.type = op->Type();
@@ -1459,6 +1459,8 @@ PerformanceQuery Scheduler::InitPerfQuery(SchedulerOperation *op, ArchitectureOp
         query.constShape = Shape(1, 1, 1, query.ofmShape.Depth());
         query.constMemory = scales->tensor->memArea.memory;
     }
+
+    query.weightFormat = wgtFormat;
 
     return query;
 }

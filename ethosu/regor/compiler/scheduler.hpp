@@ -294,7 +294,8 @@ public:
 
     void AllocateReadOnlyAddresses(Schedule *schedule, IncrementalLinearAllocator &readOnlyAllocator);
 
-    static PerformanceQuery InitPerfQuery(SchedulerOperation *op, ArchitectureOpConfig *config, int ofm_depth);
+    static PerformanceQuery InitPerfQuery(SchedulerOperation *op, ArchitectureOpConfig *config, int ofm_depth = -1,
+        WeightFormat wgtFormat = WeightFormat::Default);
     static std::vector<FusionQuery> InitFusionQuery(SchedulerOperation *op);
 
 private:
