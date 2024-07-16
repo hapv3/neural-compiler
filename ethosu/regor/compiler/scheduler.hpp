@@ -47,12 +47,12 @@ enum class OptimizationStrategy
 
 enum class SchedulerFeature : uint16_t
 {
-    WeightBuffering,
-    Cascading,
-    Grouping,
-    FWD,
-    Sparsity,
-    FMStaging,
+    WeightBuffering = 1 << 0,
+    Cascading = 1 << 1,
+    Grouping = 1 << 2,
+    FWD = 1 << 3,
+    Sparsity = 1 << 4,
+    FMStaging = 1 << 5,
 };
 
 /// <summary>
