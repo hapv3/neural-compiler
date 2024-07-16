@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2020-2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2020-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -186,6 +186,8 @@ datatype_map = {
     TensorType.VARIANT: DataType.variant,
     TensorType.UINT32: DataType.uint32,
     TensorType.UINT16: DataType.uint16,
+    TensorType.BFLOAT16: DataType.bfloat16,
+
 }
 
 datatype_inv_map = inverse_map(datatype_map)

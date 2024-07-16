@@ -35,12 +35,20 @@ class ReduceWindowOptions(object):
             return self._tab.Get(flatbuffers.number_types.Int32Flags, o + self._tab.Pos)
         return 0
 
-def ReduceWindowOptionsStart(builder): builder.StartObject(1)
+def ReduceWindowOptionsStart(builder):
+    builder.StartObject(1)
+
 def Start(builder):
-    return ReduceWindowOptionsStart(builder)
-def ReduceWindowOptionsAddReduceFunction(builder, reduceFunction): builder.PrependInt32Slot(0, reduceFunction, 0)
+    ReduceWindowOptionsStart(builder)
+
+def ReduceWindowOptionsAddReduceFunction(builder, reduceFunction):
+    builder.PrependInt32Slot(0, reduceFunction, 0)
+
 def AddReduceFunction(builder, reduceFunction):
-    return ReduceWindowOptionsAddReduceFunction(builder, reduceFunction)
-def ReduceWindowOptionsEnd(builder): return builder.EndObject()
+    ReduceWindowOptionsAddReduceFunction(builder, reduceFunction)
+
+def ReduceWindowOptionsEnd(builder):
+    return builder.EndObject()
+
 def End(builder):
     return ReduceWindowOptionsEnd(builder)

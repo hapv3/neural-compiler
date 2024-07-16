@@ -163,39 +163,74 @@ class StablehloDotGeneralOptions(object):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
         return o == 0
 
-def StablehloDotGeneralOptionsStart(builder): builder.StartObject(5)
+def StablehloDotGeneralOptionsStart(builder):
+    builder.StartObject(5)
+
 def Start(builder):
-    return StablehloDotGeneralOptionsStart(builder)
-def StablehloDotGeneralOptionsAddLhsBatchingDimensions(builder, lhsBatchingDimensions): builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(lhsBatchingDimensions), 0)
+    StablehloDotGeneralOptionsStart(builder)
+
+def StablehloDotGeneralOptionsAddLhsBatchingDimensions(builder, lhsBatchingDimensions):
+    builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(lhsBatchingDimensions), 0)
+
 def AddLhsBatchingDimensions(builder, lhsBatchingDimensions):
-    return StablehloDotGeneralOptionsAddLhsBatchingDimensions(builder, lhsBatchingDimensions)
-def StablehloDotGeneralOptionsStartLhsBatchingDimensionsVector(builder, numElems): return builder.StartVector(8, numElems, 8)
+    StablehloDotGeneralOptionsAddLhsBatchingDimensions(builder, lhsBatchingDimensions)
+
+def StablehloDotGeneralOptionsStartLhsBatchingDimensionsVector(builder, numElems):
+    return builder.StartVector(8, numElems, 8)
+
 def StartLhsBatchingDimensionsVector(builder, numElems):
     return StablehloDotGeneralOptionsStartLhsBatchingDimensionsVector(builder, numElems)
-def StablehloDotGeneralOptionsAddRhsBatchingDimensions(builder, rhsBatchingDimensions): builder.PrependUOffsetTRelativeSlot(1, flatbuffers.number_types.UOffsetTFlags.py_type(rhsBatchingDimensions), 0)
+
+def StablehloDotGeneralOptionsAddRhsBatchingDimensions(builder, rhsBatchingDimensions):
+    builder.PrependUOffsetTRelativeSlot(1, flatbuffers.number_types.UOffsetTFlags.py_type(rhsBatchingDimensions), 0)
+
 def AddRhsBatchingDimensions(builder, rhsBatchingDimensions):
-    return StablehloDotGeneralOptionsAddRhsBatchingDimensions(builder, rhsBatchingDimensions)
-def StablehloDotGeneralOptionsStartRhsBatchingDimensionsVector(builder, numElems): return builder.StartVector(8, numElems, 8)
+    StablehloDotGeneralOptionsAddRhsBatchingDimensions(builder, rhsBatchingDimensions)
+
+def StablehloDotGeneralOptionsStartRhsBatchingDimensionsVector(builder, numElems):
+    return builder.StartVector(8, numElems, 8)
+
 def StartRhsBatchingDimensionsVector(builder, numElems):
     return StablehloDotGeneralOptionsStartRhsBatchingDimensionsVector(builder, numElems)
-def StablehloDotGeneralOptionsAddLhsContractingDimensions(builder, lhsContractingDimensions): builder.PrependUOffsetTRelativeSlot(2, flatbuffers.number_types.UOffsetTFlags.py_type(lhsContractingDimensions), 0)
+
+def StablehloDotGeneralOptionsAddLhsContractingDimensions(builder, lhsContractingDimensions):
+    builder.PrependUOffsetTRelativeSlot(2, flatbuffers.number_types.UOffsetTFlags.py_type(lhsContractingDimensions), 0)
+
 def AddLhsContractingDimensions(builder, lhsContractingDimensions):
-    return StablehloDotGeneralOptionsAddLhsContractingDimensions(builder, lhsContractingDimensions)
-def StablehloDotGeneralOptionsStartLhsContractingDimensionsVector(builder, numElems): return builder.StartVector(8, numElems, 8)
+    StablehloDotGeneralOptionsAddLhsContractingDimensions(builder, lhsContractingDimensions)
+
+def StablehloDotGeneralOptionsStartLhsContractingDimensionsVector(builder, numElems):
+    return builder.StartVector(8, numElems, 8)
+
 def StartLhsContractingDimensionsVector(builder, numElems):
     return StablehloDotGeneralOptionsStartLhsContractingDimensionsVector(builder, numElems)
-def StablehloDotGeneralOptionsAddRhsContractingDimensions(builder, rhsContractingDimensions): builder.PrependUOffsetTRelativeSlot(3, flatbuffers.number_types.UOffsetTFlags.py_type(rhsContractingDimensions), 0)
+
+def StablehloDotGeneralOptionsAddRhsContractingDimensions(builder, rhsContractingDimensions):
+    builder.PrependUOffsetTRelativeSlot(3, flatbuffers.number_types.UOffsetTFlags.py_type(rhsContractingDimensions), 0)
+
 def AddRhsContractingDimensions(builder, rhsContractingDimensions):
-    return StablehloDotGeneralOptionsAddRhsContractingDimensions(builder, rhsContractingDimensions)
-def StablehloDotGeneralOptionsStartRhsContractingDimensionsVector(builder, numElems): return builder.StartVector(8, numElems, 8)
+    StablehloDotGeneralOptionsAddRhsContractingDimensions(builder, rhsContractingDimensions)
+
+def StablehloDotGeneralOptionsStartRhsContractingDimensionsVector(builder, numElems):
+    return builder.StartVector(8, numElems, 8)
+
 def StartRhsContractingDimensionsVector(builder, numElems):
     return StablehloDotGeneralOptionsStartRhsContractingDimensionsVector(builder, numElems)
-def StablehloDotGeneralOptionsAddPrecisionConfig(builder, precisionConfig): builder.PrependUOffsetTRelativeSlot(4, flatbuffers.number_types.UOffsetTFlags.py_type(precisionConfig), 0)
+
+def StablehloDotGeneralOptionsAddPrecisionConfig(builder, precisionConfig):
+    builder.PrependUOffsetTRelativeSlot(4, flatbuffers.number_types.UOffsetTFlags.py_type(precisionConfig), 0)
+
 def AddPrecisionConfig(builder, precisionConfig):
-    return StablehloDotGeneralOptionsAddPrecisionConfig(builder, precisionConfig)
-def StablehloDotGeneralOptionsStartPrecisionConfigVector(builder, numElems): return builder.StartVector(4, numElems, 4)
+    StablehloDotGeneralOptionsAddPrecisionConfig(builder, precisionConfig)
+
+def StablehloDotGeneralOptionsStartPrecisionConfigVector(builder, numElems):
+    return builder.StartVector(4, numElems, 4)
+
 def StartPrecisionConfigVector(builder, numElems):
     return StablehloDotGeneralOptionsStartPrecisionConfigVector(builder, numElems)
-def StablehloDotGeneralOptionsEnd(builder): return builder.EndObject()
+
+def StablehloDotGeneralOptionsEnd(builder):
+    return builder.EndObject()
+
 def End(builder):
     return StablehloDotGeneralOptionsEnd(builder)

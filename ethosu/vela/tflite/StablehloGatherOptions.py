@@ -150,39 +150,74 @@ class StablehloGatherOptions(object):
             return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
         return False
 
-def StablehloGatherOptionsStart(builder): builder.StartObject(6)
+def StablehloGatherOptionsStart(builder):
+    builder.StartObject(6)
+
 def Start(builder):
-    return StablehloGatherOptionsStart(builder)
-def StablehloGatherOptionsAddOffsetDims(builder, offsetDims): builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(offsetDims), 0)
+    StablehloGatherOptionsStart(builder)
+
+def StablehloGatherOptionsAddOffsetDims(builder, offsetDims):
+    builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(offsetDims), 0)
+
 def AddOffsetDims(builder, offsetDims):
-    return StablehloGatherOptionsAddOffsetDims(builder, offsetDims)
-def StablehloGatherOptionsStartOffsetDimsVector(builder, numElems): return builder.StartVector(8, numElems, 8)
+    StablehloGatherOptionsAddOffsetDims(builder, offsetDims)
+
+def StablehloGatherOptionsStartOffsetDimsVector(builder, numElems):
+    return builder.StartVector(8, numElems, 8)
+
 def StartOffsetDimsVector(builder, numElems):
     return StablehloGatherOptionsStartOffsetDimsVector(builder, numElems)
-def StablehloGatherOptionsAddCollapsedSliceDims(builder, collapsedSliceDims): builder.PrependUOffsetTRelativeSlot(1, flatbuffers.number_types.UOffsetTFlags.py_type(collapsedSliceDims), 0)
+
+def StablehloGatherOptionsAddCollapsedSliceDims(builder, collapsedSliceDims):
+    builder.PrependUOffsetTRelativeSlot(1, flatbuffers.number_types.UOffsetTFlags.py_type(collapsedSliceDims), 0)
+
 def AddCollapsedSliceDims(builder, collapsedSliceDims):
-    return StablehloGatherOptionsAddCollapsedSliceDims(builder, collapsedSliceDims)
-def StablehloGatherOptionsStartCollapsedSliceDimsVector(builder, numElems): return builder.StartVector(8, numElems, 8)
+    StablehloGatherOptionsAddCollapsedSliceDims(builder, collapsedSliceDims)
+
+def StablehloGatherOptionsStartCollapsedSliceDimsVector(builder, numElems):
+    return builder.StartVector(8, numElems, 8)
+
 def StartCollapsedSliceDimsVector(builder, numElems):
     return StablehloGatherOptionsStartCollapsedSliceDimsVector(builder, numElems)
-def StablehloGatherOptionsAddStartIndexMap(builder, startIndexMap): builder.PrependUOffsetTRelativeSlot(2, flatbuffers.number_types.UOffsetTFlags.py_type(startIndexMap), 0)
+
+def StablehloGatherOptionsAddStartIndexMap(builder, startIndexMap):
+    builder.PrependUOffsetTRelativeSlot(2, flatbuffers.number_types.UOffsetTFlags.py_type(startIndexMap), 0)
+
 def AddStartIndexMap(builder, startIndexMap):
-    return StablehloGatherOptionsAddStartIndexMap(builder, startIndexMap)
-def StablehloGatherOptionsStartStartIndexMapVector(builder, numElems): return builder.StartVector(8, numElems, 8)
+    StablehloGatherOptionsAddStartIndexMap(builder, startIndexMap)
+
+def StablehloGatherOptionsStartStartIndexMapVector(builder, numElems):
+    return builder.StartVector(8, numElems, 8)
+
 def StartStartIndexMapVector(builder, numElems):
     return StablehloGatherOptionsStartStartIndexMapVector(builder, numElems)
-def StablehloGatherOptionsAddIndexVectorDim(builder, indexVectorDim): builder.PrependInt64Slot(3, indexVectorDim, 0)
+
+def StablehloGatherOptionsAddIndexVectorDim(builder, indexVectorDim):
+    builder.PrependInt64Slot(3, indexVectorDim, 0)
+
 def AddIndexVectorDim(builder, indexVectorDim):
-    return StablehloGatherOptionsAddIndexVectorDim(builder, indexVectorDim)
-def StablehloGatherOptionsAddSliceSizes(builder, sliceSizes): builder.PrependUOffsetTRelativeSlot(4, flatbuffers.number_types.UOffsetTFlags.py_type(sliceSizes), 0)
+    StablehloGatherOptionsAddIndexVectorDim(builder, indexVectorDim)
+
+def StablehloGatherOptionsAddSliceSizes(builder, sliceSizes):
+    builder.PrependUOffsetTRelativeSlot(4, flatbuffers.number_types.UOffsetTFlags.py_type(sliceSizes), 0)
+
 def AddSliceSizes(builder, sliceSizes):
-    return StablehloGatherOptionsAddSliceSizes(builder, sliceSizes)
-def StablehloGatherOptionsStartSliceSizesVector(builder, numElems): return builder.StartVector(8, numElems, 8)
+    StablehloGatherOptionsAddSliceSizes(builder, sliceSizes)
+
+def StablehloGatherOptionsStartSliceSizesVector(builder, numElems):
+    return builder.StartVector(8, numElems, 8)
+
 def StartSliceSizesVector(builder, numElems):
     return StablehloGatherOptionsStartSliceSizesVector(builder, numElems)
-def StablehloGatherOptionsAddIndicesAreSorted(builder, indicesAreSorted): builder.PrependBoolSlot(5, indicesAreSorted, 0)
+
+def StablehloGatherOptionsAddIndicesAreSorted(builder, indicesAreSorted):
+    builder.PrependBoolSlot(5, indicesAreSorted, 0)
+
 def AddIndicesAreSorted(builder, indicesAreSorted):
-    return StablehloGatherOptionsAddIndicesAreSorted(builder, indicesAreSorted)
-def StablehloGatherOptionsEnd(builder): return builder.EndObject()
+    StablehloGatherOptionsAddIndicesAreSorted(builder, indicesAreSorted)
+
+def StablehloGatherOptionsEnd(builder):
+    return builder.EndObject()
+
 def End(builder):
     return StablehloGatherOptionsEnd(builder)

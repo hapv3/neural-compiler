@@ -69,21 +69,38 @@ class VariantSubType(object):
             return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
         return False
 
-def VariantSubTypeStart(builder): builder.StartObject(3)
+def VariantSubTypeStart(builder):
+    builder.StartObject(3)
+
 def Start(builder):
-    return VariantSubTypeStart(builder)
-def VariantSubTypeAddShape(builder, shape): builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(shape), 0)
+    VariantSubTypeStart(builder)
+
+def VariantSubTypeAddShape(builder, shape):
+    builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(shape), 0)
+
 def AddShape(builder, shape):
-    return VariantSubTypeAddShape(builder, shape)
-def VariantSubTypeStartShapeVector(builder, numElems): return builder.StartVector(4, numElems, 4)
+    VariantSubTypeAddShape(builder, shape)
+
+def VariantSubTypeStartShapeVector(builder, numElems):
+    return builder.StartVector(4, numElems, 4)
+
 def StartShapeVector(builder, numElems):
     return VariantSubTypeStartShapeVector(builder, numElems)
-def VariantSubTypeAddType(builder, type): builder.PrependInt8Slot(1, type, 0)
+
+def VariantSubTypeAddType(builder, type):
+    builder.PrependInt8Slot(1, type, 0)
+
 def AddType(builder, type):
-    return VariantSubTypeAddType(builder, type)
-def VariantSubTypeAddHasRank(builder, hasRank): builder.PrependBoolSlot(2, hasRank, 0)
+    VariantSubTypeAddType(builder, type)
+
+def VariantSubTypeAddHasRank(builder, hasRank):
+    builder.PrependBoolSlot(2, hasRank, 0)
+
 def AddHasRank(builder, hasRank):
-    return VariantSubTypeAddHasRank(builder, hasRank)
-def VariantSubTypeEnd(builder): return builder.EndObject()
+    VariantSubTypeAddHasRank(builder, hasRank)
+
+def VariantSubTypeEnd(builder):
+    return builder.EndObject()
+
 def End(builder):
     return VariantSubTypeEnd(builder)

@@ -35,12 +35,20 @@ class StablehloRngBitGeneratorOptions(object):
             return self._tab.Get(flatbuffers.number_types.Int8Flags, o + self._tab.Pos)
         return 0
 
-def StablehloRngBitGeneratorOptionsStart(builder): builder.StartObject(1)
+def StablehloRngBitGeneratorOptionsStart(builder):
+    builder.StartObject(1)
+
 def Start(builder):
-    return StablehloRngBitGeneratorOptionsStart(builder)
-def StablehloRngBitGeneratorOptionsAddAlgorithm(builder, algorithm): builder.PrependInt8Slot(0, algorithm, 0)
+    StablehloRngBitGeneratorOptionsStart(builder)
+
+def StablehloRngBitGeneratorOptionsAddAlgorithm(builder, algorithm):
+    builder.PrependInt8Slot(0, algorithm, 0)
+
 def AddAlgorithm(builder, algorithm):
-    return StablehloRngBitGeneratorOptionsAddAlgorithm(builder, algorithm)
-def StablehloRngBitGeneratorOptionsEnd(builder): return builder.EndObject()
+    StablehloRngBitGeneratorOptionsAddAlgorithm(builder, algorithm)
+
+def StablehloRngBitGeneratorOptionsEnd(builder):
+    return builder.EndObject()
+
 def End(builder):
     return StablehloRngBitGeneratorOptionsEnd(builder)

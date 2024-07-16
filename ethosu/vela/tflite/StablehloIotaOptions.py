@@ -35,12 +35,20 @@ class StablehloIotaOptions(object):
             return self._tab.Get(flatbuffers.number_types.Int64Flags, o + self._tab.Pos)
         return 0
 
-def StablehloIotaOptionsStart(builder): builder.StartObject(1)
+def StablehloIotaOptionsStart(builder):
+    builder.StartObject(1)
+
 def Start(builder):
-    return StablehloIotaOptionsStart(builder)
-def StablehloIotaOptionsAddIotaDimension(builder, iotaDimension): builder.PrependInt64Slot(0, iotaDimension, 0)
+    StablehloIotaOptionsStart(builder)
+
+def StablehloIotaOptionsAddIotaDimension(builder, iotaDimension):
+    builder.PrependInt64Slot(0, iotaDimension, 0)
+
 def AddIotaDimension(builder, iotaDimension):
-    return StablehloIotaOptionsAddIotaDimension(builder, iotaDimension)
-def StablehloIotaOptionsEnd(builder): return builder.EndObject()
+    StablehloIotaOptionsAddIotaDimension(builder, iotaDimension)
+
+def StablehloIotaOptionsEnd(builder):
+    return builder.EndObject()
+
 def End(builder):
     return StablehloIotaOptionsEnd(builder)

@@ -28,9 +28,14 @@ class RightShiftOptions(object):
     def Init(self, buf, pos):
         self._tab = flatbuffers.table.Table(buf, pos)
 
-def RightShiftOptionsStart(builder): builder.StartObject(0)
+def RightShiftOptionsStart(builder):
+    builder.StartObject(0)
+
 def Start(builder):
-    return RightShiftOptionsStart(builder)
-def RightShiftOptionsEnd(builder): return builder.EndObject()
+    RightShiftOptionsStart(builder)
+
+def RightShiftOptionsEnd(builder):
+    return builder.EndObject()
+
 def End(builder):
     return RightShiftOptionsEnd(builder)

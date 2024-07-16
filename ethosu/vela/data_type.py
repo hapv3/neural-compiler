@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2020-2021, 2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2020-2021, 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -76,6 +76,7 @@ class DataType:
     variant: Any
     complex64: Any
     complex128: Any
+    bfloat16: Any
 
     def __init__(self, type_, bits):
         self.type = type_
@@ -162,3 +163,4 @@ DataType.resource = DataType(BaseType.Resource, 8)
 DataType.variant = DataType(BaseType.Variant, 8)
 DataType.complex64 = DataType(BaseType.Complex, 64)
 DataType.complex128 = DataType(BaseType.Complex, 128)
+DataType.bfloat16 = DataType(BaseType.BFloat, 16)

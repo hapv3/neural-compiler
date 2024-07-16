@@ -63,24 +63,44 @@ class FullyConnectedOptions(object):
             return self._tab.Get(flatbuffers.number_types.Int8Flags, o + self._tab.Pos)
         return 0
 
-def FullyConnectedOptionsStart(builder): builder.StartObject(5)
+def FullyConnectedOptionsStart(builder):
+    builder.StartObject(5)
+
 def Start(builder):
-    return FullyConnectedOptionsStart(builder)
-def FullyConnectedOptionsAddFusedActivationFunction(builder, fusedActivationFunction): builder.PrependInt8Slot(0, fusedActivationFunction, 0)
+    FullyConnectedOptionsStart(builder)
+
+def FullyConnectedOptionsAddFusedActivationFunction(builder, fusedActivationFunction):
+    builder.PrependInt8Slot(0, fusedActivationFunction, 0)
+
 def AddFusedActivationFunction(builder, fusedActivationFunction):
-    return FullyConnectedOptionsAddFusedActivationFunction(builder, fusedActivationFunction)
-def FullyConnectedOptionsAddWeightsFormat(builder, weightsFormat): builder.PrependInt8Slot(1, weightsFormat, 0)
+    FullyConnectedOptionsAddFusedActivationFunction(builder, fusedActivationFunction)
+
+def FullyConnectedOptionsAddWeightsFormat(builder, weightsFormat):
+    builder.PrependInt8Slot(1, weightsFormat, 0)
+
 def AddWeightsFormat(builder, weightsFormat):
-    return FullyConnectedOptionsAddWeightsFormat(builder, weightsFormat)
-def FullyConnectedOptionsAddKeepNumDims(builder, keepNumDims): builder.PrependBoolSlot(2, keepNumDims, 0)
+    FullyConnectedOptionsAddWeightsFormat(builder, weightsFormat)
+
+def FullyConnectedOptionsAddKeepNumDims(builder, keepNumDims):
+    builder.PrependBoolSlot(2, keepNumDims, 0)
+
 def AddKeepNumDims(builder, keepNumDims):
-    return FullyConnectedOptionsAddKeepNumDims(builder, keepNumDims)
-def FullyConnectedOptionsAddAsymmetricQuantizeInputs(builder, asymmetricQuantizeInputs): builder.PrependBoolSlot(3, asymmetricQuantizeInputs, 0)
+    FullyConnectedOptionsAddKeepNumDims(builder, keepNumDims)
+
+def FullyConnectedOptionsAddAsymmetricQuantizeInputs(builder, asymmetricQuantizeInputs):
+    builder.PrependBoolSlot(3, asymmetricQuantizeInputs, 0)
+
 def AddAsymmetricQuantizeInputs(builder, asymmetricQuantizeInputs):
-    return FullyConnectedOptionsAddAsymmetricQuantizeInputs(builder, asymmetricQuantizeInputs)
-def FullyConnectedOptionsAddQuantizedBiasType(builder, quantizedBiasType): builder.PrependInt8Slot(4, quantizedBiasType, 0)
+    FullyConnectedOptionsAddAsymmetricQuantizeInputs(builder, asymmetricQuantizeInputs)
+
+def FullyConnectedOptionsAddQuantizedBiasType(builder, quantizedBiasType):
+    builder.PrependInt8Slot(4, quantizedBiasType, 0)
+
 def AddQuantizedBiasType(builder, quantizedBiasType):
-    return FullyConnectedOptionsAddQuantizedBiasType(builder, quantizedBiasType)
-def FullyConnectedOptionsEnd(builder): return builder.EndObject()
+    FullyConnectedOptionsAddQuantizedBiasType(builder, quantizedBiasType)
+
+def FullyConnectedOptionsEnd(builder):
+    return builder.EndObject()
+
 def End(builder):
     return FullyConnectedOptionsEnd(builder)

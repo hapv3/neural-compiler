@@ -28,9 +28,14 @@ class BitwiseXorOptions(object):
     def Init(self, buf, pos):
         self._tab = flatbuffers.table.Table(buf, pos)
 
-def BitwiseXorOptionsStart(builder): builder.StartObject(0)
+def BitwiseXorOptionsStart(builder):
+    builder.StartObject(0)
+
 def Start(builder):
-    return BitwiseXorOptionsStart(builder)
-def BitwiseXorOptionsEnd(builder): return builder.EndObject()
+    BitwiseXorOptionsStart(builder)
+
+def BitwiseXorOptionsEnd(builder):
+    return builder.EndObject()
+
 def End(builder):
     return BitwiseXorOptionsEnd(builder)

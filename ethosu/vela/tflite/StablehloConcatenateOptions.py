@@ -35,12 +35,20 @@ class StablehloConcatenateOptions(object):
             return self._tab.Get(flatbuffers.number_types.Int64Flags, o + self._tab.Pos)
         return 0
 
-def StablehloConcatenateOptionsStart(builder): builder.StartObject(1)
+def StablehloConcatenateOptionsStart(builder):
+    builder.StartObject(1)
+
 def Start(builder):
-    return StablehloConcatenateOptionsStart(builder)
-def StablehloConcatenateOptionsAddDimension(builder, dimension): builder.PrependInt64Slot(0, dimension, 0)
+    StablehloConcatenateOptionsStart(builder)
+
+def StablehloConcatenateOptionsAddDimension(builder, dimension):
+    builder.PrependInt64Slot(0, dimension, 0)
+
 def AddDimension(builder, dimension):
-    return StablehloConcatenateOptionsAddDimension(builder, dimension)
-def StablehloConcatenateOptionsEnd(builder): return builder.EndObject()
+    StablehloConcatenateOptionsAddDimension(builder, dimension)
+
+def StablehloConcatenateOptionsEnd(builder):
+    return builder.EndObject()
+
 def End(builder):
     return StablehloConcatenateOptionsEnd(builder)

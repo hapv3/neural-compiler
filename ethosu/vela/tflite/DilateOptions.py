@@ -28,9 +28,14 @@ class DilateOptions(object):
     def Init(self, buf, pos):
         self._tab = flatbuffers.table.Table(buf, pos)
 
-def DilateOptionsStart(builder): builder.StartObject(0)
+def DilateOptionsStart(builder):
+    builder.StartObject(0)
+
 def Start(builder):
-    return DilateOptionsStart(builder)
-def DilateOptionsEnd(builder): return builder.EndObject()
+    DilateOptionsStart(builder)
+
+def DilateOptionsEnd(builder):
+    return builder.EndObject()
+
 def End(builder):
     return DilateOptionsEnd(builder)

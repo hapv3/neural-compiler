@@ -327,87 +327,170 @@ class StablehloConvolutionOptions(object):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(36))
         return o == 0
 
-def StablehloConvolutionOptionsStart(builder): builder.StartObject(17)
+def StablehloConvolutionOptionsStart(builder):
+    builder.StartObject(17)
+
 def Start(builder):
-    return StablehloConvolutionOptionsStart(builder)
-def StablehloConvolutionOptionsAddWindowStrides(builder, windowStrides): builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(windowStrides), 0)
+    StablehloConvolutionOptionsStart(builder)
+
+def StablehloConvolutionOptionsAddWindowStrides(builder, windowStrides):
+    builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(windowStrides), 0)
+
 def AddWindowStrides(builder, windowStrides):
-    return StablehloConvolutionOptionsAddWindowStrides(builder, windowStrides)
-def StablehloConvolutionOptionsStartWindowStridesVector(builder, numElems): return builder.StartVector(8, numElems, 8)
+    StablehloConvolutionOptionsAddWindowStrides(builder, windowStrides)
+
+def StablehloConvolutionOptionsStartWindowStridesVector(builder, numElems):
+    return builder.StartVector(8, numElems, 8)
+
 def StartWindowStridesVector(builder, numElems):
     return StablehloConvolutionOptionsStartWindowStridesVector(builder, numElems)
-def StablehloConvolutionOptionsAddPadding(builder, padding): builder.PrependUOffsetTRelativeSlot(1, flatbuffers.number_types.UOffsetTFlags.py_type(padding), 0)
+
+def StablehloConvolutionOptionsAddPadding(builder, padding):
+    builder.PrependUOffsetTRelativeSlot(1, flatbuffers.number_types.UOffsetTFlags.py_type(padding), 0)
+
 def AddPadding(builder, padding):
-    return StablehloConvolutionOptionsAddPadding(builder, padding)
-def StablehloConvolutionOptionsStartPaddingVector(builder, numElems): return builder.StartVector(8, numElems, 8)
+    StablehloConvolutionOptionsAddPadding(builder, padding)
+
+def StablehloConvolutionOptionsStartPaddingVector(builder, numElems):
+    return builder.StartVector(8, numElems, 8)
+
 def StartPaddingVector(builder, numElems):
     return StablehloConvolutionOptionsStartPaddingVector(builder, numElems)
-def StablehloConvolutionOptionsAddLhsDilation(builder, lhsDilation): builder.PrependUOffsetTRelativeSlot(2, flatbuffers.number_types.UOffsetTFlags.py_type(lhsDilation), 0)
+
+def StablehloConvolutionOptionsAddLhsDilation(builder, lhsDilation):
+    builder.PrependUOffsetTRelativeSlot(2, flatbuffers.number_types.UOffsetTFlags.py_type(lhsDilation), 0)
+
 def AddLhsDilation(builder, lhsDilation):
-    return StablehloConvolutionOptionsAddLhsDilation(builder, lhsDilation)
-def StablehloConvolutionOptionsStartLhsDilationVector(builder, numElems): return builder.StartVector(8, numElems, 8)
+    StablehloConvolutionOptionsAddLhsDilation(builder, lhsDilation)
+
+def StablehloConvolutionOptionsStartLhsDilationVector(builder, numElems):
+    return builder.StartVector(8, numElems, 8)
+
 def StartLhsDilationVector(builder, numElems):
     return StablehloConvolutionOptionsStartLhsDilationVector(builder, numElems)
-def StablehloConvolutionOptionsAddRhsDilation(builder, rhsDilation): builder.PrependUOffsetTRelativeSlot(3, flatbuffers.number_types.UOffsetTFlags.py_type(rhsDilation), 0)
+
+def StablehloConvolutionOptionsAddRhsDilation(builder, rhsDilation):
+    builder.PrependUOffsetTRelativeSlot(3, flatbuffers.number_types.UOffsetTFlags.py_type(rhsDilation), 0)
+
 def AddRhsDilation(builder, rhsDilation):
-    return StablehloConvolutionOptionsAddRhsDilation(builder, rhsDilation)
-def StablehloConvolutionOptionsStartRhsDilationVector(builder, numElems): return builder.StartVector(8, numElems, 8)
+    StablehloConvolutionOptionsAddRhsDilation(builder, rhsDilation)
+
+def StablehloConvolutionOptionsStartRhsDilationVector(builder, numElems):
+    return builder.StartVector(8, numElems, 8)
+
 def StartRhsDilationVector(builder, numElems):
     return StablehloConvolutionOptionsStartRhsDilationVector(builder, numElems)
-def StablehloConvolutionOptionsAddWindowReversal(builder, windowReversal): builder.PrependUOffsetTRelativeSlot(4, flatbuffers.number_types.UOffsetTFlags.py_type(windowReversal), 0)
+
+def StablehloConvolutionOptionsAddWindowReversal(builder, windowReversal):
+    builder.PrependUOffsetTRelativeSlot(4, flatbuffers.number_types.UOffsetTFlags.py_type(windowReversal), 0)
+
 def AddWindowReversal(builder, windowReversal):
-    return StablehloConvolutionOptionsAddWindowReversal(builder, windowReversal)
-def StablehloConvolutionOptionsStartWindowReversalVector(builder, numElems): return builder.StartVector(1, numElems, 1)
+    StablehloConvolutionOptionsAddWindowReversal(builder, windowReversal)
+
+def StablehloConvolutionOptionsStartWindowReversalVector(builder, numElems):
+    return builder.StartVector(1, numElems, 1)
+
 def StartWindowReversalVector(builder, numElems):
     return StablehloConvolutionOptionsStartWindowReversalVector(builder, numElems)
-def StablehloConvolutionOptionsAddInputBatchDimension(builder, inputBatchDimension): builder.PrependInt64Slot(5, inputBatchDimension, 0)
+
+def StablehloConvolutionOptionsAddInputBatchDimension(builder, inputBatchDimension):
+    builder.PrependInt64Slot(5, inputBatchDimension, 0)
+
 def AddInputBatchDimension(builder, inputBatchDimension):
-    return StablehloConvolutionOptionsAddInputBatchDimension(builder, inputBatchDimension)
-def StablehloConvolutionOptionsAddInputFeatureDimension(builder, inputFeatureDimension): builder.PrependInt64Slot(6, inputFeatureDimension, 0)
+    StablehloConvolutionOptionsAddInputBatchDimension(builder, inputBatchDimension)
+
+def StablehloConvolutionOptionsAddInputFeatureDimension(builder, inputFeatureDimension):
+    builder.PrependInt64Slot(6, inputFeatureDimension, 0)
+
 def AddInputFeatureDimension(builder, inputFeatureDimension):
-    return StablehloConvolutionOptionsAddInputFeatureDimension(builder, inputFeatureDimension)
-def StablehloConvolutionOptionsAddInputSpatialDimensions(builder, inputSpatialDimensions): builder.PrependUOffsetTRelativeSlot(7, flatbuffers.number_types.UOffsetTFlags.py_type(inputSpatialDimensions), 0)
+    StablehloConvolutionOptionsAddInputFeatureDimension(builder, inputFeatureDimension)
+
+def StablehloConvolutionOptionsAddInputSpatialDimensions(builder, inputSpatialDimensions):
+    builder.PrependUOffsetTRelativeSlot(7, flatbuffers.number_types.UOffsetTFlags.py_type(inputSpatialDimensions), 0)
+
 def AddInputSpatialDimensions(builder, inputSpatialDimensions):
-    return StablehloConvolutionOptionsAddInputSpatialDimensions(builder, inputSpatialDimensions)
-def StablehloConvolutionOptionsStartInputSpatialDimensionsVector(builder, numElems): return builder.StartVector(8, numElems, 8)
+    StablehloConvolutionOptionsAddInputSpatialDimensions(builder, inputSpatialDimensions)
+
+def StablehloConvolutionOptionsStartInputSpatialDimensionsVector(builder, numElems):
+    return builder.StartVector(8, numElems, 8)
+
 def StartInputSpatialDimensionsVector(builder, numElems):
     return StablehloConvolutionOptionsStartInputSpatialDimensionsVector(builder, numElems)
-def StablehloConvolutionOptionsAddKernelInputFeatureDimension(builder, kernelInputFeatureDimension): builder.PrependInt64Slot(8, kernelInputFeatureDimension, 0)
+
+def StablehloConvolutionOptionsAddKernelInputFeatureDimension(builder, kernelInputFeatureDimension):
+    builder.PrependInt64Slot(8, kernelInputFeatureDimension, 0)
+
 def AddKernelInputFeatureDimension(builder, kernelInputFeatureDimension):
-    return StablehloConvolutionOptionsAddKernelInputFeatureDimension(builder, kernelInputFeatureDimension)
-def StablehloConvolutionOptionsAddKernelOutputFeatureDimension(builder, kernelOutputFeatureDimension): builder.PrependInt64Slot(9, kernelOutputFeatureDimension, 0)
+    StablehloConvolutionOptionsAddKernelInputFeatureDimension(builder, kernelInputFeatureDimension)
+
+def StablehloConvolutionOptionsAddKernelOutputFeatureDimension(builder, kernelOutputFeatureDimension):
+    builder.PrependInt64Slot(9, kernelOutputFeatureDimension, 0)
+
 def AddKernelOutputFeatureDimension(builder, kernelOutputFeatureDimension):
-    return StablehloConvolutionOptionsAddKernelOutputFeatureDimension(builder, kernelOutputFeatureDimension)
-def StablehloConvolutionOptionsAddKernelSpatialDimensions(builder, kernelSpatialDimensions): builder.PrependUOffsetTRelativeSlot(10, flatbuffers.number_types.UOffsetTFlags.py_type(kernelSpatialDimensions), 0)
+    StablehloConvolutionOptionsAddKernelOutputFeatureDimension(builder, kernelOutputFeatureDimension)
+
+def StablehloConvolutionOptionsAddKernelSpatialDimensions(builder, kernelSpatialDimensions):
+    builder.PrependUOffsetTRelativeSlot(10, flatbuffers.number_types.UOffsetTFlags.py_type(kernelSpatialDimensions), 0)
+
 def AddKernelSpatialDimensions(builder, kernelSpatialDimensions):
-    return StablehloConvolutionOptionsAddKernelSpatialDimensions(builder, kernelSpatialDimensions)
-def StablehloConvolutionOptionsStartKernelSpatialDimensionsVector(builder, numElems): return builder.StartVector(8, numElems, 8)
+    StablehloConvolutionOptionsAddKernelSpatialDimensions(builder, kernelSpatialDimensions)
+
+def StablehloConvolutionOptionsStartKernelSpatialDimensionsVector(builder, numElems):
+    return builder.StartVector(8, numElems, 8)
+
 def StartKernelSpatialDimensionsVector(builder, numElems):
     return StablehloConvolutionOptionsStartKernelSpatialDimensionsVector(builder, numElems)
-def StablehloConvolutionOptionsAddOutputBatchDimension(builder, outputBatchDimension): builder.PrependInt64Slot(11, outputBatchDimension, 0)
+
+def StablehloConvolutionOptionsAddOutputBatchDimension(builder, outputBatchDimension):
+    builder.PrependInt64Slot(11, outputBatchDimension, 0)
+
 def AddOutputBatchDimension(builder, outputBatchDimension):
-    return StablehloConvolutionOptionsAddOutputBatchDimension(builder, outputBatchDimension)
-def StablehloConvolutionOptionsAddOutputFeatureDimension(builder, outputFeatureDimension): builder.PrependInt64Slot(12, outputFeatureDimension, 0)
+    StablehloConvolutionOptionsAddOutputBatchDimension(builder, outputBatchDimension)
+
+def StablehloConvolutionOptionsAddOutputFeatureDimension(builder, outputFeatureDimension):
+    builder.PrependInt64Slot(12, outputFeatureDimension, 0)
+
 def AddOutputFeatureDimension(builder, outputFeatureDimension):
-    return StablehloConvolutionOptionsAddOutputFeatureDimension(builder, outputFeatureDimension)
-def StablehloConvolutionOptionsAddOutputSpatialDimensions(builder, outputSpatialDimensions): builder.PrependUOffsetTRelativeSlot(13, flatbuffers.number_types.UOffsetTFlags.py_type(outputSpatialDimensions), 0)
+    StablehloConvolutionOptionsAddOutputFeatureDimension(builder, outputFeatureDimension)
+
+def StablehloConvolutionOptionsAddOutputSpatialDimensions(builder, outputSpatialDimensions):
+    builder.PrependUOffsetTRelativeSlot(13, flatbuffers.number_types.UOffsetTFlags.py_type(outputSpatialDimensions), 0)
+
 def AddOutputSpatialDimensions(builder, outputSpatialDimensions):
-    return StablehloConvolutionOptionsAddOutputSpatialDimensions(builder, outputSpatialDimensions)
-def StablehloConvolutionOptionsStartOutputSpatialDimensionsVector(builder, numElems): return builder.StartVector(8, numElems, 8)
+    StablehloConvolutionOptionsAddOutputSpatialDimensions(builder, outputSpatialDimensions)
+
+def StablehloConvolutionOptionsStartOutputSpatialDimensionsVector(builder, numElems):
+    return builder.StartVector(8, numElems, 8)
+
 def StartOutputSpatialDimensionsVector(builder, numElems):
     return StablehloConvolutionOptionsStartOutputSpatialDimensionsVector(builder, numElems)
-def StablehloConvolutionOptionsAddFeatureGroupCount(builder, featureGroupCount): builder.PrependInt64Slot(14, featureGroupCount, 0)
+
+def StablehloConvolutionOptionsAddFeatureGroupCount(builder, featureGroupCount):
+    builder.PrependInt64Slot(14, featureGroupCount, 0)
+
 def AddFeatureGroupCount(builder, featureGroupCount):
-    return StablehloConvolutionOptionsAddFeatureGroupCount(builder, featureGroupCount)
-def StablehloConvolutionOptionsAddBatchGroupCount(builder, batchGroupCount): builder.PrependInt64Slot(15, batchGroupCount, 0)
+    StablehloConvolutionOptionsAddFeatureGroupCount(builder, featureGroupCount)
+
+def StablehloConvolutionOptionsAddBatchGroupCount(builder, batchGroupCount):
+    builder.PrependInt64Slot(15, batchGroupCount, 0)
+
 def AddBatchGroupCount(builder, batchGroupCount):
-    return StablehloConvolutionOptionsAddBatchGroupCount(builder, batchGroupCount)
-def StablehloConvolutionOptionsAddPrecisionConfig(builder, precisionConfig): builder.PrependUOffsetTRelativeSlot(16, flatbuffers.number_types.UOffsetTFlags.py_type(precisionConfig), 0)
+    StablehloConvolutionOptionsAddBatchGroupCount(builder, batchGroupCount)
+
+def StablehloConvolutionOptionsAddPrecisionConfig(builder, precisionConfig):
+    builder.PrependUOffsetTRelativeSlot(16, flatbuffers.number_types.UOffsetTFlags.py_type(precisionConfig), 0)
+
 def AddPrecisionConfig(builder, precisionConfig):
-    return StablehloConvolutionOptionsAddPrecisionConfig(builder, precisionConfig)
-def StablehloConvolutionOptionsStartPrecisionConfigVector(builder, numElems): return builder.StartVector(4, numElems, 4)
+    StablehloConvolutionOptionsAddPrecisionConfig(builder, precisionConfig)
+
+def StablehloConvolutionOptionsStartPrecisionConfigVector(builder, numElems):
+    return builder.StartVector(4, numElems, 4)
+
 def StartPrecisionConfigVector(builder, numElems):
     return StablehloConvolutionOptionsStartPrecisionConfigVector(builder, numElems)
-def StablehloConvolutionOptionsEnd(builder): return builder.EndObject()
+
+def StablehloConvolutionOptionsEnd(builder):
+    return builder.EndObject()
+
 def End(builder):
     return StablehloConvolutionOptionsEnd(builder)

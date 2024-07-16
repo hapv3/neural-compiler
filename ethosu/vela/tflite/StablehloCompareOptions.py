@@ -42,15 +42,26 @@ class StablehloCompareOptions(object):
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 0
 
-def StablehloCompareOptionsStart(builder): builder.StartObject(2)
+def StablehloCompareOptionsStart(builder):
+    builder.StartObject(2)
+
 def Start(builder):
-    return StablehloCompareOptionsStart(builder)
-def StablehloCompareOptionsAddComparisonDirection(builder, comparisonDirection): builder.PrependUint32Slot(0, comparisonDirection, 0)
+    StablehloCompareOptionsStart(builder)
+
+def StablehloCompareOptionsAddComparisonDirection(builder, comparisonDirection):
+    builder.PrependUint32Slot(0, comparisonDirection, 0)
+
 def AddComparisonDirection(builder, comparisonDirection):
-    return StablehloCompareOptionsAddComparisonDirection(builder, comparisonDirection)
-def StablehloCompareOptionsAddCompareType(builder, compareType): builder.PrependUint32Slot(1, compareType, 0)
+    StablehloCompareOptionsAddComparisonDirection(builder, comparisonDirection)
+
+def StablehloCompareOptionsAddCompareType(builder, compareType):
+    builder.PrependUint32Slot(1, compareType, 0)
+
 def AddCompareType(builder, compareType):
-    return StablehloCompareOptionsAddCompareType(builder, compareType)
-def StablehloCompareOptionsEnd(builder): return builder.EndObject()
+    StablehloCompareOptionsAddCompareType(builder, compareType)
+
+def StablehloCompareOptionsEnd(builder):
+    return builder.EndObject()
+
 def End(builder):
     return StablehloCompareOptionsEnd(builder)

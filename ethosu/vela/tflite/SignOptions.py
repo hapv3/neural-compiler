@@ -28,9 +28,14 @@ class SignOptions(object):
     def Init(self, buf, pos):
         self._tab = flatbuffers.table.Table(buf, pos)
 
-def SignOptionsStart(builder): builder.StartObject(0)
+def SignOptionsStart(builder):
+    builder.StartObject(0)
+
 def Start(builder):
-    return SignOptionsStart(builder)
-def SignOptionsEnd(builder): return builder.EndObject()
+    SignOptionsStart(builder)
+
+def SignOptionsEnd(builder):
+    return builder.EndObject()
+
 def End(builder):
     return SignOptionsEnd(builder)

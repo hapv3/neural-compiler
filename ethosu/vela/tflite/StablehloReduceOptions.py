@@ -62,18 +62,32 @@ class StablehloReduceOptions(object):
             return self._tab.Get(flatbuffers.number_types.Int32Flags, o + self._tab.Pos)
         return 0
 
-def StablehloReduceOptionsStart(builder): builder.StartObject(2)
+def StablehloReduceOptionsStart(builder):
+    builder.StartObject(2)
+
 def Start(builder):
-    return StablehloReduceOptionsStart(builder)
-def StablehloReduceOptionsAddDimensions(builder, dimensions): builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(dimensions), 0)
+    StablehloReduceOptionsStart(builder)
+
+def StablehloReduceOptionsAddDimensions(builder, dimensions):
+    builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(dimensions), 0)
+
 def AddDimensions(builder, dimensions):
-    return StablehloReduceOptionsAddDimensions(builder, dimensions)
-def StablehloReduceOptionsStartDimensionsVector(builder, numElems): return builder.StartVector(8, numElems, 8)
+    StablehloReduceOptionsAddDimensions(builder, dimensions)
+
+def StablehloReduceOptionsStartDimensionsVector(builder, numElems):
+    return builder.StartVector(8, numElems, 8)
+
 def StartDimensionsVector(builder, numElems):
     return StablehloReduceOptionsStartDimensionsVector(builder, numElems)
-def StablehloReduceOptionsAddBodySubgraphIndex(builder, bodySubgraphIndex): builder.PrependInt32Slot(1, bodySubgraphIndex, 0)
+
+def StablehloReduceOptionsAddBodySubgraphIndex(builder, bodySubgraphIndex):
+    builder.PrependInt32Slot(1, bodySubgraphIndex, 0)
+
 def AddBodySubgraphIndex(builder, bodySubgraphIndex):
-    return StablehloReduceOptionsAddBodySubgraphIndex(builder, bodySubgraphIndex)
-def StablehloReduceOptionsEnd(builder): return builder.EndObject()
+    StablehloReduceOptionsAddBodySubgraphIndex(builder, bodySubgraphIndex)
+
+def StablehloReduceOptionsEnd(builder):
+    return builder.EndObject()
+
 def End(builder):
     return StablehloReduceOptionsEnd(builder)

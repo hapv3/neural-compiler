@@ -63,24 +63,44 @@ class TransposeConvOptions(object):
             return self._tab.Get(flatbuffers.number_types.Int8Flags, o + self._tab.Pos)
         return 0
 
-def TransposeConvOptionsStart(builder): builder.StartObject(5)
+def TransposeConvOptionsStart(builder):
+    builder.StartObject(5)
+
 def Start(builder):
-    return TransposeConvOptionsStart(builder)
-def TransposeConvOptionsAddPadding(builder, padding): builder.PrependInt8Slot(0, padding, 0)
+    TransposeConvOptionsStart(builder)
+
+def TransposeConvOptionsAddPadding(builder, padding):
+    builder.PrependInt8Slot(0, padding, 0)
+
 def AddPadding(builder, padding):
-    return TransposeConvOptionsAddPadding(builder, padding)
-def TransposeConvOptionsAddStrideW(builder, strideW): builder.PrependInt32Slot(1, strideW, 0)
+    TransposeConvOptionsAddPadding(builder, padding)
+
+def TransposeConvOptionsAddStrideW(builder, strideW):
+    builder.PrependInt32Slot(1, strideW, 0)
+
 def AddStrideW(builder, strideW):
-    return TransposeConvOptionsAddStrideW(builder, strideW)
-def TransposeConvOptionsAddStrideH(builder, strideH): builder.PrependInt32Slot(2, strideH, 0)
+    TransposeConvOptionsAddStrideW(builder, strideW)
+
+def TransposeConvOptionsAddStrideH(builder, strideH):
+    builder.PrependInt32Slot(2, strideH, 0)
+
 def AddStrideH(builder, strideH):
-    return TransposeConvOptionsAddStrideH(builder, strideH)
-def TransposeConvOptionsAddFusedActivationFunction(builder, fusedActivationFunction): builder.PrependInt8Slot(3, fusedActivationFunction, 0)
+    TransposeConvOptionsAddStrideH(builder, strideH)
+
+def TransposeConvOptionsAddFusedActivationFunction(builder, fusedActivationFunction):
+    builder.PrependInt8Slot(3, fusedActivationFunction, 0)
+
 def AddFusedActivationFunction(builder, fusedActivationFunction):
-    return TransposeConvOptionsAddFusedActivationFunction(builder, fusedActivationFunction)
-def TransposeConvOptionsAddQuantizedBiasType(builder, quantizedBiasType): builder.PrependInt8Slot(4, quantizedBiasType, 0)
+    TransposeConvOptionsAddFusedActivationFunction(builder, fusedActivationFunction)
+
+def TransposeConvOptionsAddQuantizedBiasType(builder, quantizedBiasType):
+    builder.PrependInt8Slot(4, quantizedBiasType, 0)
+
 def AddQuantizedBiasType(builder, quantizedBiasType):
-    return TransposeConvOptionsAddQuantizedBiasType(builder, quantizedBiasType)
-def TransposeConvOptionsEnd(builder): return builder.EndObject()
+    TransposeConvOptionsAddQuantizedBiasType(builder, quantizedBiasType)
+
+def TransposeConvOptionsEnd(builder):
+    return builder.EndObject()
+
 def End(builder):
     return TransposeConvOptionsEnd(builder)

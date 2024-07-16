@@ -28,9 +28,14 @@ class UnsortedSegmentMinOptions(object):
     def Init(self, buf, pos):
         self._tab = flatbuffers.table.Table(buf, pos)
 
-def UnsortedSegmentMinOptionsStart(builder): builder.StartObject(0)
+def UnsortedSegmentMinOptionsStart(builder):
+    builder.StartObject(0)
+
 def Start(builder):
-    return UnsortedSegmentMinOptionsStart(builder)
-def UnsortedSegmentMinOptionsEnd(builder): return builder.EndObject()
+    UnsortedSegmentMinOptionsStart(builder)
+
+def UnsortedSegmentMinOptionsEnd(builder):
+    return builder.EndObject()
+
 def End(builder):
     return UnsortedSegmentMinOptionsEnd(builder)

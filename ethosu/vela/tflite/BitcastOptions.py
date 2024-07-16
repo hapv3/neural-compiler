@@ -28,9 +28,14 @@ class BitcastOptions(object):
     def Init(self, buf, pos):
         self._tab = flatbuffers.table.Table(buf, pos)
 
-def BitcastOptionsStart(builder): builder.StartObject(0)
+def BitcastOptionsStart(builder):
+    builder.StartObject(0)
+
 def Start(builder):
-    return BitcastOptionsStart(builder)
-def BitcastOptionsEnd(builder): return builder.EndObject()
+    BitcastOptionsStart(builder)
+
+def BitcastOptionsEnd(builder):
+    return builder.EndObject()
+
 def End(builder):
     return BitcastOptionsEnd(builder)

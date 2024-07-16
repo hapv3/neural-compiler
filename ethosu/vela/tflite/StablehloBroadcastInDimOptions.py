@@ -55,15 +55,26 @@ class StablehloBroadcastInDimOptions(object):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
         return o == 0
 
-def StablehloBroadcastInDimOptionsStart(builder): builder.StartObject(1)
+def StablehloBroadcastInDimOptionsStart(builder):
+    builder.StartObject(1)
+
 def Start(builder):
-    return StablehloBroadcastInDimOptionsStart(builder)
-def StablehloBroadcastInDimOptionsAddBroadcastDimensions(builder, broadcastDimensions): builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(broadcastDimensions), 0)
+    StablehloBroadcastInDimOptionsStart(builder)
+
+def StablehloBroadcastInDimOptionsAddBroadcastDimensions(builder, broadcastDimensions):
+    builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(broadcastDimensions), 0)
+
 def AddBroadcastDimensions(builder, broadcastDimensions):
-    return StablehloBroadcastInDimOptionsAddBroadcastDimensions(builder, broadcastDimensions)
-def StablehloBroadcastInDimOptionsStartBroadcastDimensionsVector(builder, numElems): return builder.StartVector(8, numElems, 8)
+    StablehloBroadcastInDimOptionsAddBroadcastDimensions(builder, broadcastDimensions)
+
+def StablehloBroadcastInDimOptionsStartBroadcastDimensionsVector(builder, numElems):
+    return builder.StartVector(8, numElems, 8)
+
 def StartBroadcastDimensionsVector(builder, numElems):
     return StablehloBroadcastInDimOptionsStartBroadcastDimensionsVector(builder, numElems)
-def StablehloBroadcastInDimOptionsEnd(builder): return builder.EndObject()
+
+def StablehloBroadcastInDimOptionsEnd(builder):
+    return builder.EndObject()
+
 def End(builder):
     return StablehloBroadcastInDimOptionsEnd(builder)

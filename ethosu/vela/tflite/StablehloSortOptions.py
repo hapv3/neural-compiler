@@ -49,18 +49,32 @@ class StablehloSortOptions(object):
             return self._tab.Get(flatbuffers.number_types.Int32Flags, o + self._tab.Pos)
         return 0
 
-def StablehloSortOptionsStart(builder): builder.StartObject(3)
+def StablehloSortOptionsStart(builder):
+    builder.StartObject(3)
+
 def Start(builder):
-    return StablehloSortOptionsStart(builder)
-def StablehloSortOptionsAddDimension(builder, dimension): builder.PrependInt64Slot(0, dimension, 0)
+    StablehloSortOptionsStart(builder)
+
+def StablehloSortOptionsAddDimension(builder, dimension):
+    builder.PrependInt64Slot(0, dimension, 0)
+
 def AddDimension(builder, dimension):
-    return StablehloSortOptionsAddDimension(builder, dimension)
-def StablehloSortOptionsAddIsStable(builder, isStable): builder.PrependBoolSlot(1, isStable, 0)
+    StablehloSortOptionsAddDimension(builder, dimension)
+
+def StablehloSortOptionsAddIsStable(builder, isStable):
+    builder.PrependBoolSlot(1, isStable, 0)
+
 def AddIsStable(builder, isStable):
-    return StablehloSortOptionsAddIsStable(builder, isStable)
-def StablehloSortOptionsAddComparatorSubgraphIndex(builder, comparatorSubgraphIndex): builder.PrependInt32Slot(2, comparatorSubgraphIndex, 0)
+    StablehloSortOptionsAddIsStable(builder, isStable)
+
+def StablehloSortOptionsAddComparatorSubgraphIndex(builder, comparatorSubgraphIndex):
+    builder.PrependInt32Slot(2, comparatorSubgraphIndex, 0)
+
 def AddComparatorSubgraphIndex(builder, comparatorSubgraphIndex):
-    return StablehloSortOptionsAddComparatorSubgraphIndex(builder, comparatorSubgraphIndex)
-def StablehloSortOptionsEnd(builder): return builder.EndObject()
+    StablehloSortOptionsAddComparatorSubgraphIndex(builder, comparatorSubgraphIndex)
+
+def StablehloSortOptionsEnd(builder):
+    return builder.EndObject()
+
 def End(builder):
     return StablehloSortOptionsEnd(builder)

@@ -42,15 +42,26 @@ class StablehloWhileOptions(object):
             return self._tab.Get(flatbuffers.number_types.Int32Flags, o + self._tab.Pos)
         return 0
 
-def StablehloWhileOptionsStart(builder): builder.StartObject(2)
+def StablehloWhileOptionsStart(builder):
+    builder.StartObject(2)
+
 def Start(builder):
-    return StablehloWhileOptionsStart(builder)
-def StablehloWhileOptionsAddCondSubgraphIndex(builder, condSubgraphIndex): builder.PrependInt32Slot(0, condSubgraphIndex, 0)
+    StablehloWhileOptionsStart(builder)
+
+def StablehloWhileOptionsAddCondSubgraphIndex(builder, condSubgraphIndex):
+    builder.PrependInt32Slot(0, condSubgraphIndex, 0)
+
 def AddCondSubgraphIndex(builder, condSubgraphIndex):
-    return StablehloWhileOptionsAddCondSubgraphIndex(builder, condSubgraphIndex)
-def StablehloWhileOptionsAddBodySubgraphIndex(builder, bodySubgraphIndex): builder.PrependInt32Slot(1, bodySubgraphIndex, 0)
+    StablehloWhileOptionsAddCondSubgraphIndex(builder, condSubgraphIndex)
+
+def StablehloWhileOptionsAddBodySubgraphIndex(builder, bodySubgraphIndex):
+    builder.PrependInt32Slot(1, bodySubgraphIndex, 0)
+
 def AddBodySubgraphIndex(builder, bodySubgraphIndex):
-    return StablehloWhileOptionsAddBodySubgraphIndex(builder, bodySubgraphIndex)
-def StablehloWhileOptionsEnd(builder): return builder.EndObject()
+    StablehloWhileOptionsAddBodySubgraphIndex(builder, bodySubgraphIndex)
+
+def StablehloWhileOptionsEnd(builder):
+    return builder.EndObject()
+
 def End(builder):
     return StablehloWhileOptionsEnd(builder)

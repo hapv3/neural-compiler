@@ -24,3 +24,4 @@ class BuiltinOptions2(object):
     DilateOptions = 18
     StablehloRngBitGeneratorOptions = 19
     ReduceWindowOptions = 20
+    StableHLOCompositeOptions = 21

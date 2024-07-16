@@ -55,15 +55,26 @@ class StablehloTransposeOptions(object):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
         return o == 0
 
-def StablehloTransposeOptionsStart(builder): builder.StartObject(1)
+def StablehloTransposeOptionsStart(builder):
+    builder.StartObject(1)
+
 def Start(builder):
-    return StablehloTransposeOptionsStart(builder)
-def StablehloTransposeOptionsAddPermutation(builder, permutation): builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(permutation), 0)
+    StablehloTransposeOptionsStart(builder)
+
+def StablehloTransposeOptionsAddPermutation(builder, permutation):
+    builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(permutation), 0)
+
 def AddPermutation(builder, permutation):
-    return StablehloTransposeOptionsAddPermutation(builder, permutation)
-def StablehloTransposeOptionsStartPermutationVector(builder, numElems): return builder.StartVector(8, numElems, 8)
+    StablehloTransposeOptionsAddPermutation(builder, permutation)
+
+def StablehloTransposeOptionsStartPermutationVector(builder, numElems):
+    return builder.StartVector(8, numElems, 8)
+
 def StartPermutationVector(builder, numElems):
     return StablehloTransposeOptionsStartPermutationVector(builder, numElems)
-def StablehloTransposeOptionsEnd(builder): return builder.EndObject()
+
+def StablehloTransposeOptionsEnd(builder):
+    return builder.EndObject()
+
 def End(builder):
     return StablehloTransposeOptionsEnd(builder)

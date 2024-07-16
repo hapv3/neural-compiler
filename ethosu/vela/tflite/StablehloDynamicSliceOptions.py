@@ -55,15 +55,26 @@ class StablehloDynamicSliceOptions(object):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
         return o == 0
 
-def StablehloDynamicSliceOptionsStart(builder): builder.StartObject(1)
+def StablehloDynamicSliceOptionsStart(builder):
+    builder.StartObject(1)
+
 def Start(builder):
-    return StablehloDynamicSliceOptionsStart(builder)
-def StablehloDynamicSliceOptionsAddSliceSizes(builder, sliceSizes): builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(sliceSizes), 0)
+    StablehloDynamicSliceOptionsStart(builder)
+
+def StablehloDynamicSliceOptionsAddSliceSizes(builder, sliceSizes):
+    builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(sliceSizes), 0)
+
 def AddSliceSizes(builder, sliceSizes):
-    return StablehloDynamicSliceOptionsAddSliceSizes(builder, sliceSizes)
-def StablehloDynamicSliceOptionsStartSliceSizesVector(builder, numElems): return builder.StartVector(8, numElems, 8)
+    StablehloDynamicSliceOptionsAddSliceSizes(builder, sliceSizes)
+
+def StablehloDynamicSliceOptionsStartSliceSizesVector(builder, numElems):
+    return builder.StartVector(8, numElems, 8)
+
 def StartSliceSizesVector(builder, numElems):
     return StablehloDynamicSliceOptionsStartSliceSizesVector(builder, numElems)
-def StablehloDynamicSliceOptionsEnd(builder): return builder.EndObject()
+
+def StablehloDynamicSliceOptionsEnd(builder):
+    return builder.EndObject()
+
 def End(builder):
     return StablehloDynamicSliceOptionsEnd(builder)

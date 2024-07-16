@@ -109,27 +109,50 @@ class StablehloSliceOptions(object):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
         return o == 0
 
-def StablehloSliceOptionsStart(builder): builder.StartObject(3)
+def StablehloSliceOptionsStart(builder):
+    builder.StartObject(3)
+
 def Start(builder):
-    return StablehloSliceOptionsStart(builder)
-def StablehloSliceOptionsAddStartIndices(builder, startIndices): builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(startIndices), 0)
+    StablehloSliceOptionsStart(builder)
+
+def StablehloSliceOptionsAddStartIndices(builder, startIndices):
+    builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(startIndices), 0)
+
 def AddStartIndices(builder, startIndices):
-    return StablehloSliceOptionsAddStartIndices(builder, startIndices)
-def StablehloSliceOptionsStartStartIndicesVector(builder, numElems): return builder.StartVector(8, numElems, 8)
+    StablehloSliceOptionsAddStartIndices(builder, startIndices)
+
+def StablehloSliceOptionsStartStartIndicesVector(builder, numElems):
+    return builder.StartVector(8, numElems, 8)
+
 def StartStartIndicesVector(builder, numElems):
     return StablehloSliceOptionsStartStartIndicesVector(builder, numElems)
-def StablehloSliceOptionsAddLimitIndices(builder, limitIndices): builder.PrependUOffsetTRelativeSlot(1, flatbuffers.number_types.UOffsetTFlags.py_type(limitIndices), 0)
+
+def StablehloSliceOptionsAddLimitIndices(builder, limitIndices):
+    builder.PrependUOffsetTRelativeSlot(1, flatbuffers.number_types.UOffsetTFlags.py_type(limitIndices), 0)
+
 def AddLimitIndices(builder, limitIndices):
-    return StablehloSliceOptionsAddLimitIndices(builder, limitIndices)
-def StablehloSliceOptionsStartLimitIndicesVector(builder, numElems): return builder.StartVector(8, numElems, 8)
+    StablehloSliceOptionsAddLimitIndices(builder, limitIndices)
+
+def StablehloSliceOptionsStartLimitIndicesVector(builder, numElems):
+    return builder.StartVector(8, numElems, 8)
+
 def StartLimitIndicesVector(builder, numElems):
     return StablehloSliceOptionsStartLimitIndicesVector(builder, numElems)
-def StablehloSliceOptionsAddStrides(builder, strides): builder.PrependUOffsetTRelativeSlot(2, flatbuffers.number_types.UOffsetTFlags.py_type(strides), 0)
+
+def StablehloSliceOptionsAddStrides(builder, strides):
+    builder.PrependUOffsetTRelativeSlot(2, flatbuffers.number_types.UOffsetTFlags.py_type(strides), 0)
+
 def AddStrides(builder, strides):
-    return StablehloSliceOptionsAddStrides(builder, strides)
-def StablehloSliceOptionsStartStridesVector(builder, numElems): return builder.StartVector(8, numElems, 8)
+    StablehloSliceOptionsAddStrides(builder, strides)
+
+def StablehloSliceOptionsStartStridesVector(builder, numElems):
+    return builder.StartVector(8, numElems, 8)
+
 def StartStridesVector(builder, numElems):
     return StablehloSliceOptionsStartStridesVector(builder, numElems)
-def StablehloSliceOptionsEnd(builder): return builder.EndObject()
+
+def StablehloSliceOptionsEnd(builder):
+    return builder.EndObject()
+
 def End(builder):
     return StablehloSliceOptionsEnd(builder)

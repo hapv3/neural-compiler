@@ -110,33 +110,62 @@ class StablehloCustomCallOptions(object):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))
         return o == 0
 
-def StablehloCustomCallOptionsStart(builder): builder.StartObject(6)
+def StablehloCustomCallOptionsStart(builder):
+    builder.StartObject(6)
+
 def Start(builder):
-    return StablehloCustomCallOptionsStart(builder)
-def StablehloCustomCallOptionsAddCallTargetName(builder, callTargetName): builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(callTargetName), 0)
+    StablehloCustomCallOptionsStart(builder)
+
+def StablehloCustomCallOptionsAddCallTargetName(builder, callTargetName):
+    builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(callTargetName), 0)
+
 def AddCallTargetName(builder, callTargetName):
-    return StablehloCustomCallOptionsAddCallTargetName(builder, callTargetName)
-def StablehloCustomCallOptionsAddHasSideEffect(builder, hasSideEffect): builder.PrependBoolSlot(1, hasSideEffect, 0)
+    StablehloCustomCallOptionsAddCallTargetName(builder, callTargetName)
+
+def StablehloCustomCallOptionsAddHasSideEffect(builder, hasSideEffect):
+    builder.PrependBoolSlot(1, hasSideEffect, 0)
+
 def AddHasSideEffect(builder, hasSideEffect):
-    return StablehloCustomCallOptionsAddHasSideEffect(builder, hasSideEffect)
-def StablehloCustomCallOptionsAddBackendConfig(builder, backendConfig): builder.PrependUOffsetTRelativeSlot(2, flatbuffers.number_types.UOffsetTFlags.py_type(backendConfig), 0)
+    StablehloCustomCallOptionsAddHasSideEffect(builder, hasSideEffect)
+
+def StablehloCustomCallOptionsAddBackendConfig(builder, backendConfig):
+    builder.PrependUOffsetTRelativeSlot(2, flatbuffers.number_types.UOffsetTFlags.py_type(backendConfig), 0)
+
 def AddBackendConfig(builder, backendConfig):
-    return StablehloCustomCallOptionsAddBackendConfig(builder, backendConfig)
-def StablehloCustomCallOptionsAddApiVersion(builder, apiVersion): builder.PrependInt32Slot(3, apiVersion, 0)
+    StablehloCustomCallOptionsAddBackendConfig(builder, backendConfig)
+
+def StablehloCustomCallOptionsAddApiVersion(builder, apiVersion):
+    builder.PrependInt32Slot(3, apiVersion, 0)
+
 def AddApiVersion(builder, apiVersion):
-    return StablehloCustomCallOptionsAddApiVersion(builder, apiVersion)
-def StablehloCustomCallOptionsAddCalledComputations(builder, calledComputations): builder.PrependUOffsetTRelativeSlot(4, flatbuffers.number_types.UOffsetTFlags.py_type(calledComputations), 0)
+    StablehloCustomCallOptionsAddApiVersion(builder, apiVersion)
+
+def StablehloCustomCallOptionsAddCalledComputations(builder, calledComputations):
+    builder.PrependUOffsetTRelativeSlot(4, flatbuffers.number_types.UOffsetTFlags.py_type(calledComputations), 0)
+
 def AddCalledComputations(builder, calledComputations):
-    return StablehloCustomCallOptionsAddCalledComputations(builder, calledComputations)
-def StablehloCustomCallOptionsStartCalledComputationsVector(builder, numElems): return builder.StartVector(4, numElems, 4)
+    StablehloCustomCallOptionsAddCalledComputations(builder, calledComputations)
+
+def StablehloCustomCallOptionsStartCalledComputationsVector(builder, numElems):
+    return builder.StartVector(4, numElems, 4)
+
 def StartCalledComputationsVector(builder, numElems):
     return StablehloCustomCallOptionsStartCalledComputationsVector(builder, numElems)
-def StablehloCustomCallOptionsAddCustomAttributes(builder, customAttributes): builder.PrependUOffsetTRelativeSlot(5, flatbuffers.number_types.UOffsetTFlags.py_type(customAttributes), 0)
+
+def StablehloCustomCallOptionsAddCustomAttributes(builder, customAttributes):
+    builder.PrependUOffsetTRelativeSlot(5, flatbuffers.number_types.UOffsetTFlags.py_type(customAttributes), 0)
+
 def AddCustomAttributes(builder, customAttributes):
-    return StablehloCustomCallOptionsAddCustomAttributes(builder, customAttributes)
-def StablehloCustomCallOptionsStartCustomAttributesVector(builder, numElems): return builder.StartVector(1, numElems, 1)
+    StablehloCustomCallOptionsAddCustomAttributes(builder, customAttributes)
+
+def StablehloCustomCallOptionsStartCustomAttributesVector(builder, numElems):
+    return builder.StartVector(1, numElems, 1)
+
 def StartCustomAttributesVector(builder, numElems):
     return StablehloCustomCallOptionsStartCustomAttributesVector(builder, numElems)
-def StablehloCustomCallOptionsEnd(builder): return builder.EndObject()
+
+def StablehloCustomCallOptionsEnd(builder):
+    return builder.EndObject()
+
 def End(builder):
     return StablehloCustomCallOptionsEnd(builder)
