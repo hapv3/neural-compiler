@@ -1259,8 +1259,8 @@ void EthosU85RCSGenerator::GenerateOFM(OpType opType, const HLCFeatureMap &fm, c
         Emit(isa::npu_set_ofm_height1_m1_t(tiles.height1 - 1));
         Emit(isa::npu_set_ofm_width0_m1_t(tiles.width0 - 1));
         // OFM_STRIDE registers
-        Emit(isa::npu_set_ofm_stride_y_t(strides.Height()));
-        Emit(isa::npu_set_ofm_stride_x_t(strides.Width()));
+        Emit(isa::npu_set_ofm_stride_y_t(strides.Height() * fm.stepXY.y));
+        Emit(isa::npu_set_ofm_stride_x_t(strides.Width() * fm.stepXY.x));
         Emit(isa::npu_set_ofm_stride_c_t(strides.Depth()));
     }
     // OFM_ZERO_POINT register

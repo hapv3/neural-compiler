@@ -241,6 +241,18 @@ static void UpdatePaddingIfOffsetNegative(SchedulerOperation *op)
     }
 }
 
+static void InitializeSlice(TensorSlice &slice, const Shape &offset, const Shape &shape)
+{
+    if ( !slice.offset.IsValid() )
+    {
+        slice.offset = offset;
+    }
+    if ( !slice.shape.IsValid() )
+    {
+        slice.shape = shape;
+    }
+}
+
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv2D(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
 {
     std::vector<std::unique_ptr<SchedulerOperation>> result;
@@ -252,11 +264,9 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv2D(Architecture *a
     auto &ifmSlice = ifmConn->slice;
     auto *kernel = op->Kernel();
     auto &padding = kernel->Padding();
-    if ( !ofmSlice.offset.IsValid() )
-    {
-        ofmSlice.offset = ofmShape.WithZeros();
-        ifmSlice.offset = ifmShape.WithZeros().WithHW(-padding.Top(), -padding.Left());
-    }
+    InitializeSlice(ofmSlice, ofmShape.WithZeros(), ofmShape);
+    InitializeSlice(ifmSlice, ifmShape.WithZeros().WithHW(-padding.Top(), -padding.Left()), ifmShape);
+
     if ( ofmShape.Batch() > 1 )
     {
         return DecomposeLeadingDimensions(1, arch, std::move(op), DecomposeConv2D);
@@ -291,11 +301,9 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
     auto &ifmSlice = ifmConn->slice;
     auto *kernel = op->Kernel();
     auto &padding = kernel->Padding();
-    if ( !ofmSlice.offset.IsValid() )
-    {
-        ofmSlice.offset = ofmShape.WithZeros();
-        ifmSlice.offset = ifmShape.WithZeros().WithHW(-padding.Top(), -padding.Left());
-    }
+    InitializeSlice(ofmSlice, ofmShape.WithZeros(), ofmShape);
+    InitializeSlice(ifmSlice, ifmShape.WithZeros().WithHW(-padding.Top(), -padding.Left()), ifmShape);
+
     if ( ofmShape.Batch() > 1 )
     {
         return DecomposeLeadingDimensions(1, arch, std::move(op), DecomposeDepthwiseConv2D);
