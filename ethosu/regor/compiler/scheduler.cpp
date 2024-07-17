@@ -417,7 +417,7 @@ WeightScaleEncoding ChooseBestWeightFormat(Architecture *arch, SchedulerOperatio
             weightStats.distinctWeights = weightTensor->distinctWeights;
             auto query = Scheduler::InitPerfQuery(op, nullptr, -1);
             auto cycles = arch->Performance()->WeightDecodeCycles(
-                query, weightStats, WeightFormat::Default, weightTensor->memArea.memory);
+                query, weightStats, weightTensor->config->Format(), weightTensor->memArea.memory);
             if ( cycles < minCycles )
             {
                 bestResult = &encodingResult;

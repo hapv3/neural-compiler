@@ -950,6 +950,7 @@ ML_ENCODER_DLL_EXPORT int mle_encode(mle_context_t *ctx, ml_encode_result_t *res
     if ( written >= 0 )
     {
         result->encoded_data = output.detach();
+        result->source_length = inbuf_size;
         result->encoded_length = written;
         result->section_info = nullptr;
         result->section_count = 0;

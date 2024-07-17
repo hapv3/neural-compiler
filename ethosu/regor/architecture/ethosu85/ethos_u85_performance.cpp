@@ -536,6 +536,7 @@ int64_t EthosU85Performance::WeightDecodeCycles(
     }
     else
     {
+        assert(weights.size > 0);
         float zeroRate = std::min(float(weights.zeroCount) / weights.size, 0.9f);
         zeroRate = std::max(zeroRate, 0.5f);
         int weightsPerCore = 8 + (zeroRate - 0.5) * (32 - 8) / 0.4;
