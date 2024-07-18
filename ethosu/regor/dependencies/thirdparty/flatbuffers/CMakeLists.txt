@@ -160,6 +160,7 @@ set(FlatBuffers_Compiler_SRCS
   src/idl_gen_csharp.cpp
   src/idl_gen_dart.cpp
   src/idl_gen_kotlin.cpp
+  src/idl_gen_kotlin_kmp.cpp
   src/idl_gen_go.cpp
   src/idl_gen_java.cpp
   src/idl_gen_ts.cpp
@@ -496,7 +497,7 @@ function(compile_schema SRC_FBS OPT OUT_GEN_FILE)
       ${OPT}
       -o "${SRC_FBS_DIR}"
       "${CMAKE_CURRENT_SOURCE_DIR}/${SRC_FBS}"
-    DEPENDS flatc
+    DEPENDS flatc ${SRC_FBS}
     COMMENT "flatc generation: `${SRC_FBS}` -> `${GEN_HEADER}`"
     )
   set(${OUT_GEN_FILE} ${GEN_HEADER} PARENT_SCOPE)
@@ -531,16 +532,17 @@ if(FLATBUFFERS_BUILD_TESTS)
   # The flattest target needs some generated files
   SET(FLATC_OPT --cpp --gen-mutable --gen-object-api --reflect-names)
   SET(FLATC_OPT_COMP ${FLATC_OPT};--gen-compare)
+  SET(FLATC_OPT_SCOPED_ENUMS ${FLATC_OPT_COMP};--scoped-enums)
 
   compile_schema_for_test(tests/alignment_test.fbs "${FLATC_OPT_COMP}")
-  compile_schema_for_test(tests/arrays_test.fbs "${FLATC_OPT_COMP};--scoped-enums")
+  compile_schema_for_test(tests/arrays_test.fbs "${FLATC_OPT_SCOPED_ENUMS}")
   compile_schema_for_test(tests/native_inline_table_test.fbs "${FLATC_OPT_COMP}")
   compile_schema_for_test(tests/native_type_test.fbs "${FLATC_OPT}")
   compile_schema_for_test(tests/key_field/key_field_sample.fbs "${FLATC_OPT_COMP}")
   compile_schema_for_test(tests/64bit/test_64bit.fbs "${FLATC_OPT_COMP};--bfbs-gen-embed")
   compile_schema_for_test(tests/64bit/evolution/v1.fbs "${FLATC_OPT_COMP}")
   compile_schema_for_test(tests/64bit/evolution/v2.fbs "${FLATC_OPT_COMP}")
-  compile_schema_for_test(tests/union_underlying_type_test.fbs "${FLATC_OPT_COMP}")
+  compile_schema_for_test(tests/union_underlying_type_test.fbs "${FLATC_OPT_SCOPED_ENUMS}")
 
   if(FLATBUFFERS_CODE_SANITIZE)
     add_fsanitize_to_target(flattests ${FLATBUFFERS_CODE_SANITIZE})
@@ -554,7 +556,11 @@ if(FLATBUFFERS_BUILD_TESTS)
 
   # Add a library so there is a single target that the generated samples can 
   # link too.
-  add_library(flatsample INTERFACE)
+  if(MSVC OR ${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.20.0")
+    add_library(flatsample INTERFACE)
+  else()
+    add_library(flatsample STATIC)
+  endif()
 
   # Since flatsample has no sources, we have to explicitly set the linker lang.
   set_target_properties(flatsample PROPERTIES LINKER_LANGUAGE CXX)
@@ -592,7 +598,7 @@ if(FLATBUFFERS_BUILD_GRPCTEST)
   find_package(protobuf CONFIG REQUIRED)
   find_package(gRPC CONFIG REQUIRED)
   add_executable(grpctest ${FlatBuffers_GRPCTest_SRCS})
-  target_link_libraries(grpctext
+  target_link_libraries(grpctest
     PRIVATE
       $<BUILD_INTERFACE:ProjectConfig>
       gRPC::grpc++_unsecure

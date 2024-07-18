@@ -18,17 +18,17 @@ limitations under the License.
 # Third Party Software
 
 The following lists the Third Party software versions and licenses used by Vela:
-* FlatBuffers [v23.5.26](https://github.com/google/flatbuffers/releases/tag/v23.5.26) - 
-([Apache-2.0 License](https://github.com/google/flatbuffers/blob/v23.5.26/LICENSE))
+* FlatBuffers [v24.3.25](https://github.com/google/flatbuffers/releases/tag/v24.3.25) -
+  ([Apache-2.0 License](https://github.com/google/flatbuffers/blob/v24.3.25/LICENSE))
 
-* fmt [10.2.1](https://github.com/fmtlib/fmt/releases/tag/10.2.1) - 
-([MIT License](https://github.com/fmtlib/fmt/blob/10.2.1/LICENSE))
+* fmt [10.2.1](https://github.com/fmtlib/fmt/releases/tag/10.2.1) -
+  ([MIT License](https://github.com/fmtlib/fmt/blob/10.2.1/LICENSE))
 
-* Catch2 [v3.5.3](https://github.com/catchorg/Catch2/releases/tag/v3.5.3) - 
-([BSL-1.0 License](https://github.com/catchorg/Catch2/blob/v3.5.3/LICENSE.txt))
+* Catch2 [v3.5.3](https://github.com/catchorg/Catch2/releases/tag/v3.5.3) -
+  ([BSL-1.0 License](https://github.com/catchorg/Catch2/blob/v3.5.3/LICENSE.txt))
 
-* Gemmlowp [09d81e02ab15b41405caebeb5eb63fd12555aee3](https://github.com/google/gemmlowp/tree/09d81e02ab15b41405caebeb5eb63fd12555aee3) - 
-([Apache-2.0 License](https://github.com/google/gemmlowp/blob/09d81e02ab15b41405caebeb5eb63fd12555aee3/LICENSE))
+* Gemmlowp [09d81e02ab15b41405caebeb5eb63fd12555aee3](https://github.com/google/gemmlowp/tree/09d81e02ab15b41405caebeb5eb63fd12555aee3) -
+  ([Apache-2.0 License](https://github.com/google/gemmlowp/blob/09d81e02ab15b41405caebeb5eb63fd12555aee3/LICENSE))
 
-* pybind11 [v2.11.1](https://github.com/pybind/pybind11/releases/tag/v2.11.1) - 
-([BSD-3-Clause License](https://github.com/pybind/pybind11/blob/v2.11.1/LICENSE))
+* pybind11 [v2.11.1](https://github.com/pybind/pybind11/releases/tag/v2.11.1) -
+  ([BSD-3-Clause License](https://github.com/pybind/pybind11/blob/v2.11.1/LICENSE))

@@ -28,7 +28,7 @@ __HERE_DOC__
 
 
 # FlatBuffers
-version=v23.5.26
+version=v24.3.25
 clone_url=https://github.com/google/flatbuffers.git
 output_dir=${cwd}/flatbuffers
 thirdparty_md_text+="\n* FlatBuffers [${version}](https://github.com/google/flatbuffers/releases/tag/${version}) - \n"
