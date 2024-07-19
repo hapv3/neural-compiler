@@ -48,6 +48,7 @@ private:
     Operation *RewriteFullyConnected(Graph *const graph, Operation *const operation);
     Operation *FixupPoolStrides(Graph *const, Operation *const operation);
     Operation *RewriteRescale(Graph *const graph, Operation *const operation);
+    Operation *FuseRescale(Graph *const graph, Operation *const operation);
     Operation *RewriteTable(Graph *const graph, Operation *const operation);
     Operation *RewriteCast(Graph *const graph, Operation *const operation);
     Operation *RewriteConcat(Graph *const graph, Operation *const operation);
@@ -56,7 +57,6 @@ private:
     void MoveToConsumer(const Operation *const operation, Operation *const cons);
     Operation *MoveSplitSliceToConsumer(Graph *const, Operation *const operation);
 
-public:
     // The graph optimisation steps.
     // Order matters, array of rewrites processed in order.
     // clang-format off
@@ -97,6 +97,7 @@ public:
                 &GraphIrOptimiser::RewriteConcat,
                 &GraphIrOptimiser::RewriteSlice,
                 &GraphIrOptimiser::RewriteNegate,
+                &GraphIrOptimiser::FuseRescale,  // First pass fuse all possible ifm and ofm rescales
             }
         },
         // MoveSplitSliceToConsumer need to be done after any other optimisation that can affect the ifm/ofm shapes
@@ -104,6 +105,7 @@ public:
         {
             {},
             {
+                &GraphIrOptimiser::FuseRescale,  // Second pass, fuse any remaining ofm rescales after ifm fusing in first pass
                 &GraphIrOptimiser::MoveSplitSliceToConsumer
             }
         },
@@ -123,6 +125,7 @@ public:
     }};
     // clang-format on
 
+public:
     explicit GraphIrOptimiser(IArchitectureConstraints *constraints, const GraphOptimiserOptions &options, OptimiserDatabase *db);
 
     const GraphOptStepArray &GraphOptimisationSteps() const { return _graphOptimisationSteps; }

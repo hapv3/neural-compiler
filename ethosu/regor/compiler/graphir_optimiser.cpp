@@ -340,6 +340,58 @@ Operation *GraphIrOptimiser::RewriteRescale(Graph *const, Operation *const opera
     return returnOp;
 }
 
+
+/// @brief Moves Rescale operations to the output of the previous operation
+///        or the input of the next operation when possible.
+/// @param
+/// @param operation Operation to optimise
+/// @return (Possibly) optimised operation
+Operation *GraphIrOptimiser::FuseRescale(Graph *const, Operation *const operation)
+{
+    Operation *returnOp = operation;
+    OpType opType = operation->Type();
+    if ( opType == OpType::Rescale )
+    {
+        auto ofmConn = operation->Output(TensorUsage::OFM);
+        auto ifmConn = operation->Input(TensorUsage::IFM);
+        auto producer = ifmConn->tensor->Writers().size() == 1 ? ifmConn->tensor->Writers().front() : nullptr;
+        if ( producer && producer->Output(TensorUsage::OFM)->quantization.EqualScales(Quantization::Unit()) &&
+             _constraints->SupportsFusedRescale(producer->Type(), TensorUsage::OFM, producer->IFM(0)->Type(),
+                 ofmConn->tensor->Type(), ofmConn->quantization) )
+        {
+            // Propagate rescaling to output of previous op
+            producer->CopyOutput(TensorUsage::OFM, *ofmConn);
+            returnOp = producer.get();
+        }
+        else if ( ofmConn->tensor->Readers().size() == 1 && ofmConn->quantization.zeroPoints == Quantization::Unit().zeroPoints )
+        {
+            // Propagate rescaling to input of next op
+            auto consumer = ofmConn->tensor->Readers().front();
+            for ( auto ifm : consumer->Inputs().pairs() )
+            {
+                if ( ifm.second.tensor == ofmConn->tensor )
+                {
+                    if ( ifm.second.quantization.EqualScales(Quantization::Unit()) &&
+                         _constraints->SupportsFusedRescale(consumer->Type(), TensorUsage::IFM, ifmConn->tensor->Type(),
+                             ofmConn->tensor->Type(), ofmConn->quantization) )
+                    {
+                        consumer->CopyInput(ifm.first, *ifmConn);
+                        ifm.second.quantization.scales = ofmConn->quantization.scales;
+                        returnOp = consumer.get();
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    if ( returnOp != operation )
+    {
+        RecordOptimisation(operation, returnOp);
+        operation->Disconnect();
+    }
+    return returnOp;
+}
+
 // Fixup Pool strides when the kernel size, IFM shape and stride are equal.
 Operation *GraphIrOptimiser::FixupPoolStrides(Graph *const, Operation *const operation)
 {

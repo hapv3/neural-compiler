@@ -90,6 +90,53 @@ bool EthosU85Constraints::SupportsReverse(OpType opType, ReverseType reverseType
     return reverseType == ReverseType::H || reverseType == ReverseType::W || reverseType == ReverseType::C;
 }
 
+bool EthosU85Constraints::SupportsFusedRescale(
+    OpType opType, TensorUsage tensorUsage, DataType fromType, DataType toType, const Quantization &quantization)
+{
+    auto npuOp = ArchEthosU85::GetHWOp(opType);
+    bool globalScale = quantization.scales.size() == 1;
+    int fromBits = DataTypeSizeBits(fromType);
+    int toBits = DataTypeSizeBits(toType);
+
+    if ( tensorUsage == TensorUsage::IFM )
+    {
+        if ( npuOp == EthosU85NpuOp::Elementwise )
+        {
+            bool fromTypeSupported = (IsInteger(fromType) && fromBits == 8) || fromType == DataType::Int16;
+            bool toTypeSupported = (IsInteger(toType) && (toBits == 8 || toBits == 16)) || toType == DataType::Int32;
+            return opType != OpType::Div && opType != OpType::Mul && globalScale && fromTypeSupported && toTypeSupported;
+        }
+    }
+    else if ( tensorUsage == TensorUsage::OFM )
+    {
+        if ( npuOp == EthosU85NpuOp::Convolution || npuOp == EthosU85NpuOp::Depthwise ||
+             npuOp == EthosU85NpuOp::Pooling || npuOp == EthosU85NpuOp::VectorProduct )
+        {
+            return opType != OpType::Rescale;
+        }
+        if ( npuOp == EthosU85NpuOp::Resize && globalScale )
+        {
+            auto &qs = quantization.scales.front();
+            return qs.scale == 1 && qs.shift >= 16;  // Only shift of 16 or more supported
+        }
+        if ( npuOp == EthosU85NpuOp::Elementwise && globalScale )
+        {
+            if ( opType == OpType::SHR || opType == OpType::SHL || opType == OpType::Asr || opType == OpType::Div )
+            {
+                return false;
+            }
+            bool fromTypeSupported = (IsInteger(fromType) && (fromBits == 8 || fromBits == 16)) || fromType == DataType::Int32;
+            if ( opType == OpType::Mul && fromTypeSupported && fromType == DataType::Int32 )
+            {
+                return quantization.scales.front().scale == 1;  // Only shift supported
+            }
+            return fromTypeSupported;
+        }
+    }
+
+    return false;
+}
+
 bool EthosU85Constraints::SupportsGather(OpType opType)
 {
     EthosU85NpuOp npuOp = ArchEthosU85::GetHWOp(opType);

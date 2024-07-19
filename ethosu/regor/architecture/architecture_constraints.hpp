@@ -90,6 +90,8 @@ public:
 
     virtual bool SupportsTransposeHW(OpType opType, TransposeType transposeType) = 0;
     virtual bool SupportsReverse(OpType opType, ReverseType reverseType) = 0;
+    virtual bool SupportsFusedRescale(OpType opType, TensorUsage tensorUsage, DataType fromType, DataType toType,
+        const Quantization &quantization) = 0;
 
     bool CanExecute(const ExecutionQuery &query)
     {

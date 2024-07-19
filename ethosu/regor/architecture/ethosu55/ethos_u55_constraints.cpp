@@ -58,6 +58,52 @@ bool EthosU55Constraints::SupportsReverse(OpType opType, ReverseType reverseType
     return reverseType == ReverseType::None;
 }
 
+bool EthosU55Constraints::SupportsFusedRescale(
+    OpType opType, TensorUsage tensorUsage, DataType fromType, DataType toType, const Quantization &quantization)
+{
+    auto npuOp = ArchEthosU55::GetHWOp(opType);
+    bool globalScale = quantization.scales.size() == 1;
+    int fromBits = DataTypeSizeBits(fromType);
+    int toBits = DataTypeSizeBits(toType);
+
+    if ( tensorUsage == TensorUsage::IFM )
+    {
+        if ( npuOp == EthosU55NpuOp::Elementwise )
+        {
+            bool fromTypeSupported = IsInteger(fromType) && (fromBits == 8 || fromBits == 16);
+            bool toTypeSupported = (IsInteger(toType) && (toBits == 8 || toBits == 16)) || toType == DataType::Int32;
+            // TODO: Only one ifm can have full 32-bit (advanced) rescale, so for now only allow 16-bit (simple) rescale
+            auto &qs = quantization.scales.front();
+            bool scaleSupported = qs.shift == 0 && static_cast<int16_t>(qs.scale) == qs.scale;
+            return (opType == OpType::Add || opType == OpType::Sub) && globalScale && fromTypeSupported && scaleSupported;
+        }
+    }
+    else if ( tensorUsage == TensorUsage::OFM )
+    {
+        if ( npuOp == EthosU55NpuOp::Convolution || npuOp == EthosU55NpuOp::Depthwise ||
+             npuOp == EthosU55NpuOp::Pooling || npuOp == EthosU55NpuOp::VectorProduct )
+        {
+            return opType != OpType::Rescale;
+        }
+        if ( npuOp == EthosU55NpuOp::Elementwise && globalScale )
+        {
+            if ( opType == OpType::Min || opType == OpType::Max || opType == OpType::Asr || opType == OpType::SHL ||
+                 opType == OpType::CLZ || opType == OpType::LeakyRelu )
+            {
+                return false;
+            }
+            bool fromTypeSupported = (IsInteger(fromType) && (fromBits == 8 || fromBits == 16)) || fromType == DataType::Int32;
+            if ( fromTypeSupported && fromType == DataType::Int32 )
+            {
+                return quantization.scales.front().scale == 1;  // Only shift supported for int32
+            }
+            return fromTypeSupported;
+        }
+    }
+
+    return false;
+}
+
 bool EthosU55Constraints::SupportsGather(OpType opType)
 {
     UNUSED(opType);

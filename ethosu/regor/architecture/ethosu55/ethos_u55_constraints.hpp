@@ -32,6 +32,7 @@ public:
     bool SupportsTranspose(OpType opType, TransposeType transposeType, Shape ifmShape) override;
     bool SupportsTransposeHW(OpType opType, TransposeType transposeType) override;
     bool SupportsReverse(OpType opType, ReverseType reverseType) override;
+    bool SupportsFusedRescale(OpType opType, TensorUsage tensorUsage, DataType fromType, DataType toType, const Quantization &quantization) override;
     bool SupportsGather(OpType opType) override;
     bool SupportsScatter(OpType opType) override;
     bool SupportsSigmoidTanhLutInt16(OpType opType) override;
