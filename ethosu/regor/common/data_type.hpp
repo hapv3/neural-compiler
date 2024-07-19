@@ -239,8 +239,8 @@ inline constexpr bool IsBool(DataType type)
 
 inline constexpr uint64_t IntegerMax(DataType type)
 {
-    assert(IsInteger(type));
-    return ~0ULL >> (64 - DataTypeSizeBits(type) + int(IsSignedInteger(type)));
+    assert(IsInteger(type) || IsBool(type));
+    return ~0ULL >> (64 - DataTypeSizeBits(type) + int(IsSignedInteger(type) || IsBool(type)));
 }
 
 static_assert(uint64_t(std::numeric_limits<int8_t>::max()) == IntegerMax(DataType::Int8));
@@ -250,8 +250,8 @@ static_assert(uint64_t(std::numeric_limits<int64_t>::max()) == IntegerMax(DataTy
 
 inline constexpr int64_t IntegerMin(DataType type)
 {
-    assert(IsInteger(type));
-    if ( IsSignedInteger(type) )
+    assert(IsInteger(type) || IsBool(type));
+    if ( IsSignedInteger(type) || IsBool(type) )
     {
         int size = DataTypeSizeBits(type);
         return -1 * (1ULL << (size - 1));
