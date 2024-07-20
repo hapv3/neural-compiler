@@ -412,21 +412,43 @@ void EthosU85RCSGenerator::CheckAddresses(const HLCFeatureMap &fm)
     assert(fm.address % 16 == 0 || fm.format != TensorFormat::NHCWB16);
 }
 
+// Calculate the offset of the 4D slice at the position given by the leading dimensions
+// of a possible 5D or 6D offset in the fm
+static int Cube4DOffset(const HLCFeatureMap &fm, const Shape &strides)
+{
+    int offset = 0;
+    int rank = fm.slice.offset.Size();
+    if ( rank > 4 )
+    {
+        assert(fm.shape.Size() == fm.slice.offset.Size());
+        int stride5D = strides.Batch() * fm.shape.Batch();
+
+        offset += stride5D * fm.slice.offset[rank - 5];
+
+        if ( rank > 5 )
+        {
+            int stride6D = stride5D * fm.shape[rank - 5];
+            offset += stride6D * fm.slice.offset[rank - 6];
+        }
+    }
+    return offset;
+}
+
 // Calculates the rolling buffer address of the given coordinate.
 Address EthosU85RCSGenerator::AddressForCoordinate(const HLCFeatureMap &fm, const Shape &strides, const Shape &coord)
 {
-    Shape truncatedCoord = Shape::PadAxes(coord, 4, 0) % Shape::PadAxes(fm.shape, 4, 1);
-    int offset = 0;
+    Shape truncatedCoord = Shape(Shape::PadAxes(coord, 4, 0) % Shape::PadAxes(fm.shape, 4, 1), 4);
+    int offset = Cube4DOffset(fm, strides);
     if ( fm.format == TensorFormat::NHWC )
     {
-        offset = strides.Dot(truncatedCoord);
+        offset += strides.Dot(truncatedCoord);
     }
     else if ( fm.format == TensorFormat::NHCWB16 )
     {
         constexpr int BRICK = 16;
         int elemSize = DataTypeSizeBits(fm.dataType) / 8;
         int strideX = BRICK * elemSize;
-        offset =
+        offset +=
             truncatedCoord.Height() * strides.Height() + truncatedCoord.Width() * strideX +
             (truncatedCoord.Depth() / BRICK) * strides.Depth() + (truncatedCoord.Depth() % BRICK) * elemSize +
             truncatedCoord.Batch() * strides.Batch();

@@ -151,7 +151,7 @@ static Box TransformWithStridesAndSkirt(const Box &outputArea, const Shape *stri
     if ( limit == TransformLimit::Wrap )
     {
         Shape ifmWrap = Shape::PadAxes(ifmShape, 4, 1);
-        Shape one(1, 1, 1, 1);
+        Shape one = start.WithOnes();
         start = Shape::Wrap(start, ifmWrap);
         end = Shape::Wrap(end - one, ifmWrap) + one;
         assert((end - start).Elements() > 0);

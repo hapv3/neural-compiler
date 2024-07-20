@@ -305,12 +305,7 @@ public:
 
     Shape WithZeros() const { return Shape(nullptr, Size()); }
 
-    Shape WithOnes() const
-    {
-        Shape tmp(nullptr, Size());
-        std::fill_n(tmp.Storage(), Size(), 1);
-        return tmp;
-    }
+    Shape WithOnes() const { return Shape(nullptr, Size(), 1); }
 
     Shape Insert(int index, int value) const
     {

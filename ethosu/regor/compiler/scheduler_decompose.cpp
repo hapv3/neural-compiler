@@ -83,6 +83,12 @@ static auto GetArchAccumulatorSource(const AccumulatorControl &ac)
 bool CanRunOnHardware(Architecture *arch, const SchedulerOperation *schedOp)
 {
     regor::ArchitectureOpGroupQuery qOpGroup{};
+    if ( IsElementwise(schedOp->Type()) )
+    {
+        auto &ofmShape = schedOp->OFM()->SliceShape();
+        if ( ofmShape.Size() > 3 && ofmShape.Elements() > ofmShape.Width() * ofmShape.Height() * ofmShape.Depth() )
+            return false;
+    }
     auto *ifm = schedOp->TryIFM(0);
     auto *ifm2 = schedOp->TryIFM(1);
     auto *ofm = schedOp->TryOFM();
@@ -129,6 +135,7 @@ bool CanDecompose(Architecture *, const SchedulerOperation *schedOp)
     if ( schedOp->Type() == OpType::Conv2D ) return true;
     if ( schedOp->Type() == OpType::DepthwiseConv2DBias ) return true;
     if ( schedOp->Type() == OpType::TransposeConv2D ) return true;
+    if ( IsElementwise(schedOp->Type()) ) return true;
     return false;
 }
 
@@ -158,11 +165,13 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeLeadingDimensio
     for ( int i = 0; i < dimSize; i++ )
     {
         std::unique_ptr<SchedulerOperation> subOp = MakeSubOperation(op.get());
-        newIfmSlice.offset[axis] = i;
+        assert(i < ifmConn->shape[axis] || ifmConn->shape[axis] == 1);  // Broadcast dimension
+        newIfmSlice.offset[axis] = std::min(i, ifmConn->shape[axis] - 1);
         newOfmSlice.offset[axis] = i;
         if ( ifm2Conn != nullptr )
         {
-            newIfm2Slice.offset[axis] = i;
+            assert(i < ifm2Conn->shape[axis] || ifm2Conn->shape[axis] == 1);  // Broadcast dimension
+            newIfm2Slice.offset[axis] = std::min(i, ifm2Conn->shape[axis] - 1);
         }
         subOp->Input(TensorUsage::IFM)->slice = newIfmSlice;
         subOp->Output(TensorUsage::OFM)->slice = newOfmSlice;
@@ -468,6 +477,34 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTransposeConv2D(Archit
         result.emplace_back(std::move(op));
     }
 
+    return result;
+}
+
+std::vector<std::unique_ptr<SchedulerOperation>> DecomposeElementwise(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
+{
+    std::vector<std::unique_ptr<SchedulerOperation>> result;
+    auto ofmConn = op->Output(TensorUsage::OFM);
+    auto &ofmShape = ofmConn->SliceShape();
+    auto &ofmSlice = ofmConn->slice;
+    auto ifmConn = op->Input(TensorUsage::IFM);
+    auto &ifmShape = ifmConn->SliceShape();
+    auto &ifmSlice = ifmConn->slice;
+    if ( auto ifm2Conn = op->TryInput(TensorUsage::IFM1) )
+    {
+        auto &ifm2Shape = ifm2Conn->shape;
+        auto &ifm2Slice = ifm2Conn->slice;
+
+        InitializeSlice(ifm2Slice, ifm2Shape.WithZeros(), ifm2Shape);
+    }
+    auto ofmRank = ofmShape.Size();
+    if ( ofmRank > 3 && ofmShape.Elements() > ofmShape.Width() * ofmShape.Height() * ofmShape.Depth() )
+    {
+        InitializeSlice(ofmSlice, ofmShape.WithZeros(), ofmShape);
+        InitializeSlice(ifmSlice, ifmShape.WithZeros(), ifmShape);
+
+        return DecomposeLeadingDimensions(ofmRank - 3, arch, std::move(op), DecomposeElementwise);
+    }
+    result.emplace_back(std::move(op));
     return result;
 }
 
