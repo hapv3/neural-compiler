@@ -233,9 +233,15 @@ protected:
         Shape granule;
         Shape ublock;
         int accBits;
+        int ifmBlockDepth;
+        int ifmBits;
+        bool isPooling;
     };
 
+    Shape AreaFit(const FindConfigCommon &common, const Shape &ofmShape, const Shape &ofmBlockLimit,
+        const Shape &ifmShape, const Kernel *kernel);
     Shape FindElementwiseConfig(const ArchitectureConfigQuery &query, const FindConfigCommon &common);
+    Shape FindDepthwiseConfig(const ArchitectureConfigQuery &query, const FindConfigCommon &common, Shape &ifmBlock);
     std::unique_ptr<ArchitectureOpConfig> FindBlockConfig(OpType opType, const ArchitectureConfigQuery &query);
 
     bool TryBlockConfig(EthosU85NpuOp npuOp, const Shape &ofmBlock, const Shape &ifmBlock, const Shape &ifmShape,
@@ -254,9 +260,9 @@ private:
     int MaxOutstandingKernelOps() { return 2; }
     int MaxOutstandingDMAOps() { return 4; }
     int MaxBlockdep() { return 7; }
-    bool IsUBlockValid(const OpType opType, int ifmBits, const Shape &ofmUBlock, bool hasIfm2, const Kernel *kernel, EthosU85Traversal traversal);
-    Shape FindUBlock(OpType opType, const ArchitectureConfigQuery &query, EthosU85Traversal traversal);
-    Shape CalcIfmAUSize(int IfmBlkDepth, int ifmBits, Shape ofmUBlk);
+    bool IsUBlockValid(const OpType opType, int ifmBits, const Shape &ofmUBlock, bool hasIfm2, bool depthFirst1x1);
+    Shape FindUBlock(OpType opType, const ArchitectureConfigQuery &query, bool partKernel);
+    Shape CalcIfmAUSize(int ifmBlkDepth, int ifmBits, const Shape &ofmUBlk);
     int CalcResizeMaxOfmBlockWidth(int ifmBits, int scaleN, int scaleD);
     int IndexForOfmUBlock(const Shape &ofmUBlock);
     void SetupOfmUBlockToOpTable();

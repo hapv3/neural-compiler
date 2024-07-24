@@ -97,10 +97,12 @@ bool Compiler::ParseOptions(const char *text, size_t size)
             {
                 if ( key == "trace" )
                 {
-                    if ( reader.Get<bool>() )
+                    bool enable = false;
+                    if ( reader.Read(enable) )
                     {
-                        Logging::Out.SetFilterMask(Logging::Out.FilterMask() | 8 | 16 | 32);
+                        if ( enable ) Logging::Out.SetFilterMask(Logging::Out.FilterMask() | 8 | 16 | 32);
                     }
+                    else LOG_WARN("Bad debug.trace flag\n");
                 }
                 reader.End();
             }

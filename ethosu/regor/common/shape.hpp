@@ -44,7 +44,7 @@ private:
     bool _dynamic = false;
 
 public:
-    Shape() {}
+    Shape() { _storage.ptr = nullptr; }
 
     Shape(int c)
     {
