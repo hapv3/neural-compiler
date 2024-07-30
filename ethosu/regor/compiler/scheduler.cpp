@@ -479,8 +479,8 @@ WeightScaleEncoding Scheduler::EncodeBestWeightFormat(
 
     if ( blockConfigSparse )
     {
-        auto perfDefault = EstimateOpPerformanceForSparsity(op, blockConfigDefault.get(), op->OFM()->shape.Depth());
-        auto perfSparse = EstimateOpPerformanceForSparsity(op, blockConfigSparse.get(), op->OFM()->shape.Depth());
+        auto perfDefault = EstimateOpPerformanceForSparsity(op, blockConfigDefault.get(), op->OFM()->SliceShape().Depth());
+        auto perfSparse = EstimateOpPerformanceForSparsity(op, blockConfigSparse.get(), op->OFM()->SliceShape().Depth());
         if ( perfSparse.opCycles > perfDefault.opCycles )
         {
             supportedFormats &= ~WF(WeightFormat::Sparse2_4);
@@ -639,14 +639,14 @@ std::unique_ptr<Schedule> Scheduler::CreateInitialSchedule()
     for ( auto &op : _ops )
     {
         auto cost = CreateSchedulerOpInfo(op.get(), op->OFM()->SliceShape());
-        cost->cycles = EstimateOpPerformance(op.get(), cost->Config(), op->OFM()->shape.Depth());
-        cost->elementAccess = EstimateOpElementAccess(op.get(), cost->Config(), op->OFM()->shape.Depth());
+        cost->cycles = EstimateOpPerformance(op.get(), cost->Config(), op->OFM()->SliceShape().Depth());
+        cost->elementAccess = EstimateOpElementAccess(op.get(), cost->Config(), op->OFM()->SliceShape().Depth());
         // sub-operations
         for ( auto &subOp : op->SubOps() )
         {
             auto subCost = CreateSchedulerOpInfo(subOp.get(), subOp->OFM()->SliceShape(), cost);
-            subCost->cycles = EstimateOpPerformance(subOp.get(), subCost->Config(), subOp->OFM()->shape.Depth());
-            subCost->elementAccess = EstimateOpElementAccess(subOp.get(), subCost->Config(), subOp->OFM()->shape.Depth());
+            subCost->cycles = EstimateOpPerformance(subOp.get(), subCost->Config(), subOp->OFM()->SliceShape().Depth());
+            subCost->elementAccess = EstimateOpElementAccess(subOp.get(), subCost->Config(), subOp->OFM()->SliceShape().Depth());
             schedule->SetCost(*subOp, std::move(subCost));
         }
         schedule->SetCost(*op, std::move(cost));
@@ -1081,15 +1081,15 @@ std::shared_ptr<Schedule> Scheduler::ProposeMinimalSchedule()
         Shape minStripe = Shape::PadAxes(schedOp->OFM()->shape, 3, 1);
         minStripe[-3] = minStripeHeight;
         auto cost = CreateSchedulerOpInfo(schedOp.get(), minStripe);
-        cost->cycles = EstimateOpPerformance(schedOp.get(), cost->Config(), schedOp->OFM()->shape.Depth());
-        cost->elementAccess = EstimateOpElementAccess(schedOp.get(), cost->Config(), schedOp->OFM()->shape.Depth());
+        cost->cycles = EstimateOpPerformance(schedOp.get(), cost->Config(), schedOp->OFM()->SliceShape().Depth());
+        cost->elementAccess = EstimateOpElementAccess(schedOp.get(), cost->Config(), schedOp->OFM()->SliceShape().Depth());
 
         // sub-operations use the same stripe as their parent
         for ( auto &subOp : schedOp->SubOps() )
         {
             auto subCost = CreateSchedulerOpInfo(subOp.get(), minStripe, cost);
-            subCost->cycles = EstimateOpPerformance(subOp.get(), subCost->Config(), subOp->OFM()->shape.Depth());
-            subCost->elementAccess = EstimateOpElementAccess(subOp.get(), subCost->Config(), subOp->OFM()->shape.Depth());
+            subCost->cycles = EstimateOpPerformance(subOp.get(), subCost->Config(), subOp->OFM()->SliceShape().Depth());
+            subCost->elementAccess = EstimateOpElementAccess(subOp.get(), subCost->Config(), subOp->OFM()->SliceShape().Depth());
             minSchedule->SetCost(*subOp, std::move(subCost));
         }
         minSchedule->SetCost(*schedOp, std::move(cost));
@@ -1159,15 +1159,15 @@ std::shared_ptr<Schedule> Scheduler::ProposeScheduleStriping(const Shape &finalS
         auto cost = CreateSchedulerOpInfo(schedOp, stripe);
 
         // Estimate performance
-        cost->cycles = EstimateOpPerformance(schedOp, cost->Config(), schedOp->OFM()->shape.Depth());
-        cost->elementAccess = EstimateOpElementAccess(schedOp, cost->Config(), schedOp->OFM()->shape.Depth());
+        cost->cycles = EstimateOpPerformance(schedOp, cost->Config(), schedOp->OFM()->SliceShape().Depth());
+        cost->elementAccess = EstimateOpElementAccess(schedOp, cost->Config(), schedOp->OFM()->SliceShape().Depth());
 
         // sub-operations use the same stripe as their parent
         for ( auto &subOp : schedOp->SubOps() )
         {
             auto subCost = CreateSchedulerOpInfo(subOp.get(), stripe, cost);
-            subCost->cycles = EstimateOpPerformance(subOp.get(), subCost->Config(), subOp->OFM()->shape.Depth());
-            subCost->elementAccess = EstimateOpElementAccess(subOp.get(), subCost->Config(), subOp->OFM()->shape.Depth());
+            subCost->cycles = EstimateOpPerformance(subOp.get(), subCost->Config(), subOp->OFM()->SliceShape().Depth());
+            subCost->elementAccess = EstimateOpElementAccess(subOp.get(), subCost->Config(), subOp->OFM()->SliceShape().Depth());
             stripedSchedule->SetCost(*subOp, std::move(subCost));
         }
 
@@ -1433,7 +1433,7 @@ PerformanceQuery Scheduler::InitPerfQuery(SchedulerOperation *op, ArchitectureOp
     query.config = config;
 
     SchedulerConnection *ifm0 = op->IFM(0);
-    query.ifmShape[0] = ifm0->shape;
+    query.ifmShape[0] = ifm0->SliceShape();
     query.ifmMemory[0] = ifm0->tensor->memArea.memory;
     query.ifmType[0] = ifm0->tensor->dataType;
     query.ifmFormat[0] = ifm0->tensor->format;
@@ -1441,14 +1441,14 @@ PerformanceQuery Scheduler::InitPerfQuery(SchedulerOperation *op, ArchitectureOp
     SchedulerConnection *ifm1 = op->TryIFM(1);
     if ( ifm1 )
     {
-        query.ifmShape[1] = ifm1->shape;
+        query.ifmShape[1] = ifm1->SliceShape();
         query.ifmMemory[1] = ifm1->tensor->memArea.memory;
         query.ifmType[1] = ifm1->tensor->dataType;
         query.ifmFormat[1] = ifm1->tensor->format;
     }
 
     SchedulerConnection *ofm = op->OFM();
-    query.ofmShape = (ofmDepth >= 0) ? ofm->shape.WithDepth(ofmDepth) : ofm->shape;
+    query.ofmShape = (ofmDepth >= 0) ? ofm->SliceShape().WithDepth(ofmDepth) : ofm->SliceShape();
     query.ofmMemory = ofm->tensor->memArea.memory;
     query.ofmType = ofm->tensor->dataType;
     query.ofmFormat = ofm->tensor->format;
