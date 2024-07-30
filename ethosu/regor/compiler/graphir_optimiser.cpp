@@ -393,6 +393,48 @@ Operation *GraphIrOptimiser::RewriteTable(Graph *const graph, Operation *const o
     return returnOp;
 }
 
+// Rewrite TOSA Cast to other ops
+Operation *GraphIrOptimiser::RewriteCast(Graph *const graph, Operation *const operation)
+{
+    Operation *returnOp = operation;
+    const OpType opType = operation->Type();
+    if ( opType == OpType::Cast )
+    {
+        const auto ifmConn = operation->Input(TensorUsage::IFM);
+        const auto ofmConn = operation->Output(TensorUsage::OFM);
+
+        if ( IsBool(ifmConn->tensor->Type()) && IsInteger(ofmConn->tensor->Type()) )
+        {
+            // Replace CAST with BITWISE_AND to convert from internal bool representation to integer
+            auto newOp = std::make_shared<Operation>(OpType::And);
+            newOp->CopyInput(TensorUsage::IFM0, *ifmConn);
+            newOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_one", 1));
+            newOp->CopyOutput(TensorUsage::OFM, *ofmConn);
+            operation->Disconnect();
+            returnOp = newOp.get();
+        }
+        else if ( IsInteger(ifmConn->tensor->Type()) && IsBool(ofmConn->tensor->Type()) )
+        {
+            // Replace CAST with CMP_NE to convert from integer to internal bool representation
+            auto newOp = std::make_shared<Operation>(OpType::NotEqual);
+            newOp->CopyInput(TensorUsage::IFM0, *ifmConn);
+            newOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_zero", 0));
+            newOp->CopyOutput(TensorUsage::OFM, *ofmConn);
+            operation->Disconnect();
+            returnOp = newOp.get();
+        }
+        else
+        {
+            // Replace CAST with ADD
+            auto copyOp = std::make_shared<Operation>(OpType::Add);
+            copyOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_zero", 0));
+            ReplaceOperation(operation, copyOp.get());
+            returnOp = copyOp.get();
+        }
+    }
+    return returnOp;
+}
+
 // Move Split/slice op to consumer
 void GraphIrOptimiser::MoveToConsumer(const Operation *const operation, Operation *const cons)
 {
