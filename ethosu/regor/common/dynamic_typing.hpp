@@ -25,7 +25,7 @@
 namespace regor
 {
 
-template<typename T>
+template<typename T, typename ENABLE = void>
 struct FieldTypeId
 {
     static constexpr uint8_t TYPEID = 0;
@@ -106,6 +106,12 @@ template<>
 struct FieldTypeId<Fraction<int>>
 {
     static constexpr uint8_t TYPEID = 0x22;
+};
+// Enum types
+template<typename T>
+struct FieldTypeId<T, typename std::enable_if<std::is_enum<T>::value>::type>
+{
+    static constexpr uint8_t TYPEID = FieldTypeId<typename std::underlying_type<T>::type>::TYPEID;
 };
 
 template<typename TYPE>

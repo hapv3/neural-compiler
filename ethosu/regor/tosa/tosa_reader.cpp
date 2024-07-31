@@ -695,9 +695,9 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         tosa_assert(tosa_attr.border()->size() == 2);
 
                         builder->Set(op, GraphApi::OpAttr::RESIZE_SCALEY,
-                            GraphApi::Point2{(*tosa_attr.scale())[0], (*tosa_attr.scale())[1]});
+                            GraphApi::FractionND{(*tosa_attr.scale())[0], (*tosa_attr.scale())[1]});
                         builder->Set(op, GraphApi::OpAttr::RESIZE_SCALEX,
-                            GraphApi::Point2{(*tosa_attr.scale())[2], (*tosa_attr.scale())[3]});
+                            GraphApi::FractionND{(*tosa_attr.scale())[2], (*tosa_attr.scale())[3]});
                         builder->Set(op, GraphApi::OpAttr::RESIZE_OFFSET,
                             GraphApi::Point2{(*tosa_attr.offset())[1], (*tosa_attr.offset())[0]});
                         builder->Set(op, GraphApi::OpAttr::RESIZE_BORDER,
