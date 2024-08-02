@@ -322,7 +322,26 @@ inline int Clz64(uint64_t x)
     return x == 0 ? 64 : __builtin_clzll(x);
 #elif _MSC_VER
     unsigned long leading_zero = 0;
+
+#if defined(_WIN64)
     return _BitScanReverse64(&leading_zero, x) ? 63 - leading_zero : 64;
+#elif defined(_WIN32)
+    // WIN32 does not contain _BitScanReverse64 so split into high and low parts
+    uint32_t x_h = x >> 32;
+    uint32_t x_l = x & 0xffffffff;
+    if ( x_h != 0 )
+    {
+        // There is a set bit in the high bits
+        return _BitScanReverse(&leading_zero, x_h) ? 31 - leading_zero : 32;
+    }
+    else
+    {
+        // There is no set bit in the high bits, try lower bits
+        return _BitScanReverse(&leading_zero, x_l) ? 63 - leading_zero : 64;
+    }
+#else
+#error "Unsupported MSVC platform"
+#endif
 #else
 #error "Unsupported toolchain"
 #endif
