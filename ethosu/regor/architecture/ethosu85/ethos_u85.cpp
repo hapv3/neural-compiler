@@ -370,7 +370,7 @@ void ArchEthosU85::SetupOfmUBlockToOpTable()
         };
         _uBlockToOpTable[b_1x1x16] = {
             depthwise | pool | elementwise | resize,
-            vectorprod | elementwise | resize,
+            conv | vectorprod | elementwise | resize, //convolution 1x1 kernel 16 bit ifm
             elementwise | resize
         };
     }
@@ -391,7 +391,7 @@ void ArchEthosU85::SetupOfmUBlockToOpTable()
         };
         _uBlockToOpTable[b_1x2x16] = {
             depthwise | pool | elementwise | resize,
-            vectorprod | elementwise | resize,
+            conv | vectorprod | elementwise | resize, //convolution 1x1 kernel 16 bit ifm
             elementwise | resize
         };
     }
@@ -455,7 +455,7 @@ void ArchEthosU85::SetupOfmUBlockToOpTable()
     // clang-format on
 }
 
-bool ArchEthosU85::IsUBlockValid(const OpType opType, int ifmBits, const Shape &ofmUBlock, bool hasIfm2)
+bool ArchEthosU85::IsUBlockValid(const OpType opType, int ifmBits, const Shape &ofmUBlock, bool hasIfm2, const Kernel *kernel, EthosU85Traversal traversal)
 {
     EthosU85NpuOp npuOp = GetHWOp(opType);
     if ( npuOp == EthosU85NpuOp::None )
@@ -485,6 +485,28 @@ bool ArchEthosU85::IsUBlockValid(const OpType opType, int ifmBits, const Shape &
         return false;
     }
 
+    // check special case 1x1 kernel convolution for 128 and 256
+    if ( _macs == 128 && npuOp == EthosU85NpuOp::Convolution )
+    {
+        if ( ofmUBlock == Shape(1, 1, 16) )
+        {
+            if ( !(kernel->Size().x == 1 && kernel->Size().y == 1) || traversal != EthosU85Traversal::DepthFirst )
+            {
+                return false;
+            }
+        }
+    }
+    else if ( _macs == 256 && npuOp == EthosU85NpuOp::Convolution )
+    {
+        if ( ofmUBlock == Shape(1, 2, 16) )
+        {
+            if ( !(kernel->Size().x == 1 && kernel->Size().y == 1) || traversal != EthosU85Traversal::DepthFirst )
+            {
+                return false;
+            }
+        }
+    }
+
     // one-hot encoded mask for NpuOp operations
     unsigned opmask = MaskForNpuOp(npuOp, hasIfm2);
     return bitsToOperations[bitIdx] & opmask;
@@ -496,7 +518,7 @@ bool IsMinMaxReduction(OpType opType, const Kernel *kernel)
     return (opType == OpType::MaxPool || opType == OpType::Min) && (kernel->Size().x == 1 || kernel->Size().y == 1);
 }
 
-Shape ArchEthosU85::FindUBlock(OpType opType, const ArchitectureConfigQuery &query)
+Shape ArchEthosU85::FindUBlock(OpType opType, const ArchitectureConfigQuery &query, EthosU85Traversal traversal)
 {
     int lookupBits = query.ifmBits;
     if ( IsMinMaxReduction(opType, query.kernel) && lookupBits == 32 )
@@ -515,7 +537,7 @@ Shape ArchEthosU85::FindUBlock(OpType opType, const ArchitectureConfigQuery &que
     for ( int i = 0; i < _nOfmUBlocks; i++ )
     {
         const Shape &ublk = _ofmUBlocks[i];
-        if ( !IsUBlockValid(opType, lookupBits, ublk, query.ifmShape[1] != Shape()) )
+        if ( !IsUBlockValid(opType, lookupBits, ublk, query.ifmShape[1] != Shape(), query.kernel, traversal) )
         {
             continue;
         }
@@ -662,7 +684,7 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU85::FindBlockConfig(OpType opTyp
     int upscale = UpscaleAndRounding(query.ifmResampling, rounding);
     int numBlocksInRam = 2;
 
-    const Shape ofmUBlock = FindUBlock(opType, query);
+    const Shape ofmUBlock = FindUBlock(opType, query, traversal);
     if ( !ofmUBlock )
     {
         // no valid ofm microblock found

@@ -248,8 +248,8 @@ private:
     int MaxOutstandingKernelOps() { return 2; }
     int MaxOutstandingDMAOps() { return 4; }
     int MaxBlockdep() { return 7; }
-    bool IsUBlockValid(const OpType opType, int ifmBits, const Shape &ofmUBlock, bool hasIfm2);
-    Shape FindUBlock(OpType opType, const ArchitectureConfigQuery &query);
+    bool IsUBlockValid(const OpType opType, int ifmBits, const Shape &ofmUBlock, bool hasIfm2, const Kernel *kernel, EthosU85Traversal traversal);
+    Shape FindUBlock(OpType opType, const ArchitectureConfigQuery &query, EthosU85Traversal traversal);
     Shape CalcIfmAUSize(int IfmBlkDepth, int ifmBits, Shape ofmUBlk);
     int CalcResizeMaxOfmBlockWidth(int ifmBits, int scaleN, int scaleD);
     int IndexForOfmUBlock(const Shape &ofmUBlock);
