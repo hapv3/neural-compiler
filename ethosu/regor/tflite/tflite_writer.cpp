@@ -80,6 +80,12 @@ std::unique_ptr<const uint8_t[]> TfLiteWriter::Serialise(const std::vector<std::
                 auto operator_codes = tflite_model->operator_codes();
                 assert(operator_codes);
                 builtin_code = operator_codes->Get(tflite_operator->opcode_index())->builtin_code();
+                if ( builtin_code == tflite::BuiltinOperator(0) )
+                {
+                    int8_t deprecated_builtin_code = operator_codes->Get(tflite_operator->opcode_index())->deprecated_builtin_code();
+                    builtin_code = static_cast<tflite::BuiltinOperator>(deprecated_builtin_code);
+                }
+
                 type = TfLiteMapping::BuiltinOperatorToOpType(builtin_code);
             }
             else
