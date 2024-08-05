@@ -69,7 +69,7 @@ class HillClimbAllocator
 private:
     static constexpr int MAX_ITERATIONS = 99999;
     // Special handling if best solution has not improved during this many iterations
-    static constexpr int MAX_ITERATIONS_STUCK = 50;
+    static constexpr int MAX_ITERATIONS_STUCK = 25;
     // Minimum number of iterations since the last improvement (unless an optimal solution is found)
     static constexpr int MIN_ITERATIONS_IMPROVE = 5000;
     // Used for live ranges allocated at address 0

@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <queue>
 #include <set>
 #include <vector>
 
@@ -292,15 +293,24 @@ void HillClimbAllocator::AttemptBottleneckFix(std::vector<int> &indices, int ite
         // Adding more neighbours can sometimes resolve the situation where the current bottleneck
         // is resolved, but always results in a higher bottleneck at a nearby live range.
         // Magic number is based on tuning
-        for ( auto turn : nonNbTurnList )
+        std::unordered_set<int> visited;  // Set contains LR IDs
+        std::queue<int> pending;          // Queue contains LR IDs
+        pending.push(maxLr->id);
+        while ( pending.size() > 0 )
         {
-            for ( auto lr_p : neighbours[indices[turn]] )
+            int id = pending.front();
+            pending.pop();
+            if ( visited.count(id) ) continue;
+            visited.insert(id);
+            assert(id >= 0 && id < int(neighbours.size()));
+            for ( auto lr_p : neighbours[id] )
             {
                 if ( turns.count(lr_p->turn) == 0 )
                 {
                     turns.insert(lr_p->turn);
                     turnList.push_back(lr_p->turn);
                 }
+                pending.push(lr_p->id);
             }
         }
         ix1 = turnList[dist(0, turnList.size() - 1)(rng)];
