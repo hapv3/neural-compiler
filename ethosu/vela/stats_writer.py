@@ -390,7 +390,7 @@ def print_performance_metrics(nng, arch, show_cpu_operations=False, verbose_weig
     )
 
     def format_tens_list(lst):
-        return " ".join(str(list(tens.shape)) for tens in lst)
+        return " ".join(str(list(tens.shape)) for tens in lst if tens is not None)
 
     for sg in nng.subgraphs:
         if sg.placement == PassPlacement.Cpu:
