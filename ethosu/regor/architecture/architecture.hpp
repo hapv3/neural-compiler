@@ -65,26 +65,33 @@ protected:
     int _readLatencyCycles = 0;
     int _writeLatencyCycles = 0;
     int _maxBurstLengthBytes = 0;
-    int _portIndex = 0;
+    int _portsUsed = 1;
+    int _maxReads = 0;
+    int _maxWrites = 0;
 
 public:
     ArchitectureMemory(const std::string &name, Address sizeBytes) : _name(name), _sizeBytes(sizeBytes) {}
 
 public:
-    void SetParameters(float bandwidth, int readLatency, int writeLatency, int maxBurstLengthBytes, int portIndex)
+    void SetParameters(float bandwidth, int readLatency, int writeLatency, int maxBurstLengthBytes, int portsUsed, int maxReads, int maxWrites)
     {
         _bandwidthPerCycle = bandwidth;
         _readLatencyCycles = readLatency;
         _writeLatencyCycles = writeLatency;
         _maxBurstLengthBytes = maxBurstLengthBytes;
-        _portIndex = portIndex;
+        _portsUsed = portsUsed;
+        _maxReads = maxReads;
+        _maxWrites = maxWrites;
     }
 
-    float Bandwidth() const { return _bandwidthPerCycle; }  // Assume read/write symmetrical
+    float Bandwidth() const { return _bandwidthPerCycle; }
     int ReadLatency() const { return _readLatencyCycles; }
     int WriteLatency() const { return _writeLatencyCycles; }
     Address SizeBytes() const { return _sizeBytes; }
     int MaxBurstLength() const { return _maxBurstLengthBytes; }
+    int PortsUsed() const { return _portsUsed; }
+    int MaxReads() const { return _maxReads; }
+    int MaxWrites() const { return _maxWrites; }
     std::string Name() const { return _name; }
 };
 

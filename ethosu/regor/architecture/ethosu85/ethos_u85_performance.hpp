@@ -33,6 +33,16 @@ struct EthosU85PerfInfo
     float activationCycles[3];
 };
 
+enum class EthosU85Channel
+{
+    Mem2Mem = 0,
+    IFMStream = 1,
+    Weight = 2,
+    FastWeight = 3,
+    IFM = 4,
+    OFM = 5,
+};
+
 /// <summary>
 /// Profiles performance analysis for Ethos-U85
 /// </summary>
@@ -58,6 +68,8 @@ private:
     int64_t EstimateConvCycles(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);
     float EstimateOutputCyclesPerElement(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);
     int64_t EstimateMinimumMemoryCycles(const PerformanceQuery &query);
+
+    float ChannelBW(const ArchitectureMemory *mem, EthosU85Channel channel);
 };
 
 }  // namespace regor

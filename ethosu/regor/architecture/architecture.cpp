@@ -98,8 +98,9 @@ bool Architecture::ParseMemory(IniReader *reader, const std::string &section)
     int readLatency = 0;
     int writeLatency = 0;
     int burstLength = 1;
-    int portIndex = 0;
-
+    int ports_used = 0;
+    int max_reads = 0;
+    int max_writes = 0;
     // Parse memory definition
     std::string key;
     while ( reader->Begin(key) )
@@ -140,9 +141,17 @@ bool Architecture::ParseMemory(IniReader *reader, const std::string &section)
         {
             burstLength = std::max(1, reader->Get<int>());
         }
-        else if ( key == "port_index" )
+        else if ( key == "ports_used" )
         {
-            portIndex = std::max(0, reader->Get<int>());
+            ports_used = std::max(1, reader->Get<int>());
+        }
+        else if ( key == "max_reads" )
+        {
+            max_reads = std::max(1, reader->Get<int>());
+        }
+        else if ( key == "max_writes" )
+        {
+            max_writes = std::max(1, reader->Get<int>());
         }
         else
         {
@@ -176,7 +185,7 @@ bool Architecture::ParseMemory(IniReader *reader, const std::string &section)
     else
     {
         auto memory = std::make_unique<ArchitectureMemory>(name, size);
-        memory->SetParameters(bandwidth, readLatency, writeLatency, burstLength, portIndex);
+        memory->SetParameters(bandwidth, readLatency, writeLatency, burstLength, ports_used, max_reads, max_writes);
         _memories[name] = std::move(memory);
     }
 

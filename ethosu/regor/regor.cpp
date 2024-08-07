@@ -58,10 +58,13 @@ struct Memories
 {
     struct Memory
     {
-        float clock_scale;
-        int read_latency;
-        int write_latency;
-        int burst_length;
+        float clock_scale = 1;
+        int read_latency = 1;
+        int write_latency = 1;
+        int burst_length = 64;
+        int ports_used = 1;
+        int max_reads = 1;
+        int max_writes = 1;
     };
 
     // Maps memory name ("Sram") to a memory struct instance
@@ -156,6 +159,18 @@ Memories parse_vela_system_config_section(IniReader &reader, const std::unordere
             else if ( memoryParameterName == "write_latency" )
             {
                 memories.memories[memoryName].write_latency = reader.Get<int>();
+            }
+            else if ( memoryParameterName == "ports_used" )
+            {
+                memories.memories[memoryName].ports_used = reader.Get<int>();
+            }
+            else if ( memoryParameterName == "max_reads" )
+            {
+                memories.memories[memoryName].max_reads = reader.Get<int>();
+            }
+            else if ( memoryParameterName == "max_writes" )
+            {
+                memories.memories[memoryName].max_writes = reader.Get<int>();
             }
         }
 
@@ -314,6 +329,9 @@ DLL_EXPORT int regor_set_system_config(regor_context_t ctx, const char *config_t
 
         startOfSection = reader.Position();
     }
+    std::string u55String = "Ethos_U55";
+    bool isU55 = vela.system_config_name.substr(0, u55String.size()) == u55String;
+    int axiWidthBytes = isU55 ? 8 : 16;
 
     if ( (foundSystemConfig && foundMemoryMode) || !regorIniUnknown.empty() )
     {
@@ -321,10 +339,13 @@ DLL_EXPORT int regor_set_system_config(regor_context_t ctx, const char *config_t
         {
             regorIni += "[memory." + it.first + "]\n";
             regorIni += "name=" + it.first + "\n";
-            regorIni += "bandwidth=" + std::to_string(it.second.clock_scale * 16) + "\n";
+            regorIni += "bandwidth=" + std::to_string(it.second.clock_scale * axiWidthBytes * it.second.ports_used) + "\n";
             regorIni += "read_latency=" + std::to_string(it.second.read_latency) + "\n";
             regorIni += "write_latency=" + std::to_string(it.second.write_latency) + "\n";
             regorIni += "burst_length=" + std::to_string(it.second.burst_length) + "\n";
+            regorIni += "ports_used=" + std::to_string(it.second.ports_used) + "\n";
+            regorIni += "max_reads=" + std::to_string(it.second.max_reads) + "\n";
+            regorIni += "max_writes=" + std::to_string(it.second.max_writes) + "\n";
         }
 
         if ( foundSystemConfig )

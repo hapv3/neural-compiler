@@ -168,6 +168,7 @@ public:
         int cbRamSizeBytes;
         uint8_t numAxiSramLog2;
         uint8_t numAxiExtLog2;
+        const std::array<int, 5> channelRBs;
         const EthosU85PerfInfo *perfInfo;
     };
 
@@ -191,6 +192,7 @@ private:
     int _accRamSizeBytes = 0;
     int _numAxiSramLog2 = 0;
     int _numAxiExtLog2 = 0;
+    const std::array<int, 5> *_channelRBs{};
 
 protected:
     std::unique_ptr<class WeightEncoder> _weightEncoder;

@@ -167,8 +167,10 @@ void ArchEthosU55::ApplyConfig(const AcceleratorConfig *cfg)
     _shram.reservedEndBanks = (_shram.totalBanks > 16) ? 2 : 0;
 
     _shramMemory = std::make_unique<ArchitectureMemory>("shram", _shram.bankSizeBytes * _shram.totalBanks);
-    _shramMemory->SetParameters(1, 0, 0, 1, 0);  // TODO: These figures make no sense for the shram (they depend on
-                                                 // which HW unit is accessing the memory)
+    // TODO: Change SHRAM to use an internal memory representation rather than an external one (ArchitectureMemory)
+    //  where most of the parameters are not relevant. It is currently this way to enable easy
+    //  integration of the LUT memory
+    _shramMemory->SetParameters(1, 0, 0, 1, 1, 1000, 1000);
     _lutMemory = _shramMemory.get();
     _performance = std::unique_ptr<ArchitecturePerformance>(new EthosU55Performance(this, cfg->perfInfo));
 }

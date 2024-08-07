@@ -109,9 +109,10 @@ CycleCost EthosU85Performance::MeasureCycleCost(const PerformanceQuery &query, c
 
 int64_t EthosU85Performance::MemToMemCycles(const ArchitectureMemory *dest, const ArchitectureMemory *source, int sizeBytes)
 {
-    int64_t fromCycles = int64_t(float(sizeBytes) / source->Bandwidth());
+    int64_t fromCycles = int64_t(float(sizeBytes) / ChannelBW(source, EthosU85Channel::Mem2Mem));
     fromCycles += source->ReadLatency();
-    int64_t toCycles = int64_t(float(sizeBytes) / dest->Bandwidth());
+    // TODO: Below shouldn't use the OFM channel. See MLBEDSW-9384.
+    int64_t toCycles = int64_t(float(sizeBytes) / ChannelBW(dest, EthosU85Channel::OFM));
     toCycles += source->WriteLatency();
     return std::max(fromCycles, toCycles);
 }
@@ -544,9 +545,39 @@ int64_t EthosU85Performance::WeightDecodeCycles(
         weightsPerCycle = weightsPerCore * _arch->_cores;
     }
     int64_t decodeCycles = weights.size / weightsPerCycle;
-    int64_t dmaCycles = int64_t(float(weights.encodedSize) / weightsMemory->Bandwidth());
+
+    EthosU85Channel channel = (format & WeightFormat::Fast) ? EthosU85Channel::FastWeight : EthosU85Channel::Weight;
+    int64_t dmaCycles = int64_t(float(weights.encodedSize) / ChannelBW(weightsMemory, channel));
     dmaCycles += weightsMemory->ReadLatency();
     return std::max(decodeCycles, dmaCycles);
+}
+
+float EthosU85Performance::ChannelBW(const ArchitectureMemory *mem, const EthosU85Channel channel)
+{
+    int burstLenWords = std::max(mem->MaxBurstLength() / 16, 1);
+
+    float read_rb_lim;
+    int maxOutstanding;
+    int latency;
+
+    if ( channel == EthosU85Channel::OFM )
+    {
+        maxOutstanding = mem->MaxWrites();
+        latency = mem->WriteLatency();
+        read_rb_lim = std::numeric_limits<float>::max();
+    }
+    else
+    {
+        maxOutstanding = mem->MaxReads();
+        latency = mem->ReadLatency();
+        int channelRB = _arch->_channelRBs->at(static_cast<int>(channel));
+        read_rb_lim = static_cast<float>(channelRB) / burstLenWords;
+    }
+
+    float transactionUtil = std::min(read_rb_lim, static_cast<float>(maxOutstanding * mem->PortsUsed() * 0.8));
+    float channelBW = std::min(mem->Bandwidth(), static_cast<float>(mem->MaxBurstLength() * transactionUtil / latency * 0.8));
+
+    return channelBW;
 }
 
 }  // namespace regor
