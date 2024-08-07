@@ -396,25 +396,6 @@ Shape TFLiteGraphOptimiser::MakeStridedSliceDesiredShape(Operation *const operat
 }
 
 
-// Move Split/slice op to consumer
-void TFLiteGraphOptimiser::MoveToConsumer(const Operation *const operation, Operation *const cons)
-{
-    auto *ifmConn = operation->Input(TensorUsage::IFM0);
-    auto *ofm = operation->OFM();
-    auto *consIfm0 = cons->IFM(0);
-    auto *consIfm1 = cons->IFM(1);
-
-    if ( consIfm0 == ofm )
-    {
-        cons->CopyInput(TensorUsage::IFM0, *ifmConn);
-    }
-    else if ( consIfm1 != nullptr && IsBinaryElementwise(cons->Type()) && consIfm1 == ofm )
-    {
-        cons->CopyInput(TensorUsage::IFM1, *ifmConn);
-    }
-}
-
-
 Operation *TFLiteGraphOptimiser::MakeDepthwiseMeanOp(const TensorConnection *ifmConn, const Shape &ifmShape4D, const Shape &readShape,
     const Shape &readOffset, const Shape &ofmShape4D, int w, int h, const std::string &name, std::shared_ptr<Tensor> &weightTensor,
     std::shared_ptr<Tensor> biasTensor, const Quantization &ifmQuant, const Quantization &weightQuant, const Quantization &ofmQuant)
@@ -1681,54 +1662,6 @@ Operation *TFLiteGraphOptimiser::ConvertArgMax(Graph *const graph, Operation *co
         }
     }
     return returnOp;
-}
-
-Operation *TFLiteGraphOptimiser::MoveSplitSliceToConsumer(Graph *const, Operation *const operation)
-{
-    auto *ifmConn = operation->Input(TensorUsage::IFM0);
-
-    if ( operation->Type() == OpType::MemoryCopy && ifmConn->slice.offset.Size() > 0 )
-    {
-        auto *ofmConn = operation->Output(TensorUsage::OFM);
-        auto *ofm = ofmConn->tensor.get();
-
-        // TODO: MLBEDSW-9072: Add check that moving split to consumer is valid
-
-        // We can only move to consumer if there is no transpose on the op that we will remove,
-        // otherwise we will lose that transposition.
-        if ( ofm->Readers().size() == 1 && IsNone(ofmConn->transpose) )
-        {
-            auto cons = ofm->Readers().front();
-            auto consOfmConn = cons->Output(TensorUsage::OFM);
-            auto *consIfm0 = cons->IFM(0);
-            auto *consIfm1 = cons->IFM(1);
-
-            bool ifmShapeEqual = false;
-            if ( consIfm0 == ofm )
-            {
-                // Check if ifm0 consumer has correct shape
-                auto *consIfm0Conn = cons->Input(TensorUsage::IFM0);
-                ifmShapeEqual = consIfm0Conn->shape == ofmConn->shape;
-            }
-            else if ( consIfm1 != nullptr && consIfm1 == ofm )
-            {
-                // Check if ifm1 consumer has correct shape
-                auto *consIfm1Conn = cons->Input(TensorUsage::IFM1);
-                ifmShapeEqual = consIfm1Conn->shape == ofmConn->shape;
-            }
-
-            // We can only move to consumer if there is no transpose on the op that we move to,
-            // otherwise the IFM shape may change and transposition will be wrong.
-            if ( !IsReshape(cons->Type()) && ofmConn->shape == Shape::PadAxes(ofm->StorageShape(), 4, 1) &&
-                 IsNone(consOfmConn->transpose) && ifmShapeEqual )
-            {
-                // Split/Slice can be performed by tensor consumer
-                MoveToConsumer(operation, cons.get());
-            }
-        }
-    }
-
-    return operation;
 }
 
 Operation *TFLiteGraphOptimiser::CreateTransposeForMatMul(const std::shared_ptr<Tensor> &ifm, const Shape &ofmShape)

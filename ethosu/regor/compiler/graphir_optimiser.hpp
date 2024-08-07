@@ -49,6 +49,8 @@ private:
     Operation *FixupPoolStrides(Graph *const, Operation *const operation);
     Operation *RewriteRescale(Graph *const graph, Operation *const operation);
     Operation *RewriteTable(Graph *const graph, Operation *const operation);
+    void MoveToConsumer(const Operation *const operation, Operation *const cons);
+    Operation *MoveSplitSliceToConsumer(Graph *const, Operation *const operation);
 
 public:
     // The graph optimisation steps.
@@ -87,6 +89,14 @@ public:
                 &GraphIrOptimiser::FixupPoolStrides,
                 &GraphIrOptimiser::RewriteRescale,
                 &GraphIrOptimiser::RewriteTable,
+            }
+        },
+        // MoveSplitSliceToConsumer need to be done after any other optimisation that can affect the ifm/ofm shapes
+        // has been performed, since the ifm/ofm shapes are of importance to this function.
+        {
+            {},
+            {
+                &GraphIrOptimiser::MoveSplitSliceToConsumer
             }
         },
         {

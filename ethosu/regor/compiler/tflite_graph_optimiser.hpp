@@ -105,8 +105,6 @@ private:
     //
     // returns the Desired shape.
     Shape MakeStridedSliceDesiredShape(Operation *const operation, const Shape &baseShape);
-    // Move Split/slice op to consumer
-    void MoveToConsumer(const Operation *const operation, Operation *const cons);
 
     Operation *MakeDepthwiseMeanOp(const TensorConnection *ifmConn, const Shape &ifmShape4D, const Shape &readShape,
         const Shape &readOffset, const Shape &ofmShape4D, int w, int h, const std::string &name, std::shared_ptr<Tensor> &weightTensor,
@@ -134,7 +132,6 @@ private:
     Operation *ConvertScatter(Graph *const graph, Operation *const operation);
     Operation *ConvertResize(Graph *const graph, Operation *const operation);
     Operation *ConvertArgMax(Graph *const graph, Operation *const operation);
-    Operation *MoveSplitSliceToConsumer(Graph *const, Operation *const operation);
 
     // RewriteBatchMatMul must be called before rewrite of transpose
     Operation *CreateTransposeForMatMul(const std::shared_ptr<Tensor> &ifm, const Shape &ofmShape);
@@ -270,13 +267,10 @@ public:
                 &TFLiteGraphOptimiser::UnrollConv,
             }
         },
-        // MoveSplitSliceToConsumer need to be done after any other optimisation that can affect the ifm/ofm shapes
-        // has been performed, since the ifm/ofm shapes are of importance to this function.
         {
             {},
             {
                 &TFLiteGraphOptimiser::ConvertPad,
-                &TFLiteGraphOptimiser::MoveSplitSliceToConsumer
             }
         },
         {
