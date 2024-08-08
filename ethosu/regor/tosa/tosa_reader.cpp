@@ -64,6 +64,14 @@ inline void tosa_assert(bool cond, const char *msg = nullptr)
     }
 }
 
+inline void builder_assert(bool cond, const std::string &msg)
+{
+    if ( !cond )
+    {
+        throw std::runtime_error("TOSA builder error : " + msg);
+    }
+}
+
 template<typename T>
 const T &SafeDeref(const T *ptr, const char *msg = nullptr)
 {
@@ -343,12 +351,14 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                 if ( tensorData && tensorData->size() )
                 {
                     buffer = builder->CreateBuffer(tensorData->size(), GraphApi::BufferMapping::Alias, tensorData->Data());
+                    builder_assert(buffer, "Failed to create buffer");
                 }
 
                 GraphApi::GraphShape tosaShape;
                 tosaShape.count = shape.ToNHWC(tosaShape.axisNHWC, std::size(tosaShape.axisNHWC));
 
                 auto tensor = builder->CreateTensor(name, tosaShape, GraphApi::GraphTensorLayout::Linear, type, buffer);
+                builder_assert(tensor, "Failed to create tensor");
 
                 tensors[name] = tensor;
                 shapes[name] = std::move(tosaShape);
@@ -565,6 +575,7 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                 }
 
                 auto op = builder->CreateOp(TosaMapping::FBOpToOp(tosa_operator.op()), kernelPtr);
+                builder_assert(op, "Failed to create operation");
 
                 // Fix op Attributes
                 auto ToApiShape = [](const ::flatbuffers::Vector<int32_t> *in) -> GraphApi::GraphShape
@@ -585,7 +596,8 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                     case tosaFb::Op::ARITHMETIC_RIGHT_SHIFT:
                     {
                         const auto &tosa_attr = TosaAttr<tosaFb::Op::ARITHMETIC_RIGHT_SHIFT>::Get(tosa_operator);
-                        builder->Set(op, OpAttr::ASR_ROUND, tosa_attr.round());
+                        builder_assert(builder->Set(op, OpAttr::ASR_ROUND, tosa_attr.round()),
+                            "Failed to set ASR_ROUND attribute on ARITHMETIC_RIGHT_SHIFT");
                     }
                     break;
                     case tosaFb::Op::CLAMP:
@@ -619,51 +631,62 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                                     break;
                             }
                         }
-                        builder->Set(op, OpAttr::CLAMP_MIN, clamp_min);
-                        builder->Set(op, OpAttr::CLAMP_MAX, clamp_max);
+                        builder_assert(builder->Set(op, OpAttr::CLAMP_MIN, clamp_min), "Failed to set CLAMP_MIN attribute on CLAMP");
+                        builder_assert(builder->Set(op, OpAttr::CLAMP_MAX, clamp_max), "Failed to set CLAMP_MAX attribute on CLAMP");
                     }
                     break;
                     case tosaFb::Op::SLICE:
                     {
                         const auto &tosa_attr = TosaAttr<tosaFb::Op::SLICE>::Get(tosa_operator);
-                        builder->Set(op, OpAttr::SLICE_BEGIN, ToApiShape(tosa_attr.start()));
-                        builder->Set(op, OpAttr::SLICE_SIZE, ToApiShape(tosa_attr.size()));
+                        builder_assert(builder->Set(op, OpAttr::SLICE_BEGIN, ToApiShape(tosa_attr.start())),
+                            "Failed to set SLICE_BEGIN attribute on SLICE");
+                        builder_assert(builder->Set(op, OpAttr::SLICE_SIZE, ToApiShape(tosa_attr.size())), "Failed to set SLICE_SIZE attribute on SLICE");
                     }
                     break;
                     case tosaFb::Op::MUL:
                     {
                         const auto &tosa_attr = TosaAttr<tosaFb::Op::MUL>::Get(tosa_operator);
-                        builder->Set(op, OpAttr::MUL_SHIFT, tosa_attr.shift());
+                        builder_assert(builder->Set(op, OpAttr::MUL_SHIFT, tosa_attr.shift()), "Failed to set MUL_SHIFT attribute on MUL");
                     }
                     break;
                     case tosaFb::Op::TRANSPOSE:
                     {
                         const auto &tosa_attr = TosaAttr<tosaFb::Op::TRANSPOSE>::Get(tosa_operator);
-                        builder->Set(op, OpAttr::TRANSPOSE_PERM, ToApiShape(tosa_attr.perms()));
+                        builder_assert(builder->Set(op, OpAttr::TRANSPOSE_PERM, ToApiShape(tosa_attr.perms())),
+                            "Failed to set TRANSPOSE_PERM attribute on TRANSPOSE");
                     }
                     break;
                     case tosaFb::Op::COND_IF:
                     {
                         const auto &tosa_attr = TosaAttr<tosaFb::Op::COND_IF>::Get(tosa_operator);
-                        builder->Set(op, OpAttr::COND_IF, SafeDeref(tosa_attr.then_branch()).c_str());
-                        builder->Set(op, OpAttr::COND_ELSE, SafeDeref(tosa_attr.else_branch()).c_str());
+                        builder_assert(builder->Set(op, OpAttr::COND_IF, SafeDeref(tosa_attr.then_branch()).c_str()),
+                            "Failed to set COND_IF attribute on COND_IF");
+                        builder_assert(builder->Set(op, OpAttr::COND_ELSE, SafeDeref(tosa_attr.else_branch()).c_str()),
+                            "Failed to set COND_ELSE attribute on COND_IF");
                     }
                     break;
                     case tosaFb::Op::WHILE_LOOP:
                     {
                         const auto &tosa_attr = TosaAttr<tosaFb::Op::WHILE_LOOP>::Get(tosa_operator);
-                        builder->Set(op, OpAttr::WHILE_BODY, SafeDeref(tosa_attr.body_branch()).c_str());
-                        builder->Set(op, OpAttr::WHILE_COND, SafeDeref(tosa_attr.cond_branch()).c_str());
+                        builder_assert(builder->Set(op, OpAttr::WHILE_BODY, SafeDeref(tosa_attr.body_branch()).c_str()),
+                            "Failed to set WHILE_BODY attribute on WHILE_LOOP");
+                        builder_assert(builder->Set(op, OpAttr::WHILE_COND, SafeDeref(tosa_attr.cond_branch()).c_str()),
+                            "Failed to set WHILE_COND attribute on WHILE_LOOP");
                     }
                     break;
                     case tosaFb::Op::RESCALE:
                     {
                         const auto &tosa_attr = TosaAttr<tosaFb::Op::RESCALE>::Get(tosa_operator);
-                        builder->Set(op, GraphApi::OpAttr::RESCALE_SCALE32, tosa_attr.scale32());
-                        builder->Set(op, GraphApi::OpAttr::RESCALE_DOUBLE_ROUND, tosa_attr.double_round());
-                        builder->Set(op, GraphApi::OpAttr::RESCALE_PER_CHANNEL, tosa_attr.per_channel());
-                        builder->Set(op, GraphApi::OpAttr::RESCALE_INPUT_UNSIGNED, tosa_attr.input_unsigned());
-                        builder->Set(op, GraphApi::OpAttr::RESCALE_OUTPUT_UNSIGNED, tosa_attr.output_unsigned());
+                        builder_assert(builder->Set(op, GraphApi::OpAttr::RESCALE_SCALE32, tosa_attr.scale32()),
+                            "Failed to set RESCALE_SCALE32 attribute on RESCALE");
+                        builder_assert(builder->Set(op, GraphApi::OpAttr::RESCALE_DOUBLE_ROUND, tosa_attr.double_round()),
+                            "Failed to set RESCALE_DOUBLE_ROUND attribute on RESCALE");
+                        builder_assert(builder->Set(op, GraphApi::OpAttr::RESCALE_PER_CHANNEL, tosa_attr.per_channel()),
+                            "Failed to set RESCALE_PER_CHANNEL attribute on RESCALE");
+                        builder_assert(builder->Set(op, GraphApi::OpAttr::RESCALE_INPUT_UNSIGNED, tosa_attr.input_unsigned()),
+                            "Failed to set RESCALE_INPUT_UNSIGNED attribute on RESCALE");
+                        builder_assert(builder->Set(op, GraphApi::OpAttr::RESCALE_OUTPUT_UNSIGNED, tosa_attr.output_unsigned()),
+                            "Failed to set RESCALE_OUTPUT_UNSIGNED attribute on RESCALE");
 
                         if ( input_tensors.size() == 1 )
                         {
@@ -681,7 +704,8 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                     case tosaFb::Op::RESHAPE:
                     {
                         const auto &tosa_attr = TosaAttr<tosaFb::Op::RESHAPE>::Get(tosa_operator);
-                        builder->Set(op, OpAttr::RESHAPE_SHAPE, ToApiShape(tosa_attr.new_shape()));
+                        builder_assert(builder->Set(op, OpAttr::RESHAPE_SHAPE, ToApiShape(tosa_attr.new_shape())),
+                            "Failed to set RESHAPE_SHAPE attribute on RESHAPE");
                     }
                     break;
                     case tosaFb::Op::RESIZE:
@@ -694,16 +718,26 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         tosa_assert(tosa_attr.border());
                         tosa_assert(tosa_attr.border()->size() == 2);
 
-                        builder->Set(op, GraphApi::OpAttr::RESIZE_SCALEY,
-                            GraphApi::FractionND{(*tosa_attr.scale())[0], (*tosa_attr.scale())[1]});
-                        builder->Set(op, GraphApi::OpAttr::RESIZE_SCALEX,
-                            GraphApi::FractionND{(*tosa_attr.scale())[2], (*tosa_attr.scale())[3]});
-                        builder->Set(op, GraphApi::OpAttr::RESIZE_OFFSET,
-                            GraphApi::Point2{(*tosa_attr.offset())[1], (*tosa_attr.offset())[0]});
-                        builder->Set(op, GraphApi::OpAttr::RESIZE_BORDER,
-                            GraphApi::Point2{(*tosa_attr.border())[1], (*tosa_attr.border())[0]});
-                        builder->Set(op, GraphApi::OpAttr::RESIZE_MODE,
-                            int(TosaMapping::FBResizeModeToResizeMode(tosa_attr.mode())));
+                        builder_assert(
+                            builder->Set(op, GraphApi::OpAttr::RESIZE_SCALEY,
+                                GraphApi::FractionND{(*tosa_attr.scale())[0], (*tosa_attr.scale())[1]}),
+                            "Failed to set RESIZE_SCALEY attribute on RESIZE");
+                        builder_assert(
+                            builder->Set(op, GraphApi::OpAttr::RESIZE_SCALEX,
+                                GraphApi::FractionND{(*tosa_attr.scale())[2], (*tosa_attr.scale())[3]}),
+                            "Failed to set RESIZE_SCALEX attribute on RESIZE");
+                        builder_assert(
+                            builder->Set(op, GraphApi::OpAttr::RESIZE_OFFSET,
+                                GraphApi::Point2{(*tosa_attr.offset())[1], (*tosa_attr.offset())[0]}),
+                            "Failed to set RESIZE_OFFSET attribute on RESIZE");
+                        builder_assert(
+                            builder->Set(op, GraphApi::OpAttr::RESIZE_BORDER,
+                                GraphApi::Point2{(*tosa_attr.border())[1], (*tosa_attr.border())[0]}),
+                            "Failed to set RESIZE_BORDER attribute on RESIZE");
+                        builder_assert(
+                            builder->Set(op, GraphApi::OpAttr::RESIZE_MODE,
+                                int(TosaMapping::FBResizeModeToResizeMode(tosa_attr.mode()))),
+                            "Failed to RESIZE_MODE attribute on RESIZE");
 
                         // If no input tensors for scale/offset/border, create them to be backwards compatible
                         if ( input_tensors.size() == 1 )
@@ -739,13 +773,14 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                     case tosaFb::Op::REVERSE:
                     {
                         const auto &tosa_attr = TosaAttr<tosaFb::Op::ARGMAX>::Get(tosa_operator);
-                        builder->Set(op, GraphApi::OpAttr::AXIS_SELECT, tosa_attr.axis());
+                        builder_assert(builder->Set(op, GraphApi::OpAttr::AXIS_SELECT, tosa_attr.axis()), "Failed to set AXIS_SELECT attribute on REVERSE");
                         break;
                     }
                     case tosaFb::Op::TILE:
                     {
                         const auto &tosa_attr = TosaAttr<tosaFb::Op::TILE>::Get(tosa_operator);
-                        builder->Set(op, OpAttr::TILE_MULTIPLES, ToApiShape(tosa_attr.multiples()));
+                        builder_assert(builder->Set(op, OpAttr::TILE_MULTIPLES, ToApiShape(tosa_attr.multiples())),
+                            "Failed to set TILE_MULTIPLES attribute on TILE");
                         break;
                     }
                     break;
