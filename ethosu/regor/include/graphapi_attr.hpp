@@ -82,7 +82,7 @@ enum class OpAttr : uint32_t
     CLAMP_MAX = GRAPHAPI_MAKE_ATTR(clamp, double, 1),
     // Rescale
     RESCALE_SCALE32 = GRAPHAPI_MAKE_ATTR(rescale, bool, 0),
-    RESCALE_ROUND = GRAPHAPI_MAKE_ATTR(rescale, bool, 1),
+    RESCALE_DOUBLE_ROUND = GRAPHAPI_MAKE_ATTR(rescale, bool, 1),
     RESCALE_PER_CHANNEL = GRAPHAPI_MAKE_ATTR(rescale, bool, 2),
     RESCALE_INPUT_UNSIGNED = GRAPHAPI_MAKE_ATTR(rescale, bool, 3),
     RESCALE_OUTPUT_UNSIGNED = GRAPHAPI_MAKE_ATTR(rescale, bool, 4),

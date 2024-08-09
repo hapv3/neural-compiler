@@ -660,7 +660,7 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                     {
                         const auto &tosa_attr = TosaAttr<tosaFb::Op::RESCALE>::Get(tosa_operator);
                         builder->Set(op, GraphApi::OpAttr::RESCALE_SCALE32, tosa_attr.scale32());
-                        builder->Set(op, GraphApi::OpAttr::RESCALE_ROUND, tosa_attr.double_round());
+                        builder->Set(op, GraphApi::OpAttr::RESCALE_DOUBLE_ROUND, tosa_attr.double_round());
                         builder->Set(op, GraphApi::OpAttr::RESCALE_PER_CHANNEL, tosa_attr.per_channel());
                         builder->Set(op, GraphApi::OpAttr::RESCALE_INPUT_UNSIGNED, tosa_attr.input_unsigned());
                         builder->Set(op, GraphApi::OpAttr::RESCALE_OUTPUT_UNSIGNED, tosa_attr.output_unsigned());
