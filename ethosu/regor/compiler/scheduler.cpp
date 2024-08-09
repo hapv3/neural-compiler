@@ -871,6 +871,13 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
     auto scaleTens = scales->tensor.get();
     // No need to move the weights if they are already in the same memory as the staging area
     bool needsDMA = weightTens->memArea.memory != _arch->StagingMemory().memory;
+
+    if ( _spilling )
+    {
+        // To be refined and architecture specific depending on mem2mem characteristics
+        needsDMA = cost->elementAccess.weightsRefetch > 2;
+    }
+
     bool isChained =
         (schedOp->Parent() != nullptr || schedOp->SubOps().size() > 1 ||
             (schedOp->SubOps().size() == 1 && !IsActivation(schedOp->SubOps()[0]->Type())));
