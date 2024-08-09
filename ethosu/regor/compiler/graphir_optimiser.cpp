@@ -394,7 +394,7 @@ Operation *GraphIrOptimiser::RewriteTable(Graph *const graph, Operation *const o
 }
 
 // Rewrite TOSA Cast to other ops
-Operation *GraphIrOptimiser::RewriteCast(Graph *const graph, Operation *const operation)
+Operation *GraphIrOptimiser::RewriteCast(Graph *const, Operation *const operation)
 {
     Operation *returnOp = operation;
     const OpType opType = operation->Type();

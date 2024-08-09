@@ -392,7 +392,8 @@ private:
 
             int64_t size;
             void *buf = blobs[0]->Map(size);
-            tfl.model = py::bytes(reinterpret_cast<char *>(buf), size);
+            assert(size <= std::numeric_limits<py::ssize_t>::max());
+            tfl.model = py::bytes(reinterpret_cast<char *>(buf), py::ssize_t(size));
             blobs[0]->Unmap(buf);
             blobs[0]->Release();
 
