@@ -36,7 +36,9 @@ static bool shapeCheck(const TensorConnection *t1, int index1, const TensorConne
 {
     const auto &shape1 = t1->shape;
     const auto &shape2 = t2->shape;
-    return (shape1.Size() > index1 && shape2.Size() > index2 && shape1[index1] == shape2[index2]);
+    if ( index1 < 0 ) index1 = shape1.Size() + index1;
+    if ( index2 < 0 ) index2 = shape2.Size() + index2;
+    return (index1 >= 0 && shape1.Size() > index1 && index2 >= 0 && shape2.Size() > index2 && shape1[index1] == shape2[index2]);
 }
 
 static Shape broadcastShape(const Shape &shape1, const Shape &shape2)
@@ -1566,7 +1568,7 @@ void ErrorIfCheck_1gr4n0iszdlxr(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "ERROR_IF(BC != OC && BC != 1)";
     const auto *bias = op->Input(TensorUsage::Scales);
     const auto *output = op->Output(TensorUsage::OFM);
-    if ( (bias->shape.Elements() != 1) && !shapeCheck(output, 3, bias, 0) )
+    if ( (bias->shape.Elements() != 1) && !shapeCheck(output, -1, bias, 0) )
         throw std::invalid_argument(constraint);  // OC
 }
 
