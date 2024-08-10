@@ -173,7 +173,7 @@ int64_t EthosU85Performance::EstimateConvCycles(const PerformanceQuery &query, c
                       npuOp == EthosU85NpuOp::VectorProduct || npuOp == EthosU85NpuOp::ReduceSum )
             {
                 numKernelSteps = subKernelElements;
-                cycles = std::max(cyclesWb, query.ifmShape->Depth() / 8 * numUBlocks.ElementsWH()) * numKernelSteps *
+                cycles = std::max(cyclesWb, ifmBlock.Depth() / 8 * numUBlocks.ElementsWH()) * numKernelSteps *
                          numUBlocks.Depth() * (ifmBits / 8);
                 cycles /= query.weightFormat & WeightFormat::Sparse2_4 ? 2 : 1;
             }
