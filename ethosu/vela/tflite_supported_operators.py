@@ -178,7 +178,11 @@ class TFLiteSupportedOperators:
         | concat_ops
         | split_ops
     )
-    per_axis_quant_ops = convolution_like_ops  # per-axis/channel quantization only currently supported for conv ops
+    per_axis_quant_ops = (
+        # Per-axis/channel quantization only currently supported for conv and fc ops
+        convolution_like_ops
+        | set((Op.FullyConnected, ))
+    )
     supported_fused_activations = relu_ops | set(
         (
             Op.Tanh,
