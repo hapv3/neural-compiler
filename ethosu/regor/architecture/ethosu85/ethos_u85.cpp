@@ -668,6 +668,7 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU85::FindBlockConfig(OpType opTyp
     bool isResize = npuOp == EthosU85NpuOp::Resize;
     bool isPartKernel = isConvolution && ChooseKernelMethod(ifmShape, query.ifmBits, query.kernel);
     bool isEqualDepthOp = isElementwise || (isPooling && !isReduceSum) || isDepthwise || isResize;
+    bool isMatmul = (npuOp == EthosU85NpuOp::VectorProduct) && query.ifmShape[1];
 
     EthosU85Traversal traversal = isDepthwise ? EthosU85Traversal::Depthwise : (isPartKernel ? EthosU85Traversal::PartKernel : EthosU85Traversal::DepthFirst);
 
@@ -841,7 +842,8 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU85::FindBlockConfig(OpType opTyp
                     }
 
                     // Scale relative to every output OFM element
-                    float relativeCost = (isResize) ? float(ofmElements) / (float(height) * width * depth) : (ifmFetch + weightFetch) / float(ofmElements);
+                    float relativeCost =
+                        (isResize || isMatmul) ? float(ofmElements) / (float(height) * width * depth) : (ifmFetch + weightFetch) / float(ofmElements);
 
                     // If the entire IFM can be encompassed by both buffers, bias to prefer this configuration
                     if ( ifmShape.Elements() < ifmBlock.Elements() * 2 )
@@ -859,7 +861,7 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU85::FindBlockConfig(OpType opTyp
                             Shape coverageShape = Shape::Min(ifmShape, ifmBlock);
                             float coverage = float(ifmShape.ElementsWH()) / float(coverageShape.ElementsWH());
                             // Small 4x4 IFM constraint found through analysis of networks
-                            if ( coverage <= bestCoverage && (height <= 4 && width <= 4) )
+                            if ( coverage <= bestCoverage && ((height <= 4 && width <= 4) || isMatmul) )
                             {
                                 bestCoverage = coverage;
                                 chooseThis = true;
