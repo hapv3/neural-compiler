@@ -852,6 +852,46 @@ void Scheduler::ProposeOperatorBuffering(SchedulerOperation *schedOp, SchedulerO
     }
 }
 
+static bool FulldepthWeightBuffering(const std::vector<std::unique_ptr<SchedulerOperation>> &ops, SchedulerTensor *weights,
+    SchedulerOperation *schedOp, SchedulerOpInfo *cost, SchedulerOperation *prevOp, SchedulerOpInfo *prevCost, Schedule *refSchedule)
+{
+    bool forceFullDepthSlice = false;
+    if ( weights->srcTensor->Readers().size() > 1 )
+    {
+        // Check for special case where several consecutive ops have the same weight tensor.
+        // If the weigths can fit entire in bufferLimit and the ops all have the same ofm depth slice
+        // only one dma transfer will be needed for the ops, see CoalesceWeightBufferTensors.
+        // If this is the case ignore prebuffering and instead force a full depth slice
+        auto cmpOp = prevOp;
+        auto cmpCost = prevCost;
+        SchedulerConnection *cmpWeights = nullptr;
+
+        if ( prevOp == nullptr && schedOp->Index() == 0 && ops.size() > 1 )
+        {
+            // First op in schedule, so check with next op instead
+            cmpOp = ops[1].get();
+            cmpCost = refSchedule->Cost(cmpOp);
+        }
+
+        if ( cmpOp != nullptr )
+        {
+            cmpWeights = cmpOp->TryInput(TensorUsage::Weights);
+        }
+
+        if ( cmpWeights != nullptr )
+        {
+            UniqueId weightsTensorId = weights->equivalenceId;
+            UniqueId cmpWeightsTensorId = cmpWeights->tensor->equivalenceId;
+
+            if ( cmpWeightsTensorId == weightsTensorId && cmpCost->ofmDepthSlices == cost->ofmDepthSlices )
+            {
+                forceFullDepthSlice = true;
+            }
+        }
+    }
+
+    return forceFullDepthSlice;
+}
 
 void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerConnection *scales, SchedulerOperation *schedOp,
     SchedulerOperation *prevOp, Schedule *bufferedSchedule, Schedule *refSchedule, int bufferLimitBytes)
@@ -872,12 +912,6 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
     // No need to move the weights if they are already in the same memory as the staging area
     bool needsDMA = weightTens->memArea.memory != _arch->StagingMemory().memory;
 
-    if ( _spilling )
-    {
-        // To be refined and architecture specific depending on mem2mem characteristics
-        needsDMA = cost->elementAccess.weightsRefetch > 2;
-    }
-
     bool isChained =
         (schedOp->Parent() != nullptr || schedOp->SubOps().size() > 1 ||
             (schedOp->SubOps().size() == 1 && !IsActivation(schedOp->SubOps()[0]->Type())));
@@ -896,6 +930,21 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
     auto fullWeightScales = EncodeWeightAndScaleTensor(
         std::move(encodingParams), weightTens, scaleTens, weights->quantization, ofm->quantization);
 
+    int fullWeightsBytes = fullWeightScales.npuWeightsTensor->AllocationSizeBytes();
+
+    bool forceFullDepthSlice = false;
+    if ( fullWeightsBytes <= bufferLimitBytes )
+    {
+        forceFullDepthSlice = FulldepthWeightBuffering(_ops, weightTens, schedOp, cost, prevOp, prevCost, refSchedule);
+    }
+
+    if ( _spilling && !forceFullDepthSlice )
+    {
+        // To be refined and architecture specific depending on mem2mem characteristics
+        needsDMA = cost->elementAccess.weightsRefetch > 2;
+    }
+
+
     // No buffering required - take all the weights from permanent storage
     if ( schedOp->Type() == OpType::FullyConnected || !needsDMA ||
          _arch->CanSubdivide(schedOp->Type()) == AxisMask::None || ofm->reverse == ReverseType::C ||
@@ -906,8 +955,6 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
         cost->SetWeightScaleTensors(fullWeightScales.npuWeightsTensor, fullWeightScales.npuScalesTensor);
         return;
     }
-
-    int fullWeightsBytes = fullWeightScales.npuWeightsTensor->AllocationSizeBytes();
 
     auto encodedWeightScales = fullWeightScales;
 
@@ -920,7 +967,7 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
 
     // Force full depth for cascaded and chained ops
     // TODO MLBEDSW-9145: support depth-slicing for chains
-    if ( cost->cascade != 0 || isChained )
+    if ( cost->cascade != 0 || isChained || forceFullDepthSlice )
     {
         weightBufferSize = fullWeightsBytes;
         // Update the memory snapshot to reflect the added size of the weights
