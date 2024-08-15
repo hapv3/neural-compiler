@@ -57,7 +57,7 @@ struct TensorConnection
     std::shared_ptr<Tensor> tensor;
     Shape shape;
     // For operations accessing a slice of the tensor:
-    // Writing: Concat, ConcatTFLite, and Pack
+    // Writing: Concat and Pack
     // Reading: Split, SplitV, Unpack, Slice, and StridedSlice
     TensorSlice slice;
     Quantization quantization;

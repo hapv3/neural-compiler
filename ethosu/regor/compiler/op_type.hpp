@@ -111,7 +111,6 @@ enum class OpType : uint16_t
     BlockLSTM,
     Call,
     ConcatEmbeddings,
-    ConcatTFLite,
     Const,
     Conv2DBias,
     Cos,
@@ -265,7 +264,7 @@ constexpr inline bool IsActivation(OpType opType)
 
 constexpr inline bool IsConcatenation(OpType opType)
 {
-    return opType == OpType::Concat || opType == OpType::ConcatEmbeddings || opType == OpType::ConcatTFLite;
+    return opType == OpType::Concat || opType == OpType::ConcatEmbeddings;
 }
 
 constexpr inline bool IsVariadic(OpType opType)

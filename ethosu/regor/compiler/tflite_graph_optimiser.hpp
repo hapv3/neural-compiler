@@ -122,7 +122,7 @@ private:
 
     // Rewrite functions
     Operation *ConvertExpToLUT(Graph *const graph, Operation *const operation);
-    Operation *RewriteConcat(Graph *const graph, Operation *const operation);
+    Operation *RewritePack(Graph *const graph, Operation *const operation);
     Operation *RewriteSplit(Graph *const graph, Operation *const operation);
     Operation *RemoveReshape(Graph *const graph, Operation *const operation);
     Operation *ExtractTransposePermutation(Graph *const graph, Operation *const operation);
@@ -219,7 +219,7 @@ public:
         {
             {},
             {
-                &TFLiteGraphOptimiser::RewriteConcat
+                &TFLiteGraphOptimiser::RewritePack
             }
         },
         {

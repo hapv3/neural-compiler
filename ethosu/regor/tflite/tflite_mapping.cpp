@@ -71,7 +71,7 @@ const std::map<tflite::BuiltinOperator, OpType> TfLiteMapping::_builtinOperatorT
     // clang-format off
     {tflite::BuiltinOperator::ADD,                              OpType::Add},
     {tflite::BuiltinOperator::AVERAGE_POOL_2D,                  OpType::AvgPool},
-    {tflite::BuiltinOperator::CONCATENATION,                    OpType::ConcatTFLite},
+    {tflite::BuiltinOperator::CONCATENATION,                    OpType::Concat},
     {tflite::BuiltinOperator::CONV_2D,                          OpType::Conv2DBias},
     {tflite::BuiltinOperator::DEPTHWISE_CONV_2D,                OpType::DepthwiseConv2DBias},
     {tflite::BuiltinOperator::DEPTH_TO_SPACE,                   OpType::DepthToSpace},

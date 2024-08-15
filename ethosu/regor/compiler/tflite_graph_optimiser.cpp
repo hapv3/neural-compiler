@@ -180,10 +180,6 @@ int TFLiteGraphOptimiser::GetAxis(const Operation *const operation)
 
     switch ( opType )
     {
-        case OpType::Concat:
-        case OpType::ConcatTFLite:
-            axis = operation->Attribute<axis_attr_t>()->axis;
-            break;
         case OpType::Pack:
         case OpType::Unpack:
             axis = operation->Attribute<axis_attr_t>()->axis;
@@ -703,64 +699,30 @@ Operation *TFLiteGraphOptimiser::ConvertExpToLUT(Graph *const graph, Operation *
     return returnOp;
 }
 
-Operation *TFLiteGraphOptimiser::RewriteConcat(Graph *const graph, Operation *const operation)
+// Convert TFLite Pack into TOSA Concat
+Operation *TFLiteGraphOptimiser::RewritePack(Graph *const graph, Operation *const operation)
 {
     UNUSED(graph);
-    auto *returnOp = operation;
-    auto opType = operation->Type();
-
-    if ( opType == OpType::Concat || opType == OpType::ConcatTFLite || opType == OpType::Pack )
+    Operation *returnOp = operation;
+    const OpType opType = operation->Type();
+    if ( opType == OpType::Pack )
     {
-        auto *ifm0Conn = operation->Input(TensorUsage::IFM0);
         auto *ofmConn = operation->Output(TensorUsage::OFM);
-        auto *ofm = ofmConn->tensor.get();
-        auto axis = GetAxis(operation);
-        auto axis4D = 0;
+        const auto axis = GetAxis(operation);
 
-        // Remove writers from OFM
-        ofm->RemoveWriters();
-
-        // No unfuse of activation, should have been taken care of in TFLite reader.
-        // Pack treated like concat after setting desired shape
-        Shape packShape = Shape();  // Pack/Unpack calculates shape once outside loop.
-        if ( opType == OpType::Pack )
+        // Create a new CONCAT op
+        auto concatOp = std::make_shared<Operation>(OpType::Concat);
+        concatOp->CopyOutput(TensorUsage::OFM, *ofmConn);
+        concatOp->Attribute<axis_attr_t>()->axis = axis;
+        for ( auto [usage, ifmConn] : operation->Inputs().pairs() )
         {
-            packShape = MakePackUnpackDesiredShape(axis, ifm0Conn->shape, &axis4D);
+            if ( !IsIFM(usage) ) continue;
+
+            concatOp->CopyInput(usage, ifmConn);
+            concatOp->Input(usage)->shape = ifmConn.shape.Insert(axis, 1);
         }
-
-        auto idx = 0;
-        auto usage = MakeTensorUsage(TensorUsage::IFM, 0);
-        auto *ifmConn = operation->Input(usage);
-        auto offset = 0;
-        // Set shape on all IFMs
-        while ( ifmConn != nullptr )
-        {
-            Shape writeOffset(0, 0, 0, 0);
-            if ( opType == OpType::Pack )
-            {
-                ifmConn->shape = packShape;
-                writeOffset[axis4D] = offset;
-            }
-            else if ( opType == OpType::Concat || opType == OpType::ConcatTFLite )
-            {
-                ifmConn->shape = MakeConcatSplitDesiredShape(axis, ifmConn->shape, &axis4D);
-                writeOffset[axis4D] = offset;
-            }
-
-            auto op = MakeMemoryCopyForConcat(ofmConn, ifmConn, writeOffset);
-
-            offset += ifmConn->shape[axis4D];
-
-            ifmConn->tensor->RemoveReader(operation->shared_from_this());
-
-            usage = MakeTensorUsage(TensorUsage::IFM, ++idx);
-            ifmConn = operation->Input(usage);
-
-            RecordOptimisation(operation, op.get());
-        }
-        // Replaced by multiple ops.
-        // Will return the original op, which have all the Input/Outputs for the traversal.
-        // But with Writers and Readers cleared.
+        returnOp = concatOp.get();
+        operation->Disconnect();
     }
     return returnOp;
 }
