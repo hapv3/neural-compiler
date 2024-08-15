@@ -49,13 +49,20 @@ Tensor *GraphIrOptimiser::ConvertBool8Tensors(Graph *graph, Tensor *tensor)
     {
         if ( tensor->IsConstant() )
         {
+            const auto oldView = tensor->View();
+            const auto oldValues = oldView.Values<int8_t>();
+            const auto size = oldView.BufferSize();
+
+            // Replace this tensor's buffer with a new buffer since we don't know if the current buffer is writable
+            auto newBuffer = std::make_shared<Buffer>(std::make_unique<uint8_t[]>(size), size);
+            tensor->SetBuffer(newBuffer);
             auto view = tensor->View();
             auto &shape = view.ViewShape();
             auto values = view.WritableValues<int8_t>();
             for ( int i = 0; i < shape.Elements(); i++ )
             {
                 // Convert each element to the internal representation -1 (true) and 0 (false)
-                values[i] = values[i] == 0 ? 0 : -1;
+                values[i] = oldValues[i] == 0 ? 0 : -1;
             }
         }
         else if ( graph->IsInput(tensor) )
@@ -71,6 +78,7 @@ Tensor *GraphIrOptimiser::ConvertBool8Tensors(Graph *graph, Tensor *tensor)
             newOp->ConnectInput(TensorUsage::IFM0, graphInputTensor);
             newOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_zero", 0));
             newOp->ConnectOutput(TensorUsage::OFM, newTensor);
+            RecordOptimisation(graph, newOp.get());
             returnTensor = graphInputTensor.get();
         }
         else if ( graph->IsOutput(tensor) )
@@ -86,6 +94,7 @@ Tensor *GraphIrOptimiser::ConvertBool8Tensors(Graph *graph, Tensor *tensor)
             newOp->ConnectInput(TensorUsage::IFM0, newTensor);
             newOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_one", 1));
             newOp->ConnectOutput(TensorUsage::OFM, graphOutputTensor);
+            RecordOptimisation(graph, newOp.get());
             returnTensor = newTensor.get();
         }
     }
@@ -410,6 +419,7 @@ Operation *GraphIrOptimiser::RewriteCast(Graph *const, Operation *const operatio
             newOp->CopyInput(TensorUsage::IFM0, *ifmConn);
             newOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_one", 1));
             newOp->CopyOutput(TensorUsage::OFM, *ofmConn);
+            RecordOptimisation(operation, newOp.get());
             operation->Disconnect();
             returnOp = newOp.get();
         }
@@ -420,6 +430,7 @@ Operation *GraphIrOptimiser::RewriteCast(Graph *const, Operation *const operatio
             newOp->CopyInput(TensorUsage::IFM0, *ifmConn);
             newOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_zero", 0));
             newOp->CopyOutput(TensorUsage::OFM, *ofmConn);
+            RecordOptimisation(operation, newOp.get());
             operation->Disconnect();
             returnOp = newOp.get();
         }
@@ -428,9 +439,43 @@ Operation *GraphIrOptimiser::RewriteCast(Graph *const, Operation *const operatio
             // Replace CAST with ADD
             auto copyOp = std::make_shared<Operation>(OpType::Add);
             copyOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_zero", 0));
+            RecordOptimisation(operation, copyOp.get());
             ReplaceOperation(operation, copyOp.get());
             returnOp = copyOp.get();
         }
+    }
+    return returnOp;
+}
+
+// Rewrite TOSA Concat to one MemoryCopy per IFM
+Operation *GraphIrOptimiser::RewriteConcat(Graph *const graph, Operation *const operation)
+{
+    Operation *returnOp = operation;
+    const OpType opType = operation->Type();
+    if ( opType == OpType::Concat )
+    {
+        const auto *ofmConn = operation->Output(TensorUsage::OFM);
+        const auto *attr = operation->Attribute<axis_attr_t>();
+        auto axis = attr->axis;
+        if ( axis < 0 ) axis = ofmConn->shape.Size() + axis;
+
+        // Replace CONCAT with a memory copy per IFM that copies IFM to an offset into OFM
+        Shape ofmSliceOffset = ofmConn->shape.WithZeros();
+        for ( auto [usage, ifmConn] : operation->Inputs().pairs() )
+        {
+            if ( !IsIFM(usage) ) continue;
+
+            auto copyOp = std::make_shared<Operation>(OpType::MemoryCopy);
+            copyOp->SetRounding(RoundMode::NATURAL);
+            copyOp->CopyInput(TensorUsage::IFM, ifmConn);
+            copyOp->CopyOutput(TensorUsage::OFM, *ofmConn);
+            copyOp->Output(TensorUsage::OFM)->Set({ofmSliceOffset, ifmConn.shape});
+            RecordOptimisation(operation, copyOp.get());
+            returnOp = copyOp.get();
+
+            ofmSliceOffset[axis] += ifmConn.shape[axis];
+        }
+        operation->Disconnect();
     }
     return returnOp;
 }

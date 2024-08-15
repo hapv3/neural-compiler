@@ -376,7 +376,7 @@ void SchedulerPacking::InitSchedulerConnection(
     SchedulerConnection *schedConn, const std::shared_ptr<SchedulerTensor> &tensor, const TensorConnection &conn)
 {
     schedConn->tensor = tensor;
-    schedConn->slice = conn.slice;
+    schedConn->slice = {Shape::PadAxes(conn.slice.offset, 4, 0), Shape::PadAxes(conn.slice.shape, 4, 1)};
     schedConn->shape = Shape::PadAxes(conn.shape, 3, 1);  // Scheduler needs minimum HWC axes to stripe
     schedConn->quantization = conn.quantization;
     schedConn->transpose = conn.transpose;

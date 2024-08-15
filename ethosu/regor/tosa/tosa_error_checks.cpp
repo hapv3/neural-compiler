@@ -1692,10 +1692,10 @@ void ErrorIfCheck_3bzibvkt1zqng(const regor::Operation *op, [[maybe_unused]] con
     for ( const auto &input : inputs )
     {
         if ( input.shape.Size() != shape0.Size() )
-            throw std::invalid_argument("ERROR_IF(rank(input_shape) != rank(shape0))");
+            throw std::invalid_argument("ERROR_IF(rank(input_shape) != rank(shapes1[0]))");
         for ( int index = 0; index < input.shape.Size(); index++ )
         {
-            if ( index != axis && input.shape != shape0 ) throw std::invalid_argument(constraint);
+            if ( index != axis && input.shape[index] != shape0[index] ) throw std::invalid_argument(constraint);
         }
     }
 }
