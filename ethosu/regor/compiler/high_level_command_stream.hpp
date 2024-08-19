@@ -140,6 +140,12 @@ union HLCParameters
     {
         int axis;
     } argmax;
+
+    struct
+    {
+        int axis;
+        int multiplier;
+    } tile;
 };
 
 /// <summary>
@@ -265,9 +271,9 @@ public:
 
     std::string ToString() const override
     {
-        return fmt::format("DMA src: {}:{}, address: {}, dest: {}:{}, address: {}, size: {}", srcMemArea.memory->Name(),
-            srcMemArea.usage, srcAddress, destMemArea.memory->Name(), destMemArea.usage, destAddress,
-            sizes ? sizes.ToString() : std::to_string(length));
+        return fmt::format("DMA src: {}:{}, address: {}, dest: {}:{}, address: {}, sizes: ({}), length: {}",
+            srcMemArea.memory->Name(), srcMemArea.usage, srcAddress, destMemArea.memory->Name(), destMemArea.usage,
+            destAddress, sizes ? sizes.ToString() : "N/A", std::to_string(length));
     }
 };
 

@@ -284,7 +284,7 @@ TOSA_REGISTER_OP(PAD,                     PadAttribute,                  GraphAp
 TOSA_REGISTER_OP(RESHAPE,                 ReshapeAttribute,              GraphApi::GraphTensorUsage::IFM, GraphApi::GraphTensorUsage::Params);
 TOSA_REGISTER_OP(REVERSE,                 AxisAttribute,                 GraphApi::GraphTensorUsage::IFM);
 TOSA_REGISTER_OP(SLICE,                   SliceAttribute,                GraphApi::GraphTensorUsage::IFM);
-TOSA_REGISTER_OP(TILE,                    TileAttribute,                 GraphApi::GraphTensorUsage::IFM);
+TOSA_REGISTER_OP(TILE,                    TileAttribute,                 GraphApi::GraphTensorUsage::IFM, GraphApi::GraphTensorUsage::Params);
 TOSA_REGISTER_OP(TRANSPOSE,               TransposeAttribute,            GraphApi::GraphTensorUsage::IFM);
 TOSA_REGISTER_OP(GATHER,                  NONE,                          GraphApi::GraphTensorUsage::IFM);
 TOSA_REGISTER_OP(SCATTER,                 NONE,                          GraphApi::GraphTensorUsage::IFM);
@@ -778,9 +778,14 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                     }
                     case tosaFb::Op::TILE:
                     {
-                        const auto &tosa_attr = TosaAttr<tosaFb::Op::TILE>::Get(tosa_operator);
-                        builder_assert(builder->Set(op, OpAttr::TILE_MULTIPLES, ToApiShape(tosa_attr.multiples())),
-                            "Failed to set TILE_MULTIPLES attribute on TILE");
+                        // If no input tensors for multiples, convert multiples attribute to param tensor
+                        if ( input_tensors.size() == 1 )
+                        {
+                            const auto &tosa_attr = TosaAttr<tosaFb::Op::TILE>::Get(tosa_operator);
+                            std::string name = "multiples" + std::to_string(tosa_op_index);
+                            tensors[name] = CreateParamTensor<int32_t>(tosa_attr.multiples(), builder, name);
+                            input_tensors.push_back(std::move(name));
+                        }
                         break;
                     }
                     break;

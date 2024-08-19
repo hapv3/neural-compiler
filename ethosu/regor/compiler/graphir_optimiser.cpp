@@ -678,6 +678,92 @@ Operation *GraphIrOptimiser::RewriteReduceMinMaxAnyAll(Graph *const graph, Opera
     return returnOp;
 }
 
+// Decompose Tile with more than one tiled axis
+// into several tile operations, each with one tiled axis
+Operation *GraphIrOptimiser::RewriteTile(Graph *const, Operation *const operation)
+{
+    Operation *returnOp = operation;
+
+    const OpType opType = operation->Type();
+    if ( opType != OpType::Tile )
+    {
+        return returnOp;
+    }
+
+    auto *ofmConn = operation->Output(TensorUsage::OFM);
+    auto *ifmConn = operation->Input(TensorUsage::IFM);
+    auto *params = operation->Input(TensorUsage::Params);
+    auto *ofm = ofmConn->tensor.get();
+    auto *ifm = ifmConn->tensor.get();
+
+    assert(ifmConn);
+    assert(ofmConn);
+    assert(params);
+
+    // Convert params tensor to vector
+    auto view = params->tensor->View();
+    assert(params->tensor->Type() == DataType::Int32);
+
+    Shape multiples(view.Buffer()->Data<int32_t>(), view.ViewShape().Elements());
+
+    // axisMask contains ones for every axis that needs to be tiled.
+    // e.g. if H,W are tiled, axisMask will be 0110
+    unsigned axisMask = multiples.GreaterMask(multiples.WithOnes());
+
+    // We only need to decompose if there is more than one tiled axis
+    if ( axisMask == 0 || IsPowerOfTwo(axisMask) )
+    {
+        return returnOp;
+    }
+
+    auto inputConn = ifmConn;
+    int axis = ifmConn->shape.Size() - 1;
+
+    while ( axisMask )
+    {
+        // tile only if the LSB>0
+        if ( axisMask & 1 )
+        {
+            // Create new tile operation that only tiles one of the axes
+            int multiplier = multiples[axis];
+
+            // The shape of the intermediate tensor is same as its input-tensor
+            // but with one tiled axis (taken from ofm-shape)
+            Shape outShape = inputConn->shape;
+            outShape[axis] = ofmConn->shape[axis];
+
+            std::vector<int32_t> newMultiples(multiples.Size(), 1);
+            newMultiples[axis] = multiplier;
+
+            std::shared_ptr<Tensor> outTens = ofmConn->tensor;
+            // create intermediate tensor if this is not the last tiled axis
+            if ( (axisMask >> 1) > 0 )
+            {
+                std::string name(fmt::format("{}_tiled_axis_{}", ofm->Name(), axis));
+                outTens = std::make_shared<Tensor>(name, ofm->Type(), outShape);
+            }
+
+            auto tileOp = std::make_shared<Operation>(OpType::Tile);
+            tileOp->CopyInput(TensorUsage::IFM, *inputConn);
+            tileOp->ConnectOutput(TensorUsage::OFM, outTens).Set(outShape);
+            // create new param tensor
+            auto newParamtensor = CreateConstTensor(
+                "multiples", DataType::Int32, std::make_shared<Buffer>(newMultiples.size(), newMultiples.data()));
+            tileOp->ConnectInput(TensorUsage::Params, newParamtensor);
+
+            RecordOptimisation(operation, tileOp.get());
+            returnOp = tileOp.get();
+
+            inputConn = tileOp->Output(TensorUsage::OFM);
+        }
+        axis--;
+        axisMask >>= 1;
+    }
+
+    operation->Disconnect();
+    return returnOp;
+}
+
 // Move Split/slice op to consumer
 void GraphIrOptimiser::MoveToConsumer(const Operation *const operation, Operation *const cons)
 {

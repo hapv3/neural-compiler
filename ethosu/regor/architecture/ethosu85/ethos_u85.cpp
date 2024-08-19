@@ -1066,6 +1066,7 @@ EthosU85NpuOp ArchEthosU85::GetHWOp(OpType type)
         {OpType::Resize, EthosU85NpuOp::Resize},
         {OpType::Gather, EthosU85NpuOp::Dma},
         {OpType::Scatter, EthosU85NpuOp::Dma},
+        {OpType::Tile, EthosU85NpuOp::Dma},
         {OpType::Rescale, EthosU85NpuOp::Pooling},
     };
 
@@ -1415,7 +1416,7 @@ bool EthosU85OpGroup::CanRunOnNPU(const ArchitectureOpGroupQuery &op)
     // Check allowed ifm/ofm data type mapping
     if ( npuOp != EthosU85NpuOp::Elementwise )
     {
-        if ( op.type == OpType::LUT || op.type == OpType::MemoryCopy || op.type == OpType::Rescale )
+        if ( op.type == OpType::LUT || op.type == OpType::MemoryCopy || op.type == OpType::Rescale || op.type == OpType::Tile )
         {  // TODO: LUT operations end up here due to UseAvgPoolNop although the rules are not the same as
            // for a Pooling operation, so skip checks for now.
             return true;

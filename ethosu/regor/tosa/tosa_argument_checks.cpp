@@ -114,6 +114,7 @@ const TensorConnection *GetTensorForArgument(const Operation *op, const Argument
         {"indices", TensorUsage::IFM1},
         {"values_in", TensorUsage::IFM},
         {"multiplier", TensorUsage::Params},
+        {"multiples", TensorUsage::Params},
         {"shift", TensorUsage::Params1},
         {"scale", TensorUsage::Params},
         {"offset", TensorUsage::Params1},

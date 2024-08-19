@@ -174,14 +174,6 @@ struct transpose_attr_t
     END_FIELD_TABLE()
 };
 
-struct tile_attr_t
-{
-    Shape multiples;
-    BEGIN_FIELD_TABLE(tile_attr_t)
-        ATTR_FIELD(multiples, 0)
-    END_FIELD_TABLE()
-};
-
 struct fft_attr_t
 {
     bool inverse;

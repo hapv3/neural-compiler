@@ -417,6 +417,26 @@ static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, 
             op->parameters.argmax.axis = axis->axis;
         }
         break;
+        case OpType::Tile:
+        {
+            auto *ifmConn = schedOp->Input(TensorUsage::IFM);
+            auto *params = schedOp->Input(TensorUsage::Params);
+            assert(params);
+            assert(params->tensor->dataType == DataType::Int32);
+            auto view = params->tensor->srcTensor->View();
+            Shape multiples(view.Buffer()->Data<int32_t>(), view.ViewShape().Elements());
+            multiples = Shape::PadAxes(multiples, ifmConn->shape.Size(), 1);
+            unsigned axisMask = multiples.GreaterMask(multiples.WithOnes());
+            assert((axisMask == 0 || IsPowerOfTwo(axisMask)) && "TILE operation should only have one tiled axis");
+            // Find tiled axis
+            int axis = ifmConn->shape.Size() - 1;
+            while ( (axisMask >>= 1) > 0 )
+            {
+                axis -= 1;
+            }
+            op->parameters.tile.axis = axis;
+            op->parameters.tile.multiplier = multiples[axis];
+        }
         default:
             break;
     }

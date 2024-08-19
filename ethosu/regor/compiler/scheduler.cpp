@@ -215,6 +215,11 @@ static int UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *conn)
         {
             tensor->needsLinearFormat = true;
         }
+        // TODO: Tile doesn't support brick format yet (MLBEDSW-9485)
+        else if ( producer->Type() == OpType::Tile )
+        {
+            tensor->needsLinearFormat = true;
+        }
         if ( !producer->IsNpuOp() )
         {
             tensor->hasCPUWriters = true;
@@ -229,6 +234,11 @@ static int UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *conn)
         }
         // TODO: Gather doesn't support brick format yet (MLBEDSW-8410)
         if ( consumer->Type() == OpType::Scatter || consumer->Type() == OpType::Gather )
+        {
+            tensor->needsLinearFormat = true;
+        }
+        // TODO: Tile doesn't support brick format yet (MLBEDSW-9485)
+        else if ( consumer->Type() == OpType::Tile )
         {
             tensor->needsLinearFormat = true;
         }

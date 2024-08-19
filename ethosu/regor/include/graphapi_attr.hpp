@@ -100,8 +100,6 @@ enum class OpAttr : uint32_t
     TRANSPOSE_CONV2D_SHAPE = GRAPHAPI_MAKE_ATTR(transpose_conv2d, GraphShape, 0),
     // Transpose
     TRANSPOSE_PERM = GRAPHAPI_MAKE_ATTR(transpose, GraphShape, 0),
-    // Tiling
-    TILE_MULTIPLES = GRAPHAPI_MAKE_ATTR(tile, GraphShape, 0),
     // FFT
     FFT_INVERSE = GRAPHAPI_MAKE_ATTR(fft, bool, 0),
     // CUSTOM

@@ -50,7 +50,6 @@ DynamicRef CreateAttribute(uint32_t reducedHash)
         CASE_MAKE_ATTR_INSTANCE(slice_attr_t);
         CASE_MAKE_ATTR_INSTANCE(softmax_attr_t);
         CASE_MAKE_ATTR_INSTANCE(strided_slice_attr_t);
-        CASE_MAKE_ATTR_INSTANCE(tile_attr_t);
         CASE_MAKE_ATTR_INSTANCE(transpose_attr_t);
         CASE_MAKE_ATTR_INSTANCE(transpose_conv2d_attr_t);
         CASE_MAKE_ATTR_INSTANCE(while_attr_t);

@@ -1011,12 +1011,14 @@ void ErrorIfCheck_3estuseky2gm2(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "ERROR_IF(shape1[i] * multiples[i] != shape[i])";
     const auto &shape = op->Output(TensorUsage::OFM)->shape;
     const auto &shape1 = op->Input(TensorUsage::IFM)->shape;
-    const auto &multiples = op->Attribute<regor::tile_attr_t>()->multiples;
+    const auto view = op->Input(TensorUsage::Params)->tensor->View();
+    Shape multiples(view.Buffer()->Data<int32_t>(), view.ViewShape().Elements());
+
     if ( multiples.Size() != shape.Size() ) throw std::invalid_argument(constraint);
     for ( int i = 0; i < shape.Size(); i++ )
     {
         int64_t shape1Dim = shape1[i];
-        if ( shape1Dim < 0 || multiples[i] < 0 || shape[i] ) throw std::invalid_argument(constraint);
+        if ( shape1Dim < 0 || multiples[i] < 0 || shape[i] < 0 ) throw std::invalid_argument(constraint);
         int64_t result = shape1Dim * multiples[i];
         if ( result > std::numeric_limits<int32_t>::max() ) throw std::invalid_argument(constraint);
         if ( static_cast<int32_t>(result) != shape[i] ) throw std::invalid_argument(constraint);
