@@ -1214,6 +1214,16 @@ std::shared_ptr<Schedule> Scheduler::ProposeScheduleStriping(const Shape &finalS
         // Create a cost entry with the new stripe
         auto cost = CreateSchedulerOpInfo(schedOp, stripe);
 
+        // If the weights are buffered in the reference schedule they should be in the new proposal
+        if ( refCost->bufferedWeightTensor.tensor )
+        {
+            cost->bufferedWeightTensor.tensor = std::make_shared<SchedulerTensor>();
+            cost->bufferedWeightTensor.tensor->srcTensor = refCost->bufferedWeightTensor.tensor->srcTensor;
+            cost->bufferedWeightTensor.tensor->allocatedSize = refCost->bufferedWeightTensor.tensor->allocatedSize;
+            cost->bufferedWeightTensor.tensor->memArea = _arch->StagingMemory();
+            cost->bufferedWeightTensor.buffering = refCost->bufferedWeightTensor.buffering;
+        }
+
         // Estimate performance
         cost->cycles = EstimateOpPerformance(schedOp, cost->Config(), schedOp->OFM()->SliceShape().Depth());
         cost->elementAccess = EstimateOpElementAccess(schedOp, cost->Config(), schedOp->OFM()->SliceShape().Depth());
@@ -1322,10 +1332,10 @@ std::shared_ptr<Schedule> Scheduler::OptimizeSubSchedule(const CascadeInfo &casc
     int memUsageParallelToSubSchedule = refSchedule->MemoryUsageAt(timeForCascade) - cascadeInfo.memUsage;
 
     // If the first Op's IFM has other consumers it has to live throughout the whole sub-schedule whether it's
-    // included in a cascade or not
+    // included in a cascade or not. Not valid if spilling enabled
     int persistentInitialIFM = 0;
     auto firstOpIfm = firstOp->IFM(firstOp->PrimaryIfmIndex());
-    if ( firstOpIfm->tensor->consumers.size() > 1 )
+    if ( !_spilling && firstOpIfm->tensor->consumers.size() > 1 )
     {
         persistentInitialIFM = firstOpIfm->tensor->AllocationSizeBytes();
     }
