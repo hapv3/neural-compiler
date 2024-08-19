@@ -2482,15 +2482,7 @@ Operation *TFLiteGraphOptimiser::ConvertPrelu(Graph *const graph, Operation *con
         unitQuantOfmZp.zeroPoints.push_back(ofmQuant.zeroPoints[0]);
         unitQuantOfmZp.type = QuantizationType::EXPLICIT;
 
-        std::shared_ptr<Tensor> zeroTens;
-        if ( ifmConn->tensor->Type() == DataType::Int16 )
-        {
-            zeroTens = CreateConstTensor("zero_const", int16_t(0));
-        }
-        else
-        {
-            zeroTens = CreateConstTensor("zero_const", int8_t(0));
-        }
+        std::shared_ptr<Tensor> zeroTens = CreateConstTensor("zero_const", ifmConn->tensor->Type(), 0);
         std::shared_ptr<Tensor> fmNegative = ifmConn->tensor->Clone();
         std::shared_ptr<Tensor> fmAlpha = ofmConn->tensor->Clone();
         std::shared_ptr<Tensor> fmScaled = ofmConn->tensor->Clone();

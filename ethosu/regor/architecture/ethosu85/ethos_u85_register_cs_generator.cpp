@@ -1671,6 +1671,7 @@ void EthosU85RCSGenerator::GenerateConvolutionOp(const HLCStripe *stripe, Memory
     if ( op->ifm.size() == 2 )
     {
         // Dynamic weights
+        assert(ToActivationPrecision(op->ifm[0].dataType) == ToActivationPrecision(op->ifm[1].dataType));
         useGlobalScale = true;
         GenerateIFM2Precision(op->ifm[1], false, false);
         GenerateIFM2(op->type, op->ifm[1], stripe->ifmAreas[1], false, 0, -1);
@@ -1724,6 +1725,7 @@ void EthosU85RCSGenerator::GenerateElementwiseOp(HLCStripe *stripe, MemoryAccess
     {
         // Binary operation: generate IFM2 registers
         assert(op->ifm.size() == 2);
+        assert(ToActivationPrecision(op->ifm[0].dataType) == ToActivationPrecision(op->ifm[1].dataType));
         assert(stripe->ifmAreas.size() == 2);
         assert(stripe->opGroup != nullptr);
         EthosU85OpGroup *opGroup = static_cast<EthosU85OpGroup *>(stripe->opGroup);

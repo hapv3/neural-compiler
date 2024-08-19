@@ -53,6 +53,30 @@ std::shared_ptr<Tensor> CreateConstTensor(const std::string &name, T value)
     return CreateConstTensor(name, DataTypeOf<T>::value, buf);
 }
 
+// Create a single element constant tensor with the specified data type and value (value is not bounds-checked)
+inline std::shared_ptr<Tensor> CreateConstTensor(const std::string &name, DataType type, int value)
+{
+#define FOR_ALL_INT_TYPES(functor, sep) \
+    functor(uint8_t) sep functor(uint16_t) \
+    sep functor(uint32_t) \
+    sep functor(uint64_t) \
+    sep functor(int8_t) \
+    sep functor(int16_t) \
+    sep functor(int32_t) \
+    sep functor(int64_t)
+    switch ( type )
+    {
+#define TYPE_FUNC(x) \
+    case DataTypeOf<x>::value: \
+        return CreateConstTensor(name, type, std::make_shared<Buffer>(std::vector<x>{x(value)}));
+        FOR_ALL_INT_TYPES(TYPE_FUNC, ;);
+#undef TYPE_FUNC
+        default:
+            return CreateConstTensor(name, value);
+    };
+#undef FOR_ALL_INT_TYPES
+}
+
 template<typename T>
 std::shared_ptr<Buffer> NewBufferFromView(const BufferView &src)
 {

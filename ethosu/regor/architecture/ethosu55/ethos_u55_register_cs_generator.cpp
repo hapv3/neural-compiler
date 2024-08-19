@@ -1334,6 +1334,7 @@ void EthosU55RCSGenerator::GenerateElementwiseOp(HLCStripe *stripe, MemoryAccess
     {
         // Binary operation: generate IFM2 registers
         assert(op->ifm.size() == 2);
+        assert(ToActivationPrecision(op->ifm[0].dataType) == ToActivationPrecision(op->ifm[1].dataType));
         assert(stripe->ifmAreas.size() == 2);
         int32_t scalarValue = 0;
         auto ifmShape = stripe->ifmAreas[0].SizeShape();

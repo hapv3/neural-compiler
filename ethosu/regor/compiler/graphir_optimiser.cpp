@@ -76,7 +76,7 @@ Tensor *GraphIrOptimiser::ConvertBool8Tensors(Graph *graph, Tensor *tensor)
             // Create and insert an elementwise CMP_NE to convert to internal bool representation
             auto newOp = std::make_shared<Operation>(OpType::NotEqual);
             newOp->ConnectInput(TensorUsage::IFM0, graphInputTensor);
-            newOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_zero", 0));
+            newOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_zero", int8_t(0)));
             newOp->ConnectOutput(TensorUsage::OFM, newTensor);
             RecordOptimisation(graph, newOp.get());
             returnTensor = graphInputTensor.get();
@@ -92,7 +92,7 @@ Tensor *GraphIrOptimiser::ConvertBool8Tensors(Graph *graph, Tensor *tensor)
             // Create and insert an elementwise BITWISE_AND to convert from internal bool representation
             auto newOp = std::make_shared<Operation>(OpType::And);
             newOp->ConnectInput(TensorUsage::IFM0, newTensor);
-            newOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_one", 1));
+            newOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_one", int8_t(1)));
             newOp->ConnectOutput(TensorUsage::OFM, graphOutputTensor);
             RecordOptimisation(graph, newOp.get());
             returnTensor = newTensor.get();
@@ -417,7 +417,7 @@ Operation *GraphIrOptimiser::RewriteCast(Graph *const, Operation *const operatio
             // Replace CAST with BITWISE_AND to convert from internal bool representation to integer
             auto newOp = std::make_shared<Operation>(OpType::And);
             newOp->CopyInput(TensorUsage::IFM0, *ifmConn);
-            newOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_one", 1));
+            newOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_one", int8_t(1)));
             newOp->CopyOutput(TensorUsage::OFM, *ofmConn);
             RecordOptimisation(operation, newOp.get());
             operation->Disconnect();
@@ -428,7 +428,7 @@ Operation *GraphIrOptimiser::RewriteCast(Graph *const, Operation *const operatio
             // Replace CAST with CMP_NE to convert from integer to internal bool representation
             auto newOp = std::make_shared<Operation>(OpType::NotEqual);
             newOp->CopyInput(TensorUsage::IFM0, *ifmConn);
-            newOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_zero", 0));
+            newOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_zero", ifmConn->tensor->Type(), 0));
             newOp->CopyOutput(TensorUsage::OFM, *ofmConn);
             RecordOptimisation(operation, newOp.get());
             operation->Disconnect();
@@ -438,7 +438,7 @@ Operation *GraphIrOptimiser::RewriteCast(Graph *const, Operation *const operatio
         {
             // Replace CAST with ADD
             auto copyOp = std::make_shared<Operation>(OpType::Add);
-            copyOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_zero", 0));
+            copyOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_zero", ifmConn->tensor->Type(), 0));
             RecordOptimisation(operation, copyOp.get());
             ReplaceOperation(operation, copyOp.get());
             returnOp = copyOp.get();
@@ -475,6 +475,30 @@ Operation *GraphIrOptimiser::RewriteConcat(Graph *const graph, Operation *const 
 
             ofmSliceOffset[axis] += ifmConn.shape[axis];
         }
+        operation->Disconnect();
+    }
+    return returnOp;
+}
+
+// Rewrite TOSA Negate to TOSA Sub
+Operation *GraphIrOptimiser::RewriteNegate(Graph *const graph, Operation *const operation)
+{
+    UNUSED(graph);
+    Operation *returnOp = operation;
+    const OpType opType = operation->Type();
+    if ( opType == OpType::Neg )
+    {
+        const auto ifmConn = operation->Input(TensorUsage::IFM);
+        const auto ofmConn = operation->Output(TensorUsage::OFM);
+
+        // Replace NEG(x) with SUB(0, x)
+        auto newOp = std::make_shared<Operation>(OpType::Sub);
+        newOp->SetRounding(RoundMode::NATURAL);
+        newOp->ConnectInput(TensorUsage::IFM0, CreateConstTensor("const_zero", ifmConn->tensor->Type(), 0));
+        newOp->CopyInput(TensorUsage::IFM1, *ifmConn);
+        newOp->CopyOutput(TensorUsage::OFM, *ofmConn);
+        RecordOptimisation(operation, newOp.get());
+        returnOp = newOp.get();
         operation->Disconnect();
     }
     return returnOp;
