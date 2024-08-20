@@ -219,7 +219,11 @@ int64_t EthosU85Performance::EstimateConvCycles(const PerformanceQuery &query, c
     }
 
     // Estimate output cycles
-    int numOfmBlks = Shape::DivRoundUp(query.ofmShape, ofmBlock).Elements();
+    float numOfmBlks = 1;
+    for ( int i = 0; i < std::min(query.ofmShape.Size(), ofmBlock.Size()); i++ )
+    {
+        numOfmBlks *= std::max(static_cast<float>(query.ofmShape[i]) / ofmBlock[i], 1.0f);
+    }
     int64_t cyclesOutputBlk = int64_t(EstimateOutputCyclesPerElement(query, fused) * float(ofmBlock.Elements()));
 
     // Scale and bias tensor
