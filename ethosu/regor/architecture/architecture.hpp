@@ -279,6 +279,16 @@ struct ElementAccess
     int constRead[2] = {0, 0};
 };
 
+enum class MemChannel
+{
+    Mem2Mem = 0,
+    IFMStream = 1,
+    Weight = 2,
+    FastWeight = 3,
+    IFM = 4,
+    OFM = 5,
+};
+
 /// <summary>
 /// Architecture performance interface
 /// </summary>
@@ -293,6 +303,7 @@ public:
     virtual ElementAccess ElementTransferToBytes(const PerformanceQuery &query, const ElementAccess &access) = 0;
     virtual int64_t WeightDecodeCycles(const PerformanceQuery &query, const WeightStats &weights,
         Flags<WeightFormat> format, ArchitectureMemory *weightsMemory) = 0;
+    virtual float ChannelBW(const ArchitectureMemory *mem, MemChannel channel) = 0;
 };
 
 enum class IniParseResult

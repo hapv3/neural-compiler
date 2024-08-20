@@ -940,10 +940,12 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
 
     if ( _spilling && !forceFullDepthSlice )
     {
-        // To be refined and architecture specific depending on mem2mem characteristics
-        needsDMA = cost->elementAccess.weightsRefetch > 2;
+        // To be refined and architecture specific depending on mem2mem characteristics and prebuffering
+        float bwRatio = std::round(
+            _arch->Performance()->ChannelBW(weightTens->memArea.memory, MemChannel::Weight) /
+            _arch->Performance()->ChannelBW(weightTens->memArea.memory, MemChannel::Mem2Mem));
+        needsDMA = (cost->elementAccess.weightsRefetch > 2) || (cost->elementAccess.weightsRefetch == 2 && bwRatio < 2);
     }
-
 
     // No buffering required - take all the weights from permanent storage
     if ( schedOp->Type() == OpType::FullyConnected || !needsDMA ||

@@ -109,10 +109,10 @@ CycleCost EthosU85Performance::MeasureCycleCost(const PerformanceQuery &query, c
 
 int64_t EthosU85Performance::MemToMemCycles(const ArchitectureMemory *dest, const ArchitectureMemory *source, int sizeBytes)
 {
-    int64_t fromCycles = int64_t(float(sizeBytes) / ChannelBW(source, EthosU85Channel::Mem2Mem));
+    int64_t fromCycles = int64_t(float(sizeBytes) / ChannelBW(source, MemChannel::Mem2Mem));
     fromCycles += source->ReadLatency();
     // TODO: Below shouldn't use the OFM channel. See MLBEDSW-9384.
-    int64_t toCycles = int64_t(float(sizeBytes) / ChannelBW(dest, EthosU85Channel::OFM));
+    int64_t toCycles = int64_t(float(sizeBytes) / ChannelBW(dest, MemChannel::OFM));
     toCycles += source->WriteLatency();
     return std::max(fromCycles, toCycles);
 }
@@ -546,13 +546,13 @@ int64_t EthosU85Performance::WeightDecodeCycles(
     }
     int64_t decodeCycles = weights.size / weightsPerCycle;
 
-    EthosU85Channel channel = (format & WeightFormat::Fast) ? EthosU85Channel::FastWeight : EthosU85Channel::Weight;
+    MemChannel channel = (format & WeightFormat::Fast) ? MemChannel::FastWeight : MemChannel::Weight;
     int64_t dmaCycles = int64_t(float(weights.encodedSize) / ChannelBW(weightsMemory, channel));
     dmaCycles += weightsMemory->ReadLatency();
     return std::max(decodeCycles, dmaCycles);
 }
 
-float EthosU85Performance::ChannelBW(const ArchitectureMemory *mem, const EthosU85Channel channel)
+float EthosU85Performance::ChannelBW(const ArchitectureMemory *mem, const MemChannel channel)
 {
     int burstLenWords = std::max(mem->MaxBurstLength() / 16, 1);
 
@@ -560,7 +560,7 @@ float EthosU85Performance::ChannelBW(const ArchitectureMemory *mem, const EthosU
     int maxOutstanding;
     int latency;
 
-    if ( channel == EthosU85Channel::OFM )
+    if ( channel == MemChannel::OFM )
     {
         maxOutstanding = mem->MaxWrites();
         latency = mem->WriteLatency();

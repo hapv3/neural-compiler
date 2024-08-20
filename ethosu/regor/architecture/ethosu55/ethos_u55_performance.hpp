@@ -53,6 +53,7 @@ public:
     ElementAccess ElementTransferToBytes(const PerformanceQuery &query, const ElementAccess &access) override;
     int64_t WeightDecodeCycles(const PerformanceQuery &query, const WeightStats &weights, Flags<WeightFormat> format,
         ArchitectureMemory *weightsMemory) override;
+    float ChannelBW(const ArchitectureMemory *mem, MemChannel channel) override;
 
 private:
     int64_t EstimateConvCycles(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);

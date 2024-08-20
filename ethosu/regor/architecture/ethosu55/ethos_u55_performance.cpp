@@ -539,4 +539,10 @@ int64_t EthosU55Performance::WeightDecodeCycles(
     dmaCycles += weightsMemory->ReadLatency();
     return dmaCycles;
 }
+
+float EthosU55Performance::ChannelBW(const ArchitectureMemory *mem, const MemChannel channel)
+{
+    UNUSED(channel);
+    return mem->Bandwidth();
+}
 }  // namespace regor
