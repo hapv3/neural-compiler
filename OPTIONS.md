@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright 2020-2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+SPDX-FileCopyrightText: Copyright 2020-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 
 SPDX-License-Identifier: Apache-2.0
 
@@ -126,9 +126,9 @@ allow multiple files to be searched for the required system config and memory
 mode.  Custom configuration files can be used by adding a .ini file in an
 appropriate directory under the `ethosu/config_files` directory or by providing
 its absolute path. More details can be found in the Configuration File and List
-Configuration Files sections.
+Configuration Files sections.  
 **Type: POSIX path**  
-**Default: use default configuration**  
+**Default: Use default configuration**  
 
 ```bash
 vela network.tflite --config DirectoryName/my_vela_cfg1.ini --config absolute/path/to/my_vela_cfg2.ini --system-config My_Sys_Cfg --memory-mode My_Mem_Mode
@@ -170,8 +170,9 @@ vela network.tflite --accelerator-config ethos-u55-64
 Selects the system configuration to use as specified in the Vela configuration
 file (see section below).  
 **Type: String**  
-**Default: Use `internal-default` config.  This maps to the following configs from the example `vela.ini` file**  
-
+**Default: Default config maps to the following configs from the example `vela.ini` file**  
+- **Ethos-U85** - System configuration Ethos_U85_SYS_DRAM_Mid: SRAMx2 (32 GB/s)
+  and DRAM (12 GB/s)  
 - **Ethos-U65** - System configuration Ethos-U65 Client-Server: SRAM (16 GB/s)
   and DRAM (12 GB/s)  
 - **Ethos-U55** - System configuration Ethos-U55 High-End Embedded: SRAM
@@ -186,9 +187,8 @@ vela network.tflite --config my_vela_cfg.ini --system-config My_Sys_Cfg
 Selects the memory mode to use as specified in the Vela configuration file (see
 section below).  
 **Type: String**  
-**Default: Use `internal-default` config.  This maps to the following configs from the example `vela.ini` file**  
-
-- **Ethos-U65** - Memory mode Dedicated SRAM: the SRAM is only for use by the
+**Default: Default config maps to the following configs from the example `vela.ini` file**  
+- **Ethos-U85 and Ethos-U65** - Memory mode Dedicated SRAM: the SRAM is only for use by the
   Ethos-U.  The non-SRAM memory is assumed to be read-writeable  
 - **Ethos-U55** - Memory mode Shared SRAM: the SRAM is shared between the
   Ethos-U and the Cortex-M software.  The non-SRAM memory is assumed to be
@@ -327,8 +327,8 @@ vela network.tflite --verbose-all
 ### Verbose Config
 
 Verbose system configuration and memory mode.  If no `--system-config` or
-`--memory-mode` CLI options are specified then the `internal-default` values
-will be displayed.  
+`--memory-mode` CLI options are specified then default values will be
+displayed.  
 
 ```bash
 vela network.tflite --verbose-config
@@ -546,6 +546,47 @@ the compiler driver and scheduler.
 vela network.tflite --verbose-progress
 ```
 
+### Debug force regor
+
+Force Ethos-U55 and Ethos-U65 to use the Regor compilation path (Experimental).
+This path is the default for Ethos-U85.
+
+```bash
+vela network.tflite --debug-force-regor
+```
+
+### Disable chaining
+
+Disable use of chaining buffers when using the Regor compilation path.
+
+```bash
+vela network.tflite --disable-chaining
+```
+
+### Disable Fast Weight Decoder
+
+Disable use of the Fast Weight Decoder core when using the Regor compilation path.
+
+```bash
+vela network.tflite --disable-fwd
+```
+
+### Disable cascading
+
+Disable cascading of operators when using the Regor compilation path.
+
+```bash
+vela network.tflite --disable-cascading
+```
+
+### Disable Buffering
+
+Disable buffering of weights to faster memory when using the Regor compilation path.
+
+```bash
+vela network.tflite --disable-buffering
+```
+
 ## Configuration File
 
 This is used to describe various properties of the Ethos-U embedded system.  The
@@ -562,14 +603,12 @@ is identified using the format `[Part.Name]` (Part = {System_Config or
 Memory_Mode}, Name = {a string with no spaces}.).  A configuration file may
 contain multiple entries per section, with the entries `.Name` being used to
 select it using the `--system-config` and `--memory-mode` CLI options.  If the
-CLI options are not specified then the sections named `internal-default` are
-used.  These are special sections which are defined internally and contain
-default values.
+CLI options are not specified then default options will be used.
 
 Each section contains a number of options which are described in more detail
 below.  All options are optional.  If they are not specified, then they will be
 assigned a value of 1 (or the equivalent).  They will not be assigned the value
-of `internal-default`.
+of the default configuration.
 
 One special option is the `inherit` option.  This can be used in any section and
 its value is the name of another section to inherit options from.  The only
@@ -577,8 +616,8 @@ restriction on this option is that recursion is not allowed and so it cannot
 reference its own section.
 
 To see the configuration values being used by Vela use the `--verbose_config`
-CLI option.  This can also be used to display the internal-default values and to
-see a full list of all the available options.
+CLI option.  This can also be used to display a full list of all the available
+options.
 
 An example Vela configuration file, called `vela.ini`, is included in the
 `ethosu/config_files/Arm` directory. Example usage based on this file is:
@@ -617,18 +656,27 @@ core_clock=???                 ---> Clock frequency of the Ethos-U.  ??? = {floa
 axi0_port=???                  ---> Memory type connected to AXI0.  ??? = {Sram, Dram, OnChipFlash or OffChipFlash}
 axi1_port=???                  ---> Memory type connected to AXI1.  ??? = {Sram, Dram, OnChipFlash or OffChipFlash}
 Sram_clock_scale=???           ---> Scaling of core_clock to specify the Sram bandwidth.  Only required if selected by an AXI port.  ??? = {float 0.0 to 1.0}
+Sram_ports_used=???            ---> Number of Sram ports used. Only required if selected by an AXI port. ??? = {int}
 Sram_burst_length=???          ---> Minimum efficient burst length in Sram. Only required if selected by an AXI port. ??? = {int in Bytes}
 Sram_read_latency=???          ---> Read latency in Sram. Only required if selected by an AXI port. ??? = {int in Cycles}
 Sram_write_latency=???         ---> Write latency in Sram. Only required if selected by an AXI port. ??? = {int in Cycles}
+Sram_max_reads=???             ---> Max outstanding reads in Sram. Only required if selected by an AXI port. ??? = {int}
+Sram_max_writes=???            ---> Max outstanding writes in Sram. Only required if selected by an AXI port. ??? = {int}
 Dram_clock_scale=???           ---> Scaling of core_clock to specify the Dram bandwidth.  Only required if selected by an AXI port.  ??? = {float 0.0 to 1.0}
+Dram_ports_used=???            ---> Number of Dram ports used. Only required if selected by an AXI port. ??? = {int}
 Dram_burst_length=???          ---> Minimum efficient burst length in Dram. Only required if selected by an AXI port. ??? = {int in Bytes}
 Dram_read_latency=???          ---> Read latency in Dram. Only required if selected by an AXI port. ??? = {int in Cycles}
 Dram_write_latency=???         ---> Write latency in Dram. Only required if selected by an AXI port. ??? = {int in Cycles}
+Dram_max_reads=???             ---> Max outstanding reads in Dram. Only required if selected by an AXI port. ??? = {int}
+Dram_max_writes=???            ---> Max outstanding writes in Dram. Only required if selected by an AXI port. ??? = {int}
 OnChipFlash_clock_scale=???    ---> Scaling of core_clock to specify the OnChipFlash bandwidth.  Only required if selected by an AXI port.  ??? = {float 0.0 to 1.0}
 OffChipFlash_clock_scale=???   ---> Scaling of core_clock to specify the OffChipFlash bandwidth.  Only required if selected by an AXI port.  ??? = {float 0.0 to 1.0}
+OffChipFlash_ports_used=???    ---> Number of OffChipFlash ports used. Only required if selected by an AXI port. ??? = {int}
 OffChipFlash_burst_length=???  ---> Minimum efficient burst length in OffChipFlash. Only required if selected by an AXI port. ??? = {int in Bytes}
 OffChipFlash_read_latency=???  ---> Read latency in OffChipFlash. Only required if selected by an AXI port. ??? = {int in Cycles}
 OffChipFlash_write_latency=??? ---> Write latency in OffChipFlash. Only required if selected by an AXI port. ??? = {int in Cycles}
+OffChipFlash_max_reads=???     ---> Max outstanding reads in OffChipFlash. Only required if selected by an AXI port. ??? = {int}
+OffChipFlash_max_writes=???    ---> Max outstanding writes in OffChipFlash. Only required if selected by an AXI port. ??? = {int}
 
 ; -----------------------------------------------------------------------------
 ; Memory Mode

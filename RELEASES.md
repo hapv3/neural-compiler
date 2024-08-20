@@ -22,6 +22,36 @@ main feature changes, interface changes and reported defects that have been
 fixed.  The version numbering adheres to the
 [semantic versioning](https://semver.org/) scheme.
 
+## Release 4.0.0 - 04/09/2024
+
+**Main feature changes:**
+
+* Added initial support for Ethos-U85
+  * Supported TFLite operators listed in SUPPORTED_OPS.md
+  * No backwards incompatible changes for Ethos-U55 or Ethos-U65
+* Upgrade TensorFlow Lite support to version 2.17
+* NumPy 2.0 compatibility
+
+**Interface changes:**
+
+* Addition of fields in the configuration file:
+  * `*_max_reads` and `*_max_writes`
+  * `*_ports_used` for Ethos-U85 System configurations
+
+* Addition of CLI debug options for the Regor compilation path:
+  * `--debug-force-regor`
+  * `--disable-chaining`
+  * `--disable-fwd`
+  * `--disable-cascading`
+  * `--disable-buffering`
+
+**Reported defect fixes:**
+
+* Ethos-U55/Ethos-U65
+  * Fixed issue with reshaping of MEAN operator (MLCE-1293)
+  * Fixed issue with extracting strides from STRIDED_SLICE operator attribute (MLCE-1316)
+
+
 ## Release 3.12.0 - 20/05/2024
 
 **Main feature changes:**
