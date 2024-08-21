@@ -480,6 +480,33 @@ Operation *GraphIrOptimiser::RewriteConcat(Graph *const graph, Operation *const 
     return returnOp;
 }
 
+// Rewrite TOSA Slice to a MemoryCopy
+Operation *GraphIrOptimiser::RewriteSlice(Graph *const graph, Operation *const operation)
+{
+    Operation *returnOp = operation;
+    const OpType opType = operation->Type();
+    if ( opType == OpType::Slice )
+    {
+        const auto *ifmConn = operation->Input(TensorUsage::IFM);
+        const auto *ofmConn = operation->Output(TensorUsage::OFM);
+        const auto *attr = operation->Attribute<slice_attr_t>();
+        const Shape begin = attr->begin;
+        const Shape size = attr->size;
+
+        // Replace SLICE with a memory copy with IFM slice
+        auto copyOp = std::make_shared<Operation>(OpType::Add);
+        copyOp->SetRounding(RoundMode::NATURAL);
+        copyOp->CopyInput(TensorUsage::IFM0, *ifmConn);
+        copyOp->Input(TensorUsage::IFM0)->Set({begin, size});
+        copyOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_zero", ifmConn->tensor->Type(), 0));
+        copyOp->CopyOutput(TensorUsage::OFM, *ofmConn);
+        RecordOptimisation(operation, copyOp.get());
+        returnOp = copyOp.get();
+        operation->Disconnect();
+    }
+    return returnOp;
+}
+
 // Rewrite TOSA Negate to TOSA Sub
 Operation *GraphIrOptimiser::RewriteNegate(Graph *const graph, Operation *const operation)
 {

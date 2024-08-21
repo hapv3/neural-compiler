@@ -51,6 +51,7 @@ private:
     Operation *RewriteTable(Graph *const graph, Operation *const operation);
     Operation *RewriteCast(Graph *const graph, Operation *const operation);
     Operation *RewriteConcat(Graph *const graph, Operation *const operation);
+    Operation *RewriteSlice(Graph *const graph, Operation *const operation);
     Operation *RewriteNegate(Graph *const graph, Operation *const operation);
     void MoveToConsumer(const Operation *const operation, Operation *const cons);
     Operation *MoveSplitSliceToConsumer(Graph *const, Operation *const operation);
@@ -94,6 +95,7 @@ public:
                 &GraphIrOptimiser::RewriteTable,
                 &GraphIrOptimiser::RewriteCast,
                 &GraphIrOptimiser::RewriteConcat,
+                &GraphIrOptimiser::RewriteSlice,
                 &GraphIrOptimiser::RewriteNegate,
             }
         },
