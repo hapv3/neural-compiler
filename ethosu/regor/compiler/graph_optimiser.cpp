@@ -173,15 +173,23 @@ void GraphOptimiser::PrintQuantization(const Graph *graph, const std::string &la
             std::string name = op->OFM() ? op->OFM()->Name() : "<unnamed>";
             LOG_PRINT("{0} {1} {2}\n", op_idx, OpTypeToString(type), name);
 
-            const ordered_map<TensorUsage, TensorConnection> &inputs = op->Inputs();
-            auto input_idx = 0;
-            for ( const auto &v : inputs )
+            int tensor_idx = 0;
+            for ( const auto &v : op->Inputs() )
             {
                 const auto &tens = v.tensor;
                 std::string quantization_string = v.quantization.ToString();
-                LOG_PRINT("    {0} {1:02} {2} {3} {4}\n", "Input", input_idx, DataTypeToString(tens->Type()),
+                LOG_PRINT("    {0} {1:02} {2} {3} {4}\n", "Input", tensor_idx, DataTypeToString(tens->Type()),
                     quantization_string, tens->Name());
-                input_idx++;
+                tensor_idx++;
+            }
+            tensor_idx = 0;
+            for ( const auto &v : op->Outputs() )
+            {
+                const auto &tens = v.tensor;
+                std::string quantization_string = v.quantization.ToString();
+                LOG_PRINT("    {0} {1:02} {2} {3} {4}\n", "Output", tensor_idx, DataTypeToString(tens->Type()),
+                    quantization_string, tens->Name());
+                tensor_idx++;
             }
             ++op_idx;
         }
