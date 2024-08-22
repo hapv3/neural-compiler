@@ -367,16 +367,26 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const, Operation *const operatio
         {
             // Propagate rescaling to input of next op
             auto consumer = ofmConn->tensor->Readers().front();
+            auto ifmQuant = ofmConn->quantization;
+            // Convert scales to have 0 shift if possible, since this can
+            // improve fusing for Ethos-U55/65
+            for ( auto &qs : ifmQuant.scales)
+            {
+                if ( qs.shift > 0 && qs.shift < 31 && ((qs.scale >> qs.shift) << qs.shift) == qs.scale )
+                {
+                    qs = {(qs.scale >> qs.shift), 0};
+                }
+            }
             for ( auto ifm : consumer->Inputs().pairs() )
             {
                 if ( ifm.second.tensor == ofmConn->tensor )
                 {
                     if ( ifm.second.quantization.EqualScales(Quantization::Unit()) &&
                          _constraints->SupportsFusedRescale(consumer->Type(), TensorUsage::IFM, ifmConn->tensor->Type(),
-                             ofmConn->tensor->Type(), ofmConn->quantization) )
+                             ofmConn->tensor->Type(), ifmQuant) )
                     {
                         consumer->CopyInput(ifm.first, *ifmConn);
-                        ifm.second.quantization.scales = ofmConn->quantization.scales;
+                        ifm.second.quantization.scales = ifmQuant.scales;
                         returnOp = consumer.get();
                         break;
                     }
