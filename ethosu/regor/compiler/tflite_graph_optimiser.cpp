@@ -903,187 +903,6 @@ Operation *TFLiteGraphOptimiser::RemoveReshape(Graph *const graph, Operation *co
     return returnOp;
 }
 
-Operation *TFLiteGraphOptimiser::RemoveTranspose(Graph *const graph, Operation *const operation)
-{
-    Operation *returnOp = operation;
-
-    OpType opType = operation->Type();
-
-    if ( opType == OpType::Transpose )
-    {
-        auto *ifmConn = operation->Input(TensorUsage::IFM0);
-        assert(ifmConn);
-        auto *paramsConn = operation->Input(TensorUsage::Params);
-        assert(paramsConn);
-        assert(paramsConn->shape.Size() == 1);
-        auto *ofmConn = operation->Output(TensorUsage::OFM);
-        assert(ofmConn);
-        auto *ifm = ifmConn->tensor.get();
-        auto *ofm = ofmConn->tensor.get();
-        Shape ifmShape = ifmConn->shape;
-        Shape ofmShape = ofmConn->shape;
-
-        // We can only handle permutation vectors up 4 elements
-        if ( paramsConn->shape.Depth() > 4 ) return returnOp;
-
-        // We can only handle constant permutation vectors
-        if ( !paramsConn->tensor->IsConstant() ) return returnOp;
-
-        // Convert the permutation vector to a transpose mask that can transpose a shape of size 4
-        // For example:
-        // [0, 1, 2, 3] -> 0x0123 ("NHWC")
-        // [0, 1, 2] -> 0x0123 ("NHWC")
-        // [0, 1] -> 0x0123 ("NHWC")
-        // [0] -> 0x0123 ("NHWC")
-        // [0, 2, 1, 3] -> 0x0213 ("NWHC")
-        // [1, 0, 2] -> 0x0213 ("NWHC")
-        uint32_t mask = 0;
-        int offset = 4 - paramsConn->shape.Depth();
-        for ( int i = 0; i < offset; i++ )
-        {
-            mask = (mask << 4) | i;
-        }
-        for ( int i = offset; i < 4; i++ )
-        {
-            mask = (mask << 4) | (offset + paramsConn->tensor->View().Values<int32_t>()[i - offset]);
-        }
-
-        // Convert the transpose mask to a transpose type
-        TransposeType transposeType = TransposeType(mask);
-
-        // Check if IFM/OFM are network IFM/OFM
-        bool isIfmSgIfm = IsTensorInVector(graph->Inputs(), ifm);
-        bool isIfmSgOfm = IsTensorInVector(graph->Outputs(), ifm);
-        bool ifmSingleReader = ifm->Readers().size() == 1;
-        bool ifmSingleWriter = ifm->Writers().size() == 1;
-
-        Operation *mainOp = nullptr;
-
-        if ( ifmSingleReader && ifmSingleWriter && !isIfmSgIfm && !isIfmSgOfm )
-        {
-            // Get the previous op and its current transpose type
-            Operation *prevOp = ifm->Writers()[0].get();
-            OpType prevOpType = prevOp->Type();
-            auto prevOfmConn = prevOp->Output(TensorUsage::OFM);
-
-            if ( IsNone(prevOfmConn->transpose) && prevOfmConn->reverse == ReverseType::None &&
-                 prevOfmConn->shape == ifmShape && _constraints->SupportsTransposeHW(prevOpType, transposeType) )
-            {
-                // Set transpose type and shape on main op's OFM connection
-                prevOp->Output(TensorUsage::OFM)->shape = Shape::PadAxes(ofmShape, 4, 1);
-                prevOp->Output(TensorUsage::OFM)->transpose = transposeType;
-
-                // Previous op supports transpose -- Save it so we can fuse transpose to it
-                mainOp = prevOp;
-            }
-        }
-
-        // If the transpose type is not supported (for example it's transposing in the batch dimension), try to
-        // rearrange the IFM and OFM shapes by moving any dimension that is 1 to the left. Then recalculate the
-        // transpose mask to match the new shapes.
-        //
-        // Example 1:
-        // Original, with unsupported permutation vector:
-        // 128x1x8x128 + [1, 2, 0, 3] -> 1x8x128x128
-        // Compact, with supported permutation vector:
-        // 1x128x8x128 + [0, 2, 1, 3] ("NWHC") -> 1x8x128x128
-        //
-        // Example 2:
-        // Original, with unsupported permutation vector:
-        // 1x8x128x32 + [2, 0, 1, 3] -> 128x1x8x32
-        // Compact, with supported permutation vector:
-        // 1x8x128x32 + [0, 2, 1, 3] ("NWHC") -> 1x128x8x32
-        if ( !mainOp && !_constraints->SupportsTransposeHW(OpType::MemoryCopy, transposeType) )
-        {
-            const auto paddedIfmShape = Shape::PadAxes(ifmShape, 4, 1);
-            const auto paddedOfmShape = Shape::PadAxes(ofmShape, 4, 1);
-
-            // Rearrange IFM shape by moving the 1's to the left
-            unsigned newIfmShapeMap[4] = {0, 1, 2, 3};
-            std::stable_sort(std::begin(newIfmShapeMap), std::end(newIfmShapeMap),
-                [&](auto &a, auto &b) {
-                    return (paddedIfmShape[a] == 1 || paddedIfmShape[b] == 1) ? paddedIfmShape[a] < paddedIfmShape[b] : a < b;
-                });
-
-            // Rearrange OFM shape by moving the 1's to the left
-            unsigned newOfmShapeMap[4] = {0, 1, 2, 3};
-            std::stable_sort(std::begin(newOfmShapeMap), std::end(newOfmShapeMap),
-                [&](auto &a, auto &b) {
-                    return (paddedOfmShape[a] == 1 || paddedOfmShape[b] == 1) ? paddedOfmShape[a] < paddedOfmShape[b] : a < b;
-                });
-
-            // Transform the transpose mask to match the rearragned IFM and OFM shapes
-            uint32_t compactMask = 0;
-            for ( int i = 0; i < 4; i++ )
-            {
-                int newOfmIndex = newOfmShapeMap[i];
-                assert(newOfmIndex <= 3);
-                int oldIfmIndex = (mask >> (4 * (3 - newOfmIndex))) & 0xF;
-                int newIfmIndex = newIfmShapeMap[oldIfmIndex];
-                compactMask = (compactMask << 4) | newIfmIndex;
-            }
-
-            // Use the compacted mask if supported
-            TransposeType compactTransposeType = TransposeType(compactMask);
-            if ( _constraints->SupportsTransposeHW(OpType::MemoryCopy, compactTransposeType) )
-            {
-                // Build new IFM shape with the rearranged dimensions
-                std::vector<int> newIfmShape;
-                for ( auto dim : newIfmShapeMap )
-                {
-                    newIfmShape.push_back(paddedIfmShape[dim]);
-                }
-
-                // Build new OFM shape with the rearranged dimensions
-                std::vector<int> newOfmShape;
-                for ( auto dim : newOfmShapeMap )
-                {
-                    newOfmShape.push_back(paddedOfmShape[dim]);
-                }
-
-                ifmShape = Shape::FromVector(newIfmShape);
-                ofmShape = Shape::FromVector(newOfmShape);
-                transposeType = compactTransposeType;
-            }
-        }
-        ExecutionQuery query{};
-        query.opType = opType;
-        query.targetType = OpType::MemoryCopy;
-        query.transposeType = transposeType;
-
-        if ( !mainOp && _constraints->CanExecute(query) )
-        {
-            // Previous doesn't support transpose -- Add a MemoryCopy so we can fuse transpose to it
-            auto memoryCopy = InsertCopyOpAfterTensor(ifmConn->tensor, ifmConn->quantization);
-            memoryCopy->SetRounding(RoundMode::NATURAL);
-
-            // Set transpose type and shapes on main op's IFM/OFM connection
-            memoryCopy->Input(TensorUsage::IFM0)->shape = Shape::PadAxes(ifmShape, 4, 1);
-            memoryCopy->Output(TensorUsage::OFM)->shape = Shape::PadAxes(ofmShape, 4, 1);
-            memoryCopy->Output(TensorUsage::OFM)->transpose = transposeType;
-
-            // Since we added a new op and tensor before our transpose, update to new IFM
-            ifmConn = operation->Input(TensorUsage::IFM0);
-            ifm = ifmConn->tensor.get();
-
-            mainOp = memoryCopy.get();
-        }
-
-        if ( mainOp )
-        {
-            // Bypass and remove Transpose
-            ReplaceProducerOutput(ifm->Writers(), ifm, ofmConn->tensor);
-            ReplaceConsumerInput(operation, ifm->Readers(), ifm, ofmConn->tensor);
-            operation->Disconnect();
-
-            returnOp = mainOp;
-        }
-    }
-
-    return returnOp;
-}
-
-
 // Remove Reverse op and move its reverse type to the previous op's OFM TensorConnection. If previous op can't reverse,
 // insert a MemoryCopy.
 Operation *TFLiteGraphOptimiser::RemoveReverse(Graph *const graph, Operation *const operation)
@@ -1528,6 +1347,33 @@ Operation *TFLiteGraphOptimiser::ConvertResize(Graph *const graph, Operation *co
             returnOp = resizeOp.get();
             operation->Disconnect();
         }
+    }
+    return returnOp;
+}
+
+// Convert TFLite Transpose into TOSA Transpose
+Operation *TFLiteGraphOptimiser::ConvertTranspose(Graph *const graph, Operation *const operation)
+{
+    Operation *returnOp = operation;
+    OpType opType = operation->Type();
+    if ( opType == OpType::Transpose )
+    {
+        auto *paramsConn = operation->Input(TensorUsage::Params);
+        auto *attr = operation->Attribute<transpose_attr_t>();
+
+        // We can only handle permutation vectors up to 4 elements
+        if ( paramsConn->shape.Depth() > 4 ) return returnOp;
+
+        // We can only handle constant permutation vectors
+        if ( !paramsConn->tensor->IsConstant() ) return returnOp;
+
+        // Decode the permutation vector into a shape
+        std::vector<int32_t> perm;
+        for ( int i = 0; i < paramsConn->shape.Depth(); i++ )
+        {
+            perm.push_back(paramsConn->tensor->View().Values<int32_t>()[i]);
+        }
+        attr->perm = Shape::FromVector(perm);
     }
     return returnOp;
 }

@@ -160,7 +160,8 @@ struct ArchitectureOpGroupQuery
         UniqueId key;
         DataType type;
         Shape shape;
-        bool isReordered;
+        TransposeType transpose;
+        ReverseType reverse;
         bool isConst;
     };
 

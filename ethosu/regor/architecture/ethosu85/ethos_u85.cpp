@@ -237,7 +237,7 @@ Flags<WeightFormat> ArchEthosU85::SupportedWeightFormat(OpType op)
 
 bool ArchEthosU85::UseAvgPoolNop(OpType type)
 {
-    return IsActivation(type) || type == OpType::Quantize || type == OpType::MemoryCopy;
+    return IsActivation(type) || type == OpType::Quantize || type == OpType::MemoryCopy || type == OpType::Transpose;
 }
 
 bool ArchEthosU85::UseNullPool(OpType opType, int bits)
@@ -1135,7 +1135,7 @@ int EthosU85OpGroup::ExternalIfms(const ArchitectureOpGroupQuery &op)
 bool EthosU85OpGroup::Fuse(const ArchitectureOpGroupQuery &op, const std::vector<int> &dependsOn)
 {
     assert(_opsCount > 0);
-    if ( _opsCount > 1 )
+    if ( _chainLength > 1 )
     {
         // TODO MLBEDSW-9142: support fusing on chained ops
         return false;
@@ -1162,11 +1162,27 @@ bool EthosU85OpGroup::Fuse(const ArchitectureOpGroupQuery &op, const std::vector
     }
     const EthosU85OpGroup::OpInfo &prevOp = _ops[dep];
 
-    // Can't fuse activation with activation..
-    if ( IsActivation(prevOp.type) )
+    // Can't fuse activation with activation
+    if ( IsActivation(op.type) && _hasFusedActivation )
     {
         return false;
     }
+
+    // Can't fuse transpose/reverse with transpose/reverse
+    if ( (op.type == OpType::Transpose || op.type == OpType::Reverse) && (_hasFusedTranspose || _hasFusedReverse) )
+    {
+        return false;
+    }
+
+    // Can't fuse a transpose type that's not supported primaryOp in opgroup
+    if ( !_arch->_constraints->SupportsTransposeHW(_ops[0].type, op.ofm.transpose) )
+    {
+        return false;
+    }
+
+    _hasFusedActivation = _hasFusedActivation || IsActivation(op.type);
+    _hasFusedTranspose = _hasFusedTranspose || (op.type == OpType::Transpose && !IsNone(op.ofm.transpose));
+    _hasFusedReverse = _hasFusedReverse || (op.type == OpType::Reverse && op.ofm.reverse != ReverseType::None);
 
     _fusedTensors.insert(prevOp.ofm.key);
     return true;
@@ -1196,6 +1212,14 @@ bool EthosU85OpGroup::Chain(const ArchitectureOpGroupQuery &op, const std::vecto
     {
         return false;
     }
+    if ( _hasFusedTranspose || (op.type == OpType::Transpose && !IsNone(op.ofm.transpose)) )
+    {
+        return false;
+    }
+    if ( _hasFusedReverse || (op.type == OpType::Reverse && op.ofm.reverse != ReverseType::None) )
+    {
+        return false;
+    }
     if ( (_chainLength + 1) > _maxChainLength )
     {
         return false;
@@ -1212,12 +1236,6 @@ bool EthosU85OpGroup::Chain(const ArchitectureOpGroupQuery &op, const std::vecto
             return false;
         }
         const EthosU85OpGroup::OpInfo &prevOp = _ops[dep];
-
-        if ( prevOp.ofm.isReordered )
-        {
-            // cannot chain reordered ofm
-            return false;
-        }
 
         if ( prevOp.ofm.shape != op.ofm.shape )
         {
@@ -1261,8 +1279,11 @@ int EthosU85OpGroup::Add(const ArchitectureOpGroupQuery &op, const std::vector<i
         _supportsChaining = CanStartChain(op);
         _externalIfms = externalInputs;
         _chainLength = 1;
+        _hasFusedActivation = IsActivation(op.type);
+        _hasFusedTranspose = (op.type == OpType::Transpose && !IsNone(op.ofm.transpose));
+        _hasFusedReverse = (op.type == OpType::Reverse && op.ofm.reverse != ReverseType::None);
     }
-    else if ( IsActivation(op.type) )
+    else if ( IsActivation(op.type) || op.type == OpType::Transpose )
     {
         if ( Fuse(op, dependsOn) == false )
         {
@@ -1420,6 +1441,11 @@ bool EthosU85OpGroup::CanRunOnNPU(const ArchitectureOpGroupQuery &op)
         {  // TODO: LUT operations end up here due to UseAvgPoolNop although the rules are not the same as
            // for a Pooling operation, so skip checks for now.
             return true;
+        }
+
+        if ( op.type == OpType::Transpose )
+        {
+            return _arch->_constraints->SupportsTransposeHW(OpType::MemoryCopy, op.ofm.transpose);
         }
 
         auto map = s_opDataTypeSupport.find(npuOp);

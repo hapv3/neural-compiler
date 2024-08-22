@@ -926,12 +926,20 @@ void EthosU85RCSGenerator::GenerateActivation(const HLCStripe *stripe, MemoryAcc
         opType = op->type;
         parameters = &op->parameters;
     }
-    else if ( !op->subOps.empty() && opGroup->IsFused(op->subOps[0].ifm[0].uid) )
+    else
     {
-        // Fused activation
-        assert(IsActivation(op->subOps[0].type));
-        opType = op->subOps[0].type;
-        parameters = &op->subOps[0].parameters;
+        for ( auto &subOp : op->subOps )
+        {
+            if ( opGroup->IsFused(subOp.ifm[0].uid) && IsActivation(subOp.type) )
+            {
+                // Fused activation
+                opType = subOp.type;
+                parameters = &subOp.parameters;
+
+                // We know there can be only one fused activation
+                break;
+            }
+        }
     }
 
     auto &ofm = op->ofm;
@@ -1995,10 +2003,12 @@ bool EthosU85RCSGenerator::GenerateOpGroup(HLCStripe *stripe, HLCStripe *prevOp,
     std::deque<MemoryAccesses> &outstandingDmaAccesses, std::vector<std::pair<unsigned, std::string>> &debugInfo,
     std::vector<std::tuple<void *, int, int>> *cmdRanges)
 {
-    std::vector<HLCSubOperation> subOps = stripe->operation->subOps;
     assert(stripe->opGroup != nullptr);
     EthosU85OpGroup *opGroup = static_cast<EthosU85OpGroup *>(stripe->opGroup);
-    bool isChained = (subOps.size() > 1 || (subOps.size() == 1 && !IsActivation(subOps[0].type)));
+    const auto &subOps = stripe->operation->subOps;
+    const bool isChained =
+        subOps.end() !=
+        std::find_if(subOps.begin(), subOps.end(), [](const auto &subOp) { return IsElementwise(subOp.type); });
 
     int blockdep = 0;
     if ( isChained )
@@ -2020,18 +2030,18 @@ bool EthosU85RCSGenerator::GenerateOpGroup(HLCStripe *stripe, HLCStripe *prevOp,
     while ( idx < int(subOps.size()) )
     {
         int emitStart = _emit.Position();
-        if ( idx >= 0 )
+        if ( idx >= 0 && opGroup->IsChained(stripe->operation->ofm.uid) )
         {
             // chained sub operation
-            assert(opGroup->IsChained(stripe->operation->ofm.uid));
             HLCSubOperation subOp = subOps[idx];
             subStripe = MakeStripeForSubOp(stripe, subOp);
             stripe = subStripe.get();
         }
-        // fuse next subOp if its an activation
+        // fuse next subOp if it's an activation or transpose
         if ( ((idx + 1) < int(subOps.size())) && opGroup->IsFused(subOps[idx + 1].ifm[0].uid) )
         {
-            assert(IsActivation(subOps[idx + 1].type));
+            OpType type = subOps[idx + 1].type;
+            assert(IsActivation(type) || type == OpType::Transpose);
             if ( idx >= 0 )
             {
                 HLCSubOperation activation = subOps[idx + 1];

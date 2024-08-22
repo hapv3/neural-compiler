@@ -142,6 +142,30 @@ Operation *GraphIrOptimiser::ConvertAttributes(Graph *const graph, Operation *co
         }
         ofmConn->quantization.scales[0].shift += attr->shift;
     }
+    else if ( opType == OpType::Transpose )
+    {
+        const auto *attr = operation->Attribute<transpose_attr_t>();
+        const int size = attr->perm.Size();
+        if ( size <= 4 )
+        {
+            TensorConnection *ifmConn = operation->Input(TensorUsage::IFM);
+            TensorConnection *ofmConn = operation->Output(TensorUsage::OFM);
+            // Convert the permutation vector to a transpose mask that can transpose a shape of size 4
+            // For example:
+            // [0, 1, 2, 3] -> 0x0123 ("NHWC")
+            // [0, 1, 2] -> 0x0123 ("NHWC")
+            // [0, 1] -> 0x0123 ("NHWC")
+            // [0] -> 0x0123 ("NHWC")
+            // [0, 2, 1, 3] -> 0x0213 ("NWHC")
+            // [1, 0, 2] -> 0x0213 ("NWHC")
+            const uint32_t mask = attr->perm.ToMask();
+            const uint32_t mask4D = mask + (0x0123 - (0x0123 >> 4 * (4 - size)));
+            ofmConn->transpose = TransposeType(mask4D);
+            // Pad shapes to match transpose mask
+            ifmConn->shape = Shape::PadAxes(ifmConn->shape, 4, 1);
+            ofmConn->shape = Shape::PadAxes(ofmConn->shape, 4, 1);
+        }
+    }
     return operation;
 }
 
@@ -761,6 +785,89 @@ Operation *GraphIrOptimiser::RewriteTile(Graph *const, Operation *const operatio
     }
 
     operation->Disconnect();
+    return returnOp;
+}
+
+// Rearrange transpose
+Operation *GraphIrOptimiser::RearrangeTranspose(Graph *const graph, Operation *const operation)
+{
+    UNUSED(graph);
+    Operation *returnOp = operation;
+    const OpType opType = operation->Type();
+    if ( opType == OpType::Transpose )
+    {
+        auto *ifmConn = operation->Input(TensorUsage::IFM);
+        auto *ofmConn = operation->Output(TensorUsage::OFM);
+        auto *attr = operation->Attribute<transpose_attr_t>();
+
+        // If the transpose type is not supported (for example it's transposing in the batch dimension), try to
+        // rearrange the IFM and OFM shapes by moving any dimension that is 1 to the left. Then recalculate the
+        // transpose mask to match the new shapes.
+        //
+        // Example 1:
+        // Original, with unsupported permutation vector:
+        // 128x1x8x128 + [1, 2, 0, 3] -> 1x8x128x128
+        // Compact, with supported permutation vector:
+        // 1x128x8x128 + [0, 2, 1, 3] ("NWHC") -> 1x8x128x128
+        //
+        // Example 2:
+        // Original, with unsupported permutation vector:
+        // 1x8x128x32 + [2, 0, 1, 3] -> 128x1x8x32
+        // Compact, with supported permutation vector:
+        // 1x8x128x32 + [0, 2, 1, 3] ("NWHC") -> 1x128x8x32
+
+        // Don't bother with rearrangement if transpose type is already supported
+        if ( _constraints->SupportsTransposeHW(OpType::MemoryCopy, ofmConn->transpose) )
+        {
+            return returnOp;
+        }
+
+        Shape ifmShape = ifmConn->shape;
+        Shape ofmShape = ofmConn->shape;
+        uint32_t mask = uint32_t(ofmConn->transpose);
+        Shape perm = Shape::FromMask4(mask);
+        int ofmDim = perm.Size() - 1;
+        for ( auto onesMask = ofmShape.EqualMask(ofmShape.WithOnes()); onesMask; onesMask >>= 1 )
+        {
+            if ( onesMask & 1 )
+            {
+                // Find matching dimension to remove from IFM
+                int ifmDim = perm[ofmDim];
+
+                // Remove dimensions from IFM, OFM, perm
+                ofmShape = ofmShape.Erase(ofmDim);
+                ifmShape = ifmShape.Erase(ifmDim);
+                perm = perm.Erase(ofmDim);
+                for ( int i = 0; i < perm.Size(); i++ )
+                {
+                    if ( perm[i] > ifmDim ) perm[i]--;
+                }
+            }
+            ofmDim--;
+        }
+
+        // We can only deal with 4D or less permutation vectors
+        const int size = perm.Size();
+        if ( size > 4 )
+        {
+            return returnOp;
+        }
+
+        // Rebuild the mask for 4D IFM and OFM
+        const uint32_t newMask = perm.ToMask();
+        const uint32_t newMask4D = newMask + (0x0123 - (0x0123 >> 4 * (4 - size)));
+
+        // Don't bother with the rearrangement if result is not supported
+        if ( !_constraints->SupportsTransposeHW(OpType::MemoryCopy, TransposeType(newMask4D)) )
+        {
+            return returnOp;
+        }
+
+        ofmConn->transpose = TransposeType(newMask4D);
+        attr->perm = Shape::FromMask4(newMask4D);
+        ifmConn->shape = Shape::PadAxes(ifmShape, 4, 1);
+        ofmConn->shape = Shape::PadAxes(ofmShape, 4, 1);
+    }
     return returnOp;
 }
 

@@ -404,7 +404,7 @@ public:
         while ( length-- )
         {
             int to = ToOffset(reverseAxisMask4b & 0xF);
-            assert(to < Size());
+            assert(to >= 0 && to < Size());
             result[to] = *local++;
             reverseAxisMask4b = reverseAxisMask4b >> 4;
         }
@@ -549,6 +549,17 @@ public:
     std::vector<TYPE> ToList() const
     {
         return std::vector<TYPE>(std::reverse_iterator<const int *>(Storage() + Size()), std::reverse_iterator<const int *>(Storage()));
+    }
+
+    uint32_t ToMask() const
+    {
+        uint32_t mask = 0;
+        auto *local = Storage();
+        for ( int i = _last; i >= 0; i-- )
+        {
+            mask = (mask << 4) | local[i];
+        }
+        return mask;
     }
 
     std::string ToString() const
@@ -696,6 +707,11 @@ public:
     static Shape FromVector(const std::vector<TYPE> &from)
     {
         return from.empty() ? Shape() : Shape(from.data(), from.size());
+    }
+
+    static Shape FromMask4(const uint32_t mask)
+    {
+        return Shape((mask >> 12) & 0xF, (mask >> 8) & 0xF, (mask >> 4) & 0xF, mask & 0xF);
     }
 
     static Shape PadAxes(const Shape &shape, int axes, int padValue)

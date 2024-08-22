@@ -128,20 +128,23 @@ ArchitectureOpGroupQuery SchedulerPacking::CreateOpGroupQuery(const SchedulerOpe
     query.ifm[0].key = ifm0->tensor->uid;
     query.ifm[0].type = ifm0->tensor->dataType;
     query.ifm[0].shape = ifm0->shape;
-    query.ifm[0].isReordered = (!IsNone(ifm0->transpose)) || (ifm0->reverse != ReverseType::None);
+    query.ifm[0].transpose = ifm0->transpose;
+    query.ifm[0].reverse = ifm0->reverse;
     query.ifm[0].isConst = ifm0->tensor->IsConstant();
     if ( ifm1 )
     {
         query.ifm[1].key = ifm1->tensor->uid;
         query.ifm[1].type = ifm1->tensor->dataType;
         query.ifm[1].shape = ifm1->shape;
-        query.ifm[1].isReordered = (!IsNone(ifm1->transpose)) || (ifm1->reverse != ReverseType::None);
+        query.ifm[1].transpose = ifm1->transpose;
+        query.ifm[1].reverse = ifm1->reverse;
         query.ifm[1].isConst = ifm1->tensor->IsConstant();
     }
     query.ofm.key = ofm->tensor->uid;
     query.ofm.type = ofm->tensor->dataType;
     query.ofm.shape = ofm->shape;
-    query.ofm.isReordered = (!IsNone(ofm->transpose)) || (ofm->reverse != ReverseType::None);
+    query.ofm.transpose = ofm->transpose;
+    query.ofm.reverse = ofm->reverse;
     query.ofm.isConst = false;
     return query;
 }
@@ -212,11 +215,19 @@ void SchedulerPacking::SchedulerPacking::PackOperations()
                 {
                     primaryOp->AddSubOp(std::move(*cur));
                     // Replace primary op's OFM by nextOp's OFM
-                    auto *ofmConn = prevOp->OFM();
+                    auto *ofmConn = primaryOp->OFM();
                     ofmConn->tensor = nextOp->OFM()->tensor;
-                    ofmConn->quantization = prevOp->Output(TensorUsage::OFM)->quantization;
                     ofmConn->quantization.quantMin = nextOp->Output(TensorUsage::OFM)->quantization.quantMin;
                     ofmConn->quantization.quantMax = nextOp->Output(TensorUsage::OFM)->quantization.quantMax;
+                }
+                else if ( nextOp->Type() == OpType::Transpose )
+                {
+                    primaryOp->AddSubOp(std::move(*cur));
+                    // Replace primary op's OFM by nextOp's OFM
+                    auto *ofmConn = primaryOp->OFM();
+                    ofmConn->tensor = nextOp->OFM()->tensor;
+                    ofmConn->shape = nextOp->OFM()->shape;
+                    ofmConn->transpose = nextOp->OFM()->transpose;
                 }
                 else
                 {
@@ -343,7 +354,19 @@ int SchedulerPacking::CanPack(const SchedulerOperation *schedOp, const Scheduler
         return 0;
     }
 
-    if ( _disableChaining && !IsActivation(nextOp->Type()) )
+    // Previous op is transpose or reverse and has different shape
+    if ( nextOp->IsReordering() && prevOFM == ifmTensor && prevConnOfm->shape != nextConnIfm->shape )
+    {
+        return 0;
+    }
+
+    // Previous op is transpose or reverse and has different shape
+    if ( nextOp->IsReordering() && prevOFM == ifm2Tensor && prevConnOfm->shape != nextConnIfm2->shape )
+    {
+        return 0;
+    }
+
+    if ( _disableChaining && !IsActivation(nextOp->Type()) && nextOp->Type() != OpType::Transpose )
     {
         return 0;
     }

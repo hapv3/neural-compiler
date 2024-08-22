@@ -124,6 +124,9 @@ private:
     int _externalIfms = 0;
     int _chainIdx = 0;
     bool _supportsChaining = false;
+    bool _hasFusedActivation = false;
+    bool _hasFusedTranspose = false;
+    bool _hasFusedReverse = false;
 
 public:
     EthosU85OpGroup(ArchEthosU85 *arch) : _arch(arch){};

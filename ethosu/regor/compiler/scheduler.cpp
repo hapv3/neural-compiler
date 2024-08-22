@@ -566,9 +566,11 @@ std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(
     auto ifm2Shape = ifm2 ? ifm2->shape : Shape();
     auto ofmShape = ofmStripeShape;
 
-    bool isChained =
-        (op->Parent() != nullptr || op->SubOps().size() > 1 ||
-            (op->SubOps().size() == 1 && !IsActivation(op->SubOps()[0]->Type())));
+    const auto &subOps = op->SubOps();
+    const bool isChained =
+        op->Parent() != nullptr ||
+        subOps.end() !=
+            std::find_if(subOps.begin(), subOps.end(), [](const auto &subOp) { return IsElementwise(subOp->Type()); });
 
     // Operations that cannot be subdivided require full OFM shape
     // TODO MLBEDSW-9143 support cascading for chains..
@@ -930,9 +932,12 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
     // No need to move the weights if they are already in the same memory as the staging area
     bool needsDMA = weightTens->memArea.memory != _arch->StagingMemory().memory;
 
-    bool isChained =
-        (schedOp->Parent() != nullptr || schedOp->SubOps().size() > 1 ||
-            (schedOp->SubOps().size() == 1 && !IsActivation(schedOp->SubOps()[0]->Type())));
+    const auto &subOps = schedOp->SubOps();
+    const bool isChained =
+        schedOp->Parent() != nullptr ||
+        subOps.end() !=
+            std::find_if(subOps.begin(), subOps.end(), [](const auto &subOp) { return IsElementwise(subOp->Type()); });
+
     assert(ofm->transpose == TransposeType::None || (ofm->transpose & TransposeType::MaskC) == TransposeType::C || refCost->stripe == ofm->shape);
     auto fullDepth =
         (refCost->stripe == ofm->shape) ? refCost->stripe.Untranspose(ofm->transpose).Depth() : refCost->stripe.Depth();
@@ -1088,6 +1093,7 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
             }
 
             // Calculate cycles required to run the last op for use as future slack
+            assert(cost->ofmDepthSlices.size() >= 2);
             int lastDepth = cost->ofmDepthSlices.back();
             lastDepth -= *(cost->ofmDepthSlices.rbegin() + 1);
             auto tailCycles = EstimateOpPerformance(schedOp, cost->Config(), lastDepth);

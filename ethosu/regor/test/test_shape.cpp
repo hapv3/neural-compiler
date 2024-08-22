@@ -410,3 +410,37 @@ TEST_CASE("Vector Conversion")
     Shape b = Shape::FromVector(charVec);
     REQUIRE((b[0] == 45 && b[4] == 16 && b[5] == 19));
 }
+
+
+TEST_CASE("From Mask4")
+{
+    uint32_t mask1 = 0x0123;
+    Shape a = Shape::FromMask4(mask1);
+    REQUIRE((a.Size() == 4));
+    REQUIRE((a[0] == 0 && a[1] == 1 && a[2] == 2 && a[3] == 3));
+    uint32_t mask1b = a.ToMask();
+    REQUIRE((mask1 == mask1b));
+
+    uint32_t mask2 = 0x1032;
+    Shape b = Shape::FromMask4(mask2);
+    REQUIRE((b.Size() == 4));
+    REQUIRE((b[0] == 1 && b[1] == 0 && b[2] == 3 && b[3] == 2));
+    uint32_t mask2b = b.ToMask();
+    REQUIRE((mask2 == mask2b));
+}
+
+
+TEST_CASE("To Mask")
+{
+    Shape shape1(0, 1, 2, 3);
+    uint32_t mask1 = shape1.ToMask();
+    REQUIRE((mask1 == 0x0123));
+    Shape shapeFromMask1 = Shape::FromMask4(mask1);
+    REQUIRE((shape1 == shapeFromMask1));
+
+    Shape shape2(1, 0, 3, 2);
+    uint32_t mask2 = shape2.ToMask();
+    REQUIRE((mask2 == 0x1032));
+    Shape shapeFromMask2 = Shape::FromMask4(mask2);
+    REQUIRE((shape2 == shapeFromMask2));
+}
