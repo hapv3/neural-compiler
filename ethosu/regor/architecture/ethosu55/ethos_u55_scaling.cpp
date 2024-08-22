@@ -179,7 +179,9 @@ void RescalePooling(HLCOperation *op, bool isNoOp)
     DataType ifmDataType = op->ifm[0].dataType;
     OpType opType = op->type;
 
-    if ( ofmQuant->type != QuantizationType::TFLITE )
+    if ( ofmQuant->type != QuantizationType::TFLITE &&
+         // Special case for average pool with no padding
+         !(op->type == OpType::AvgPool && ifm1Quant->scales == Quantization::Unit().scales && op->kernel.Padding().IsZero()) )
     {
         // Explicit scaling
         return;
