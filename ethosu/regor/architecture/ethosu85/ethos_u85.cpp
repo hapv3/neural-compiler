@@ -672,6 +672,7 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU85::FindBlockConfig(OpType opTyp
     bool isPartKernel = isConvolution && ChooseKernelMethod(ifmShape, query.ifmBits, query.kernel);
     bool isEqualDepthOp = isElementwise || (isPooling && !isReduceSum) || isDepthwise || isResize;
     bool isMatmul = (npuOp == EthosU85NpuOp::VectorProduct) && query.ifmShape[1];
+    bool isFullyConnected = (npuOp == EthosU85NpuOp::VectorProduct) && !isMatmul;
 
     EthosU85Traversal traversal = isDepthwise ? EthosU85Traversal::Depthwise : (isPartKernel ? EthosU85Traversal::PartKernel : EthosU85Traversal::DepthFirst);
 
@@ -845,9 +846,19 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU85::FindBlockConfig(OpType opTyp
                     }
 
                     // Scale relative to every output OFM element
-                    float relativeCost =
-                        (isResize || isMatmul) ? float(ofmElements) / (float(height) * width * depth) : (ifmFetch + weightFetch) / float(ofmElements);
-
+                    float relativeCost = 0.0;
+                    if ( isFullyConnected )
+                    {
+                        relativeCost = 1.0f / (height * width);
+                    }
+                    else if ( isResize || isMatmul )
+                    {
+                        relativeCost = float(ofmElements) / (float(height) * width * depth);
+                    }
+                    else
+                    {
+                        relativeCost = (ifmFetch + weightFetch) / float(ofmElements);
+                    }
                     // If the entire IFM can be encompassed by both buffers, bias to prefer this configuration
                     if ( ifmShape.Elements() < ifmBlock.Elements() * 2 )
                     {
