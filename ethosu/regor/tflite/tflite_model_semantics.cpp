@@ -80,6 +80,20 @@ unsigned int BoundsCheckedIndex(T index, const U &vector)
     throw std::runtime_error("Error: Out of bounds\n");
 }
 
+template<typename T, typename U>
+unsigned int BoundsCheckedIndex(T index, const U &vector, const BuiltinOperator &builtinOperator)
+{
+    if ( (std::is_unsigned_v<T> || index >= 0) && static_cast<uint64_t>(index) < vector.size() ) return unsigned(index);
+    std::string errorMessage = fmt::format(
+        "Error: {0} Does not have valid TFLite Semantics.\n"
+        " - Index out of bounds\n"
+        "   Most likely missing inputs or output\n"
+        "Failed to parse TFLite file\n",
+        EnumNameBuiltinOperator(builtinOperator));
+
+    throw std::runtime_error(errorMessage);
+}
+
 const Tensor *TensorFromUsage(regor::TensorUsage usage, const Operator &op, const BuiltinOperator &builtinOperator,
     const flatbuffers::Vector<flatbuffers::Offset<Tensor>> &tensors)
 {
@@ -89,8 +103,8 @@ const Tensor *TensorFromUsage(regor::TensorUsage usage, const Operator &op, cons
         const auto *inputs = CheckedPtr(op.inputs());
         if ( IsVariadic(opType) )
         {
-            auto tensorIndex = BoundsCheckedIndex(regor::GetUsageIndex(usage), *inputs);
-            auto tensorsLookupIndex = BoundsCheckedIndex((*inputs)[tensorIndex], tensors);
+            auto tensorIndex = BoundsCheckedIndex(regor::GetUsageIndex(usage), *inputs, builtinOperator);
+            auto tensorsLookupIndex = BoundsCheckedIndex((*inputs)[tensorIndex], tensors, builtinOperator);
             return CheckedPtr(tensors[tensorsLookupIndex]);
         }
 
@@ -103,15 +117,15 @@ const Tensor *TensorFromUsage(regor::TensorUsage usage, const Operator &op, cons
         }
 
         auto i = std::distance(mapping.begin(), at);
-        auto tensorIndex = BoundsCheckedIndex(i, *inputs);
-        auto tensorsLookupIndex = BoundsCheckedIndex((*inputs)[tensorIndex], tensors);
+        auto tensorIndex = BoundsCheckedIndex(i, *inputs, builtinOperator);
+        auto tensorsLookupIndex = BoundsCheckedIndex((*inputs)[tensorIndex], tensors, builtinOperator);
         return CheckedPtr(tensors[tensorsLookupIndex]);
     }
     else
     {
         const auto *outputs = CheckedPtr(op.outputs());
-        auto tensorIndex = BoundsCheckedIndex(regor::GetUsageIndex(usage), *outputs);
-        auto tensorsLookupIndex = BoundsCheckedIndex((*outputs)[tensorIndex], tensors);
+        auto tensorIndex = BoundsCheckedIndex(regor::GetUsageIndex(usage), *outputs, builtinOperator);
+        auto tensorsLookupIndex = BoundsCheckedIndex((*outputs)[tensorIndex], tensors, builtinOperator);
         return CheckedPtr(tensors[tensorsLookupIndex]);
     }
 }
@@ -234,31 +248,35 @@ void ConstraintEmptyConstTensors(const Model &m_model)
     for ( const auto subgraph : *m_model.subgraphs() )
     {
         auto &tensors = *CheckedPtr(subgraph->tensors());
-        for ( auto input : *subgraph->inputs() )
+        if ( subgraph->inputs() && subgraph->operators() )
         {
-            writtenTensors.insert(input);
-        }
-        for ( auto op : *subgraph->operators() )
-        {
-            for ( auto output : *op->outputs() )
+            for ( auto input : *subgraph->inputs() )
             {
-                writtenTensors.insert(output);
+                writtenTensors.insert(input);
             }
-        }
-        for ( auto op : *subgraph->operators() )
-        {
-            for ( auto input : *op->inputs() )
+
+            for ( auto op : *subgraph->operators() )
             {
-                if ( input != -1 && !writtenTensors.count(input) )
+                for ( auto output : *op->outputs() )
                 {
-                    auto tensor = tensors[BoundsCheckedIndex(input, tensors)];
-                    auto buffer = buffers[BoundsCheckedIndex(tensor->buffer(), buffers)];
-                    // Buffer 0 is a special buffer that is used for empty tensors
-                    if ( tensor->buffer() != 0 && (!buffer->data() || buffer->data()->size() == 0) )
+                    writtenTensors.insert(output);
+                }
+            }
+            for ( auto op : *subgraph->operators() )
+            {
+                for ( auto input : *op->inputs() )
+                {
+                    if ( input != -1 && !writtenTensors.count(input) )
                     {
-                        std::string constraint = "Constant tensors must not have empty buffers";
-                        std::string extra = "Found Constant Tensor with empty buffer";
-                        throw InvalidTfLiteException(constraint, extra, *tensor);
+                        auto tensor = tensors[BoundsCheckedIndex(input, tensors)];
+                        auto buffer = buffers[BoundsCheckedIndex(tensor->buffer(), buffers)];
+                        // Buffer 0 is a special buffer that is used for empty tensors
+                        if ( tensor->buffer() != 0 && (!buffer->data() || buffer->data()->size() == 0) )
+                        {
+                            std::string constraint = "Constant tensors must not have empty buffers";
+                            std::string extra = "Found Constant Tensor with empty buffer";
+                            throw InvalidTfLiteException(constraint, extra, *tensor);
+                        }
                     }
                 }
             }
