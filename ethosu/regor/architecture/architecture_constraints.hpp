@@ -68,6 +68,7 @@ struct ExecutionQuery
     OpType targetType;
     DataType ifmType;
     Shape ifmShape;
+    DataType ofmType;
     TransposeType transposeType;
     ReverseType reverseType;
     ResizeSupportQuery resizeQuery;
@@ -125,6 +126,9 @@ public:
             case OpType::ResizeBilinear:
                 valid = SupportsResize(query.resizeQuery);
                 break;
+            case OpType::Cast:
+                valid = SupportsCast(query.opType, query.ifmType, query.ofmType);
+                break;
             default:
                 break;
         }
@@ -140,6 +144,7 @@ protected:
     virtual bool SupportsSigmoidTanhLutInt16(OpType opType) = 0;
     virtual bool SupportsResize(const ResizeSupportQuery &query) = 0;
     virtual bool SupportsArgMax(OpType opType) = 0;
+    virtual bool SupportsCast(OpType opType, DataType ifmType, DataType ofmType) = 0;
 };
 
 }  // namespace regor

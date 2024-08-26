@@ -87,4 +87,12 @@ bool EthosU55Constraints::SupportsArgMax(OpType opType)
     return false;
 }
 
+bool EthosU55Constraints::SupportsCast(OpType opType, DataType ifmType, DataType ofmType)
+{
+    UNUSED(opType);
+    UNUSED(ifmType);
+    UNUSED(ofmType);
+    return false;
+}
+
 }  // namespace regor

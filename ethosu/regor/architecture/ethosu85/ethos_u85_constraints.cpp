@@ -210,4 +210,9 @@ bool EthosU85Constraints::SupportsResize(const ResizeSupportQuery &query)
     return supported;
 }
 
+bool EthosU85Constraints::SupportsCast(OpType opType, DataType ifmType, DataType ofmType)
+{
+    return !IsFloat(ifmType | ofmType);
+}
+
 }  // namespace regor

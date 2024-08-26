@@ -37,6 +37,7 @@ public:
     bool SupportsSigmoidTanhLutInt16(OpType opType) override;
     bool SupportsResize(const ResizeSupportQuery &query) override;
     bool SupportsArgMax(OpType opType) override;
+    bool SupportsCast(OpType opType, DataType ifmType, DataType ofmType) override;
 
 private:
     ArchEthosU85 *_arch;
