@@ -245,21 +245,18 @@ bool ArchEthosU85::UseNullPool(OpType opType, int bits)
     return ((opType == OpType::MemoryCopy || opType == OpType::Rescale || opType == OpType::Transpose) && bits >= 32);
 }
 
-static bool ChooseKernelMethod(const Shape &ifmShape, int ifmBits, const Kernel *kernel)
+// Return true if kernel first mode has a better utilisation than depth first mode
+static bool ChooseKernelFirst(const Shape &ifmShape, const Kernel *kernel, bool sparse)
 {
-    if ( ifmShape.Depth() <= 8 )
-    {
-        return true;
-    }
+    int k = kernel->ElementsWH();
+    int s = sparse ? 10 : 5;
+    int r = sparse ? 4 : 2;
+    int k_rnd = (k / s) * s + std::max(k % s, r);
+    double kernelFirstUtilisation = (ifmShape.Depth() / double(RoundAway(ifmShape.Depth(), 16)) * (k / double(k_rnd)));
 
-    // Compare part-kernel to depth-kernel and choose the one with best utilisation
-    int kernelElements = kernel->ElementsWH();
-    double depthUtilisation = ifmShape.Depth() / double(RoundAway(ifmShape.Depth(), ifmBits == 8 ? 32 : 16));
-    double partUtilisation =
-        (ifmShape.Depth() / double(RoundAway(ifmShape.Depth(), 8)) *
-            (kernelElements / double(RoundAway(kernelElements, ifmBits == 8 ? 4 : 2))));
+    double depthFirstUtilisation = ifmShape.Depth() / double(RoundAway(ifmShape.Depth(), sparse ? 128 : 64));
 
-    return partUtilisation >= depthUtilisation;
+    return kernelFirstUtilisation >= depthFirstUtilisation;
 }
 
 
@@ -656,7 +653,7 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU85::FindBlockConfig(OpType opTyp
     bool isElementwise = npuOp == EthosU85NpuOp::Elementwise;
     bool isConvolution = npuOp == EthosU85NpuOp::Convolution || npuOp == EthosU85NpuOp::Depthwise;
     bool isResize = npuOp == EthosU85NpuOp::Resize;
-    bool isPartKernel = isConvolution && ChooseKernelMethod(ifmShape, query.ifmBits, query.kernel);
+    bool isPartKernel = npuOp == EthosU85NpuOp::Convolution && ChooseKernelFirst(ifmShape, query.kernel, query.weightFormat & WeightFormat::Sparse2_4);
     bool isEqualDepthOp = isElementwise || (isPooling && !isReduceSum) || isDepthwise || isResize;
     bool isMatmul = (npuOp == EthosU85NpuOp::VectorProduct) && query.ifmShape[1];
     bool isFullyConnected = (npuOp == EthosU85NpuOp::VectorProduct) && !isMatmul;
