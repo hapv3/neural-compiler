@@ -237,10 +237,12 @@ OptimiserDatabase::OptimiserDatabase(Database *db) : _db(db)
 {
     _sourceTable = _db->AddTable("source");
     _optTable = _db->AddTable("optimised");
+    _groupTable = _db->AddTable("group");
     _cmdTable = _db->AddTable("queue", false);
     _streamTable = _db->AddTable("cmdstream");
     _db->AddColumns(_sourceTable, {"operator", "kernel_w", "kernel_h", "ofm_w", "ofm_h", "ofm_d", "ext_key"});
     _db->AddColumns(_optTable, {"source_id", "operator", "kernel_w", "kernel_h", "ofm_w", "ofm_h", "ofm_d"});
+    _db->AddColumns(_groupTable, {"group_id"});
     _db->AddColumns(_cmdTable, {"offset", "cmdstream_id", "optimised_id"});
 }
 
@@ -327,6 +329,28 @@ void OptimiserDatabase::AddOptimised(const void *from, const Operation *to)
     _db->AddRow(_optTable, _optId,
         {std::to_string(sourceId), OpTypeToString(to->Type()), std::to_string(k.x), std::to_string(k.y),
             std::to_string(o.Width()), std::to_string(o.Height()), std::to_string(o.Depth())});
+}
+
+void OptimiserDatabase::AddSubOps(const void *primaryKey, const std::vector<const void *> &subOpKeys)
+{
+    if ( subOpKeys.empty() )
+    {
+        return;
+    }
+
+    assert(primaryKey);
+    auto primaryPos = _optimised.find(primaryKey);
+    assert(primaryPos != _optimised.end());
+    int primaryOptId = std::get<1>(primaryPos->second);
+    _db->AddRow(_groupTable, primaryOptId, {std::to_string(primaryOptId)});
+    for ( auto subOpKey : subOpKeys )
+    {
+        assert(subOpKey);
+        auto subOpPos = _optimised.find(subOpKey);
+        assert(subOpPos != _optimised.end());
+        int subOpOptId = std::get<1>(subOpPos->second);
+        _db->AddRow(_groupTable, subOpOptId, {std::to_string(primaryOptId)});
+    }
 }
 
 void OptimiserDatabase::AddCommand(void *key, int stream, int cmdIndex)

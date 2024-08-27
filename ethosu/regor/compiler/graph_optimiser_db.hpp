@@ -41,6 +41,7 @@ private:
     int _streamId = 0;
     int _sourceTable = 0;
     int _optTable = 0;
+    int _groupTable = 0;
     int _cmdTable = 0;
     int _streamTable = 0;
     std::unordered_map<const void *, int> _source;
@@ -53,6 +54,7 @@ public:
     int OptimisedId(const void *op);
     int SourceOp(const Operation *op, int ext_key = -1);
     void AddOptimised(const void *from, const Operation *to);
+    void AddSubOps(const void *primaryKey, const std::vector<const void *> &subOpKeys);
     void AddCommand(void *key, int stream, int cmdIndex);
     int AddStream();
 };

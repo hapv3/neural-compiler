@@ -337,6 +337,22 @@ bool Compiler::BuildNetwork(const char *entryGraph)
     return true;
 }
 
+void Compiler::RecordSubOps(const std::vector<std::unique_ptr<SchedulerOperation>> &scheduleOps)
+{
+    if ( _optDb )
+    {
+        for ( auto &scheduleOp : scheduleOps )
+        {
+            std::vector<const void *> subOpKeys;
+            for ( auto &subOp : scheduleOp->SubOps() )
+            {
+                subOpKeys.push_back(subOp->_srcKey);
+            }
+            _optDb->AddSubOps(scheduleOp->_srcKey, subOpKeys);
+        }
+    }
+}
+
 std::unique_ptr<Graph> Compiler::CompileGraph(std::unique_ptr<Graph> &graph,
     IncrementalLinearAllocator &readOnlyAllocator, std::unordered_map<const Tensor *, Address> &tensorAddressMap)
 {
@@ -377,6 +393,9 @@ std::unique_ptr<Graph> Compiler::CompileGraph(std::unique_ptr<Graph> &graph,
     // Pack/linearise graph Operations into SchedulerOperations
     SchedulerPacking packing(_architecture.get(), _schedulerOptions.disabled.All(SchedulerFeature::Grouping));
     auto scheduleOps = packing.Process(graph.get());
+
+    // Add subOps to debugDB
+    RecordSubOps(scheduleOps);
 
     // Schedule the linearised operation sequence
     Scheduler scheduler(_architecture.get(), _schedulerOptions, "graph", scheduleOps);

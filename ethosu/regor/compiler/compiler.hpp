@@ -124,6 +124,7 @@ public:
 
 private:
     bool BuildNetwork(const char *entryGraph);
+    void RecordSubOps(const std::vector<std::unique_ptr<SchedulerOperation>> &scheduleOps);
 
     std::unique_ptr<Graph> CompileGraph(std::unique_ptr<Graph> &graph, IncrementalLinearAllocator &readOnlyAllocator,
         std::unordered_map<const Tensor *, Address> &tensorAddressMap);
