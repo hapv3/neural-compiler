@@ -26,6 +26,8 @@
 namespace regor
 {
 
+static constexpr int MAX_DIM = 65536;
+
 bool NeedsDecompose(Architecture *arch, const SchedulerOperation *schedOp)
 {
     return CanDecompose(arch, schedOp) && !CanRunOnHardware(arch, schedOp);
@@ -88,6 +90,7 @@ bool CanRunOnHardware(Architecture *arch, const SchedulerOperation *schedOp)
         auto &ofmShape = schedOp->OFM()->SliceShape();
         if ( ofmShape.Size() > 3 && ofmShape.Elements() > ofmShape.Width() * ofmShape.Height() * ofmShape.Depth() )
             return false;
+        if ( ofmShape.Width() > MAX_DIM || ofmShape.Height() > MAX_DIM || ofmShape.Depth() > MAX_DIM ) return false;
     }
     auto *ifm = schedOp->TryIFM(0);
     auto *ifm2 = schedOp->TryIFM(1);
@@ -140,6 +143,75 @@ bool CanDecompose(Architecture *, const SchedulerOperation *schedOp)
 }
 
 using DecomposeFunc = std::vector<std::unique_ptr<SchedulerOperation>> (*)(Architecture *, std::unique_ptr<SchedulerOperation>);
+
+static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeBlocksElementwise(
+    Architecture *arch, std::unique_ptr<SchedulerOperation> op, Shape &blockShape, DecomposeFunc doDecompose)
+{
+    std::vector<std::unique_ptr<SchedulerOperation>> result;
+    const auto BH = blockShape.Height();
+    const auto BW = blockShape.Width();
+    const auto BC = blockShape.Depth();
+    auto *ofmConn = op->OFM();
+    auto *ifmConn = op->IFM(0);
+    auto *ifm2Conn = op->TryIFM(1);
+    auto *kernel = op->Kernel();
+    auto &stride = kernel->Stride();
+    auto &ofmShape = ofmConn->SliceShape();
+    const auto N = Shape::DivRoundUp(ofmShape, blockShape);  // Block count per dimension
+    auto NewIfmSlice = [&](SchedulerConnection *ifmC, int x, int y, int c)
+    {
+        auto newIfmSlice = ifmC->slice;
+        auto &ifmOffset = newIfmSlice.offset;
+
+        newIfmSlice.offset =
+            ifmOffset.WithHeight(ifmOffset.Height() + y * BH * stride.y).WithWidth(ifmOffset.Width() + x * BW * stride.x);
+        auto &newIfmShape = newIfmSlice.shape;
+        auto newIfmHeight = std::max(std::min(newIfmShape.Height() - y * BH, BH), 1);
+        auto newIfmWidth = std::max(std::min(newIfmShape.Width() - x * BW, BW), 1);
+        auto newIfmDepth = std::max(std::min(newIfmShape.Depth() - c * BC, BC), 1);
+        newIfmSlice.shape = newIfmShape.WithHeight(newIfmHeight).WithWidth(newIfmWidth).WithDepth(newIfmDepth);
+        return newIfmSlice;
+    };
+    for ( auto by = 0; by < N.Height(); by++ )
+    {
+        for ( auto bx = 0; bx < N.Width(); bx++ )
+        {
+            for ( auto bc = 0; bc < N.Depth(); bc++ )
+            {
+                auto newIfmSlice = NewIfmSlice(ifmConn, bx, by, bc);
+                TensorSlice newIfm2Slice;
+                if ( ifm2Conn )
+                {
+                    newIfm2Slice = NewIfmSlice(ifm2Conn, bx, by, bc);
+                }
+                auto newOfmSlice = ofmConn->slice;
+                auto &ofmOffset = newOfmSlice.offset;
+                newOfmSlice.offset =
+                    ofmOffset.WithHeight(ofmOffset.Height() + by * BH)
+                        .WithWidth(ofmOffset.Width() + bx * BW)
+                        .WithDepth(ofmOffset.Depth() + bc * BC);
+                auto &newOfmShape = newOfmSlice.shape;
+                auto newOfmHeight = std::min(newOfmShape.Height() - by * BH, BH);
+                auto newOfmWidth = std::min(newOfmShape.Width() - bx * BW, BW);
+                auto newOfmDepth = std::min(newOfmShape.Depth() - bc * BC, BC);
+                newOfmSlice.shape = newOfmShape.WithHeight(newOfmHeight).WithWidth(newOfmWidth).WithDepth(newOfmDepth);
+                std::unique_ptr<SchedulerOperation> subOp = MakeSubOperation(op.get());
+                auto *subIfmConn = subOp->IFM(0);
+                subIfmConn->slice = std::move(newIfmSlice);
+                if ( ifm2Conn )
+                {
+                    auto *subIfm2Conn = subOp->IFM(1);
+                    subIfm2Conn->slice = std::move(newIfm2Slice);
+                }
+                auto *subOfmConn = subOp->OFM();
+                subOfmConn->slice = std::move(newOfmSlice);
+                auto subOps = doDecompose(arch, std::move(subOp));
+                result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
+            }
+        }
+    }
+    return result;
+}
 
 // Decompose to sub-operations with size 1 along the leading <dimension> axes.
 // Used for the batch dimension, and for the leading N-3 dimensions for elementwise operations.
@@ -489,6 +561,9 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeElementwise(Architectu
     auto ifmConn = op->Input(TensorUsage::IFM);
     auto &ifmShape = ifmConn->SliceShape();
     auto &ifmSlice = ifmConn->slice;
+
+    InitializeSlice(ofmSlice, ofmShape.WithZeros(), ofmShape);
+    InitializeSlice(ifmSlice, ifmShape.WithZeros(), ifmShape);
     if ( auto ifm2Conn = op->TryInput(TensorUsage::IFM1) )
     {
         auto &ifm2Shape = ifm2Conn->shape;
@@ -499,10 +574,11 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeElementwise(Architectu
     auto ofmRank = ofmShape.Size();
     if ( ofmRank > 3 && ofmShape.Elements() > ofmShape.Width() * ofmShape.Height() * ofmShape.Depth() )
     {
-        InitializeSlice(ofmSlice, ofmShape.WithZeros(), ofmShape);
-        InitializeSlice(ifmSlice, ifmShape.WithZeros(), ifmShape);
-
         return DecomposeLeadingDimensions(ofmRank - 3, arch, std::move(op), DecomposeElementwise);
+    }
+    if ( auto maxShape = Shape::Min(Shape(nullptr, ofmShape.Size(), MAX_DIM), ofmShape); maxShape != ofmShape )
+    {
+        return DecomposeBlocksElementwise(arch, std::move(op), maxShape, DecomposeElementwise);
     }
     result.emplace_back(std::move(op));
     return result;
