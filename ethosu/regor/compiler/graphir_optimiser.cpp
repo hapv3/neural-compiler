@@ -370,7 +370,7 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const, Operation *const operatio
             auto ifmQuant = ofmConn->quantization;
             // Convert scales to have 0 shift if possible, since this can
             // improve fusing for Ethos-U55/65
-            for ( auto &qs : ifmQuant.scales)
+            for ( auto &qs : ifmQuant.scales )
             {
                 if ( qs.shift > 0 && qs.shift < 31 && ((qs.scale >> qs.shift) << qs.shift) == qs.scale )
                 {
