@@ -372,7 +372,7 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const, Operation *const operatio
             // improve fusing for Ethos-U55/65
             for ( auto &qs : ifmQuant.scales )
             {
-                if ( qs.shift > 0 && qs.shift < 31 && ((qs.scale >> qs.shift) << qs.shift) == qs.scale )
+                if ( qs.shift > 0 && qs.shift < 31 && (qs.scale % (1 << qs.shift)) == 0 )
                 {
                     qs = {(qs.scale >> qs.shift), 0};
                 }
