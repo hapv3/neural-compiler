@@ -17,6 +17,7 @@
 # Description:
 # Holds a container for Ethos-U and System architecture parameters.
 import enum
+import os
 from collections import namedtuple
 from configparser import ConfigParser
 
@@ -40,6 +41,8 @@ from .tensor import TensorFormat
 from .tensor import TensorPurpose
 from .tflite_supported_operators import TFLiteSupportedOperators
 from .tosa_supported_operators import TosaSupportedOperators
+
+CONFIG_FILES_PATH = os.path.normpath(os.path.join(__file__, "..", "..", "config_files"))
 
 
 class Block:
@@ -550,53 +553,27 @@ class ArchitectureFeatures:
 
     def _set_default_sys_config(self):
         # ArchitectureFeatures.DEFAULT_CONFIG values
-        if self.is_ethos_u65_system:
-            # Default Ethos-U65 system configuration
-            # Ethos-U65 Client-Server: SRAM (16 GB/s) and DRAM (12 GB/s)
-            self.core_clock = 1e9
-            self.axi0_port = MemArea.Sram
-            self.axi1_port = MemArea.Dram
-            self.memory_clock_scales[MemArea.Sram] = 1.0
-            self.memory_clock_scales[MemArea.Dram] = 0.75  # 3 / 4
-            self.memory_burst_length[MemArea.Sram] = 32
-            self.memory_burst_length[MemArea.Dram] = 128
-            self.memory_latency[MemArea.Sram][BandwidthDirection.Read] = 32
-            self.memory_latency[MemArea.Sram][BandwidthDirection.Write] = 32
-            self.memory_latency[MemArea.Dram][BandwidthDirection.Read] = 500
-            self.memory_latency[MemArea.Dram][BandwidthDirection.Write] = 250
+        if self.is_ethos_u85_system:
+            self.system_config = "Ethos_U85_SYS_DRAM_Mid"
+        elif self.is_ethos_u65_system:
+            self.system_config = "Ethos_U65_Client_Server"
         else:
-            # Default Ethos-U55 system configuration
-            # Ethos-U55 High-End Embedded: SRAM (4 GB/s) and Flash (0.5 GB/s)
-            self.core_clock = 500e6
-            self.axi0_port = MemArea.Sram
-            self.axi1_port = MemArea.OffChipFlash
-            self.memory_clock_scales[MemArea.Sram] = 1.0
-            self.memory_clock_scales[MemArea.OffChipFlash] = 0.125  # 1 / 8
-            self.memory_burst_length[MemArea.Sram] = 32
-            self.memory_burst_length[MemArea.OffChipFlash] = 128
-            self.memory_latency[MemArea.Sram][BandwidthDirection.Read] = 32
-            self.memory_latency[MemArea.Sram][BandwidthDirection.Write] = 32
-            self.memory_latency[MemArea.OffChipFlash][BandwidthDirection.Read] = 64
-            self.memory_latency[MemArea.OffChipFlash][BandwidthDirection.Write] = 64
+            self.system_config = "Ethos_U55_High_End_Embedded"
+        print(
+            f"Warning: No system configuration specified. Using a default of {self.system_config}."
+            " Compilation may be invalid or non-optimal."
+        )
 
     def _set_default_mem_mode(self):
         # ArchitectureFeatures.DEFAULT_CONFIG values
-        if self.is_ethos_u65_system:
-            # Default Ethos-U65 memory mode
-            # Dedicated SRAM: the SRAM is only for use by the Ethos-U
-            # The non-SRAM memory is assumed to be read-writeable
-            self.const_mem_area = MemPort.Axi1
-            self.arena_mem_area = MemPort.Axi1
-            self.cache_mem_area = MemPort.Axi0
-            self.arena_cache_size = 384 * 1024
+        if self.is_ethos_u85_system or self.is_ethos_u65_system:
+            self.memory_mode = "Dedicated_Sram_384KB"
         else:
-            # Default Ethos-U55 memory mode
-            # Shared SRAM: the SRAM is shared between the Ethos-U and the Cortex-M software
-            # The non-SRAM memory is assumed to be read-only
-            self.const_mem_area = MemPort.Axi1
-            self.arena_mem_area = MemPort.Axi0
-            self.cache_mem_area = MemPort.Axi0
-            self.arena_cache_size = self.max_address_offset
+            self.memory_mode = "Shared_Sram"
+        print(
+            f"Warning: No memory mode specified. Using a default of {self.memory_mode}."
+            " Compilation may be invalid or non-optimal."
+        )
 
     def _get_vela_config(self, vela_config_files, verbose_config, arena_cache_size_from_cli):
         """
@@ -618,16 +595,38 @@ class ArchitectureFeatures:
         arena_cache_size_loc_text = "Default"
 
         # read configuration file(s)
-        self.vela_config = None
+        if vela_config_files is None:
+            self.vela_config_files = [str(os.path.join(CONFIG_FILES_PATH, "Arm", "vela.ini"))]
+            print(
+                f"Warning: No configuration file specified. Using a default of {self.vela_config_files}."
+                " Compilation may be invalid or non-optimal."
+            )
+        else:
+            self.vela_config_files = vela_config_files
+            if self.system_config == ArchitectureFeatures.DEFAULT_CONFIG:
+                raise CliOptionError(
+                    "--config",
+                    self.vela_config_files,
+                    "Specifying a configuration file is not allowed when using a default system configuration",
+                )
+            if self.memory_mode == ArchitectureFeatures.DEFAULT_CONFIG:
+                raise CliOptionError(
+                    "--config",
+                    self.vela_config_files,
+                    "Specifying a configuration file is not allowed when using a default memory mode",
+                )
 
-        if vela_config_files is not None:
-            self.vela_config = ConfigParser()
-            self.vela_config.read(vela_config_files)
+        self.vela_config = ConfigParser()
+        self.vela_config.read(self.vela_config_files)
+
+        # handle default system config
+        if self.system_config == ArchitectureFeatures.DEFAULT_CONFIG:
+            self._set_default_sys_config()
 
         # read system configuration
         sys_cfg_section = "System_Config." + self.system_config
 
-        if self.vela_config is not None and self.vela_config.has_section(sys_cfg_section):
+        if self.vela_config.has_section(sys_cfg_section):
             self.core_clock = float(self._read_config(sys_cfg_section, "core_clock", self.core_clock))
             self.axi0_port = MemArea[self._read_config(sys_cfg_section, "axi0_port", self.axi0_port)]
             self.axi1_port = MemArea[self._read_config(sys_cfg_section, "axi1_port", self.axi1_port)]
@@ -657,18 +656,16 @@ class ArchitectureFeatures:
                         self.memory_latency[mem_area][BandwidthDirection.Write],
                     )
                 )
-        elif self.system_config == ArchitectureFeatures.DEFAULT_CONFIG:
-            self._set_default_sys_config()
-
-        elif vela_config_files is None:
-            raise CliOptionError("--config", vela_config_files, "Vela config file not specified")
-
         else:
             raise CliOptionError(
                 "--system-config",
                 self.system_config,
                 f"Section {sys_cfg_section} not found in Vela config file",
             )
+
+        # handle default memory mode
+        if self.memory_mode == ArchitectureFeatures.DEFAULT_CONFIG:
+            self._set_default_mem_mode()
 
         # read the memory mode
         mem_mode_section = "Memory_Mode." + self.memory_mode
@@ -689,12 +686,6 @@ class ArchitectureFeatures:
             )
             if found[-1]:
                 arena_cache_size_loc_text = "Configuration file"
-
-        elif self.memory_mode == ArchitectureFeatures.DEFAULT_CONFIG:
-            self._set_default_mem_mode()
-
-        elif vela_config_files is None:
-            raise CliOptionError("--config", vela_config_files, "Vela config file not specified")
 
         else:
             raise CliOptionError(
@@ -759,7 +750,8 @@ class ArchitectureFeatures:
         # display the system configuration and memory mode
         if verbose_config:
             print("Configuration files:")
-            print(f"   {vela_config_files}")
+            print(f"   original = {vela_config_files}")
+            print(f"   used = {self.vela_config_files}")
             print(f"System Configuration ({self.system_config}):")
             print(f"   core_clock = {self.core_clock}")
             print(f"   axi0_port = {self.axi0_port.name}")

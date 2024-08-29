@@ -53,12 +53,9 @@ from .tflite_supported_operators import TFLiteSupportedOperators
 from .tosa_model_semantic import TosaSemantic
 from .tosa_supported_operators import TosaSupportedOperators
 from ethosu import regor
-from ethosu.vela.architecture_features import ArchitectureFeatures
 
 TFLITE_MAGIC = 0x334C4654
 TOSA_MAGIC = 0x41534F54
-
-CONFIG_FILES_PATH = os.path.normpath(os.path.join(__file__, "..", "..", "config_files"))
 
 
 def process(input_name, enable_debug_db, arch, model_reader_options, compiler_options, scheduler_options):
@@ -455,8 +452,8 @@ def get_format(in_data: bytes) -> str:
 
 def list_config_files():
     print("Available config files:")
-    path_length = len(CONFIG_FILES_PATH + os.path.sep)
-    for config in glob.glob(os.path.join(CONFIG_FILES_PATH, "*", "*.ini")):
+    path_length = len(architecture_features.CONFIG_FILES_PATH + os.path.sep)
+    for config in glob.glob(os.path.join(architecture_features.CONFIG_FILES_PATH, "*", "*.ini")):
         print(config[path_length:])
 
 
@@ -662,10 +659,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             and not config.startswith(".")
             and not config.startswith("~")
         ):
-            config_path = os.path.join(CONFIG_FILES_PATH, config)
+            config_path = os.path.join(architecture_features.CONFIG_FILES_PATH, config)
         else:
             # Check if the configuration file is correctly placed inside the config_files directory
-            if os.access(os.path.join(CONFIG_FILES_PATH, *config.split(os.path.sep)[-2:]), os.R_OK):
+            if os.access(
+                os.path.join(architecture_features.CONFIG_FILES_PATH, *config.split(os.path.sep)[-2:]),
+                os.R_OK,
+            ):
                 rel_path = os.path.join(*config.split(os.path.sep)[-2:])
                 print(
                     f"Warning: Consider accessing the configuration by --config {rel_path} since it is located "
@@ -690,12 +690,6 @@ def main(argv: Optional[List[str]] = None) -> int:
             "Invalid argument to --cpu-tensor-alignment = {} (must be greater than or equal to 16 and a power of 2)"
             "".format(args.cpu_tensor_alignment)
         )
-
-    if args.system_config == ArchitectureFeatures.DEFAULT_CONFIG:
-        print(f"Warning: Using {ArchitectureFeatures.DEFAULT_CONFIG} values for system configuration")
-
-    if args.memory_mode == ArchitectureFeatures.DEFAULT_CONFIG:
-        print(f"Warning: Using {ArchitectureFeatures.DEFAULT_CONFIG} values for memory mode")
 
     if args.verbose_all:
         for v in vars(args):
@@ -724,11 +718,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         system_config += f"cores={arch.ncores}\n"
 
         system_config += "[vela]\n"
-        system_config += f"system_config_name={args.system_config}\n"
-        system_config += f"memory_mode_name={args.memory_mode}\n"
+        system_config += f"system_config_name={arch.system_config}\n"
+        system_config += f"memory_mode_name={arch.memory_mode}\n"
 
         # TODO MLBEDSW-8190: Improve support for multiple config files
-        for config_file in config_files:
+        for config_file in arch.vela_config_files:
             with open(config_file, "rb") as f:
                 system_config += f.read().decode("utf-8")
 
