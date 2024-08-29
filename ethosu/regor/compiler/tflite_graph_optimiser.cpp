@@ -1922,7 +1922,7 @@ Operation *TFLiteGraphOptimiser::FixupDilationGT2(Graph *const, Operation *const
             int hwDilationH = (dilation.y % 2 == 0) ? 2 : 1;
             int hwDilationW = (dilation.x % 2 == 0) ? 2 : 1;
             int manualDilationH = dilation.y / hwDilationH;
-            int maunalDilationW = dilation.x / hwDilationW;
+            int manualDilationW = dilation.x / hwDilationW;
 
             auto *weightConn = operation->Input(TensorUsage::Weights);
             assert(weightConn);
@@ -1932,9 +1932,9 @@ Operation *TFLiteGraphOptimiser::FixupDilationGT2(Graph *const, Operation *const
 
             // Create new empty kernel with dilated size
             auto origKernelSize = operation->Kernel()->Size();
-            auto dilatedKernelSize = operation->Kernel()->WithDilation({manualDilationH, maunalDilationW}).DilatedWH();
+            auto dilatedKernelSize = operation->Kernel()->WithDilation({manualDilationH, manualDilationW}).DilatedWH();
             Kernel dilatedKernel = operation->Kernel()->WithDilation({hwDilationH, hwDilationW}).WithSize(dilatedKernelSize);
-            const int newKernelBufferSize = dilatedKernel.ElementsWH() * weightShape.Depth();
+            const int newKernelBufferSize = weightShape.Batch() * dilatedKernel.ElementsWH() * weightShape.Depth();
             operation->SetKernel(std::make_unique<Kernel>(std::move(dilatedKernel)));
 
             // Copy the original kernel values into the new sparse kernel
@@ -1942,17 +1942,23 @@ Operation *TFLiteGraphOptimiser::FixupDilationGT2(Graph *const, Operation *const
             auto strideC = 1;
             auto strideW = weightShape.Depth();
             auto origStrideH = strideW * origKernelSize.x;
+            auto origStrideO = origStrideH * origKernelSize.y;
             auto newStrideH = strideW * dilatedKernelSize.x;
+            auto newStrideO = newStrideH * dilatedKernelSize.y;
+
             auto newKernelVals = std::make_unique<int8_t[]>(newKernelBufferSize);
-            for ( int h = 0; h < origKernelSize.y; ++h )
+            for ( int oc = 0; oc < weightShape.Batch(); oc++ )
             {
-                for ( int w = 0; w < origKernelSize.x; ++w )
+                for ( int h = 0; h < origKernelSize.y; ++h )
                 {
-                    for ( int c = 0; c < weightShape.Depth(); c++ )
+                    for ( int w = 0; w < origKernelSize.x; ++w )
                     {
-                        auto origKernelIdx = c * strideC + w * strideW + h * origStrideH;
-                        auto newKernelIdx = c * strideC + w * strideW * maunalDilationW + h * newStrideH * manualDilationH;
-                        newKernelVals[newKernelIdx] = weights[origKernelIdx];
+                        for ( int c = 0; c < weightShape.Depth(); c++ )
+                        {
+                            auto origKernelIdx = c * strideC + w * strideW + h * origStrideH + oc * origStrideO;
+                            auto newKernelIdx = c * strideC + w * strideW * manualDilationW + h * newStrideH * manualDilationH + oc * newStrideO;
+                            newKernelVals[newKernelIdx] = weights[origKernelIdx];
+                        }
                     }
                 }
             }
