@@ -906,6 +906,7 @@ ExecutionQuery TfLiteReader::OperationToExecQuery(const Operation &operation)
     ExecutionQuery query{};
     query.opType = operation.Type();
     query.ifmType = operation.IFM(0)->Type();
+    query.ofmType = operation.OFM()->Type();
     switch ( query.opType )
     {
         case OpType::LeakyRelu:
