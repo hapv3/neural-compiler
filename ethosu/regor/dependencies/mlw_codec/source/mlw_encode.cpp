@@ -690,6 +690,7 @@ int ml_encode_section(mle_context_t *ctx, const int16_t *inbuf, int size, palett
     bool allow_empty_slices = !p->only_zeros || ctx->allow_empty_slices;
     int total_zcnt = 0;
     const int max_slice_len = (1 << ctx->slicelen_bits) - 1;
+    const int max_zero_run_length = ctx->allow_empty_slices ? max_slice_len - 1 : INT32_MAX;
     while ( 1 )
     {
         if ( p->use_zero_runs )
@@ -702,7 +703,7 @@ int ml_encode_section(mle_context_t *ctx, const int16_t *inbuf, int size, palett
             // the zero explicitly as a weight value instead
             if ( allow_empty_slices || i > 0 )
             {
-                while ( i < size && inbuf[i] == 0 && zcnt < max_slice_len )
+                while ( i < size && inbuf[i] == 0 && zcnt < max_zero_run_length )
                 {
                     zcnt++;
                     i++;
