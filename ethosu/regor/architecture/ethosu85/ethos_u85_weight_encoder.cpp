@@ -632,6 +632,7 @@ private:
     const QuantizedScale *_scales = nullptr;
     int _biasIndex = 0;
     int _biasCount = 0;
+    int _depthLength = 0;
     int _bufferSize = 0;
     int _streamIndex = 0;
     int _cores = 0;
@@ -662,9 +663,10 @@ public:
         for ( int i = 0; i < count; i++ )
         {
             int index = _biasIndex + i;
-            if ( index < _bufferSize )
+            if ( _depthLength > 0 )
             {
-                *biasBuffer++ = _buffer ? static_cast<int64_t>(_buffer[index]) : 0;
+                _depthLength--;
+                *biasBuffer++ = _buffer ? static_cast<int64_t>(_buffer[index % _bufferSize]) : 0;
                 *quantBuffer++ = _quantization.scales[index % scaleSize];
             }
             else
@@ -682,8 +684,10 @@ public:
     void SetSource(const void *buffer, int biasCount, int depthOffset, int depthLength, int streamIndex)
     {
         assert(streamIndex >= 0 && streamIndex < _cores);
-        assert(depthOffset + depthLength <= biasCount);
+        bool isBroadcast = biasCount == 1;
+        assert(depthOffset + depthLength <= biasCount || isBroadcast);
         _buffer = reinterpret_cast<const TYPE *>(buffer);
+        _depthLength = depthLength;
         _biasIndex = depthOffset + streamIndex;                            // Where to start in the buffer
         _biasCount = RoundAway(depthLength, RoundAway(_uBlockDepth, 16));  // How many biases to generate
         _bufferSize = biasCount;
