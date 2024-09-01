@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2020-2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2020-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -370,5 +370,5 @@ def create_binary_elementwise(
 
 
 def get_pad_values_from_input(padding) -> Tuple:
-    """Returns top, left, bottom, right padding from input values in a Pad input tensor"""
-    return (padding[-3][0], padding[-2][0], padding[-3][1], padding[-2][1])
+    """Returns top, left, bottom, right, near, far padding from input values in a Pad input tensor"""
+    return (padding[-3][0], padding[-2][0], padding[-3][1], padding[-2][1], padding[-1][0], padding[-1][1])

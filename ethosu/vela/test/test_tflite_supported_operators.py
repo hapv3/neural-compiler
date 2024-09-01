@@ -463,25 +463,27 @@ def create_pad_op(
 
 
 def test_constraint_padded_dimensions():
-    # Incorrect padding dimensions, can only pad width and height
+    # Incorrect padding dimensions - can not pad batch
     op = create_pad_op(
         in_shape=[1, 1, 1, 1],
         out_shape=[1, 3, 3, 1],
         padding=[[1, 1], [1, 1], [1, 1], [0, 0]],
     )
     assert not support.is_operator_supported(op)
+    # Correct padding dimensions - padding height and width
     op = create_pad_op(
         in_shape=[1, 1, 1, 1],
         out_shape=[1, 3, 3, 1],
         padding=[[1, 1], [1, 1], [0, 0]],
     )
+    # Correct padding dimensions - padding height, width and depth.
     assert support.is_operator_supported(op)
     op = create_pad_op(
         in_shape=[1, 1, 1, 1],
         out_shape=[1, 3, 3, 1],
         padding=[[1, 1], [1, 1], [0, 1]],
     )
-    assert not support.is_operator_supported(op)
+    assert support.is_operator_supported(op)
 
 
 def test_constraint_pad_shape():

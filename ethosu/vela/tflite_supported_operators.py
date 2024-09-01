@@ -322,13 +322,16 @@ class TFLiteSupportedOperators:
         )
         self.specific_constraints[Op.StridedSlice].append(TFLiteSupportedOperators.constraint_stridedslice_offset_false)
 
-        # Pad specific checks:
+        # Pad operators specific checks:
         for op_type in TFLiteSupportedOperators.pad_ops:
             self.specific_constraints[op_type].append(TFLiteSupportedOperators.constraint_pad_shape)
-            self.specific_constraints[op_type].append(TFLiteSupportedOperators.constraint_padding_dimensions)
             self.specific_constraints[op_type].append(TFLiteSupportedOperators.constraint_pad_type)
 
+        # Pad specific checks:
+        self.specific_constraints[Op.Pad].append(TFLiteSupportedOperators.constraint_padding_dimensions)
+
         # Mirror pad specific checks:
+        self.specific_constraints[Op.MirrorPad].append(TFLiteSupportedOperators.constraint_mirror_pad_padding_dimensions)
         self.specific_constraints[Op.MirrorPad].append(TFLiteSupportedOperators.constraint_mirror_pad_padding_values)
 
         # Mean specific checks:
@@ -824,6 +827,15 @@ class TFLiteSupportedOperators:
 
     @staticmethod
     def constraint_padding_dimensions(op):
+        "The pad tensor can only pad height, width and depth"
+        pad_tensor = op.inputs[1].values
+        valid = True
+        if len(pad_tensor) > 3:
+            valid = sum(pad_tensor[0, :]) == 0
+        return valid, f"First dimension padding: {pad_tensor[0,:]}"
+
+    @staticmethod
+    def constraint_mirror_pad_padding_dimensions(op):
         "The pad tensor can only pad width and height"
         pad_tensor = op.inputs[1].values
 

@@ -1826,7 +1826,9 @@ def replace_pad_by_hw_pad(op: Operation, arch, nng) -> Operation:
             return op
         if pad_op.ifm.dtype != pad_op.ofm.dtype or not check_quantized_tens_scaling_equal(pad_op.ofm, pad_op.ifm):
             return op
-        top, left, bottom, right = get_pad_values_from_input(pad_op.inputs[1].values)
+        top, left, bottom, right, near, far = get_pad_values_from_input(pad_op.inputs[1].values)
+        if near > 0 or far > 0:
+            return op
         k = op.kernel
         k_w, k_h = k.dilated_wh()
 
@@ -2042,34 +2044,35 @@ def convert_pad(op: Operation, arch, nng):
     """
     if op.type != Op.Pad or not op.run_on_npu:
         return op
-    top, left, bottom, right = get_pad_values_from_input(op.inputs[1].values)
-
+    top, left, bottom, right, near, far = get_pad_values_from_input(op.inputs[1].values)
     ifm = op.ifm
     assert ifm is not None
     ifm_shape = op.ifm_shapes[0]
     ofm = op.ofm
     assert ofm is not None
     ofm.ops = []
-    ofm_shape = op.ofm_shapes[0]
 
     # Average pool op that copies IFM to the right place inside the OFM
-    shp0 = Shape4D(0, 0, 0, 0)
-    shp_top = shp0.with_height(top)
-    avgpool_op = create_avg_pool_for_concat(op, op.name + "_main", ifm, ifm_shape, shp_top.with_width(left))
+    avgpool_op = create_avg_pool_for_concat(op, op.name + "_main", ifm, ifm_shape, Shape4D(0, top, left, near))
     avgpool_op.activation = op.activation
     quant = ofm.quantization
     pad_value = quant.zero_point
+
+    # Keep track of incremental paddings by modifying this shape for each added padding dimension
+    pad_shape = Shape4D(ifm_shape.as_list())
+
     # Add operations that fill the borders of the OFM
     if top > 0:
-        shape = Shape4D(1, top, ofm_shape.width, ofm_shape.depth)
+        shape = pad_shape.with_height(top)
         zero_tens = create_const_tensor(
             op.name + "_top", shape.as_list(), ofm.dtype, shape.elements() * [pad_value], quantization=quant
         )
         # If top/bottom or left/right are equal, the const tensors can be allocated to the same address
         zero_tens.equivalence_id = create_equivalence_id(tuple(zero_tens.values))
-        create_avg_pool_for_concat(op, op.name + "_top", zero_tens, shape, shp0)
+        create_avg_pool_for_concat(op, op.name + "_top", zero_tens, shape, Shape4D(0, 0, left, near))
+        pad_shape = pad_shape.with_height(pad_shape.height + top)
     if bottom > 0:
-        shape = Shape4D(1, bottom, ofm_shape.width, ofm_shape.depth)
+        shape = pad_shape.with_height(bottom)
         zero_tens = create_const_tensor(
             op.name + "_bottom",
             shape.as_list(),
@@ -2079,24 +2082,47 @@ def convert_pad(op: Operation, arch, nng):
         )
         zero_tens.equivalence_id = create_equivalence_id(tuple(zero_tens.values))
         create_avg_pool_for_concat(
-            op, op.name + "_bottom", zero_tens, shape, shp0.with_height(ofm_shape.height - bottom)
+            op, op.name + "_bottom", zero_tens, shape, Shape4D(0, pad_shape.height, left, near)
         )
+        pad_shape = pad_shape.with_height(pad_shape.height + bottom)
     if left > 0:
-        shape = Shape4D(1, ifm_shape.height, left, ofm_shape.depth)
+        shape = pad_shape.with_width(left)
         zero_tens = create_const_tensor(
             op.name + "_left", shape.as_list(), ofm.dtype, shape.elements() * [pad_value], quantization=quant
         )
         zero_tens.equivalence_id = create_equivalence_id(tuple(zero_tens.values))
-        create_avg_pool_for_concat(op, op.name + "_left", zero_tens, shape, shp_top)
+        create_avg_pool_for_concat(op, op.name + "_left", zero_tens, shape, Shape4D(0, 0, 0, near))
+        pad_shape = pad_shape.with_width(pad_shape.width + left)
     if right > 0:
-        shape = Shape4D(1, ifm_shape.height, right, ofm_shape.depth)
+        shape = pad_shape.with_width(right)
         zero_tens = create_const_tensor(
             op.name + "_right", shape.as_list(), ofm.dtype, shape.elements() * [pad_value], quantization=quant
         )
         zero_tens.equivalence_id = create_equivalence_id(tuple(zero_tens.values))
         create_avg_pool_for_concat(
-            op, op.name + "_right", zero_tens, shape, shp_top.with_width(ofm_shape.width - right)
+            op, op.name + "_right", zero_tens, shape, Shape4D(0, 0, pad_shape.width, near)
         )
+        pad_shape = pad_shape.with_width(pad_shape.width + right)
+    if near > 0:
+        shape = pad_shape.with_depth(near)
+        zero_tens = create_const_tensor(
+            op.name + "_near", shape.as_list(), ofm.dtype, shape.elements() * [pad_value], quantization=quant
+        )
+        zero_tens.equivalence_id = create_equivalence_id(tuple(zero_tens.values))
+        create_avg_pool_for_concat(
+            op, op.name + "_near", zero_tens, shape, Shape4D(0, 0, 0, 0)
+        )
+        pad_shape = pad_shape.with_depth(pad_shape.depth + near)
+    if far > 0:
+        shape = pad_shape.with_depth(far)
+        zero_tens = create_const_tensor(
+            op.name + "_far", shape.as_list(), ofm.dtype, shape.elements() * [pad_value], quantization=quant
+        )
+        zero_tens.equivalence_id = create_equivalence_id(tuple(zero_tens.values))
+        create_avg_pool_for_concat(
+            op, op.name + "_far", zero_tens, shape, Shape4D(0, 0, 0, pad_shape.depth)
+        )
+        pad_shape = pad_shape.with_depth(pad_shape.depth + far)
 
     op.type = Op.ConcatTFLite
     return avgpool_op

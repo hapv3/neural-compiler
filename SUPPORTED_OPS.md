@@ -351,8 +351,8 @@ This is a list of constraints that the MINIMUM operator must satisfy in order to
 This is a list of constraints that the MIRROR_PAD operator must satisfy in order to be scheduled on the NPU.
 
 - The padding tensor must have the shape [3,2] or [4,2]
-- The pad tensor can only pad width and height
 - Pad tensor must be of type: int32, int64
+- The pad tensor can only pad width and height
 - The number of pad values for each direction must not be larger than the ifm size in that dimension
 
 ### Ethos-U55 and Ethos-U65 TFLite MUL Constraints
@@ -373,8 +373,8 @@ This is a list of constraints that the PAD operator must satisfy in order to be 
 - The padding tensor must be constant
 - Shape of output tensor must equal to size of input tensor plus padding
 - The padding tensor must have the shape [3,2] or [4,2]
-- The pad tensor can only pad width and height
 - Pad tensor must be of type: int32, int64
+- The pad tensor can only pad height, width and depth
 
 ### Ethos-U55 and Ethos-U65 TFLite RESHAPE Constraints
 
