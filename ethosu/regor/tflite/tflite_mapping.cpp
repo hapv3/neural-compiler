@@ -575,8 +575,6 @@ const std::multimap<OpType, TensorUsage> TfLiteMapping::_inputTensorIndices = {
     {OpType::Sub,                               TensorUsage::IFM0},
     {OpType::Sub,                               TensorUsage::IFM1},
     // SubgraphInput                            None
-    {OpType::Sum,                               TensorUsage::IFM0},
-    {OpType::Sum,                               TensorUsage::Params},
     {OpType::Svdf,                              TensorUsage::IFM0},
     {OpType::Svdf,                              TensorUsage::Weights},
     {OpType::Svdf,                              MakeTensorUsage(TensorUsage::Weights, 1)},

@@ -87,8 +87,8 @@ bool EthosU55Constraints::SupportsFusedRescale(
         }
         if ( npuOp == EthosU55NpuOp::Elementwise && globalScale )
         {
-            if ( opType == OpType::Min || opType == OpType::Max || opType == OpType::Asr || opType == OpType::SHL ||
-                 opType == OpType::CLZ || opType == OpType::LeakyRelu )
+            if ( opType == OpType::Minimum || opType == OpType::Maximum || opType == OpType::Asr ||
+                 opType == OpType::SHL || opType == OpType::CLZ || opType == OpType::LeakyRelu )
             {
                 return false;
             }

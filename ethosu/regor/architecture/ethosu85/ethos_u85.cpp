@@ -1049,8 +1049,6 @@ EthosU85NpuOp ArchEthosU85::GetHWOp(OpType type)
         {OpType::AvgPool, EthosU85NpuOp::Pooling},
         {OpType::QuantizedAvgPool, EthosU85NpuOp::Pooling},
         {OpType::QuantizedMaxPool, EthosU85NpuOp::Pooling},
-        {OpType::Sum, EthosU85NpuOp::Pooling},
-        {OpType::Min, EthosU85NpuOp::Pooling},
         {OpType::ArgMax, EthosU85NpuOp::Pooling},
         {OpType::ReduceMin, EthosU85NpuOp::ReduceMinMax},
         {OpType::ReduceMax, EthosU85NpuOp::ReduceMinMax},
