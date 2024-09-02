@@ -412,7 +412,8 @@ Operation *GraphIrOptimiser::FixupPoolStrides(Graph *const, Operation *const ope
     {
         auto kernel = operation->Kernel();
         const auto ifm = operation->Input(TensorUsage::IFM);
-        if ( kernel->Size() == kernel->Stride() && kernel->Stride() == ifm->shape.WH<int>() && kernel->Padding().IsZero() )
+        if ( kernel->Size() == kernel->Stride() && ifm->shape.Size() >= 3 && kernel->Stride() == ifm->shape.WH<int>() &&
+             kernel->Padding().IsZero() )
         {
             operation->SetKernel(std::make_unique<Kernel>(kernel->WithStride({1, 1})));
         }
