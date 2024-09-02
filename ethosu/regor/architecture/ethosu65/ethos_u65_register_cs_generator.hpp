@@ -33,6 +33,11 @@ public:
     EthosU65RCSGenerator(ArchEthosU65 *arch);
 
 protected:
+    // Converts TILE operations to DMA commands
+    std::vector<std::unique_ptr<HighLevelCommand>> InsertTileDMACommands(std::vector<std::unique_ptr<HighLevelCommand>> &cmds) override;
+
+    // Generate register commands for DMA operations
+    void GenerateDMA(const HLCDMA *dma, MemoryAccesses &memoryAccesses) override;
     void GenerateInitialRegisterSetup() override;
 
 private:

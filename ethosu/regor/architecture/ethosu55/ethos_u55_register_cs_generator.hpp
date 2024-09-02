@@ -230,7 +230,7 @@ protected:
     // to LUT memory
     std::vector<std::unique_ptr<HighLevelCommand>> InsertLUTDMACommands(std::vector<std::unique_ptr<HighLevelCommand>> &cmds);
     // Inserts DMA commands to handle TILE operations
-    std::vector<std::unique_ptr<HighLevelCommand>> InsertTileDMACommands(std::vector<std::unique_ptr<HighLevelCommand>> &cmds);
+    virtual std::vector<std::unique_ptr<HighLevelCommand>> InsertTileDMACommands(std::vector<std::unique_ptr<HighLevelCommand>> &cmds);
 
     //----------------------------------------------------------------------
     // Operations
@@ -248,7 +248,7 @@ protected:
     void GenerateElementwiseOp(HLCStripe *stripe, MemoryAccesses &memoryAccesses);
     bool GenerateStripe(HLCStripe *stripe, MemoryAccesses &memoryAccesses);
     // Generates register commands for DMA operations
-    void GenerateDMA(const HLCDMA *dma, MemoryAccesses &memoryAccesses);
+    virtual void GenerateDMA(const HLCDMA *dma, MemoryAccesses &memoryAccesses);
 
     virtual void GenerateInitialRegisterSetup()
     {
