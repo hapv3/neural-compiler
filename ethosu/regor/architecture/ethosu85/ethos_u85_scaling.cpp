@@ -188,7 +188,8 @@ void RescalePooling(HLCOperation *op, bool isNoOp)
         return;
     }
 
-    if ( opType == OpType::MaxPool || opType == OpType::ArgMax )
+    if ( opType == OpType::MaxPool || opType == OpType::ArgMax || opType == OpType::ReduceMin ||
+         opType == OpType::ReduceMax || opType == OpType::ReduceAny || opType == OpType::ReduceAll )
     {
         // Do nothing
     }

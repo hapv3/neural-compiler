@@ -245,8 +245,10 @@ constexpr inline bool IsConvolution(OpType opType)
 
 constexpr inline bool IsPooling(OpType opType)
 {
-    return opType == OpType::MaxPool || opType == OpType::AvgPool || opType == OpType::QuantizedAvgPool || opType == OpType::QuantizedMaxPool ||
-           opType == OpType::ReduceSum || opType == OpType::Sum || opType == OpType::Min || opType == OpType::ArgMax;
+    return opType == OpType::MaxPool || opType == OpType::AvgPool || opType == OpType::QuantizedAvgPool ||
+           opType == OpType::QuantizedMaxPool || opType == OpType::ReduceSum || opType == OpType::Sum ||
+           opType == OpType::ReduceMin || opType == OpType::Min || opType == OpType::ReduceMax || opType == OpType::Max ||
+           opType == OpType::ReduceAny || opType == OpType::ReduceAll || opType == OpType::ArgMax;
 }
 
 constexpr inline bool IsVectorProduct(OpType opType)

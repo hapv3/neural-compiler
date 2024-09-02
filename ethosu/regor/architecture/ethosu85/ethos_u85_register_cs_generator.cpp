@@ -1578,7 +1578,7 @@ void EthosU85RCSGenerator::GenerateOperationCode(const HLCOperation *op)
             // SUM when kernel size > 8x8
             mode = (kernelSize.x <= 8 && kernelSize.y <= 8) ? pooling_mode::AVERAGE : pooling_mode::SUM;
         }
-        else if ( opType == OpType::MaxPool )
+        else if ( opType == OpType::MaxPool || opType == OpType::ReduceMax || opType == OpType::ReduceAll )
         {
             mode = pooling_mode::MAX;
         }
@@ -1587,6 +1587,10 @@ void EthosU85RCSGenerator::GenerateOperationCode(const HLCOperation *op)
             auto axis = op->parameters.argmax.axis;
             assert(axis == 1 || axis == 2);
             mode = axis == 1 ? pooling_mode::ARGMAX_Y : pooling_mode::ARGMAX_X;
+        }
+        else if ( opType == OpType::ReduceMin || opType == OpType::ReduceAny )
+        {
+            mode = pooling_mode::MIN;
         }
         else
         {
@@ -1847,7 +1851,7 @@ bool EthosU85RCSGenerator::GenerateStripe(HLCStripe *stripe, MemoryAccesses &mem
     auto opType = stripe->operation->type;
     EthosU85NpuOp npuOp = ArchEthosU85::GetHWOp(opType);
 
-    if ( npuOp == EthosU85NpuOp::Pooling || npuOp == EthosU85NpuOp::ReduceSum )
+    if ( npuOp == EthosU85NpuOp::Pooling || npuOp == EthosU85NpuOp::ReduceMinMax || npuOp == EthosU85NpuOp::ReduceSum )
     {
         GeneratePoolingOp(stripe, memoryAccesses);
     }

@@ -1626,6 +1626,68 @@ Operation *TFLiteGraphOptimiser::ConvertArgMax(Graph *const graph, Operation *co
     return returnOp;
 }
 
+// Convert TFLite REDUCE_{MIN,MAX,ANY,ALL} to one or more TOSA REDUCE_{MIN,MAX,ANY,ALL}
+Operation *TFLiteGraphOptimiser::ConvertReduceMinMaxAnyAll(Graph *const graph, Operation *const operation)
+{
+    UNUSED(graph);
+    Operation *returnOp = operation;
+    const auto opType = operation->Type();
+    if ( opType == OpType::ReduceMin || opType == OpType::ReduceMax || opType == OpType::ReduceAny || opType == OpType::ReduceAll )
+    {
+        auto *ifmConn = operation->Input(TensorUsage::IFM);
+        auto *paramsConn = operation->Input(TensorUsage::Params);
+        auto *ofmConn = operation->Output(TensorUsage::OFM);
+
+        // Probably already a TOSA op
+        if ( !paramsConn ) return returnOp;
+
+        // Get the axis values from the constant params tensor
+        assert(paramsConn->shape.Size() == 1);
+        assert(paramsConn->shape.Depth() > 0);
+        assert(paramsConn->tensor->IsConstant());
+        assert(paramsConn->tensor->Type() == DataType::Int32);
+        const auto paramsValues = paramsConn->tensor->View().Values<int32_t>();
+        std::vector<int32_t> axes;
+        for ( int i = 0; i < paramsConn->shape.Depth(); i++ )
+        {
+            int axis = paramsValues[i];
+            if ( axis < 0 ) axis = ifmConn->shape.Size() + axis;
+            assert(axis >= 0);
+            assert(axis < ifmConn->shape.Size());
+            axes.push_back(axis);
+        }
+
+        // Break down TFLite op into one or more TOSA ops, one per reduced dimension
+        Operation *prevOp = operation;
+        TensorConnection *prevConn = ifmConn;
+        for ( int axis : axes )
+        {
+            auto reduceOp = std::make_shared<Operation>(opType);
+            reduceOp->SetRounding(RoundMode::NATURAL);
+            auto *reduceOpAttr = reduceOp->Attribute<axis_attr_t>();
+            reduceOpAttr->axis = axis;
+            reduceOp->CopyInput(TensorUsage::IFM, *prevConn);
+            const auto ofmName = prevConn->tensor->Name() + "_reduce" + std::to_string(axis);
+            const auto ofmType = prevConn->tensor->Type();
+            const auto ofmShape = prevConn->shape.With(axis, 1);
+            const auto ofmTensor = std::make_shared<Tensor>(ofmName, ofmType, ofmShape);
+            reduceOp->ConnectOutput(TensorUsage::OFM, ofmTensor).Set(prevConn->quantization);
+            RecordOptimisation(operation, reduceOp.get());
+            returnOp = reduceOp.get();
+
+            prevOp = reduceOp.get();
+            prevConn = reduceOp->Output(TensorUsage::OFM);
+        }
+
+        // Adjust the last op so it connects to the original OFM
+        prevOp->ConnectOutput(TensorUsage::OFM, ofmConn->tensor).Set(prevConn->quantization).Set(prevConn->shape);
+
+        // Remove TFLite op
+        operation->Disconnect();
+    }
+    return returnOp;
+}
+
 Operation *TFLiteGraphOptimiser::CreateTransposeForMatMul(const std::shared_ptr<Tensor> &ifm, const Shape &ofmShape)
 {
     auto op = std::make_shared<Operation>(OpType::Transpose);

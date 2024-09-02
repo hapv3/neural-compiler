@@ -56,6 +56,7 @@ Tensor *GraphIrOptimiser::ConvertBool8Tensors(Graph *graph, Tensor *tensor)
             // Replace this tensor's buffer with a new buffer since we don't know if the current buffer is writable
             auto newBuffer = std::make_shared<Buffer>(std::make_unique<uint8_t[]>(size), size);
             tensor->SetBuffer(newBuffer);
+            tensor->ChangeType(DataType::Int8);
             auto view = tensor->View();
             auto &shape = view.ViewShape();
             auto values = view.WritableValues<int8_t>();
@@ -71,6 +72,7 @@ Tensor *GraphIrOptimiser::ConvertBool8Tensors(Graph *graph, Tensor *tensor)
             std::shared_ptr<Tensor> graphInputTensor = tensor->shared_from_this();
             std::shared_ptr<Tensor> newTensor = tensor->Clone();
             newTensor->SetName(newTensor->Name() + "_int8");
+            newTensor->ChangeType(DataType::Int8);
             ReplaceConsumerInput(nullptr, graphInputTensor->Readers(), graphInputTensor.get(), newTensor);
 
             // Create and insert an elementwise CMP_NE to convert to internal bool representation
@@ -86,6 +88,7 @@ Tensor *GraphIrOptimiser::ConvertBool8Tensors(Graph *graph, Tensor *tensor)
             // Replace the OFM of ops producing the graph output tensor
             std::shared_ptr<Tensor> newTensor = tensor->Clone();
             newTensor->SetName(newTensor->Name() + "_int8");
+            newTensor->ChangeType(DataType::Int8);
             std::shared_ptr<Tensor> graphOutputTensor = tensor->shared_from_this();
             ReplaceProducerOutput(graphOutputTensor->Writers(), graphOutputTensor.get(), newTensor);
 
@@ -635,6 +638,43 @@ Operation *GraphIrOptimiser::RewriteNegate(Graph *const graph, Operation *const 
         RecordOptimisation(operation, newOp.get());
         returnOp = newOp.get();
         operation->Disconnect();
+    }
+    return returnOp;
+}
+
+// Rewrite REDUCE_{MIN,MAX,ANY,ALL} IFM/OFM shapes and set a kernel matching the axis to reduce
+Operation *GraphIrOptimiser::RewriteReduceMinMaxAnyAll(Graph *const graph, Operation *const operation)
+{
+    UNUSED(graph);
+    Operation *returnOp = operation;
+    const OpType opType = operation->Type();
+    if ( opType == OpType::ReduceMin || opType == OpType::ReduceMax || opType == OpType::ReduceAny || opType == OpType::ReduceAll )
+    {
+        auto *ifmConn = operation->Input(TensorUsage::IFM);
+        auto *ofmConn = operation->Output(TensorUsage::OFM);
+        auto *attr = operation->Attribute<axis_attr_t>();
+        auto axis = attr->axis;
+        if ( axis < 0 ) axis = ifmConn->shape.Size() + axis;
+        assert(axis >= 0);
+        assert(axis < ifmConn->shape.Size());
+
+        // Reshape IFM/OFM so IFM is HxWxC and OFM is Hx1xC
+        int sizeOfAxisToReduce = ifmConn->shape[axis];
+        int sizeOfAxesBefore = 1;
+        for ( int i = 0; i < axis; i++ )
+            sizeOfAxesBefore *= ifmConn->shape[i];
+        int sizeOfAxesAfter = 1;
+        for ( int i = axis + 1; i < ifmConn->shape.Size(); i++ )
+            sizeOfAxesAfter *= ifmConn->shape[i];
+        ifmConn->shape = {sizeOfAxesBefore, sizeOfAxisToReduce, sizeOfAxesAfter};
+        ofmConn->shape = {sizeOfAxesBefore, 1, sizeOfAxesAfter};
+
+        // Update the axis to reduce to match the reshapes shapes
+        attr->axis = 1;
+
+        // Set kernel to 1xW (where W is the width of the reshaped shapes)
+        auto kernel = operation->Kernel()->WithSize({sizeOfAxisToReduce /* W */, 1 /* H */});
+        operation->SetKernel(std::make_unique<Kernel>(std::move(kernel)));
     }
     return returnOp;
 }

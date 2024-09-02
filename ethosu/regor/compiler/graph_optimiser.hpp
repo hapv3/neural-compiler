@@ -138,6 +138,7 @@ public:
                         for ( const auto &func : *opFunctions )
                         {
                             updatedOp = (static_cast<T *>(this)->*(func))(graph, updatedOp);
+                            assert(updatedOp && "Operator rewrite function returned NULL");
                         }
                     }
                 }
@@ -178,6 +179,7 @@ public:
                                     for ( const auto &func : *tensFunctions )
                                     {
                                         updatedTensor = (static_cast<T *>(this)->*(func))(graph, updatedTensor);
+                                        assert(updatedTensor && "Tensor rewrite function returned NULL");
                                     }
                                 }
                             }

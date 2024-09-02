@@ -54,6 +54,7 @@ private:
     Operation *RewriteConcat(Graph *const graph, Operation *const operation);
     Operation *RewriteSlice(Graph *const graph, Operation *const operation);
     Operation *RewriteNegate(Graph *const graph, Operation *const operation);
+    Operation *RewriteReduceMinMaxAnyAll(Graph *const graph, Operation *const operation);
     Operation *OptimiseElementwise(Graph *const graph, Operation *const operation);
     void MoveToConsumer(const Operation *const operation, Operation *const cons);
     Operation *MoveSplitSliceToConsumer(Graph *const, Operation *const operation);
@@ -98,6 +99,7 @@ private:
                 &GraphIrOptimiser::RewriteConcat,
                 &GraphIrOptimiser::RewriteSlice,
                 &GraphIrOptimiser::RewriteNegate,
+                &GraphIrOptimiser::RewriteReduceMinMaxAnyAll,
                 &GraphIrOptimiser::FuseRescale,  // First pass fuse all possible ifm and ofm rescales
                 &GraphIrOptimiser::OptimiseElementwise,
             }
