@@ -907,6 +907,13 @@ ExecutionQuery TfLiteReader::OperationToExecQuery(const Operation &operation)
     query.opType = operation.Type();
     query.ifmType = operation.IFM(0)->Type();
     query.ofmType = operation.OFM()->Type();
+    query.ifmShape = operation.Input(TensorUsage::IFM0)->shape;
+    if ( operation.Input(TensorUsage::IFM1) )
+    {
+        query.ifm2Shape = operation.Input(TensorUsage::IFM1)->shape;
+    }
+    query.ofmShape = operation.Output(TensorUsage::OFM)->shape;
+
     switch ( query.opType )
     {
         case OpType::LeakyRelu:

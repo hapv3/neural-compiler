@@ -58,7 +58,8 @@ struct ResizeSupportQuery
     Shape ifmShape;
 };
 
-
+const std::array<OpType, 10> elemWiseMainOps = {OpType::Minimum, OpType::Maximum, OpType::Add, OpType::Mul, OpType::Sub,
+    OpType::Abs, OpType::Exp, OpType::LeakyRelu, OpType::Rsqrt, OpType::SquaredDifference};
 /// <summary>
 /// Information for querying whether an operation can be executed by the hardware
 /// </summary>
@@ -68,6 +69,8 @@ struct ExecutionQuery
     OpType targetType;
     DataType ifmType;
     Shape ifmShape;
+    Shape ifm2Shape;
+    Shape ofmShape;
     DataType ofmType;
     TransposeType transposeType;
     ReverseType reverseType;
@@ -122,6 +125,10 @@ public:
             default:
                 break;
         }
+        if ( std::find(elemWiseMainOps.begin(), elemWiseMainOps.end(), query.opType) != elemWiseMainOps.end() )
+        {
+            valid = SupportsNonMatchingShapes(query.ifmShape, query.ifm2Shape, query.ofmShape);
+        }
         return valid;
     }
 
@@ -135,6 +142,7 @@ protected:
     virtual bool SupportsResize(const ResizeSupportQuery &query) = 0;
     virtual bool SupportsArgMax(OpType opType) = 0;
     virtual bool SupportsCast(OpType opType, DataType ifmType, DataType ofmType) = 0;
+    virtual bool SupportsNonMatchingShapes(const Shape &ifmShape, const Shape &ofmShape, const Shape &ifm2Shape) = 0;
 };
 
 }  // namespace regor

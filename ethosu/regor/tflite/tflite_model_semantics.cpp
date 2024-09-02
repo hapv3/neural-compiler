@@ -795,14 +795,19 @@ void ConstraintMatchingEitherShapes(const Operator &op, const SubGraph &subgraph
     Shape ifm2Shape = Shape();
     auto ifm2 = TensorFromUsage(MakeTensorUsage(regor::TensorUsage::IFM, 1), op, builtinOperator, *subgraph.tensors());
 
-    if ( ifm2 )
+    if ( ifm2 && !valid )
     {
         ifm2Shape = ShapeFromTens(ifm2);
-        valid = valid || ifm2Shape == ofmShape;
+        bool isBroadcastable = true;
+        for ( auto i = 0; i < std::min(ifmShape.Size(), ifm2Shape.Size()); i++ )
+        {
+            isBroadcastable = isBroadcastable && (ifmShape[i] == ifm2Shape[i] || ifmShape[i] == 1 || ifm2Shape[i] == 1);
+        }
+        valid = ifm2Shape == ofmShape || (isBroadcastable && Shape::Max(ifmShape, ifm2Shape) == ofmShape);
     }
     if ( !valid )
     {
-        std::string constraint = "At least one Input's shape must match the OFM's shape";
+        std::string constraint = "At least one Input's shape must match the OFM's shape, or the union of the Input shapes must equal the OFM shape if Inputs are broadcast-able";
         std::string extra = fmt::format("IFM shape={}, IFM2 shape={} and OFM shape={}", ifmShape.ToString(),
             ifm2Shape.ToString(), ofmShape.ToString());
         throw InvalidTfLiteException(constraint, extra, op, subgraph, builtinOperator);
