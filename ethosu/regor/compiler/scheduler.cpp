@@ -486,6 +486,10 @@ WeightScaleEncoding Scheduler::EncodeBestWeightFormat(
             supportedFormats &= ~WF(WeightFormat::Sparse2_4);
         }
     }
+    else if ( supportedFormats & WeightFormat::Sparse2_4 )
+    {  // No block config available for sparse 2_4, so disable.
+        supportedFormats &= ~WF(WeightFormat::Sparse2_4);
+    }
 
     std::vector<WeightScaleEncoding> encodingResults;
     auto weights = op->Input(TensorUsage::Weights);
@@ -505,6 +509,10 @@ WeightScaleEncoding Scheduler::EncodeBestWeightFormat(
         bool checkFastDecoder = !(weightFormat & WF(WeightFormat::Fast)) && (supportedFormats & WF(WeightFormat::Fast));
 
         auto *blockConfig = (weightFormat & WF(WeightFormat::Sparse2_4)) ? blockConfigSparse.get() : blockConfigDefault.get();
+        if ( !blockConfig )
+        {
+            throw std::runtime_error("Failed to find block configuration\n");
+        }
         auto encodingParams = _arch->WeightEncoder()->GetEncodingConfig(
             blockConfig, weightsRef, op->Kernel(), ifmType, depthOffsets, weightFormat);
 

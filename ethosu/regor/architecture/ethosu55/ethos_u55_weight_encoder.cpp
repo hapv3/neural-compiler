@@ -76,6 +76,8 @@ Flags<WeightFormat> EthosU55WeightEncoder::EthosUEncodingConfig::Format()
 std::unique_ptr<IWeightEncodingConfig> EthosU55WeightEncoder::GetEncodingConfig(ArchitectureOpConfig *opCfg,
     const WeightsRef &weights, const Kernel *kernel, DataType ifmType, const std::vector<int> &depthOffsets, Flags<WeightFormat>)
 {
+    assert(opCfg);
+    assert(kernel);
     std::unique_ptr<EthosUEncodingConfig> params = std::make_unique<EthosUEncodingConfig>(_arch->_cores);
 
     EthosU55OpConfig *opConfig = static_cast<EthosU55OpConfig *>(opCfg);
