@@ -391,8 +391,8 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU55::FindBlockConfig(OpType opTyp
         {
             for ( int width = _ofmUBlock.Width(); width <= searchSpace.Width(); width += _ofmUBlock.Width() )
             {
-                // Avoid checking W/H transposed blocks that already didn't fit. i.e. if 8x4x16 didn't
-                // fit, then 4x8x16 won't either.
+                // Avoid checking blocks that already didn't fit with a smaller depth.
+                // i.e. if 8x4x16 didn't fit then 8x4x32 won't either.
                 if ( wontFit.count(Point2i(height, width)) > 0 )
                 {
                     continue;
@@ -472,7 +472,7 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU55::FindBlockConfig(OpType opTyp
                 }
                 else
                 {
-                    wontFit.emplace(width, height);
+                    wontFit.emplace(height, width);
                 }
             }
         }
