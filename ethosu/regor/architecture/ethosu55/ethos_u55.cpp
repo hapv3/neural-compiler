@@ -630,6 +630,7 @@ EthosU55NpuOp ArchEthosU55::GetHWOp(OpType type)
         {OpType::ResizeBilinear, EthosU55NpuOp::Pooling},
         {OpType::ReduceSum, EthosU55NpuOp::ReduceSum},
         {OpType::Rescale, EthosU55NpuOp::Pooling},
+        {OpType::Tile, EthosU55NpuOp::Dma},
     };
     auto pos = toNpuOp.find(type);
     if ( pos != toNpuOp.end() )
@@ -784,6 +785,7 @@ bool EthosU55OpGroup::CanRunOnNPU(const ArchitectureOpGroupQuery &op)
         case EthosU55NpuOp::Pooling:
         case EthosU55NpuOp::ReduceSum:
         case EthosU55NpuOp::Elementwise:
+        case EthosU55NpuOp::Dma:
             break;
         default:
             assert(false && "Unrecognized HWOp");
@@ -793,7 +795,7 @@ bool EthosU55OpGroup::CanRunOnNPU(const ArchitectureOpGroupQuery &op)
     // Check allowed ifm/ofm type mapping
     if ( npuOp != EthosU55NpuOp::Elementwise )
     {
-        if ( op.type == OpType::LUT || op.type == OpType::MemoryCopy || op.type == OpType::Rescale )
+        if ( op.type == OpType::LUT || op.type == OpType::MemoryCopy || op.type == OpType::Rescale || op.type == OpType::Tile )
         {  // TODO: LUT operations end up here due to UseAvgPoolNop although the rules are not the same as
            // for a Pooling operation, so skip checks for now.
             return true;

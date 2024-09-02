@@ -708,8 +708,7 @@ int EthosU55RCSGenerator::CalcBlockDep(HLCStripe *prevStripe, HLCStripe *stripe)
             if ( fm.memArea == prevOfm.memArea &&
                  Overlaps(fm.address, fm.address + fm.AllocationSizeBytes(), prevOfm.address, prevOfm.address + prevOfm.AllocationSizeBytes()) )
             {
-                // Previous OFM overlaps in unexpected way with current IFM
-                assert(false && "Unexpected overlap previous OFM/current IFM");
+                // Previous OFM overlaps with current IFM
                 return 0;
             }
         }
@@ -1149,8 +1148,7 @@ void EthosU55RCSGenerator::GenerateShramRegisters(const EthosU55OpConfig *config
 }
 
 // Calculates and generates KERNEL_WAIT or DMA_WAIT register
-void EthosU55RCSGenerator::GenerateWaits(bool isKernelWait, const MemoryAccesses &memoryAccesses, int maxWaits,
-    std::deque<MemoryAccesses> &outstandingAccesses, std::deque<MemoryAccesses> &accessesToUpdate)
+void EthosU55RCSGenerator::GenerateWaits(bool isKernelWait, const MemoryAccesses &memoryAccesses, std::deque<MemoryAccesses> &outstandingAccesses)
 {
     int waits = CalcCommandWaits(memoryAccesses, outstandingAccesses);
     if ( waits >= 0 )
@@ -1164,6 +1162,10 @@ void EthosU55RCSGenerator::GenerateWaits(bool isKernelWait, const MemoryAccesses
             Emit(isa::npu_op_dma_wait_t(waits));
         }
     }
+}
+
+void EthosU55RCSGenerator::UpdateMemoryAccesses(const MemoryAccesses &memoryAccesses, std::deque<MemoryAccesses> &accessesToUpdate, int maxWaits)
+{
     accessesToUpdate.push_back(memoryAccesses);
     if ( int(accessesToUpdate.size()) > maxWaits )
     {
@@ -1219,6 +1221,78 @@ EthosU55RCSGenerator::InsertLUTDMACommands(std::vector<std::unique_ptr<HighLevel
                     slot.hlcOp = nullptr;
                     slot.lastUsed = 0;
                 }
+            }
+        }
+        result.push_back(std::move(hlc));
+    }
+    return result;
+}
+
+// Inserts DMA commands to handle TILE operations
+std::vector<std::unique_ptr<HighLevelCommand>>
+EthosU55RCSGenerator::InsertTileDMACommands(std::vector<std::unique_ptr<HighLevelCommand>> &cmds)
+{
+    // reshape to 3D-tensor where the width-axis is being tiled
+    static auto reshapeFunc = [](Shape &shape, int tiledAxis)
+    {
+        int height = 1;
+        int channel = 1;
+        // all axes before tiledAxis are reshaped to height
+        for ( int i = 0; i < tiledAxis; i++ )
+        {
+            height *= shape[i];
+        }
+        // all axes after tiledAxis are reshaped to channel
+        for ( int i = tiledAxis + 1; i < shape.Size(); i++ )
+        {
+            channel *= shape[i];
+        }
+
+        shape = {1, height, shape[tiledAxis], channel};
+    };
+
+    std::vector<std::unique_ptr<HighLevelCommand>> result;
+    for ( auto &hlc : cmds )
+    {
+        if ( hlc->IsStripe() )
+        {
+            auto stripe = static_cast<HLCStripe *>(hlc.get());
+            auto op = stripe->operation;
+            if ( op->type == OpType::Tile )
+            {
+                auto &ifm = op->ifm[0];
+                auto &ofm = op->ofm;
+
+                assert(ifm.format == TensorFormat::NHWC);
+                assert(ofm.format == TensorFormat::NHWC);
+
+                const auto &tileParams = op->parameters.tile;
+
+                reshapeFunc(ifm.shape, tileParams.axis);
+                reshapeFunc(ofm.shape, tileParams.axis);
+
+                int srcOffset = 0;
+                int dstOffset = 0;
+                int elemSize = DataTypeSizeBits(ifm.dataType) / 8;
+                int rowBytes = ifm.shape[2] * ifm.shape[3] * elemSize;
+                // each row in the IFM is copied separately
+                // and duplicated based on the multiplier attribute.
+                for ( int h = 0; h < ifm.shape.Height(); h++ )
+                {
+                    for ( int i = 0; i < tileParams.multiplier; i++ )
+                    {
+                        auto dma = std::make_unique<HLCDMA>();
+                        dma->srcMemArea = ifm.memArea;
+                        dma->srcAddress = ifm.address + srcOffset;
+                        dma->length = rowBytes;
+                        dma->destMemArea = ofm.memArea;
+                        dma->destAddress = ofm.address + dstOffset;
+                        result.push_back(std::move(dma));
+                        dstOffset += rowBytes;
+                    }
+                    srcOffset += rowBytes;
+                }
+                continue;
             }
         }
         result.push_back(std::move(hlc));
@@ -1440,6 +1514,7 @@ std::vector<uint32_t> EthosU55RCSGenerator::GenerateCommandStream(std::vector<st
     _stripeToLutSlot.clear();
     GenerateInitialRegisterSetup();
     auto cmds = InsertLUTDMACommands(highLevelCommandStream);
+    cmds = InsertTileDMACommands(cmds);
     std::deque<MemoryAccesses> outstandingDmaAccesses;
     std::deque<MemoryAccesses> outstandingNpuAccesses;
     int maxOutstandingDMAOps = _arch->MaxOutstandingDMAOps();
@@ -1448,10 +1523,10 @@ std::vector<uint32_t> EthosU55RCSGenerator::GenerateCommandStream(std::vector<st
     std::vector<std::pair<unsigned, std::string>> debugInfo;
     for ( auto &hlc : cmds )
     {
-        MemoryAccesses memoryAccesses;
         int emitStart = _emit.Position();
         if ( hlc->IsStripe() )
         {
+            MemoryAccesses memoryAccesses;
             auto stripe = static_cast<HLCStripe *>(hlc.get());
             if ( verbose )
             {
@@ -1464,7 +1539,8 @@ std::vector<uint32_t> EthosU55RCSGenerator::GenerateCommandStream(std::vector<st
             // BLOCKDEP register
             int blockdep = CalcBlockDep(prevOp, stripe);
             Emit(isa::npu_set_blockdep_t(blockdep));
-            GenerateWaits(false, memoryAccesses, maxOutstandingKernelOps, outstandingDmaAccesses, outstandingNpuAccesses);
+            GenerateWaits(false, memoryAccesses, outstandingDmaAccesses);
+            UpdateMemoryAccesses(memoryAccesses, outstandingNpuAccesses, maxOutstandingKernelOps);
             GenerateOperationCode(stripe->operation->type);
             prevOp = stripe;
             // Return command mapping information to the caller
@@ -1476,13 +1552,16 @@ std::vector<uint32_t> EthosU55RCSGenerator::GenerateCommandStream(std::vector<st
         }
         else
         {
+            MemoryAccesses dmaAccesses;
             auto dma = static_cast<HLCDMA *>(hlc.get());
             if ( verbose )
             {
                 debugInfo.emplace_back(emitStart, dma->ToString());
             }
-            GenerateDMA(static_cast<HLCDMA *>(hlc.get()), memoryAccesses);
-            GenerateWaits(true, memoryAccesses, maxOutstandingDMAOps, outstandingNpuAccesses, outstandingDmaAccesses);
+            GenerateDMA(static_cast<HLCDMA *>(hlc.get()), dmaAccesses);
+            GenerateWaits(false, dmaAccesses, outstandingDmaAccesses);
+            GenerateWaits(true, dmaAccesses, outstandingNpuAccesses);
+            UpdateMemoryAccesses(dmaAccesses, outstandingDmaAccesses, maxOutstandingDMAOps);
             Emit(isa::npu_op_dma_start_t());
         }
     }

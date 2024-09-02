@@ -64,6 +64,7 @@ enum class EthosU55NpuOp
     Pooling,
     ReduceSum,
     Elementwise,
+    Dma,
 };
 
 /// <summary>

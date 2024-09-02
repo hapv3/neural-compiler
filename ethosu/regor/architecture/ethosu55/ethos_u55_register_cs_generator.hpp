@@ -223,11 +223,14 @@ protected:
     // Generates IB_END/IB_START/AB_START/ACC_FORMAT registers
     void GenerateShramRegisters(const EthosU55OpConfig *config, bool hasIfm2);
     // Calculates and generates KERNEL_WAIT or DMA_WAIT register
-    void GenerateWaits(bool isKernelWait, const MemoryAccesses &memoryAccesses, int maxWaits,
-        std::deque<MemoryAccesses> &outstandingAccesses, std::deque<MemoryAccesses> &accessesToUpdate);
+    void GenerateWaits(bool isKernelWait, const MemoryAccesses &memoryAccesses, std::deque<MemoryAccesses> &outstandingAccesses);
+    // Save current memory accesses to accessesToUpdate
+    void UpdateMemoryAccesses(const MemoryAccesses &memoryAccesses, std::deque<MemoryAccesses> &accessesToUpdate, int maxWaits);
     // Inserts DMA commands for copying LUTs from constant memory
     // to LUT memory
     std::vector<std::unique_ptr<HighLevelCommand>> InsertLUTDMACommands(std::vector<std::unique_ptr<HighLevelCommand>> &cmds);
+    // Inserts DMA commands to handle TILE operations
+    std::vector<std::unique_ptr<HighLevelCommand>> InsertTileDMACommands(std::vector<std::unique_ptr<HighLevelCommand>> &cmds);
 
     //----------------------------------------------------------------------
     // Operations

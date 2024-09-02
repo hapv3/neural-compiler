@@ -37,6 +37,7 @@ static const Point2i s_SubkernelLimits[] = {
     {8, 8},  // ReduceMinMax
     {1, 1},  // Elementwise
     {1, 1},  // Resize
+    {1, 1},  // Dma
 };
 
 static constexpr bool OpUsesMacs(EthosU85NpuOp npuOp)

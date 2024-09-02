@@ -34,11 +34,12 @@ static const Point2i s_SubkernelLimits[] = {
     {8, 8},  // Pooling
     {8, 8},  // ReduceSum
     {1, 1},  // Elementwise
+    {1, 1},  // Dma
 };
 
 static constexpr bool OpUsesMacs(EthosU55NpuOp npuOp)
 {
-    return (npuOp != EthosU55NpuOp::Elementwise && npuOp != EthosU55NpuOp::None);
+    return (npuOp != EthosU55NpuOp::Elementwise && npuOp != EthosU55NpuOp::Dma && npuOp != EthosU55NpuOp::None);
 }
 
 EthosU55Performance::EthosU55Performance(ArchEthosU55 *arch, const EthosU55PerfInfo *perfInfo) : _arch(arch)
@@ -76,6 +77,11 @@ CycleCost EthosU55Performance::MeasureCycleCost(const PerformanceQuery &query, c
         auto ofmShape =
             (query.ofmFormat == TensorFormat::NHCWB16) ? Shape::RoundAway(query.ofmShape, Shape(1, 1, 1, 16)) : query.ofmShape;
         cycles.opCycles = int64_t(EstimateOutputCyclesPerElement(query, fused) * float(ofmShape.Elements()));
+    }
+    else if ( npuOp == EthosU55NpuOp::Dma )
+    {
+        // TODO: MLBEDSW-8400
+        cycles.opCycles = 0;
     }
     else
     {
@@ -494,6 +500,13 @@ ElementAccess EthosU55Performance::MeasureElementAccess(const PerformanceQuery &
                 }
             }
         }
+    }
+    else if ( query.type == OpType::Tile )
+    {
+        // IFM0 is read multiple times to cover all elements in ofmShape
+        access.ifmRead[0] = Shape::RoundAway(query.ofmShape[0], ofmRounding).Elements();
+        // Complete OFM is written
+        access.ofmWrite = Shape::RoundAway(query.ofmShape[0], ofmRounding).Elements();
     }
     else
     {
