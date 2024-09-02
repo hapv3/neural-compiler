@@ -329,7 +329,7 @@ void HillClimbAllocator::Search(std::vector<int> &indices, int iters)
     std::vector<HillClimbLiveRange> bestLrs = lrs;
     int lastImprovementIteration = 0;
 
-    for ( int i = 0; bestSize > maxAllowedSize && i < iters && i - lastImprovementIteration < MIN_ITERATIONS_IMPROVE; ++i )
+    for ( int i = 0; i < iters; ++i )
     {
         // Reorder the indices
         AttemptBottleneckFix(indices, i - lastImprovementIteration);
@@ -356,6 +356,12 @@ void HillClimbAllocator::Search(std::vector<int> &indices, int iters)
             // The new allocation produced worse result; undo the change
             indices = bestIndices;
             lrs = bestLrs;
+        }
+        if ( (bestSize <= maxAllowedSize) && (i - lastImprovementIteration > MIN_ITERATIONS_IMPROVE) )
+        {
+            // A Solution has been found and solution hasn't improved in the last MIN_ITERATIONS_IMPROVE iterations;
+            // stop
+            return;
         }
     }
     lrs = std::move(bestLrs);
