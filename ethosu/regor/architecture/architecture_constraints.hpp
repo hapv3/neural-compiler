@@ -98,9 +98,6 @@ public:
         bool valid = true;
         switch ( query.opType )
         {
-            case OpType::LeakyRelu:
-                valid = SupportsLeakyRelu(query.quantScalingInvalidOrUnequal, query.ifmType);
-                break;
             case OpType::MatMul:
                 valid = SupportsMatMul(query.opType);
                 break;
@@ -116,17 +113,8 @@ public:
             case OpType::Scatter:
                 valid = SupportsScatter(query.opType);
                 break;
-            case OpType::Sigmoid:
-                valid = SupportsSigmoidTanhLutInt16(query.opType);
-                break;
             case OpType::ArgMax:
                 valid = SupportsArgMax(query.opType);
-                break;
-            case OpType::ResizeNearestNeighbor:
-                valid = SupportsResize(query.resizeQuery);
-                break;
-            case OpType::ResizeBilinear:
-                valid = SupportsResize(query.resizeQuery);
                 break;
             case OpType::Cast:
                 valid = SupportsCast(query.opType, query.ifmType, query.ofmType);
