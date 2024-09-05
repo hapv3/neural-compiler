@@ -598,16 +598,16 @@ This is a list of constraints that the MAX_POOL_2D operator must satisfy in orde
 This is a list of constraints that the MEAN operator must satisfy in order to be scheduled on the NPU.
 
 - Input tensor must be at least 2D
-- Requirements for axis parameter:
-        When IFM tensor is 2D:
-          - Reduction in both axes is supported.
-        When IFM tensor is 3D or 4D:
-          - Reduction in Batch axis is only supported if batch size is 1.
-          - Reduction in both Height and Width axes is supported.
+- Requirements for axis parameter:  
+        When IFM tensor is 2D:  
+          - Reduction in both axes is supported.  
+        When IFM tensor is 3D or 4D:  
+          - Reduction in Batch axis is only supported if batch size is 1.  
+          - Reduction in both Height and Width axes is supported.  
           - Reduction in Depth axis is supported if at least one of H,W,C are of size 1.
-- Product of reduced axes must be no greater than:
-        - 16777216 for signed 8-bit inputs.
-        - 8388608 for unsigned 8-bit inputs.
+- Product of reduced axes must be no greater than:  
+        - 16777216 for signed 8-bit inputs.  
+        - 8388608 for unsigned 8-bit inputs.  
         - 65536 for signed 16-bit inputs.
 - If Width axis is reduced its shape must be no greater than 4096.
 - If Depth axis is reduced its shape must be no greater than 4096.
@@ -773,11 +773,11 @@ This is a list of constraints that the TRANSPOSE_CONV operator must satisfy in o
 - Optional Bias tensor must be of shape: 1D
 - Optional Bias tensor must be of type: int32, int64
 - Optional Bias tensor values must fit within 40-bits
-- Stride values for width and height must match one of the following criteria:
-        Stride values WxH must be 1x1 or 2x2
+- Stride values for width and height must match one of the following criteria:  
+        Stride values WxH must be 1x1 or 2x2  
         Stride WxH 2x1 supported if ifm height and kernel height = 1
 - SAME padding: OFM dimensions must equal IFM dimensions multiplied by stride
-- VALID padding: OFM dimensions must equal IFM dimensions multiplied by stride,
+- VALID padding: OFM dimensions must equal IFM dimensions multiplied by stride,  
         minus difference between kernel size and stride
 """
     ]
