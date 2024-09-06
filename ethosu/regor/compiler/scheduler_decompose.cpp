@@ -154,22 +154,16 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeBlocksElementwi
     auto *ofmConn = op->OFM();
     auto *ifmConn = op->IFM(0);
     auto *ifm2Conn = op->TryIFM(1);
-    auto *kernel = op->Kernel();
-    auto &stride = kernel->Stride();
     auto &ofmShape = ofmConn->SliceShape();
     const auto N = Shape::DivRoundUp(ofmShape, blockShape);  // Block count per dimension
     auto NewIfmSlice = [&](SchedulerConnection *ifmC, int x, int y, int c)
     {
         auto newIfmSlice = ifmC->slice;
-        auto &ifmOffset = newIfmSlice.offset;
 
-        newIfmSlice.offset =
-            ifmOffset.WithHeight(ifmOffset.Height() + y * BH * stride.y).WithWidth(ifmOffset.Width() + x * BW * stride.x);
+        newIfmSlice.offset += Shape(y * BH, x * BW, c * BC);
         auto &newIfmShape = newIfmSlice.shape;
-        auto newIfmHeight = std::max(std::min(newIfmShape.Height() - y * BH, BH), 1);
-        auto newIfmWidth = std::max(std::min(newIfmShape.Width() - x * BW, BW), 1);
-        auto newIfmDepth = std::max(std::min(newIfmShape.Depth() - c * BC, BC), 1);
-        newIfmSlice.shape = newIfmShape.WithHeight(newIfmHeight).WithWidth(newIfmWidth).WithDepth(newIfmDepth);
+        newIfmSlice.shape = Shape::Max(
+            Shape::Min(newIfmShape - Shape(y * BH, x * BW, c * BC), Shape(BH, BW, BC)), newIfmShape.WithOnes());
         return newIfmSlice;
     };
     for ( auto by = 0; by < N.Height(); by++ )
@@ -185,16 +179,10 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeBlocksElementwi
                     newIfm2Slice = NewIfmSlice(ifm2Conn, bx, by, bc);
                 }
                 auto newOfmSlice = ofmConn->slice;
-                auto &ofmOffset = newOfmSlice.offset;
-                newOfmSlice.offset =
-                    ofmOffset.WithHeight(ofmOffset.Height() + by * BH)
-                        .WithWidth(ofmOffset.Width() + bx * BW)
-                        .WithDepth(ofmOffset.Depth() + bc * BC);
+                newOfmSlice.offset += Shape(by * BH, bx * BW, bc * BC);
                 auto &newOfmShape = newOfmSlice.shape;
-                auto newOfmHeight = std::min(newOfmShape.Height() - by * BH, BH);
-                auto newOfmWidth = std::min(newOfmShape.Width() - bx * BW, BW);
-                auto newOfmDepth = std::min(newOfmShape.Depth() - bc * BC, BC);
-                newOfmSlice.shape = newOfmShape.WithHeight(newOfmHeight).WithWidth(newOfmWidth).WithDepth(newOfmDepth);
+                newOfmSlice.shape = Shape::Max(
+                    Shape::Min(newOfmShape - Shape(by * BH, bx * BW, bc * BC), Shape(BH, BW, BC)), newOfmShape.WithOnes());
                 std::unique_ptr<SchedulerOperation> subOp = MakeSubOperation(op.get());
                 auto *subIfmConn = subOp->IFM(0);
                 subIfmConn->slice = std::move(newIfmSlice);
