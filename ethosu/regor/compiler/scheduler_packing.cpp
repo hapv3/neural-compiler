@@ -484,7 +484,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> SchedulerPacking::DecomposeSche
             result = DecomposeTransposeConv2D(_arch, std::move(op));
             break;
         default:
-            if ( IsElementwise(op->Type()) )
+            if ( DecomposeAsElementwise(op->Type()) )
             {
                 result = DecomposeElementwise(_arch, std::move(op));
             }

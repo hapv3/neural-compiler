@@ -502,8 +502,8 @@ Operation *GraphIrOptimiser::RewriteCast(Graph *const, Operation *const operatio
             // Replace CAST with ADD
             auto copyOp = std::make_shared<Operation>(OpType::Add);
             copyOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_zero", ifmConn->tensor->Type(), 0));
-            RecordOptimisation(operation, copyOp.get());
             ReplaceOperation(operation, copyOp.get());
+            RecordOptimisation(operation, copyOp.get());
             returnOp = copyOp.get();
         }
     }
@@ -514,7 +514,7 @@ Operation *GraphIrOptimiser::OptimiseElementwise(Graph *const, Operation *const 
 {
     Operation *returnOp = operation;
     const OpType opType = operation->Type();
-    if ( IsElementwise(opType) )
+    if ( DecomposeAsElementwise(opType) )
     {
         auto ofmShape = operation->Output(TensorUsage::OFM)->shape;
         if ( ofmShape.Size() > 3 && (ofmShape.Depth() == 1 || ofmShape.Width() == 1 || ofmShape.Height() == 1) &&

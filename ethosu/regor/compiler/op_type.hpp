@@ -228,6 +228,12 @@ constexpr inline bool IsElementwise(OpType opType)
     return IsUnaryElementwise(opType) || IsBinaryElementwise(opType);
 }
 
+constexpr inline bool DecomposeAsElementwise(OpType opType)
+{
+    return IsElementwise(opType) || opType == OpType::Rescale || opType == OpType::LUT || opType == OpType::Table ||
+           opType == OpType::Clamp || opType == OpType::Cast;
+}
+
 constexpr inline bool IsDepthwise(OpType opType)
 {
     return opType == OpType::DepthwiseConv2DBias;
