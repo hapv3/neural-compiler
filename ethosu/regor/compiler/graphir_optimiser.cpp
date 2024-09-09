@@ -56,7 +56,6 @@ Tensor *GraphIrOptimiser::ConvertBool8Tensors(Graph *graph, Tensor *tensor)
             // Replace this tensor's buffer with a new buffer since we don't know if the current buffer is writable
             auto newBuffer = std::make_shared<Buffer>(std::make_unique<uint8_t[]>(size), size);
             tensor->SetBuffer(newBuffer);
-            tensor->ChangeType(DataType::Int8);
             auto view = tensor->View();
             auto &shape = view.ViewShape();
             auto values = view.WritableValues<int8_t>();
@@ -72,7 +71,6 @@ Tensor *GraphIrOptimiser::ConvertBool8Tensors(Graph *graph, Tensor *tensor)
             std::shared_ptr<Tensor> graphInputTensor = tensor->shared_from_this();
             std::shared_ptr<Tensor> newTensor = tensor->Clone();
             newTensor->SetName(newTensor->Name() + "_int8");
-            newTensor->ChangeType(DataType::Int8);
             ReplaceConsumerInput(nullptr, graphInputTensor->Readers(), graphInputTensor.get(), newTensor);
 
             // Create and insert an elementwise CMP_NE to convert to internal bool representation
@@ -88,7 +86,6 @@ Tensor *GraphIrOptimiser::ConvertBool8Tensors(Graph *graph, Tensor *tensor)
             // Replace the OFM of ops producing the graph output tensor
             std::shared_ptr<Tensor> newTensor = tensor->Clone();
             newTensor->SetName(newTensor->Name() + "_int8");
-            newTensor->ChangeType(DataType::Int8);
             std::shared_ptr<Tensor> graphOutputTensor = tensor->shared_from_this();
             ReplaceProducerOutput(graphOutputTensor->Writers(), graphOutputTensor.get(), newTensor);
 

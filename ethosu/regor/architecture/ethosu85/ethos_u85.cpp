@@ -1326,16 +1326,18 @@ static const std::unordered_map<EthosU85NpuOp, std::unordered_map<DataType, std:
         }},
     {EthosU85NpuOp::Pooling,
         {
+            {DataType::Bool8, {DataType::Bool8, DataType::Int32, DataType::Int64}},
             {DataType::UInt8, {DataType::UInt8, DataType::Int32, DataType::Int64}},
             {DataType::Int8, {DataType::Int8, DataType::Int32, DataType::Int64}},
             {DataType::Int16, {DataType::Int16}},
         }},
     {EthosU85NpuOp::ReduceMinMax,
         {
-            {DataType::UInt8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int16, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int32, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
+            {DataType::Bool8, {DataType::Bool8, DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
+            {DataType::UInt8, {DataType::Bool8, DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
+            {DataType::Int8, {DataType::Bool8, DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
+            {DataType::Int16, {DataType::Bool8, DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
+            {DataType::Int32, {DataType::Bool8, DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
         }},
     {EthosU85NpuOp::ReduceSum,
         {
@@ -1346,6 +1348,7 @@ static const std::unordered_map<EthosU85NpuOp, std::unordered_map<DataType, std:
         }},
     {EthosU85NpuOp::Dma,
         {
+            {DataType::Bool8, {DataType::Bool8}},
             {DataType::UInt8, {DataType::UInt8}},
             {DataType::Int8, {DataType::Int8}},
             {DataType::Int16, {DataType::Int16}},
