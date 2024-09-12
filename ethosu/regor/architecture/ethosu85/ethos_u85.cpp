@@ -240,9 +240,9 @@ bool ArchEthosU85::UseAvgPoolNop(OpType type)
     return IsActivation(type) || type == OpType::Quantize || type == OpType::MemoryCopy;
 }
 
-bool ArchEthosU85::UseNullPool(OpType opType, DataType type)
+bool ArchEthosU85::UseNullPool(OpType opType, int bits)
 {
-    return (opType == OpType::Rescale && DataTypeSizeBits(type) >= 32);
+    return ((opType == OpType::MemoryCopy || opType == OpType::Rescale || opType == OpType::Transpose) && bits >= 32);
 }
 
 static bool ChooseKernelMethod(const Shape &ifmShape, int ifmBits, const Kernel *kernel)
@@ -466,10 +466,11 @@ bool ArchEthosU85::IsUBlockValid(const OpType opType, int ifmBits, const Shape &
         return false;
     }
 
-    if ( opType == OpType::Rescale && ifmBits == 64 )
+    if ( UseNullPool(opType, ifmBits) )
     {
-        // Accumulator restore for 48-bit (in 64-bit container) uses 2 32-bit passes
-        ifmBits = 32;
+        // Implemented by none pooling op with IFM set to int8 (not used by the operation) and
+        // input instead handled by ArchAccumulatorSource::Ifm2
+        ifmBits = 8;
     }
 
     unsigned blockIdx = IndexForOfmUBlock(ofmUBlock);
@@ -1100,7 +1101,7 @@ bool EthosU85OpGroup::CanStartChain(const ArchitectureOpGroupQuery &op)
 {
     OpType opType = op.type;
     EthosU85NpuOp npuOp = ArchEthosU85::GetHWOp(opType);
-    if ( npuOp == EthosU85NpuOp::Pooling && _arch->UseNullPool(opType, op.ifm[0].type) )
+    if ( npuOp == EthosU85NpuOp::Pooling && _arch->UseNullPool(opType, DataTypeSizeBits(op.ifm[0].type)) )
     {
         return false;
     }

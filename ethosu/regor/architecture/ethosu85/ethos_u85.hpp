@@ -244,7 +244,7 @@ protected:
     // Checks if the operation is to be mapped on AvgPool
     static bool UseAvgPoolNop(OpType type);
     // Checks if the operation is to be mapped to a NullPool
-    static bool UseNullPool(OpType opType, DataType type);
+    static bool UseNullPool(OpType opType, int bits);
     static EthosU85NpuOp GetHWOp(OpType type);
 
 private:

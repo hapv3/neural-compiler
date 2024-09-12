@@ -185,7 +185,7 @@ protected:
     // Generates IFM_BROADCAST and IFM2_BROADCAST register for binary elementwise operations
     void GenerateInputBroadcast(const Shape &ifmShape, const Shape &ifm2Shape, bool ifmIsScalar, bool ifm2IsScalar);
     // Generates IFM_PRECISION register
-    void GenerateIFMPrecision(const HLCFeatureMap &fm, bool chained, bool isScalar);
+    void GenerateIFMPrecision(const HLCFeatureMap &fm, bool chained, bool isScalar, DataType type);
     // Generates IFM2_PRECISION register
     void GenerateIFM2Precision(const HLCFeatureMap &fm, bool chained, bool isScalar);
     // Generates OFM_PRECISION register

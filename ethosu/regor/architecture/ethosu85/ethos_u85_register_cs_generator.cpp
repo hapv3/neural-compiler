@@ -1090,10 +1090,10 @@ void EthosU85RCSGenerator::GenerateInputBroadcast(const Shape &ifmShape, const S
 }
 
 // Generates IFM_PRECISION register
-void EthosU85RCSGenerator::GenerateIFMPrecision(const HLCFeatureMap &fm, bool chained, bool isScalar)
+void EthosU85RCSGenerator::GenerateIFMPrecision(const HLCFeatureMap &fm, bool chained, bool isScalar, DataType dataType)
 {
-    activation_type type = ToActivationType(fm.dataType);
-    activation_precision precision = ToActivationPrecision(fm.dataType);
+    activation_type type = ToActivationType(dataType);
+    activation_precision precision = ToActivationPrecision(dataType);
     activation_format format = ToActivationFormat(fm.format);
     activation_storage storage = activation_storage::TILE2X2;
     if ( chained )
@@ -1427,7 +1427,7 @@ void EthosU85RCSGenerator::GenerateAccFormat(const HLCStripe *stripe)
     EthosU85Accumulator accType;
     ArchAccumulatorSource accSrc;
 
-    if ( opType == OpType::Rescale && DataTypeSizeBits(stripe->operation->ifm[0].dataType) >= 32 )
+    if ( _arch->UseNullPool(opType, DataTypeSizeBits(stripe->operation->ifm[0].dataType)) )
     {
         accType = DataTypeSizeBits(stripe->operation->ifm[0].dataType) == 32 ? EthosU85Accumulator::Acc32 : EthosU85Accumulator::Acc48;
         accSrc = ArchAccumulatorSource::Ifm2;
@@ -1624,14 +1624,9 @@ void EthosU85RCSGenerator::GenerateOperationCode(const HLCOperation *op)
     {
         Emit(isa::npu_op_dma_start_t());
     }
-    else if ( opType == OpType::Rescale )
+    else if ( _arch->UseAvgPoolNop(opType) || opType == OpType::Rescale )
     {
-        Emit(isa::npu_op_pool_t(ArchEthosU85::UseNullPool(opType, op->ifm[0].dataType) ? pooling_mode::NONE : pooling_mode::SUM));
-    }
-    else if ( _arch->UseAvgPoolNop(opType) )
-    {
-        // Implemented using SUM
-        Emit(isa::npu_op_pool_t(pooling_mode::SUM));
+        Emit(isa::npu_op_pool_t(_arch->UseNullPool(opType, DataTypeSizeBits(op->ifm[0].dataType)) ? pooling_mode::NONE : pooling_mode::SUM));
     }
     else
     {
@@ -1659,7 +1654,10 @@ void EthosU85RCSGenerator::GenerateCommon(const HLCStripe *stripe, bool useGloba
         ifm2Chained = (ifm2Cb >= 0);
     }
     EthosU85OpConfig *config = static_cast<EthosU85OpConfig *>(stripe->operation->config);
-    GenerateIFMPrecision(op->ifm[0], ifmChained, isScalar);
+    // Pool with input type >= 32 should use IFM int8 precision and none pooling op
+    DataType
+        dataType = _arch->UseNullPool(op->type, DataTypeSizeBits(op->ifm[0].dataType)) ? DataType::Int8 : op->ifm[0].dataType;
+    GenerateIFMPrecision(op->ifm[0], ifmChained, isScalar, dataType);
     GenerateIFM(op->type, op->ifm[0], stripe->ifmAreas[0], isScalar, scalarValue, ifmCb, ifm2Chained);
     if ( !isScalar && !ifmChained )
     {
@@ -1719,7 +1717,7 @@ void EthosU85RCSGenerator::GeneratePoolingOp(HLCStripe *stripe, MemoryAccesses &
     auto opType = stripe->operation->type;
     auto op = stripe->operation.get();
     bool useGlobalScale = !op->scales;
-    if ( opType == OpType::Rescale && DataTypeSizeBits(op->ifm[0].dataType) >= 32 )
+    if ( _arch->UseNullPool(opType, DataTypeSizeBits(op->ifm[0].dataType)) )
     {
         GenerateIFM2Precision(op->ifm[0], false, false);
         GenerateIFM2(op->type, op->ifm[0], stripe->ifmAreas[0], false, 0, -1);
