@@ -1599,6 +1599,11 @@ Operation *TFLiteGraphOptimiser::CreateTransposeForMatMul(const std::shared_ptr<
     return op.get();
 }
 
+// Convert TFLite BatchMatmul to GraphIR Matmul
+// Transpose inputs (NHCW) based on adj_x/y to align
+// with the TOSA/GraphIR representation of Matmul:
+//    IFM should be transposed if adj_x is true
+//    IFM2 should be transposed if adj_y is true
 Operation *TFLiteGraphOptimiser::RewriteBatchMatMul(Graph *const, Operation *const operation)
 {
     Operation *returnOp = operation;
@@ -1618,10 +1623,10 @@ Operation *TFLiteGraphOptimiser::RewriteBatchMatMul(Graph *const, Operation *con
             const auto options = passthrough->builtin_options_as_BatchMatMulOptions();
             if ( options )
             {
-                // adj_x = True then ifm should be transposed
+                // TOSA/GraphIR Matmul representation aligns with adj_x/adj_y == false.
+                // Transpose inputs if necessary
                 transposeIfm = options->adj_x();
-                // adj_y = False then ifm2 should be transposed
-                transposeIfm2 = !options->adj_y();
+                transposeIfm2 = options->adj_y();
             }
         }
 
@@ -1655,30 +1660,16 @@ Operation *TFLiteGraphOptimiser::RewriteBatchMatMul(Graph *const, Operation *con
             ifm2Tensor = op->Output(TensorUsage::OFM)->tensor;
         }
 
-        // OFM handling
-        // Reshape ofm N,H,W,C -> 1,NxH,W,C
         auto ofmReshaped = Shape(1, n, ofmShape.Width(), ofmShape.Depth());
 
-        // Add n Matmul ops
-        for ( int i = 0; i < n; ++i )
-        {
-            auto newOp = std::make_shared<Operation>(OpType::MatMul);
-            newOp->SetRounding(ifm->tensor->Type() == DataType::Int16 ? RoundMode::NATURAL : RoundMode::DBL);
-
-            TensorSlice ifmSlice = {Shape(0, i, 0, 0), ifmReshaped.WithHeight(1)};
-            newOp->ConnectInput(TensorUsage::IFM0, ifmTensor).Set(ifmReshaped).Set(ifm->quantization).Set(ifmSlice);
-
-            TensorSlice ifm2Slice = {Shape(0, i, 0, 0), ifm2Reshaped.WithHeight(1)};
-            newOp->ConnectInput(TensorUsage::IFM1, ifm2Tensor).Set(ifm2Reshaped).Set(ifm2->quantization).Set(ifm2Slice);
-
-
-            TensorSlice ofmSlice = {Shape(0, i, 0, 0), ofmReshaped.WithHeight(1)};
-            newOp->ConnectOutput(TensorUsage::OFM, ofm->tensor).Set(ofmReshaped).Set(ofm->quantization).Set(ofmSlice);
-
-            RecordOptimisation(operation, newOp.get());
-            returnOp = newOp.get();
-        }
-
+        auto newOp = std::make_shared<Operation>(OpType::MatMul);
+        newOp->SetRounding(ifm->tensor->Type() == DataType::Int16 ? RoundMode::NATURAL : RoundMode::DBL);
+        newOp->ConnectInput(TensorUsage::IFM0, ifmTensor).Set(ifmReshaped).Set(ifm->quantization);
+        newOp->ConnectInput(TensorUsage::IFM1, ifm2Tensor).Set(ifm2Reshaped).Set(ifm2->quantization);
+        newOp->CopyOutput(TensorUsage::OFM, *ofm);
+        newOp->Output(TensorUsage::OFM)->Set(ofmReshaped);
+        returnOp = newOp.get();
+        RecordOptimisation(operation, returnOp);
         operation->Disconnect();
     }
     return returnOp;

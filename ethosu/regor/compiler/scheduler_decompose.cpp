@@ -92,6 +92,11 @@ bool CanRunOnHardware(Architecture *arch, const SchedulerOperation *schedOp)
             return false;
         if ( ofmShape.Width() > MAX_DIM || ofmShape.Height() > MAX_DIM || ofmShape.Depth() > MAX_DIM ) return false;
     }
+    if ( schedOp->Type() == OpType::MatMul )
+    {
+        auto &ofmShape = schedOp->OFM()->SliceShape();
+        if ( ofmShape.Size() > 2 && ofmShape.Elements() > ofmShape.Width() * ofmShape.Depth() ) return false;
+    }
     auto *ifm = schedOp->TryIFM(0);
     auto *ifm2 = schedOp->TryIFM(1);
     auto *ofm = schedOp->TryOFM();
@@ -139,6 +144,7 @@ bool CanDecompose(Architecture *, const SchedulerOperation *schedOp)
     if ( schedOp->Type() == OpType::DepthwiseConv2DBias ) return true;
     if ( schedOp->Type() == OpType::TransposeConv2D ) return true;
     if ( DecomposeAsElementwise(schedOp->Type()) ) return true;
+    if ( schedOp->Type() == OpType::MatMul ) return true;
     return false;
 }
 
@@ -568,6 +574,37 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeElementwise(Architectu
     {
         return DecomposeBlocksElementwise(arch, std::move(op), maxShape, DecomposeElementwise);
     }
+    result.emplace_back(std::move(op));
+    return result;
+}
+std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMatmul(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
+{
+    std::vector<std::unique_ptr<SchedulerOperation>> result;
+    auto ofmConn = op->Output(TensorUsage::OFM);
+    auto &ofmShape = ofmConn->SliceShape();
+    auto &ofmSlice = ofmConn->slice;
+    auto ifmConn = op->Input(TensorUsage::IFM);
+    auto &ifmShape = ifmConn->SliceShape();
+    auto &ifmSlice = ifmConn->slice;
+
+    InitializeSlice(ofmSlice, ofmShape.WithZeros(), ofmShape);
+    InitializeSlice(ifmSlice, ifmShape.WithZeros(), ifmShape);
+
+    // TODO MLBEDSW-9535: large tensor decomposition
+    if ( auto ifm2Conn = op->TryInput(TensorUsage::IFM1) )
+    {
+        auto &ifm2Shape = ifm2Conn->shape;
+        auto &ifm2Slice = ifm2Conn->slice;
+
+        InitializeSlice(ifm2Slice, ifm2Shape.WithZeros(), ifm2Shape);
+    }
+
+    auto ofmRank = ofmShape.Size();
+    if ( ofmRank > 2 && (ofmShape.Elements() > ofmShape.Width() * ofmShape.Depth()) )
+    {
+        return DecomposeLeadingDimensions(ofmRank - 2, arch, std::move(op), DecomposeMatmul);
+    }
+
     result.emplace_back(std::move(op));
     return result;
 }

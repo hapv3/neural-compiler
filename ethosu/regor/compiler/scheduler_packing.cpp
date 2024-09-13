@@ -506,6 +506,9 @@ std::vector<std::unique_ptr<SchedulerOperation>> SchedulerPacking::DecomposeSche
         case OpType::TransposeConv2D:
             result = DecomposeTransposeConv2D(_arch, std::move(op));
             break;
+        case OpType::MatMul:
+            result = DecomposeMatmul(_arch, std::move(op));
+            break;
         default:
             if ( DecomposeAsElementwise(op->Type()) )
             {

@@ -26,6 +26,26 @@ namespace regor
 
 using namespace GraphOptimisation;
 
+namespace
+{
+// Convert a permutation shape (up to 4 elements) to a TransposeType
+// For example:
+// [0, 1, 2, 3] -> 0x0123 ("NHWC")
+// [0, 1, 2] -> 0x0123 ("NHWC")
+// [0, 1] -> 0x0123 ("NHWC")
+// [0] -> 0x0123 ("NHWC")
+// [0, 2, 1, 3] -> 0x0213 ("NWHC")
+// [1, 0, 2] -> 0x0213 ("NWHC")
+TransposeType TransposeTypeFromShape(const Shape &perm)
+{
+    assert(perm.Size() <= 4);
+    const uint32_t mask = perm.ToMask();
+    const uint32_t mask4D = mask + (0x0123 - (0x0123 >> 4 * (4 - perm.Size())));
+    auto type = TransposeType(mask4D);
+    return type;
+}
+}  // namespace
+
 Tensor *GraphIrOptimiser::ConvertInt48Tensors(Graph *, Tensor *tensor)
 {
     if ( tensor->Type() == DataType::Int48 && !tensor->IsConstant() )
@@ -177,17 +197,7 @@ Operation *GraphIrOptimiser::ConvertAttributes(Graph *const graph, Operation *co
         {
             TensorConnection *ifmConn = operation->Input(TensorUsage::IFM);
             TensorConnection *ofmConn = operation->Output(TensorUsage::OFM);
-            // Convert the permutation vector to a transpose mask that can transpose a shape of size 4
-            // For example:
-            // [0, 1, 2, 3] -> 0x0123 ("NHWC")
-            // [0, 1, 2] -> 0x0123 ("NHWC")
-            // [0, 1] -> 0x0123 ("NHWC")
-            // [0] -> 0x0123 ("NHWC")
-            // [0, 2, 1, 3] -> 0x0213 ("NWHC")
-            // [1, 0, 2] -> 0x0213 ("NWHC")
-            const uint32_t mask = attr->perm.ToMask();
-            const uint32_t mask4D = mask + (0x0123 - (0x0123 >> 4 * (4 - size)));
-            ofmConn->transpose = TransposeType(mask4D);
+            ofmConn->transpose = TransposeTypeFromShape(attr->perm);
             // Pad shapes to match transpose mask
             ifmConn->shape = Shape::PadAxes(ifmConn->shape, 4, 1);
             ofmConn->shape = Shape::PadAxes(ofmConn->shape, 4, 1);
@@ -946,21 +956,93 @@ Operation *GraphIrOptimiser::RearrangeTranspose(Graph *const graph, Operation *c
             return returnOp;
         }
 
-        // Rebuild the mask for 4D IFM and OFM
-        const uint32_t newMask = perm.ToMask();
-        const uint32_t newMask4D = newMask + (0x0123 - (0x0123 >> 4 * (4 - size)));
+        auto transposeType = TransposeTypeFromShape(perm);
 
         // Don't bother with the rearrangement if result is not supported
-        if ( !_constraints->SupportsTransposeHW(OpType::MemoryCopy, TransposeType(newMask4D)) )
+        if ( !_constraints->SupportsTransposeHW(OpType::MemoryCopy, transposeType) )
         {
             return returnOp;
         }
 
-        ofmConn->transpose = TransposeType(newMask4D);
-        attr->perm = Shape::FromMask4(newMask4D);
+        ofmConn->transpose = transposeType;
+        attr->perm = Shape::FromMask4(uint32_t(transposeType));
         ifmConn->shape = Shape::PadAxes(ifmShape, 4, 1);
         ofmConn->shape = Shape::PadAxes(ofmShape, 4, 1);
     }
+
+    return returnOp;
+}
+
+// Rewrite Matmul by adding a NHCW transpose for the IFM2-tensor
+// Also reshape all Non-WC axes into the height axis.
+Operation *GraphIrOptimiser::RewriteMatmul(Graph *const graph, Operation *const operation)
+{
+    Operation *returnOp = operation;
+    const OpType opType = operation->Type();
+    if ( opType != OpType::MatMul )
+    {
+        return returnOp;
+    }
+
+    auto *ifmConn = operation->Input(TensorUsage::IFM);
+    auto *ifm1Conn = operation->Input(TensorUsage::IFM1);
+    auto *ofmConn = operation->Output(TensorUsage::OFM);
+
+    // Reshape non-WC axes into height
+    auto ReshapeFunc = [](const Shape &s)
+    {
+        int height = s.Elements() / (s.Width() * s.Depth());
+        return Shape(1, height, s.Width(), s.Depth());
+    };
+
+    ifmConn->shape = ReshapeFunc(ifmConn->shape);
+    ifm1Conn->shape = ReshapeFunc(ifm1Conn->shape);
+    ofmConn->shape = ReshapeFunc(ofmConn->shape);
+
+    // If IFM2 producer is already a NHCW transpose
+    // and there are no other producers/consumers of ifm2
+    // we remove the transpose instead of adding another
+    const auto &ifm1Writers = ifm1Conn->tensor->Writers();
+    const auto &ifm1Readers = ifm1Conn->tensor->Readers();
+    // TODO MLBEDSW-9620: Remove inverse transpose sequences
+    if ( (ifm1Readers.size() == 1) && (ifm1Writers.size() == 1) )
+    {
+        auto producer = ifm1Writers[0];
+        if ( producer->Type() == OpType::Transpose )
+        {
+
+            auto *attr = producer->Attribute<transpose_attr_t>();
+            TransposeType transposeType = TransposeType::None;
+            if ( attr->perm.Size() <= 4 )
+            {
+                transposeType = TransposeTypeFromShape(attr->perm);
+            }
+            if ( transposeType == TransposeType::NHCW )
+            {
+                auto *producerIfm = producer->Input(TensorUsage::IFM0);
+                operation->ConnectInput(TensorUsage::IFM1, producerIfm->tensor).Set(ifm1Conn->quantization);
+                operation->Input(TensorUsage::IFM1)->shape = ReshapeFunc(operation->Input(TensorUsage::IFM1)->shape);
+                producer->Disconnect();
+                return returnOp;
+            }
+        }
+    }
+
+    // Otherwise create new transpose op
+    auto transposeOp = std::make_shared<Operation>(OpType::Transpose);
+    auto *attr = transposeOp->Attribute<transpose_attr_t>();
+    attr->perm = Shape(0, 1, 3, 2);
+    const auto &ifm1Shape = ifm1Conn->shape;
+    auto transposedIfm1Shape = ifm1Shape.WithWidth(ifm1Shape.Depth()).WithDepth(ifm1Shape.Width());
+    auto transposedIfm1 = std::make_shared<Tensor>(ifm1Conn->tensor->Name() + "/" + OpTypeToString(transposeOp->Type()),
+        ifm1Conn->tensor->Type(), transposedIfm1Shape);
+    transposeOp->ConnectInput(TensorUsage::IFM0, ifm1Conn->tensor).Set(ifm1Shape);
+    transposeOp->ConnectOutput(TensorUsage::OFM, transposedIfm1);
+    RecordOptimisation(operation, transposeOp.get());
+
+    // replace IFM2 with transposed output
+    operation->ConnectInput(TensorUsage::IFM1, transposedIfm1).Set(ifm1Conn->quantization);
+
     return returnOp;
 }
 
