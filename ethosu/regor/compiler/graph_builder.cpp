@@ -256,7 +256,15 @@ GraphApi::GraphTensor *GraphBuilder::CreateTensor(
     }
 
     auto tensor = std::make_shared<Tensor>(name, type);
-    tensor->SetStorageShape(Shape(shape.axisNHWC, int(shape.count)));
+    if ( shape.count > 0 )
+    {
+        tensor->SetStorageShape(Shape(shape.axisNHWC, size_t(shape.count)));
+    }
+    else
+    {
+        // Is scalar -- use shape [1]
+        tensor->SetStorageShape(Shape(1));
+    }
     // TODO: Handle external tensor format specification - tensor->SetStorageLayout(layout);
     if ( buffer )
     {
@@ -463,7 +471,16 @@ bool GraphBuilder::Set(GraphOperation *graphOp, GraphApi::OpAttr attr, const Gra
         return false;
     }
 
-    Shape shape(value.axisNHWC, size_t(value.count));
+    Shape shape;
+    if ( value.count > 0 )
+    {
+        shape = Shape(value.axisNHWC, size_t(value.count));
+    }
+    else
+    {
+        // Is scalar -- use shape [1]
+        shape = Shape(1);
+    }
     return WriteAttributeValue(op, attr, shape);
 }
 
