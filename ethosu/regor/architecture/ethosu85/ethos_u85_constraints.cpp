@@ -112,7 +112,7 @@ bool EthosU85Constraints::SupportsFusedRescale(
         if ( npuOp == EthosU85NpuOp::Convolution || npuOp == EthosU85NpuOp::Depthwise ||
              npuOp == EthosU85NpuOp::Pooling || npuOp == EthosU85NpuOp::VectorProduct )
         {
-            return opType != OpType::Rescale;
+            return opType != OpType::Rescale && !IsActivation(opType);
         }
         if ( npuOp == EthosU85NpuOp::Resize && globalScale )
         {

@@ -361,6 +361,7 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const, Operation *const operatio
         {
             // Propagate rescaling to output of previous op
             producer->CopyOutput(TensorUsage::OFM, *ofmConn);
+            producer->SetRounding(operation->Rounding());
             returnOp = producer.get();
         }
         else if ( ofmConn->tensor->Readers().size() == 1 && ofmConn->quantization.zeroPoints == Quantization::Unit().zeroPoints )
