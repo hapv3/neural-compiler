@@ -89,6 +89,7 @@ BEGIN_ENUM_TABLE(regor::OpType)
     ADD_ENUM_NAME(MemoryCopy)
     ADD_ENUM_NAME(Passthrough)
     ADD_ENUM_NAME(LUT)
+    ADD_ENUM_NAME(AndNot)
     // Compatibility Operators
     ADD_ENUM_NAME(AddN)
     ADD_ENUM_NAME(ArgMin)

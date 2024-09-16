@@ -889,6 +889,49 @@ Operation *GraphIrOptimiser::RewriteNegate(Graph *const graph, Operation *const 
     return returnOp;
 }
 
+// Rewrite TOSA Select as ((ifm1 & ifm0) | (ifm2 & ~ifm0))
+Operation *GraphIrOptimiser::RewriteSelect(Graph *const graph, Operation *const operation)
+{
+    UNUSED(graph);
+    Operation *returnOp = operation;
+    const OpType opType = operation->Type();
+    if ( opType == OpType::Select )
+    {
+        auto selectorConn = operation->Input(TensorUsage::IFM);
+        const auto ifm2Conn = operation->Input(TensorUsage::IFM1);  // Used if selector is true
+        const auto ifm3Conn = operation->Input(TensorUsage::IFM2);  // Used if selector is false
+        const auto ofmConn = operation->Output(TensorUsage::OFM);
+
+        // Cast selector IFM (bool8) to same data type as the OFM (if needed)
+        if ( DataTypeSizeBits(selectorConn->tensor->Type()) != DataTypeSizeBits(ofmConn->tensor->Type()) )
+        {
+            assert(selectorConn->tensor->Type() == DataType::Bool8);
+            auto addOp = CreateAdd(selectorConn->tensor, CreateConstTensor("const_zero", DataType::Int8, 0),
+                selectorConn->quantization, Quantization::Unit(), Quantization::Unit(), ofmConn->tensor->Type());
+            selectorConn = addOp->Output(TensorUsage::OFM);
+            RecordOptimisation(operation, addOp);
+        }
+
+        // Break down SELECT(selector, a, b) into OR(AND(a, selector), AND_NOT(b, selector))
+        auto andOp = CreateBinaryElementwise(OpType::And, ifm2Conn->tensor, selectorConn->tensor,
+            ifm2Conn->quantization, selectorConn->quantization, ofmConn->quantization, ofmConn->tensor->Type());
+        auto andNotOp = CreateBinaryElementwise(OpType::AndNot, ifm3Conn->tensor, selectorConn->tensor,
+            ifm3Conn->quantization, selectorConn->quantization, ofmConn->quantization, ofmConn->tensor->Type());
+        auto orOp = CreateBinaryElementwise(OpType::Or, andOp->Output(TensorUsage::OFM)->tensor,
+            andNotOp->Output(TensorUsage::OFM)->tensor, ofmConn->quantization, ofmConn->quantization,
+            ofmConn->quantization, ofmConn->tensor->Type());
+        orOp->CopyOutput(TensorUsage::OFM, *ofmConn);
+        RecordOptimisation(operation, andOp);
+        RecordOptimisation(operation, andNotOp);
+        RecordOptimisation(operation, orOp);
+        returnOp = orOp;
+
+        // Remove old select op
+        operation->Disconnect();
+    }
+    return returnOp;
+}
+
 // Rewrite REDUCE_{MIN,MAX,ANY,ALL} IFM/OFM shapes and set a kernel matching the axis to reduce
 Operation *GraphIrOptimiser::RewriteReduceMinMaxAnyAll(Graph *const graph, Operation *const operation)
 {

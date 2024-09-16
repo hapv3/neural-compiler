@@ -99,6 +99,7 @@ enum class OpType : uint16_t
     MemoryCopy,
     Passthrough,
     LUT,
+    AndNot,
 
     // Compatibility Operators
     AddN,
@@ -218,9 +219,9 @@ constexpr inline bool IsBinaryElementwise(OpType opType)
 {
     return opType == OpType::Add || opType == OpType::Sub || opType == OpType::Mul || opType == OpType::Minimum ||
            opType == OpType::Maximum || opType == OpType::SHL || opType == OpType::SHR || opType == OpType::Div ||
-           opType == OpType::LogicalAnd || opType == OpType::LogicalOr || opType == OpType::LogicalXor ||
-           opType == OpType::Xor || opType == OpType::And || opType == OpType::Or || opType == OpType::Asr ||
-           opType == OpType::Equal || opType == OpType::Greater || opType == OpType::GreaterEqual || opType == OpType::NotEqual;
+           opType == OpType::LogicalAnd || opType == OpType::LogicalOr || opType == OpType::LogicalXor || opType == OpType::Xor ||
+           opType == OpType::And || opType == OpType::Or || opType == OpType::Asr || opType == OpType::Equal ||
+           opType == OpType::Greater || opType == OpType::GreaterEqual || opType == OpType::NotEqual || opType == OpType::AndNot;
 }
 
 constexpr inline bool IsElementwise(OpType opType)

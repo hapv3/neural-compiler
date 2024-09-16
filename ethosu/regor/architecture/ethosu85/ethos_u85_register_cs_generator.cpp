@@ -167,7 +167,6 @@ bool EthosU85Emitter::IsOp(uint16_t key)
 /// <summary>
 /// Generates register command streams for Ethos U85.
 /// </summary>
-// TODO MLBEDSW-7985 add elementwise bitwise AND_NOT
 namespace
 {
 const std::unordered_map<OpType, elementwise_mode> kElementwiseMap = {
@@ -195,6 +194,7 @@ const std::unordered_map<OpType, elementwise_mode> kElementwiseMap = {
     {OpType::Greater, elementwise_mode::CMP_GT},
     {OpType::GreaterEqual, elementwise_mode::CMP_GE},
     {OpType::NotEqual, elementwise_mode::CMP_NE},
+    {OpType::AndNot, elementwise_mode::AND_NOT},
 };
 
 activation_type ToActivationType(DataType type)
