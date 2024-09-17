@@ -564,8 +564,8 @@ std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(
     SchedulerConnection *ifm2 = op->TryIFM(1 - op->PrimaryIfmIndex());
     SchedulerConnection *ofm = op->OFM();
 
-    auto ifmShape = ifm->shape;
-    auto ifm2Shape = ifm2 ? ifm2->shape : Shape();
+    auto ifmShape = ifm->SliceShape();
+    auto ifm2Shape = ifm2 ? ifm2->SliceShape() : Shape();
     auto ofmShape = ofmStripeShape;
 
     const auto &subOps = op->SubOps();
@@ -579,7 +579,7 @@ std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(
     Flags<AxisMask> subdivideMask = _arch->CanSubdivide(op->Type(), ofm->transpose, ofm->reverse);
     if ( subdivideMask == AxisMask::None || isChained )
     {
-        ofmShape = op->OFM()->shape;
+        ofmShape = op->OFM()->SliceShape();
     }
 
     // Give empty operation info to CPU ops
@@ -589,7 +589,7 @@ std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(
     }
 
     // Determine if striped operation
-    if ( ofmShape != op->OFM()->shape )
+    if ( ofmShape != op->OFM()->SliceShape() )
     {
         // Striped Op - Need to calculate stripe input volume
         Point2i stripeInput = GetStripeInputRequirement(ofmShape, op->Kernel(), ifm->stepXY, ifm->resamplingMode);
@@ -1169,7 +1169,7 @@ std::shared_ptr<Schedule> Scheduler::ProposeMinimalSchedule()
     {
         auto const &schedOp = *pos;
         int minStripeHeight = (prevOp != nullptr) ? prevOp->Kernel()->Stride().y : 1;
-        Shape minStripe = Shape::PadAxes(schedOp->OFM()->shape, 3, 1);
+        Shape minStripe = Shape::PadAxes(schedOp->OFM()->SliceShape(), 3, 1);
         minStripe[-3] = minStripeHeight;
         auto cost = CreateSchedulerOpInfo(schedOp.get(), minStripe);
         cost->cycles = EstimateOpPerformance(schedOp.get(), cost->Config(), schedOp->OFM()->SliceShape().Depth());

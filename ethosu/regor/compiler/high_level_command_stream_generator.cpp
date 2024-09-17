@@ -630,8 +630,9 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
             int endWidth = std::min(startWidth + ofmStep.Width(), ofmEnd.Width());
             for ( int depthIndex = 0; depthIndex < int(depthSlices.size()) - 1; ++depthIndex )
             {
-                int startChannel = std::max(depthSlices[depthIndex], ofmStart.Depth());
-                int endChannel = std::min(depthSlices[depthIndex + 1], ofmEnd.Depth());
+                // Depth-slices are computed relative to the offset and sliceShape for a striped or sliced OFM
+                int startChannel = ofmStart.Depth() + depthSlices[depthIndex];
+                int endChannel = std::min(ofmEnd.Depth(), ofmStart.Depth() + depthSlices[depthIndex + 1]);
 
                 // Construct the output area for the current stripe
                 auto outputAreaStart = Shape(ofmStart.Batch(), startHeight, startWidth, startChannel);
