@@ -317,7 +317,8 @@ enum class IniParseResult
 enum class AxisMask
 {
     None = 0,
-    AxisY = 1,
+    AxisX = 1,
+    AxisY = 2,
 };
 
 /// <summary>

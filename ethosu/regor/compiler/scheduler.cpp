@@ -574,7 +574,8 @@ std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(
 
     // Operations that cannot be subdivided require full OFM shape
     // TODO MLBEDSW-9143 support cascading for chains..
-    if ( _arch->CanSubdivide(op->Type()) == AxisMask::None || isChained )
+    Flags<AxisMask> subdivideMask = _arch->CanSubdivide(op->Type());
+    if ( subdivideMask == AxisMask::None || isChained )
     {
         ofmShape = op->OFM()->shape;
     }
@@ -593,6 +594,12 @@ std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(
 
         // Ensure stripe input volume is within the full IFM volume
         stripeInput = Point2i::Min(stripeInput, ifmShape.WH<int>());
+        if ( !subdivideMask.Any(AxisMask::AxisX) && (stripeInput.x != ifmShape.Width()) )
+        {
+            assert(stripeInput.x >= (ifmShape.Width() - op->Kernel()->Stride().x) && "Unexpected stripe input width");
+            stripeInput.x = ifmShape.Width();
+        }
+
         ifmShape = ifmShape.WithHW(stripeInput.y, stripeInput.x);
 
         if ( !ifm2Shape.IsEmpty() )
