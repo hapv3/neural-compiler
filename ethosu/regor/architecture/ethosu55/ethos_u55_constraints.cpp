@@ -142,12 +142,7 @@ bool EthosU55Constraints::SupportsCast(OpType opType, DataType ifmType, DataType
 }
 bool EthosU55Constraints::SupportsNonMatchingShapes(const Shape &ifmShape, const Shape &ofmShape, const Shape &ifm2Shape)
 {
-    bool valid = ifmShape == ofmShape;
-    if ( !ifm2Shape.IsEmpty() )
-    {
-        valid || ifm2Shape == ofmShape;
-    }
-    return valid;
+    return (ifmShape == ofmShape) || (ifm2Shape && (ifm2Shape == ofmShape));
 }
 
 }  // namespace regor
