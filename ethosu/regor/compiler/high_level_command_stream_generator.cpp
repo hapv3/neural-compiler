@@ -437,6 +437,7 @@ static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, 
             op->parameters.tile.axis = axis;
             op->parameters.tile.multiplier = multiples[axis];
         }
+        break;
         default:
             break;
     }
