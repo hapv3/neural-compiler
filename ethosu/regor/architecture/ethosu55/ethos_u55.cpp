@@ -207,9 +207,9 @@ int ArchEthosU55::UpscaleAndRounding(ArchResampling resampling, int &rounding)
     return (resampling == ArchResampling::None) ? 1 : 2;
 }
 
-AxisMask ArchEthosU55::CanSubdivide(OpType opType)
+AxisMask ArchEthosU55::CanSubdivide(OpType opType, TransposeType transpose, ReverseType reverse)
 {
-    if ( IsConvolution(opType) || IsElementwise(opType) || IsPooling(opType) )
+    if ( (IsConvolution(opType) || IsElementwise(opType) || IsPooling(opType)) && IsNone(transpose) && (reverse != ReverseType::H) )
     {
         return AxisMask::AxisY;
     }

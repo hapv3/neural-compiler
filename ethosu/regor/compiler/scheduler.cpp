@@ -561,6 +561,7 @@ std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(
     assert(op->PrimaryIfmIndex() >= 0 && op->PrimaryIfmIndex() <= 1);
     SchedulerConnection *ifm = op->IFM(op->PrimaryIfmIndex());
     SchedulerConnection *ifm2 = op->TryIFM(1 - op->PrimaryIfmIndex());
+    SchedulerConnection *ofm = op->OFM();
 
     auto ifmShape = ifm->shape;
     auto ifm2Shape = ifm2 ? ifm2->shape : Shape();
@@ -574,7 +575,7 @@ std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(
 
     // Operations that cannot be subdivided require full OFM shape
     // TODO MLBEDSW-9143 support cascading for chains..
-    Flags<AxisMask> subdivideMask = _arch->CanSubdivide(op->Type());
+    Flags<AxisMask> subdivideMask = _arch->CanSubdivide(op->Type(), ofm->transpose, ofm->reverse);
     if ( subdivideMask == AxisMask::None || isChained )
     {
         ofmShape = op->OFM()->shape;
@@ -946,16 +947,18 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
             std::find_if(subOps.begin(), subOps.end(), [](const auto &subOp) { return IsElementwise(subOp->Type()); });
 
     assert(ofm->transpose == TransposeType::None || (ofm->transpose & TransposeType::MaskC) == TransposeType::C || refCost->stripe == ofm->shape);
-    auto fullDepth =
+    auto fullDepthBeforeTransposition =
         (refCost->stripe == ofm->shape) ? refCost->stripe.Untranspose(ofm->transpose).Depth() : refCost->stripe.Depth();
-    std::vector<int> ofmFullDepthSlices = {0, fullDepth};
+    auto fullDepthAfterTransposition = refCost->stripe.Depth();
+    std::vector<int> ofmFullDepthSlicesBeforeTransposition = {0, fullDepthBeforeTransposition};
+    std::vector<int> ofmFullDepthSlicesAfterTransposition = {0, fullDepthAfterTransposition};
 
     WeightsRef weightsRef = {&weightTens->bufferView, weightTens->srcTensor->AxisOrder(), weightTens->dataType};
 
     auto weightFormat = cost->npuWeightsTensor->config->Format();
 
-    auto encodingParams = _arch->WeightEncoder()->GetEncodingConfig(
-        cost->Config(), weightsRef, schedOp->Kernel(), ifm->tensor->dataType, ofmFullDepthSlices, weightFormat);
+    auto encodingParams = _arch->WeightEncoder()->GetEncodingConfig(cost->Config(), weightsRef, schedOp->Kernel(),
+        ifm->tensor->dataType, ofmFullDepthSlicesBeforeTransposition, weightFormat);
 
     auto fullWeightScales = EncodeWeightAndScaleTensor(
         std::move(encodingParams), weightTens, scaleTens, weights->quantization, ofm->quantization);
@@ -979,11 +982,11 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
 
     // No buffering required - take all the weights from permanent storage
     if ( schedOp->Type() == OpType::FullyConnected || !needsDMA ||
-         _arch->CanSubdivide(schedOp->Type()) == AxisMask::None || ofm->reverse == ReverseType::C ||
+         _arch->CanSubdivide(schedOp->Type(), ofm->transpose, ofm->reverse) == AxisMask::None || ofm->reverse == ReverseType::C ||
          (ofm->transpose != TransposeType::None && (ofm->transpose & TransposeType::MaskC) != TransposeType::C) ||
          _options.disabled.All(SchedulerFeature::WeightBuffering) )
     {
-        cost->ofmDepthSlices = std::move(ofmFullDepthSlices);
+        cost->ofmDepthSlices = std::move(ofmFullDepthSlicesAfterTransposition);
         cost->SetWeightScaleTensors(fullWeightScales.npuWeightsTensor, fullWeightScales.npuScalesTensor);
         return;
     }
@@ -1144,7 +1147,7 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
     else
     {
         // Don't slice or buffer - use the whole depth from persistent storage
-        cost->ofmDepthSlices = std::move(ofmFullDepthSlices);
+        cost->ofmDepthSlices = std::move(ofmFullDepthSlicesAfterTransposition);
         encodedWeightScales = std::move(fullWeightScales);
     }
     cost->SetWeightScaleTensors(encodedWeightScales.npuWeightsTensor, encodedWeightScales.npuScalesTensor);

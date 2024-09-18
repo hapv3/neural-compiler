@@ -204,7 +204,7 @@ public:
     Address MaxAddress() override { return 1LL << 32; }
     std::vector<uint32_t> ConfigRegisters() override;
     int UpscaleAndRounding(ArchResampling resampling, int &rounding) override;
-    AxisMask CanSubdivide(OpType opType) override;
+    AxisMask CanSubdivide(OpType opType, TransposeType transpose, ReverseType reverse) override;
     bool SupportsScalar(OpType opType, DataType dataType, TensorUsage usage) override;
     Flags<WeightFormat> SupportedWeightFormat(OpType op) override;
     uint32_t Version() override;

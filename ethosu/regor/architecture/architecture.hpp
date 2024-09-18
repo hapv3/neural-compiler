@@ -348,7 +348,7 @@ public:
     virtual std::vector<uint32_t> ConfigRegisters() = 0;
     virtual uint32_t Version() = 0;
     virtual int UpscaleAndRounding(ArchResampling resampling, int &rounding) = 0;
-    virtual AxisMask CanSubdivide(OpType opType) = 0;
+    virtual AxisMask CanSubdivide(OpType opType, TransposeType transpose, ReverseType reverse) = 0;
     virtual bool SupportsScalar(OpType opType, DataType dataType, TensorUsage usage) = 0;
     virtual Flags<WeightFormat> SupportedWeightFormat(OpType op) = 0;
 
