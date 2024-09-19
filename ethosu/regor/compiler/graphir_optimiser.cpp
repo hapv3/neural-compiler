@@ -101,6 +101,33 @@ Tensor *GraphIrOptimiser::ConvertBool8Tensors(Graph *graph, Tensor *tensor)
     return returnTensor;
 }
 
+Tensor *GraphIrOptimiser::ConvertInt4Tensors(Graph *graph, Tensor *tensor)
+{
+    Tensor *returnTensor = tensor;
+    if ( tensor->Type() == DataType::Int4Packed8 && tensor->IsConstant() )
+    {
+        const auto oldView = tensor->View();
+        const auto oldValues = oldView.Values<int8_t>();
+        const auto size = oldView.BufferSize();
+        tensor->SetBuffer(nullptr);
+        tensor->ChangeType(DataType::Int8);
+        // Replace this tensor's buffer with a new buffer
+        auto newBuffer = std::make_shared<Buffer>(std::make_unique<uint8_t[]>(size * 2), size * 2);
+        tensor->SetBuffer(newBuffer);
+        auto view = tensor->View();
+        auto &shape = view.ViewShape();
+        auto values = view.WritableValues<int8_t>();
+        for ( int i = 0; i < shape.Elements(); i++ )
+        {
+            // Convert each element to Int8
+            uint8_t nibbles = oldValues[i / 2];
+            uint8_t val = i & 1 ? (nibbles & 0xF0) >> 4 : nibbles & 0x0F;
+            values[i] = val > 7 ? val - 16 : val;
+        }
+    }
+    return returnTensor;
+}
+
 Operation *GraphIrOptimiser::ConvertAttributes(Graph *const graph, Operation *const operation)
 {
     UNUSED(graph);

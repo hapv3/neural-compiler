@@ -45,6 +45,7 @@ private:
     Operation *ConvertResizeOffsets(Graph *const graph, Operation *const operation);
     Tensor *ConvertInt48Tensors(Graph *graph, Tensor *tensor);
     Tensor *ConvertBool8Tensors(Graph *graph, Tensor *tensor);
+    Tensor *ConvertInt4Tensors(Graph *graph, Tensor *tensor);
     Operation *RewriteFullyConnected(Graph *const graph, Operation *const operation);
     Operation *FixupPoolStrides(Graph *const, Operation *const operation);
     Operation *RewriteRescale(Graph *const graph, Operation *const operation);
@@ -83,6 +84,7 @@ private:
             {
                 &GraphIrOptimiser::ConvertInt48Tensors,
                 &GraphIrOptimiser::ConvertBool8Tensors,
+                &GraphIrOptimiser::ConvertInt4Tensors,
             },
             {
                 &GraphIrOptimiser::RemoveReshape,
