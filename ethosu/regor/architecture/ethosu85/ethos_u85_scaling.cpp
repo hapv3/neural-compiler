@@ -138,12 +138,13 @@ void RescaleElementwise(HLCOperation *op)
             outScale = ElementwiseMulScale(ifm1Scale, ifm2Scale, ofmScale);
         }
     }
-    else if ( opType == OpType::Abs || opType == OpType::LeakyRelu )
+    else if ( opType == OpType::Abs )
     {
-        if ( opType == OpType::LeakyRelu )
-        {
-            input1Scale = QuantizedScale(ifm1Scale / ofmScale);
-        }
+        outScale = QuantizedScale(ifm1Scale / ofmScale);
+    }
+    else if ( opType == OpType::LeakyRelu )
+    {
+        input1Scale = QuantizedScale(ifm1Scale / ofmScale);
     }
     else if ( opType == OpType::Add || opType == OpType::Sub )
     {

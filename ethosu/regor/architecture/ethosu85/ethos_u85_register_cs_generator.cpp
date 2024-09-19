@@ -703,24 +703,26 @@ void EthosU85RCSGenerator::GenerateScalingForElementwise(HLCOperation *op)
     uint32_t ofmDoubleRound = 0;
 
     int bitDepth = DataTypeSizeBits(op->ifm[0].dataType);
-    if ( opType == OpType::Mul || opType == OpType::Abs || opType == OpType::LeakyRelu )
+    if ( opType == OpType::Abs || opType == OpType::Mul )
     {
         if ( !op->ofm.quantization.scales.empty() )
         {
             outScale = op->ofm.quantization.scales[0];
         }
-        if ( opType == OpType::LeakyRelu )
+    }
+    else if ( opType == OpType::LeakyRelu )
+    {
+        // ofmScale is unit
+        // ifm1Scale is used for rescaling and ifm2Scale is used for alpha
+        if ( !op->ifm[0].quantization.scales.empty() )
         {
-            if ( !op->ifm[0].quantization.scales.empty() )
-            {
-                input1Scale = op->ifm[0].quantization.scales[0];
-            }
-            const HLCParameters *params = &op->parameters;
-            float alpha = params->leaky_relu.alpha;
-            float ifm1Scale = float(input1Scale.Dequantize());
-            input2Scale = QuantizedScale(alpha * ifm1Scale);
-            ifmCnt = 2;
+            input1Scale = op->ifm[0].quantization.scales[0];
         }
+        const HLCParameters *params = &op->parameters;
+        float alpha = params->leaky_relu.alpha;
+        float ifm1Scale = float(input1Scale.Dequantize());
+        input2Scale = QuantizedScale(alpha * ifm1Scale);
+        ifmCnt = 2;
     }
     else if ( opType == OpType::Div )
     {

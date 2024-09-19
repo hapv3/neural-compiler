@@ -77,7 +77,6 @@ void RescaleElementwise(HLCOperation *op)
 
     bool allHaveScale =
         (!ifm1Quant->scales.empty() && !ofmQuant->scales.empty() && ifm2Quant != nullptr && !ifm2Quant->scales.empty());
-
     if ( opType == OpType::Mul )
     {
         if ( allHaveScale )
@@ -85,9 +84,14 @@ void RescaleElementwise(HLCOperation *op)
             outScale = ElementwiseMulScale(ifm1Scale, ifm2Scale, ofmScale);
         }
     }
-    else if ( opType == OpType::Abs || opType == OpType::LeakyRelu )
+    else if ( opType == OpType::LeakyRelu )
     {
-        outScale = QuantizedScale(ofmScale);
+        // The alpha-value is used as ofm-scale for LeakyReLU.
+        // This is handled in RCS-gen as this is true for all QuantizationTypes
+    }
+    else if ( opType == OpType::Abs )
+    {
+        outScale = QuantizedScale(ifm1Scale / ofmScale);
     }
     else if ( opType == OpType::Add || opType == OpType::Sub )
     {
