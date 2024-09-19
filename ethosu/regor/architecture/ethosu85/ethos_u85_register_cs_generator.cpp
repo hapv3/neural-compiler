@@ -1537,9 +1537,12 @@ EthosU85RCSGenerator::InsertLUTDMACommands(std::vector<std::unique_ptr<HighLevel
             auto stripe = static_cast<HLCStripe *>(hlc.get());
             auto op = stripe->operation;
             // TODO MLBEDSW-9142 LUT for chained subOps should be inserted before the primary Op
-            if ( IsLUTType(op->type) || (!op->subOps.empty() && IsLUTType(op->subOps[0].type)) )
+            const auto &subOps = stripe->operation->subOps;
+            auto lutSubOp = std::find_if(
+                subOps.begin(), subOps.end(), [](const auto &subOp) { return IsLUTType(subOp.type); });
+            if ( IsLUTType(op->type) || (lutSubOp != subOps.end()) )
             {
-                const auto &srcTens = IsLUTType(op->type) ? op->parameters.lut : op->subOps[0].parameters.lut;
+                const auto &srcTens = IsLUTType(op->type) ? op->parameters.lut : lutSubOp->parameters.lut;
                 assert(srcTens.sizeBytes % lutSlotSize == 0);
                 bool alreadyInLutMem;
                 int sizeInSlots = srcTens.sizeBytes / lutSlotSize;
