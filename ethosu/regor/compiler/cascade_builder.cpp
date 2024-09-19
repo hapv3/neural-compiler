@@ -148,7 +148,7 @@ void CascadeBuilder::BuildCascades(Schedule *refSchedule, Schedule *fallbackSche
         SchedulerConnection *ifm = op->IFM(op->PrimaryIfmIndex());
 
         // If Op is not a candidate for cascading - assign fallback cost
-        if ( !IsCascadable(op, ifm->tensor.get(), refSchedule->Cost(op)) )
+        if ( !IsCascadable(op, ifm, refSchedule->Cost(op)) )
         {
             costs[*op] = std::make_unique<SchedulerOpInfo>(*fallbackCost);
             if ( !_spilling )
@@ -203,9 +203,8 @@ void CascadeBuilder::BuildCascades(Schedule *refSchedule, Schedule *fallbackSche
             auto currentIfm = currentOp->IFM(currentOp->PrimaryIfmIndex());
             auto producerOfm = producer->OFM();
 
-            if ( costs.find(*currentOp) != costs.end() || (refCost == nullptr) ||
-                 !IsCascadable(currentOp, currentIfm->tensor.get(), refCost) || producer->OFM()->shape != currentIfm->shape ||
-                 currentIfm->requireFullTensor || producerOfm->requireFullTensor ||
+            if ( costs.find(*currentOp) != costs.end() || (refCost == nullptr) || !IsCascadable(currentOp, currentIfm, refCost) ||
+                 producer->OFM()->shape != currentIfm->shape || currentIfm->requireFullTensor || producerOfm->requireFullTensor ||
                  currentIfm->tensor->needsLinearFormat || producerOfm->tensor->needsLinearFormat )
             {
                 // Current op has already been processed or cannot be cascaded
@@ -329,9 +328,10 @@ void CascadeBuilder::BuildCascades(Schedule *refSchedule, Schedule *fallbackSche
 }
 
 
-bool CascadeBuilder::IsCascadable(const SchedulerOperation *op, SchedulerTensor *ifm, SchedulerOpInfo *cost) const
+bool CascadeBuilder::IsCascadable(const SchedulerOperation *op, SchedulerConnection *ifmConn, SchedulerOpInfo *cost) const
 {
     OpType type = op->Type();
+    auto ifm = ifmConn->tensor;
 
     if ( ifm->srcTensor->IsConstant() )
     {
@@ -345,8 +345,10 @@ bool CascadeBuilder::IsCascadable(const SchedulerOperation *op, SchedulerTensor 
     }
 
     // ReduceSum: sum over the entire IFM - full shape needed
+    // TransposeConv: Uses resampling mode which is not supported in cascades
     return (cost->stripe.Height() < op->OFM()->shape.Height()) &&
-           (IsConvolution(type) || IsElementwise(type) || (IsPooling(type) && type != OpType::ReduceSum));
+           ((IsConvolution(type) && (ifmConn->resamplingMode == ArchResampling::None)) || IsElementwise(type) ||
+               (IsPooling(type) && type != OpType::ReduceSum));
 }
 
 

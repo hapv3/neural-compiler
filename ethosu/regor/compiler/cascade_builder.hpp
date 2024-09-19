@@ -91,7 +91,7 @@ public:
     void BuildCascades(Schedule *refSchedule, Schedule *fallbackSchedule, Address guidingStagingLimit);
 
 private:
-    bool IsCascadable(const SchedulerOperation *op, SchedulerTensor *ifm, SchedulerOpInfo *cost) const;
+    bool IsCascadable(const SchedulerOperation *op, SchedulerConnection *ifmConn, SchedulerOpInfo *cost) const;
     int EstimateBufferUsage(SchedulerOperation *op, SchedulerOpInfo *cost) const;
     int NonLocalUsage(UniqueId uid) const;
 };
