@@ -142,7 +142,7 @@ protected:
     virtual bool SupportsResize(const ResizeSupportQuery &query) = 0;
     virtual bool SupportsArgMax(OpType opType) = 0;
     virtual bool SupportsCast(OpType opType, DataType ifmType, DataType ofmType) = 0;
-    virtual bool SupportsNonMatchingShapes(const Shape &ifmShape, const Shape &ofmShape, const Shape &ifm2Shape) = 0;
+    virtual bool SupportsNonMatchingShapes(const Shape &ifmShape, const Shape &ifm2Shape, const Shape &ofmShape) = 0;
 };
 
 }  // namespace regor

@@ -140,7 +140,7 @@ bool EthosU55Constraints::SupportsCast(OpType opType, DataType ifmType, DataType
     UNUSED(ofmType);
     return false;
 }
-bool EthosU55Constraints::SupportsNonMatchingShapes(const Shape &ifmShape, const Shape &ofmShape, const Shape &ifm2Shape)
+bool EthosU55Constraints::SupportsNonMatchingShapes(const Shape &ifmShape, const Shape &ifm2Shape, const Shape &ofmShape)
 {
     return (ifmShape == ofmShape) || (ifm2Shape && (ifm2Shape == ofmShape));
 }

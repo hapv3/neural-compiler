@@ -262,7 +262,7 @@ bool EthosU85Constraints::SupportsCast(OpType opType, DataType ifmType, DataType
     return !IsFloat(ifmType | ofmType);
 }
 
-bool EthosU85Constraints::SupportsNonMatchingShapes(const Shape &ifmShape, const Shape &ofmShape, const Shape &ifm2Shape)
+bool EthosU85Constraints::SupportsNonMatchingShapes(const Shape &ifmShape, const Shape &ifm2Shape, const Shape &ofmShape)
 {
     return true;
 }

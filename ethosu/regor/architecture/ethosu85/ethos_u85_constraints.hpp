@@ -39,7 +39,7 @@ public:
     bool SupportsResize(const ResizeSupportQuery &query) override;
     bool SupportsArgMax(OpType opType) override;
     bool SupportsCast(OpType opType, DataType ifmType, DataType ofmType) override;
-    bool SupportsNonMatchingShapes(const Shape &ifmShape, const Shape &ofmShape, const Shape &ifm2Shape) override;
+    bool SupportsNonMatchingShapes(const Shape &ifmShape, const Shape &ifm2Shape, const Shape &ofmShape) override;
 
 private:
     ArchEthosU85 *_arch;
