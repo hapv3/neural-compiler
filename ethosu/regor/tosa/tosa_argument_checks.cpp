@@ -260,8 +260,20 @@ bool ResolveAndValidateArgument(const regor::Operation *op, const Argument *argu
         if ( ((argument->category == Category::Input && argument->name == "input" && attr->input_unsigned) ||
                  (argument->category == Category::Output && argument->name == "output" && attr->output_unsigned)) )
         {
+
+            if ( attr->output_unsigned && DataTypeSizeBits(*expectedType) > 16 )
+            {
+                // Error to make unsigned with anything but i8_t and i16_t
+                return false;
+            }
             // Signedness of IFM/OFM for Rescale depends on the input_unsigned/output_unsigned attributes
-            expectedType = *expectedType & ~unsigned(DataType::Signed);
+            // Actual input/output type can be either signed or unsigned
+            auto unsignedType = *expectedType & ~unsigned(DataType::Signed);
+
+            // Check unsigned type
+            if ( ValidateArgument(op, argument, unsignedType) ) return true;
+
+            // Unsgined check failed, signed check will be done below
         }
     }
     return ValidateArgument(op, argument, *expectedType);

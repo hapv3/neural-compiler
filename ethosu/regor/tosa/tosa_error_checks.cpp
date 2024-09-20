@@ -1715,21 +1715,22 @@ void ErrorIfCheck_1wbutqm1lq6qy(const regor::Operation *op, [[maybe_unused]] con
 {
     // Operators: RESCALE,
     static constexpr char constraint[] = "ERROR_IF(in_t != i8_t && (in_t != i16_t || input_unsigned == False) && input_zp != 0)";
-    auto in_t = op->IFM(0)->Type();
+    auto bits = DataTypeSizeBits(op->IFM(0)->Type());
     auto &zp = op->Input(TensorUsage::IFM)->quantization.zeroPoints;
     auto input_zp = zp.empty() ? 0 : zp[0];
-    if ( DataTypeSizeBits(in_t) != 8 && in_t != DataType::UInt16 && input_zp != 0 )
-        throw std::invalid_argument(constraint);
+    auto *attr = op->Attribute<regor::rescale_attr_t>();
+    if ( bits != 8 && (bits != 16 || !attr->input_unsigned) && input_zp != 0 ) throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_2x883ovw61v55(const regor::Operation *op, [[maybe_unused]] const Context &context)
 {
     // Operators: RESCALE,
     static constexpr char constraint[] = "ERROR_IF(out_t != i8_t && (out_t != i16_t || output_unsigned == False) && output_zp != 0)";
-    auto out_t = op->OFM()->Type();
+    auto bits = DataTypeSizeBits(op->OFM()->Type());
     auto &zp = op->Output(TensorUsage::OFM)->quantization.zeroPoints;
     auto output_zp = zp.empty() ? 0 : zp[0];
-    if ( DataTypeSizeBits(out_t) != 8 && out_t != DataType::UInt16 && output_zp != 0 )
+    auto *attr = op->Attribute<regor::rescale_attr_t>();
+    if ( bits != 8 && (bits != 16 || !attr->output_unsigned) && output_zp != 0 )
         throw std::invalid_argument(constraint);
 }
 
@@ -1737,20 +1738,24 @@ void ErrorIfCheck_7yfu5xo1ii36(const regor::Operation *op, [[maybe_unused]] cons
 {
     // Operators: RESCALE,
     static constexpr char constraint[] = "ERROR_IF(in_t == i16_t && input_unsigned == True && input_zp != 0 && input_zp != 32768)";
-    auto in_t = op->IFM(0)->Type();
+    auto bits = DataTypeSizeBits(op->IFM(0)->Type());
     auto &zp = op->Input(TensorUsage::IFM)->quantization.zeroPoints;
     auto input_zp = zp.empty() ? 0 : zp[0];
-    if ( in_t == DataType::UInt16 && (input_zp != 0 && input_zp != 32768) ) throw std::invalid_argument(constraint);
+    auto *attr = op->Attribute<regor::rescale_attr_t>();
+    if ( bits == 16 && attr->input_unsigned && input_zp != 0 && input_zp != 32768 )
+        throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_3kc0n1wjhehqz(const regor::Operation *op, [[maybe_unused]] const Context &context)
 {
     // Operators: RESCALE,
     static constexpr char constraint[] = "ERROR_IF(out_t == i16_t && output_unsigned == True && output_zp != 0 && output_zp != 32768)";
-    auto out_t = op->OFM()->Type();
+    auto bits = DataTypeSizeBits(op->OFM()->Type());
     auto &zp = op->Output(TensorUsage::OFM)->quantization.zeroPoints;
     auto output_zp = zp.empty() ? 0 : zp[0];
-    if ( out_t == DataType::UInt16 && (output_zp != 0 && output_zp != 32768) ) throw std::invalid_argument(constraint);
+    auto *attr = op->Attribute<regor::rescale_attr_t>();
+    if ( bits == 16 && attr->output_unsigned && output_zp != 0 && output_zp != 32768 )
+        throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_3rzfyy6qi1bly(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -1768,7 +1773,9 @@ void ErrorIfCheck_23cyq2l8quj8p(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "ERROR_IF(in_t == i16_t && out_t == i32_t && input_unsigned)";
     auto in_t = op->IFM(0)->Type();
     auto out_t = op->OFM()->Type();
-    if ( in_t == DataType::UInt16 && DataTypeSizeBits(out_t) == 32 ) throw std::invalid_argument(constraint);
+    auto *attr = op->Attribute<regor::rescale_attr_t>();
+    if ( DataTypeSizeBits(in_t) == 16 && DataTypeSizeBits(out_t) == 32 && attr->input_unsigned )
+        throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_13bcaagzywlqq(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -1777,7 +1784,9 @@ void ErrorIfCheck_13bcaagzywlqq(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "ERROR_IF(in_t == i32_t && out_t == i16_t && output_unsigned)";
     auto in_t = op->IFM(0)->Type();
     auto out_t = op->OFM()->Type();
-    if ( DataTypeSizeBits(in_t) == 32 && out_t == DataType::UInt16 ) throw std::invalid_argument(constraint);
+    auto *attr = op->Attribute<regor::rescale_attr_t>();
+    if ( DataTypeSizeBits(in_t) == 32 && DataTypeSizeBits(out_t) == 16 && attr->output_unsigned )
+        throw std::invalid_argument(constraint);
 }
 
 void ErrorIfCheck_15kl5g5u1jrhq(const regor::Operation *op, [[maybe_unused]] const Context &context)

@@ -46,7 +46,7 @@ std::string GraphValidator::GetErrorMsg()
     std::string errorMsg = "Validation error:\n";
     for ( auto &error : _validationErrors )
     {
-        errorMsg += OpTypeToString(error.operation) + error.errorMessage + "\n";
+        errorMsg += OpTypeToString(error.operation) + " " + error.errorMessage + "\n";
     }
     return errorMsg;
 }
