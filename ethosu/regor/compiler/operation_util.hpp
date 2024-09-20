@@ -166,8 +166,10 @@ inline Operation *CreateReduceSum(const std::shared_ptr<Tensor> &ifm, const Quan
 {
     const auto &ifmShape = ifm->StorageShape();
     auto op = std::make_shared<Operation>(OpType::ReduceSum);
+    auto attr = op->Attribute<axis_attr_t>();
+    attr->axis = ifmShape.Size() - 1;  // Depth dimension
     auto ofm = std::make_shared<Tensor>(ifm->Name() + "/reducesum", DataType::Int32);
-    ofm->SetStorageShape(Shape(1, ifmShape.Height(), ifmShape.Width(), 1));
+    ofm->SetStorageShape(ifmShape.WithDepth(1));
     op->ConnectInput(TensorUsage::IFM, ifm).Set(ifmQuantization);
     op->ConnectOutput(TensorUsage::OFM, ofm).Set(ofmQuantization);
     return op.get();

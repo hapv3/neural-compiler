@@ -729,6 +729,72 @@ Operation *GraphIrOptimiser::RewriteReduceMinMaxAnyAll(Graph *const graph, Opera
     return returnOp;
 }
 
+// Rewrite REDUCE_SUM with any axis into a REDUCE_SUM with C axis
+Operation *GraphIrOptimiser::RewriteReduceSum(Graph *const graph, Operation *const operation)
+{
+    UNUSED(graph);
+    Operation *returnOp = operation;
+    const OpType opType = operation->Type();
+    if ( opType == OpType::ReduceSum )
+    {
+        auto *ifmConn = operation->Input(TensorUsage::IFM);
+        auto *ofmConn = operation->Output(TensorUsage::OFM);
+        auto *attr = operation->Attribute<axis_attr_t>();
+        auto axis = attr->axis;
+        if ( axis < 0 ) axis = ifmConn->shape.Size() + axis;
+        assert(axis >= 0);
+        assert(axis < ifmConn->shape.Size());
+
+        if ( axis != ifmConn->shape.Size() - 1 && ifmConn->tensor->Type() == DataType::Int32 )
+        {
+            // Replace ReduceSum (axis != C) with a Reshape, Transpose and ReduceSum (axis = C):
+            //
+            // 1. Reshape to 3D shape (HWC) where W dimension is the dimension to reduce.
+            // 2. Transpose HCW: HxWxC -> HxCxW.
+            // 3. ReduceSum axis C: HxCxW -> HxCx1.
+
+            // Calculate 3D shape of IFM where 2nd dimension is the dimension to reduce
+            const int sizeOfAxisToReduce = ifmConn->shape[axis];
+            int sizeOfAxesBefore = 1;
+            for ( int i = 0; i < axis; i++ )
+                sizeOfAxesBefore *= ifmConn->shape[i];
+            int sizeOfAxesAfter = 1;
+            for ( int i = axis + 1; i < ifmConn->shape.Size(); i++ )
+                sizeOfAxesAfter *= ifmConn->shape[i];
+            Shape ifmShape3D(sizeOfAxesBefore, sizeOfAxisToReduce, sizeOfAxesAfter);
+
+            // Create intermediate tensor between Transpose and ReduceSum
+            std::shared_ptr<Tensor> transposeTens = ifmConn->tensor->Clone();
+            transposeTens->SetName(ifmConn->tensor->Name() + "_transpose");
+            transposeTens->SetStorageShape({sizeOfAxesBefore, sizeOfAxesAfter, sizeOfAxisToReduce});
+
+            // Create Transpose op
+            auto transposeOp = std::make_shared<Operation>(OpType::Transpose);
+            auto transposeAttr = transposeOp->Attribute<transpose_attr_t>();
+            transposeAttr->perm = {0, 2, 1};  // HCW
+            transposeOp->CopyInput(TensorUsage::IFM, *ifmConn);
+            transposeOp->Input(TensorUsage::IFM)->Set(ifmShape3D);
+            transposeOp->ConnectOutput(TensorUsage::OFM, transposeTens);
+            RecordOptimisation(operation, transposeOp.get());
+
+            // Create ReduceSum op
+            auto reduceSumOp = std::make_shared<Operation>(OpType::ReduceSum);
+            auto reduceAttr = reduceSumOp->Attribute<axis_attr_t>();
+            reduceAttr->axis = 2;  // C
+            reduceSumOp->ConnectInput(TensorUsage::IFM, transposeTens);
+            reduceSumOp->CopyOutput(TensorUsage::OFM, *ofmConn);
+            reduceSumOp->Output(TensorUsage::OFM)->Set(transposeTens->StorageShape().WithDepth(1));
+            RecordOptimisation(operation, reduceSumOp.get());
+            returnOp = reduceSumOp.get();
+
+            // Remove old ReduceSum op
+            operation->Disconnect();
+        }
+    }
+
+    return returnOp;
+}
+
 // Decompose Tile with more than one tiled axis
 // into several tile operations, each with one tiled axis
 Operation *GraphIrOptimiser::RewriteTile(Graph *const, Operation *const operation)
