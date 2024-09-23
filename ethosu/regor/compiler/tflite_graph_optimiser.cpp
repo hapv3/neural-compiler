@@ -136,9 +136,10 @@ Operation *TFLiteGraphOptimiser::ConvertLeakyRelu16bit(TensorConnection &ifmConn
         // the alpha-value also has quantization-parameters
         assert(params->tensor->IsConstant());
         assert(params->tensor->Type() == DataType::Int16);
+        assert(params->quantization.zeroPoints.size() > 0);
         auto view = params->tensor->View();
         // Set scalar and alphaQuant accordingly
-        scalar = view.Buffer()->Data<int16_t>()[0];
+        scalar = view.Buffer()->Data<int16_t>()[0] - params->quantization.zeroPoints[0];
         alphaQuant = params->quantization;
     }
 
@@ -2692,12 +2693,14 @@ Operation *TFLiteGraphOptimiser::Convert8bitLeakyReluToLUT(Graph *const graph, O
 
     auto ifmConn = operation->Input(TensorUsage::IFM0);
     auto ofmConn = operation->Output(TensorUsage::OFM);
+    auto params = operation->Input(TensorUsage::Params);
     auto ifm = ifmConn->tensor;
     auto ofm = ofmConn->tensor;
     const double ifmScale = ifmConn->quantization.scales.size() ? ifmConn->quantization.scales[0].Dequantize() : 1.0;
     const double ofmScale = ofmConn->quantization.scales.size() ? ofmConn->quantization.scales[0].Dequantize() : 1.0;
     const auto zpIn = ifmConn->quantization.zeroPoints.size() ? ifmConn->quantization.zeroPoints[0] : 0;
     const auto zpOut = ofmConn->quantization.zeroPoints.size() ? ofmConn->quantization.zeroPoints[0] : 0;
+    int scalar = 1;
 
     assert(opType == OpType::LeakyRelu);
     assert(DataTypeSizeBits(ifm->Type()) == 8);
@@ -2705,6 +2708,30 @@ Operation *TFLiteGraphOptimiser::Convert8bitLeakyReluToLUT(Graph *const graph, O
 
     QuantizedScale identityScale = ElementwiseMulScale(ifmScale, 1.0, ofmScale);
     QuantizedScale alphaScale = ElementwiseMulScale(ifmScale, alpha, ofmScale);
+
+    if ( params != nullptr )
+    {
+        // If alpha comes in as a params-tensor (e.g. converted PReLU)
+        // the alpha-value also has quantization-parameters
+        assert(params->tensor->IsConstant());
+        assert(params->quantization.scales.size() > 0);
+        assert(params->quantization.zeroPoints.size() > 0);
+        auto view = params->tensor->View();
+        QuantizedScale alphaQuant = QuantizedScale(alpha);
+        auto alphaZp = params->quantization.zeroPoints[0];
+        if ( params->tensor->Type() == DataType::Int8 )
+        {
+            scalar = view.Buffer()->Data<int8_t>()[0] - alphaZp;
+            alphaQuant = params->quantization.scales[0];
+        }
+        else if ( params->tensor->Type() == DataType::UInt8 )
+        {
+            scalar = view.Buffer()->Data<uint8_t>()[0] - alphaZp;
+            alphaQuant = params->quantization.scales[0];
+        }
+        alphaScale = ElementwiseMulScale(ifmScale, alphaQuant.Dequantize(), ofmScale);
+    }
+
     // convert to left shift-positive notation
     identityScale.shift = 31 - identityScale.shift;
     alphaScale.shift = 31 - alphaScale.shift;
@@ -2719,7 +2746,7 @@ Operation *TFLiteGraphOptimiser::Convert8bitLeakyReluToLUT(Graph *const graph, O
         int lutResult;
         if ( x < zpIn )
         {
-            lutResult = int(zpOut + MultiplyByQuantizedMultiplier(int(x - zpIn), alphaScale));
+            lutResult = int(zpOut + MultiplyByQuantizedMultiplier(scalar * int(x - zpIn), alphaScale));
         }
         else
         {
