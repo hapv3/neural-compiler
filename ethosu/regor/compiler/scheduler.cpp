@@ -61,6 +61,7 @@ static Shape GetShapeForFormat(const Shape &shape, TensorFormat format)
 
 int TensorAllocationBytes(const Shape &shape, TensorFormat format, DataType dtype)
 {
+    if ( !shape ) return 0;
     Shape storageShape = GetShapeForFormat(shape, format);
     return RoundAway(DataTypeStorageSizeBytes(dtype, storageShape.Elements()), AllocationQuantum);
 }
@@ -1133,7 +1134,7 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
         // Create a new tensor in fast storage to use as weights buffer
         cost->bufferedWeightTensor.tensor = std::make_shared<SchedulerTensor>();
         cost->bufferedWeightTensor.tensor->srcTensor = encodedWeightScales.npuWeightsTensor->srcTensor;
-        cost->bufferedWeightTensor.tensor->allocatedSize = weightBufferSize;
+        cost->bufferedWeightTensor.tensor->SetAllocatedSize(weightBufferSize);
         cost->bufferedWeightTensor.tensor->memArea = _arch->StagingMemory();
         cost->bufferedWeightTensor.buffering = buffering;
 
@@ -1149,6 +1150,9 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
     {
         // Don't slice or buffer - use the whole depth from persistent storage
         cost->ofmDepthSlices = std::move(ofmFullDepthSlicesAfterTransposition);
+        cost->bufferedWeightTensor.buffering = Buffering::None;
+        cost->bufferedWeightTensor.tensor = nullptr;
+        cost->bufferedWeightTensor.preBuffer = false;
         encodedWeightScales = std::move(fullWeightScales);
     }
     cost->SetWeightScaleTensors(encodedWeightScales.npuWeightsTensor, encodedWeightScales.npuScalesTensor);
@@ -1249,14 +1253,17 @@ std::shared_ptr<Schedule> Scheduler::ProposeScheduleStriping(const Shape &finalS
         // Create a cost entry with the new stripe
         auto cost = CreateSchedulerOpInfo(schedOp, stripe);
 
-        // If the weights are buffered in the reference schedule they should be in the new proposal
+        // Take buffering choice from the reference schedule for this striping proposal.
+        // TODO: Replace with in-loop buffering
         if ( refCost->bufferedWeightTensor.tensor )
         {
-            cost->bufferedWeightTensor.tensor = std::make_shared<SchedulerTensor>();
-            cost->bufferedWeightTensor.tensor->srcTensor = refCost->bufferedWeightTensor.tensor->srcTensor;
-            cost->bufferedWeightTensor.tensor->allocatedSize = refCost->bufferedWeightTensor.tensor->allocatedSize;
-            cost->bufferedWeightTensor.tensor->memArea = _arch->StagingMemory();
-            cost->bufferedWeightTensor.buffering = refCost->bufferedWeightTensor.buffering;
+            auto bufferingTensor = std::make_shared<SchedulerTensor>();
+            bufferingTensor->srcTensor = cost->npuWeightsTensor->srcTensor;
+            bufferingTensor->SetAllocatedSize(cost->npuWeightsTensor->AllocationSizeBytes());
+            bufferingTensor->memArea = refCost->bufferedWeightTensor.tensor->memArea;
+            cost->bufferedWeightTensor.buffering = Buffering::Single;  // Stripes are currently single-buffered
+            cost->bufferedWeightTensor.preBuffer = false;
+            cost->bufferedWeightTensor.tensor = std::move(bufferingTensor);
         }
 
         // Estimate performance
@@ -1484,8 +1491,7 @@ void Scheduler::ApplySchedule(Schedule *schedule)
         }
 
         // Check buffering tensors are meaningfully defined
-        assert(!cost->bufferedWeightTensor.tensor ||
-               (cost->bufferedWeightTensor.tensor->allocatedSize == 0 || (cost->bufferedWeightTensor.tensor->srcTensor != nullptr)));
+        assert(!cost->bufferedWeightTensor.tensor || (cost->bufferedWeightTensor.tensor->srcTensor != nullptr));
     }
 }
 
@@ -1511,7 +1517,7 @@ void Scheduler::CoalesceWeightBufferTensors(Schedule *schedule)
             {
                 UniqueId prevWeightsTensorId = prevCost->npuWeightsTensor ? prevCost->npuWeightsTensor->equivalenceId : -1;
                 UniqueId weightsTensorId = cost->npuWeightsTensor ? cost->npuWeightsTensor->equivalenceId : -2;
-                if ( prevWeightsTensorId == weightsTensorId && prevBufTensor->allocatedSize == bufTensor->allocatedSize &&
+                if ( prevWeightsTensorId == weightsTensorId && prevBufTensor->AllocationSizeBytes() == bufTensor->AllocationSizeBytes() &&
                      prevCost->ofmDepthSlices.size() == 2 && cost->ofmDepthSlices.size() == 2 && prevCost->ofmDepthSlices == cost->ofmDepthSlices )
                 {
                     // Reuse previous weight buffer tensor if both current and previous op use 1 depth slice
@@ -1999,7 +2005,7 @@ WeightScaleTensors Scheduler::TryEncodeWeightAndScaleTensor(IWeightEncodingConfi
     npuTensor->totalWeightBytes = totalWeightBytes;
     npuTensor->subStreams = subStreams;
     npuTensor->storageShape = encodedTensor->StorageShape();
-    npuTensor->allocatedSize = encodedTensor->View().BufferSize();
+    npuTensor->SetAllocatedSize(encodedTensor->View().BufferSize());
 
     // Insert encoded weights hash and equivalenceId into map
     auto entry = _equivalenceIdMap.emplace(buf->Hash(), npuTensor->equivalenceId);

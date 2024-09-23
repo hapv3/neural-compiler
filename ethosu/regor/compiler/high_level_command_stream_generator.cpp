@@ -239,7 +239,7 @@ static void MakeFeatureMap(const SchedulerConnection *schedConn, HLCFeatureMap &
     fm.dataType = schedTens->dataType;
     fm.memArea = schedTens->memArea;
     fm.format = schedTens->format;
-    fm.address = schedTens->allocatedAddress;
+    fm.address = schedTens->AllocatedAddress();
     fm.quantization = schedConn->quantization;
     fm.bufferView = schedTens->bufferView;
     fm.strides = GetStrides(fm);
@@ -261,7 +261,7 @@ static std::unique_ptr<HLCWeights> MakeWeights(NpuWeightTensor *srcTensor, Buffe
     {
         bufTensor = srcTensor;
     }
-    weights->address = bufTensor->allocatedAddress;
+    weights->address = bufTensor->AllocatedAddress();
     weights->memArea = bufTensor->memArea;
     weights->buffering = buffering;
     // Same function is used for generating scales - scales have no config or weight format, so set to default
@@ -301,7 +301,7 @@ static HLCSubOperation MakeSubOperation(const std::unique_ptr<SchedulerOperation
         auto lutTensor = lutConn->tensor;
         auto &param = hlcSubOp.parameters.lut;
         param.memArea = lutTensor->memArea;
-        param.address = lutTensor->allocatedAddress;
+        param.address = lutTensor->AllocatedAddress();
         param.sizeBytes = lutTensor->AllocationSizeBytes();
         param.ifmType = schedOp->IFM(0)->tensor->dataType;
     }
@@ -361,7 +361,7 @@ static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, 
         auto lutTensor = lutConn->tensor;
         auto &param = op->parameters.lut;
         param.memArea = lutTensor->memArea;
-        param.address = lutTensor->allocatedAddress;
+        param.address = lutTensor->AllocatedAddress();
         param.sizeBytes = lutTensor->AllocationSizeBytes();
         param.ifmType = schedOp->IFM(0)->tensor->dataType;
     }
@@ -550,11 +550,11 @@ void HLCStreamGenerator::GenerateHLCDMACommands(SchedulerOperation *op, const st
 }
 
 // Generates DMA command for weights
-static std::unique_ptr<HLCDMA> GenerateWeightDMA(NpuWeightTensor *weightTens, const SchedulerConnection &bufConn, int depth, int depthIndex)
+static std::unique_ptr<HLCDMA> GenerateWeightDMA(NpuWeightTensor *weightTens, const SchedulerBufferTensor &bufConn, int depth, int depthIndex)
 {
     auto dma = std::make_unique<HLCDMA>();
     dma->srcMemArea = weightTens->memArea;
-    dma->srcAddress = weightTens->allocatedAddress;
+    dma->srcAddress = weightTens->AllocatedAddress();
     dma->length = 0;
     int offset0 = 0;  // offset of the first substream
     for ( int subStream = 0; subStream < weightTens->subStreams; ++subStream )
@@ -575,7 +575,7 @@ static std::unique_ptr<HLCDMA> GenerateWeightDMA(NpuWeightTensor *weightTens, co
         }
     }
     dma->destMemArea = bufConn.tensor->memArea;
-    dma->destAddress = bufConn.tensor->allocatedAddress;
+    dma->destAddress = bufConn.tensor->AllocatedAddress();
     if ( bufConn.buffering == Buffering::Double && depthIndex % 2 == 1 )
     {
         dma->destAddress += weightTens->doubleBufferOffset;

@@ -39,6 +39,10 @@ int TensorAllocationBytes(const Shape &shape, TensorFormat format, DataType dtyp
 /// </summary>
 struct SchedulerTensor
 {
+private:
+    int allocatedSize = 0;
+    Address allocatedAddress = -1;
+
 public:
     std::shared_ptr<Tensor> srcTensor;
     TensorFormat format = TensorFormat::Unknown;
@@ -51,8 +55,6 @@ public:
     bool isGraphInput = false;
     bool isGraphOutput = false;
     bool isPersistent = false;
-    int allocatedSize = -1;
-    Address allocatedAddress = -1;
     bool needsLinearFormat = false;
     // If two tensors have same equivalence id and same memory area, they can be stored on the same address
     UniqueId equivalenceId = GenerateUniqueId();
@@ -60,10 +62,25 @@ public:
     std::vector<SchedulerOperation *> producers;
     std::vector<SchedulerOperation *> consumers;
 
+    void SetAddress(Address address)
+    {
+        assert(allocatedAddress == -1 && address >= 0);
+        allocatedAddress = address;
+    }
+
+    Address AllocatedAddress() const { return allocatedAddress; }
+
+    void SetAllocatedSize(int size)
+    {
+        assert(allocatedSize == 0 && size > 0);
+        allocatedSize = size;
+    }
+
     int AllocationSizeBytes() const
     {
         return (allocatedSize > 0) ? allocatedSize : TensorAllocationBytes(storageShape, format, dataType);
     }
+
     std::string Name() const { return srcTensor.get() == nullptr ? "?" : srcTensor->Name(); }
     bool IsConstant() const { return bufferView.HasBuffer() && bufferView.BufferSize() > 0; }
 };

@@ -37,7 +37,7 @@ std::shared_ptr<SchedulerTensor> CreateTensor(std::string name, Address tensorAd
     auto tensor = std::make_shared<Tensor>(name, DataType::Int8);
     auto schedTensor = std::make_shared<SchedulerTensor>();
     schedTensor->srcTensor = tensor;
-    schedTensor->allocatedAddress = tensorAddress;
+    schedTensor->SetAddress(tensorAddress);
     tensorAddressMap[tensor.get()] = tensorAddress;
 
     return schedTensor;

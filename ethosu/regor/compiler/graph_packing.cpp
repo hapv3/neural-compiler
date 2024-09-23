@@ -98,7 +98,7 @@ std::unique_ptr<Graph> GraphPacking::Process(std::vector<std::pair<Operation *, 
                 // Connect input tensor to new CPU operation
                 const auto oldTensor = schedTensor->srcTensor;
                 assert(oldTensor && "Missing source graph tensor");
-                const auto newTensor = LookupNewTensor(oldTensor.get(), tensorAddressMap, schedTensor->allocatedAddress);
+                const auto newTensor = LookupNewTensor(oldTensor.get(), tensorAddressMap, schedTensor->AllocatedAddress());
                 currentOp->ConnectInput(usage, newTensor).Set(schedConn.shape).Set(schedConn.quantization);
             }
 
@@ -109,7 +109,7 @@ std::unique_ptr<Graph> GraphPacking::Process(std::vector<std::pair<Operation *, 
                 // Connect output tensor to new CPU operation
                 const auto oldTensor = schedTensor->srcTensor;
                 assert(oldTensor && "Missing source graph tensor");
-                const auto newTensor = LookupNewTensor(oldTensor.get(), tensorAddressMap, schedTensor->allocatedAddress);
+                const auto newTensor = LookupNewTensor(oldTensor.get(), tensorAddressMap, schedTensor->AllocatedAddress());
                 currentOp->ConnectOutput(usage, newTensor).Set(schedConn.shape).Set(schedConn.quantization);
             }
         }
@@ -189,7 +189,7 @@ void GraphPacking::ConnectTensors(Operation *op, const std::unique_ptr<Scheduler
         // Connect input tensor to new Ethos-U operation, but only once
         const auto &oldTensor = schedTensor->srcTensor;
         assert(oldTensor && "Missing source graph tensor");
-        const auto newTensor = LookupNewTensor(oldTensor.get(), tensorAddressMap, schedTensor->allocatedAddress);
+        const auto newTensor = LookupNewTensor(oldTensor.get(), tensorAddressMap, schedTensor->AllocatedAddress());
         if ( op->UsageOfTensor(newTensor.get()) == TensorUsage::None )
         {
             const auto usage = MakeTensorUsage(TensorUsage::IFM, op->Inputs().size());
@@ -212,7 +212,7 @@ void GraphPacking::ConnectTensors(Operation *op, const std::unique_ptr<Scheduler
         // Connect output tensor to new Ethos-U operation, but only once
         const auto &oldTensor = schedTensor->srcTensor;
         assert(oldTensor && "Missing source graph tensor");
-        const auto newTensor = LookupNewTensor(oldTensor.get(), tensorAddressMap, schedTensor->allocatedAddress);
+        const auto newTensor = LookupNewTensor(oldTensor.get(), tensorAddressMap, schedTensor->AllocatedAddress());
         if ( op->UsageOfTensor(newTensor.get()) == TensorUsage::None )
         {
             const auto usage = MakeTensorUsage(TensorUsage::OFM, op->Outputs().size());

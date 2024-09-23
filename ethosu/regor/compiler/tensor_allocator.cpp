@@ -73,7 +73,7 @@ void PrintAllocation(LiveRangeGraph &lrGraph, Address totalSize)
         {
             continue;
         }
-        auto address = (*lr->tensors.begin())->allocatedAddress;
+        auto address = (*lr->tensors.begin())->AllocatedAddress();
         auto peakUsageDuringLiveRange = *std::max_element(memHist.begin() + lr->startTime, memHist.begin() + lr->endTime + 1);
         for ( const auto &tens : lr->tensors )
         {

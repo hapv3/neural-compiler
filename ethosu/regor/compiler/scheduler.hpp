@@ -73,6 +73,13 @@ struct WeightScaleEncoding
     WeightScaleTensors weightScales;
 };
 
+struct SchedulerBufferTensor
+{
+    std::shared_ptr<SchedulerTensor> tensor;
+    bool preBuffer = false;
+    Buffering buffering = Buffering::None;
+};
+
 /// <summary>
 /// Metadata for each scheduled operation (unique per schedule)
 /// </summary>
@@ -96,7 +103,7 @@ public:
     // Encoded scales in readonly memory
     std::shared_ptr<NpuWeightTensor> npuScalesTensor;
     // Buffered weights/scales in fast storage
-    SchedulerConnection bufferedWeightTensor;
+    SchedulerBufferTensor bufferedWeightTensor;
     CycleCost cycles;
     ElementAccess elementAccess;
 

@@ -170,7 +170,7 @@ public:
                     else
                     {
                         auto tensor = input.second.tensor.get();
-                        if ( tensor->allocatedAddress >= 0 )
+                        if ( tensor->AllocatedAddress() >= 0 )
                         {
                             AddToReadOnly(tensor);
                         }
@@ -188,7 +188,7 @@ public:
                     if ( input.second.tensor->srcTensor->IsConstant() )
                     {
                         auto tensor = input.second.tensor.get();
-                        if ( tensor->allocatedAddress >= 0 )
+                        if ( tensor->AllocatedAddress() >= 0 )
                         {
                             AddToReadOnly(tensor);
                         }
@@ -213,7 +213,7 @@ private:
     {
         if ( tensor )
         {
-            const auto offset = tensor->allocatedAddress;
+            const auto offset = tensor->AllocatedAddress();
             const auto allocation = tensor->AllocationSizeBytes();
             const auto size = tensor->srcTensor->View().Buffer()->Size();
 

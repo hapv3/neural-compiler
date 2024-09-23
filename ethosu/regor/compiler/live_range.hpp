@@ -74,7 +74,7 @@ struct LiveRange
     {
         for ( auto &tensor : tensors )
         {
-            tensor->allocatedAddress = address;
+            tensor->SetAddress(address);
         }
     }
 
@@ -100,7 +100,7 @@ public:
     std::vector<std::shared_ptr<LiveRange>> LiveRanges() const { return _lrs; };
 
     /** usage[t] will be set to the memory usage at time t, for each timestamp t in the live graph */
-    std::vector<int> GetTemporalMemoryUsage(int &maxUsage);
+    std::vector<int> GetTemporalMemoryUsage(int &maxUsage, int granularity = 16);
     void ExtractLiveRangesFromCascades(const std::vector<std::unique_ptr<SchedulerOperation>> &schedOps,
         Schedule *schedule, const MemArea &targetMemory, bool addRollingBuffers);
     LiveRange *GetOrCreateRange(SchedulerTensor *tens);

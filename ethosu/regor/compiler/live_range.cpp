@@ -34,18 +34,21 @@
 namespace regor
 {
 
-std::vector<int> LiveRangeGraph::GetTemporalMemoryUsage(int &maxUsage)
+std::vector<int> LiveRangeGraph::GetTemporalMemoryUsage(int &maxUsage, int granularity)
 {
+    assert(granularity > 0);
     std::vector<int> usage(_currentTime + 1);
+    maxUsage = 0;
     for ( const auto &lr : _lrs )
     {
         assert(lr->endTime <= _currentTime);
         for ( int i = lr->startTime; i <= lr->endTime; ++i )
         {
-            usage[i] += lr->size;
+            assert((i >= 0) && (i < int(usage.size())));
+            usage[i] += RoundAway(lr->size, granularity);
+            maxUsage = std::max(maxUsage, usage[i]);
         }
     }
-    maxUsage = *std::max_element(usage.begin(), usage.end());
     return usage;
 }
 
