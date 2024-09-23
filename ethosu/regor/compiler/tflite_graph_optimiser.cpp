@@ -2481,7 +2481,7 @@ Operation *TFLiteGraphOptimiser::ConvertPrelu(Graph *const graph, Operation *con
                 float scaledAlphaMin = (alphaMin - alphaZp) * alphaScale;
                 float scaledAlphaMax = (alphaMax - alphaZp) * alphaScale;
 
-                if ( (alphaMin == alphaMax) )
+                if ( alphaMin == alphaMax )
                 {
                     // If all alpha values are equal, we can convert to LeakyReLU
                     auto lreluOp = std::make_shared<Operation>(OpType::LeakyRelu);
