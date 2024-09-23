@@ -158,7 +158,11 @@ public:
     void SetPrefix(const char *prefix) { _prefix = prefix; }
     void SetFilterMask(unsigned mask) { _filterMask = mask; }
     unsigned FilterMask() const { return _filterMask; }
-    void SetWriter(log_writer_t writer) { _logWriter = writer; }
+    void SetWriter(log_writer_t writer)
+    {
+        _logWriter = writer;
+        if ( !_logWriter ) _filterMask = 0;
+    }
     void Indent();
     void Unindent();
     void Write(const std::string &s);

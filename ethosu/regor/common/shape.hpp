@@ -404,7 +404,7 @@ public:
         while ( length-- )
         {
             int to = ToOffset(reverseAxisMask4b & 0xF);
-            assert(to >= 0 && to < Size());
+            assert(to >= 0 && to < tmp.Size());
             result[to] = *local++;
             reverseAxisMask4b = reverseAxisMask4b >> 4;
         }

@@ -185,7 +185,7 @@ struct PyRegorCompiledTFLiteModel : PyRegorCompiledModel
 class PyRegor
 {
 public:
-    PyRegor(const std::string &arch)
+    PyRegor(const std::string &arch, bool verbose)
     {
         if ( !regor_create(&_context, arch.c_str()) )
         {
@@ -193,7 +193,7 @@ public:
         }
         std::cout.setf(std::ios::unitbuf);
         std::cout.flush();
-        regor_set_logging(&PyRegor::Log, 0);
+        regor_set_logging(&PyRegor::Log, verbose ? ~0u : 0u);
     }
 
     ~PyRegor() { regor_destroy(_context); }
@@ -214,7 +214,7 @@ public:
         }
     }
 
-    py::object PyCompile(py::bytes &input, const std::string &fmt, bool verbose)
+    py::object PyCompile(py::bytes &input, const std::string &fmt)
     {
         // Extract input buffer and size of input buffer
         py::buffer_info info(py::buffer(input).request());
@@ -222,7 +222,7 @@ public:
         size_t in_size = size_t(std::max<py::ssize_t>(info.size, 0));
 
         // Compile the input buffer and return a subclass of PyRegorCompiledModel
-        return Compile(in_data, in_size, fmt, verbose);
+        return Compile(in_data, in_size, fmt);
     }
 
     PyRegorPerfReport GetPerfReport()
@@ -335,13 +335,12 @@ private:
     }
 
     // Internal helper
-    py::object Compile(const void *input, size_t in_size, const std::string &_fmt, bool verbose)
+    py::object Compile(const void *input, size_t in_size, const std::string &_fmt)
     {
         int rStatus;
         (void)(rStatus);
 
         // Capture these
-        regor_set_logging(&PyRegor::Log, verbose ? ~0u : 0u);
         rStatus = regor_set_callback_arg(_context, this);
         assert(rStatus);
 
@@ -392,7 +391,7 @@ private:
 
             int64_t size;
             void *buf = blobs[0]->Map(size);
-            assert(size <= std::numeric_limits<py::ssize_t>::max());
+            assert(size >= 0 && size <= int64_t(std::numeric_limits<py::ssize_t>::max()));
             tfl.model = py::bytes(reinterpret_cast<char *>(buf), py::ssize_t(size));
             blobs[0]->Unmap(buf);
             blobs[0]->Release();
@@ -525,11 +524,10 @@ PYBIND11_MODULE(regor, m)
     py::class_<PyRegorDatabase>(m, "Database", "A regor database").def(py::init<>()).def_readwrite("tables", &PyRegorDatabase::tables, "database tables");
 
     py::class_<PyRegor>(m, "Regor", "The main Regor compiler class")
-        .def(py::init<const std::string &>())
+        .def(py::init<const std::string &, bool>())
         .def("SetSystemConfig", &PyRegor::SetSystemConfig, "Set the system configuration")
         .def("SetCompilerOptions", &PyRegor::SetCompilerOptions, "Set compiler options")
-        .def("Compile", &PyRegor::PyCompile, "Compile the input model into a TFLite Flatbuffer", py::arg("input"),
-            py::arg("fmt"), py::arg("verbose") = false)
+        .def("Compile", &PyRegor::PyCompile, "Compile the input model into a TFLite Flatbuffer", py::arg("input"), py::arg("fmt"))
         .def("GetPerfReport", &PyRegor::GetPerfReport, "Get the performance report for the latest compiled model")
         .def("GetOptDatabase", &PyRegor::GetOptDatabase, "Get the optimiser database for the latest compiled model");
 
@@ -569,14 +567,14 @@ PYBIND11_MODULE(regor, m)
         [](const std::string &arch, py::bytes &input, const std::string &fmt, const std::string &sysconfig,
             const std::string &options = "", bool verbose = false) -> py::object
         {
-            PyRegor pyr(arch);
+            PyRegor pyr(arch, verbose);
             pyr.SetSystemConfig(sysconfig);
             if ( options.size() > 0 )
             {
                 pyr.SetCompilerOptions(options);
             }
 
-            return pyr.PyCompile(input, fmt, verbose);
+            return pyr.PyCompile(input, fmt);
         },
         R"pbdoc(
             Compile a model
