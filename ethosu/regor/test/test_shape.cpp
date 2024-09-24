@@ -293,6 +293,25 @@ TEST_CASE("Pad axes (pads left)")
     }
 }
 
+TEST_CASE("AxisProduct")
+{
+    Shape a(2, 2, 3, 4);
+    for ( int i = 0; i < a.Size(); i++ )
+    {
+        for ( int j = i + 1; j < a.Size(); j++ )
+        {
+            // compute product of axes from i to j
+            int product = 1;
+            for ( int x = i; x < j; x++ )
+            {
+                product *= a[x];
+            }
+            REQUIRE(a.AxisProduct(i, j) == product);
+        }
+        REQUIRE(a.AxisProduct(i, i) == 0);
+    }
+}
+
 TEST_CASE("Copy, Move and Assignment")
 {
     Shape invalid;

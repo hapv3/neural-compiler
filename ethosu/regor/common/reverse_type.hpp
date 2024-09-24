@@ -18,11 +18,18 @@
 
 #pragma once
 #include "common/bit_flags.hpp"
+#include "common/shape.hpp"
 
-enum class ReverseType : uint8_t
+enum class ReverseType : uint32_t
 {
     None = 0x0,
-    C = 0x1,
-    W = 0x2,
-    H = 0x4
+    C = 1 << 0,
+    W = 1 << 1,
+    H = 1 << 2,
+    N = 1 << 3,
+    B = 1 << 4,
+    A = 1 << 5,
+    Dynamic = 1ULL << 31  // used for non-constant axes
 };
+
+Flags<ReverseType> ToReverseMask(const Shape &shape, int ofmRank);

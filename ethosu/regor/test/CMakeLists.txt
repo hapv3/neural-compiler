@@ -34,6 +34,7 @@ add_catch_test(
         test_tosa_validator.cpp
         test_ethos_u85_weight_encoder.cpp
         test_transpose_type.cpp
+        test_reverse_type.cpp
         test_raw_writer.cpp
         test_graph_packing.cpp
         test_ordered_map.cpp

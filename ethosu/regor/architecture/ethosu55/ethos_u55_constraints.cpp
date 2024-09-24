@@ -51,11 +51,11 @@ bool EthosU55Constraints::SupportsTranspose(OpType opType, TransposeType transpo
     return false;
 }
 
-bool EthosU55Constraints::SupportsReverse(OpType opType, ReverseType reverseType)
+bool EthosU55Constraints::SupportsReverse(OpType opType, ReverseType reverseTypeMask, const Shape &ofmShape)
 {
     UNUSED(opType);
-    UNUSED(reverseType);
-    return reverseType == ReverseType::None;
+    UNUSED(ofmShape);
+    return reverseTypeMask == ReverseType::None;
 }
 
 bool EthosU55Constraints::SupportsFusedRescale(

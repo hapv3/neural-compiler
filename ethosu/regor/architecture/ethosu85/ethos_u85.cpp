@@ -237,12 +237,12 @@ Flags<WeightFormat> ArchEthosU85::SupportedWeightFormat(OpType op)
 
 bool ArchEthosU85::UseAvgPoolNop(OpType type)
 {
-    return IsActivation(type) || type == OpType::Quantize || type == OpType::MemoryCopy || type == OpType::Transpose;
+    return IsActivation(type) || type == OpType::Quantize || type == OpType::MemoryCopy || type == OpType::Transpose || type == OpType::Reverse;
 }
 
 bool ArchEthosU85::UseNullPool(OpType opType, int bits)
 {
-    return ((opType == OpType::MemoryCopy || opType == OpType::Rescale || opType == OpType::Transpose) && bits >= 32);
+    return ((opType == OpType::MemoryCopy || opType == OpType::Rescale || opType == OpType::Transpose || opType == OpType::Reverse) && bits >= 32);
 }
 
 // Return true if kernel first mode has a better utilisation than depth first mode
@@ -1151,6 +1151,12 @@ bool EthosU85OpGroup::Fuse(const ArchitectureOpGroupQuery &op, const std::vector
         return false;
     }
 
+    if ( op.inputs == 2 )
+    {
+        // can't fuse binary input
+        return false;
+    }
+
     int dep = KeyToOpIndex(dependsOn[0]);
     if ( dep < 0 )
     {
@@ -1171,8 +1177,26 @@ bool EthosU85OpGroup::Fuse(const ArchitectureOpGroupQuery &op, const std::vector
         return false;
     }
 
-    // Can't fuse a transpose type that's not supported primaryOp in opgroup
+    // Can't fuse a transpose type that's not supported by primaryOp in opgroup
     if ( !_arch->_constraints->SupportsTransposeHW(_ops[0].type, op.ofm.transpose) )
+    {
+        return false;
+    }
+
+    // Can't fuse a reverse type that's not supported by primaryOp in opgroup
+    if ( !_arch->_constraints->SupportsReverse(_ops[0].type, op.ofm.reverse, op.ofm.shape) )
+    {
+        return false;
+    }
+
+    // Dependency without connection
+    if ( prevOp.ofm.key != op.ifm[0].key )
+    {
+        return false;
+    }
+
+    // Can't fuse reshaped Tensors
+    if ( prevOp.ofm.key == op.ifm[0].key && prevOp.ofm.shape != op.ifm[0].shape )
     {
         return false;
     }
@@ -1280,7 +1304,7 @@ int EthosU85OpGroup::Add(const ArchitectureOpGroupQuery &op, const std::vector<i
         _hasFusedTranspose = (op.type == OpType::Transpose && !IsNone(op.ofm.transpose));
         _hasFusedReverse = (op.type == OpType::Reverse && op.ofm.reverse != ReverseType::None);
     }
-    else if ( IsActivation(op.type) || op.type == OpType::Transpose )
+    else if ( IsActivation(op.type) || op.type == OpType::Transpose || op.type == OpType::Reverse )
     {
         if ( Fuse(op, dependsOn) == false )
         {
@@ -1445,6 +1469,10 @@ bool EthosU85OpGroup::CanRunOnNPU(const ArchitectureOpGroupQuery &op)
             return _arch->_constraints->SupportsTransposeHW(OpType::MemoryCopy, op.ofm.transpose);
         }
 
+        if ( op.type == OpType::Reverse )
+        {
+            return _arch->_constraints->SupportsReverse(OpType::MemoryCopy, op.ofm.reverse, op.ofm.shape);
+        }
         auto map = s_opDataTypeSupport.find(npuOp);
         if ( map == s_opDataTypeSupport.end() )
         {

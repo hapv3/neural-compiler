@@ -303,45 +303,6 @@ inline TransposeType CalculateTransposeType(const Operation &operation)
     return transposeType;
 }
 
-inline ReverseType CalculateReverseType(const Operation &operation)
-{
-    auto ifmConn = operation.Input(TensorUsage::IFM);
-    auto paramsConn = operation.Input(TensorUsage::Params);
-    auto ofmConn = operation.Output(TensorUsage::OFM);
-
-    Shape ifmShape = ifmConn->shape;
-    Shape ofmShape = ofmConn->shape;
-
-    assert(paramsConn->tensor->Type() == DataType::Int32);
-    int32_t axis = paramsConn->tensor->View().Values<int32_t>()[0];
-
-    // We can only handle constant axis vectors
-    if ( !paramsConn->tensor->IsConstant() ) throw std::invalid_argument("Axis vector has more than 4 elements");
-    // We can only handle 1-element axis vectors
-    if ( paramsConn->shape != Shape(1) ) throw std::invalid_argument("Axis vector has has more than 1 element");
-    // Convert the axis parameter to a reverse type.
-    // For example:
-    // [axis = 0, size = 1, min_axis = 0, max_axis = 0] -> reverse type C (0x1)
-    // [axis = 0, size = 2, min_axis = 0, max_axis = 1] -> reverse type W (0x2)
-    // [axis = 1, size = 2, min_axis = 0, max_axis = 1] -> reverse type C (0x1)
-    // [axis = 0, size = 3, min_axis = 0, max_axis = 2] -> reverse type H (0x4)
-    // [axis = 1, size = 3, min_axis = 0, max_axis = 2] -> reverse type W (0x2)
-    // [axis = 2, size = 3, min_axis = 0, max_axis = 2] -> reverse type C (0x1)
-    // [axis = 1, size = 4, min_axis = 1, max_axis = 3] -> reverse type H (0x4)
-    // [axis = 2, size = 4, min_axis = 1, max_axis = 3] -> reverse type W (0x2)
-    // [axis = 3, size = 4, min_axis = 1, max_axis = 3] -> reverse type C (0x1)
-    const int size = ifmShape.Size();
-    if ( axis < 0 ) axis = size + axis;
-    const int axis_min = std::max(size - 3, 0);  // Can only reverse the last 3 dimensions
-    const int axis_max = size - 1;
-    // TODO: Change into semantic check.
-    if ( axis < axis_min || axis > axis_max ) throw std::invalid_argument("Axis vector outside [-rank(ifm),rank(ifm))");
-    assert(axis - axis_max < 32);
-
-    ReverseType reverseType = ReverseType(1 << (axis_max - axis));
-    return reverseType;
-}
-
 // Is the scaling of Tensor connection a and b valid and equal.
 inline bool IsScalingValidAndEqual(const TensorConnection &a, const TensorConnection &b)
 {

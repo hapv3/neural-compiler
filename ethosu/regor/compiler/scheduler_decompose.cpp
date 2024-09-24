@@ -137,9 +137,6 @@ bool CanRunOnHardware(Architecture *arch, const SchedulerOperation *schedOp)
 
 bool CanDecompose(Architecture *, const SchedulerOperation *schedOp)
 {
-    // TODO: MLBEDSW-8868 Restore fused transpose/reverse
-    if ( auto ofm = schedOp->TryOFM(); ofm && (ofm->transpose != TransposeType::None || ofm->reverse != ReverseType::None) )
-        return false;
     if ( schedOp->Type() == OpType::Conv2D ) return true;
     if ( schedOp->Type() == OpType::DepthwiseConv2DBias ) return true;
     if ( schedOp->Type() == OpType::TransposeConv2D ) return true;

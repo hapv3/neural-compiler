@@ -203,6 +203,17 @@ Operation *GraphIrOptimiser::ConvertAttributes(Graph *const graph, Operation *co
             ofmConn->shape = Shape::PadAxes(ofmConn->shape, 4, 1);
         }
     }
+    else if ( opType == OpType::Reverse )
+    {
+        // Convert TOSA axis attribute to ReverseType representation
+        TensorConnection *ofmConn = operation->Output(TensorUsage::OFM);
+        int ofmRank = ofmConn->shape.Size();
+        const auto *attr = operation->Attribute<axis_attr_t>();
+        auto mask = ToReverseMask(attr->axis, ofmRank);
+        assert(mask != ReverseType::Dynamic && "Unexpected dynamic reverse axis.");
+        assert((mask == ReverseType::None || IsPowerOfTwo(unsigned(mask))) && "Reverse operation can only have one axis");
+        ofmConn->reverse = mask;
+    }
     return operation;
 }
 
@@ -1043,6 +1054,51 @@ Operation *GraphIrOptimiser::RewriteMatmul(Graph *const graph, Operation *const 
     // replace IFM2 with transposed output
     operation->ConnectInput(TensorUsage::IFM1, transposedIfm1).Set(ifm1Conn->quantization);
 
+    return returnOp;
+}
+
+// Reshape Reverse with unsupported shape or axis
+// If a Reverse has >4D shape, or unsupported axis-parameter
+// reshape to a 3D-tensor where W is the reversed axis
+Operation *GraphIrOptimiser::ReshapeReverse(Graph *const graph, Operation *const operation)
+{
+    UNUSED(graph);
+    Operation *returnOp = operation;
+    const OpType opType = operation->Type();
+    auto *ifmConn = operation->Input(TensorUsage::IFM);
+    auto *ofmConn = operation->Output(TensorUsage::OFM);
+    const auto &ofmShape = ofmConn->shape;
+    const auto &ifmShape = ifmConn->shape;
+    int ofmRank = ofmConn->shape.Size();
+
+    if ( opType != OpType::Reverse )
+    {
+        return returnOp;
+    }
+
+    auto *attr = operation->Attribute<axis_attr_t>();
+    int axis = attr->axis;
+    // We need to reshape the operation if any of the following are true:
+    //     OFM is >4D
+    //     OFM is 4D with batch > 1
+    //     OFM is 4D with reversed batch
+    // TODO MLBEDSW-9621: Use HW-constraint-check instead
+    if ( ofmRank > 4 || (ofmRank == 4 && (ofmShape.Batch() > 1 || axis == 0)) )
+    {
+        assert(ifmShape == ofmShape);
+        assert(axis < ofmRank);
+        // Reshape reversed axis into W
+        // All predecing axes into H
+        // All succeeding axes into C
+        int height = (axis > 0) ? ofmShape.AxisProduct(0, axis) : 1;
+        int depth = (axis + 1) < ofmShape.Size() ? ofmShape.AxisProduct(axis + 1, ofmShape.Size()) : 1;
+
+        auto newShape = Shape(height, ofmShape[axis], depth);
+        ifmConn->shape = newShape;
+        ofmConn->shape = newShape;
+        attr->axis = 1;
+        ofmConn->reverse = ReverseType::W;
+    }
     return returnOp;
 }
 

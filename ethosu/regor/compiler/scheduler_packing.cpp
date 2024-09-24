@@ -211,10 +211,9 @@ void SchedulerPacking::SchedulerPacking::PackOperations()
                 LOG_TRACE1("Added {} (key {}) to {} (key {})\n", OpTypeToString(nextOp->Type()), key,
                     OpTypeToString(prevOp->Type()), prevOpKey);
 
+                // Replace primary op's OFM by nextOp's OFM
                 if ( IsActivation(nextOp->Type()) )
                 {
-                    primaryOp->AddSubOp(std::move(*cur));
-                    // Replace primary op's OFM by nextOp's OFM
                     auto *ofmConn = primaryOp->OFM();
                     ofmConn->tensor = nextOp->OFM()->tensor;
                     ofmConn->quantization.quantMin = nextOp->Output(TensorUsage::OFM)->quantization.quantMin;
@@ -222,17 +221,20 @@ void SchedulerPacking::SchedulerPacking::PackOperations()
                 }
                 else if ( nextOp->Type() == OpType::Transpose )
                 {
-                    primaryOp->AddSubOp(std::move(*cur));
-                    // Replace primary op's OFM by nextOp's OFM
                     auto *ofmConn = primaryOp->OFM();
                     ofmConn->tensor = nextOp->OFM()->tensor;
                     ofmConn->shape = nextOp->OFM()->shape;
                     ofmConn->transpose = nextOp->OFM()->transpose;
                 }
-                else
+                else if ( nextOp->Type() == OpType::Reverse )
                 {
-                    primaryOp->AddSubOp(std::move(*cur));
+                    auto *ofmConn = primaryOp->OFM();
+                    ofmConn->tensor = nextOp->OFM()->tensor;
+                    ofmConn->shape = nextOp->OFM()->shape;
+                    ofmConn->reverse = nextOp->OFM()->reverse;
                 }
+
+                primaryOp->AddSubOp(std::move(*cur));
                 prevOpKey = key;
                 prevOp = nextOp;
                 cur++;
@@ -354,19 +356,8 @@ int SchedulerPacking::CanPack(const SchedulerOperation *schedOp, const Scheduler
         return 0;
     }
 
-    // Previous op is transpose or reverse and has different shape
-    if ( nextOp->IsReordering() && prevOFM == ifmTensor && prevConnOfm->shape != nextConnIfm->shape )
-    {
-        return 0;
-    }
-
-    // Previous op is transpose or reverse and has different shape
-    if ( nextOp->IsReordering() && prevOFM == ifm2Tensor && prevConnOfm->shape != nextConnIfm2->shape )
-    {
-        return 0;
-    }
-
-    if ( _disableChaining && !IsActivation(nextOp->Type()) && nextOp->Type() != OpType::Transpose )
+    // Do not pack elementwise operations if chaining is disabled
+    if ( _disableChaining && IsElementwise(nextOp->Type()) )
     {
         return 0;
     }
@@ -385,9 +376,9 @@ int SchedulerPacking::CanPack(const SchedulerOperation *schedOp, const Scheduler
         return 0;
     }
 
-    if ( IsActivation(nextOp->Type()) && !nextConnIfm->quantization.EqualScales(nextConnOfm->quantization) )
+    // Can not fuse operations with different scales
+    if ( IsElementwise(nextOp->Type()) == false && !nextConnIfm->quantization.EqualScales(nextConnOfm->quantization) )
     {
-        // Can not fuse activation with different scales
         return 0;
     }
 

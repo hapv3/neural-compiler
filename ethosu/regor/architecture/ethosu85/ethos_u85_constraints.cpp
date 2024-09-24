@@ -76,10 +76,14 @@ bool EthosU85Constraints::SupportsTranspose(OpType opType, TransposeType transpo
     }
 }
 
-
-bool EthosU85Constraints::SupportsReverse(OpType opType, ReverseType reverseType)
+bool EthosU85Constraints::SupportsReverse(OpType opType, ReverseType reverseTypeMask, const Shape &ofmShape)
 {
-    if ( reverseType == ReverseType::None ) return true;
+    Flags<ReverseType> reverseMask(reverseTypeMask);
+    // Do not support non-constant axes
+    if ( reverseMask == ReverseType::Dynamic ) return false;
+
+    // All Optypes support reverseType::None
+    if ( reverseMask == ReverseType::None ) return true;
 
     EthosU85NpuOp npuOp = ArchEthosU85::GetHWOp(opType);
     if ( npuOp == EthosU85NpuOp::None || npuOp == EthosU85NpuOp::Elementwise || npuOp == EthosU85NpuOp::Dma )
@@ -87,7 +91,68 @@ bool EthosU85Constraints::SupportsReverse(OpType opType, ReverseType reverseType
         return false;
     }
 
-    return reverseType == ReverseType::H || reverseType == ReverseType::W || reverseType == ReverseType::C;
+    // TODO MLBEDSW-9621: refactor reverse constraint checks
+    // Currently this function maps to what we can optimise, not the HW capabilities.
+
+    static constexpr int maxAxis = (1 << 16) - 1;
+    int ofmRank = ofmShape.Size();
+    bool batchReverse = (reverseMask & ReverseType::N) != 0;
+
+    // Validate that axes don't overflow
+    auto CheckShape = [&](const Shape &s) { return s.GreaterMask(Shape(nullptr, s.Size(), maxAxis)) == 0; };
+
+    // Reshapes reversed axis into W
+    // all preceding axes into H
+    // all succeeding axes into C
+    auto Reshape = [](const Shape &s, int axis)
+    {
+        int height = (axis > 0) ? s.AxisProduct(0, axis) : 1;
+        int depth = (axis + 1) < s.Size() ? s.AxisProduct(axis + 1, s.Size()) : 1;
+        return Shape(height, s[axis], depth);
+    };
+
+    if ( ofmRank > 4 || (ofmRank == 4 && (ofmShape.Batch() > 1 || batchReverse)) )
+    {
+        // Reverse with multiple axes is decomposed into a sequence of reverse operations
+        // We need to reshape each component if any of the following are true:
+        //     OFM is >4D
+        //     OFM is 4D with batch > 1
+        //     OFM is 4D with reversed batch
+
+        // Find each reversed axis, verify that the reshaped operation-shapes won't overflow
+        int axis = ofmRank - 1;
+        auto mask = unsigned(reverseMask);
+        while ( mask != 0 )
+        {
+            // check if axis is reversed
+            if ( mask & 1 )
+            {
+                Shape reshaped = Reshape(ofmShape, axis);
+                if ( !CheckShape(reshaped) )
+                {
+                    LOG_WARN("Can't optimise Reverse with OfmShape {} and axis {}, optimised OFM has too large axes.\n",
+                        ofmShape.ToString(), axis);
+                    return false;
+                }
+            }
+            axis -= 1;
+            mask = mask >> 1;
+        }
+    }
+    else
+    {
+        // HWC-reverse <= 4D can be handled without reshapes.
+        // Verify that axes don't overflow
+        assert(Flags<ReverseType>(ReverseType::H, ReverseType::W, ReverseType::C).All(reverseMask) && "Unexpected reverseType for <=4D reverse");
+        if ( !CheckShape(ofmShape) )
+        {
+            LOG_WARN("Reverse has too large axes: {} (max axis size is: {})\n", ofmShape.ToString(), maxAxis);
+            return false;
+        }
+        return true;
+    }
+
+    return true;
 }
 
 bool EthosU85Constraints::SupportsFusedRescale(

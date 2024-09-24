@@ -156,6 +156,7 @@ public:
     // Test any set
     bool Any(TYPE val) const { return (_raw & TYPE(val)) != 0; }
     bool Any(ENUM val) const { return Any(TYPE(val)); }
+    bool Any(const Flags<ENUM> &val) const { return Any(ENUM(val)); }
     template<typename... ARGS>
     bool Any(ENUM val, ARGS... rest) const
     {
@@ -166,6 +167,7 @@ public:
     // Test all set
     bool All(TYPE val) const { return (_raw & TYPE(val)) == TYPE(val); }
     bool All(ENUM val) const { return All(TYPE(val)); }
+    bool All(const Flags<ENUM> &val) const { return All(ENUM(val)); }
     template<typename... ARGS>
     bool All(ENUM val, ARGS... rest) const
     {

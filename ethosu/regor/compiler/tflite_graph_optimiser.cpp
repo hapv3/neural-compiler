@@ -22,7 +22,6 @@
 
 #include "architecture/architecture.hpp"
 #include "architecture/architecture_constraints.hpp"
-#include "common/reverse_type.hpp"
 #include "common/scaling.hpp"
 #include "common/transpose_type.hpp"
 #include "graph.hpp"
@@ -950,9 +949,14 @@ Operation *TFLiteGraphOptimiser::RemoveReshape(Graph *const graph, Operation *co
     return returnOp;
 }
 
-// Remove Reverse op and move its reverse type to the previous op's OFM TensorConnection. If previous op can't reverse,
-// insert a MemoryCopy.
-Operation *TFLiteGraphOptimiser::RemoveReverse(Graph *const graph, Operation *const operation)
+// Convert ReverseV2 into TOSA Reverse
+// ReverseV2 supports a vector of axes, while TOSA reverse only supports one axis
+// If there is more than one reversed axis, convert to a sequence of Reverse operations.
+//
+// ReverseV2(Axis 1,2,3) is converted to:
+//     Reverse(axis: 1) -> Reverse(axis: 2) -> Reverse(axis: 3)
+//
+Operation *TFLiteGraphOptimiser::ConvertReverse(Graph *const graph, Operation *const operation)
 {
     auto returnOp = operation;
 
@@ -961,97 +965,43 @@ Operation *TFLiteGraphOptimiser::RemoveReverse(Graph *const graph, Operation *co
         auto ifmConn = operation->Input(TensorUsage::IFM);
         auto paramsConn = operation->Input(TensorUsage::Params);
         auto ofmConn = operation->Output(TensorUsage::OFM);
-
-        auto *ifm = ifmConn->tensor.get();
-        auto *ofm = ofmConn->tensor.get();
-        Shape ifmShape = ifmConn->shape;
-        Shape ofmShape = ofmConn->shape;
+        auto ofm = ofmConn->tensor;
 
         // We can only handle constant axis vectors
         if ( !paramsConn->tensor->IsConstant() ) return returnOp;
-
-        // We can only handle 1-element axis vectors
-        if ( paramsConn->shape != Shape(1) ) return returnOp;
-
         assert(paramsConn->tensor->Type() == DataType::Int32);
-        int32_t axis = paramsConn->tensor->View().Values<int32_t>()[0];
+        assert(paramsConn->shape.Size() == 1);
 
-        // Convert the axis parameter to a reverse type.
-        // For example:
-        // [axis = 0, size = 1, min_axis = 0, max_axis = 0] -> reverse type C (0x1)
-        // [axis = 0, size = 2, min_axis = 0, max_axis = 1] -> reverse type W (0x2)
-        // [axis = 1, size = 2, min_axis = 0, max_axis = 1] -> reverse type C (0x1)
-        // [axis = 0, size = 3, min_axis = 0, max_axis = 2] -> reverse type H (0x4)
-        // [axis = 1, size = 3, min_axis = 0, max_axis = 2] -> reverse type W (0x2)
-        // [axis = 2, size = 3, min_axis = 0, max_axis = 2] -> reverse type C (0x1)
-        // [axis = 1, size = 4, min_axis = 1, max_axis = 3] -> reverse type H (0x4)
-        // [axis = 2, size = 4, min_axis = 1, max_axis = 3] -> reverse type W (0x2)
-        // [axis = 3, size = 4, min_axis = 1, max_axis = 3] -> reverse type C (0x1)
-        const int size = ifmShape.Size();
-        if ( axis < 0 ) axis = size + axis;
-        const int axis_min = std::max(size - 3, 0);  // Can only reverse the last 3 dimensions
-        const int axis_max = size - 1;
-        if ( axis < axis_min || axis > axis_max ) return returnOp;
-        const ReverseType reverseType = ReverseType(1 << (axis_max - axis));
+        int numAxes = paramsConn->shape.Depth();
+        if ( numAxes == 0 ) return returnOp;
 
-        // Check if IFM/OFM are network IFM/OFM
-        bool isIfmSgIfm = IsTensorInVector(graph->Inputs(), ifm);
-        bool isIfmSgOfm = IsTensorInVector(graph->Outputs(), ifm);
-        bool ifmSingleReader = ifm->Readers().size() == 1;
-        bool ifmSingleWriter = ifm->Writers().size() == 1;
-
-        Operation *mainOp = nullptr;
-
-        if ( ifmSingleReader && ifmSingleWriter && !isIfmSgIfm && !isIfmSgOfm )
+        // Create one Reverse operation for every element in axis
+        auto inputConn = ifmConn;
+        std::shared_ptr<Tensor> outTens;
+        for ( int i = 0; i < numAxes; i++ )
         {
-            // Get the previous op and its current reverse type
-            Operation *prevOp = ifm->Writers()[0].get();
-            OpType prevOpType = prevOp->Type();
-            auto prevOfmConn = prevOp->Output(TensorUsage::OFM);
-
-            if ( prevOfmConn->reverse == ReverseType::None && IsNone(prevOfmConn->transpose) &&
-                 prevOfmConn->shape == ifmShape && _constraints->SupportsReverse(prevOpType, reverseType) )
+            int32_t axis = paramsConn->tensor->View().Values<int32_t>()[i];
+            outTens = ofm;
+            // If this is not the final axis, we need to create an intermediate tensor
+            if ( i < (numAxes - 1) )
             {
-                // Set reverse type and shape on main op's OFM connection
-                prevOp->Output(TensorUsage::OFM)->shape = Shape::PadAxes(ofmShape, 4, 1);
-                prevOp->Output(TensorUsage::OFM)->reverse = reverseType;
-
-                // Previous op supports reverse -- Save it so we can fuse reverse to it
-                mainOp = prevOp;
+                std::string name(fmt::format("{}_reverse_axis_{}", ofm->Name(), axis));
+                outTens = std::make_shared<Tensor>(name, ofm->Type(), ofm->StorageShape());
             }
-        }
-        ExecutionQuery query{};
-        query.opType = operation->Type();
-        query.targetType = OpType::MemoryCopy;
-        query.reverseType = reverseType;
-
-        if ( !mainOp && _constraints->CanExecute(query) )
-        {
-            // Previous doesn't support reverse -- Add a MemoryCopy so we can fuse reverse to it
-            auto memoryCopy = InsertCopyOpAfterTensor(ifmConn->tensor, ifmConn->quantization);
-            memoryCopy->SetRounding(RoundMode::NATURAL);
-
-            // Set reverse type and shapes on main op's IFM/OFM connection
-            memoryCopy->Input(TensorUsage::IFM0)->shape = Shape::PadAxes(ifmShape, 4, 1);
-            memoryCopy->Output(TensorUsage::OFM)->shape = Shape::PadAxes(ofmShape, 4, 1);
-            memoryCopy->Output(TensorUsage::OFM)->reverse = reverseType;
-
-            // Since we added a new op and tensor before our reverse, update to new IFM
-            ifmConn = operation->Input(TensorUsage::IFM0);
-            ifm = ifmConn->tensor.get();
-
-            mainOp = memoryCopy.get();
+            auto reverseOp = std::make_shared<Operation>(OpType::Reverse);
+            reverseOp->ConnectInput(TensorUsage::IFM, inputConn->tensor).Set(ofmConn->shape);
+            reverseOp->ConnectOutput(TensorUsage::OFM, outTens).Set(ofmConn->shape);
+            auto *attr = reverseOp->Attribute<axis_attr_t>();
+            attr->axis = axis;
+            inputConn = reverseOp->Output(TensorUsage::OFM);
+            RecordOptimisation(operation, reverseOp.get());
+            returnOp = reverseOp.get();
         }
 
-        if ( mainOp )
-        {
-            // Bypass and remove Reverse
-            ReplaceProducerOutput(ifm->Writers(), ifm, ofmConn->tensor);
-            ReplaceConsumerInput(operation, ifm->Readers(), ifm, ofmConn->tensor);
-            operation->Disconnect();
-
-            returnOp = mainOp;
-        }
+        // quantization is set on the final Reverse operation, the others have unit-scaling
+        returnOp->Input(TensorUsage::IFM)->quantization = ifmConn->quantization;
+        returnOp->Output(TensorUsage::OFM)->quantization = ofmConn->quantization;
+        operation->Disconnect();
     }
 
     return returnOp;

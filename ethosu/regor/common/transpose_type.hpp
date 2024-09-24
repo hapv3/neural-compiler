@@ -17,7 +17,9 @@
 //
 
 #pragma once
-#include "common/bit_flags.hpp"
+
+#include <cassert>
+#include <cstdint>
 
 enum class TransposeType : uint32_t
 {

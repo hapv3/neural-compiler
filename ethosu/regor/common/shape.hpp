@@ -260,6 +260,21 @@ public:
         return result;
     }
 
+    // Compute a product of axes from start to end
+    int AxisProduct(int start, int end) const
+    {
+        if ( start == end ) return 0;
+        int tmp = 1;
+        assert(end <= Size());
+        int inner = ToOffset(end - 1);
+        int outer = ToOffset(start);
+        for ( int i = inner; i <= outer; i++ )
+        {
+            tmp *= At(i);
+        }
+        return tmp;
+    }
+
     Shape With(int index, int value) const
     {
         Shape tmp(*this, std::max(Size(), index + 1));

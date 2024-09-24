@@ -23,6 +23,7 @@
 #include "common/buffer_view.hpp"
 #include "common/data_type.hpp"
 #include "common/numeric_util.hpp"
+#include "common/reverse_type.hpp"
 #include "common/scaling.hpp"
 #include "common/shape.hpp"
 #include "compiler/graph.hpp"
@@ -931,9 +932,24 @@ ExecutionQuery TfLiteReader::OperationToExecQuery(const Operation &operation)
             break;
         }
         case OpType::ReverseV2:
+        {
             query.targetType = OpType::MemoryCopy;
-            query.reverseType = CalculateReverseType(operation);
+            auto paramsConn = operation.Input(TensorUsage::Params);
+            assert(paramsConn);
+            assert(paramsConn->tensor->Type() == DataType::Int32);
+            if ( !paramsConn->tensor->IsConstant() )
+            {
+                query.reverseTypeMask = ReverseType::Dynamic;
+            }
+            else
+            {
+                // non-dynamic reverseType, we convert it to bitmask
+                auto view = paramsConn->tensor->View();
+                Shape axes = Shape(view.Buffer()->Data<int32_t>(), view.ViewShape().Elements());
+                query.reverseTypeMask = ToReverseMask(axes, query.ofmShape.Size());
+            }
             break;
+        }
         case OpType::ResizeBilinear:
         case OpType::ResizeNearestNeighbor:
             query.resizeQuery = CalculateResizeSupportQuery(operation);

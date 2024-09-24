@@ -822,8 +822,13 @@ int EthosU85RCSGenerator::CalcBlockDep(HLCStripe *prevStripe, HLCStripe *stripe)
     {
         prevOfm = prevOp->subOps.back().ofm;
     }
-    // TODO: Investigate if this is correct
-    if ( !IsNone(prevOp->ofm.transpose) )
+    // TODO MLBEDSW-9625: Compute block-dependency for transposed ofms
+    if ( !IsNone(prevOfm.transpose) )
+    {
+        return 0;
+    }
+    // TODO MLBEDSW-9626: Compute block-dependency for reversed ofms
+    if ( prevOfm.reverse != ReverseType::None )
     {
         return 0;
     }
@@ -2048,11 +2053,11 @@ bool EthosU85RCSGenerator::GenerateOpGroup(HLCStripe *stripe, HLCStripe *prevOp,
             subStripe = MakeStripeForSubOp(stripe, subOp);
             stripe = subStripe.get();
         }
-        // fuse next subOp if it's an activation or transpose
+        // fuse next subOp if it's an activation, transpose or reverse
         if ( ((idx + 1) < int(subOps.size())) && opGroup->IsFused(subOps[idx + 1].ifm[0].uid) )
         {
             OpType type = subOps[idx + 1].type;
-            assert(IsActivation(type) || type == OpType::Transpose);
+            assert(IsActivation(type) || type == OpType::Transpose || type == OpType::Reverse);
             if ( idx >= 0 )
             {
                 HLCSubOperation activation = subOps[idx + 1];

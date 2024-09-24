@@ -125,8 +125,7 @@ private:
     Operation *RewritePack(Graph *const graph, Operation *const operation);
     Operation *RewriteSplit(Graph *const graph, Operation *const operation);
     Operation *RemoveReshape(Graph *const graph, Operation *const operation);
-    Operation *ExtractTransposePermutation(Graph *const graph, Operation *const operation);
-    Operation *RemoveReverse(Graph *const graph, Operation *const operation);
+    Operation *ConvertReverse(Graph *const graph, Operation *const operation);
     Operation *ConvertGather(Graph *const graph, Operation *const operation);
     Operation *ConvertScatter(Graph *const graph, Operation *const operation);
     Operation *ConvertResize(Graph *const graph, Operation *const operation);
@@ -240,7 +239,6 @@ public:
             {},
             {
                 &TFLiteGraphOptimiser::RemoveReshape,
-                &TFLiteGraphOptimiser::RemoveReverse,
             }
         },
         {
@@ -261,6 +259,7 @@ public:
                 &TFLiteGraphOptimiser::ConvertLeakyRelu,
                 &TFLiteGraphOptimiser::ConvertHardSwishToLUT,
                 &TFLiteGraphOptimiser::ConvertRSqrtToLUT,
+                &TFLiteGraphOptimiser::ConvertReverse,
                 &TFLiteGraphOptimiser::ConvertGather,
                 &TFLiteGraphOptimiser::RewriteSquaredDifference,
                 &TFLiteGraphOptimiser::ConvertScatter,

@@ -24,7 +24,32 @@
 
 BEGIN_ENUM_TABLE(ReverseType)
     ADD_ENUM_NAME(None)
-    ADD_ENUM_NAME(H)
-    ADD_ENUM_NAME(W)
     ADD_ENUM_NAME(C)
+    ADD_ENUM_NAME(W)
+    ADD_ENUM_NAME(H)
+    ADD_ENUM_NAME(N)
+    ADD_ENUM_NAME(B)
+    ADD_ENUM_NAME(A)
+    ADD_ENUM_NAME(Dynamic)
 END_ENUM_TABLE()
+
+// Calculate a bitmask of the reversed axes for the operation
+Flags<ReverseType> ToReverseMask(const Shape &shape, int ofmRank)
+{
+    // Compose a bitmask with all the reverseTypes in shape
+    Flags<ReverseType> mask = ReverseType::None;
+    for ( int i = 0; i < shape.Size(); i++ )
+    {
+        // Convert axis to ReverseType
+        // ReverseType = 0,1,2,4 represent C,W,H,N respectively
+        // Axis = 0,1,2,3 represent the four outer axes of ofmShape
+        // Compute a shift based on ofmShape and axis
+        int axis = shape[i];
+        assert(axis < ofmRank && "ToReverseMask axis out of bounds");
+        assert(ofmRank < 32 && "ToReverseMask ofmRank out of bounds");
+        unsigned shift = ofmRank - axis - 1;
+        assert(shift < unsigned(ofmRank));
+        mask |= ReverseType(1UL << shift);
+    }
+    return mask;
+}

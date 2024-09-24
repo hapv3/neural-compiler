@@ -61,6 +61,7 @@ private:
     Operation *RewriteMatmul(Graph *const graph, Operation *const operation);
     Operation *OptimiseElementwise(Graph *const graph, Operation *const operation);
     Operation *RearrangeTranspose(Graph *const graph, Operation *const operation);
+    Operation *ReshapeReverse(Graph *const graph, Operation *const operation);
     void MoveToConsumer(const Operation *const operation, Operation *const cons);
     Operation *MoveSplitSliceToConsumer(Graph *const, Operation *const operation);
 
@@ -111,7 +112,8 @@ private:
                 &GraphIrOptimiser::RewriteMatmul,
                 &GraphIrOptimiser::FuseRescale,  // First pass fuse all possible ifm and ofm rescales
                 &GraphIrOptimiser::OptimiseElementwise,
-                &GraphIrOptimiser::RearrangeTranspose
+                &GraphIrOptimiser::RearrangeTranspose,
+                &GraphIrOptimiser::ReshapeReverse
             }
         },
         // MoveSplitSliceToConsumer need to be done after any other optimisation that can affect the ifm/ofm shapes
