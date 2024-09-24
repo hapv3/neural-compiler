@@ -627,8 +627,17 @@ void ConstraintPadOutputShape(const Operator &op, const SubGraph &subgraph, cons
 
     for ( unsigned int dim = 0; static_cast<int>(dim) < ifmShape.Size(); dim++ )
     {
-        int paddedOutDim = CheckedAdd(CheckedAdd(ifmShape[dim], DataFromBuffer<int>(buffers, padTensor->buffer(), dim * 2)),
-            DataFromBuffer<int>(buffers, padTensor->buffer(), dim * 2 + 1));
+        int paddedOutDim;
+        if ( padTensor->type() == TensorType::INT32 )
+        {
+            paddedOutDim = CheckedAdd(CheckedAdd(ifmShape[dim], DataFromBuffer<int>(buffers, padTensor->buffer(), dim * 2)),
+                DataFromBuffer<int>(buffers, padTensor->buffer(), dim * 2 + 1));
+        }
+        else
+        {
+            paddedOutDim = CheckedAdd(CheckedAdd(ifmShape[dim], DataFromBuffer<int64_t>(buffers, padTensor->buffer(), dim * 2)),
+                DataFromBuffer<int64_t>(buffers, padTensor->buffer(), dim * 2 + 1));
+        }
 
         if ( paddedOutDim != ofmShape[dim] )
         {
