@@ -1089,13 +1089,15 @@ static broadcast_mode CalculateBroadcast(const Shape &shape1, const Shape &shape
 void EthosU85RCSGenerator::GenerateInputBroadcast(const Shape &ifmShape, const Shape &ifm2Shape, bool ifmIsScalar, bool ifm2IsScalar)
 {
     assert(!(ifmIsScalar && ifm2IsScalar));
-    // IFM broadcast
-    auto broadcastMode = ifmIsScalar ? broadcast_mode::SCALAR : CalculateBroadcast(ifmShape, ifm2Shape);
-    Emit(isa::npu_set_ifm_broadcast_t(broadcastMode));
-
-    // IFM2 broadcast
-    broadcastMode = ifm2IsScalar ? broadcast_mode::SCALAR : CalculateBroadcast(ifm2Shape, ifmShape);
-    Emit(isa::npu_set_ifm2_broadcast_t(broadcastMode));
+    broadcast_mode mode1 = ifmIsScalar ? broadcast_mode::SCALAR : broadcast_mode::NONE;
+    broadcast_mode mode2 = ifm2IsScalar ? broadcast_mode::SCALAR : broadcast_mode::NONE;
+    if ( ifmShape && ifm2Shape )
+    {
+        if ( !ifmIsScalar ) mode1 = CalculateBroadcast(ifmShape, ifm2Shape);
+        if ( !ifm2IsScalar ) mode2 = CalculateBroadcast(ifm2Shape, ifmShape);
+    }
+    Emit(isa::npu_set_ifm_broadcast_t(mode1));
+    Emit(isa::npu_set_ifm2_broadcast_t(mode2));
 }
 
 // Generates IFM_PRECISION register
@@ -1834,6 +1836,10 @@ void EthosU85RCSGenerator::GenerateElementwiseOp(HLCStripe *stripe, MemoryAccess
         assert(op->ifm.size() == 1);
         GenerateScalingForElementwise(op);
         GenerateCommon(stripe, useGlobalScale, memoryAccesses);
+        int32_t scalarValue = 0;
+        bool ifmIsScalar = IsScalar(op->ifm[0], scalarValue);
+        auto ifmShape = stripe->ifmAreas[0].SizeShape();
+        GenerateInputBroadcast(ifmShape, Shape(), ifmIsScalar, false);
     }
     else
     {
