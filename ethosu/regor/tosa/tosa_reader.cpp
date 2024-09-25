@@ -221,7 +221,7 @@ GraphApi::GraphTensorUsage GetTosaTensorUsage(const tosaFb::TosaOperator &op, in
             return SafeDeref(attr, "Malformed TOSA Flatbuffer attribute"); \
         } \
 \
-        TosaAttr<tosaFb::Op::OP_ENUM>() \
+        TosaAttr() \
         { \
             s_tosaTensorUsage[tosaFb::Op::OP_ENUM] = {__VA_ARGS__}; \
         } \
