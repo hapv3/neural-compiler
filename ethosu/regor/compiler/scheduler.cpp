@@ -150,12 +150,13 @@ std::shared_ptr<Schedule> Scheduler::Process()
     return chosenSchedule;
 }
 
-Point2i Scheduler::GetStripeInputRequirement(const Shape &ofmShape, Kernel *kernel, ArchResampling resampling)
+Point2i Scheduler::GetStripeInputRequirement(const Shape &ofmShape, Kernel *kernel, const Point2i &ifmStep, ArchResampling resampling)
 {
     int rounding;
     int upscale = _arch->UpscaleAndRounding(resampling, rounding);
-    int h = RequiredInputSize(ofmShape.Height(), kernel->Stride().y, kernel->DilatedWH().y, upscale, rounding);
-    int w = RequiredInputSize(ofmShape.Width(), kernel->Stride().x, kernel->DilatedWH().x, upscale, rounding);
+    auto stride = kernel->Stride() * ifmStep;
+    int h = RequiredInputSize(ofmShape.Height(), stride.y, kernel->DilatedWH().y, upscale, rounding);
+    int w = RequiredInputSize(ofmShape.Width(), stride.x, kernel->DilatedWH().x, upscale, rounding);
     return Point2i(w, h);
 }
 
@@ -591,7 +592,7 @@ std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(
     if ( ofmShape != op->OFM()->shape )
     {
         // Striped Op - Need to calculate stripe input volume
-        Point2i stripeInput = GetStripeInputRequirement(ofmShape, op->Kernel(), ifm->resamplingMode);
+        Point2i stripeInput = GetStripeInputRequirement(ofmShape, op->Kernel(), ifm->stepXY, ifm->resamplingMode);
 
         // Ensure stripe input volume is within the full IFM volume
         stripeInput = Point2i::Min(stripeInput, ifmShape.WH<int>());
