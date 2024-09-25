@@ -507,7 +507,7 @@ public:
         auto *local = Storage();
         for ( int i = 0; i <= _last; i++ )
         {
-            if ( local != 0 )
+            if ( local[i] != 0 )
             {
                 return false;
             }

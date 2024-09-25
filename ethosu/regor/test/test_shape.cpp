@@ -84,7 +84,7 @@ TEST_CASE("Dynamic shape allocation")
     {
         Shape a(nullptr, axes);
         REQUIRE(a.Size() == axes);
-        REQUIRE(!a.IsEmpty());
+        REQUIRE(a.IsEmpty());
         REQUIRE((a.Size() > MAX_STATIC_DIMS) == a.IsDynamic());
         REQUIRE((a.Size() <= MAX_STATIC_DIMS) == !a.IsDynamic());
     }
@@ -308,6 +308,18 @@ TEST_CASE("Copy, Move and Assignment")
     b = std::move(a);
     REQUIRE(b.Size() == 2);
     REQUIRE(!a.IsValid());
+}
+
+TEST_CASE("Is Empty")
+{
+    int axes = GENERATE(range(1, MAX_TEST_DIMS, 2));
+    std::vector<int> atemp = random_vector<int>(axes, 1, 32767);
+    std::vector<int> btemp = random_vector<int>(axes, 0, 0);
+    Shape a(atemp.data(), axes);
+    Shape b(btemp.data(), axes);
+
+    REQUIRE(!a.IsEmpty());
+    REQUIRE(b.IsEmpty());
 }
 
 TEST_CASE("Extract axes")
