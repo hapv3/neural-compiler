@@ -106,7 +106,6 @@ Please check the supported operator list for your chosen runtime for further inf
 | HARD_SWISH | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-hard_swish-constraints) |
 | LEAKY_RELU | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-leaky_relu-constraints) |
 | LOGISTIC | [Generic](#tflite-generic-constraints) |
-| MATMUL | [Generic](#tflite-generic-constraints) |
 | MAXIMUM | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-maximum-constraints) |
 | MAX_POOL_2D | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-max_pool_2d-constraints) |
 | MEAN | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-mean-constraints) |
