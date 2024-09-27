@@ -50,6 +50,7 @@ public:
     bool hasCPUWriters = false;
     bool isGraphInput = false;
     bool isGraphOutput = false;
+    bool isPersistent = false;
     int allocatedSize = -1;
     Address allocatedAddress = -1;
     bool needsLinearFormat = false;

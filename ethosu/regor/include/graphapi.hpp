@@ -207,6 +207,7 @@ struct IGraphBuilder
     // Set graph inputs/outputs
     virtual void AddInput(GraphTensor *graphTensor) = 0;
     virtual void AddOutput(GraphTensor *graphTensor) = 0;
+    virtual void AddPersistent(GraphTensor *graphTensor) = 0;
     // Connect operator inputs/outputs
     virtual void AddInput(GraphOperation *graphOp, GraphTensorUsage usage, GraphTensor *graphTensor) = 0;
     virtual void AddOutput(GraphOperation *graphOp, GraphTensorUsage usage, GraphTensor *graphTensor) = 0;

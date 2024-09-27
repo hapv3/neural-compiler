@@ -48,6 +48,8 @@ private:
     void SerialiseInputTensor(const Tensor *tensor, Address address);
 
     void SerialiseOutputTensor(const Tensor *tensor, Address address);
+
+    void SerialiseVariableTensor(const Tensor *tensor, Address address);
 };
 
 }  // namespace regor

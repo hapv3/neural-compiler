@@ -407,6 +407,7 @@ void SchedulerPacking::InitSchedulerTensor(SchedulerTensor *schedTensor, Tensor 
     schedTensor->bufferView = tensor->View();
     schedTensor->isGraphInput = graph->IsInput(tensor);
     schedTensor->isGraphOutput = graph->IsOutput(tensor);
+    schedTensor->isPersistent = graph->IsPersistent(tensor);
     schedTensor->uid = tensor->Uid();
 }
 

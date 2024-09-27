@@ -151,6 +151,12 @@ std::unique_ptr<Graph> GraphPacking::Process(std::vector<std::pair<Operation *, 
         graph->AddOutput(LookupNewTensor(graphOutput.get()));
     }
 
+    // Transfer persistent tensors from old graph
+    for ( const auto &tensor : srcGraph->Persistent() )
+    {
+        graph->AddPersistent(LookupNewTensor(tensor.get()));
+    }
+
     _oldTensorToNewTensor.clear();
 
     // Save the execution order of all ops in the new graph
@@ -174,7 +180,7 @@ void GraphPacking::ConnectTensors(Operation *op, const std::unique_ptr<Scheduler
         const bool isConsumedByUs = std::any_of(schedTensor->consumers.begin(), schedTensor->consumers.end(), isCurrentOp);
         const bool isProducedByUsOnly = std::all_of(schedTensor->producers.begin(), schedTensor->producers.end(), isCurrentOp);
 
-        if ( isConsumedByUs && isProducedByUsOnly && !schedTensor->isGraphInput )
+        if ( isConsumedByUs && isProducedByUsOnly && !schedTensor->isGraphInput && !schedTensor->isPersistent )
         {
             // Don't connect NPU internal tensors
             continue;
@@ -197,7 +203,7 @@ void GraphPacking::ConnectTensors(Operation *op, const std::unique_ptr<Scheduler
 
         const bool isProducedByUs = std::any_of(schedTensor->producers.begin(), schedTensor->producers.end(), isCurrentOp);
         const bool isConsumedByUsOnly = std::all_of(schedTensor->consumers.begin(), schedTensor->consumers.end(), isCurrentOp);
-        if ( isProducedByUs && isConsumedByUsOnly && !schedTensor->isGraphOutput )
+        if ( isProducedByUs && isConsumedByUsOnly && !schedTensor->isGraphOutput && !schedTensor->isPersistent )
         {
             // Don't connect NPU internal tensors
             continue;

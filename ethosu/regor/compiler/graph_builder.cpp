@@ -296,6 +296,12 @@ void GraphBuilder::AddOutput(GraphTensor *graphTensor)
     _outputs.push_back(tensor->shared_from_this());
 }
 
+void GraphBuilder::AddPersistent(GraphTensor *graphTensor)
+{
+    auto tensor = static_cast<Tensor *>(graphTensor);
+    _persistent.push_back(tensor->shared_from_this());
+}
+
 void GraphBuilder::AddInput(GraphOperation *graphOp, GraphTensorUsage usage, GraphTensor *graphTensor)
 {
     auto op = static_cast<Operation *>(graphOp);
@@ -550,7 +556,6 @@ void GraphBuilder::SetAxisStrides([[maybe_unused]] GraphTensor *graphTensor, [[m
 {
     assert(axisStrides == nullptr && "Not currently implemented");
 }
-
 
 void GraphBuilder::FreeUnconnected()
 {

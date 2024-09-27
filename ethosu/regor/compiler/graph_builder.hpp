@@ -58,6 +58,7 @@ protected:
     std::vector<std::shared_ptr<Tensor>> _tensors;
     std::vector<std::shared_ptr<Tensor>> _inputs;
     std::vector<std::shared_ptr<Tensor>> _outputs;
+    std::vector<std::shared_ptr<Tensor>> _persistent;
     std::vector<std::shared_ptr<Buffer>> _buffers;
 
 public:
@@ -74,6 +75,7 @@ public:
     // Set graph inputs/outputs
     void AddInput(GraphTensor *graphTensor) override;
     void AddOutput(GraphTensor *graphTensor) override;
+    void AddPersistent(GraphTensor *graphTensor) override;
     // Connect operator inputs/outputs
     void AddInput(GraphOperation *graphOp, GraphTensorUsage usage, GraphTensor *graphTensor) override;
     void AddOutput(GraphOperation *graphOp, GraphTensorUsage usage, GraphTensor *graphTensor) override;

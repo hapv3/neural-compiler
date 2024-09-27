@@ -109,7 +109,8 @@ typedef struct regor_raw_tensor_header_t
         RAW_TENSOR_TYPE_SCRATCH = 2,
         RAW_TENSOR_TYPE_SCRATCH_FAST = 3,
         RAW_TENSOR_TYPE_INPUT = 4,
-        RAW_TENSOR_TYPE_OUTPUT = 5
+        RAW_TENSOR_TYPE_OUTPUT = 5,
+        RAW_TENSOR_TYPE_VARIABLE = 6
     };
     enum raw_tensor_region_t
     {
@@ -157,6 +158,14 @@ typedef struct regor_raw_tensor_header_t
             uint8_t element_size;
             uint32_t shape[4];
         } output;
+        struct
+        {
+            uint8_t region;  // See raw_tensor_region
+            uint32_t size;
+            uint64_t address;
+            uint8_t element_size;
+            uint32_t shape[4];
+        } variable;
     } tensor;
 } regor_raw_tensor_header_t;
 

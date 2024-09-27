@@ -99,9 +99,9 @@ private:
     std::vector<flatbuffers::Offset<tflite::Tensor>> _serialised_tensors;
     std::vector<int32_t> _tensor_addresses;  // Keep as 32 bits - required by runtime
 
-    int SerialisedTensorIndex(const Tensor *tensor, const std::unordered_map<const Tensor *, Address> &addresses);
+    int SerialisedTensorIndex(const Tensor *tensor, const std::unordered_map<const Tensor *, Address> &addresses, const Graph &graph);
 
-    flatbuffers::Offset<tflite::Tensor> SerialiseTensor(const Tensor *tensor);
+    flatbuffers::Offset<tflite::Tensor> SerialiseTensor(const Tensor *tensor, const Graph &graph);
     flatbuffers::Offset<void> SerialiseOptions(const Operation *operation, OpType type);
     flatbuffers::Offset<tflite::Metadata> SerialiseTensorAddresses(int subgraph_index);
 

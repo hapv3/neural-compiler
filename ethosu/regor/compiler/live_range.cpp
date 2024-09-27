@@ -56,6 +56,8 @@ void LiveRangeGraph::ExtractLiveRangesFromCascades(const std::vector<std::unique
     auto startTime = _currentTime;
     // Live ranges containing graph output
     std::vector<LiveRange *> graphOutputRanges;
+    // Live ranges containing persistent tensors
+    std::vector<LiveRange *> persistentRanges;
     for ( const auto &schedOp : schedOps )
     {
         SchedulerOpInfo *opInfo = schedule->Cost(schedOp.get());
@@ -150,6 +152,11 @@ void LiveRangeGraph::ExtractLiveRangesFromCascades(const std::vector<std::unique
                 // Graph output must not be overwritten by following schedOps
                 graphOutputRanges.push_back(lr);
             }
+            if ( tens->isPersistent )
+            {
+                // Persistent tensors must be alive for the entire inference
+                persistentRanges.push_back(lr);
+            }
             lr->MarkUsage(timeToSet);
             if ( isRollingBuffer )
             {
@@ -166,8 +173,14 @@ void LiveRangeGraph::ExtractLiveRangesFromCascades(const std::vector<std::unique
     for ( auto lr : graphOutputRanges )
     {
         lr->MarkUsage(_currentTime, 1);
-        ++_currentTime;
     }
+
+    // Persistent tensor live-range is for entire inference
+    for ( auto lr : persistentRanges )
+    {
+        lr->MarkUsage(0, EndTime());
+    }
+    ++_currentTime;
 }
 
 LiveRange *LiveRangeGraph::GetOrCreateRange(SchedulerTensor *tens)
@@ -219,9 +232,10 @@ SchedulerTensor *LiveRangeGraph::ReusableIFM(const std::unique_ptr<SchedulerOper
             {
                 const auto ifmTens = ifmConn.tensor.get();
 
-                if ( IsIFM(usage) && !ifmTens->isGraphOutput && ifmConn.shape == ofmConn->shape &&
-                     ifmTens->format == ofmTens->format && ifmTens->dataType == ofmTens->dataType &&
-                     !ShouldBeIgnored(ifmTens, targetMemory) && ifmTens->consumers.size() == 1 && ofmTens->producers.size() == 1 )
+                if ( IsIFM(usage) && !ifmTens->isGraphOutput && !ifmTens->isPersistent && !ofmTens->isPersistent &&
+                     ifmConn.shape == ofmConn->shape && ifmTens->format == ofmTens->format &&
+                     ifmTens->dataType == ofmTens->dataType && !ShouldBeIgnored(ifmTens, targetMemory) &&
+                     ifmTens->consumers.size() == 1 && ofmTens->producers.size() == 1 )
                 {
                     reusableIfm = ifmTens;
                     break;

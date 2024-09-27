@@ -35,6 +35,7 @@ static constexpr int SCRATCH_REGION = 1;
 static constexpr int SCRATCH_FAST_REGION = 2;
 static constexpr int INPUT_REGION = SCRATCH_REGION;
 static constexpr int OUTPUT_REGION = SCRATCH_REGION;
+static constexpr int VARIABLE_REGION = SCRATCH_REGION;
 
 std::vector<std::pair<std::unique_ptr<const uint8_t[]>, size_t>> RawWriter::Serialise(
     const std::vector<std::unique_ptr<Graph>> &graphs, const std::vector<std::unordered_map<const Tensor *, Address>> &tensor_address_maps)
@@ -100,7 +101,12 @@ std::vector<std::pair<std::unique_ptr<const uint8_t[]>, size_t>> RawWriter::Seri
     for ( const auto &[tensorUsage, tensorConnection] : customNpuOp->Inputs().pairs() )
     {
         auto inputTensor = tensorConnection.tensor.get();
-        if ( IsIFM(tensorUsage) && !inputTensor->IsConstant() )
+        if ( graph->IsPersistent(inputTensor) )
+        {
+            // Serialise variable (input) tensor
+            SerialiseVariableTensor(inputTensor, tensor_address_map.at(inputTensor));
+        }
+        else if ( IsIFM(tensorUsage) && !inputTensor->IsConstant() )
         {
             // Serialise input tensor
             SerialiseInputTensor(inputTensor, tensor_address_map.at(inputTensor));
@@ -110,7 +116,12 @@ std::vector<std::pair<std::unique_ptr<const uint8_t[]>, size_t>> RawWriter::Seri
     for ( const auto &[tensorUsage, tensorConnection] : customNpuOp->Outputs().pairs() )
     {
         auto outputTensor = tensorConnection.tensor.get();
-        if ( IsOFM(tensorUsage) )
+        if ( graph->IsPersistent(outputTensor) )
+        {
+            // Serialise variable (output) tensor
+            SerialiseVariableTensor(outputTensor, tensor_address_map.at(outputTensor));
+        }
+        else if ( IsOFM(tensorUsage) )
         {
             // Serialise output tensor
             SerialiseOutputTensor(outputTensor, tensor_address_map.at(outputTensor));
@@ -247,9 +258,32 @@ void RawWriter::SerialiseOutputTensor(const Tensor *tensor, Address address)
     header.tensor.output.region = OUTPUT_REGION;
     header.tensor.output.element_size = DataTypeStorageSizeBytes(tensor->Type(), 1);
     auto shape = Shape::PadAxes(tensor->StorageShape(), 4, 1).ToList<uint32_t>();
-    std::copy(shape.begin(), shape.end(), header.tensor.input.shape);
+    std::copy(shape.begin(), shape.end(), header.tensor.output.shape);
     header.tensor.output.size = DataTypeStorageSizeBytes(tensor->Type(), tensor->StorageShape().Elements());
     header.tensor.output.address = address;
+
+    // Copy header
+    std::copy_n(reinterpret_cast<uint8_t *>(&header), sizeof(header), serialisedTensor.get());
+
+    _raw.emplace_back(std::move(serialisedTensor), serialisedTensorSize);
+}
+
+void RawWriter::SerialiseVariableTensor(const Tensor *tensor, Address address)
+{
+    assert(!tensor->IsConstant());
+
+    const size_t serialisedTensorSize = sizeof(regor_raw_tensor_header_t);
+    auto serialisedTensor = std::make_unique<uint8_t[]>(serialisedTensorSize);
+
+    // Initialise variable tensor header
+    regor_raw_tensor_header_t header;
+    header.type = regor_raw_tensor_header_t::RAW_TENSOR_TYPE_VARIABLE;
+    header.tensor.variable.region = VARIABLE_REGION;
+    header.tensor.variable.element_size = DataTypeStorageSizeBytes(tensor->Type(), 1);
+    auto shape = Shape::PadAxes(tensor->StorageShape(), 4, 1).ToList<uint32_t>();
+    std::copy(shape.begin(), shape.end(), header.tensor.variable.shape);
+    header.tensor.variable.size = DataTypeStorageSizeBytes(tensor->Type(), tensor->StorageShape().Elements());
+    header.tensor.variable.address = address;
 
     // Copy header
     std::copy_n(reinterpret_cast<uint8_t *>(&header), sizeof(header), serialisedTensor.get());

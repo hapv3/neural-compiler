@@ -176,6 +176,7 @@ void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::uniqu
     for ( const auto &tflite_subgraph : *tflite_subgraphs )
     {
         std::vector<std::shared_ptr<Tensor>> tensors;
+        std::vector<std::shared_ptr<Tensor>> persistent;
         std::vector<std::shared_ptr<Operation>> operations;
         assert(tflite_subgraph);
         auto tflite_tensors = tflite_subgraph->tensors();
@@ -188,7 +189,7 @@ void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::uniqu
         // Operators refer to tensors, so create tensors before operations
         for ( const auto &tflite_tensor : *tflite_tensors )
         {
-            tensors.push_back(ParseTensor(tflite_tensor, buffers.at(tflite_tensor->buffer()), tensorQuantization));
+            tensors.push_back(ParseTensor(tflite_tensor, buffers.at(tflite_tensor->buffer()), tensorQuantization, persistent));
         }
 
         // Create operations
@@ -287,6 +288,10 @@ void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::uniqu
         {
             graph->AddOutput(tensors.at(index));
         }
+        for ( auto &tensor : persistent )
+        {
+            graph->AddPersistent(tensor);
+        }
 
         // Find and disconnect any operations which do not precede a graph output. Otherwise they might persist beyond
         // the life of the Graph because the Graph destructor only disconnects operations which precede its outputs.
@@ -323,8 +328,8 @@ void TfLiteReader::LoadGraphs(const void *input, size_t size, std::vector<std::u
     LoadGraphs(LoadModel(input, size), graphs, optDb, constraints);
 }
 
-std::shared_ptr<Tensor> TfLiteReader::ParseTensor(const tflite::Tensor *tflite_tensor,
-    const std::shared_ptr<Buffer> &buffer, std::unordered_map<UniqueId, Quantization> &tensorQuantization)
+std::shared_ptr<Tensor> TfLiteReader::ParseTensor(const tflite::Tensor *tflite_tensor, const std::shared_ptr<Buffer> &buffer,
+    std::unordered_map<UniqueId, Quantization> &tensorQuantization, std::vector<std::shared_ptr<Tensor>> &persistent)
 {
     const std::string name = tflite_tensor->name() ? tflite_tensor->name()->str() : "<unnamed>";
     const DataType type = TfLiteMapping::TensorTypeToDataType(tflite_tensor->type());
@@ -387,10 +392,12 @@ std::shared_ptr<Tensor> TfLiteReader::ParseTensor(const tflite::Tensor *tflite_t
 
     if ( tflite_tensor->sparsity() )
     {
-        LOG_WARN("Tensor '{}' contains sparsity information, which is not supported and will be ignored.\n", name);
+        LOG_WARN("Tensor '{}' contains sparsity information, which is not supported and will be ignored.\n", name.c_str());
     }
 
     tensor->SetPassthrough(tflite_tensor);
+
+    if ( tflite_tensor->is_variable() ) persistent.push_back(tensor);
 
     return tensor;
 }

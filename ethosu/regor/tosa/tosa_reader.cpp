@@ -338,7 +338,6 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                 const auto type = TosaMapping::TensorTypeToDataType(tosa_tensor->type());
 
                 const bool variable = tosa_tensor->variable();
-                tosa_assert(!variable, "Variable tensors not supported");
                 const bool is_unranked = tosa_tensor->is_unranked();
                 tosa_assert(!is_unranked, "Unranked tensors not supported");
 
@@ -366,6 +365,7 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                 types[name] = type;
 
                 builder->SetAxisStrides(tensor, nullptr);  // Autocalculate
+                if ( variable ) builder->AddPersistent(tensor);
             }
 
             const auto &tosa_operators = SafeDeref(tosa_basicblock->operators());

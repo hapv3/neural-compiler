@@ -135,11 +135,11 @@ std::unique_ptr<const uint8_t[]> TfLiteWriter::Serialise(const std::vector<std::
             std::vector<int> inputs, outputs;
             for ( const auto &tensor : SortedInputTensors(operation, type) )
             {
-                inputs.push_back(SerialisedTensorIndex(tensor, tensor_address_map));
+                inputs.push_back(SerialisedTensorIndex(tensor, tensor_address_map, *graph));
             }
             for ( const auto &connection : operation->Outputs() )
             {
-                outputs.push_back(SerialisedTensorIndex(connection.tensor.get(), tensor_address_map));
+                outputs.push_back(SerialisedTensorIndex(connection.tensor.get(), tensor_address_map, *graph));
             }
 
             // Unused parameters are set to default or, if present in the input model, passed through unmodified.
@@ -184,11 +184,11 @@ std::unique_ptr<const uint8_t[]> TfLiteWriter::Serialise(const std::vector<std::
 
         for ( const auto &tensor : graph->Inputs() )
         {
-            inputs.push_back(SerialisedTensorIndex(tensor.get(), tensor_address_map));
+            inputs.push_back(SerialisedTensorIndex(tensor.get(), tensor_address_map, *graph));
         }
         for ( const auto &tensor : graph->Outputs() )
         {
-            outputs.push_back(SerialisedTensorIndex(tensor.get(), tensor_address_map));
+            outputs.push_back(SerialisedTensorIndex(tensor.get(), tensor_address_map, *graph));
         }
 
         _serialised_subgraphs.push_back(
@@ -255,7 +255,7 @@ std::vector<const Tensor *> TfLiteWriter::SortedInputTensors(const Operation *op
 }
 
 
-int TfLiteWriter::SerialisedTensorIndex(const Tensor *tensor, const std::unordered_map<const Tensor *, Address> &addresses)
+int TfLiteWriter::SerialisedTensorIndex(const Tensor *tensor, const std::unordered_map<const Tensor *, Address> &addresses, const Graph &graph)
 {
     if ( !tensor )  // Optional tensor not present
     {
@@ -269,7 +269,7 @@ int TfLiteWriter::SerialisedTensorIndex(const Tensor *tensor, const std::unorder
     {
         const int index = int(_serialised_tensors.size());
         _tensors[tensor] = index;
-        _serialised_tensors.push_back(SerialiseTensor(tensor));
+        _serialised_tensors.push_back(SerialiseTensor(tensor, graph));
 
         auto address = addresses.find(tensor);
         if ( address == addresses.end() )
@@ -286,7 +286,7 @@ int TfLiteWriter::SerialisedTensorIndex(const Tensor *tensor, const std::unorder
 }
 
 
-flatbuffers::Offset<tflite::Tensor> TfLiteWriter::SerialiseTensor(const Tensor *tensor)
+flatbuffers::Offset<tflite::Tensor> TfLiteWriter::SerialiseTensor(const Tensor *tensor, const Graph &graph)
 {
     auto tflite_shape = tensor->StorageShape().ToList<int>();
     std::vector<float> quant_min;
@@ -298,7 +298,7 @@ flatbuffers::Offset<tflite::Tensor> TfLiteWriter::SerialiseTensor(const Tensor *
     // Unused parameters are set to default or, if present in the input model, passed through unmodified
     tflite::QuantizationDetails custom_quantization = tflite::QuantizationDetails::NONE;
     flatbuffers::Offset<void> custom_quantization_details = 0;
-    bool is_variable = false;
+    bool is_variable = graph.IsPersistent(tensor);
     flatbuffers::Offset<tflite::SparsityParameters> sparsity = 0;
     std::vector<int> shape_signature;
 
