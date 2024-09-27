@@ -1691,11 +1691,17 @@ Operation *TFLiteGraphOptimiser::RewriteFullyConnectDynamic(Graph *const, Operat
         auto ifmShape = Shape::PadAxes(ifm->shape, 4, 1);
         auto ifm2Shape = Shape::PadAxes(ifm2->shape, 4, 1);
 
+        // Add NHCW Transpose op, to convert to GraphIR/TOSA Matmul representation
+        auto ifm2Reshaped = Shape(ifm2Shape.Batch(), ifm2Shape.Height(), ifm2Shape.Depth(), ifm2Shape.Width());
+        auto transposeOp = CreateTransposeForMatMul(ifm2->tensor, ifm2Reshaped);
+        RecordOptimisation(operation, transposeOp);
+        auto ifm2Tensor = transposeOp->Output(TensorUsage::OFM)->tensor;
+
         auto matMulOp = std::make_shared<Operation>(OpType::MatMul);
         matMulOp->SetRounding(ifm->tensor->Type() == DataType::Int16 ? RoundMode::NATURAL : RoundMode::DBL);
 
         matMulOp->ConnectInput(TensorUsage::IFM0, ifm->tensor).Set(ifmShape).Set(ifm->quantization).Set(ifm->slice).Set(ifm->transpose);
-        matMulOp->ConnectInput(TensorUsage::IFM1, ifm2->tensor).Set(ifm2Shape).Set(ifm2->quantization).Set(ifm2->slice).Set(ifm2->transpose);
+        matMulOp->ConnectInput(TensorUsage::IFM1, ifm2Tensor).Set(ifm2Reshaped).Set(ifm2->quantization).Set(ifm2->slice).Set(ifm2->transpose);
         matMulOp->ConnectOutput(TensorUsage::OFM, ofm->tensor).Set(ofmShape).Set(ofm->quantization).Set(ofm->slice).Set(ofm->transpose);
 
         RecordOptimisation(operation, matMulOp.get());

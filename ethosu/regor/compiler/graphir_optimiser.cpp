@@ -1021,7 +1021,7 @@ Operation *GraphIrOptimiser::RewriteMatmul(Graph *const graph, Operation *const 
             {
                 auto *producerIfm = producer->Input(TensorUsage::IFM0);
                 operation->ConnectInput(TensorUsage::IFM1, producerIfm->tensor).Set(ifm1Conn->quantization);
-                operation->Input(TensorUsage::IFM1)->shape = ReshapeFunc(operation->Input(TensorUsage::IFM1)->shape);
+                operation->Input(TensorUsage::IFM1)->shape = ReshapeFunc(producerIfm->shape);
                 producer->Disconnect();
                 return returnOp;
             }
