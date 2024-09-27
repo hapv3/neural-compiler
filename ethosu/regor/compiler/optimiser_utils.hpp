@@ -34,7 +34,6 @@ bool IsTensorInVector(const std::vector<std::shared_ptr<Tensor>> &tensorVec, con
 // Will make a clone of ifm as ofm  and connects any other consumers of the ifm to it.
 std::shared_ptr<Operation> InsertCopyOpAfterTensor(std::shared_ptr<Tensor> const &ifm, const Quantization &quantization);
 
-
 // Connects output to operations in given list. Will not replace connection shape.
 // Parameters:
 // - producerList: List of producers.
@@ -51,5 +50,13 @@ void ReplaceProducerOutput(std::vector<std::shared_ptr<Operation>> producerList,
 // - newTensor: The new input tensor to connect.
 void ReplaceConsumerInput(const Operation *const exemptOperation, std::vector<std::shared_ptr<Operation>> consumerList,
     const Tensor *const tensorToReplace, std::shared_ptr<Tensor> newTensor);
+
+// Convert a constant Tensor to a Shape
+// Parameters:
+// - tensor: Tensor to convert to shape.
+// - size: Number of elements to read from tensor.
+// - stride: Number of elements to step after each read.
+// - offset:  Number of elements to step before first read.
+Shape TensorToShape(Tensor *tensor, int size, int stride, int offset);
 
 }  // namespace regor::GraphOptimisation

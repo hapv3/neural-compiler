@@ -119,6 +119,7 @@ const TensorConnection *GetTensorForArgument(const Operation *op, const Argument
         {"scale", TensorUsage::Params},
         {"offset", TensorUsage::Params1},
         {"border", TensorUsage::Params2},
+        {"padding", TensorUsage::Params},
     };
 
     switch ( argument.category )

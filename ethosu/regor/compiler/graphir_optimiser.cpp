@@ -412,6 +412,88 @@ Operation *GraphIrOptimiser::RewriteRescale(Graph *const, Operation *const opera
     return returnOp;
 }
 
+// Rewrite TOSA PAD to number of MemoryCopy ops
+Operation *GraphIrOptimiser::RewritePad(Graph *const, Operation *const operation)
+{
+    Operation *returnOp = operation;
+    OpType opType = operation->Type();
+    if ( opType == OpType::Pad )
+    {
+        const auto &ifmConn = operation->Input(TensorUsage::IFM0);
+        const auto &ofmConn = operation->Output(TensorUsage::OFM);
+        const auto &paramsConn = operation->Input(TensorUsage::Params);
+        const auto &attr = operation->Attribute<pad_attr_t>();
+        const double pad_const = attr->pad_const;
+        const int not_pad_const = ~int(pad_const);
+
+        // Decode the padding before and after each dimension as two shapes
+        Shape paddingBefore = TensorToShape(paramsConn->tensor.get(), paramsConn->shape.Width(), 2, 0);
+        Shape paddingAfter = TensorToShape(paramsConn->tensor.get(), paramsConn->shape.Width(), 2, 1);
+
+        auto Reshape = [](Shape &shape, int axis) -> Shape
+        {
+            int sizeOfAxisToReduce = shape[axis];
+            int sizeOfAxesBefore = 1;
+            for ( int i = 0; i < axis; i++ )
+                sizeOfAxesBefore *= shape[i];
+            int sizeOfAxesAfter = 1;
+            for ( int i = axis + 1; i < shape.Size(); i++ )
+                sizeOfAxesAfter *= shape[i];
+            return Shape(sizeOfAxesBefore, sizeOfAxisToReduce, sizeOfAxesAfter);
+        };
+
+        for ( int axis = 0; axis < ifmConn->shape.Size(); axis++ )
+        {
+            // Reshape the IFM/OFM/padding to a 3D shape (HWC) where W dimension is the dimension to pad
+            Shape newIfmShape = Reshape(ifmConn->shape, axis);
+            Shape newOfmShape = Reshape(ofmConn->shape, axis);
+            Shape newPaddingBefore = Reshape(paddingBefore, axis);
+
+            const int padBefore = paddingBefore[axis];
+            if ( padBefore )
+            {
+                Shape newOfmSliceOffset = newPaddingBefore.WithWidth(0);
+                Shape newOfmSliceShape = newOfmShape.WithWidth(padBefore);
+
+                // Fill padded elements with pad_const
+                auto fillOp = std::make_shared<Operation>(OpType::Not);
+                fillOp->SetRounding(RoundMode::NATURAL);
+                fillOp->ConnectInput(TensorUsage::IFM, CreateConstTensor("pad_const", ifmConn->tensor->Type(), not_pad_const));
+                fillOp->CopyOutput(TensorUsage::OFM, *ofmConn);
+                fillOp->Output(TensorUsage::OFM)->Set(newOfmShape).Set({newOfmSliceOffset, newOfmSliceShape});
+                RecordOptimisation(operation, fillOp.get());
+            }
+
+            const int padAfter = paddingAfter[axis];
+            if ( padAfter )
+            {
+                Shape newOfmSliceOffset = newPaddingBefore.WithWidth(padBefore + newIfmShape.Width());
+                Shape newOfmSliceShape = newOfmShape.WithWidth(padAfter);
+
+                // Fill padded elements with pad_const
+                auto fillOp = std::make_shared<Operation>(OpType::Not);
+                fillOp->SetRounding(RoundMode::NATURAL);
+                fillOp->ConnectInput(TensorUsage::IFM, CreateConstTensor("pad_const", ifmConn->tensor->Type(), not_pad_const));
+                fillOp->CopyOutput(TensorUsage::OFM, *ofmConn);
+                fillOp->Output(TensorUsage::OFM)->Set(newOfmShape).Set({newOfmSliceOffset, newOfmSliceShape});
+                RecordOptimisation(operation, fillOp.get());
+            }
+        }
+
+        // Copy original IFM to OFM
+        auto copyOp = std::make_shared<Operation>(OpType::MemoryCopy);
+        copyOp->SetRounding(RoundMode::NATURAL);
+        copyOp->CopyInput(TensorUsage::IFM, *ifmConn);
+        copyOp->CopyOutput(TensorUsage::OFM, *ofmConn);
+        copyOp->Output(TensorUsage::OFM)->Set({paddingBefore, ifmConn->shape});
+        RecordOptimisation(operation, copyOp.get());
+        returnOp = copyOp.get();
+
+        // Remove original pad
+        operation->Disconnect();
+    }
+    return returnOp;
+}
 
 /// @brief Moves Rescale operations to the output of the previous operation
 ///        or the input of the next operation when possible.

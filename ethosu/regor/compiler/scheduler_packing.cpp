@@ -501,7 +501,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> SchedulerPacking::DecomposeSche
             result = DecomposeMatmul(_arch, std::move(op));
             break;
         default:
-            if ( DecomposeAsElementwise(op->Type()) )
+            if ( DecomposeAsElementwise(op->Type()) || op->Type() == OpType::MemoryCopy )
             {
                 result = DecomposeElementwise(_arch, std::move(op));
             }

@@ -49,6 +49,7 @@ private:
     Operation *RewriteFullyConnected(Graph *const graph, Operation *const operation);
     Operation *FixupPoolStrides(Graph *const, Operation *const operation);
     Operation *RewriteRescale(Graph *const graph, Operation *const operation);
+    Operation *RewritePad(Graph *const graph, Operation *const operation);
     Operation *FuseRescale(Graph *const graph, Operation *const operation);
     Operation *RewriteTable(Graph *const graph, Operation *const operation);
     Operation *RewriteCast(Graph *const graph, Operation *const operation);
@@ -101,6 +102,7 @@ private:
                 &GraphIrOptimiser::RewriteFullyConnected,
                 &GraphIrOptimiser::FixupPoolStrides,
                 &GraphIrOptimiser::RewriteRescale,
+                &GraphIrOptimiser::RewritePad,
                 &GraphIrOptimiser::RewriteTable,
                 &GraphIrOptimiser::RewriteCast,
                 &GraphIrOptimiser::RewriteConcat,

@@ -44,6 +44,7 @@ DynamicRef CreateAttribute(uint32_t reducedHash)
         CASE_MAKE_ATTR_INSTANCE(leaky_relu_attr_t);
         CASE_MAKE_ATTR_INSTANCE(mul_attr_t);
         CASE_MAKE_ATTR_INSTANCE(pack_unpack_attr_t);
+        CASE_MAKE_ATTR_INSTANCE(pad_attr_t);
         CASE_MAKE_ATTR_INSTANCE(pooling_attr_t);
         CASE_MAKE_ATTR_INSTANCE(rescale_attr_t);
         CASE_MAKE_ATTR_INSTANCE(resize_attr_t);

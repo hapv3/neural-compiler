@@ -105,6 +105,8 @@ enum class OpAttr : uint32_t
     // CUSTOM
     CUSTOM_NAME = GRAPHAPI_MAKE_ATTR(custom, string, 0),
     CUSTOM_DOMAIN = GRAPHAPI_MAKE_ATTR(custom, string, 1),
+    // PAD
+    PAD_PAD_CONST = GRAPHAPI_MAKE_ATTR(pad, double, 0),
 };
 
 #endif

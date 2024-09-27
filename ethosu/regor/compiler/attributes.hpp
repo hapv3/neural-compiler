@@ -250,6 +250,14 @@ struct pack_unpack_attr_t
     END_FIELD_TABLE()
 };
 
+struct pad_attr_t
+{
+    double pad_const;
+    BEGIN_FIELD_TABLE(pad_attr_t)
+        ATTR_FIELD(pad_const, 0)
+    END_FIELD_TABLE()
+};
+
 DynamicRef CreateAttribute(uint32_t reducedhash);
 
 }  // namespace regor

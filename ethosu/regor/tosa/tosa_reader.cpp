@@ -152,7 +152,8 @@ double ToDouble<GraphApi::GraphDataType::BFloat16, const ::flatbuffers::Vector<u
 }
 
 template<typename ALLOC_TYPE = void, typename FB_TYPE>
-GraphApi::GraphTensor *CreateParamTensor(const ::flatbuffers::Vector<FB_TYPE> *attr, GraphApi::IGraphBuilder *builder, const std::string &name)
+GraphApi::GraphTensor *CreateParamTensor(const ::flatbuffers::Vector<FB_TYPE> *attr, GraphApi::IGraphBuilder *builder,
+    const std::string &name, GraphApi::GraphShape *shape = nullptr)
 {
     using ACTUAL_ALLOC_TYPE = std::conditional_t<std::is_same_v<ALLOC_TYPE, void>, FB_TYPE, ALLOC_TYPE>;
 
@@ -168,7 +169,7 @@ GraphApi::GraphTensor *CreateParamTensor(const ::flatbuffers::Vector<FB_TYPE> *a
         std::vector<ACTUAL_ALLOC_TYPE> vbuf(buf.begin(), buf.end());
         buffer = builder->CreateBuffer(vbuf.size() * sizeof(vbuf[0]), GraphApi::BufferMapping::Allocate, vbuf.data());
     }
-    GraphApi::GraphShape tosaShape = {1, {int(buf.size())}};
+    GraphApi::GraphShape tosaShape = shape ? *shape : GraphApi::GraphShape{1, {int(buf.size())}};
     GraphApi::GraphDataType type;
     if constexpr ( std::is_same_v<ACTUAL_ALLOC_TYPE, bool> ) type = GraphApi::GraphDataType::Bool8;
     else if constexpr ( std::is_same_v<ACTUAL_ALLOC_TYPE, int8_t> ) type = GraphApi::GraphDataType::Int8;
@@ -520,56 +521,6 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         kernel.dilationYXZ[2] = 1;
                     }
                     break;
-                    case tosaFb::Op::PAD:
-                    {
-                        kernelPtr = &kernel;
-                        const auto &attr = TosaAttr<tosaFb::Op::PAD>::Get(tosa_operator);
-                        tosa_assert(input_tensors.size() > 0);
-                        auto type = types.at(input_tensors[0]);
-                        double padValue = 0;
-                        switch ( type )
-                        {
-                            case GraphApi::GraphDataType::UInt8:
-                                [[fallthrough]];
-                            case GraphApi::GraphDataType::Int8:
-                                [[fallthrough]];
-                            case GraphApi::GraphDataType::UInt16:
-                                [[fallthrough]];
-                            case GraphApi::GraphDataType::Int16:
-                                [[fallthrough]];
-                            case GraphApi::GraphDataType::Int32:
-                                [[fallthrough]];
-                            case GraphApi::GraphDataType::Bool8:
-                                [[fallthrough]];
-                            case GraphApi::GraphDataType::Int4Packed8:
-                                padValue = ToDouble(attr.pad_const_int());
-                                break;
-                            case GraphApi::GraphDataType::Int48:
-                            {
-                                padValue = ToDouble<GraphApi::GraphDataType::Int48>(attr.pad_const_fp());
-                            }
-                            break;
-                            case GraphApi::GraphDataType::Float32:
-                            {
-                                padValue = ToDouble<GraphApi::GraphDataType::Float32>(attr.pad_const_fp());
-                            }
-                            break;
-                            case GraphApi::GraphDataType::Float16:
-                            {
-                                padValue = ToDouble<GraphApi::GraphDataType::Float16>(attr.pad_const_fp());
-                            }
-                            break;
-                            case GraphApi::GraphDataType::BFloat16:
-                            {
-                                padValue = ToDouble<GraphApi::GraphDataType::BFloat16>(attr.pad_const_fp());
-                            }
-                            break;
-                            default:
-                                tosa_assert(false, "Unexpected data type for pad_value");
-                        }
-                        kernel.padValue = padValue;
-                    }
-                    break;
                     default:
                         break;
                 }
@@ -792,10 +743,40 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                     case tosaFb::Op::PAD:
                     {
                         const auto &tosa_attr = TosaAttr<tosaFb::Op::PAD>::Get(tosa_operator);
+                        double pad_const = tosa_attr.pad_const_int();
+                        if ( tosa_attr.pad_const_fp() != nullptr )
+                        {
+                            tosa_assert(input_tensors.size() > 0);
+                            auto type = types.at(input_tensors[0]);
+                            switch ( type )
+                            {
+                                case GraphApi::GraphDataType::Int48:
+                                    pad_const = ToDouble<GraphApi::GraphDataType::Int48>(tosa_attr.pad_const_fp());
+                                    break;
+                                case GraphApi::GraphDataType::Float32:
+                                    pad_const = ToDouble<GraphApi::GraphDataType::Float32>(tosa_attr.pad_const_fp());
+                                    break;
+                                case GraphApi::GraphDataType::Float16:
+                                    pad_const = ToDouble<GraphApi::GraphDataType::Float16>(tosa_attr.pad_const_fp());
+                                    break;
+                                case GraphApi::GraphDataType::BFloat16:
+                                    pad_const = ToDouble<GraphApi::GraphDataType::BFloat16>(tosa_attr.pad_const_fp());
+                                    break;
+                                default:  // empty
+                                    break;
+                            }
+                        }
+                        builder_assert(builder->Set(op, OpAttr::PAD_PAD_CONST, pad_const), "Failed to set PAD_CONST attribute on PAD");
+
+                        // If no input tensors for padding, convert padding attribute to param tensor
                         if ( input_tensors.size() == 1 )
                         {
+                            // Padding tensor has 2D shape, but padding attribute has 1D shape
+                            Shape shape(SafeDeref(tosa_attr.padding()).size() / 2, 2);
+                            GraphApi::GraphShape tosaShape;
+                            tosaShape.count = shape.ToNHWC(tosaShape.axisNHWC, std::size(tosaShape.axisNHWC));
                             std::string name = "padding_param" + std::to_string(tosa_op_index);
-                            tensors[name] = CreateParamTensor(tosa_attr.padding(), builder, name);
+                            tensors[name] = CreateParamTensor(tosa_attr.padding(), builder, name, &tosaShape);
                             input_tensors.push_back(std::move(name));
                         }
                     }
