@@ -224,23 +224,26 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeLeadingDimensio
         newIfm2Slice = ifm2Conn->slice;
         newIfm2Slice.shape[axis] = 1;
     }
-    auto dimSize = ofmConn->shape[axis];
+    auto dimSize = ofmConn->SliceShape()[axis];
     for ( int i = 0; i < dimSize; i++ )
     {
         std::unique_ptr<SchedulerOperation> subOp = MakeSubOperation(op.get());
-        assert(i < ifmConn->shape[axis] || ifmConn->shape[axis] == 1);  // Broadcast dimension
-        newIfmSlice.offset[axis] = std::min(i, ifmConn->shape[axis] - 1);
-        newOfmSlice.offset[axis] = i;
+        assert(i < ifmConn->SliceShape()[axis] || ifmConn->SliceShape()[axis] == 1);  // Broadcast dimension
         if ( ifm2Conn != nullptr )
         {
-            assert(i < ifm2Conn->shape[axis] || ifm2Conn->shape[axis] == 1);  // Broadcast dimension
-            newIfm2Slice.offset[axis] = std::min(i, ifm2Conn->shape[axis] - 1);
+            assert(i < ifm2Conn->SliceShape()[axis] || ifm2Conn->SliceShape()[axis] == 1);  // Broadcast dimension
         }
+        assert(newIfmSlice.shape + newIfmSlice.offset <= ifmConn->shape);
+        assert(newOfmSlice.shape + newOfmSlice.offset <= ofmConn->shape);
         subOp->Input(TensorUsage::IFM)->slice = newIfmSlice;
         subOp->Output(TensorUsage::OFM)->slice = newOfmSlice;
+        newIfmSlice.offset[axis] = std::min(newIfmSlice.offset[axis] + 1, ifmConn->shape[axis] - 1);
+        newOfmSlice.offset[axis] = std::min(newOfmSlice.offset[axis] + 1, ofmConn->shape[axis] - 1);
         if ( ifm2Conn != nullptr )
         {
+            assert(newIfm2Slice.shape + newIfm2Slice.offset <= ifm2Conn->shape);
             subOp->Input(TensorUsage::IFM1)->slice = newIfm2Slice;
+            newIfm2Slice.offset[axis] = std::min(newIfm2Slice.offset[axis] + 1, ifm2Conn->shape[axis] - 1);
         }
         auto subOps = (dimensions > 0) ? DecomposeLeadingDimensions(dimensions, arch, std::move(subOp), doDecompose) : doDecompose(arch, std::move(subOp));
         result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));

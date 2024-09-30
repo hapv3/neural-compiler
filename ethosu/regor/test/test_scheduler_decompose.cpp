@@ -105,9 +105,36 @@ TEST_CASE("test_scheduler_decompose")
             REQUIRE(ofmSlice.offset == Shape(0, i, 0, 0));
         }
     }
+    SECTION("Decompose matmul in height dimension with input/output slice")
+    {
+        Shape ifmShape(1, 100, 3, 2);  // ifm2 is transposed by graphIR optimiser to same shape as ifm1
+        Shape ofmShape(1, 100, 3, 3);
+        Shape ifmSliceOffset(0, 1, 0, 0);
+        Shape ifmSliceShape(1, 98, 3, 2);
+        Shape ofmSliceOffset(0, 1, 0, 0);
+        Shape ofmSliceShape(1, 98, 3, 3);
+        auto op = CreateMatmul(ifmShape, ofmShape);
+        op->Input(TensorUsage::IFM0)->slice = {ifmSliceOffset, ifmSliceShape};
+        op->Input(TensorUsage::IFM1)->slice = {ifmSliceOffset, ifmSliceShape};
+        op->Output(TensorUsage::OFM)->slice = {ofmSliceOffset, ofmSliceShape};
+        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeMatmul(nullptr, std::move(op));
+        REQUIRE(decomposedOps.size() == 98);
+        for ( size_t i = 0; i < decomposedOps.size(); i++ )
+        {
+            auto &subOp = decomposedOps[i];
+            auto &ifmSlice = subOp->Input(TensorUsage::IFM0)->slice;
+            auto &ifm2Slice = subOp->Input(TensorUsage::IFM1)->slice;
+            auto &ofmSlice = subOp->Output(TensorUsage::OFM)->slice;
+            REQUIRE(ifmSlice.shape == ifmSliceShape.WithHeight(1));
+            REQUIRE(ifm2Slice.shape == ifmSliceShape.WithHeight(1));
+            REQUIRE(ofmSlice.shape == ofmSliceShape.WithHeight(1));
+            REQUIRE(ifmSlice.offset == Shape(0, i, 0, 0) + ifmSliceOffset);
+            REQUIRE(ifm2Slice.offset == Shape(0, i, 0, 0) + ifmSliceOffset);
+            REQUIRE(ofmSlice.offset == Shape(0, i, 0, 0) + ofmSliceOffset);
+        }
+    }
     SECTION("Decompose matmul in batch dimension")
     {
-
         Shape ifmShape(100, 1, 3, 2);
         Shape ofmShape(100, 1, 3, 3);
         auto op = CreateMatmul(ifmShape, ofmShape);
@@ -127,9 +154,36 @@ TEST_CASE("test_scheduler_decompose")
             REQUIRE(ofmSlice.offset == Shape(i, 0, 0, 0));
         }
     }
+    SECTION("Decompose matmul in batch dimension with input/output slice")
+    {
+        Shape ifmShape(100, 1, 3, 2);
+        Shape ofmShape(100, 1, 3, 3);
+        Shape ifmSliceOffset(1, 0, 0, 0);
+        Shape ifmSliceShape(98, 1, 3, 2);
+        Shape ofmSliceOffset(1, 0, 0, 0);
+        Shape ofmSliceShape(98, 1, 3, 3);
+        auto op = CreateMatmul(ifmShape, ofmShape);
+        op->Input(TensorUsage::IFM0)->slice = {ifmSliceOffset, ifmSliceShape};
+        op->Input(TensorUsage::IFM1)->slice = {ifmSliceOffset, ifmSliceShape};
+        op->Output(TensorUsage::OFM)->slice = {ofmSliceOffset, ofmSliceShape};
+        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeMatmul(nullptr, std::move(op));
+        REQUIRE(decomposedOps.size() == 98);
+        for ( size_t i = 0; i < decomposedOps.size(); i++ )
+        {
+            auto &subOp = decomposedOps[i];
+            auto &ifmSlice = subOp->Input(TensorUsage::IFM0)->slice;
+            auto &ifm2Slice = subOp->Input(TensorUsage::IFM1)->slice;
+            auto &ofmSlice = subOp->Output(TensorUsage::OFM)->slice;
+            REQUIRE(ifmSlice.shape == ifmSliceShape.WithBatch(1));
+            REQUIRE(ifm2Slice.shape == ifmSliceShape.WithBatch(1));
+            REQUIRE(ofmSlice.shape == ofmSliceShape.WithBatch(1));
+            REQUIRE(ifmSlice.offset == Shape(i, 0, 0, 0) + ifmSliceOffset);
+            REQUIRE(ifm2Slice.offset == Shape(i, 0, 0, 0) + ifmSliceOffset);
+            REQUIRE(ofmSlice.offset == Shape(i, 0, 0, 0) + ofmSliceOffset);
+        }
+    }
     SECTION("Decompose matmul in height and batch")
     {
-
         Shape ifmShape(10, 10, 3, 2);
         Shape ofmShape(10, 10, 3, 3);
         auto op = CreateMatmul(ifmShape, ofmShape);
@@ -153,6 +207,40 @@ TEST_CASE("test_scheduler_decompose")
             REQUIRE(ifm2Slice.offset.Batch() == expectedBatchOffset);
             REQUIRE(ofmSlice.offset.Height() == expectedHeightOffset);
             REQUIRE(ofmSlice.offset.Batch() == expectedBatchOffset);
+        }
+    }
+    SECTION("Decompose matmul in height and batch with input/output slice")
+    {
+        Shape ifmShape(10, 10, 3, 2);
+        Shape ofmShape(10, 10, 3, 3);
+        Shape ifmSliceOffset(1, 1, 0, 0);
+        Shape ifmSliceShape(8, 8, 3, 2);
+        Shape ofmSliceOffset(1, 1, 0, 0);
+        Shape ofmSliceShape(8, 8, 3, 3);
+        auto op = CreateMatmul(ifmShape, ofmShape);
+        op->Input(TensorUsage::IFM0)->slice = {ifmSliceOffset, ifmSliceShape};
+        op->Input(TensorUsage::IFM1)->slice = {ifmSliceOffset, ifmSliceShape};
+        op->Output(TensorUsage::OFM)->slice = {ofmSliceOffset, ofmSliceShape};
+        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeMatmul(nullptr, std::move(op));
+        REQUIRE(decomposedOps.size() == 64);
+        for ( size_t i = 0; i < decomposedOps.size(); i++ )
+        {
+            auto &subOp = decomposedOps[i];
+            auto &ifmSlice = subOp->Input(TensorUsage::IFM0)->slice;
+            auto &ifm2Slice = subOp->Input(TensorUsage::IFM1)->slice;
+            auto &ofmSlice = subOp->Output(TensorUsage::OFM)->slice;
+            REQUIRE(ifmSlice.shape == ifmSliceShape.WithHeight(1).WithBatch(1));
+            REQUIRE(ifm2Slice.shape == ifmSliceShape.WithHeight(1).WithBatch(1));
+            REQUIRE(ofmSlice.shape == ofmSliceShape.WithHeight(1).WithBatch(1));
+
+            int expectedHeightOffset = i / 8;
+            int expectedBatchOffset = i % 8;
+            REQUIRE(ifmSlice.offset.Height() == ifmSliceOffset.Height() + expectedHeightOffset);
+            REQUIRE(ifmSlice.offset.Batch() == ifmSliceOffset.Height() + expectedBatchOffset);
+            REQUIRE(ifm2Slice.offset.Height() == ifmSliceOffset.Height() + expectedHeightOffset);
+            REQUIRE(ifm2Slice.offset.Batch() == ifmSliceOffset.Height() + expectedBatchOffset);
+            REQUIRE(ofmSlice.offset.Height() == ofmSliceOffset.Height() + expectedHeightOffset);
+            REQUIRE(ofmSlice.offset.Batch() == ofmSliceOffset.Height() + expectedBatchOffset);
         }
     }
     SECTION("Decompose valid matmul")
