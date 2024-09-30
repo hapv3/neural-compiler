@@ -853,11 +853,10 @@ Operation *GraphIrOptimiser::RewriteSlice(Graph *const graph, Operation *const o
         const Shape size = attr->size;
 
         // Replace SLICE with a memory copy with IFM slice
-        auto copyOp = std::make_shared<Operation>(OpType::Add);
+        auto copyOp = std::make_shared<Operation>(OpType::MemoryCopy);
         copyOp->SetRounding(RoundMode::NATURAL);
-        copyOp->CopyInput(TensorUsage::IFM0, *ifmConn);
-        copyOp->Input(TensorUsage::IFM0)->Set({begin, size});
-        copyOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_zero", ifmConn->tensor->Type(), 0));
+        copyOp->CopyInput(TensorUsage::IFM, *ifmConn);
+        copyOp->Input(TensorUsage::IFM)->Set({begin, size});
         copyOp->CopyOutput(TensorUsage::OFM, *ofmConn);
         RecordOptimisation(operation, copyOp.get());
         returnOp = copyOp.get();
