@@ -138,7 +138,7 @@ union HLCParameters
 
     struct
     {
-        int axis;
+        AxisMask axis;
     } argmax;
 
     struct

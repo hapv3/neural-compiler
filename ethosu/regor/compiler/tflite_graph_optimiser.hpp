@@ -130,7 +130,6 @@ private:
     Operation *ConvertScatter(Graph *const graph, Operation *const operation);
     Operation *ConvertResize(Graph *const graph, Operation *const operation);
     Operation *ConvertTranspose(Graph *const graph, Operation *const operation);
-    Operation *ConvertArgMax(Graph *const graph, Operation *const operation);
     Operation *ConvertReduceMinMaxAnyAll(Graph *const graph, Operation *const operation);
 
     // RewriteBatchMatMul must be called before rewrite of transpose
@@ -245,7 +244,6 @@ public:
                 &TFLiteGraphOptimiser::FixupDilationGT2,
                 &TFLiteGraphOptimiser::FixupBias,
                 &TFLiteGraphOptimiser::RewriteDepthwise,
-                &TFLiteGraphOptimiser::ConvertArgMax,
                 &TFLiteGraphOptimiser::ConvertReduceMinMaxAnyAll,
                 &TFLiteGraphOptimiser::ConvertExpToLUT,
                 &TFLiteGraphOptimiser::ConvertTanhSigmoidToLUT,

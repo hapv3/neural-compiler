@@ -511,6 +511,8 @@ std::vector<std::unique_ptr<SchedulerOperation>> SchedulerPacking::DecomposeSche
         case OpType::MatMul:
             result = DecomposeMatmul(_arch, std::move(op));
             break;
+        case OpType::ArgMax:
+            [[fallthrough]];
         case OpType::ReduceSum:
             [[fallthrough]];
         case OpType::ReduceMin:

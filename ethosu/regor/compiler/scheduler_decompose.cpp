@@ -149,6 +149,7 @@ bool CanDecompose(Architecture *, const SchedulerOperation *schedOp)
     if ( schedOp->Type() == OpType::ReduceMax ) return true;
     if ( schedOp->Type() == OpType::ReduceAny ) return true;
     if ( schedOp->Type() == OpType::ReduceAll ) return true;
+    if ( schedOp->Type() == OpType::ArgMax ) return true;
     return false;
 }
 

@@ -407,9 +407,12 @@ static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, 
         break;
         case OpType::ArgMax:
         {
+            // Convert attr->axis to AxisMask
             assert(lutConn == nullptr);
-            const auto *axis = schedOp->Attribute<axis_attr_t>();
-            op->parameters.argmax.axis = axis->axis;
+            const auto *attr = schedOp->Attribute<axis_attr_t>();
+            int ifmRank = schedOp->Input(TensorUsage::IFM)->SliceShape().Size();
+            int axis3D = 3 - ifmRank + attr->axis;
+            op->parameters.argmax.axis = axis3D == 0 ? AxisMask::AxisY : AxisMask::AxisX;
         }
         break;
         case OpType::Tile:

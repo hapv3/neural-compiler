@@ -1359,6 +1359,44 @@ Operation *GraphIrOptimiser::ReshapeReverse(Graph *const graph, Operation *const
     return returnOp;
 }
 
+// Reshape ArgMax input/outputs to 3D-tensors where W is the reduced axis
+Operation *GraphIrOptimiser::RewriteArgmax(Graph *const graph, Operation *const operation)
+{
+    Operation *returnOp = operation;
+    const OpType opType = operation->Type();
+    if ( opType != OpType::ArgMax )
+    {
+        return returnOp;
+    }
+    auto attr = operation->Attribute<axis_attr_t>();
+    auto *ifmConn = operation->Input(TensorUsage::IFM);
+    auto *ofmConn = operation->Output(TensorUsage::OFM);
+    auto &ifmShape = ifmConn->shape;
+    auto &ofmShape = ofmConn->shape;
+    int ifmRank = ifmConn->shape.Size();
+    int axis = attr->axis;
+
+    // Extend OfmShape to match ifmRank
+    if ( ofmShape.Size() != ifmShape.Size() )
+    {
+        ofmShape = ofmShape.Insert(attr->axis, 1);
+        assert(ofmShape.Size() == ifmShape.Size());
+    }
+
+    // Reshape IFM and OFM to 3D-tensors where W is the reduced axis
+    if ( attr->axis != 1 || ifmRank != 3 )
+    {
+        ifmShape = ReshapeTo3D(ifmShape, axis);
+        ofmShape = ifmShape.WithWidth(1);
+        attr->axis = 1;
+    }
+    operation->SetRounding(RoundMode::TRUNCATE_TO_LOWER);
+    // Update kernel based on reshapes
+    std::unique_ptr<Kernel> kernel = std::make_unique<Kernel>(Point2i(ifmShape[1], 1), Point2i(1, 1), Point2i(1, 1));
+    operation->SetKernel(std::move(kernel));
+    return returnOp;
+}
+
 // Move Split/slice op to consumer
 void GraphIrOptimiser::MoveToConsumer(const Operation *const operation, Operation *const cons)
 {

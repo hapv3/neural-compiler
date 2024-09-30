@@ -639,6 +639,31 @@ void TfLiteReader::ParseOperatorOptions(const std::shared_ptr<Operation> &operat
         }
         break;
 
+        case tflite::BuiltinOptions::ArgMaxOptions:
+        {
+            // Create axis attribute from parameter-tensor
+            auto *ifmConn = operation->Input(TensorUsage::IFM0);
+            auto *params = operation->Input(TensorUsage::Params);
+            assert(ifmConn);
+            assert(params);
+            int axis = 0;
+            if ( params->tensor->Type() == DataType::Int64 )
+            {
+                assert(params->tensor->View().Values<int64_t>()[0] < std::numeric_limits<int32_t>::max() && "Too large Argmax axis attribute");
+                axis = ClampToType<int32_t>(params->tensor->View().Values<int64_t>()[0]);
+            }
+            else
+            {
+                axis = params->tensor->View().Values<int32_t>()[0];
+            }
+            if ( axis < 0 )
+            {
+                axis += ifmConn->shape.Size();
+            }
+            operation->Attribute<axis_attr_t>()->axis = axis;
+        }
+        break;
+
         case tflite::BuiltinOptions::ResizeBilinearOptions:
         case tflite::BuiltinOptions::ResizeNearestNeighborOptions:
             break;
@@ -661,7 +686,6 @@ void TfLiteReader::ParseOperatorOptions(const std::shared_ptr<Operation> &operat
         case tflite::BuiltinOptions::TransposeOptions:
         case tflite::BuiltinOptions::GatherNdOptions:
         case tflite::BuiltinOptions::ScatterNdOptions:
-        case tflite::BuiltinOptions::ArgMaxOptions:
             break;
 
         case tflite::BuiltinOptions::ConcatEmbeddingsOptions:

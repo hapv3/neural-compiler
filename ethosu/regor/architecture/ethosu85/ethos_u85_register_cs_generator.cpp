@@ -332,6 +332,39 @@ round_mode_ofm GetOfmRoundingMode(const HLCOperation *op)
             return round_mode_ofm::DOUBLE_SYMMETRIC;
     }
 }
+
+pooling_mode GetPoolingMode(const HLCOperation *op)
+{
+    OpType opType = op->type;
+    assert(IsPooling(opType));
+    pooling_mode mode;
+    if ( opType == OpType::AvgPool )
+    {
+        auto kernelSize = op->kernel.Size();
+        // SUM when kernel size > 8x8
+        mode = (kernelSize.x <= 8 && kernelSize.y <= 8) ? pooling_mode::AVERAGE : pooling_mode::SUM;
+    }
+    else if ( opType == OpType::MaxPool || opType == OpType::ReduceMax || opType == OpType::ReduceAll )
+    {
+        mode = pooling_mode::MAX;
+    }
+    else if ( opType == OpType::ArgMax )
+    {
+        auto axis = op->parameters.argmax.axis;
+        assert(Flags<AxisMask>(AxisMask::AxisX, AxisMask::AxisY).All(axis) && "Argmax with unexpected axis");
+        mode = (axis == AxisMask::AxisY) ? pooling_mode::ARGMAX_Y : pooling_mode::ARGMAX_X;
+    }
+    else if ( opType == OpType::ReduceMin || opType == OpType::ReduceAny )
+    {
+        mode = pooling_mode::MIN;
+    }
+    else
+    {
+        assert(opType == OpType::ReduceSum);
+        mode = pooling_mode::REDUCE_SUM;
+    }
+    return mode;
+}
 }  // namespace
 
 uint32_t EthosU85RCSGenerator::ConfigRegister(int macs, int cmdStreamVersion, int numAxiSram, int numAxiExt, int numWd, int product)
@@ -555,6 +588,10 @@ bool EthosU85RCSGenerator::UseZeroPoint0(OpType opType, const HLCFeatureMap &fm,
     {
         return true;
     }
+    if ( opType == OpType::ArgMax && isOFM )
+    {
+        return true;
+    }
     return opType == OpType::AvgPool || opType == OpType::Resize || opType == OpType::CLZ || opType == OpType::SHL || opType == OpType::Div;
 }
 
@@ -684,6 +721,14 @@ void EthosU85RCSGenerator::GenerateOFMScalingForPooling(HLCOperation *poolOp, bo
         int shift = 0;
         QuantizePoolingScale(poolOp->kernel.ElementsWH(), ethosU85Scaling::GetScaleFactor(poolOp), 0, scale, shift, 31);
         ofmScale = QuantizedScale(int32_t(scale), shift);
+    }
+    else if ( poolOp->type == OpType::ArgMax && useGlobalScale )
+    {
+        // Argmax requires custom scaling to separate values and indices
+        // We don't use RescalePooling as this is true regardless of QuantizationType
+        const auto &unitQuant = Quantization::Unit();
+        assert((poolOp->ofm.quantization.scales.empty() || poolOp->ofm.quantization.EqualScales(unitQuant)) && "Argmax without unit scale");
+        ofmScale = QuantizedScale(1, 16);
     }
     else
     {
@@ -1652,33 +1697,7 @@ void EthosU85RCSGenerator::GenerateOperationCode(const HLCOperation *op)
     }
     else if ( IsPooling(opType) )
     {
-        pooling_mode mode;
-        if ( opType == OpType::AvgPool )
-        {
-            auto kernelSize = op->kernel.Size();
-            // SUM when kernel size > 8x8
-            mode = (kernelSize.x <= 8 && kernelSize.y <= 8) ? pooling_mode::AVERAGE : pooling_mode::SUM;
-        }
-        else if ( opType == OpType::MaxPool || opType == OpType::ReduceMax || opType == OpType::ReduceAll )
-        {
-            mode = pooling_mode::MAX;
-        }
-        else if ( opType == OpType::ArgMax )
-        {
-            auto axis = op->parameters.argmax.axis;
-            assert(axis == 1 || axis == 2);
-            mode = axis == 1 ? pooling_mode::ARGMAX_Y : pooling_mode::ARGMAX_X;
-        }
-        else if ( opType == OpType::ReduceMin || opType == OpType::ReduceAny )
-        {
-            mode = pooling_mode::MIN;
-        }
-        else
-        {
-            assert(opType == OpType::ReduceSum);
-            mode = pooling_mode::REDUCE_SUM;
-        }
-        Emit(isa::npu_op_pool_t(mode));
+        Emit(isa::npu_op_pool_t(GetPoolingMode(op)));
     }
     else if ( IsDepthwise(opType) )
     {

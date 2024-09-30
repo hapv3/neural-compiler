@@ -1382,7 +1382,7 @@ static const std::unordered_map<EthosU85NpuOp, std::unordered_map<DataType, std:
             {DataType::Bool8, {DataType::Bool8, DataType::Int32, DataType::Int64}},
             {DataType::UInt8, {DataType::UInt8, DataType::Int32, DataType::Int64}},
             {DataType::Int8, {DataType::Int8, DataType::Int32, DataType::Int64}},
-            {DataType::Int16, {DataType::Int16}},
+            {DataType::Int16, {DataType::Int16, DataType::Int32}},
         }},
     {EthosU85NpuOp::ReduceMinMax,
         {
