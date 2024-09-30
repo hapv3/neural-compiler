@@ -281,39 +281,39 @@ HandleDilation(Architecture *arch, std::unique_ptr<SchedulerOperation> op, Decom
             newOfmSlice.offset[2] += dx;
             newOfmSlice.shape[1] -= dy;
             newOfmSlice.shape[2] -= dx;
-            ofmStrides.y *= DY;
-            ofmStrides.x *= DX;
-            auto newKernel = kernel->WithDilation({1, 1}).WithStride(stride / Point2i{GX, GY});
-            std::unique_ptr<SchedulerOperation> subOp = MakeSubOperation(op.get(), &newKernel);
-            auto *subIfmConn = subOp->Input(TensorUsage::IFM);
-            subIfmConn->slice = std::move(newIfmSlice);
-            subIfmConn->stepXY = ifmStrides;
-            auto *subOfmConn = subOp->Output(TensorUsage::OFM);
-            subOfmConn->slice = std::move(newOfmSlice);
-            subOfmConn->stepXY = ofmStrides;
-            auto subOps = doDecompose(arch, std::move(subOp));
-            result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
+            if ( newOfmSlice.shape.Elements() > 0 )
+            {
+                ofmStrides.y *= DY;
+                ofmStrides.x *= DX;
+                auto newKernel = kernel->WithDilation({1, 1}).WithStride(stride / Point2i{GX, GY});
+                std::unique_ptr<SchedulerOperation> subOp = MakeSubOperation(op.get(), &newKernel);
+                auto *subIfmConn = subOp->Input(TensorUsage::IFM);
+                subIfmConn->slice = std::move(newIfmSlice);
+                subIfmConn->stepXY = ifmStrides;
+                auto *subOfmConn = subOp->Output(TensorUsage::OFM);
+                subOfmConn->slice = std::move(newOfmSlice);
+                subOfmConn->stepXY = ofmStrides;
+                auto subOps = doDecompose(arch, std::move(subOp));
+                result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
+            }
         }
     }
     return result;
 }
 
-// Negative ifm offsets indicate new padding values with ifm offset 0
-static void UpdatePaddingIfOffsetNegative(SchedulerOperation *op)
+static void UpdatePaddingAndIfmOffset(SchedulerOperation *op)
 {
+    auto *kernel = op->Kernel();
+    auto &padding = kernel->Padding();
     auto &ifmSlice = op->Input(TensorUsage::IFM)->slice;
-    if ( ifmSlice.offset.Height() < 0 || ifmSlice.offset.Width() < 0 )
-    {
-        auto *kernel = op->Kernel();
-        auto &padding = kernel->Padding();
-        auto topPad = std::max(0, -ifmSlice.offset.Height());
-        auto leftPad = std::max(0, -ifmSlice.offset.Width());
-        auto newPadding = Margin(topPad, leftPad, padding.Bottom(), padding.Right());
-        ifmSlice.offset[1] = std::max(0, ifmSlice.offset.Height());
-        ifmSlice.offset[2] = std::max(0, ifmSlice.offset.Width());
-        auto newKernel = kernel->WithPadding(newPadding);
-        op->SetKernel(&newKernel);
-    }
+    // Negative ifm offsets indicate new padding values with ifm offset 0
+    auto topPad = std::max(0, -ifmSlice.offset.Height());
+    auto leftPad = std::max(0, -ifmSlice.offset.Width());
+    ifmSlice.offset[1] = std::max(0, ifmSlice.offset.Height());
+    ifmSlice.offset[2] = std::max(0, ifmSlice.offset.Width());
+    auto newPadding = Margin(topPad, leftPad, padding.Bottom(), padding.Right());
+    auto newKernel = kernel->WithPadding(newPadding);
+    op->SetKernel(&newKernel);
 }
 
 static void InitializeSlice(TensorSlice &slice, const Shape &offset, const Shape &shape)
@@ -348,7 +348,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv2D(Architecture *a
     }
     if ( CanRunOnHardware(arch, op.get()) )
     {
-        UpdatePaddingIfOffsetNegative(op.get());
+        UpdatePaddingAndIfmOffset(op.get());
         result.emplace_back(std::move(op));
         return result;
     }
@@ -392,7 +392,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
     }
     if ( CanRunOnHardware(arch, op.get()) )
     {
-        UpdatePaddingIfOffsetNegative(op.get());
+        UpdatePaddingAndIfmOffset(op.get());
         result.emplace_back(std::move(op));
         return result;
     }

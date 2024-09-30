@@ -34,9 +34,10 @@ namespace regor
 {
 
 
-static void CalcPaddingAndSkirt(const Kernel *kernel, const Shape &inputShape, const Shape &outputShape, HLCPadding &padding, HLCPadding &skirt)
+static void CalcPaddingAndSkirt(const Kernel *kernel, const Shape &inputShape, const Shape &outputShape,
+    const Point2i &inputStep, HLCPadding &padding, HLCPadding &skirt)
 {
-    auto dilatedWH = kernel->DilatedWH();
+    auto dilatedWH = kernel->DilatedWH() * inputStep;
     int ypad = NeededTotalPadding(inputShape.Height(), outputShape.Height(), kernel->Stride().y, dilatedWH.y);
     int xpad = NeededTotalPadding(inputShape.Width(), outputShape.Width(), kernel->Stride().x, dilatedWH.x);
     const auto &pad = kernel->Padding();
@@ -167,18 +168,7 @@ static Box TransformWithStridesAndSkirt(const Box &outputArea, const Shape *stri
 
 static int StrideAdjustedPadding(int pad, int outOffset, int kernelStride)
 {
-    return pad - outOffset * (kernelStride - 1);
-}
-
-static int MarginForKernel(int paddedInput, int dilatedSize, int stride)
-{
-    assert(stride > 0);
-    int margin = paddedInput % stride;
-    if ( margin == 0 )
-    {
-        margin += stride;
-    }
-    return std::max(0, dilatedSize - margin);
+    return pad ? pad - outOffset * (kernelStride - 1) : 0;
 }
 
 static std::pair<Box, HLCPadding> TransformWithInputOutputSteps(const Box &inputArea, const Point2i &inputStep,
@@ -195,10 +185,10 @@ static std::pair<Box, HLCPadding> TransformWithInputOutputSteps(const Box &input
     startAdjustForPadFraction.x = newPadding.left * inputStep.x - adjustedLeftPad;
     startAdjustForPadFraction.y = newPadding.top * inputStep.y - adjustedTopPad;
     Point2i neededInput;
-    neededInput.x = DivRoundUp(outputArea.End().Width() - outputArea.Start().Width(), outputStep.x) * stride.x;
-    neededInput.x += MarginForKernel(neededInput.x, dilatedWH.x, stride.x);
-    neededInput.y = DivRoundUp(outputArea.End().Height() - outputArea.Start().Height(), outputStep.y) * stride.y;
-    neededInput.y += MarginForKernel(neededInput.y, dilatedWH.y, stride.y);
+    neededInput.x =
+        (DivRoundUp(outputArea.End().Width() - outputArea.Start().Width(), outputStep.x) - 1) * stride.x + dilatedWH.x;
+    neededInput.y =
+        (DivRoundUp(outputArea.End().Height() - outputArea.Start().Height(), outputStep.y) - 1) * stride.y + dilatedWH.y;
     Shape newStart =
         inputArea.Start()
             .WithWidth(inputArea.Start().Width() + startAdjustForPadFraction.x)
@@ -615,7 +605,7 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
         // Use full ifm shape for broadcast elementwise operators
         maxIfmShape = Shape::Max(ifm0Conn->SliceShape(), ifm1Conn->SliceShape());
     }
-    CalcPaddingAndSkirt(kernel, maxIfmShape, ofmShape, padding, skirt);
+    CalcPaddingAndSkirt(kernel, maxIfmShape, ofmShape, ifm0Conn->stepXY, padding, skirt);
 
     int upscaling = 1;
     if ( ifm0Conn->resamplingMode == ArchResampling::Zeros )
