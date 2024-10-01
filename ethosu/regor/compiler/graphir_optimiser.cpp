@@ -20,6 +20,7 @@
 
 #include "operation_util.hpp"
 #include "optimiser_utils.hpp"
+#include "tflite/tflite_schema_generated.hpp"
 
 namespace regor
 {
@@ -492,6 +493,100 @@ Operation *GraphIrOptimiser::RewritePad(Graph *const, Operation *const operation
         // Remove original pad
         operation->Disconnect();
     }
+    return returnOp;
+}
+
+Operation *GraphIrOptimiser::UnrollConv(Graph *const, Operation *const operation)
+{
+    auto returnOp = operation;
+
+    if ( operation->Type() == OpType::Conv2D || operation->Type() == OpType::Conv2DBias )
+    {
+        const auto ifmConn = operation->Input(TensorUsage::IFM);
+        assert(ifmConn);
+        const auto weightsConn = operation->Input(TensorUsage::Weights);
+        assert(weightsConn);
+        const auto scalesConn = operation->Input(TensorUsage::Scales);
+        assert(scalesConn);
+        const auto ofmConn = operation->Output(TensorUsage::OFM);
+        assert(ofmConn);
+
+        const auto kernel = operation->Kernel();
+        assert(kernel);
+        const int32_t kernel_h = kernel->Size().y;
+        assert(kernel_h > 0);
+        const int32_t kernel_w = kernel->Size().x;
+        assert(kernel_w > 0);
+        const int32_t stride_h = kernel->Stride().y;
+        assert(stride_h > 0);
+        const int32_t stride_w = kernel->Stride().x;
+        assert(stride_w > 0);
+        const int32_t dilation_h = kernel->Dilation().y;
+        assert(dilation_h > 0);
+        const int32_t dilation_w = kernel->Dilation().x;
+        assert(dilation_w > 0);
+        const bool hasPadding = !kernel->Padding().IsZero();
+        const bool hasIfmSlice = ifmConn->slice.shape.IsValid() || ifmConn->slice.offset.IsValid();
+        const bool hasOfmSlice = ofmConn->slice.shape.IsValid() || ofmConn->slice.offset.IsValid();
+
+        tflite::Padding paddingType = tflite::Padding::VALID;
+        const tflite::Operator *const passthrough = static_cast<const tflite::Operator *>(operation->Passthrough());
+        if ( passthrough )
+        {
+            const auto options = passthrough->builtin_options_as_Conv2DOptions();
+            if ( options )
+            {
+                paddingType = options->padding();
+            }
+        }
+
+        // Figure out if op needs to be unrolled
+        const bool needUnrollH = stride_h > 3;
+        const bool needUnrollW = stride_w > 3;
+
+        // Figure out if op can be unrolled
+        const bool canUnroll = !hasPadding && !hasIfmSlice && !hasOfmSlice && paddingType == tflite::Padding::VALID;
+        const bool canUnrollH = dilation_h == 1 && canUnroll;
+        const bool canUnrollW = dilation_w == 1 && canUnroll;
+
+        if ( (needUnrollH || needUnrollW) && canUnrollH && canUnrollW )
+        {
+            const Shape inputGridCell = ifmConn->shape.WithHeight(kernel_h).WithWidth(kernel_w);
+            const Shape outputGridCell = ofmConn->shape.WithHeight(1).WithWidth(1);
+            const Point2i gridSize = ofmConn->shape.WH<int>();
+
+            for ( int h = 0; h < gridSize.y; h++ )
+            {
+                for ( int w = 0; w < gridSize.x; w++ )
+                {
+                    TensorSlice ifmSlice;
+                    ifmSlice.shape = inputGridCell;
+                    ifmSlice.offset = Shape(0, h * stride_h, w * stride_w, 0);
+
+                    TensorSlice ofmSlice;
+                    ofmSlice.shape = outputGridCell;
+                    ofmSlice.offset = Shape(0, h, w, 0);
+
+                    // Add new for this grid cell
+                    auto op = std::make_shared<Operation>(operation->Type());
+                    op->SetKernel(std::make_unique<Kernel>(kernel->WithStride({1, 1})));
+                    op->CopyInput(TensorUsage::IFM, *ifmConn);
+                    op->Input(TensorUsage::IFM)->Set(ifmSlice);
+                    op->CopyInput(TensorUsage::Weights, *weightsConn);
+                    op->CopyInput(TensorUsage::Scales, *scalesConn);
+                    op->CopyOutput(TensorUsage::OFM, *ofmConn);
+                    op->Output(TensorUsage::OFM)->Set(ofmSlice);
+                    RecordOptimisation(operation, op.get());
+
+                    returnOp = op.get();
+                }
+            }
+
+            // Remove original op
+            operation->Disconnect();
+        }
+    }
+
     return returnOp;
 }
 

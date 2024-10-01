@@ -65,7 +65,7 @@ private:
     Operation *ReshapeReverse(Graph *const graph, Operation *const operation);
     void MoveToConsumer(const Operation *const operation, Operation *const cons);
     Operation *MoveSplitSliceToConsumer(Graph *const, Operation *const operation);
-
+    Operation *UnrollConv(Graph *const, Operation *const operation);
     // The graph optimisation steps.
     // Order matters, array of rewrites processed in order.
     // clang-format off
@@ -115,7 +115,8 @@ private:
                 &GraphIrOptimiser::FuseRescale,  // First pass fuse all possible ifm and ofm rescales
                 &GraphIrOptimiser::OptimiseElementwise,
                 &GraphIrOptimiser::RearrangeTranspose,
-                &GraphIrOptimiser::ReshapeReverse
+                &GraphIrOptimiser::ReshapeReverse,
+                &GraphIrOptimiser::UnrollConv
             }
         },
         // MoveSplitSliceToConsumer need to be done after any other optimisation that can affect the ifm/ofm shapes

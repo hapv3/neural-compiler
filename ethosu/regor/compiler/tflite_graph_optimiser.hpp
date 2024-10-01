@@ -156,9 +156,6 @@ private:
 
     Operation *ConvertSoftmaxOps(Graph *const graph, Operation *const operation);
 
-    // Unroll convolution if stride is too great
-    Operation *UnrollConv(Graph *const, Operation *const operation);
-
     Operation *ConvertMeanOps(Graph *const, Operation *const operation);
 
     // Converts int8/uint8 Sigmoid and Tanh to a LUT based solution
@@ -265,7 +262,6 @@ public:
                 &TFLiteGraphOptimiser::ConvertScatter,
                 &TFLiteGraphOptimiser::ConvertResize,
                 &TFLiteGraphOptimiser::ConvertTranspose,
-                &TFLiteGraphOptimiser::UnrollConv,
             }
         },
         {
