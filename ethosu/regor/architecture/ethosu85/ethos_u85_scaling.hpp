@@ -33,6 +33,6 @@ void RescaleConvolution(HLCOperation *op);
 void RescaleElementwise(HLCOperation *op);
 Quantization RescalePerChannel(const Quantization &ifmQuant, const Quantization &weightQuant,
     const Quantization &ofmQuant, const DataType scaleDataType, const DataType ifmDataType);
-
+double GetScaleFactor(HLCOperation *op);
 }  // namespace ethosU85Scaling
 }  // namespace regor

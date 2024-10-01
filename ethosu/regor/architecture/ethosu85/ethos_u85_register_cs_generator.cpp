@@ -676,12 +676,24 @@ int EthosU85RCSGenerator::Disassemble(const uint32_t *in, std::string &op, std::
 void EthosU85RCSGenerator::GenerateOFMScalingForPooling(HLCOperation *poolOp, bool useGlobalScale)
 {
     QuantizedScale ofmScale(1, 0);
-    bool isNoOp = _arch->UseAvgPoolNop(poolOp->type);
-    ethosU85Scaling::RescalePooling(poolOp, isNoOp);
-    if ( useGlobalScale && !poolOp->ofm.quantization.scales.empty() )
+    pooling_mode mode = (poolOp->type == OpType::AvgPool && (poolOp->kernel.Size().x > 8 || poolOp->kernel.Size().y > 8)) ? pooling_mode::SUM : pooling_mode::NONE;
+
+    if ( mode == pooling_mode::SUM && useGlobalScale )
     {
-        ofmScale = poolOp->ofm.quantization.scales[0];
-        assert(unsigned(ofmScale.shift) < 64);
+        uint32_t scale = 1;
+        int shift = 0;
+        QuantizePoolingScale(poolOp->kernel.ElementsWH(), ethosU85Scaling::GetScaleFactor(poolOp), 0, scale, shift, 31);
+        ofmScale = QuantizedScale(int32_t(scale), shift);
+    }
+    else
+    {
+        bool isNoOp = _arch->UseAvgPoolNop(poolOp->type);
+        ethosU85Scaling::RescalePooling(poolOp, isNoOp);
+        if ( useGlobalScale && !poolOp->ofm.quantization.scales.empty() )
+        {
+            ofmScale = poolOp->ofm.quantization.scales[0];
+            assert(unsigned(ofmScale.shift) < 64);
+        }
     }
     Emit(isa::npu_set_ofm_scale_t(uint32_t(ofmScale.shift), 0, GetOfmRoundingMode(poolOp), ofmScale.scale));
 }

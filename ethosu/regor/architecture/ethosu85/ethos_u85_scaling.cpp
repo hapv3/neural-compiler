@@ -55,6 +55,15 @@ float GetScale(const Quantization *quant)
 
 }  // namespace
 
+double GetScaleFactor(HLCOperation *op)
+{
+    Quantization *ifmQuant = &op->ifm[0].quantization;
+    Quantization *ofmQuant = &op->ofm.quantization;
+    double ifmScale = GetScale(ifmQuant);
+    double ofmScale = GetScale(ofmQuant);
+    return ifmScale / ofmScale;
+}
+
 void RescaleConvolution(HLCOperation *op)
 {
     int ifmCnt = int(op->ifm.size());
