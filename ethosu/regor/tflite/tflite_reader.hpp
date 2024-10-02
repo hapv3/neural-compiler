@@ -27,7 +27,6 @@
 
 #include <memory>
 #include <unordered_map>
-#include <vector>
 
 namespace regor
 {
@@ -46,8 +45,8 @@ public:
 
 private:
     static const tflite::Model *LoadModel(const void *input, size_t size);
-    static std::shared_ptr<Tensor> ParseTensor(const tflite::Tensor *tflite_tensor, const std::shared_ptr<Buffer> &buffer,
-        std::unordered_map<UniqueId, Quantization> &tensorQuantization, std::vector<std::shared_ptr<Tensor>> &persistent);
+    static std::shared_ptr<Tensor> ParseTensor(const tflite::Tensor *tflite_tensor,
+        const std::shared_ptr<Buffer> &buffer, std::unordered_map<UniqueId, Quantization> &tensorQuantization);
     static void ParseOperatorOptions(const std::shared_ptr<Operation> &operation,
         const tflite::Operator *tflite_operator, OptimiserDatabase *optDb, IArchitectureConstraints *constraints);
     static void SetOperatorRounding(const std::shared_ptr<Operation> &operation);

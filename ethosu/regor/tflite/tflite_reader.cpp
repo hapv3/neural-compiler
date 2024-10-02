@@ -189,7 +189,8 @@ void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::uniqu
         // Operators refer to tensors, so create tensors before operations
         for ( const auto &tflite_tensor : *tflite_tensors )
         {
-            tensors.push_back(ParseTensor(tflite_tensor, buffers.at(tflite_tensor->buffer()), tensorQuantization, persistent));
+            tensors.push_back(ParseTensor(tflite_tensor, buffers.at(tflite_tensor->buffer()), tensorQuantization));
+            if ( tflite_tensor->is_variable() ) persistent.push_back(tensors.back());
         }
 
         // Create operations
@@ -328,8 +329,8 @@ void TfLiteReader::LoadGraphs(const void *input, size_t size, std::vector<std::u
     LoadGraphs(LoadModel(input, size), graphs, optDb, constraints);
 }
 
-std::shared_ptr<Tensor> TfLiteReader::ParseTensor(const tflite::Tensor *tflite_tensor, const std::shared_ptr<Buffer> &buffer,
-    std::unordered_map<UniqueId, Quantization> &tensorQuantization, std::vector<std::shared_ptr<Tensor>> &persistent)
+std::shared_ptr<Tensor> TfLiteReader::ParseTensor(const tflite::Tensor *tflite_tensor,
+    const std::shared_ptr<Buffer> &buffer, std::unordered_map<UniqueId, Quantization> &tensorQuantization)
 {
     const std::string name = tflite_tensor->name() ? tflite_tensor->name()->str() : "<unnamed>";
     const DataType type = TfLiteMapping::TensorTypeToDataType(tflite_tensor->type());
@@ -392,12 +393,10 @@ std::shared_ptr<Tensor> TfLiteReader::ParseTensor(const tflite::Tensor *tflite_t
 
     if ( tflite_tensor->sparsity() )
     {
-        LOG_WARN("Tensor '{}' contains sparsity information, which is not supported and will be ignored.\n", name.c_str());
+        LOG_WARN("Tensor '{}' contains sparsity information, which is not supported and will be ignored.\n", name);
     }
 
     tensor->SetPassthrough(tflite_tensor);
-
-    if ( tflite_tensor->is_variable() ) persistent.push_back(tensor);
 
     return tensor;
 }
