@@ -1314,11 +1314,11 @@ void GraphIrOptimiser::MoveToConsumer(const Operation *const operation, Operatio
 
     if ( consIfm0 == ofm )
     {
-        cons->CopyInput(TensorUsage::IFM0, *ifmConn);
+        cons->ConnectInput(TensorUsage::IFM0, ifmConn->tensor).Set(ifmConn->shape).Set(ifmConn->slice);
     }
     else if ( consIfm1 != nullptr && IsBinaryElementwise(cons->Type()) && consIfm1 == ofm )
     {
-        cons->CopyInput(TensorUsage::IFM1, *ifmConn);
+        cons->ConnectInput(TensorUsage::IFM1, ifmConn->tensor).Set(ifmConn->shape).Set(ifmConn->slice);
     }
 }
 

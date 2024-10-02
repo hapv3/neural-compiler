@@ -128,26 +128,31 @@ static Box TransformWithStridesAndSkirt(const Box &outputArea, const Shape *stri
     int startHeight = start.Height() * strideH - skirt->top + skirtTopRemainder;
     padTop = std::max(0, -startHeight) + skirtTopRemainder;
     start = start.WithHeight(std::max(startHeight, 0));
-    if ( end.Height() * strideH + skirt->bottom > ifmShape.Height() * upscalingFactor )
+
+    int validIfmHeight = ifmShape.Height();
+    if ( splitShape.Size() > 2 && splitOffset.Size() > 2 )
+        validIfmHeight = std::min(validIfmHeight, splitShape.Height() + splitOffset.Height());
+    else if ( splitShape.Size() > 2 ) validIfmHeight = splitShape.Height();
+
+    if ( end.Height() * strideH + skirt->bottom > validIfmHeight * upscalingFactor )
     {
         // padBottom is calculated based the diff between the end position of the weight kernel,
         // after last stride and the ifm height.
-        if ( upscalingFactor != 1 && outputAreaEnd.Height() > ifmShape.Height() * upscalingFactor )
+        if ( upscalingFactor != 1 && outputAreaEnd.Height() > validIfmHeight * upscalingFactor )
         {
             // Special case for Transpose Convolution with VALID padding.
-            padBottom = outputAreaEnd.Height() - ifmShape.Height() * upscalingFactor;
+            padBottom = outputAreaEnd.Height() - validIfmHeight * upscalingFactor;
         }
         else
         {
             int kernelStart = start.Height() - padTop;
-            padBottom = std::max(0, kernelStart + totalStride + dilatedKernelHeight - ifmShape.Height() * upscalingFactor);
+            padBottom = std::max(0, kernelStart + totalStride + dilatedKernelHeight - validIfmHeight * upscalingFactor);
         }
     }
     // Adjust for upscaling
     start = start.WithHeight(std::max(start.Height() / upscalingFactor, 0));
     int endHeight = end.Height() * strideH + skirt->bottom + skirt->bottom % upscalingFactor;
-    end = end.WithHeight(std::min(std::max(endHeight / upscalingFactor, 1), ifmShape.Height()));
-
+    end = end.WithHeight(std::min(std::max(endHeight / upscalingFactor, 1), validIfmHeight));
     if ( limit == TransformLimit::Wrap )
     {
         Shape ifmWrap = Shape::PadAxes(ifmShape, 4, 1);
