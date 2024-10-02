@@ -601,6 +601,13 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const, Operation *const operatio
     OpType opType = operation->Type();
     if ( opType == OpType::Rescale )
     {
+        auto *attr = operation->Attribute<rescale_attr_t>();
+        if ( attr && (attr->input_unsigned || attr->output_unsigned) )
+        {
+            // These type of rescales needs special handling and cannot be fused
+            return returnOp;
+        }
+
         auto ofmConn = operation->Output(TensorUsage::OFM);
         auto ifmConn = operation->Input(TensorUsage::IFM);
         auto producer = ifmConn->tensor->Writers().size() == 1 ? ifmConn->tensor->Writers().front() : nullptr;
@@ -615,18 +622,23 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const, Operation *const operatio
         }
         else if ( ofmConn->tensor->Readers().size() == 1 && ofmConn->quantization.zeroPoints == Quantization::Unit().zeroPoints )
         {
+            auto CopyQuantizationAndConvertScales = [](const Quantization &quant)
+            {
+                auto result = quant;
+                // Convert scales to have 0 shift if possible, since this can
+                // improve fusing for Ethos-U55/65
+                for ( auto &qs : result.scales )
+                {
+                    if ( qs.shift > 0 && qs.shift < 31 && (qs.scale % (1 << qs.shift)) == 0 )
+                    {
+                        qs = {(qs.scale >> qs.shift), 0};
+                    }
+                }
+                return result;
+            };
             // Propagate rescaling to input of next op
             auto consumer = ofmConn->tensor->Readers().front();
-            auto ifmQuant = ofmConn->quantization;
-            // Convert scales to have 0 shift if possible, since this can
-            // improve fusing for Ethos-U55/65
-            for ( auto &qs : ifmQuant.scales )
-            {
-                if ( qs.shift > 0 && qs.shift < 31 && (qs.scale % (1 << qs.shift)) == 0 )
-                {
-                    qs = {(qs.scale >> qs.shift), 0};
-                }
-            }
+            auto ifmQuant = CopyQuantizationAndConvertScales(ofmConn->quantization);
             for ( auto ifm : consumer->Inputs().pairs() )
             {
                 if ( ifm.second.tensor == ofmConn->tensor )
@@ -635,6 +647,31 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const, Operation *const operatio
                          _constraints->SupportsFusedRescale(consumer->Type(), TensorUsage::IFM, ifmConn->tensor->Type(),
                              ofmConn->tensor->Type(), ifmQuant) )
                     {
+                        if ( IsBinaryElementwise(consumer->Type()) )
+                        {
+                            auto otherIfmCon = consumer->Input(
+                                ofmConn->tensor.get() == consumer->IFM(0) ? TensorUsage::IFM1 : TensorUsage::IFM0);
+                            auto otherProducer =
+                                otherIfmCon->tensor->Writers().size() == 1 ? otherIfmCon->tensor->Writers().front() : nullptr;
+                            // Both ifms must have same type after fusing
+                            bool sameType = otherIfmCon->tensor->Type() == ifmConn->tensor->Type();
+                            // Is there a Rescale for the other ifm
+                            if ( otherProducer && otherProducer->Type() == OpType::Rescale )
+                            {
+                                // Check if the other ifm rescale can be fused
+                                auto otherIfmQuant = CopyQuantizationAndConvertScales(
+                                    otherProducer->Output(TensorUsage::OFM)->quantization);
+                                if ( otherIfmCon->quantization.EqualScales(Quantization::Unit()) &&
+                                     _constraints->SupportsFusedRescale(consumer->Type(), TensorUsage::IFM,
+                                         otherProducer->IFM(0)->Type(), otherProducer->OFM()->Type(), otherIfmQuant) )
+                                {
+                                    // and if so that both ifms will have the same type
+                                    sameType = sameType || otherProducer->IFM(0)->Type() == ifmConn->tensor->Type();
+                                }
+                            }
+                            // Both ifms must have same type after fusing, if not break
+                            if ( !sameType ) break;
+                        }
                         consumer->CopyInput(ifm.first, *ifmConn);
                         ifm.second.quantization.scales = ifmQuant.scales;
                         returnOp = consumer.get();
