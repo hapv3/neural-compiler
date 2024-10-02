@@ -248,7 +248,7 @@ public:
     int Dot(const Shape &other) const
     {
         int result = 0;
-        if ( VERIFY(other.Size() == Size()) )
+        if ( VERIFY(other.Size() >= Size()) )
         {
             auto *from = other.Storage();
             auto *local = Storage();

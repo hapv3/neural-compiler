@@ -82,7 +82,7 @@ public:
     }
 
     std::string Name() const { return srcTensor.get() == nullptr ? "?" : srcTensor->Name(); }
-    bool IsConstant() const { return bufferView.HasBuffer() && bufferView.BufferSize() > 0; }
+    bool IsConstant() const { return bufferView.HasBuffer() && bufferView.Buffer()->Size(); }
 };
 
 

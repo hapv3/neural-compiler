@@ -23,7 +23,6 @@
 #include "architecture/architecture.hpp"
 #include "architecture/ethos_u_scaling.hpp"
 #include "architecture/mlw_encode.hpp"
-#include "common/buffer_view.hpp"
 #include "common/shape.hpp"
 #include "compiler/tensor_properties.hpp"
 #include "ethos_u85.hpp"

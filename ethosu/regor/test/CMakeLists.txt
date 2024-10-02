@@ -41,6 +41,7 @@ add_catch_test(
         test_arch_ethos_u85.cpp
         test_hash.cpp
         test_scheduler_decompose.cpp
+        test_buffer_view.cpp
     DEPS
         regor::regor-objects
         regor::fmt

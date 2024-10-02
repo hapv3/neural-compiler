@@ -527,8 +527,12 @@ flatbuffers::Offset<void> TfLiteWriter::SerialiseOptions(const Operation *operat
         {
             // Replicate parameter tensor as ReshapeOptions
             const auto tensor = operation->Input(TensorUsage::Params)->tensor;
-            const auto values = tensor->View().Values<int>();
-            const auto new_shape = _flatbuffer.CreateVector<int>(&values[0], tensor->StorageShape().Elements());
+            if ( tensor->Type() != DataType::Int32 ) throw std::runtime_error("unexpected tensor type");
+
+            BufferReader<int> reader = tensor->View().Values<int32_t, int>();
+            std::vector<int> temp;
+            std::copy(reader.begin(), reader.end(), std::back_inserter(temp));
+            const auto new_shape = _flatbuffer.CreateVector<int>(temp);
             offset = tflite::CreateReshapeOptions(_flatbuffer, new_shape).Union();
         }
         break;

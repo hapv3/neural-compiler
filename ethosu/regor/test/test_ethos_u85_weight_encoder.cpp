@@ -84,7 +84,7 @@ TEST_CASE("ethos_u85_weightsource")
     auto config = encoder->GetEncodingConfig(opCfg.get(), weightsRef, &kernel, DataType::Int8, depthOffsets, WeightFormat::Default);
     auto transform = [](const WeightTransformParam *, int weight) { return weight; };
     auto source = encoder->GetWeightSource(config.get(), DataType::Int8, transform, &param);
-    source->SetSource(&view.Values<uint8_t>()[0], 0, weightShape, view.StrideBytes(), 0);
+    source->SetSource(view.RawData<uint8_t>(), 0, weightShape, view.StrideBytes(), 0);
 
     // Initialize buffers
     std::vector<int16_t> refBuffer, actBuffer;

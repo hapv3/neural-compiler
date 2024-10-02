@@ -23,6 +23,7 @@
 #include "shape.hpp"
 
 #include <cassert>
+#include <iterator>
 #include <memory>
 #include <vector>
 
@@ -84,7 +85,7 @@ class Buffer : public std::enable_shared_from_this<Buffer>
 
 private:
     RefData _refData = {};
-    int _sizeBytes = 0;
+    size_t _sizeBytes = 0;
     const uint32_t _typeHash;
     const uint32_t _utypeHash;
     bool _isLocal = false;
@@ -97,7 +98,7 @@ public:
     Buffer &operator=(const Buffer &) = delete;
 
     template<typename TYPE, std::enable_if_t<IsSupportedIntegral<TYPE>::value, int> = 0>
-    Buffer(int sizeElements, const TYPE *buffer = nullptr, bool alias = false) :
+    Buffer(size_t sizeElements, const TYPE *buffer = nullptr, bool alias = false) :
             _typeHash(TypeHash<TYPE>::value), _utypeHash(TypeHash<std::make_unsigned_t<TYPE>>::value)
     {
         _sizeBytes = sizeof(TYPE) * sizeElements;
@@ -272,7 +273,7 @@ public:
         }
         else
         {
-            return _sizeBytes;
+            return int(_sizeBytes);
         }
     }
 
@@ -282,7 +283,9 @@ public:
     {
         // Calculate MD5 hash of data, prefixed by the size of data
         const auto buffer = const_cast<const Buffer *>(this);
-        auto sizeStr = fmt::format("<{}>", buffer->Size());
+        std::string sizeStr("<");
+        sizeStr += std::to_string(buffer->Size());
+        sizeStr += '>';
         MD5 hash;
         hash.Combine(reinterpret_cast<uint8_t *>(sizeStr.data()), int(sizeStr.size()));
         hash.Combine(buffer->Data<uint8_t>(), buffer->Size());
@@ -322,17 +325,17 @@ private:
     }
 
     template<typename TYPE>
-    static void Delete(void *p)
+    static inline void Delete(void *p)
     {
         delete reinterpret_cast<TYPE *>(p);
     }
     template<typename TYPE>
-    static void DeleteArray(void *p)
+    static inline void DeleteArray(void *p)
     {
         delete[] reinterpret_cast<TYPE *>(p);
     }
     template<typename TYPE>
-    static void DeleteVector(void *v)
+    static inline void DeleteVector(void *v)
     {
         using vec = std::vector<TYPE>;
         static_cast<vec *>(v)->~vec();
@@ -340,37 +343,190 @@ private:
 #undef FOR_ALL_INT_TYPES
 };
 
-
 /// <summary>
-/// Access proxy for processing values within a buffer
+/// Transient read-only access to a buffer view's elements
+/// - Polymorphically compatible with same-typed readers
+///   using different-typed data sources.
 /// </summary>
-template<typename TYPE, bool IS_CONST>
-class BufferValues
+template<typename TYPE>
+struct BufferReader
 {
-    using PTR_TYPE = typename std::conditional_t<IS_CONST, const TYPE *, TYPE *>;
+    typedef TYPE (*GetFunc)(const void *p, size_t index);
 
 private:
-    PTR_TYPE _data;
     Shape _strideBytes;
+    const void *_data = nullptr;
+    size_t _count = 0;
+    GetFunc _get = nullptr;
 
 public:
-    BufferValues(PTR_TYPE data, const Shape &strideBytes) : _data(data), _strideBytes(strideBytes) {}
+    BufferReader() = default;
 
-    template<bool CONSTNESS = IS_CONST, typename std::enable_if_t<!CONSTNESS, int> = 0>
-    TYPE &operator[](int index)
+    BufferReader(BufferReader<TYPE> &&other) noexcept { *this = std::move(other); }
+
+    BufferReader(const BufferReader<TYPE> &other)
     {
+        _strideBytes = other._strideBytes;
+        _data = other._data;
+        _count = other._count;
+        _get = other._get;
+    }
+
+    BufferReader(const Shape &strideBytes, const void *p, size_t count, GetFunc fn) :
+            _strideBytes(strideBytes), _data(p), _count(count), _get(fn)
+    {
+    }
+
+    BufferReader<TYPE> &operator=(BufferReader<TYPE> &&other) noexcept
+    {
+        _strideBytes = other._strideBytes;
+        _data = other._data;
+        _count = other._count;
+        _get = other._get;
+        return *this;
+    }
+
+    TYPE operator[](size_t index) const
+    {
+        assert(index < _count);
+        assert(_strideBytes.Size() <= 2 && "View does not guarantee linear access");
+        return _get(_data, index * _strideBytes.Depth());
+    }
+
+    TYPE operator[](const Shape &offset) const
+    {
+        size_t index = offset.Dot(_strideBytes);
+        assert(index / _strideBytes.Depth() < _count);
+        return _get(_data, index);
+    }
+
+    // Simple wrapping iterator
+    template<typename VALUE>
+    struct iterator_base_t
+    {
+    private:
+        GetFunc _get;
+        const void *_data = nullptr;
+        size_t _index;
+
+    public:
+        using value_type = VALUE;
+        using pointer = VALUE *;
+        using reference = VALUE &;
+        using difference_type = std::ptrdiff_t;
+        using iterator_category = std::forward_iterator_tag;
+
+    public:
+        iterator_base_t(const iterator_base_t<VALUE> &other) = default;
+        iterator_base_t(GetFunc fn, const void *p, size_t index) : _get(fn), _data(p), _index(index) {}
+
+        // Value-only access
+        VALUE operator*() { return _get(_data, _index); }
+
+        iterator_base_t<VALUE> &operator++()
+        {
+            _index++;
+            return *this;
+        }
+
+        iterator_base_t<VALUE> operator++(int)
+        {
+            iterator_base_t<VALUE> tmp = *this;
+            _index++;
+            return tmp;
+        }
+
+        iterator_base_t<VALUE> &operator=(const iterator_base_t<VALUE> &other) = default;
+
+        bool operator==(const iterator_base_t<VALUE> &other) const
+        {
+            assert(_data == other._data);
+            return other._index == _index;
+        }
+
+        bool operator!=(const iterator_base_t<VALUE> &other) const
+        {
+            assert(_data == other._data);
+            return other._index != _index;
+        }
+    };
+
+    using iterator_t = iterator_base_t<TYPE>;
+    iterator_t begin() const { return iterator_t(_get, _data, 0); }
+    iterator_t end() const { return iterator_t(_get, _data, _count); }
+};
+
+/// <summary>
+/// Transient read/write access to a buffer view's elements
+/// </summary>
+template<typename TYPE>
+class BufferWriter
+{
+private:
+    Shape _strideBytes;
+    TYPE *_data = nullptr;
+    size_t _count = 0;
+
+public:
+    BufferWriter() = default;
+
+    BufferWriter(BufferWriter<TYPE> &&other) noexcept { *this = std::move(other); }
+
+    BufferWriter(const BufferWriter<TYPE> &other)
+    {
+        _strideBytes = other._strideBytes;
+        _data = other._data;
+        _count = other._count;
+    }
+
+    BufferWriter(const Shape &strideBytes, TYPE *data, size_t count) :
+            _strideBytes(strideBytes), _data(data), _count(count)
+    {
+    }
+
+    BufferWriter<TYPE> &operator=(BufferWriter<TYPE> &&other) noexcept
+    {
+        _strideBytes = other._strideBytes;
+        _data = other._data;
+        _count = other._count;
+        return *this;
+    }
+
+    const TYPE &operator[](size_t index) const
+    {
+        assert(index < _count);
+        assert(_strideBytes.Size() <= 2 && "View does not guarantee linear access");
         return _data[index];
     }
 
-    const TYPE &operator[](int index) const { return _data[index]; }
-
-    int ElementIndex(const Shape &offset) const
+    TYPE &operator[](size_t index)
     {
-        int index = offset.Dot(_strideBytes) / sizeof(TYPE);
-        return index;
+        assert(index < _count);
+        assert(_strideBytes.Size() <= 2 && "View does not guarantee linear access");
+        return _data[index];
+    }
+
+    const TYPE &operator[](const Shape &offset) const
+    {
+        size_t index = offset.Dot(_strideBytes) / sizeof(TYPE);
+        assert(index < _count);
+        return _data[index];
+    }
+
+    TYPE &operator[](const Shape &offset)
+    {
+        size_t index = offset.Dot(_strideBytes) / sizeof(TYPE);
+        assert(index < _count);
+        return _data[index];
     }
 };
 
+template<typename FROM, typename TO>
+TO BufferReaderValueGet(const void *p, size_t offset)
+{
+    assert(((uintptr_t(p) + offset) % alignof(FROM)) == 0);
+    return TO(*static_cast<const FROM *>(static_cast<const void *>(static_cast<const uint8_t *>(p) + offset)));
+}
 
 /// <summary>
 /// View of buffer memory
@@ -380,12 +536,13 @@ class BufferView
 protected:
     std::shared_ptr<class Buffer> _buffer;
     int _elementBits = 0;
+    int _elements = 0;
     int _baseOffset = 0;
     Shape _axisElements;
     Shape _strideBytes;
 
 public:
-    BufferView() {}
+    BufferView() = default;
 
     BufferView(const std::shared_ptr<Buffer> &buffer, int firstElement, int elementBits, const Shape &axisElements, const Shape &strideBytes)
     {
@@ -415,6 +572,7 @@ public:
         {
             _strideBytes = strideBytes;
         }
+        _elements = _axisElements.Elements();
     }
 
     BufferView(const std::shared_ptr<Buffer> &buffer, const BufferView &other)
@@ -423,6 +581,7 @@ public:
         _elementBits = other._elementBits;
         _baseOffset = 0;
         _axisElements = other._axisElements;
+        _elements = other._elements;
         _strideBytes = other._strideBytes;
     }
 
@@ -430,6 +589,7 @@ public:
     bool HasBuffer() const { return _buffer != nullptr; }
     const Shape &ViewShape() const { return _axisElements; }
     const Shape &StrideBytes() const { return _strideBytes; }
+    int Elements() const { return _elements; }
 
     BufferView Reshape(const Shape &size) const
     {
@@ -444,23 +604,29 @@ public:
         return BufferView(_buffer, linearOffset, _elementBits, size, _strideBytes);
     }
 
-    template<typename TYPE>
-    BufferValues<TYPE, true> Values() const
+    template<typename STORAGE_TYPE, typename AS_TYPE = STORAGE_TYPE,
+        AS_TYPE (*FUNC)(const void *p, size_t offset) = &BufferReaderValueGet<STORAGE_TYPE, AS_TYPE>>
+    BufferReader<AS_TYPE> Values() const
     {
         assert(HasBuffer());
-        auto start = const_cast<const class Buffer *>(_buffer.get())->Data<TYPE>() + _baseOffset;
-        return BufferValues<TYPE, true>(start, _strideBytes);
+        const auto *start = const_cast<const class Buffer *>(_buffer.get())->Data<STORAGE_TYPE>() + _baseOffset;
+        return BufferReader<AS_TYPE>(_strideBytes, start, _elements, FUNC);
     }
 
-    template<typename TYPE>
-    BufferValues<TYPE, false> WritableValues()
+    template<typename STORAGE_TYPE>
+    BufferWriter<STORAGE_TYPE> WritableValues()
     {
         assert(HasBuffer());
-        auto start = _buffer->Data<TYPE>() + _baseOffset;
-        return BufferValues<TYPE, false>(start, _strideBytes);
+        auto *start = _buffer->Data<STORAGE_TYPE>() + _baseOffset;
+        return BufferWriter<STORAGE_TYPE>(_strideBytes, start, _elements);
     }
 
-    int BufferSize() const { return _buffer->Size(); }
+    template<typename STORAGE_TYPE>
+    const STORAGE_TYPE *RawData() const
+    {
+        const auto *start = const_cast<const class Buffer *>(_buffer.get())->Data<STORAGE_TYPE>();
+        return start + _baseOffset;
+    }
 
     const class Buffer *Buffer() const { return _buffer.get(); }
 };

@@ -77,48 +77,6 @@ inline std::shared_ptr<Tensor> CreateConstTensor(const std::string &name, DataTy
 #undef FOR_ALL_INT_TYPES
 }
 
-template<typename T>
-std::shared_ptr<Buffer> NewBufferFromView(const BufferView &src)
-{
-    auto size = src.ViewShape().Elements();
-    auto buf = std::make_shared<Buffer>(size, static_cast<T *>(nullptr));
-    auto bufView = BufferView(buf, src);
-    const auto srcData = src.Values<T>();
-    auto dstData = bufView.template WritableValues<T>();
-    for ( int i = 0; i < size; i++ )
-    {
-        dstData[i] = srcData[i];
-    }
-    return buf;
-}
-
-inline std::shared_ptr<Tensor> CreateSliceCopy(const std::string &name, const Tensor *src, const TensorSlice &slice)
-{
-    assert(src->IsConstant());
-    auto sliceView = src->View().SubView(slice.offset, slice.shape);
-    std::shared_ptr<Buffer> buffer;
-    switch ( src->Type() )
-    {
-        case DataType::Int8:
-            buffer = NewBufferFromView<int8_t>(sliceView);
-            break;
-        case DataType::UInt8:
-            buffer = NewBufferFromView<uint8_t>(sliceView);
-            break;
-        case DataType::Int16:
-            buffer = NewBufferFromView<int16_t>(sliceView);
-            break;
-        case DataType::Int32:
-            buffer = NewBufferFromView<int32_t>(sliceView);
-            break;
-        default:
-            assert(false);
-            break;
-    }
-    auto tensor = CreateConstTensor(name, src->Type(), buffer, &slice.shape);
-    return tensor;
-}
-
 inline Operation *CreateLUT(const std::shared_ptr<Tensor> &ifm, const std::shared_ptr<Tensor> &lut, const Quantization &ifmQuantization,
     const Quantization &ofmQuantization, DataType dtype = DataType::None, const Shape *ifmShape = nullptr,
     std::shared_ptr<Tensor> ofm = nullptr, TensorSlice ifmSlice = {}, TensorSlice ofmSlice = {})

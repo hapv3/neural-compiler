@@ -412,10 +412,10 @@ template<typename TYPE>
 static std::shared_ptr<SchedulerTensor> ReverseHW2(SchedulerTensor *tensor)
 {
     const auto &inBufferView = tensor->bufferView;
-    const auto &inBufferValues = inBufferView.Values<TYPE>();
+    const auto inBufferValues = inBufferView.Values<TYPE>();
 
     // Create output buffer that will contain reversed weights
-    const auto size = inBufferView.BufferSize();
+    const auto size = inBufferView.Elements();
     auto outBuffer = std::make_shared<Buffer>(std::make_unique<TYPE[]>(size), size);
     BufferView outBufferView(std::move(outBuffer), tensor->bufferView);
     auto outBufferValues = outBufferView.WritableValues<TYPE>();
@@ -433,10 +433,7 @@ static std::shared_ptr<SchedulerTensor> ReverseHW2(SchedulerTensor *tensor)
             {
                 for ( int c = 0; c < depth; c++ )
                 {
-                    int inElement = inBufferValues.ElementIndex({n, h, w, c});
-                    int outElement = outBufferValues.ElementIndex({n, height - h - 1, width - w - 1, c});
-
-                    outBufferValues[outElement] = inBufferValues[inElement];
+                    outBufferValues[{n, height - h - 1, width - w - 1, c}] = inBufferValues[{n, h, w, c}];
                 }
             }
         }

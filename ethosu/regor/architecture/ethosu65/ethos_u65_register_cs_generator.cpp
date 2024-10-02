@@ -154,14 +154,14 @@ void EthosU65RCSGenerator::GenerateDMA(const HLCDMA *dma, MemoryAccesses &memory
     if ( strideMode != dma_stride_mode::D1 )
     {
         Emit(isa::npu_set_dma0_size0_t(size0));
-        int skip0 = destStride0 - dma->length;
+        uint64_t skip0 = destStride0 - dma->length;
         Emit(isa::npu_set_dma0_skip0_t(skip0));
     }
 
     if ( strideMode == dma_stride_mode::D3 )
     {
         Emit(isa::npu_set_dma0_size1_t(size1));
-        int skip1 = destStride1 - (dma->length * size0);
+        uint64_t skip1 = destStride1 - (dma->length * size0);
         Emit(isa::npu_set_dma0_skip1_t(skip1));
     }
 

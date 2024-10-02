@@ -84,7 +84,7 @@ Tensor *GraphIrOptimiser::ConvertBool8Tensors(Graph *graph, Tensor *tensor)
         {
             const auto oldView = tensor->View();
             const auto oldValues = oldView.Values<int8_t>();
-            const auto size = oldView.BufferSize();
+            const auto size = oldView.Buffer()->Size();
 
             // Replace this tensor's buffer with a new buffer since we don't know if the current buffer is writable
             auto newBuffer = std::make_shared<Buffer>(std::make_unique<uint8_t[]>(size), size);
@@ -141,7 +141,7 @@ Tensor *GraphIrOptimiser::ConvertInt4Tensors(Graph *graph, Tensor *tensor)
     {
         const auto oldView = tensor->View();
         const auto oldValues = oldView.Values<int8_t>();
-        const auto size = oldView.BufferSize();
+        const auto size = oldView.Buffer()->Size();
         tensor->SetBuffer(nullptr);
         tensor->ChangeType(DataType::Int8);
         // Replace this tensor's buffer with a new buffer

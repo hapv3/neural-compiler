@@ -721,7 +721,7 @@ void Scheduler::MoveConstantData(Schedule *refSchedule)
 
                 // Check if broadcast elementwise can be buffered
                 if ( IsIFM(pos.first) && IsElementwise(schedOp->Type()) && (conn->shape != schedOp->OFM()->shape) &&
-                     conn->tensor->srcTensor->View().BufferSize() > maxIfmShramAvail )
+                     conn->tensor->srcTensor->View().Buffer()->Size() > maxIfmShramAvail )
                 {
                     moveData = true;
                 }
@@ -1933,7 +1933,7 @@ WeightScaleTensors Scheduler::TryEncodeWeightAndScaleTensor(IWeightEncodingConfi
             if ( doScales && stream < scaleStreamsRequired )
             {
                 // Encode Scales and biases
-                const uint8_t *biases = scaleTens->bufferView.HasBuffer() ? &scaleTens->bufferView.Values<uint8_t>()[0] : nullptr;
+                const uint8_t *biases = scaleTens->bufferView.HasBuffer() ? scaleTens->bufferView.RawData<uint8_t>() : nullptr;
                 int biasCount = scaleTens->bufferView.HasBuffer() ? scaleTens->bufferView.ViewShape().Depth() : depthOffset + depthLength;
                 scaleSource->SetSource(biases, biasCount, depthOffset, depthLength, stream);
                 if ( scaleSource->Elements() == 0 )
@@ -2006,7 +2006,7 @@ WeightScaleTensors Scheduler::TryEncodeWeightAndScaleTensor(IWeightEncodingConfi
     npuTensor->totalWeightBytes = totalWeightBytes;
     npuTensor->subStreams = subStreams;
     npuTensor->storageShape = encodedTensor->StorageShape();
-    npuTensor->SetAllocatedSize(encodedTensor->View().BufferSize());
+    npuTensor->SetAllocatedSize(encodedTensor->View().Buffer()->Size());
 
     // Insert encoded weights hash and equivalenceId into map
     auto entry = _equivalenceIdMap.emplace(buf->Hash(), npuTensor->equivalenceId);
