@@ -127,7 +127,7 @@ ArchitectureOpGroupQuery SchedulerPacking::CreateOpGroupQuery(const SchedulerOpe
     auto ofm = schedOp->OFM();
     query.ifm[0].key = ifm0->tensor->uid;
     query.ifm[0].type = ifm0->tensor->dataType;
-    query.ifm[0].shape = ifm0->shape;
+    query.ifm[0].shape = ifm0->SliceShape();
     query.ifm[0].transpose = ifm0->transpose;
     query.ifm[0].reverse = ifm0->reverse;
     query.ifm[0].isConst = ifm0->tensor->IsConstant();
@@ -135,14 +135,14 @@ ArchitectureOpGroupQuery SchedulerPacking::CreateOpGroupQuery(const SchedulerOpe
     {
         query.ifm[1].key = ifm1->tensor->uid;
         query.ifm[1].type = ifm1->tensor->dataType;
-        query.ifm[1].shape = ifm1->shape;
+        query.ifm[1].shape = ifm1->SliceShape();
         query.ifm[1].transpose = ifm1->transpose;
         query.ifm[1].reverse = ifm1->reverse;
         query.ifm[1].isConst = ifm1->tensor->IsConstant();
     }
     query.ofm.key = ofm->tensor->uid;
     query.ofm.type = ofm->tensor->dataType;
-    query.ofm.shape = ofm->shape;
+    query.ofm.shape = ofm->SliceShape();
     query.ofm.transpose = ofm->transpose;
     query.ofm.reverse = ofm->reverse;
     query.ofm.isConst = false;
@@ -510,6 +510,17 @@ std::vector<std::unique_ptr<SchedulerOperation>> SchedulerPacking::DecomposeSche
             break;
         case OpType::MatMul:
             result = DecomposeMatmul(_arch, std::move(op));
+            break;
+        case OpType::ReduceSum:
+            [[fallthrough]];
+        case OpType::ReduceMin:
+            [[fallthrough]];
+        case OpType::ReduceMax:
+            [[fallthrough]];
+        case OpType::ReduceAny:
+            [[fallthrough]];
+        case OpType::ReduceAll:
+            result = DecomposeReduce(_arch, std::move(op));
             break;
         default:
             if ( DecomposeAsElementwise(op->Type()) || op->Type() == OpType::MemoryCopy )

@@ -90,7 +90,6 @@ bool CanRunOnHardware(Architecture *arch, const SchedulerOperation *schedOp)
         auto &ofmShape = schedOp->OFM()->SliceShape();
         if ( ofmShape.Size() > 3 && ofmShape.Elements() > ofmShape.Width() * ofmShape.Height() * ofmShape.Depth() )
             return false;
-        if ( ofmShape.Width() > MAX_DIM || ofmShape.Height() > MAX_DIM || ofmShape.Depth() > MAX_DIM ) return false;
     }
     if ( schedOp->Type() == OpType::MatMul )
     {
@@ -106,13 +105,16 @@ bool CanRunOnHardware(Architecture *arch, const SchedulerOperation *schedOp)
     qOpGroup.kernel = schedOp->Kernel();
     qOpGroup.ifm[0].key = ifm->tensor->uid;
     qOpGroup.ifm[0].type = ifm->tensor->dataType;
+    qOpGroup.ifm[0].shape = ifm->SliceShape();
     if ( ifm2 )
     {
         qOpGroup.ifm[1].key = ifm2->tensor->uid;
         qOpGroup.ifm[1].type = ifm2->tensor->dataType;
+        qOpGroup.ifm[1].shape = ifm2->SliceShape();
     }
     qOpGroup.ofm.key = ofm->tensor->uid;
     qOpGroup.ofm.type = ofm->tensor->dataType;
+    qOpGroup.ofm.shape = ofm->SliceShape();
     if ( arch->CreateOpGroup(qOpGroup) == nullptr ) return false;
     regor::ArchitectureConfigQuery qConfig;
     qConfig.ofmShape = Shape::PadAxes(ofm->SliceShape(), 3, 1);
@@ -142,13 +144,18 @@ bool CanDecompose(Architecture *, const SchedulerOperation *schedOp)
     if ( schedOp->Type() == OpType::TransposeConv2D ) return true;
     if ( DecomposeAsElementwise(schedOp->Type()) || schedOp->Type() == OpType::MemoryCopy ) return true;
     if ( schedOp->Type() == OpType::MatMul ) return true;
+    if ( schedOp->Type() == OpType::ReduceSum ) return true;
+    if ( schedOp->Type() == OpType::ReduceMin ) return true;
+    if ( schedOp->Type() == OpType::ReduceMax ) return true;
+    if ( schedOp->Type() == OpType::ReduceAny ) return true;
+    if ( schedOp->Type() == OpType::ReduceAll ) return true;
     return false;
 }
 
-using DecomposeFunc = std::vector<std::unique_ptr<SchedulerOperation>> (*)(Architecture *, std::unique_ptr<SchedulerOperation>);
+typedef std::function<std::vector<std::unique_ptr<SchedulerOperation>>(Architecture *, std::unique_ptr<SchedulerOperation>)> DecomposeFunc;
 
 static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeBlocksElementwise(
-    Architecture *arch, std::unique_ptr<SchedulerOperation> op, Shape &blockShape, DecomposeFunc doDecompose)
+    Architecture *arch, std::unique_ptr<SchedulerOperation> op, Shape &blockShape, const DecomposeFunc &doDecompose)
 {
     std::vector<std::unique_ptr<SchedulerOperation>> result;
     const auto BH = blockShape.Height();
@@ -204,56 +211,70 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeBlocksElementwi
     return result;
 }
 
-// Decompose to sub-operations with size 1 along the leading <dimension> axes.
-// Used for the batch dimension, and for the leading N-3 dimensions for elementwise operations.
-static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeLeadingDimensions(
-    int dimensions, Architecture *arch, std::unique_ptr<SchedulerOperation> op, DecomposeFunc doDecompose)
+// Decompose to sub-operations in slices along the specified axis.
+static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeLargeAxis(int axis, int sliceSize, Architecture *arch,
+    std::unique_ptr<SchedulerOperation> op, const DecomposeFunc &doDecompose)
 {
     std::vector<std::unique_ptr<SchedulerOperation>> result;
-    int axis = --dimensions;
     auto *ofmConn = op->Output(TensorUsage::OFM);
     auto *ifmConn = op->Input(TensorUsage::IFM0);
     auto *ifm2Conn = op->TryInput(TensorUsage::IFM1);
-    auto newIfmSlice = ifmConn->slice;
-    auto newOfmSlice = ofmConn->slice;
-    newIfmSlice.shape[axis] = 1;
-    newOfmSlice.shape[axis] = 1;
-    TensorSlice newIfm2Slice;
-    if ( ifm2Conn != nullptr )
+
+    static auto SliceFunc = [](SchedulerConnection *conn, int ax, int maxSlice, int offset) -> TensorSlice
     {
-        newIfm2Slice = ifm2Conn->slice;
-        newIfm2Slice.shape[axis] = 1;
-    }
-    auto dimSize = ofmConn->SliceShape()[axis];
-    for ( int i = 0; i < dimSize; i++ )
+        Shape newOffset = conn->slice.offset;
+        Shape newShape = conn->SliceShape();
+        // maxIndex is the largest index of the undecomposed slice
+        int maxIndex = newOffset[ax] + newShape[ax];
+        // Don't offset broadcasted axis
+        if ( newShape[ax] != 1 )
+        {
+            // clamp slices if they exceed maxIndex
+            newOffset[ax] = std::min(newOffset[ax] + offset, maxIndex - 1);
+            newShape[ax] = std::min(maxSlice, maxIndex - newOffset[ax]);
+        }
+        assert(newOffset[ax] + newShape[ax] <= maxIndex);
+        return {newOffset, newShape};
+    };
+
+    auto axisSize = ofmConn->SliceShape()[axis];
+    for ( int i = 0; i < axisSize; i += sliceSize )
     {
         std::unique_ptr<SchedulerOperation> subOp = MakeSubOperation(op.get());
-        assert(i < ifmConn->SliceShape()[axis] || ifmConn->SliceShape()[axis] == 1);  // Broadcast dimension
-        if ( ifm2Conn != nullptr )
+        subOp->Input(TensorUsage::IFM0)->slice = SliceFunc(ifmConn, axis, sliceSize, i);
+        subOp->Output(TensorUsage::OFM)->slice = SliceFunc(ofmConn, axis, sliceSize, i);
+        if ( ifm2Conn )
         {
-            assert(i < ifm2Conn->SliceShape()[axis] || ifm2Conn->SliceShape()[axis] == 1);  // Broadcast dimension
+            subOp->Input(TensorUsage::IFM1)->slice = SliceFunc(ifm2Conn, axis, sliceSize, i);
         }
-        assert(newIfmSlice.shape + newIfmSlice.offset <= ifmConn->shape);
-        assert(newOfmSlice.shape + newOfmSlice.offset <= ofmConn->shape);
-        subOp->Input(TensorUsage::IFM)->slice = newIfmSlice;
-        subOp->Output(TensorUsage::OFM)->slice = newOfmSlice;
-        newIfmSlice.offset[axis] = std::min(newIfmSlice.offset[axis] + 1, ifmConn->shape[axis] - 1);
-        newOfmSlice.offset[axis] = std::min(newOfmSlice.offset[axis] + 1, ofmConn->shape[axis] - 1);
-        if ( ifm2Conn != nullptr )
-        {
-            assert(newIfm2Slice.shape + newIfm2Slice.offset <= ifm2Conn->shape);
-            subOp->Input(TensorUsage::IFM1)->slice = newIfm2Slice;
-            newIfm2Slice.offset[axis] = std::min(newIfm2Slice.offset[axis] + 1, ifm2Conn->shape[axis] - 1);
-        }
-        auto subOps = (dimensions > 0) ? DecomposeLeadingDimensions(dimensions, arch, std::move(subOp), doDecompose) : doDecompose(arch, std::move(subOp));
+        auto subOps = doDecompose(arch, std::move(subOp));
         result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
     }
     return result;
 }
 
+// Decompose to sub-operations with size 1 along the leading <dimension> axes.
+// Used for the batch dimension, and for the leading N-3 dimensions for elementwise operations.
+static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeLeadingDimensions(
+    int dimensions, Architecture *arch, std::unique_ptr<SchedulerOperation> op, const DecomposeFunc &doDecompose)
+{
+    int axis = dimensions - 1;
+    // Use a callback-mechanism to recurse over all leading dimensions
+    DecomposeFunc cb = [axis, &doDecompose](Architecture *_arch, std::unique_ptr<SchedulerOperation> _op)
+    {
+        if ( axis > 0 )
+        {
+            return DecomposeLeadingDimensions(axis, _arch, std::move(_op), doDecompose);
+        }
+        return doDecompose(_arch, std::move(_op));
+    };
+
+    return DecomposeLargeAxis(axis, 1, arch, std::move(op), cb);
+}
+
 // Handle dilation by decomposing to suboperations with input stride = dilation and dilation 1
 static std::vector<std::unique_ptr<SchedulerOperation>>
-HandleDilation(Architecture *arch, std::unique_ptr<SchedulerOperation> op, DecomposeFunc doDecompose)
+HandleDilation(Architecture *arch, std::unique_ptr<SchedulerOperation> op, const DecomposeFunc &doDecompose)
 {
     std::vector<std::unique_ptr<SchedulerOperation>> result;
     auto *ofmConn = op->Output(TensorUsage::OFM);
@@ -339,12 +360,12 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv2D(Architecture *a
     auto &ifmSlice = ifmConn->slice;
     auto *kernel = op->Kernel();
     auto &padding = kernel->Padding();
+    DecomposeFunc cb = DecomposeConv2D;
     InitializeSlice(ofmSlice, ofmShape.WithZeros(), ofmShape);
     InitializeSlice(ifmSlice, ifmShape.WithZeros().WithHW(-padding.Top(), -padding.Left()), ifmShape);
-
     if ( ofmShape.Batch() > 1 )
     {
-        return DecomposeLeadingDimensions(1, arch, std::move(op), DecomposeConv2D);
+        return DecomposeLeadingDimensions(1, arch, std::move(op), cb);
     }
     if ( CanRunOnHardware(arch, op.get()) )
     {
@@ -355,7 +376,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv2D(Architecture *a
     auto &dilation = kernel->Dilation();
     if ( dilation.x > 1 || dilation.y > 1 )
     {
-        return HandleDilation(arch, std::move(op), DecomposeConv2D);
+        return HandleDilation(arch, std::move(op), cb);
     }
     // TODO: MLBEDSW-8783 Decompose convolutions with large stride
     // If we get here, decomposition has failed, the resulting operations will be executed on CPU
@@ -376,12 +397,13 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
     auto &ifmSlice = ifmConn->slice;
     auto *kernel = op->Kernel();
     auto &padding = kernel->Padding();
+    DecomposeFunc cb = DecomposeDepthwiseConv2D;
     InitializeSlice(ofmSlice, ofmShape.WithZeros(), ofmShape);
     InitializeSlice(ifmSlice, ifmShape.WithZeros().WithHW(-padding.Top(), -padding.Left()), ifmShape);
 
     if ( ofmShape.Batch() > 1 )
     {
-        return DecomposeLeadingDimensions(1, arch, std::move(op), DecomposeDepthwiseConv2D);
+        return DecomposeLeadingDimensions(1, arch, std::move(op), cb);
     }
     if ( weightsShape.Depth() > 1 )
     {
@@ -399,7 +421,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
     auto &dilation = kernel->Dilation();
     if ( dilation.x > 1 || dilation.y > 1 )
     {
-        return HandleDilation(arch, std::move(op), DecomposeDepthwiseConv2D);
+        return HandleDilation(arch, std::move(op), cb);
     }
     // TODO: MLBEDSW-8783 Decompose convolutions with large stride
     // If we get here, decomposition has failed, the resulting operations will be executed on CPU
@@ -552,6 +574,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeElementwise(Architectu
     auto ifmConn = op->Input(TensorUsage::IFM);
     auto &ifmShape = ifmConn->SliceShape();
     auto &ifmSlice = ifmConn->slice;
+    DecomposeFunc cb = DecomposeElementwise;
 
     InitializeSlice(ofmSlice, ofmShape.WithZeros(), ofmShape);
     InitializeSlice(ifmSlice, ifmShape.WithZeros(), ifmShape);
@@ -565,15 +588,16 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeElementwise(Architectu
     auto ofmRank = ofmShape.Size();
     if ( ofmRank > 3 && ofmShape.Elements() > ofmShape.Width() * ofmShape.Height() * ofmShape.Depth() )
     {
-        return DecomposeLeadingDimensions(ofmRank - 3, arch, std::move(op), DecomposeElementwise);
+        return DecomposeLeadingDimensions(ofmRank - 3, arch, std::move(op), cb);
     }
     if ( auto maxShape = Shape::Min(Shape(nullptr, ofmShape.Size(), MAX_DIM), ofmShape); maxShape != ofmShape )
     {
-        return DecomposeBlocksElementwise(arch, std::move(op), maxShape, DecomposeElementwise);
+        return DecomposeBlocksElementwise(arch, std::move(op), maxShape, cb);
     }
     result.emplace_back(std::move(op));
     return result;
 }
+
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMatmul(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
 {
     std::vector<std::unique_ptr<SchedulerOperation>> result;
@@ -583,6 +607,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMatmul(Architecture *a
     auto ifmConn = op->Input(TensorUsage::IFM);
     auto &ifmShape = ifmConn->SliceShape();
     auto &ifmSlice = ifmConn->slice;
+    DecomposeFunc cb = DecomposeMatmul;
 
     InitializeSlice(ofmSlice, ofmShape.WithZeros(), ofmShape);
     InitializeSlice(ifmSlice, ifmShape.WithZeros(), ifmShape);
@@ -599,7 +624,50 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMatmul(Architecture *a
     auto ofmRank = ofmShape.Size();
     if ( ofmRank > 2 && (ofmShape.Elements() > ofmShape.Width() * ofmShape.Depth()) )
     {
-        return DecomposeLeadingDimensions(ofmRank - 2, arch, std::move(op), DecomposeMatmul);
+        return DecomposeLeadingDimensions(ofmRank - 2, arch, std::move(op), cb);
+    }
+
+    result.emplace_back(std::move(op));
+    return result;
+}
+
+std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
+{
+    std::vector<std::unique_ptr<SchedulerOperation>> result;
+    auto ofmConn = op->Output(TensorUsage::OFM);
+    auto ofmShape = ofmConn->SliceShape();
+    auto &ofmSlice = ofmConn->slice;
+    auto ifmConn = op->Input(TensorUsage::IFM);
+    auto ifmShape = ifmConn->SliceShape();
+    auto &ifmSlice = ifmConn->slice;
+    DecomposeFunc cb = DecomposeReduce;
+
+    InitializeSlice(ofmSlice, ofmShape.WithZeros(), ofmShape);
+    InitializeSlice(ifmSlice, ifmShape.WithZeros(), ifmShape);
+
+    if ( auto ifm2Conn = op->TryInput(TensorUsage::IFM1) )
+    {
+        auto ifm2Shape = ifm2Conn->shape;
+        auto &ifm2Slice = ifm2Conn->slice;
+
+        InitializeSlice(ifm2Slice, ifm2Shape.WithZeros(), ifm2Shape);
+    }
+
+    auto ofmRank = ofmShape.Size();
+    auto attr = op->Attribute<axis_attr_t>();
+    int reducedAxis = attr->axis;
+
+    for ( int axis = 0; axis < ofmRank; axis++ )
+    {
+        if ( ofmShape[axis] > MAX_DIM )
+        {
+            if ( axis == reducedAxis )
+            {
+                // TODO: MLBEDSW-9408 reduced axis requires specific decomposition
+                continue;
+            }
+            return DecomposeLargeAxis(axis, MAX_DIM, arch, std::move(op), cb);
+        }
     }
 
     result.emplace_back(std::move(op));

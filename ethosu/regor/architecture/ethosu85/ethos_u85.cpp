@@ -80,6 +80,8 @@ static const ArchEthosU85::AcceleratorConfig s_EthosU85Configs[] = {
 
 constexpr int CB_SLOTS = 6;
 constexpr int BRICK_ELEMENTS = 16;
+// max size for tensors
+const static Shape MAX_SHAPE(nullptr, 8, 65536);
 
 enum class ElementwiseUsage
 {
@@ -1453,6 +1455,30 @@ bool EthosU85OpGroup::CanRunOnNPU(const ArchitectureOpGroupQuery &op)
         default:
             assert(false && "Unrecognized HWOp");
             return false;
+    }
+
+    // Validate that input/outputs shapes don't overflow
+    if ( npuOp != EthosU85NpuOp::Dma )
+    {
+        const auto &ifmShape = op.ifm[0].shape;
+        const auto &ofmShape = op.ofm.shape;
+
+        if ( ifmShape.GreaterMask(MAX_SHAPE) != 0 )
+        {
+            return false;
+        }
+        if ( ofmShape.GreaterMask(MAX_SHAPE) != 0 )
+        {
+            return false;
+        }
+        if ( op.inputs > 1 )
+        {
+            const auto &ifm2Shape = op.ifm[1].shape;
+            if ( ifm2Shape.GreaterMask(MAX_SHAPE) != 0 )
+            {
+                return false;
+            }
+        }
     }
 
     // Check allowed ifm/ofm data type mapping

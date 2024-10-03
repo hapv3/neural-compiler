@@ -41,8 +41,8 @@ std::shared_ptr<SchedulerTensor> CreateTensor(std::string name, Shape storageSha
     return schedTensor;
 }
 
-std::unique_ptr<SchedulerOperation> CreateOperation(OpType opType, TensorUsage ifm0Usage, std::shared_ptr<SchedulerTensor> &ifm0,
-    TensorUsage ifm1Usage, std::shared_ptr<SchedulerTensor> &ifm1, TensorUsage ofmUsage, std::shared_ptr<SchedulerTensor> &ofm)
+std::unique_ptr<SchedulerOperation> CreateOperation(OpType opType, TensorUsage ifm0Usage,
+    const std::shared_ptr<SchedulerTensor> &ifm0, TensorUsage ofmUsage, const std::shared_ptr<SchedulerTensor> &ofm)
 {
     static std::vector<std::shared_ptr<Operation>> ops;
     ops.push_back(std::make_shared<Operation>(opType));
@@ -51,14 +51,10 @@ std::unique_ptr<SchedulerOperation> CreateOperation(OpType opType, TensorUsage i
     schedOp->_srcKey = static_cast<void *>(ops.back().get());
 
     auto *ifm0Conn = schedOp->AddInput(ifm0Usage);
-    auto *ifm1Conn = schedOp->AddInput(ifm1Usage);
     auto *ofmConn = schedOp->AddOutput(ofmUsage);
 
     ifm0Conn->tensor = ifm0;
     ifm0Conn->shape = ifm0->storageShape;
-
-    ifm1Conn->tensor = ifm1;
-    ifm1Conn->shape = ifm1->storageShape;
 
     ofmConn->tensor = ofm;
     ofmConn->shape = ofm->storageShape;
@@ -66,18 +62,40 @@ std::unique_ptr<SchedulerOperation> CreateOperation(OpType opType, TensorUsage i
     return schedOp;
 }
 
-std::unique_ptr<SchedulerOperation> CreateMatmul(Shape ifmShape, Shape ofmShape)
+std::unique_ptr<SchedulerOperation> CreateOperation(OpType opType, TensorUsage ifm0Usage,
+    const std::shared_ptr<SchedulerTensor> &ifm0, TensorUsage ifm1Usage, const std::shared_ptr<SchedulerTensor> &ifm1,
+    TensorUsage ofmUsage, const std::shared_ptr<SchedulerTensor> &ofm)
+{
+    auto schedOp = CreateOperation(opType, ifm0Usage, ifm0, ofmUsage, ofm);
+    auto *ifm1Conn = schedOp->AddInput(ifm1Usage);
+    ifm1Conn->tensor = ifm1;
+    ifm1Conn->shape = ifm1->storageShape;
+    return schedOp;
+}
+
+std::unique_ptr<SchedulerOperation> CreateOperation(OpType opType, Shape ifmShape, Shape ofmShape)
 {
     auto ifm1 = CreateTensor("ifm1", ifmShape, DataType::Int8);
-    auto ifm2 = CreateTensor("ifm2", ifmShape, DataType::Int8);
     auto ofm = CreateTensor("ofm", ofmShape, DataType::Int8);
 
-    std::unique_ptr<SchedulerOperation> op = CreateOperation(
-        OpType::MatMul, TensorUsage::IFM0, ifm1, TensorUsage::IFM1, ifm2, TensorUsage::OFM, ofm);
+    std::unique_ptr<SchedulerOperation> op = CreateOperation(opType, TensorUsage::IFM0, ifm1, TensorUsage::OFM, ofm);
 
     // set default kernel
     op->_kernel = std::make_unique<class Kernel>(Point2i(1, 1), Point2i(1, 1), Point2i(1, 1));
+    return op;
+}
 
+std::unique_ptr<SchedulerOperation> CreateOperation(OpType opType, Shape ifmShape, Shape ifm2Shape, Shape ofmShape)
+{
+    auto ifm1 = CreateTensor("ifm1", ifmShape, DataType::Int8);
+    auto ifm2 = CreateTensor("ifm2", ifm2Shape, DataType::Int8);
+    auto ofm = CreateTensor("ofm", ofmShape, DataType::Int8);
+
+    std::unique_ptr<SchedulerOperation> op = CreateOperation(
+        opType, TensorUsage::IFM0, ifm1, TensorUsage::IFM1, ifm2, TensorUsage::OFM, ofm);
+
+    // set default kernel
+    op->_kernel = std::make_unique<class Kernel>(Point2i(1, 1), Point2i(1, 1), Point2i(1, 1));
     return op;
 }
 };  // namespace
@@ -88,7 +106,7 @@ TEST_CASE("test_scheduler_decompose")
     {
         Shape ifmShape(1, 100, 3, 2);  // ifm2 is transposed by graphIR optimiser to same shape as ifm1
         Shape ofmShape(1, 100, 3, 3);
-        auto op = CreateMatmul(ifmShape, ofmShape);
+        auto op = CreateOperation(OpType::MatMul, ifmShape, ifmShape, ofmShape);
         std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeMatmul(nullptr, std::move(op));
         REQUIRE(decomposedOps.size() == 100);
         for ( size_t i = 0; i < decomposedOps.size(); i++ )
@@ -113,7 +131,7 @@ TEST_CASE("test_scheduler_decompose")
         Shape ifmSliceShape(1, 98, 3, 2);
         Shape ofmSliceOffset(0, 1, 0, 0);
         Shape ofmSliceShape(1, 98, 3, 3);
-        auto op = CreateMatmul(ifmShape, ofmShape);
+        auto op = CreateOperation(OpType::MatMul, ifmShape, ifmShape, ofmShape);
         op->Input(TensorUsage::IFM0)->slice = {ifmSliceOffset, ifmSliceShape};
         op->Input(TensorUsage::IFM1)->slice = {ifmSliceOffset, ifmSliceShape};
         op->Output(TensorUsage::OFM)->slice = {ofmSliceOffset, ofmSliceShape};
@@ -137,7 +155,7 @@ TEST_CASE("test_scheduler_decompose")
     {
         Shape ifmShape(100, 1, 3, 2);
         Shape ofmShape(100, 1, 3, 3);
-        auto op = CreateMatmul(ifmShape, ofmShape);
+        auto op = CreateOperation(OpType::MatMul, ifmShape, ifmShape, ofmShape);
         std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeMatmul(nullptr, std::move(op));
         REQUIRE(decomposedOps.size() == 100);
         for ( size_t i = 0; i < decomposedOps.size(); i++ )
@@ -162,7 +180,7 @@ TEST_CASE("test_scheduler_decompose")
         Shape ifmSliceShape(98, 1, 3, 2);
         Shape ofmSliceOffset(1, 0, 0, 0);
         Shape ofmSliceShape(98, 1, 3, 3);
-        auto op = CreateMatmul(ifmShape, ofmShape);
+        auto op = CreateOperation(OpType::MatMul, ifmShape, ifmShape, ofmShape);
         op->Input(TensorUsage::IFM0)->slice = {ifmSliceOffset, ifmSliceShape};
         op->Input(TensorUsage::IFM1)->slice = {ifmSliceOffset, ifmSliceShape};
         op->Output(TensorUsage::OFM)->slice = {ofmSliceOffset, ofmSliceShape};
@@ -177,7 +195,7 @@ TEST_CASE("test_scheduler_decompose")
             REQUIRE(ifmSlice.shape == ifmSliceShape.WithBatch(1));
             REQUIRE(ifm2Slice.shape == ifmSliceShape.WithBatch(1));
             REQUIRE(ofmSlice.shape == ofmSliceShape.WithBatch(1));
-            REQUIRE(ifmSlice.offset == Shape(i, 0, 0, 0) + ifmSliceOffset);
+            REQUIRE(ifmSlice.offset == (Shape(i, 0, 0, 0) + ifmSliceOffset));
             REQUIRE(ifm2Slice.offset == Shape(i, 0, 0, 0) + ifmSliceOffset);
             REQUIRE(ofmSlice.offset == Shape(i, 0, 0, 0) + ofmSliceOffset);
         }
@@ -186,7 +204,7 @@ TEST_CASE("test_scheduler_decompose")
     {
         Shape ifmShape(10, 10, 3, 2);
         Shape ofmShape(10, 10, 3, 3);
-        auto op = CreateMatmul(ifmShape, ofmShape);
+        auto op = CreateOperation(OpType::MatMul, ifmShape, ifmShape, ofmShape);
         std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeMatmul(nullptr, std::move(op));
         REQUIRE(decomposedOps.size() == 100);
         for ( size_t i = 0; i < decomposedOps.size(); i++ )
@@ -217,7 +235,7 @@ TEST_CASE("test_scheduler_decompose")
         Shape ifmSliceShape(8, 8, 3, 2);
         Shape ofmSliceOffset(1, 1, 0, 0);
         Shape ofmSliceShape(8, 8, 3, 3);
-        auto op = CreateMatmul(ifmShape, ofmShape);
+        auto op = CreateOperation(OpType::MatMul, ifmShape, ifmShape, ofmShape);
         op->Input(TensorUsage::IFM0)->slice = {ifmSliceOffset, ifmSliceShape};
         op->Input(TensorUsage::IFM1)->slice = {ifmSliceOffset, ifmSliceShape};
         op->Output(TensorUsage::OFM)->slice = {ofmSliceOffset, ofmSliceShape};
@@ -248,10 +266,62 @@ TEST_CASE("test_scheduler_decompose")
         // Expect no change when calling DecomposeMatmul
         Shape ifmShape(1, 1, 3, 2);
         Shape ofmShape(1, 1, 3, 3);
-        auto op = CreateMatmul(ifmShape, ofmShape);
+        auto op = CreateOperation(OpType::MatMul, ifmShape, ifmShape, ofmShape);
         SchedulerOperation *orig = op.get();
         std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeMatmul(nullptr, std::move(op));
         REQUIRE(decomposedOps.size() == 1);
         REQUIRE(orig == decomposedOps[0].get());
+    }
+    SECTION("Decompose large axis")
+    {
+        uint32_t maxSize = (1UL << 16);
+        uint32_t shapeSize = maxSize * 10 + 5;
+        Shape ifmShape(1, 1, shapeSize, 5);
+        Shape ofmShape(1, 1, shapeSize, 5);
+        auto op = CreateOperation(OpType::ReduceMax, ifmShape, ofmShape);
+        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeReduce(nullptr, std::move(op));
+        REQUIRE(decomposedOps.size() == 11);
+        for ( size_t i = 0; i < decomposedOps.size(); i++ )
+        {
+            auto &subOp = decomposedOps[i];
+            auto &ifmSlice = subOp->Input(TensorUsage::IFM0)->slice;
+            auto &ofmSlice = subOp->Output(TensorUsage::OFM)->slice;
+            int expectedWidth = i < (decomposedOps.size() - 1) ? maxSize : 5;
+            REQUIRE(ifmSlice.shape == ifmShape.WithWidth(expectedWidth));
+            REQUIRE(ofmSlice.shape == ofmShape.WithWidth(expectedWidth));
+        }
+    }
+    SECTION("Decompose large axis (sliced)")
+    {
+        uint32_t maxSize = (1UL << 16);
+        uint32_t shapeSize = maxSize * 10 + 5;
+        Shape ifmShape(1, 1, shapeSize, 50);
+        Shape ofmShape(1, 1, shapeSize, 50);
+        // slice IFM/OFM into
+        // W = 2 * maxSize + 7
+        // C = 10
+        // expect 3 decomposed ops
+        //     two with w = maxSize
+        //     one with w = 7
+        Shape ifmSliceOffset(0, 0, maxSize, 10);
+        Shape ofmSliceOffset(0, 0, 0, 10);
+        Shape ifmSliceShape(1, 1, maxSize * 2 + 7, 10);
+        Shape ofmSliceShape(1, 1, maxSize * 2 + 7, 10);
+        auto op = CreateOperation(OpType::ReduceMax, ifmShape, ofmShape);
+        op->Input(TensorUsage::IFM0)->slice = {ifmSliceOffset, ifmSliceShape};
+        op->Output(TensorUsage::OFM)->slice = {ofmSliceOffset, ofmSliceShape};
+        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeReduce(nullptr, std::move(op));
+        REQUIRE(decomposedOps.size() == 3);
+        for ( size_t i = 0; i < decomposedOps.size(); i++ )
+        {
+            auto &subOp = decomposedOps[i];
+            auto &ifmSlice = subOp->Input(TensorUsage::IFM0)->slice;
+            auto &ofmSlice = subOp->Output(TensorUsage::OFM)->slice;
+            int expectedWidth = i < (decomposedOps.size() - 1) ? maxSize : 7;
+            REQUIRE(ifmSlice.shape == ifmSliceShape.WithWidth(expectedWidth));
+            REQUIRE(ofmSlice.shape == ofmSliceShape.WithWidth(expectedWidth));
+            REQUIRE(ofmSlice.offset == (ofmSliceOffset + Shape(0, 0, i * maxSize, 0)));
+            REQUIRE(ifmSlice.offset == (ifmSliceOffset + Shape(0, 0, i * maxSize, 0)));
+        }
     }
 }

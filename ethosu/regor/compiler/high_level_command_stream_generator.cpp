@@ -620,8 +620,8 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
     auto ofmEnd = Shape::PadAxes(ofmShape, 4, 1);
     if ( ofmConn->slice.offset.Size() > 0 )
     {
-        ofmStart = ofmConn->slice.offset;
-        ofmEnd = ofmConn->slice.offset + ofmConn->slice.shape;
+        ofmStart = Shape::PadAxes(ofmConn->slice.offset, 4, 0);
+        ofmEnd = Shape::PadAxes(ofmConn->slice.offset + ofmConn->slice.shape, 4, 1);
     }
     assert(ofmStart.Size() >= 4);
     assert(ofmEnd.Size() >= 4);
