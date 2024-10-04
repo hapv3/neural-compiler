@@ -1186,7 +1186,7 @@ bool EthosU85OpGroup::Fuse(const ArchitectureOpGroupQuery &op, const std::vector
     }
 
     // Can't fuse a reverse type that's not supported by primaryOp in opgroup
-    if ( !_arch->_constraints->SupportsReverse(_ops[0].type, op.ofm.reverse, op.ofm.shape) )
+    if ( !_arch->_constraints->SupportsReverse(_ops[0].type, op.ofm.reverse) )
     {
         return false;
     }
@@ -1497,7 +1497,7 @@ bool EthosU85OpGroup::CanRunOnNPU(const ArchitectureOpGroupQuery &op)
 
         if ( op.type == OpType::Reverse )
         {
-            return _arch->_constraints->SupportsReverse(OpType::MemoryCopy, op.ofm.reverse, op.ofm.shape);
+            return _arch->_constraints->SupportsReverse(OpType::MemoryCopy, op.ofm.reverse);
         }
         auto map = s_opDataTypeSupport.find(npuOp);
         if ( map == s_opDataTypeSupport.end() )

@@ -524,6 +524,9 @@ std::vector<std::unique_ptr<SchedulerOperation>> SchedulerPacking::DecomposeSche
         case OpType::ReduceAll:
             result = DecomposeReduce(_arch, std::move(op));
             break;
+        case OpType::Reverse:
+            result = DecomposeReverse(_arch, std::move(op));
+            break;
         default:
             if ( DecomposeAsElementwise(op->Type()) || op->Type() == OpType::MemoryCopy )
             {

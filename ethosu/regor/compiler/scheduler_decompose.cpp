@@ -150,6 +150,7 @@ bool CanDecompose(Architecture *, const SchedulerOperation *schedOp)
     if ( schedOp->Type() == OpType::ReduceAny ) return true;
     if ( schedOp->Type() == OpType::ReduceAll ) return true;
     if ( schedOp->Type() == OpType::ArgMax ) return true;
+    if ( schedOp->Type() == OpType::Reverse ) return true;
     return false;
 }
 
@@ -361,12 +362,11 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv2D(Architecture *a
     auto &ifmSlice = ifmConn->slice;
     auto *kernel = op->Kernel();
     auto &padding = kernel->Padding();
-    DecomposeFunc cb = DecomposeConv2D;
     InitializeSlice(ofmSlice, ofmShape.WithZeros(), ofmShape);
     InitializeSlice(ifmSlice, ifmShape.WithZeros().WithHW(-padding.Top(), -padding.Left()), ifmShape);
     if ( ofmShape.Batch() > 1 )
     {
-        return DecomposeLeadingDimensions(1, arch, std::move(op), cb);
+        return DecomposeLeadingDimensions(1, arch, std::move(op), DecomposeConv2D);
     }
     if ( CanRunOnHardware(arch, op.get()) )
     {
@@ -377,7 +377,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv2D(Architecture *a
     auto &dilation = kernel->Dilation();
     if ( dilation.x > 1 || dilation.y > 1 )
     {
-        return HandleDilation(arch, std::move(op), cb);
+        return HandleDilation(arch, std::move(op), DecomposeConv2D);
     }
     // TODO: MLBEDSW-8783 Decompose convolutions with large stride
     // If we get here, decomposition has failed, the resulting operations will be executed on CPU
@@ -398,13 +398,12 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
     auto &ifmSlice = ifmConn->slice;
     auto *kernel = op->Kernel();
     auto &padding = kernel->Padding();
-    DecomposeFunc cb = DecomposeDepthwiseConv2D;
     InitializeSlice(ofmSlice, ofmShape.WithZeros(), ofmShape);
     InitializeSlice(ifmSlice, ifmShape.WithZeros().WithHW(-padding.Top(), -padding.Left()), ifmShape);
 
     if ( ofmShape.Batch() > 1 )
     {
-        return DecomposeLeadingDimensions(1, arch, std::move(op), cb);
+        return DecomposeLeadingDimensions(1, arch, std::move(op), DecomposeDepthwiseConv2D);
     }
     if ( weightsShape.Depth() > 1 )
     {
@@ -422,7 +421,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
     auto &dilation = kernel->Dilation();
     if ( dilation.x > 1 || dilation.y > 1 )
     {
-        return HandleDilation(arch, std::move(op), cb);
+        return HandleDilation(arch, std::move(op), DecomposeDepthwiseConv2D);
     }
     // TODO: MLBEDSW-8783 Decompose convolutions with large stride
     // If we get here, decomposition has failed, the resulting operations will be executed on CPU
@@ -575,7 +574,6 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeElementwise(Architectu
     auto ifmConn = op->Input(TensorUsage::IFM);
     auto &ifmShape = ifmConn->SliceShape();
     auto &ifmSlice = ifmConn->slice;
-    DecomposeFunc cb = DecomposeElementwise;
 
     InitializeSlice(ofmSlice, ofmShape.WithZeros(), ofmShape);
     InitializeSlice(ifmSlice, ifmShape.WithZeros(), ifmShape);
@@ -589,11 +587,11 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeElementwise(Architectu
     auto ofmRank = ofmShape.Size();
     if ( ofmRank > 3 && ofmShape.Elements() > ofmShape.Width() * ofmShape.Height() * ofmShape.Depth() )
     {
-        return DecomposeLeadingDimensions(ofmRank - 3, arch, std::move(op), cb);
+        return DecomposeLeadingDimensions(ofmRank - 3, arch, std::move(op), DecomposeElementwise);
     }
     if ( auto maxShape = Shape::Min(Shape(nullptr, ofmShape.Size(), MAX_DIM), ofmShape); maxShape != ofmShape )
     {
-        return DecomposeBlocksElementwise(arch, std::move(op), maxShape, cb);
+        return DecomposeBlocksElementwise(arch, std::move(op), maxShape, DecomposeElementwise);
     }
     result.emplace_back(std::move(op));
     return result;
@@ -608,7 +606,6 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMatmul(Architecture *a
     auto ifmConn = op->Input(TensorUsage::IFM);
     auto &ifmShape = ifmConn->SliceShape();
     auto &ifmSlice = ifmConn->slice;
-    DecomposeFunc cb = DecomposeMatmul;
 
     InitializeSlice(ofmSlice, ofmShape.WithZeros(), ofmShape);
     InitializeSlice(ifmSlice, ifmShape.WithZeros(), ifmShape);
@@ -625,7 +622,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMatmul(Architecture *a
     auto ofmRank = ofmShape.Size();
     if ( ofmRank > 2 && (ofmShape.Elements() > ofmShape.Width() * ofmShape.Depth()) )
     {
-        return DecomposeLeadingDimensions(ofmRank - 2, arch, std::move(op), cb);
+        return DecomposeLeadingDimensions(ofmRank - 2, arch, std::move(op), DecomposeMatmul);
     }
 
     result.emplace_back(std::move(op));
@@ -641,7 +638,6 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(Architecture *a
     auto ifmConn = op->Input(TensorUsage::IFM);
     auto ifmShape = ifmConn->SliceShape();
     auto &ifmSlice = ifmConn->slice;
-    DecomposeFunc cb = DecomposeReduce;
 
     InitializeSlice(ofmSlice, ofmShape.WithZeros(), ofmShape);
     InitializeSlice(ifmSlice, ifmShape.WithZeros(), ifmShape);
@@ -667,7 +663,55 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(Architecture *a
                 // TODO: MLBEDSW-9408 reduced axis requires specific decomposition
                 continue;
             }
-            return DecomposeLargeAxis(axis, MAX_DIM, arch, std::move(op), cb);
+            return DecomposeLargeAxis(axis, MAX_DIM, arch, std::move(op), DecomposeReduce);
+        }
+    }
+
+    result.emplace_back(std::move(op));
+    return result;
+}
+
+std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReverse(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
+{
+    std::vector<std::unique_ptr<SchedulerOperation>> result;
+    auto ofmConn = op->Output(TensorUsage::OFM);
+    auto ofmShape = ofmConn->SliceShape();
+    auto &ofmSlice = ofmConn->slice;
+    auto ifmConn = op->Input(TensorUsage::IFM);
+    auto ifmShape = ifmConn->SliceShape();
+    auto &ifmSlice = ifmConn->slice;
+
+    InitializeSlice(ofmSlice, ofmShape.WithZeros(), ofmShape);
+    InitializeSlice(ifmSlice, ifmShape.WithZeros(), ifmShape);
+
+    if ( auto ifm2Conn = op->TryInput(TensorUsage::IFM1) )
+    {
+        auto ifm2Shape = ifm2Conn->shape;
+        auto &ifm2Slice = ifm2Conn->slice;
+
+        InitializeSlice(ifm2Slice, ifm2Shape.WithZeros(), ifm2Shape);
+    }
+
+    auto ofmRank = ofmShape.Size();
+    auto attr = op->Attribute<axis_attr_t>();
+    int reversedAxis = attr->axis;
+
+    for ( int axis = 0; axis < ofmRank; axis++ )
+    {
+        if ( ofmShape[axis] > MAX_DIM )
+        {
+            auto subOps = DecomposeLargeAxis(axis, MAX_DIM, arch, std::move(op), DecomposeReverse);
+            if ( axis == reversedAxis )
+            {
+                // For the reversed axis, we need to invert
+                // the slice-offsets for the OFM.
+                for ( auto &subOp : subOps )
+                {
+                    auto *subOfmConn = subOp->Output(TensorUsage::OFM);
+                    subOfmConn->slice.offset[axis] = ofmShape[axis] - subOfmConn->slice.offset[axis] - subOfmConn->SliceShape()[axis];
+                }
+            }
+            return subOps;
         }
     }
 

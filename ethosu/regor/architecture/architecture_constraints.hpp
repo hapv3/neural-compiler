@@ -92,7 +92,7 @@ public:
     virtual ~IArchitectureConstraints() = default;
 
     virtual bool SupportsTransposeHW(OpType opType, TransposeType transposeType) = 0;
-    virtual bool SupportsReverse(OpType opType, ReverseType reverseTypeMask, const Shape &ofmShape) = 0;
+    virtual bool SupportsReverse(OpType opType, ReverseType reverseTypeMask) = 0;
     virtual bool SupportsFusedRescale(OpType opType, TensorUsage tensorUsage, DataType fromType, DataType toType,
         const Quantization &quantization) = 0;
 
@@ -108,7 +108,7 @@ public:
                 valid = SupportsTranspose(query.targetType, query.transposeType, query.ifmShape);
                 break;
             case OpType::ReverseV2:
-                valid = SupportsReverse(query.targetType, query.reverseTypeMask, query.ofmShape);
+                valid = SupportsReverse(query.targetType, query.reverseTypeMask);
                 break;
             case OpType::Gather:
                 valid = SupportsGather(query.opType);
