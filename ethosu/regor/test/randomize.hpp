@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -139,14 +139,14 @@ T random_of(T first, Ts... rest)
 }
 
 // Helper
-unsigned urandom_range(unsigned min, unsigned max)
+inline unsigned urandom_range(unsigned min, unsigned max)
 {
     unsigned ret;
     randomize(ret, min, max);
     return ret;
 }
 
-unsigned urandom()
+inline unsigned urandom()
 {
     unsigned ret;
     randomize(ret);

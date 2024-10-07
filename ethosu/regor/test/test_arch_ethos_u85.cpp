@@ -19,6 +19,7 @@
 #include "common/common.hpp"
 
 #include "architecture/ethosu85/ethos_u85.hpp"
+#include "util.hpp"
 
 #include <catch_all.hpp>
 
@@ -28,20 +29,7 @@ using namespace regor;
 
 TEST_CASE("arch_ethos_u85 GetOpConfig")
 {
-    std::string config;
-    config += "[architecture]\r\n";
-    config += "macs=1024\r\n";
-    IniReader reader(config.c_str(), config.size());
-
-    ArchEthosU85 arch;
-    std::string section;
-    while ( reader.Begin(section) )
-    {
-        auto result = arch.ParseSection(section, &reader);
-        assert(result != IniParseResult::Error);
-        reader.End();
-    }
-
+    auto arch = CreateArchDefault<ArchEthosU85>(1024);
     ArchitectureConfigQuery query{};
     query.ifmBits = 8;
     query.lutBytes = 0;
@@ -58,7 +46,7 @@ TEST_CASE("arch_ethos_u85 GetOpConfig")
         query.ofmShape = {1, 8, 8, 32};
         query.ifmShape[0] = query.ofmShape;
         query.kernel = &kernel;
-        auto archOpConfig = arch.GetOpConfig(type, query);
+        auto archOpConfig = arch->GetOpConfig(type, query);
         EthosU85OpConfig *ethosU85OpConfig = static_cast<EthosU85OpConfig *>(archOpConfig.get());
         REQUIRE(ethosU85OpConfig->OfmUBlock() == Shape(2, 2, 32));
     }
@@ -70,7 +58,7 @@ TEST_CASE("arch_ethos_u85 GetOpConfig")
         query.ofmShape = {1, 1, 8, 32};
         query.ifmShape[0] = query.ofmShape;
         query.kernel = &kernel;
-        auto archOpConfig = arch.GetOpConfig(type, query);
+        auto archOpConfig = arch->GetOpConfig(type, query);
         EthosU85OpConfig *ethosU85OpConfig = static_cast<EthosU85OpConfig *>(archOpConfig.get());
         REQUIRE(ethosU85OpConfig->OfmUBlock() == Shape(1, 4, 32));
     }
@@ -82,7 +70,7 @@ TEST_CASE("arch_ethos_u85 GetOpConfig")
         query.ofmShape = {1, 8, 1, 16};
         query.ifmShape[0] = query.ofmShape;
         query.kernel = &kernel;
-        auto archOpConfig = arch.GetOpConfig(type, query);
+        auto archOpConfig = arch->GetOpConfig(type, query);
         EthosU85OpConfig *ethosU85OpConfig = static_cast<EthosU85OpConfig *>(archOpConfig.get());
         REQUIRE(ethosU85OpConfig->OfmUBlock() == Shape(2, 2, 32));
     }
@@ -94,7 +82,7 @@ TEST_CASE("arch_ethos_u85 GetOpConfig")
         query.ofmShape = {1, 8, 8, 1};
         query.ifmShape[0] = query.ofmShape;
         query.kernel = &kernel;
-        auto archOpConfig = arch.GetOpConfig(type, query);
+        auto archOpConfig = arch->GetOpConfig(type, query);
         EthosU85OpConfig *ethosU85OpConfig = static_cast<EthosU85OpConfig *>(archOpConfig.get());
         REQUIRE(ethosU85OpConfig->OfmUBlock() == Shape(2, 4, 16));
     }

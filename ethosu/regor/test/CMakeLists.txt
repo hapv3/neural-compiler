@@ -22,11 +22,25 @@
 include(regor_test)
 include(regor_dependencies)
 
+regor_lib(
+    NAME
+        test_common
+    EXCLUDE_FROM_ALL
+    TYPE OBJECT
+    SOURCES
+        test_main.cpp
+        util.cpp
+    DEPS
+        Catch2
+        regor::regor-objects
+        regor::fmt
+        mlw_codec_st
+)
+
 add_catch_test(
     NAME
         unit_tests
     SOURCES
-        test_main.cpp
         test_mlw_encode.cpp
         test_data_type.cpp
         test_ini_reader.cpp
@@ -45,7 +59,5 @@ add_catch_test(
         test_scheduler_packing.cpp
         test_operation_utils.cpp
     DEPS
-        regor::regor-objects
-        regor::fmt
-        mlw_codec_st
+        test_common
 )

@@ -19,72 +19,38 @@
 #include "common/common.hpp"
 
 #include "compiler/graph_packing.hpp"
+#include "util.hpp"
 
 #include <catch_all.hpp>
 #include <memory>
 
 #include "regor.h"
 
-using namespace regor;
-
-namespace
-{
-
 using AddressMap = std::unordered_map<const Tensor *, Address>;
 
-std::shared_ptr<SchedulerTensor> CreateTensor(std::string name, Address tensorAddress, AddressMap &tensorAddressMap)
+static std::shared_ptr<SchedulerTensor> CreateTensor(std::string name, Address tensorAddress, AddressMap &tensorAddressMap)
 {
-    auto tensor = std::make_shared<Tensor>(name, DataType::Int8);
-    auto schedTensor = std::make_shared<SchedulerTensor>();
-    schedTensor->srcTensor = tensor;
+    auto schedTensor = CreateSchedulerTensor(name, Shape(10, 10, 10), DataType::Int8);
     schedTensor->SetAddress(tensorAddress);
-    tensorAddressMap[tensor.get()] = tensorAddress;
-
+    tensorAddressMap[schedTensor->srcTensor.get()] = tensorAddress;
     return schedTensor;
 }
 
-std::unique_ptr<SchedulerOperation> CreateOperation(bool npu, TensorUsage ifm0Usage, std::shared_ptr<SchedulerTensor> &ifm0,
-    TensorUsage ifm1Usage, std::shared_ptr<SchedulerTensor> &ifm1, TensorUsage ofmUsage, std::shared_ptr<SchedulerTensor> &ofm)
-{
-    static std::vector<std::shared_ptr<Operation>> ops;
-    ops.push_back(std::make_shared<Operation>(OpType::AvgPool));
-
-    auto schedOp = std::make_unique<SchedulerOperation>(OpType::AvgPool);
-    schedOp->SetNpuOp(npu);
-    schedOp->_srcKey = static_cast<void *>(ops.back().get());
-    auto *ifm0SchedConn = schedOp->AddInput(ifm0Usage);
-    ifm0SchedConn->tensor = ifm0;
-    ifm0->consumers.push_back(schedOp.get());
-    auto *ifm1SchedConn = schedOp->AddInput(ifm1Usage);
-    ifm1SchedConn->tensor = ifm1;
-    ifm1->consumers.push_back(schedOp.get());
-    auto *ofmSchedConn = schedOp->AddOutput(ofmUsage);
-    ofmSchedConn->tensor = ofm;
-    ofm->producers.push_back(schedOp.get());
-
-    return schedOp;
-}
-
-std::unique_ptr<SchedulerOperation> CreateOperation(bool npu, TensorUsage ifmUsage,
+static std::unique_ptr<SchedulerOperation> CreateSchedulerOperation(bool npu, TensorUsage ifmUsage,
     std::shared_ptr<SchedulerTensor> &ifm, TensorUsage ofmUsage, std::shared_ptr<SchedulerTensor> &ofm)
 {
-    static std::vector<std::shared_ptr<Operation>> ops;
-    ops.push_back(std::make_shared<Operation>(OpType::AvgPool));
-
-    auto schedOp = std::make_unique<SchedulerOperation>(OpType::AvgPool);
+    auto schedOp = CreateSchedulerOperation(OpType::AvgPool, ifmUsage, ifm, ofmUsage, ofm);
     schedOp->SetNpuOp(npu);
-    schedOp->_srcKey = static_cast<void *>(ops.back().get());
-    auto *ifmSchedConn = schedOp->AddInput(ifmUsage);
-    ifmSchedConn->tensor = ifm;
-    ifm->consumers.push_back(schedOp.get());
-    auto *ofmSchedConn = schedOp->AddOutput(ofmUsage);
-    ofmSchedConn->tensor = ofm;
-    ofm->producers.push_back(schedOp.get());
-
     return schedOp;
 }
 
-};  // namespace
+static std::unique_ptr<SchedulerOperation> CreateSchedulerOperation(bool npu, TensorUsage ifmUsage, std::shared_ptr<SchedulerTensor> &ifm,
+    TensorUsage ifm2Usage, std::shared_ptr<SchedulerTensor> &ifm2, TensorUsage ofmUsage, std::shared_ptr<SchedulerTensor> &ofm)
+{
+    auto schedOp = CreateSchedulerOperation(OpType::AvgPool, ifmUsage, ifm, ifm2Usage, ifm2, ofmUsage, ofm);
+    schedOp->SetNpuOp(npu);
+    return schedOp;
+}
 
 TEST_CASE("test_graph_packing")
 {
@@ -101,9 +67,9 @@ TEST_CASE("test_graph_packing")
     SECTION("All NPU")
     {
         std::vector<std::unique_ptr<SchedulerOperation>> ops;
-        ops.push_back(CreateOperation(true, TensorUsage::IFM, tens1, TensorUsage::OFM, tens2));
-        ops.push_back(CreateOperation(true, TensorUsage::IFM, tens2, TensorUsage::OFM, tens3));
-        ops.push_back(CreateOperation(true, TensorUsage::IFM, tens3, TensorUsage::OFM, tens4));
+        ops.push_back(CreateSchedulerOperation(true, TensorUsage::IFM, tens1, TensorUsage::OFM, tens2));
+        ops.push_back(CreateSchedulerOperation(true, TensorUsage::IFM, tens2, TensorUsage::OFM, tens3));
+        ops.push_back(CreateSchedulerOperation(true, TensorUsage::IFM, tens3, TensorUsage::OFM, tens4));
 
         auto oldGraph = std::make_unique<Graph>(GraphNotation::TFLite);
         oldGraph->AddInput(tens1->srcTensor);
@@ -142,9 +108,9 @@ TEST_CASE("test_graph_packing")
     SECTION("All NPU with variable")
     {
         std::vector<std::unique_ptr<SchedulerOperation>> ops;
-        ops.push_back(CreateOperation(true, TensorUsage::IFM, tens1, TensorUsage::OFM, tens2));
-        ops.push_back(CreateOperation(true, TensorUsage::IFM, tens2, TensorUsage::IFM1, var1, TensorUsage::OFM, tens3));
-        ops.push_back(CreateOperation(true, TensorUsage::IFM, tens3, TensorUsage::OFM, tens4));
+        ops.push_back(CreateSchedulerOperation(true, TensorUsage::IFM, tens1, TensorUsage::OFM, tens2));
+        ops.push_back(CreateSchedulerOperation(true, TensorUsage::IFM, tens2, TensorUsage::IFM1, var1, TensorUsage::OFM, tens3));
+        ops.push_back(CreateSchedulerOperation(true, TensorUsage::IFM, tens3, TensorUsage::OFM, tens4));
 
         auto oldGraph = std::make_unique<Graph>(GraphNotation::TFLite);
         oldGraph->AddInput(tens1->srcTensor);
@@ -189,9 +155,9 @@ TEST_CASE("test_graph_packing")
     SECTION("All CPU")
     {
         std::vector<std::unique_ptr<SchedulerOperation>> ops;
-        ops.push_back(CreateOperation(false, TensorUsage::IFM, tens1, TensorUsage::Params, tens2, TensorUsage::OFM, tens3));
-        ops.push_back(CreateOperation(false, TensorUsage::IFM, tens3, TensorUsage::OFM, tens4));
-        ops.push_back(CreateOperation(false, TensorUsage::IFM, tens4, TensorUsage::OFM, tens5));
+        ops.push_back(CreateSchedulerOperation(false, TensorUsage::IFM, tens1, TensorUsage::Params, tens2, TensorUsage::OFM, tens3));
+        ops.push_back(CreateSchedulerOperation(false, TensorUsage::IFM, tens3, TensorUsage::OFM, tens4));
+        ops.push_back(CreateSchedulerOperation(false, TensorUsage::IFM, tens4, TensorUsage::OFM, tens5));
 
         auto oldGraph = std::make_unique<Graph>(GraphNotation::TFLite);
         oldGraph->AddInput(tens1->srcTensor);
@@ -242,9 +208,9 @@ TEST_CASE("test_graph_packing")
     SECTION("All CPU with variable")
     {
         std::vector<std::unique_ptr<SchedulerOperation>> ops;
-        ops.push_back(CreateOperation(false, TensorUsage::IFM, tens1, TensorUsage::Params, tens2, TensorUsage::OFM, tens3));
-        ops.push_back(CreateOperation(false, TensorUsage::IFM, tens3, TensorUsage::Params, var1, TensorUsage::OFM, tens4));
-        ops.push_back(CreateOperation(false, TensorUsage::IFM, tens4, TensorUsage::OFM, tens5));
+        ops.push_back(CreateSchedulerOperation(false, TensorUsage::IFM, tens1, TensorUsage::Params, tens2, TensorUsage::OFM, tens3));
+        ops.push_back(CreateSchedulerOperation(false, TensorUsage::IFM, tens3, TensorUsage::Params, var1, TensorUsage::OFM, tens4));
+        ops.push_back(CreateSchedulerOperation(false, TensorUsage::IFM, tens4, TensorUsage::OFM, tens5));
 
         auto oldGraph = std::make_unique<Graph>(GraphNotation::TFLite);
         oldGraph->AddInput(tens1->srcTensor);
@@ -300,9 +266,9 @@ TEST_CASE("test_graph_packing")
     SECTION("Mixed NPU/CPU with subop")
     {
         std::vector<std::unique_ptr<SchedulerOperation>> ops;
-        ops.push_back(CreateOperation(true, TensorUsage::IFM, tens1, TensorUsage::OFM, tens3));
-        ops.back()->AddSubOp(CreateOperation(true, TensorUsage::IFM, tens2, TensorUsage::OFM, tens3));
-        ops.push_back(CreateOperation(false, TensorUsage::IFM, tens3, TensorUsage::OFM, tens4));
+        ops.push_back(CreateSchedulerOperation(true, TensorUsage::IFM, tens1, TensorUsage::OFM, tens3));
+        ops.back()->AddSubOp(CreateSchedulerOperation(true, TensorUsage::IFM, tens2, TensorUsage::OFM, tens3));
+        ops.push_back(CreateSchedulerOperation(false, TensorUsage::IFM, tens3, TensorUsage::OFM, tens4));
 
         auto oldGraph = std::make_unique<Graph>(GraphNotation::TFLite);
         oldGraph->AddInput(tens1->srcTensor);
@@ -344,9 +310,9 @@ TEST_CASE("test_graph_packing")
     SECTION("Mixed NPU/CPU with subop and variable")
     {
         std::vector<std::unique_ptr<SchedulerOperation>> ops;
-        ops.push_back(CreateOperation(true, TensorUsage::IFM, tens1, TensorUsage::OFM, tens3));
-        ops.back()->AddSubOp(CreateOperation(true, TensorUsage::IFM, tens2, TensorUsage::OFM, tens3));
-        ops.push_back(CreateOperation(false, TensorUsage::IFM, tens3, TensorUsage::IFM1, var1, TensorUsage::OFM, tens4));
+        ops.push_back(CreateSchedulerOperation(true, TensorUsage::IFM, tens1, TensorUsage::OFM, tens3));
+        ops.back()->AddSubOp(CreateSchedulerOperation(true, TensorUsage::IFM, tens2, TensorUsage::OFM, tens3));
+        ops.push_back(CreateSchedulerOperation(false, TensorUsage::IFM, tens3, TensorUsage::IFM1, var1, TensorUsage::OFM, tens4));
 
         auto oldGraph = std::make_unique<Graph>(GraphNotation::TFLite);
         oldGraph->AddInput(tens1->srcTensor);
@@ -394,9 +360,9 @@ TEST_CASE("test_graph_packing")
     SECTION("NPU to NPU connection")
     {
         std::vector<std::unique_ptr<SchedulerOperation>> ops;
-        ops.push_back(CreateOperation(true, TensorUsage::IFM, tens1, TensorUsage::OFM, tens2));
-        ops.push_back(CreateOperation(false, TensorUsage::IFM, tens3, TensorUsage::OFM, tens4));
-        ops.push_back(CreateOperation(true, TensorUsage::IFM0, tens2, TensorUsage::IFM1, tens4, TensorUsage::OFM, tens5));
+        ops.push_back(CreateSchedulerOperation(true, TensorUsage::IFM, tens1, TensorUsage::OFM, tens2));
+        ops.push_back(CreateSchedulerOperation(false, TensorUsage::IFM, tens3, TensorUsage::OFM, tens4));
+        ops.push_back(CreateSchedulerOperation(true, TensorUsage::IFM0, tens2, TensorUsage::IFM1, tens4, TensorUsage::OFM, tens5));
 
         auto oldGraph = std::make_unique<Graph>(GraphNotation::TFLite);
         oldGraph->AddInput(tens1->srcTensor);
@@ -449,9 +415,9 @@ TEST_CASE("test_graph_packing")
     SECTION("NPU to NPU connection with variable")
     {
         std::vector<std::unique_ptr<SchedulerOperation>> ops;
-        ops.push_back(CreateOperation(true, TensorUsage::IFM, tens1, TensorUsage::Params, var1, TensorUsage::OFM, tens2));
-        ops.push_back(CreateOperation(false, TensorUsage::IFM, tens3, TensorUsage::OFM, tens4));
-        ops.push_back(CreateOperation(true, TensorUsage::IFM0, tens2, TensorUsage::IFM1, tens4, TensorUsage::OFM, tens5));
+        ops.push_back(CreateSchedulerOperation(true, TensorUsage::IFM, tens1, TensorUsage::Params, var1, TensorUsage::OFM, tens2));
+        ops.push_back(CreateSchedulerOperation(false, TensorUsage::IFM, tens3, TensorUsage::OFM, tens4));
+        ops.push_back(CreateSchedulerOperation(true, TensorUsage::IFM0, tens2, TensorUsage::IFM1, tens4, TensorUsage::OFM, tens5));
 
         auto oldGraph = std::make_unique<Graph>(GraphNotation::TFLite);
         oldGraph->AddInput(tens1->srcTensor);

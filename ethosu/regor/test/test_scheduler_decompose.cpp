@@ -19,6 +19,7 @@
 #include "common/common.hpp"
 
 #include "compiler/scheduler_decompose.hpp"
+#include "util.hpp"
 
 #include <catch_all.hpp>
 
@@ -30,74 +31,32 @@ using namespace regor;
 namespace
 {
 
-std::shared_ptr<SchedulerTensor> CreateTensor(std::string name, Shape storageShape, DataType dtype)
-{
-    auto tensor = std::make_shared<Tensor>(name, dtype, storageShape);
-    auto schedTensor = std::make_shared<SchedulerTensor>();
-    schedTensor->srcTensor = tensor;
-    schedTensor->storageShape = storageShape;
-    schedTensor->dataType = dtype;
-
-    return schedTensor;
-}
-
-std::unique_ptr<SchedulerOperation> CreateOperation(OpType opType, TensorUsage ifm0Usage,
-    const std::shared_ptr<SchedulerTensor> &ifm0, TensorUsage ofmUsage, const std::shared_ptr<SchedulerTensor> &ofm)
-{
-    static std::vector<std::shared_ptr<Operation>> ops;
-    ops.push_back(std::make_shared<Operation>(opType));
-
-    auto schedOp = std::make_unique<SchedulerOperation>(opType);
-    schedOp->_srcKey = static_cast<void *>(ops.back().get());
-
-    auto *ifm0Conn = schedOp->AddInput(ifm0Usage);
-    auto *ofmConn = schedOp->AddOutput(ofmUsage);
-
-    ifm0Conn->tensor = ifm0;
-    ifm0Conn->shape = ifm0->storageShape;
-
-    ofmConn->tensor = ofm;
-    ofmConn->shape = ofm->storageShape;
-
-    return schedOp;
-}
-
-std::unique_ptr<SchedulerOperation> CreateOperation(OpType opType, TensorUsage ifm0Usage,
-    const std::shared_ptr<SchedulerTensor> &ifm0, TensorUsage ifm1Usage, const std::shared_ptr<SchedulerTensor> &ifm1,
-    TensorUsage ofmUsage, const std::shared_ptr<SchedulerTensor> &ofm)
-{
-    auto schedOp = CreateOperation(opType, ifm0Usage, ifm0, ofmUsage, ofm);
-    auto *ifm1Conn = schedOp->AddInput(ifm1Usage);
-    ifm1Conn->tensor = ifm1;
-    ifm1Conn->shape = ifm1->storageShape;
-    return schedOp;
-}
-
-std::unique_ptr<SchedulerOperation> CreateOperation(OpType opType, Shape ifmShape, Shape ofmShape)
-{
-    auto ifm1 = CreateTensor("ifm1", ifmShape, DataType::Int8);
-    auto ofm = CreateTensor("ofm", ofmShape, DataType::Int8);
-
-    std::unique_ptr<SchedulerOperation> op = CreateOperation(opType, TensorUsage::IFM0, ifm1, TensorUsage::OFM, ofm);
-
-    // set default kernel
-    op->_kernel = std::make_unique<class Kernel>(Point2i(1, 1), Point2i(1, 1), Point2i(1, 1));
-    return op;
-}
-
 std::unique_ptr<SchedulerOperation> CreateOperation(OpType opType, Shape ifmShape, Shape ifm2Shape, Shape ofmShape)
 {
-    auto ifm1 = CreateTensor("ifm1", ifmShape, DataType::Int8);
-    auto ifm2 = CreateTensor("ifm2", ifm2Shape, DataType::Int8);
-    auto ofm = CreateTensor("ofm", ofmShape, DataType::Int8);
+    auto ifm1 = CreateSchedulerTensor("ifm1", ifmShape, DataType::Int8);
+    auto ifm2 = CreateSchedulerTensor("ifm2", ifm2Shape, DataType::Int8);
+    auto ofm = CreateSchedulerTensor("ofm", ofmShape, DataType::Int8);
 
-    std::unique_ptr<SchedulerOperation> op = CreateOperation(
+    std::unique_ptr<SchedulerOperation> op = CreateSchedulerOperation(
         opType, TensorUsage::IFM0, ifm1, TensorUsage::IFM1, ifm2, TensorUsage::OFM, ofm);
 
     // set default kernel
     op->_kernel = std::make_unique<class Kernel>(Point2i(1, 1), Point2i(1, 1), Point2i(1, 1));
     return op;
 }
+
+std::unique_ptr<SchedulerOperation> CreateOperation(OpType opType, Shape ifmShape, Shape ofmShape)
+{
+    auto ifm1 = CreateSchedulerTensor("ifm1", ifmShape, DataType::Int8);
+    auto ofm = CreateSchedulerTensor("ofm", ofmShape, DataType::Int8);
+
+    std::unique_ptr<SchedulerOperation> op = CreateSchedulerOperation(opType, TensorUsage::IFM0, ifm1, TensorUsage::OFM, ofm);
+
+    // set default kernel
+    op->_kernel = std::make_unique<class Kernel>(Point2i(1, 1), Point2i(1, 1), Point2i(1, 1));
+    return op;
+}
+
 };  // namespace
 
 TEST_CASE("test_scheduler_decompose")

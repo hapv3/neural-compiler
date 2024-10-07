@@ -22,6 +22,7 @@
 #include "architecture/ethosu85/ethos_u85_weight_encoder.hpp"
 #include "common/ini_reader.hpp"
 #include "randomize.hpp"
+#include "util.hpp"
 
 #include <catch_all.hpp>
 
@@ -30,28 +31,13 @@ namespace
 
 using namespace regor;
 
-class TestArchEthosU85 : public ArchEthosU85
-{
-public:
-    std::unique_ptr<ArchitectureOpConfig> TestFindBlockConfig(OpType opType, const ArchitectureConfigQuery &query)
-    {
-        return FindBlockConfig(opType, query);
-    }
-};
-
 TEST_CASE("ethos_u85_weightsource")
 {
-    const char CONFIG[] = "[architecture]\nmacs=128\n";
+
     constexpr int CHUNK_SIZE = 128 * 1024;
 
     // Initialize Architecture
-    TestArchEthosU85 arch;
-    auto reader = IniReader(CONFIG, sizeof(CONFIG));
-    std::string section;
-    reader.Begin(section);
-    REQUIRE(section == "architecture");
-    arch.ParseConfig(&reader);
-    reader.End();
+    auto arch = CreateArchDefault<ArchEthosU85>(128);
     // Initialize shapes
     Shape ifmShape{128, 128, 3};
     Shape ofmShape{64, 64, 16};
@@ -77,8 +63,8 @@ TEST_CASE("ethos_u85_weightsource")
     query.ofmFormat = TensorFormat::Unknown;
     // Setup weight source
     WeightTransformParam param;
-    auto opCfg = arch.TestFindBlockConfig(OpType::Conv2D, query);
-    auto encoder = arch.WeightEncoder();
+    auto opCfg = arch->GetOpConfig(OpType::Conv2D, query);
+    auto encoder = arch->WeightEncoder();
     auto view = weightTensor.View();
     WeightsRef weightsRef = {&view, AxisOrder::OHWI, weightTensor.Type()};
     auto config = encoder->GetEncodingConfig(opCfg.get(), weightsRef, &kernel, DataType::Int8, depthOffsets, WeightFormat::Default);
