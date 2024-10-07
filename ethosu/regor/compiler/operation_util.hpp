@@ -30,6 +30,15 @@
 namespace regor
 {
 
+#define FOR_ALL_INT_TYPES(functor, sep) \
+    functor(uint8_t) sep functor(uint16_t) \
+    sep functor(uint32_t) \
+    sep functor(uint64_t) \
+    sep functor(int8_t) \
+    sep functor(int16_t) \
+    sep functor(int32_t) \
+    sep functor(int64_t)
+
 inline std::shared_ptr<Tensor> CreateConstTensor(
     const std::string &name, DataType type, const std::shared_ptr<Buffer> &buffer, const Shape *shape = nullptr)
 {
@@ -56,14 +65,6 @@ std::shared_ptr<Tensor> CreateConstTensor(const std::string &name, T value)
 // Create a single element constant tensor with the specified data type and value (value is not bounds-checked)
 inline std::shared_ptr<Tensor> CreateConstTensor(const std::string &name, DataType type, int value)
 {
-#define FOR_ALL_INT_TYPES(functor, sep) \
-    functor(uint8_t) sep functor(uint16_t) \
-    sep functor(uint32_t) \
-    sep functor(uint64_t) \
-    sep functor(int8_t) \
-    sep functor(int16_t) \
-    sep functor(int32_t) \
-    sep functor(int64_t)
     switch ( type )
     {
 #define TYPE_FUNC(x) \
@@ -74,7 +75,34 @@ inline std::shared_ptr<Tensor> CreateConstTensor(const std::string &name, DataTy
         default:
             return CreateConstTensor(name, value);
     };
+}
+
+// Convert a constant Tensor to a Shape
+// Parameters:
+// - tensor: Tensor to convert to shape.
+// - size: Number of elements to read from tensor.
+// - stride: Number of elements to step after each read.
+// - offset:  Number of elements to step before first read.
+inline Shape TensorToShape(Tensor *tensor, int size, int stride = 1, int offset = 0)
+{
+    Shape shape(nullptr, size);
+    switch ( tensor->Type() )
+    {
+#define TYPE_FUNC(x) \
+    case DataTypeOf<x>::value: \
+    { \
+        const auto values = tensor->View().Values<x>(); \
+        for ( int i = 0; i < size; i++ ) \
+            shape[i] = int(values[stride * i + offset]); \
+    } \
+    break;
+        FOR_ALL_INT_TYPES(TYPE_FUNC, ;);
+#undef TYPE_FUNC
+        default:
+            assert(false);
+    }
 #undef FOR_ALL_INT_TYPES
+    return shape;
 }
 
 inline Operation *CreateLUT(const std::shared_ptr<Tensor> &ifm, const std::shared_ptr<Tensor> &lut, const Quantization &ifmQuantization,
@@ -226,39 +254,35 @@ inline Operation *CreateRescaleAdd(const std::shared_ptr<Tensor> &ifm, const std
     return op;
 }
 
+// Convert a permutation shape (up to 8 elements) to a TransposeType
+// For example:
+// [0, 1, 2, 3] -> 0x0123 ("NHWC")
+// [0, 1, 2] -> 0x0123 ("NHWC")
+// [0, 1] -> 0x0123 ("NHWC")
+// [0] -> 0x0123 ("NHWC")
+// [0, 2, 1, 3] -> 0x0213 ("NWHC")
+// [1, 0, 2] -> 0x0213 ("NWHC")
+inline TransposeType TransposeTypeFromShape(const Shape &perm)
+{
+    const int n = perm.Size();
+    // We can only handle permutation vectors up 8 elements
+    if ( n > 8 ) throw std::invalid_argument("Permutation shape has more than 8 elements");
+    uint32_t mask = perm.ToMask();
+    uint32_t offset = 0x76543210 & ~(0xFFFFFFFF >> (4 * (8 - n)));
+    uint32_t mask8D = mask + offset;
+    return TransposeType(mask8D);
+}
+
 inline TransposeType CalculateTransposeType(const Operation &operation)
 {
-    auto *ifmConn = operation.Input(TensorUsage::IFM0);
-    auto *paramsConn = operation.Input(TensorUsage::Params);
-    auto *ofmConn = operation.Output(TensorUsage::OFM);
-    Shape ifmShape = ifmConn->shape;
-    Shape ofmShape = ofmConn->shape;
-    // We can only handle permutation vectors up 4 elements
-    if ( paramsConn->shape.Depth() > 4 ) throw std::invalid_argument("Permutation vector has more than 4 elements");
-
+    const auto *paramsConn = operation.Input(TensorUsage::Params);
+    assert(paramsConn);
+    // We can only handle permutation vectors up 8 elements
+    if ( paramsConn->shape.Depth() > 8 ) throw std::invalid_argument("Permutation vector has more than 8 elements");
     // We can only handle constant permutation vectors
     if ( !paramsConn->tensor->IsConstant() ) throw std::invalid_argument("Permutation vector in non-constant");
-    // Convert the permutation vector to a transpose mask that can transpose a shape of size 4
-    // For example:
-    // [0, 1, 2, 3] -> 0x0123 ("NHWC")
-    // [0, 1, 2] -> 0x0123 ("NHWC")
-    // [0, 1] -> 0x0123 ("NHWC")
-    // [0] -> 0x0123 ("NHWC")
-    // [0, 2, 1, 3] -> 0x0213 ("NWHC")
-    // [1, 0, 2] -> 0x0213 ("NWHC")
-    uint32_t mask = 0;
-    int offset = 4 - paramsConn->shape.Depth();
-    for ( int i = 0; i < offset; i++ )
-    {
-        mask = (mask << 4) | i;
-    }
-    for ( int i = offset; i < 4; i++ )
-    {
-        mask = (mask << 4) | (offset + paramsConn->tensor->View().Values<int32_t>()[i - offset]);
-    }
-    // Convert the transpose mask to a transpose type
-    TransposeType transposeType = TransposeType(mask);
-    return transposeType;
+    Shape perm = TensorToShape(paramsConn->tensor.get(), paramsConn->shape.Depth(), 1, 0);
+    return TransposeTypeFromShape(perm);
 }
 
 // Is the scaling of Tensor connection a and b valid and equal.
@@ -267,5 +291,7 @@ inline bool IsScalingValidAndEqual(const TensorConnection &a, const TensorConnec
     return (a.quantization.IsValid() && b.quantization.IsValid() && a.quantization.scales == b.quantization.scales &&
             a.quantization.zeroPoints == b.quantization.zeroPoints);
 }
+
+#undef FOR_ALL_INT_TYPES
 
 }  // namespace regor

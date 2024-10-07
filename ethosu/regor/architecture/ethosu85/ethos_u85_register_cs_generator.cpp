@@ -248,7 +248,6 @@ activation_transpose ToActivationTranspose(TransposeType type)
     switch ( type )
     {
         case TransposeType::None:
-        case TransposeType::NHWC:
             return activation_transpose::HWC;
         case TransposeType::NWHC:
             return activation_transpose::WHC;
@@ -1297,7 +1296,7 @@ void EthosU85RCSGenerator::GenerateIFM2(
 // Generates OFM registers
 void EthosU85RCSGenerator::GenerateOFM(OpType opType, const HLCFeatureMap &fm, const Box &outputArea, int chainBuffer)
 {
-    auto boxSize = outputArea.SizeShape().Untranspose(fm.transpose);
+    auto boxSize = outputArea.SizeShape().Unpermute(uint32_t(fm.transpose));
     if ( chainBuffer != INVALID_CB )
     {
         Emit(isa::npu_set_ofm_region_t(chainBuffer));

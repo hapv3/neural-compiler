@@ -51,12 +51,4 @@ void ReplaceProducerOutput(std::vector<std::shared_ptr<Operation>> producerList,
 void ReplaceConsumerInput(const Operation *const exemptOperation, std::vector<std::shared_ptr<Operation>> consumerList,
     const Tensor *const tensorToReplace, std::shared_ptr<Tensor> newTensor);
 
-// Convert a constant Tensor to a Shape
-// Parameters:
-// - tensor: Tensor to convert to shape.
-// - size: Number of elements to read from tensor.
-// - stride: Number of elements to step after each read.
-// - offset:  Number of elements to step before first read.
-Shape TensorToShape(Tensor *tensor, int size, int stride, int offset);
-
 }  // namespace regor::GraphOptimisation

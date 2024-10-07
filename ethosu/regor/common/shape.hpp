@@ -20,7 +20,6 @@
 
 #include "common.hpp"
 #include "numeric_util.hpp"
-#include "transpose_type.hpp"
 
 #include <array>
 #include <cassert>
@@ -390,6 +389,7 @@ public:
     {
         int length = Size();
         if ( length == 0 ) return *this;
+        assert(length <= 8 && "Can only permute shapes with a most 8 axes");
 
         Shape tmp(nullptr, length);
         auto *local = Storage();
@@ -397,7 +397,7 @@ public:
 
         while ( length-- )
         {
-            int from = ToOffset(reverseAxisMask4b & 0xF);
+            int from = reverseAxisMask4b & 0xF;
             assert(from < Size());
             *result++ = local[from];
             reverseAxisMask4b = reverseAxisMask4b >> 4;
@@ -411,6 +411,7 @@ public:
     {
         int length = Size();
         if ( length == 0 ) return *this;
+        assert(length <= 8 && "Can only unpermute shapes with a most 8 axes");
 
         Shape tmp(nullptr, length);
         auto *local = Storage();
@@ -418,20 +419,13 @@ public:
 
         while ( length-- )
         {
-            int to = ToOffset(reverseAxisMask4b & 0xF);
+            int to = reverseAxisMask4b & 0xF;
             assert(to >= 0 && to < tmp.Size());
             result[to] = *local++;
             reverseAxisMask4b = reverseAxisMask4b >> 4;
         }
         assert((tmp.Elements64() == Elements64()) && "Possible bad unpermute (volume differs)");
         return tmp;
-    }
-
-    Shape Untranspose(TransposeType type) const
-    {
-        if ( IsNone(type) ) return *this;
-
-        return Unpermute(uint32_t(type));
     }
 
     int Size() const { return _last + 1; }
@@ -572,7 +566,9 @@ public:
         auto *local = Storage();
         for ( int i = _last; i >= 0; i-- )
         {
-            mask = (mask << 4) | local[i];
+            int offset = ToOffset(local[i]);
+            assert(offset <= 0xF);
+            mask = (mask << 4) | offset;
         }
         return mask;
     }
@@ -722,11 +718,6 @@ public:
     static Shape FromVector(const std::vector<TYPE> &from)
     {
         return from.empty() ? Shape() : Shape(from.data(), from.size());
-    }
-
-    static Shape FromMask4(const uint32_t mask)
-    {
-        return Shape((mask >> 12) & 0xF, (mask >> 8) & 0xF, (mask >> 4) & 0xF, mask & 0xF);
     }
 
     static Shape PadAxes(const Shape &shape, int axes, int padValue)

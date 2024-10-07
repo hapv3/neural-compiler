@@ -128,7 +128,7 @@ bool CanRunOnHardware(Architecture *arch, const SchedulerOperation *schedOp)
     qConfig.lutBytes = schedOp->TryInput(TensorUsage::LUT) ? 2048 : 0;
     qConfig.scaled = schedOp->HasScaling();
     qConfig.ifmResampling = ifm->resamplingMode;
-    qConfig.ofmShape = qConfig.ofmShape.Untranspose(ofm->transpose);
+    qConfig.ofmShape = qConfig.ofmShape.Unpermute(uint32_t(ofm->transpose));
     qConfig.transpose = ofm->transpose;
     qConfig.ofmFormat = ofm->tensor->format;
     const auto &accMode = schedOp->AccumulatorMode();

@@ -61,9 +61,9 @@ static Box TransformWithStridesAndSkirt(const Box &outputArea, const Shape *stri
     OpType opType, const Shape &concatOffsets, const Shape &splitOffset, const Shape &splitShape, int dilatedKernelHeight, int upscalingFactor,
     int &padTop, int &padBottom, TransformLimit limit = TransformLimit::None, TransposeType transposeType = TransposeType::None)
 {
-    Shape outputAreaStart = outputArea.Start().Untranspose(transposeType);
-    Shape outputAreaEnd = outputArea.End().Untranspose(transposeType);
-    Shape concatOffsetsUntransposed = concatOffsets.Untranspose(transposeType);
+    Shape outputAreaStart = outputArea.Start().Unpermute(uint32_t(transposeType));
+    Shape outputAreaEnd = outputArea.End().Unpermute(uint32_t(transposeType));
+    Shape concatOffsetsUntransposed = concatOffsets.Unpermute(uint32_t(transposeType));
     Shape outputAreaSize = outputAreaEnd - outputAreaStart;
     // Make start/end at least 4 dimensional
     Shape start = Shape::Max(outputAreaStart - concatOffsetsUntransposed, Shape(0, 0, 0, 0));

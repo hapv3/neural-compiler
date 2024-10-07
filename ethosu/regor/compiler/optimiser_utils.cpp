@@ -137,40 +137,4 @@ void ReplaceConsumerInput(const Operation *const exemptOperation, std::vector<st
     }
 }
 
-// Convert a constant Tensor to a Shape
-// Parameters:
-// - tensor: Tensor to convert to shape.
-// - size: Number of elements to read from tensor.
-// - stride: Number of elements to step after each read.
-// - offset:  Number of elements to step before first read.
-Shape TensorToShape(Tensor *tensor, int size, int stride = 1, int offset = 0)
-{
-    Shape shape(nullptr, size);
-#define FOR_ALL_INT_TYPES(functor, sep) \
-    functor(uint8_t) sep functor(uint16_t) \
-    sep functor(uint32_t) \
-    sep functor(uint64_t) \
-    sep functor(int8_t) \
-    sep functor(int16_t) \
-    sep functor(int32_t) \
-    sep functor(int64_t)
-    switch ( tensor->Type() )
-    {
-#define TYPE_FUNC(x) \
-    case DataTypeOf<x>::value: \
-    { \
-        const auto values = tensor->View().Values<x>(); \
-        for ( int i = 0; i < size; i++ ) \
-            shape[i] = int(values[stride * i + offset]); \
-    } \
-    break;
-        FOR_ALL_INT_TYPES(TYPE_FUNC, ;);
-#undef TYPE_FUNC
-        default:
-            assert(false);
-    }
-#undef FOR_ALL_INT_TYPES
-    return shape;
-}
-
 }  // namespace regor::GraphOptimisation

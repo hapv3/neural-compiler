@@ -382,14 +382,14 @@ TEST_CASE("Permute Mask")
 
     SECTION("identity")
     {
-        Shape b = a.Permute(0x000000123);
+        Shape b = a.Permute(0x3210);
         REQUIRE(a == b);
     }
 
-    Shape c = a.Permute(0x000003210);
+    Shape c = a.Permute(0x0123);
     REQUIRE((c[0] == a[3] && c[1] == a[2] && c[2] == a[1] && c[3] == a[0]));
 
-    Shape d = a.Permute(0x000000312);
+    Shape d = a.Permute(0x3021);
     REQUIRE((d[0] == 100 && d[1] == 400 && d[2] == 200 && d[3] == 300));
 }
 
@@ -399,20 +399,20 @@ TEST_CASE("Unpermute Mask")
 
     SECTION("identity")
     {
-        Shape b = a.Unpermute(0x000000123);
+        Shape b = a.Unpermute(0x3210);
         REQUIRE(a == b);
     }
 
-    Shape c = a.Unpermute(0x000003012);
+    Shape c = a.Unpermute(0x0321);
     REQUIRE((c[0] == a[1] && c[1] == a[2] && c[2] == a[3] && c[3] == a[0]));
 
-    Shape d = a.Permute(0x000003012).Unpermute(0x000003012);
+    Shape d = a.Permute(0x0321).Unpermute(0x0321);
     REQUIRE(a == d);
 
-    Shape e = a.Unpermute(0x000001230);
+    Shape e = a.Unpermute(0x2103);
     REQUIRE((e[0] == 400 && e[1] == 100 && e[2] == 200 && e[3] == 300));
 
-    Shape f = a.Permute(0x000001230).Unpermute(0x000001230);
+    Shape f = a.Permute(0x2103).Unpermute(0x2103);
     REQUIRE(a == f);
 }
 
@@ -430,7 +430,6 @@ TEST_CASE("Get Strides")
     REQUIRE((d[0] == 128 && d[1] == 48 && d[2] == 16 && d[3] == 4));
 }
 
-
 TEST_CASE("Vector Conversion")
 {
     std::vector<int> intVec{5, 6, 2, 1};
@@ -442,36 +441,13 @@ TEST_CASE("Vector Conversion")
     REQUIRE((b[0] == 45 && b[4] == 16 && b[5] == 19));
 }
 
-
-TEST_CASE("From Mask4")
-{
-    uint32_t mask1 = 0x0123;
-    Shape a = Shape::FromMask4(mask1);
-    REQUIRE((a.Size() == 4));
-    REQUIRE((a[0] == 0 && a[1] == 1 && a[2] == 2 && a[3] == 3));
-    uint32_t mask1b = a.ToMask();
-    REQUIRE((mask1 == mask1b));
-
-    uint32_t mask2 = 0x1032;
-    Shape b = Shape::FromMask4(mask2);
-    REQUIRE((b.Size() == 4));
-    REQUIRE((b[0] == 1 && b[1] == 0 && b[2] == 3 && b[3] == 2));
-    uint32_t mask2b = b.ToMask();
-    REQUIRE((mask2 == mask2b));
-}
-
-
 TEST_CASE("To Mask")
 {
     Shape shape1(0, 1, 2, 3);
     uint32_t mask1 = shape1.ToMask();
-    REQUIRE((mask1 == 0x0123));
-    Shape shapeFromMask1 = Shape::FromMask4(mask1);
-    REQUIRE((shape1 == shapeFromMask1));
+    REQUIRE((mask1 == 0x3210));
 
     Shape shape2(1, 0, 3, 2);
     uint32_t mask2 = shape2.ToMask();
-    REQUIRE((mask2 == 0x1032));
-    Shape shapeFromMask2 = Shape::FromMask4(mask2);
-    REQUIRE((shape2 == shapeFromMask2));
+    REQUIRE((mask2 == 0x2301));
 }

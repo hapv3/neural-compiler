@@ -23,17 +23,16 @@
 
 enum class TransposeType : uint32_t
 {
-    H = 0x1,
-    W = 0x2,
-    C = 0x3,
+    C = 0x0,
+    W = 0x1,
+    H = 0x2,
     MaskC = 0xF,
-    NHWC = 0x0123,
-    NWHC = 0x0213,
-    NHCW = 0x0132,
-    NWCH = 0x0231,
-    NCHW = 0x0312,
-    NCWH = 0x0321,
-    None = 0x01234567,
+    None = 0x76543210,  // NHWC
+    NWHC = 0x76543120,
+    NHCW = 0x76543201,
+    NWCH = 0x76543102,
+    NCHW = 0x76543021,
+    NCWH = 0x76543012
 };
 
 inline constexpr TransposeType operator>>(TransposeType type, uint32_t size)
@@ -48,39 +47,5 @@ inline constexpr TransposeType operator&(TransposeType a, TransposeType b)
 
 inline constexpr bool IsNone(TransposeType type)
 {
-    uint32_t offset = (7u - (uint32_t(type) & 7u)) * 4;
-    return uint32_t(TransposeType::None) >> offset == uint32_t(type);
-}
-
-// Reduce a 4D transpose mask to a 3D transpose mask (f.ex. 0x0123 -> 0x012)
-inline TransposeType Reduce4To3(TransposeType type)
-{
-    if ( IsNone(type) )
-    {
-        return TransposeType(0x012);
-    }
-
-    switch ( type )
-    {
-        case TransposeType::NHWC:
-        case TransposeType::NWHC:
-        case TransposeType::NHCW:
-        case TransposeType::NWCH:
-        case TransposeType::NCHW:
-        case TransposeType::NCWH:
-        {
-            int n = uint32_t(type >> 12) & 0xF;
-            assert(n == 0);
-            int h = uint32_t(type >> 8) & 0xF;
-            assert(h <= 3);
-            int w = uint32_t(type >> 4) & 0xF;
-            assert(w <= 3);
-            int c = uint32_t(type >> 0) & 0xF;
-            assert(c <= 3);
-            return TransposeType(((h - 1) << 8) | ((w - 1) << 4) | (c - 1));
-        }
-        default:
-            assert(false && "Unsupported transpose type");
-            return type;
-    }
+    return type == TransposeType::None;
 }

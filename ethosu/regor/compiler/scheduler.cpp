@@ -357,7 +357,7 @@ std::unique_ptr<ArchitectureOpConfig> GetOpConfig(Architecture *arch, SchedulerO
     query.lutBytes = op->TryInput(TensorUsage::LUT) ? 2048 : 0;
     query.scaled = op->HasScaling();
     query.ifmResampling = ifm->resamplingMode;
-    query.ofmShape = query.ofmShape.Untranspose(ofm->transpose);
+    query.ofmShape = query.ofmShape.Unpermute(uint32_t(ofm->transpose));
     query.transpose = ofm->transpose;
     query.reverse = ofm->reverse;
     query.ofmFormat = ofm->tensor->format;
@@ -510,8 +510,7 @@ WeightScaleEncoding Scheduler::EncodeBestWeightFormat(
     WeightsRef weightsRef = {&weights->tensor->bufferView, weights->tensor->srcTensor->AxisOrder(), weights->tensor->dataType};
     auto ifm = op->IFM(op->PrimaryIfmIndex());
     auto ifmType = ifm->tensor->dataType;
-    std::vector<int> depthOffsets{0, ofmShape.Untranspose(op->OFM()->transpose).Depth()};
-
+    std::vector<int> depthOffsets{0, ofmShape.Unpermute(uint32_t(op->OFM()->transpose)).Depth()};
 
     std::vector<WF> formatList = {WF(WeightFormat::Default, WeightFormat::Sparse2_4), WF(WeightFormat::Default),
         WF(WeightFormat::Fast, WeightFormat::Sparse2_4), WF(WeightFormat::Fast)};
@@ -648,7 +647,7 @@ std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(
         WeightsRef weightsRef;
         weightsRef.isScales = true;
 
-        std::vector<int> depthOffsets{0, ofmShape.Untranspose(op->OFM()->transpose).Depth()};
+        std::vector<int> depthOffsets{0, ofmShape.Unpermute(uint32_t(op->OFM()->transpose)).Depth()};
 
         auto encodingParams = _arch->WeightEncoder()->GetEncodingConfig(
             blockConfig.get(), weightsRef, op->Kernel(), ifm->tensor->dataType, depthOffsets, weightFormat);
@@ -951,7 +950,7 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
 
     assert(ofm->transpose == TransposeType::None || (ofm->transpose & TransposeType::MaskC) == TransposeType::C || refCost->stripe == ofm->shape);
     auto fullDepthBeforeTransposition =
-        (refCost->stripe == ofm->shape) ? refCost->stripe.Untranspose(ofm->transpose).Depth() : refCost->stripe.Depth();
+        (refCost->stripe == ofm->shape) ? refCost->stripe.Unpermute(uint32_t(ofm->transpose)).Depth() : refCost->stripe.Depth();
     auto fullDepthAfterTransposition = refCost->stripe.Depth();
     std::vector<int> ofmFullDepthSlicesBeforeTransposition = {0, fullDepthBeforeTransposition};
     std::vector<int> ofmFullDepthSlicesAfterTransposition = {0, fullDepthAfterTransposition};

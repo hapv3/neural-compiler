@@ -50,10 +50,10 @@ bool EthosU85Constraints::SupportsTransposeHW(OpType opType, TransposeType trans
     }
     else if ( npuOp == EthosU85NpuOp::Elementwise )
     {
-        return transposeType == TransposeType::NHWC || transposeType == TransposeType::NHCW || transposeType == TransposeType::NCHW;
+        return transposeType == TransposeType::None || transposeType == TransposeType::NHCW || transposeType == TransposeType::NCHW;
     }
 
-    return transposeType == TransposeType::NHWC || transposeType == TransposeType::NWHC || transposeType == TransposeType::NHCW ||
+    return transposeType == TransposeType::None || transposeType == TransposeType::NWHC || transposeType == TransposeType::NHCW ||
            transposeType == TransposeType::NWCH || transposeType == TransposeType::NCHW || transposeType == TransposeType::NCWH;
 }
 

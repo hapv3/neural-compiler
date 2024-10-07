@@ -29,22 +29,6 @@ using namespace GraphOptimisation;
 
 namespace
 {
-// Convert a permutation shape (up to 4 elements) to a TransposeType
-// For example:
-// [0, 1, 2, 3] -> 0x0123 ("NHWC")
-// [0, 1, 2] -> 0x0123 ("NHWC")
-// [0, 1] -> 0x0123 ("NHWC")
-// [0] -> 0x0123 ("NHWC")
-// [0, 2, 1, 3] -> 0x0213 ("NWHC")
-// [1, 0, 2] -> 0x0213 ("NWHC")
-TransposeType TransposeTypeFromShape(const Shape &perm)
-{
-    assert(perm.Size() <= 4);
-    const uint32_t mask = perm.ToMask();
-    const uint32_t mask4D = mask + (0x0123 - (0x0123 >> 4 * (4 - perm.Size())));
-    auto type = TransposeType(mask4D);
-    return type;
-}
 
 // Reshape into 3D-shape with the specified axis in the width-dimension
 // Remaining axes are multiplied-together
@@ -205,16 +189,8 @@ Operation *GraphIrOptimiser::ConvertAttributes(Graph *const graph, Operation *co
     else if ( opType == OpType::Transpose )
     {
         const auto *attr = operation->Attribute<transpose_attr_t>();
-        const int size = attr->perm.Size();
-        if ( size <= 4 )
-        {
-            TensorConnection *ifmConn = operation->Input(TensorUsage::IFM);
-            TensorConnection *ofmConn = operation->Output(TensorUsage::OFM);
-            ofmConn->transpose = TransposeTypeFromShape(attr->perm);
-            // Pad shapes to match transpose mask
-            ifmConn->shape = Shape::PadAxes(ifmConn->shape, 4, 1);
-            ofmConn->shape = Shape::PadAxes(ofmConn->shape, 4, 1);
-        }
+        TensorConnection *ofmConn = operation->Output(TensorUsage::OFM);
+        ofmConn->transpose = TransposeTypeFromShape(attr->perm);
     }
     else if ( opType == OpType::Reverse )
     {
@@ -1198,8 +1174,7 @@ Operation *GraphIrOptimiser::RearrangeTranspose(Graph *const graph, Operation *c
 
         Shape ifmShape = ifmConn->shape;
         Shape ofmShape = ofmConn->shape;
-        uint32_t mask = uint32_t(ofmConn->transpose);
-        Shape perm = Shape::FromMask4(mask);
+        Shape perm = attr->perm;
         int ofmDim = perm.Size() - 1;
         for ( auto onesMask = ofmShape.EqualMask(ofmShape.WithOnes()); onesMask; onesMask >>= 1 )
         {
@@ -1236,7 +1211,7 @@ Operation *GraphIrOptimiser::RearrangeTranspose(Graph *const graph, Operation *c
         }
 
         ofmConn->transpose = transposeType;
-        attr->perm = Shape::FromMask4(uint32_t(transposeType));
+        attr->perm = perm;
         ifmConn->shape = Shape::PadAxes(ifmShape, 4, 1);
         ofmConn->shape = Shape::PadAxes(ofmShape, 4, 1);
     }

@@ -16,18 +16,32 @@
 // limitations under the License.
 //
 
-#include "common/transpose_type.hpp"
+#include "compiler/operation_util.hpp"
 
 #include <catch_all.hpp>
 
-TEST_CASE("TransposeType IsNone")
-{
-    REQUIRE(IsNone(TransposeType::None));
-    REQUIRE(IsNone(TransposeType(0x76543210)));
+using namespace regor;
 
-    REQUIRE_FALSE(IsNone(TransposeType::NWHC));
-    REQUIRE_FALSE(IsNone(TransposeType::NHCW));
-    REQUIRE_FALSE(IsNone(TransposeType::NWCH));
-    REQUIRE_FALSE(IsNone(TransposeType::NCHW));
-    REQUIRE_FALSE(IsNone(TransposeType::NCWH));
+TEST_CASE("TransposeTypeFromShape")
+{
+    // 4D identity
+    Shape shape1(0, 1, 2, 3);
+    auto mask1 = TransposeTypeFromShape(shape1);
+    REQUIRE(mask1 == TransposeType::None);
+
+    // 3D WHC
+    Shape shape2(1, 0, 2);
+    auto mask2 = TransposeTypeFromShape(shape2);
+    REQUIRE(mask2 == TransposeType::NWHC);
+
+    // 2D CW
+    Shape shape3(1, 0);
+    auto mask3 = TransposeTypeFromShape(shape3);
+    REQUIRE(mask3 == TransposeType::NHCW);
+
+    // 6D
+    int axes4[6] = {0, 4, 5, 3, 1, 2};
+    Shape shape4(axes4, 6);
+    auto mask4 = TransposeTypeFromShape(shape4);
+    REQUIRE(uint32_t(mask4) == 0x76510243);
 }

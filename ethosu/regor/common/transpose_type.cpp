@@ -23,11 +23,10 @@
 #include "common/bit_flags.hpp"
 
 BEGIN_ENUM_TABLE(TransposeType)
-    ADD_ENUM_NAME(NHWC)
+    ADD_ENUM_NAME(None)
     ADD_ENUM_NAME(NWHC)
     ADD_ENUM_NAME(NHCW)
     ADD_ENUM_NAME(NWCH)
     ADD_ENUM_NAME(NCHW)
     ADD_ENUM_NAME(NCWH)
-    ADD_ENUM_NAME(None)
 END_ENUM_TABLE()

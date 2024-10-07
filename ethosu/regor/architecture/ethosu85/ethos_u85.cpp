@@ -727,7 +727,7 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU85::FindBlockConfig(OpType opTyp
 
     // Common constant vars
     FindConfigCommon common;
-    common.ofmBlockMax = _ofmBlockMax.Untranspose(Reduce4To3(query.transpose));
+    common.ofmBlockMax = _ofmBlockMax.Unpermute(uint32_t(query.transpose));
     common.ublock = ofmUBlock;
     common.granule = ofmBlockGranule;
     common.accBits = AccumulatorBits(accType);
@@ -745,7 +745,7 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU85::FindBlockConfig(OpType opTyp
     int ofmUBlockDepth = ofmUBlock.Depth();
 
     Shape searchSpaceStep = Shape::Max(ofmUBlock, ofmBlockGranule);
-    Shape ofmBlockMaxTp = _ofmBlockMax.Untranspose(Reduce4To3(query.transpose));
+    Shape ofmBlockMaxTp = _ofmBlockMax.Unpermute(uint32_t(query.transpose));
     Shape searchSpaceEnd = Shape::RoundAway(Shape::Max(Shape::Min(query.ofmShape, ofmBlockMaxTp), searchSpaceStep), ofmUBlock);
 
     if ( isResize )

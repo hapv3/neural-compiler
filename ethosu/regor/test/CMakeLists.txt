@@ -43,6 +43,7 @@ add_catch_test(
         test_scheduler_decompose.cpp
         test_buffer_view.cpp
         test_scheduler_packing.cpp
+        test_operation_utils.cpp
     DEPS
         regor::regor-objects
         regor::fmt
