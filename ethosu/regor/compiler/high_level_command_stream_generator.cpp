@@ -623,6 +623,8 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
         ofmStart = ofmConn->slice.offset;
         ofmEnd = ofmConn->slice.offset + ofmConn->slice.shape;
     }
+    assert(ofmStart.Size() >= 4);
+    assert(ofmEnd.Size() >= 4);
     assert(hlcOp->ifm.size() <= 2);
 
     // Binary elementwise using broadcast to repeat smaller IFMs over larger IFM volumes need their

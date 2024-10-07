@@ -390,8 +390,9 @@ void SchedulerPacking::InitSchedulerConnection(
     SchedulerConnection *schedConn, const std::shared_ptr<SchedulerTensor> &tensor, const TensorConnection &conn)
 {
     schedConn->tensor = tensor;
+    // Convert to (minimum) 4D-shapes in scheduler-IR
     schedConn->slice = {Shape::PadAxes(conn.slice.offset, 4, 0), Shape::PadAxes(conn.slice.shape, 4, 1)};
-    schedConn->shape = Shape::PadAxes(conn.shape, 3, 1);  // Scheduler needs minimum HWC axes to stripe
+    schedConn->shape = Shape::PadAxes(conn.shape, 4, 1);
     schedConn->quantization = conn.quantization;
     schedConn->transpose = conn.transpose;
     schedConn->reverse = conn.reverse;
@@ -456,6 +457,15 @@ std::unique_ptr<SchedulerOperation> SchedulerPacking::MakeSchedulerOperation(Ope
             InitSchedulerConnection(schedConn, schedTensor, item.second);
             schedConn->resamplingMode = ResamplingMode(item.first, schedOp->Type());
         }
+    }
+
+    // Adjust axis attribute if tensors have been reshaped
+    if ( schedOp->HasAttribute<axis_attr_t>() )
+    {
+        auto attr = schedOp->Attribute<axis_attr_t>();
+        int paddedAxes = schedOp->Output(TensorUsage::OFM)->shape.Size() - op->Output(TensorUsage::OFM)->shape.Size();
+        assert(paddedAxes >= 0);
+        attr->axis += paddedAxes;
     }
 
     // Examine elementwise and set a primary path for cascading.

@@ -183,6 +183,12 @@ public:
 
     const DynamicRef &AttributeRef() const { return _attr; }
 
+    template<typename TYPE>
+    bool HasAttribute() const
+    {
+        return _attr && (_attr.Info()->Hash() == TypeHash<TYPE>::HASH);
+    }
+
 private:
     int CountUsage(const ordered_map<TensorUsage, TensorConnection> &list, TensorUsage usage) const
     {

@@ -217,6 +217,12 @@ public:
         return static_cast<const TYPE *>(_attr.Instance());
     }
 
+    template<typename TYPE>
+    bool HasAttribute() const
+    {
+        return _attr && (_attr.Info()->Hash() == TypeHash<TYPE>::HASH);
+    }
+
     // Input connections
     SchedulerConnection *AddInput(TensorUsage usage) { return &inputs[usage]; }
 
