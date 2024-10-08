@@ -363,7 +363,7 @@ int SchedulerPacking::CanPack(const SchedulerOperation *schedOp, const Scheduler
     }
 
     // Highly unlikely constant tensor between ops
-    assert(!prevOFM->srcTensor->IsConstant() && "Unexpected constant tensor between ops");
+    assert(!prevOFM->IsConstant() && "Unexpected constant tensor between ops");
 
     // Only pack tensors on single-reader/writer paths (i.e. can't pack across concat/split)
     if ( prevOFM->producers.size() != 1 || prevOFM->consumers.size() != 1 )

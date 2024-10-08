@@ -280,7 +280,7 @@ static int UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *conn)
         }
     }
 
-    return tensor->srcTensor->IsConstant() ? 0 : tensor->AllocationSizeBytes();
+    return tensor->IsConstant() ? 0 : tensor->AllocationSizeBytes();
 }
 
 
@@ -705,7 +705,7 @@ void Scheduler::MoveConstantData(Schedule *refSchedule)
         for ( auto pos : schedOp->inputs.pairs() )
         {
             SchedulerConnection *conn = &pos.second;
-            if ( !conn->tensor->srcTensor->IsConstant() )
+            if ( !conn->tensor->IsConstant() )
             {
                 continue;
             }

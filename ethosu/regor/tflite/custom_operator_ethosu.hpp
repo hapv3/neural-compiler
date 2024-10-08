@@ -157,7 +157,7 @@ public:
             const auto cost = _schedule->Cost(op.get());
             for ( const auto &input : op->inputs.pairs() )
             {
-                if ( input.second.tensor->srcTensor->IsConstant() )
+                if ( input.second.tensor->IsConstant() )
                 {
                     if ( input.first == TensorUsage::Weights )
                     {
@@ -185,7 +185,7 @@ public:
             {
                 for ( const auto &input : subOp->inputs.pairs() )
                 {
-                    if ( input.second.tensor->srcTensor->IsConstant() )
+                    if ( input.second.tensor->IsConstant() )
                     {
                         auto tensor = input.second.tensor.get();
                         if ( tensor->AllocatedAddress() >= 0 )

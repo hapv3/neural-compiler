@@ -333,7 +333,7 @@ bool CascadeBuilder::IsCascadable(const SchedulerOperation *op, SchedulerConnect
     OpType type = op->Type();
     auto ifm = ifmConn->tensor;
 
-    if ( ifm->srcTensor->IsConstant() )
+    if ( ifm->IsConstant() )
     {
         return false;
     }
