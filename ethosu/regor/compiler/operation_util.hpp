@@ -292,6 +292,34 @@ inline bool IsScalingValidAndEqual(const TensorConnection &a, const TensorConnec
             a.quantization.zeroPoints == b.quantization.zeroPoints);
 }
 
+// Reshape for example (A, B, N, H, W, C) + (3, 2, 1) -> (A*B*N, H*W, C)
+inline Shape ReshapeTo3D(const Shape &shape, const Shape &axes)
+{
+    assert(shape.Size() > 3);
+    assert(axes.Size() == 3);
+    assert(axes[0] + axes[1] + axes[2] == shape.Size());
+    int h = std::max(1, shape.AxisProduct(0, axes[0]));
+    int w = std::max(1, shape.AxisProduct(axes[0], axes[0] + axes[1]));
+    int c = std::max(1, shape.AxisProduct(axes[0] + axes[1], axes[0] + axes[1] + axes[2]));
+    return Shape(h, w, c);
+}
+
+// Reshape for example (B, N, H, W, C) + W -> (B*N*H, W, C)
+inline Shape ReshapeTo3DAroundAxis(const Shape &shape, int axis)
+{
+    assert(axis >= 0);
+    assert(axis < shape.Size());
+    int outer = axis;
+    int inner = shape.Size() - axis - 1;
+    return ReshapeTo3D(shape, {outer, 1, inner});
+}
+
+// Reshape (B, N, H, W, C) -> (B, N*H*W, C)
+inline Shape ReshapeTo3DAroundEdges(const Shape &shape)
+{
+    return ReshapeTo3D(shape, {1, shape.Size() - 2, 1});
+}
+
 #undef FOR_ALL_INT_TYPES
 
 }  // namespace regor

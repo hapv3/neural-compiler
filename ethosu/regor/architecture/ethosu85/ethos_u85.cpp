@@ -1446,7 +1446,7 @@ bool EthosU85OpGroup::Fuse(const ArchitectureOpGroupQuery &op, const std::vector
     }
 
     // Can't fuse a transpose type that's not supported by primaryOp in opgroup
-    if ( !_arch->_constraints->SupportsTransposeHW(_ops[0].type, op.ofm.transpose) )
+    if ( !_arch->_constraints->SupportsTranspose(_ops[0].type, op.ofm.transpose) )
     {
         return false;
     }
@@ -1758,7 +1758,7 @@ bool EthosU85OpGroup::CanRunOnNPU(const ArchitectureOpGroupQuery &op)
 
         if ( op.type == OpType::Transpose )
         {
-            return _arch->_constraints->SupportsTransposeHW(OpType::MemoryCopy, op.ofm.transpose);
+            return _arch->_constraints->SupportsTranspose(OpType::MemoryCopy, op.ofm.transpose);
         }
 
         if ( op.type == OpType::Reverse )

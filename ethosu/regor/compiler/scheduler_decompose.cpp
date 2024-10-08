@@ -18,6 +18,8 @@
 
 #include "scheduler_decompose.hpp"
 
+#include "common/logging.hpp"
+
 #include "operation_util.hpp"
 
 #include <numeric>
@@ -96,6 +98,15 @@ bool CanRunOnHardware(Architecture *arch, const SchedulerOperation *schedOp)
         auto &ofmShape = schedOp->OFM()->SliceShape();
         if ( ofmShape.Size() > 2 && ofmShape.Elements() > ofmShape.Width() * ofmShape.Depth() ) return false;
     }
+    if ( schedOp->Type() == OpType::Transpose )
+    {
+        auto &ifmShape = schedOp->IFM(0)->SliceShape();
+        if ( ifmShape.Size() > 3 && ifmShape.Elements() > ifmShape.Width() * ifmShape.Height() * ifmShape.Depth() )
+            return false;
+        auto &ofmShape = schedOp->OFM()->SliceShape();
+        if ( ofmShape.Size() > 3 && ofmShape.Elements() > ofmShape.Width() * ofmShape.Height() * ofmShape.Depth() )
+            return false;
+    }
     auto *ifm = schedOp->TryIFM(0);
     auto *ifm2 = schedOp->TryIFM(1);
     auto *ofm = schedOp->TryOFM();
@@ -115,6 +126,7 @@ bool CanRunOnHardware(Architecture *arch, const SchedulerOperation *schedOp)
     qOpGroup.ofm.key = ofm->tensor->uid;
     qOpGroup.ofm.type = ofm->tensor->dataType;
     qOpGroup.ofm.shape = ofm->SliceShape();
+    qOpGroup.ofm.transpose = ofm->transpose;
     if ( arch->CreateOpGroup(qOpGroup) == nullptr ) return false;
     regor::ArchitectureConfigQuery qConfig;
     qConfig.ofmShape = Shape::PadAxes(ofm->SliceShape(), 3, 1);
@@ -151,6 +163,7 @@ bool CanDecompose(Architecture *, const SchedulerOperation *schedOp)
     if ( schedOp->Type() == OpType::ReduceAll ) return true;
     if ( schedOp->Type() == OpType::ArgMax ) return true;
     if ( schedOp->Type() == OpType::Reverse ) return true;
+    if ( schedOp->Type() == OpType::Transpose ) return true;
     return false;
 }
 
@@ -716,6 +729,250 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReverse(Architecture *
     }
 
     result.emplace_back(std::move(op));
+    return result;
+}
+
+// Swap two axes of a shape by adding one or more transpose ops to a scheduler connection
+static std::vector<std::unique_ptr<SchedulerOperation>> SwapAxes(Architecture *arch, Shape &shape, SchedulerConnection *tail, int a, int b)
+{
+    std::vector<std::unique_ptr<SchedulerOperation>> result;
+
+    assert(shape.IsValid());
+    assert(tail);
+    assert(a < shape.Size());
+    assert(b < shape.Size());
+    assert(a < b);
+
+    LOG_TRACE2("SwapAxes: Swap ({}), {} <-> {}\n", shape.ToString(), a, b);
+
+    // The hardware can perform all permutations of a 3D tensor. This means we can swap two arbitrary axes of a shape
+    // with N axes like this:
+    //
+    // 1. Reshape to a 3D shape (0*1 ..., A, ... N-2*N-1) and swap axis 0 and 1 in the 3D shape. Now A is leftmost in
+    //    the original shape.
+    // 2. Reshape to a 3D shape (0*1 ..., B, ... N-2*N-1) and swap axis 1 and 2 in the 3D shape. Now B is rightmost in
+    //    the original shape.
+    // 3. Swap 0 and N-1.
+    // 4. Swap back axis N-1 to position B, like in step 2.
+    // 5. Swap back axis 0 to position A, like in step 1.
+
+    // We can handle all swaps in a 3D shape
+    if ( shape.Size() < 4 )
+    {
+        // Build transpose type for this swap
+        Shape perm(nullptr, shape.Size());
+        for ( int i = 0; i < shape.Size(); i++ )
+            perm[i] = i;
+        std::swap(perm[a], perm[b]);
+        const auto transposeType = TransposeTypeFromShape(perm);
+
+        const Shape &ifmShape = shape;
+        const Shape ofmShape = ifmShape.Permute(uint32_t(transposeType));
+        LOG_TRACE2("SwapAxes: Transpose ({}) -> ({}), 0x{:08x}\n", ifmShape.ToString(), ofmShape.ToString(), transposeType);
+
+        // Create SchedulerOperation
+        auto op = std::make_unique<SchedulerOperation>(OpType::Transpose);
+        Kernel kernel({1, 1} /* size */, {1, 1} /* stride */, {1, 1} /* dilation */);
+        op->SetKernel(&kernel);
+        auto ifmConn = op->AddInput(TensorUsage::IFM);
+        auto ofmConn = op->AddOutput(TensorUsage::OFM);
+
+        // Create SchedulerTensor
+        auto newTensor = std::make_shared<SchedulerTensor>();
+        newTensor->format = tail->tensor->format;
+        newTensor->memArea = tail->tensor->memArea;
+        newTensor->storageShape = ofmShape;
+        newTensor->bufferView = BufferView(nullptr, 0, DataTypeSizeBits(tail->tensor->dataType), ofmShape, Shape());
+        newTensor->dataType = tail->tensor->dataType;
+        newTensor->uid = GenerateUniqueId();
+
+        // Connect input/output
+        Quantization unitQuantZp = Quantization::Unit();
+        unitQuantZp.zeroPoints = tail->quantization.zeroPoints;
+        unitQuantZp.forceZeroPoint = tail->quantization.forceZeroPoint;
+        ifmConn->tensor = tail->tensor;
+        ifmConn->tensor->consumers.push_back(op.get());
+        ifmConn->shape = ifmShape;
+        ifmConn->quantization = unitQuantZp;
+        ofmConn->tensor = std::move(newTensor);
+        ofmConn->tensor->producers.push_back(op.get());
+        ofmConn->shape = ofmShape;
+        ofmConn->quantization = std::move(unitQuantZp);
+        ofmConn->transpose = transposeType;
+
+        result.push_back(std::move(op));
+        std::swap(shape[a], shape[b]);
+
+        return result;
+    }
+
+    if ( a == 0 && b == 1 )
+    {
+        // Swap of index 0 and 1 can always be done with 1 op
+        LOG_TRACE2("SwapAxes: Left-anchored swap\n");
+        auto tmp = ReshapeTo3D(shape, {1, 1, shape.Size() - 2});
+        auto ops = SwapAxes(arch, tmp, tail, 0, 1);
+        result.insert(result.end(), std::make_move_iterator(ops.begin()), std::make_move_iterator(ops.end()));
+        std::swap(shape[a], shape[b]);
+        LOG_TRACE2("SwapAxes: Current shape ({})\n", shape.ToString());
+
+        return result;
+    }
+
+    if ( a == shape.Size() - 2 && b == shape.Size() - 1 )
+    {
+        // Swap of index N-2 and N-1 can always be done with 1 op
+        LOG_TRACE2("SwapAxes: Right-anchored swap\n");
+        auto tmp = ReshapeTo3D(shape, {shape.Size() - 2, 1, 1});
+        auto ops = SwapAxes(arch, tmp, tail, 1, 2);
+        result.insert(result.end(), std::make_move_iterator(ops.begin()), std::make_move_iterator(ops.end()));
+        std::swap(shape[a], shape[b]);
+        LOG_TRACE2("SwapAxes: Current shape ({})\n", shape.ToString());
+
+        return result;
+    }
+
+    if ( a != 0 )
+    {
+        // Move A left
+        LOG_TRACE2("SwapAxes: Move index {} ({}) leftmost\n", a, shape[a]);
+        auto tmp1 = ReshapeTo3DAroundAxis(shape, a);
+        auto ops1 = SwapAxes(arch, tmp1, tail, 0, 1);
+        result.insert(result.end(), std::make_move_iterator(ops1.begin()), std::make_move_iterator(ops1.end()));
+        shape = shape.Erase(a).Insert(0, shape[a]);
+        LOG_TRACE2("SwapAxes: Current shape ({})\n", shape.ToString());
+
+        // Swap (A is now leftmost)
+        auto ops = SwapAxes(arch, shape, result.back()->OFM(), 0, b);
+        result.insert(result.end(), std::make_move_iterator(ops.begin()), std::make_move_iterator(ops.end()));
+
+        // Move A back to where it was
+        LOG_TRACE2("SwapAxes: Move leftmost ({}) back to index {}\n", shape[0], a);
+        auto tmp2 = ReshapeTo3D(shape, {1, a, shape.Size() - a - 1});
+        auto ops2 = SwapAxes(arch, tmp2, result.back()->OFM(), 0, 1);
+        result.insert(result.end(), std::make_move_iterator(ops2.begin()), std::make_move_iterator(ops2.end()));
+        shape = shape.Erase(0).Insert(a, shape[0]);
+        LOG_TRACE2("SwapAxes: Current shape ({})\n", shape.ToString());
+
+        return result;
+    }
+
+    if ( b != shape.Size() - 1 )
+    {
+        // Move B right
+        LOG_TRACE2("SwapAxes: Move index {} ({}) rightmost\n", b, shape[b]);
+        auto tmp1 = ReshapeTo3DAroundAxis(shape, b);
+        auto ops1 = SwapAxes(arch, tmp1, tail, 1, 2);
+        result.insert(result.end(), std::make_move_iterator(ops1.begin()), std::make_move_iterator(ops1.end()));
+        shape = shape.Erase(b).Insert(-1, shape[b]);
+        LOG_TRACE2("SwapAxes: Current shape ({})\n", shape.ToString());
+
+        // Swap (A is leftmost and B is rightmost)
+        auto ops = SwapAxes(arch, shape, result.back()->OFM(), 0, shape.Size() - 1);
+        result.insert(result.end(), std::make_move_iterator(ops.begin()), std::make_move_iterator(ops.end()));
+
+        // Move B back to where it was
+        LOG_TRACE2("SwapAxes: Move rightmost ({}) back to index {}\n", shape[-1], b);
+        auto tmp2 = ReshapeTo3D(shape, {b, shape.Size() - b - 1, 1});
+        auto ops2 = SwapAxes(arch, tmp2, result.back()->OFM(), 1, 2);
+        result.insert(result.end(), std::make_move_iterator(ops2.begin()), std::make_move_iterator(ops2.end()));
+        shape = shape.Erase(-1).Insert(b, shape[-1]);
+        LOG_TRACE2("SwapAxes: Current shape ({})\n", shape.ToString());
+
+        return result;
+    }
+
+    // Swap (A is leftmost and B is rightmost)
+    assert(a == 0);
+    assert(b == shape.Size() - 1);
+    LOG_TRACE2("SwapAxes: Swap leftmost and rightmost\n");
+    auto tmp = ReshapeTo3DAroundEdges(shape);
+    auto ops = SwapAxes(arch, tmp, tail, 0, 2);
+    result.insert(result.end(), std::make_move_iterator(ops.begin()), std::make_move_iterator(ops.end()));
+    std::swap(shape[a], shape[b]);
+    LOG_TRACE2("SwapAxes: Current shape ({})\n", shape.ToString());
+
+    return result;
+}
+
+std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTranspose(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
+{
+    std::vector<std::unique_ptr<SchedulerOperation>> result;
+    auto ifmConn = op->Input(TensorUsage::IFM);
+    auto ofmConn = op->Output(TensorUsage::OFM);
+    const auto attr = op->Attribute<transpose_attr_t>();
+    const auto &perm = attr->perm;
+    const auto axes = attr->perm.Size();
+
+    // Calculate sort order
+    Shape order(nullptr, axes);
+    for ( int i = 0; i < axes; i++ )
+        order[perm[i]] = i;
+
+    auto shape = ifmConn->shape;
+
+    LOG_TRACE1("DecomposeTranspose: Initial shape ({})\n", shape.ToString());
+
+    // Decompose a transpose peforming a selection sort of the axes. Each swap in the selection sort algorithm expands
+    // to one or more transpose ops.
+    //
+    // Example:
+    //
+    // Input shape:        [ 3,  7, 11, 13]
+    // Permutation vector: [ 1,  3,  0,  2]
+    // Sort order:         [ 2,  0,  3,  1]
+    // Output shape:       [ 7, 13,  3, 11]
+    //
+    // Selection sort swaps:
+    //
+    // Swap 1: Pos 0 <-> Pos 1: [7, 3,  11, 13]
+    // Swap 2: Pos 1 <-> Pos 3: [7, 13, 11,  3]
+    // Swap 3: Pos 2 <-> Pos 3: [7, 13,  3, 11]
+
+    for ( int axis = 0; axis < axes; axis++ )
+    {
+        // Check if axis is already in the right place
+        if ( order[axis] == axis ) continue;
+
+        // Find where the axis is
+        int i;
+        for ( i = axis + 1; i < axes; i++ )
+            if ( order[i] == axis ) break;
+        assert(i < axes);
+
+        // Move axis to right place
+        LOG_TRACE1("DecomposeTranspose: Swap {} <-> {}\n", axis, i);
+        auto tail = !result.empty() ? result.back()->OFM() : ifmConn;
+        auto subOps = SwapAxes(arch, shape, tail, axis, i);
+        result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
+        std::swap(order[axis], order[i]);
+        LOG_TRACE1("DecomposeTranspose: Shape is now ({})\n", shape.ToString());
+    }
+
+    LOG_TRACE1("DecomposeTranspose: Final shape ({})\n", shape.ToString());
+
+    if ( result.empty() )
+    {
+        // Didn't decompose the op
+        result.push_back(std::move(op));
+    }
+    else
+    {
+        // Adjust to that first is read from the original IFM
+        auto ifm = result.front()->IFM(0);
+        ifm->tensor = ifmConn->tensor;
+        ifm->quantization = ifmConn->quantization;
+
+        // Adjust to that last output is written to the original OFM
+        auto ofm = result.back()->OFM();
+        ofm->tensor = ofmConn->tensor;
+        ofm->quantization = ofmConn->quantization;
+
+        // Remove the original op from the list of consumers and producers
+        std::remove(ifmConn->tensor->consumers.begin(), ifmConn->tensor->consumers.end(), op.get());
+        std::remove(ofmConn->tensor->producers.begin(), ofmConn->tensor->producers.end(), op.get());
+    }
+
     return result;
 }
 

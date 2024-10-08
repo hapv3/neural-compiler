@@ -26,6 +26,7 @@
 
 namespace regor
 {
+
 bool NeedsDecompose(Architecture *arch, const SchedulerOperation *schedOp);
 bool CanRunOnHardware(Architecture *arch, const SchedulerOperation *schedOp);
 bool CanDecompose(Architecture *arch, const SchedulerOperation *schedOp);
@@ -36,4 +37,6 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeElementwise(Architectu
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMatmul(Architecture *arch, std::unique_ptr<SchedulerOperation> op);
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(Architecture *arch, std::unique_ptr<SchedulerOperation> op);
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReverse(Architecture *arch, std::unique_ptr<SchedulerOperation> op);
+std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTranspose(Architecture *arch, std::unique_ptr<SchedulerOperation> op);
+
 }  // namespace regor

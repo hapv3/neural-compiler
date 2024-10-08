@@ -91,10 +91,10 @@ class IArchitectureConstraints
 public:
     virtual ~IArchitectureConstraints() = default;
 
-    virtual bool SupportsTransposeHW(OpType opType, TransposeType transposeType) = 0;
     virtual bool SupportsReverse(OpType opType, ReverseType reverseTypeMask) = 0;
     virtual bool SupportsFusedRescale(OpType opType, TensorUsage tensorUsage, DataType fromType, DataType toType,
         const Quantization &quantization) = 0;
+    virtual bool SupportsTranspose(OpType opType, TransposeType transposeType) = 0;
 
     bool CanExecute(const ExecutionQuery &query)
     {
@@ -103,9 +103,6 @@ public:
         {
             case OpType::MatMul:
                 valid = SupportsMatMul(query.opType);
-                break;
-            case OpType::Transpose:
-                valid = SupportsTranspose(query.targetType, query.transposeType, query.ifmShape);
                 break;
             case OpType::ReverseV2:
                 valid = SupportsReverse(query.targetType, query.reverseTypeMask);
@@ -137,7 +134,6 @@ protected:
     virtual bool SupportsMatMul(OpType opType) = 0;
     virtual bool SupportsGather(OpType opType) = 0;
     virtual bool SupportsScatter(OpType opType) = 0;
-    virtual bool SupportsTranspose(OpType opType, TransposeType transposeType, Shape ifmShape) = 0;
     virtual bool SupportsSigmoidTanhLutInt16(OpType opType) = 0;
     virtual bool SupportsResize(const ResizeSupportQuery &query) = 0;
     virtual bool SupportsArgMax(OpType opType) = 0;

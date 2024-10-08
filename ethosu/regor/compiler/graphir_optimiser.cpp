@@ -27,22 +27,6 @@ namespace regor
 
 using namespace GraphOptimisation;
 
-namespace
-{
-
-// Reshape into 3D-shape with the specified axis in the width-dimension
-// Remaining axes are multiplied-together
-// For example:
-// (1, 10, 8, 5, 6)[axis = 1] -> (1, 10, 8*5*6) -> (1, 10, 240)
-Shape ReshapeTo3D(const Shape &shape, int axis)
-{
-    uint32_t height = (axis > 0) ? shape.AxisProduct(0, axis) : 1;
-    uint32_t depth = (axis + 1) < shape.Size() ? shape.AxisProduct(axis + 1, shape.Size()) : 1;
-    return Shape(height, shape[axis], depth);
-}
-
-}  // namespace
-
 Tensor *GraphIrOptimiser::ConvertInt48Tensors(Graph *, Tensor *tensor)
 {
     if ( tensor->Type() == DataType::Int48 && !tensor->IsConstant() )
@@ -421,9 +405,9 @@ Operation *GraphIrOptimiser::RewritePad(Graph *const, Operation *const operation
         for ( int axis = 0; axis < ifmConn->shape.Size(); axis++ )
         {
             // Reshape the IFM/OFM/padding to a 3D shape (HWC) where W dimension is the dimension to pad
-            Shape newIfmShape = ReshapeTo3D(ifmConn->shape, axis);
-            Shape newOfmShape = ReshapeTo3D(ofmConn->shape, axis);
-            Shape newPaddingBefore = ReshapeTo3D(paddingBefore, axis);
+            Shape newIfmShape = ReshapeTo3DAroundAxis(ifmConn->shape, axis);
+            Shape newOfmShape = ReshapeTo3DAroundAxis(ofmConn->shape, axis);
+            Shape newPaddingBefore = ReshapeTo3DAroundAxis(paddingBefore, axis);
 
             const int padBefore = paddingBefore[axis];
             if ( padBefore )
@@ -979,7 +963,7 @@ Operation *GraphIrOptimiser::RewriteReduceMinMaxAnyAll(Graph *const graph, Opera
         assert(axis < ifmConn->shape.Size());
 
         // Reshape IFM/OFM so IFM is HxWxC and OFM is Hx1xC
-        ifmConn->shape = ReshapeTo3D(ifmConn->shape, axis);
+        ifmConn->shape = ReshapeTo3DAroundAxis(ifmConn->shape, axis);
         ofmConn->shape = ifmConn->shape.WithWidth(1);
 
         // Update the axis to reduce to match the reshapes shapes
@@ -1017,7 +1001,7 @@ Operation *GraphIrOptimiser::RewriteReduceSum(Graph *const graph, Operation *con
             // 3. ReduceSum axis C: HxCxW -> HxCx1.
 
             // Calculate 3D shape of IFM where 2nd dimension is the dimension to reduce
-            Shape ifmShape3D = ReshapeTo3D(ifmConn->shape, axis);
+            Shape ifmShape3D = ReshapeTo3DAroundAxis(ifmConn->shape, axis);
 
             // Create intermediate tensor between Transpose and ReduceSum
             std::shared_ptr<Tensor> transposeTens = ifmConn->tensor->Clone();
@@ -1166,7 +1150,7 @@ Operation *GraphIrOptimiser::RearrangeTranspose(Graph *const graph, Operation *c
         // 1x8x128x32 + [0, 2, 1, 3] ("NWHC") -> 1x128x8x32
 
         // Don't bother with rearrangement if transpose type is already supported
-        if ( _constraints->SupportsTransposeHW(OpType::MemoryCopy, ofmConn->transpose) )
+        if ( _constraints->SupportsTranspose(OpType::MemoryCopy, ofmConn->transpose) )
         {
             return returnOp;
         }
@@ -1194,22 +1178,7 @@ Operation *GraphIrOptimiser::RearrangeTranspose(Graph *const graph, Operation *c
             ofmDim--;
         }
 
-        // We can only deal with 4D or less permutation vectors
-        const int size = perm.Size();
-        if ( size > 4 )
-        {
-            return returnOp;
-        }
-
-        auto transposeType = TransposeTypeFromShape(perm);
-
-        // Don't bother with the rearrangement if result is not supported
-        if ( !_constraints->SupportsTransposeHW(OpType::MemoryCopy, transposeType) )
-        {
-            return returnOp;
-        }
-
-        ofmConn->transpose = transposeType;
+        ofmConn->transpose = TransposeTypeFromShape(perm);
         attr->perm = perm;
         ifmConn->shape = Shape::PadAxes(ifmShape, 4, 1);
         ofmConn->shape = Shape::PadAxes(ofmShape, 4, 1);
@@ -1362,7 +1331,7 @@ Operation *GraphIrOptimiser::ReshapeReverse(Graph *const graph, Operation *const
         // Reshape reversed axis into W
         // All predecing axes into H
         // All succeeding axes into C
-        auto newShape = ReshapeTo3D(ofmShape, axis);
+        auto newShape = ReshapeTo3DAroundAxis(ofmShape, axis);
         ifmConn->shape = newShape;
         ofmConn->shape = newShape;
         attr->axis = 1;
@@ -1398,7 +1367,7 @@ Operation *GraphIrOptimiser::RewriteArgmax(Graph *const graph, Operation *const 
     // Reshape IFM and OFM to 3D-tensors where W is the reduced axis
     if ( attr->axis != 1 || ifmRank != 3 )
     {
-        ifmShape = ReshapeTo3D(ifmShape, axis);
+        ifmShape = ReshapeTo3DAroundAxis(ifmShape, axis);
         ofmShape = ifmShape.WithWidth(1);
         attr->axis = 1;
     }

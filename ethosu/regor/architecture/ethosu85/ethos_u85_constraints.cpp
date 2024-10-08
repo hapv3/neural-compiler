@@ -39,7 +39,7 @@ bool EthosU85Constraints::SupportsMatMul(OpType opType)
     return true;
 }
 
-bool EthosU85Constraints::SupportsTransposeHW(OpType opType, TransposeType transposeType)
+bool EthosU85Constraints::SupportsTranspose(OpType opType, TransposeType transposeType)
 {
     if ( IsNone(transposeType) ) return true;
 
@@ -55,25 +55,6 @@ bool EthosU85Constraints::SupportsTransposeHW(OpType opType, TransposeType trans
 
     return transposeType == TransposeType::None || transposeType == TransposeType::NWHC || transposeType == TransposeType::NHCW ||
            transposeType == TransposeType::NWCH || transposeType == TransposeType::NCHW || transposeType == TransposeType::NCWH;
-}
-
-bool EthosU85Constraints::SupportsTranspose(OpType opType, TransposeType transposeType, Shape ifmShape)
-{
-    if ( SupportsTransposeHW(opType, transposeType) )
-    {
-        return true;
-    }
-    else
-    {
-        for ( int i = 0; ifmShape.Size(); i++ )
-        {
-            if ( ifmShape[i] == 1 )
-            {
-                return true;
-            }
-        }
-        return false;
-    }
 }
 
 bool EthosU85Constraints::SupportsReverse(OpType opType, ReverseType reverseTypeMask)

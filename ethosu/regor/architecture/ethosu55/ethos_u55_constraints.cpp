@@ -34,21 +34,10 @@ bool EthosU55Constraints::SupportsMatMul(OpType opType)
     return false;
 }
 
-bool EthosU55Constraints::SupportsTransposeHW(OpType opType, TransposeType transposeType)
+bool EthosU55Constraints::SupportsTranspose(OpType opType, TransposeType transposeType)
 {
     UNUSED(opType);
-    UNUSED(transposeType);
     return IsNone(transposeType);
-}
-
-bool EthosU55Constraints::SupportsTranspose(OpType opType, TransposeType transposeType, Shape ifmShape)
-{
-    UNUSED(ifmShape);
-    if ( SupportsTransposeHW(opType, transposeType) )
-    {
-        return true;
-    }
-    return false;
 }
 
 bool EthosU55Constraints::SupportsReverse(OpType opType, ReverseType reverseTypeMask)
