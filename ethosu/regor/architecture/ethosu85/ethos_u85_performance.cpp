@@ -254,7 +254,7 @@ int64_t EthosU85Performance::EstimateConvCycles(const PerformanceQuery &query, c
     return totalCycles;
 }
 
-static int EstimateMemoryTransfer(int cores, bool isRead, ArchitectureMemory *memory, TensorFormat format,
+static int64_t EstimateMemoryTransfer(int cores, bool isRead, ArchitectureMemory *memory, TensorFormat format,
     int elementBits, const Shape &block, const Shape &shape, int toTransfer)
 {
     int burstLen = 8;
@@ -304,7 +304,8 @@ static int EstimateMemoryTransfer(int cores, bool isRead, ArchitectureMemory *me
 
     burstLen = std::min(memory->MaxBurstLength(), burstLen / 8);
     assert(burstLen > 0 && "Burst length cannot be zero");
-    return (toTransfer * memory->MaxBurstLength()) / burstLen;
+    int64_t memTransfer = (int64_t(toTransfer) * memory->MaxBurstLength()) / burstLen;
+    return memTransfer;
 }
 
 
