@@ -251,15 +251,16 @@ static int UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *conn)
         }
         // Check if consumer shape requires linear format
         // Brick format can only be used if both shapes have equal W and C
+        // Need to check full shape on connection since tensor might have many producers (concat)
         auto ifm0 = consumer->TryIFM(0);
         auto ifm1 = consumer->TryIFM(1);
         auto ifm2 = consumer->TryIFM(2);
         if ( (ifm0 && ifm0->tensor.get() == tensor &&
-                 Shape::PadAxes(ifm0->SliceShape(), 2, 1).WC<int>() != Shape::PadAxes(conn->SliceShape(), 2, 1).WC<int>()) ||
+                 Shape::PadAxes(ifm0->SliceShape(), 2, 1).WC<int>() != Shape::PadAxes(conn->shape, 2, 1).WC<int>()) ||
              (ifm1 && ifm1->tensor.get() == tensor &&
-                 Shape::PadAxes(ifm1->SliceShape(), 2, 1).WC<int>() != Shape::PadAxes(conn->SliceShape(), 2, 1).WC<int>()) ||
+                 Shape::PadAxes(ifm1->SliceShape(), 2, 1).WC<int>() != Shape::PadAxes(conn->shape, 2, 1).WC<int>()) ||
              (ifm2 && ifm2->tensor.get() == tensor &&
-                 Shape::PadAxes(ifm2->SliceShape(), 2, 1).WC<int>() != Shape::PadAxes(conn->SliceShape(), 2, 1).WC<int>()) )
+                 Shape::PadAxes(ifm2->SliceShape(), 2, 1).WC<int>() != Shape::PadAxes(conn->shape, 2, 1).WC<int>()) )
         {
             tensor->needsLinearFormat = true;
         }
