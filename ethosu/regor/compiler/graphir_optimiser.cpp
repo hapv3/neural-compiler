@@ -611,7 +611,11 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const, Operation *const operatio
         auto ofmConn = operation->Output(TensorUsage::OFM);
         auto ifmConn = operation->Input(TensorUsage::IFM);
         auto producer = ifmConn->tensor->Writers().size() == 1 ? ifmConn->tensor->Writers().front() : nullptr;
+        // When there is only one producer of the input to the rescale operation and this input has no zero point
+        // adjustment and the producers output has unit scaling it might be possible to fuse this rescale to
+        // the producers output if the constraints of the architecture allows it
         if ( producer && producer->Output(TensorUsage::OFM)->quantization.EqualScales(Quantization::Unit()) &&
+             ifmConn->quantization.zeroPoints == Quantization::Unit().zeroPoints &&
              _constraints->SupportsFusedRescale(producer->Type(), TensorUsage::OFM, producer->IFM(0)->Type(),
                  ofmConn->tensor->Type(), ofmConn->quantization) )
         {
