@@ -35,9 +35,9 @@ namespace regor
 
 
 static void CalcPaddingAndSkirt(const Kernel *kernel, const Shape &inputShape, const Shape &outputShape,
-    const Point2i &inputStep, HLCPadding &padding, HLCPadding &skirt)
+    const Point2i &inputDilation, HLCPadding &padding, HLCPadding &skirt)
 {
-    auto dilatedWH = kernel->DilatedWH() * inputStep;
+    auto dilatedWH = kernel->DilatedWH() * inputDilation;
     int ypad = NeededTotalPadding(inputShape.Height(), outputShape.Height(), kernel->Stride().y, dilatedWH.y);
     int xpad = NeededTotalPadding(inputShape.Width(), outputShape.Width(), kernel->Stride().x, dilatedWH.x);
     const auto &pad = kernel->Padding();
@@ -57,9 +57,10 @@ enum class TransformLimit
     Wrap,
 };
 
-static Box TransformWithStridesAndSkirt(const Box &outputArea, const Shape *strides, const HLCPadding *skirt, const Shape &ifmShape,
-    OpType opType, const Shape &concatOffsets, const Shape &splitOffset, const Shape &splitShape, int dilatedKernelHeight, int upscalingFactor,
-    int &padTop, int &padBottom, TransformLimit limit = TransformLimit::None, TransposeType transposeType = TransposeType::None)
+static Box TransformWithStridesAndSkirt(const Box &outputArea, const Shape *strides, const Point2i &inputStep,
+    const HLCPadding *skirt, const Shape &ifmShape, OpType opType, const Shape &concatOffsets, const Shape &splitOffset,
+    const Shape &splitShape, int dilatedKernelHeight, int upscalingFactor, int &padTop, int &padBottom,
+    TransformLimit limit = TransformLimit::None, TransposeType transposeType = TransposeType::None)
 {
     Shape outputAreaStart = outputArea.Start().Unpermute(uint32_t(transposeType));
     Shape outputAreaEnd = outputArea.End().Unpermute(uint32_t(transposeType));
@@ -116,23 +117,25 @@ static Box TransformWithStridesAndSkirt(const Box &outputArea, const Shape *stri
     assert(strides->Size() == 4);
 
     int strideW = strides->Width();
-    int validIfmOffset = splitOffset.IsEmpty() ? 0 : splitOffset.Width();
-    start = start.WithWidth(std::max(start.Width() * strideW - skirt->left, validIfmOffset));
+    Point2i validIfmOffset = splitOffset.IsEmpty() ? Point2i{0, 0} : splitOffset.WH<int>();
+    start = start.WithWidth(std::max(start.Width() * strideW - (skirt->left + validIfmOffset.x), validIfmOffset.x));
+    strideW *= inputStep.x;
     int validIfmWidth = ifmShape.Width();
     if ( splitShape.Size() > 1 && splitOffset.Size() > 1 )
-        validIfmWidth = std::min(validIfmWidth, splitShape.Width() + splitOffset.Width());
+        validIfmWidth = std::min(validIfmWidth, splitShape.Width() + splitOffset.Width() + skirt->right);
     else if ( splitShape.Size() > 1 ) validIfmWidth = splitShape.Width();
     end = end.WithWidth(std::min(end.Width() * strideW + skirt->right, validIfmWidth));
     int strideH = strides->Height();
     int skirtTopRemainder = skirt->top % upscalingFactor;
+    int startHeight = start.Height() * strideH - (skirt->top + validIfmOffset.y) + skirtTopRemainder;
+    strideH *= inputStep.y;
     int totalStride = strideH * (outputAreaEnd.Height() - outputAreaStart.Height() - 1);
-    int startHeight = start.Height() * strideH - skirt->top + skirtTopRemainder;
     padTop = std::max(0, -startHeight) + skirtTopRemainder;
-    start = start.WithHeight(std::max(startHeight, 0));
+    start = start.WithHeight(std::max(startHeight, validIfmOffset.y));
 
     int validIfmHeight = ifmShape.Height();
     if ( splitShape.Size() > 2 && splitOffset.Size() > 2 )
-        validIfmHeight = std::min(validIfmHeight, splitShape.Height() + splitOffset.Height());
+        validIfmHeight = std::min(validIfmHeight, splitShape.Height() + splitOffset.Height() + skirt->bottom);
     else if ( splitShape.Size() > 2 ) validIfmHeight = splitShape.Height();
 
     if ( end.Height() * strideH + skirt->bottom > validIfmHeight * upscalingFactor )
@@ -166,24 +169,19 @@ static Box TransformWithStridesAndSkirt(const Box &outputArea, const Shape *stri
     return Box(start, end);
 }
 
-static int StrideAdjustedPadding(int pad, int outOffset, int kernelStride)
-{
-    return pad ? pad - outOffset * (kernelStride - 1) : 0;
-}
-
 static std::pair<Box, HLCPadding> TransformWithInputOutputSteps(const Box &inputArea, const Point2i &inputStep,
-    const Box &outputArea, const Point2i &outputStep, class Kernel *kernel, const HLCPadding &padding)
+    const Box &outputArea, const Point2i &outputStep, class Kernel *kernel, const HLCPadding &padding, const Shape &ifmShape)
 {
     const auto &stride = kernel->Stride();
     const auto dilatedWH = kernel->DilatedWH();
     HLCPadding newPadding;
-    auto adjustedTopPad = StrideAdjustedPadding(padding.top, outputArea.Start().Height(), stride.y);
-    auto adjustedLeftPad = StrideAdjustedPadding(padding.left, outputArea.Start().Width(), stride.x);
-    newPadding.top = std::max(0, DivRoundUp(adjustedTopPad, inputStep.y));
-    newPadding.left = std::max(0, DivRoundUp(adjustedLeftPad, inputStep.x));
+    newPadding.top = std::max(0, DivRoundUp(padding.top, inputStep.y));
+    newPadding.left = std::max(0, DivRoundUp(padding.left, inputStep.x));
     Point2i startAdjustForPadFraction;
-    startAdjustForPadFraction.x = newPadding.left * inputStep.x - adjustedLeftPad;
-    startAdjustForPadFraction.y = newPadding.top * inputStep.y - adjustedTopPad;
+    if ( padding.left > 0 && inputArea.Start().Width() == 0 )
+        startAdjustForPadFraction.x = std::max(0, DivRoundUp(padding.left, inputStep.x) * inputStep.x - padding.left);
+    if ( padding.top > 0 && inputArea.Start().Height() == 0 )
+        startAdjustForPadFraction.y = std::max(0, DivRoundUp(padding.top, inputStep.y) * inputStep.y - padding.top);
     Point2i neededInput;
     neededInput.x =
         (DivRoundUp(outputArea.End().Width() - outputArea.Start().Width(), outputStep.x) - 1) * stride.x + dilatedWH.x;
@@ -193,15 +191,19 @@ static std::pair<Box, HLCPadding> TransformWithInputOutputSteps(const Box &input
         inputArea.Start()
             .WithWidth(inputArea.Start().Width() + startAdjustForPadFraction.x)
             .WithHeight(inputArea.Start().Height() + startAdjustForPadFraction.y);
+    Shape newEnd =
+        inputArea.End()
+            .WithWidth(std::min(inputArea.End().Width() + startAdjustForPadFraction.x, ifmShape.Width()))
+            .WithHeight(std::min(inputArea.End().Height() + startAdjustForPadFraction.y, ifmShape.Height()));
     newPadding.bottom = std::max(0,
         neededInput.y -
-            (DivRoundUp((inputArea.End().Height() - inputArea.Start().Height()) - startAdjustForPadFraction.y, inputStep.y) +
+            (DivRoundUp((ifmShape.Height() - inputArea.Start().Height()) - startAdjustForPadFraction.y, inputStep.y) +
                 newPadding.top));
     newPadding.right = std::max(0,
         neededInput.x -
-            (DivRoundUp(inputArea.End().Width() - inputArea.Start().Width() - startAdjustForPadFraction.x, inputStep.x) +
+            (DivRoundUp(ifmShape.Width() - inputArea.Start().Width() - startAdjustForPadFraction.x, inputStep.x) +
                 newPadding.left));
-    return std::make_pair<Box, HLCPadding>(Box(newStart, inputArea.End()), std::move(newPadding));
+    return std::make_pair<Box, HLCPadding>(Box(newStart, newEnd), std::move(newPadding));
 }
 
 // Calculates STRIDE_C/Y/X
@@ -608,7 +610,7 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
         // Use full ifm shape for broadcast elementwise operators
         maxIfmShape = Shape::Max(ifm0Conn->SliceShape(), ifm1Conn->SliceShape());
     }
-    CalcPaddingAndSkirt(kernel, maxIfmShape, ofmShape, ifm0Conn->stepXY, padding, skirt);
+    CalcPaddingAndSkirt(kernel, maxIfmShape, ofmShape, ofmConn->stepXY, padding, skirt);
 
     int upscaling = 1;
     if ( ifm0Conn->resamplingMode != ArchResampling::None )
@@ -659,14 +661,15 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
                 {
                     auto ifmConn = op->IFM(ifmIndex);
                     // Calculate input area based on the output area
-                    auto inputArea = TransformWithStridesAndSkirt(outputArea, &strides, &skirt, ifmConn->shape, opType,
-                        ofmConn->slice.offset, ifmConn->slice.offset, ifmConn->slice.shape, dilatedKernelHeight,
+                    auto inputArea = TransformWithStridesAndSkirt(outputArea, &strides, ifmConn->stepXY, &skirt, ifmConn->shape,
+                        opType, ofmConn->slice.offset, ifmConn->slice.offset, ifmConn->slice.shape, dilatedKernelHeight,
                         upscaling, hlcStripe->padding.top, hlcStripe->padding.bottom, ifmLimit, ofmConn->transpose);
                     if ( ofmConn->stepXY != Point2i{1, 1} || ifmConn->stepXY != Point2i{1, 1} )
                     {
-                        std::tie(inputArea, hlcStripe->padding) = TransformWithInputOutputSteps(
-                            inputArea, ifmConn->stepXY, outputArea, ofmConn->stepXY, kernel, hlcStripe->padding);
+                        std::tie(inputArea, hlcStripe->padding) = TransformWithInputOutputSteps(inputArea,
+                            ifmConn->stepXY, outputArea, ofmConn->stepXY, kernel, hlcStripe->padding, ifmConn->shape);
                     }
+                    inputArea = Box(inputArea.Start(), Shape::Max(inputArea.End(), inputArea.Start() + inputArea.Start().WithOnes()));
                     hlcStripe->ifmAreas.push_back(inputArea);
                 }
                 if ( opInfo->npuWeightsTensor != nullptr )

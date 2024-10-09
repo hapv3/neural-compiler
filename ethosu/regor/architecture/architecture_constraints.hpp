@@ -96,6 +96,7 @@ public:
     virtual bool SupportsFusedRescale(OpType opType, TensorUsage tensorUsage, DataType fromType, DataType toType,
         const Quantization &quantization) = 0;
     virtual bool SupportsTranspose(OpType opType, TransposeType transposeType) = 0;
+    virtual bool SupportsAccumulatorSaveRestore() = 0;
 
     bool CanExecute(const ExecutionQuery &query)
     {

@@ -235,7 +235,7 @@ public:
         {
             extra = fmt::format(", Weight depth: {}", weightRangeDepth);
         }
-        if ( padding.top != 0 || padding.bottom != 0 )
+        if ( padding.top != 0 || padding.bottom != 0 || padding.left != 0 || padding.right != 0 )
         {
             extra += fmt::format(", padding: {}", padding.ToString());
         }

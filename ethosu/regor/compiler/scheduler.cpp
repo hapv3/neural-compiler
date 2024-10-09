@@ -234,20 +234,24 @@ static int UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *conn)
         {
             tensor->hasCPUReaders = true;
         }
+        if ( tensor->needsLinearFormat ) continue;
         // TODO: Gather doesn't support brick format yet (MLBEDSW-8410)
         if ( consumer->Type() == OpType::Scatter || consumer->Type() == OpType::Gather )
         {
             tensor->needsLinearFormat = true;
+            continue;
         }
         // TODO: Tile doesn't support brick format yet (MLBEDSW-9485)
         else if ( consumer->Type() == OpType::Tile )
         {
             tensor->needsLinearFormat = true;
+            continue;
         }
         // Int32 ReduceSum requires linear format
         if ( consumer->Type() == OpType::ReduceSum && tensor->dataType == DataType::Int32 )
         {
             tensor->needsLinearFormat = true;
+            continue;
         }
         // Check if consumer shape requires linear format
         // Brick format can only be used if both shapes have equal W and C
@@ -596,7 +600,7 @@ std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(
         stripeInput = Point2i::Min(stripeInput, ifmShape.WH<int>());
         if ( !subdivideMask.Any(AxisMask::AxisX) && (stripeInput.x != ifmShape.Width()) )
         {
-            assert(stripeInput.x >= (ifmShape.Width() - op->Kernel()->Stride().x) && "Unexpected stripe input width");
+            assert(stripeInput.x * ifm->stepXY.x >= (ifmShape.Width() - op->Kernel()->Stride().x) && "Unexpected stripe input width");
             stripeInput.x = ifmShape.Width();
         }
 

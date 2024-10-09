@@ -26,6 +26,11 @@
 
 namespace regor
 {
+class DecompositionFailure : public std::runtime_error
+{
+public:
+    DecompositionFailure(const std::string &what = "") : std::runtime_error(what) {}
+};
 
 bool NeedsDecompose(Architecture *arch, const SchedulerOperation *schedOp);
 bool CanRunOnHardware(Architecture *arch, const SchedulerOperation *schedOp);
