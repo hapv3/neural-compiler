@@ -169,7 +169,18 @@ bool EthosU85Constraints::SupportsFusedRescale(
         {
             bool fromTypeSupported = (IsInteger(fromType) && fromBits == 8) || fromType == DataType::Int16;
             bool toTypeSupported = (IsInteger(toType) && (toBits == 8 || toBits == 16)) || toType == DataType::Int32;
-            return opType != OpType::Div && opType != OpType::Mul && globalScale && fromTypeSupported && toTypeSupported;
+
+            auto &qs = quantization.scales.front();
+            // Make sure shift is valid
+            if ( qs.shift < 0 || qs.shift > 63 ) return false;
+            // Make sure the rescale can be done without clipping
+            int64_t zp = quantization.zeroPoints.front();
+            int64_t value = (zp < 0 ? int64_t(IntegerMax(fromType)) : IntegerMin(fromType));
+            value = value - zp;
+            value = (value * qs.scale) >> qs.shift;
+            bool noClipping = value >= IntegerMin(toType) && value <= int64_t(IntegerMax(toType));
+
+            return opType != OpType::Div && opType != OpType::Mul && globalScale && fromTypeSupported && toTypeSupported && noClipping;
         }
     }
     else if ( tensorUsage == TensorUsage::OFM )

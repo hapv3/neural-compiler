@@ -75,7 +75,15 @@ bool EthosU55Constraints::SupportsFusedRescale(
             // TODO: Only one ifm can have full 32-bit (advanced) rescale, so for now only allow 16-bit (simple) rescale
             auto &qs = quantization.scales.front();
             bool scaleSupported = qs.shift == 0 && static_cast<int16_t>(qs.scale) == qs.scale;
-            return (opType == OpType::Add || opType == OpType::Sub) && globalScale && fromTypeSupported && scaleSupported;
+
+            // Make sure the rescale can be done without clipping
+            int64_t zp = quantization.zeroPoints.front();
+            int64_t value = (zp < 0 ? int64_t(IntegerMax(fromType)) : IntegerMin(fromType));
+            value = value - zp;
+            value = (value * qs.scale) >> qs.shift;
+            bool noClipping = value >= IntegerMin(toType) && value <= int64_t(IntegerMax(toType));
+
+            return (opType == OpType::Add || opType == OpType::Sub) && globalScale && fromTypeSupported && scaleSupported && noClipping;
         }
     }
     else if ( tensorUsage == TensorUsage::OFM )
