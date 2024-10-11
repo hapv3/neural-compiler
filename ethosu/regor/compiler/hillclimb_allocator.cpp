@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <queue>
 #include <set>
+#include <utility>
 #include <vector>
 
 namespace regor
@@ -191,15 +192,15 @@ Address HillClimbAllocator::AllocateIndices(const std::vector<int> &indices)
 void HillClimbAllocator::SortIndicesOnPrio(std::vector<int> &indices) const
 {
     std::sort(indices.begin(), indices.end(),
-        [&lrUrgency = lrUrgency, &lrs = lrs](int const &a, int const &b)
+        [&lrUrgency_ = std::as_const(lrUrgency), &lrs_ = std::as_const(lrs)](int const &a, int const &b)
         {
             // urgent first
-            if ( lrUrgency[a] != lrUrgency[b] )
+            if ( lrUrgency_[a] != lrUrgency_[b] )
             {
-                return lrUrgency[a] > lrUrgency[b];
+                return lrUrgency_[a] > lrUrgency_[b];
             }
-            auto &lr1 = lrs[a];
-            auto &lr2 = lrs[b];
+            auto &lr1 = lrs_[a];
+            auto &lr2 = lrs_[b];
             // long duration before short duration
             auto duration1 = lr1.endTime - lr1.startTime;
             auto duration2 = lr2.endTime - lr2.startTime;
