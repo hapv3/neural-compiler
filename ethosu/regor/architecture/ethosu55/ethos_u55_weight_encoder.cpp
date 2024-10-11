@@ -41,13 +41,13 @@ EthosU55WeightEncoder::EthosUEncodingConfig::EthosUEncodingConfig(int cores) : _
 
 void EthosU55WeightEncoder::EthosUEncodingConfig::Rehash()
 {
-    _hash = SimpleHash32(ofmBlockDepth, traversal, _depthOffsetHash, ifmType, dilation, ohwiStrides);
-
     _depthOffsetHash = 0;
     for ( int offset : this->depthOffsets )
     {
         _depthOffsetHash = _depthOffsetHash * 31 ^ offset;
     }
+
+    _hash = SimpleHash32(ofmBlockDepth, traversal, _depthOffsetHash, ifmType, dilation, ohwiStrides);
 }
 
 uint32_t EthosU55WeightEncoder::EthosUEncodingConfig::Hash()
