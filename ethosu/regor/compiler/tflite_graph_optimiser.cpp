@@ -2697,7 +2697,16 @@ Operation *TFLiteGraphOptimiser::ConvertPad(Graph *const graph, Operation *const
     const auto &ofmConn = operation->Output(TensorUsage::OFM);
     const auto &ofmShape = ofmConn->shape;
     const auto &paramsConn = operation->Input(TensorUsage::Params);
-    const auto padValues = paramsConn->tensor->View().Values<int32_t>();
+    BufferReader<int> padValues;
+    if ( paramsConn->tensor->Type() == DataType::Int32 )
+    {
+        padValues = paramsConn->tensor->View().Values<int32_t, int>();
+    }
+    else
+    {
+        assert(paramsConn->tensor->Type() == DataType::Int64);
+        padValues = paramsConn->tensor->View().Values<int64_t, int>();
+    }
     int top = padValues[2];
     int bottom = padValues[3];
     int left = padValues[4];
