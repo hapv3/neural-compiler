@@ -369,11 +369,18 @@ TEST_CASE("Erase and Insert axes")
     REQUIRE(a.Erase(1) == Shape(100, 300, 400));
     REQUIRE(a.Erase(2) == Shape(100, 200, 400));
     REQUIRE(a.Erase(3) == Shape(100, 200, 300));
+    REQUIRE(a.Erase(-1) == Shape(100, 200, 300));
+    REQUIRE(a.Erase(-2) == Shape(100, 200, 400));
+    REQUIRE(a.Erase(-3) == Shape(100, 300, 400));
+    REQUIRE(a.Erase(-4) == Shape(200, 300, 400));
 
     Shape b(100, 200);
     REQUIRE(b.Insert(0, 50) == Shape(50, 100, 200));
     REQUIRE(b.Insert(1, 50) == Shape(100, 50, 200));
     REQUIRE(b.Insert(2, 50) == Shape(100, 200, 50));
+    REQUIRE(b.Insert(-1, 50) == Shape(100, 200, 50));
+    REQUIRE(b.Insert(-2, 50) == Shape(100, 50, 200));
+    REQUIRE(b.Insert(-3, 50) == Shape(50, 100, 200));
 }
 
 TEST_CASE("Permute Mask")

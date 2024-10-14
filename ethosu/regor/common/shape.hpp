@@ -327,7 +327,7 @@ public:
         auto *result = tmp.Storage();
         auto *local = Storage();
 
-        index = Size() - index;
+        index = tmp.ToOffset(index);
         for ( int i = 0; i < index; i++ )
             result[i] = local[i];
         result[index] = value;
