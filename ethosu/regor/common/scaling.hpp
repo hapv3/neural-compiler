@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -40,6 +40,10 @@ public:
     double Dequantize() const;
     bool operator==(const QuantizedScale &other) const;
     bool operator!=(const QuantizedScale &other) const;
+    /**
+     * Unit scale, i.e. no scaling
+     */
+    static const QuantizedScale &Unit();
 };
 
 /* Calculate elementwise Mul OFM QuantizedScale */

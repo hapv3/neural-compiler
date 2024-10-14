@@ -703,10 +703,11 @@ void EthosU85RCSGenerator::GenerateScalingForElementwise(HLCOperation *op)
 {
     auto opType = op->type;
     int ifmCnt = int(op->ifm.size());
+    bool setIfmDoubleRound = op->ifm[0].quantization.type == QuantizationType::TFLITE;
 
-    QuantizedScale input1Scale(1, 0);
-    QuantizedScale input2Scale(1, 0);
-    QuantizedScale outScale(1, 0);
+    QuantizedScale input1Scale(QuantizedScale::Unit());
+    QuantizedScale input2Scale(QuantizedScale::Unit());
+    QuantizedScale outScale(QuantizedScale::Unit());
     ethosU85Scaling::RescaleElementwise(op);
 
     auto ifmRoundMode = round_mode_ifm::DOUBLE_SYMMETRIC;
@@ -714,62 +715,33 @@ void EthosU85RCSGenerator::GenerateScalingForElementwise(HLCOperation *op)
     auto ofmRoundMode = GetOfmRoundingMode(op);
     uint32_t ofmDoubleRound = 0;
 
-    int bitDepth = DataTypeSizeBits(op->ifm[0].dataType);
-    if ( opType == OpType::Abs || opType == OpType::Mul )
+    if ( !op->ofm.quantization.scales.empty() ) outScale = op->ofm.quantization.scales[0];
+    if ( !op->ifm[0].quantization.scales.empty() ) input1Scale = op->ifm[0].quantization.scales[0];
+    if ( ifmCnt == 2 )
     {
-        if ( !op->ofm.quantization.scales.empty() )
-        {
-            outScale = op->ofm.quantization.scales[0];
-        }
+        if ( !op->ifm[1].quantization.scales.empty() ) input2Scale = op->ifm[1].quantization.scales[0];
     }
-    else if ( opType == OpType::LeakyRelu )
+
+    if ( opType == OpType::LeakyRelu )
     {
-        // ofmScale is unit
         // ifm1Scale is used for rescaling and ifm2Scale is used for alpha
-        if ( !op->ifm[0].quantization.scales.empty() )
-        {
-            input1Scale = op->ifm[0].quantization.scales[0];
-        }
-        const HLCParameters *params = &op->parameters;
-        float alpha = params->leaky_relu.alpha;
+        float alpha = op->parameters.leaky_relu.alpha;
         float ifm1Scale = float(input1Scale.Dequantize());
         input2Scale = QuantizedScale(alpha * ifm1Scale);
         ifmCnt = 2;
     }
-    else if ( opType == OpType::Div )
-    {
-        // Div operations require unit scaling
-        if ( !op->ifm[0].quantization.scales.empty() )
-        {
-            auto scale = op->ifm[0].quantization.scales[0];
-            assert(scale.scale == 1);
-            assert(scale.shift == 0);
-        }
-        if ( ifmCnt == 2 && !op->ifm[1].quantization.scales.empty() )
-        {
-            auto scale = op->ifm[1].quantization.scales[0];
-            assert(scale.scale == 1);
-            assert(scale.shift == 0);
-        }
-        if ( !op->ofm.quantization.scales.empty() )
-        {
-            auto scale = op->ofm.quantization.scales[0];
-            assert(scale.scale == 1);
-            assert(scale.shift == 0);
-        }
-    }
     else if ( opType == OpType::Add || opType == OpType::Sub )
     {
         // Double round is used to compensate for the left shift that happens in AdvancedElementwiseAddSubScale
-        ifmDoubleRound = op->ifm[0].dataType == DataType::Int8 ? 20 : 15;
-        if ( !op->ofm.quantization.scales.empty() && !op->ifm[0].quantization.scales.empty() &&
-             !op->ifm[1].quantization.scales.empty() )
-        {
-            outScale = op->ofm.quantization.scales[0];
-            input1Scale = op->ifm[0].quantization.scales[0];
-            input2Scale = op->ifm[1].quantization.scales[0];
-        }
+        if ( setIfmDoubleRound ) ifmDoubleRound = op->ifm[0].dataType == DataType::Int8 ? 20 : 15;
     }
+
+    // Check that scaling is valid
+    assert(!(opType == OpType::Div || opType == OpType::Mul) || (input1Scale == QuantizedScale::Unit()));
+    assert(!(opType == OpType::Div || opType == OpType::Mul) || (input2Scale == QuantizedScale::Unit()));
+    assert(!(opType == OpType::Div || opType == OpType::SHL || opType == OpType::SHR || opType == OpType::Asr) ||
+           (outScale == QuantizedScale::Unit()));
+
     assert(unsigned(input1Scale.shift) < 64);
     Emit(isa::npu_set_ifm_scale_t(input1Scale.shift, ifmDoubleRound, ifmRoundMode, input1Scale.scale));
     if ( ifmCnt == 2 )

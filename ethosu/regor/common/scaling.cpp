@@ -65,6 +65,12 @@ double QuantizedScale::Dequantize() const
     return std::ldexp(significand, exp);
 }
 
+const QuantizedScale &QuantizedScale::Unit()
+{
+    static const QuantizedScale unitScale(1, 0);
+    return unitScale;
+}
+
 QuantizedScale ElementwiseMulScale(const double inputScale, const double input2Scale, const double outputScale)
 {
     // clamp to single-point precision
