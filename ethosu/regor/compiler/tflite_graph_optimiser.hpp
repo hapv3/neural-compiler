@@ -145,11 +145,6 @@ private:
     Operation *CreateCastToInt32(const TensorConnection *ifmConn);
     Operation *RewriteSquaredDifference(Graph *const, Operation *const operation);
 
-    // Convert depthwise convolutions with a depth multiplier greater than 1 into a single Conv2D if:
-    // - the input depth is 1; and
-    // - the output depth equals the depth multiplier.
-    Operation *RewriteDepthwise(Graph *const, Operation *const operation);
-
     // Check that no reshape like operations remain in graph.
     Operation *CheckReshapeOpsRemoved(Graph *const graph, Operation *const operation);
 
@@ -243,7 +238,6 @@ public:
                 &TFLiteGraphOptimiser::RewriteSpaceToBatchConvBatchToSpace,
                 &TFLiteGraphOptimiser::FixupDilationGT2,
                 &TFLiteGraphOptimiser::FixupBias,
-                &TFLiteGraphOptimiser::RewriteDepthwise,
                 &TFLiteGraphOptimiser::ConvertReduceMinMaxAnyAll,
                 &TFLiteGraphOptimiser::ConvertExpToLUT,
                 &TFLiteGraphOptimiser::ConvertTanhSigmoidToLUT,

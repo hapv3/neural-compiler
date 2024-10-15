@@ -1807,34 +1807,6 @@ Operation *TFLiteGraphOptimiser::FixupBias(Graph *const, Operation *const operat
     return operation;
 }
 
-// Convert depthwise convolutions with a depth multiplier greater than 1 into a single Conv2D if:
-// - the input depth is 1; and
-// - the output depth equals the depth multiplier.
-Operation *TFLiteGraphOptimiser::RewriteDepthwise(Graph *const, Operation *const operation)
-{
-    Operation *returnOp = operation;
-    if ( operation->Type() == OpType::DepthwiseConv2DBias )
-    {
-        const auto ifm = operation->Input(TensorUsage::IFM0);
-        const auto ofm = operation->Output(TensorUsage::OFM);
-        const auto multiplier = operation->Kernel()->DepthMultiplier();
-
-        if ( ifm && (ifm->shape.Depth() == 1) && (multiplier != 1) && ofm && (ofm->shape.Depth() == multiplier) )
-        {
-            auto newOp = std::make_shared<Operation>(OpType::Conv2DBias);
-            newOp->SetRounding(ifm->tensor->Type() == DataType::Int16 ? RoundMode::NATURAL : RoundMode::DBL);
-            auto kernel = std::make_unique<Kernel>(operation->Kernel()->Size(), operation->Kernel()->Stride(),
-                operation->Kernel()->Dilation(), 1, operation->Kernel()->Padding());
-            newOp->SetKernel(std::move(kernel));
-            ReplaceOperation(operation, newOp.get());
-            returnOp = newOp.get();
-            RecordOptimisation(operation, returnOp);
-        }
-    }
-    return returnOp;
-}
-
-
 // Check that no reshape like operations remain in graph.
 Operation *TFLiteGraphOptimiser::CheckReshapeOpsRemoved(Graph *const graph, Operation *const operation)
 {

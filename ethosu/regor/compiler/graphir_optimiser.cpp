@@ -1317,6 +1317,44 @@ Operation *GraphIrOptimiser::RewriteMatmul(Graph *const graph, Operation *const 
     return returnOp;
 }
 
+// Convert depthwise convolutions with a depth multiplier greater than 1 into a single Conv2D if:
+// - the input depth is 1; and
+// - the output depth equals the depth multiplier.
+Operation *GraphIrOptimiser::RewriteDepthwise(Graph *const graph, Operation *const operation)
+{
+    UNUSED(graph);
+    Operation *returnOp = operation;
+    if ( operation->Type() == OpType::DepthwiseConv2DBias )
+    {
+        const auto ifm = operation->Input(TensorUsage::IFM0);
+        const auto ofm = operation->Output(TensorUsage::OFM);
+        const auto weights = operation->Input(TensorUsage::Weights);
+        const auto shape = weights->tensor->StorageShape();
+        const auto &axisOrder = weights->tensor->AxisOrder();
+        const auto multiplier = axisOrder == AxisOrder::HWCM ? shape[3] : operation->Kernel()->DepthMultiplier();
+
+        if ( ifm && (ifm->shape.Depth() == 1) && (multiplier != 1) && ofm && (ofm->shape.Depth() == multiplier) )
+        {
+            auto newOp = std::make_shared<Operation>(OpType::Conv2DBias);
+            newOp->SetRounding(ifm->tensor->Type() == DataType::Int16 ? RoundMode::NATURAL : RoundMode::DBL);
+            auto kernel = std::make_unique<Kernel>(operation->Kernel()->Size(), operation->Kernel()->Stride(),
+                operation->Kernel()->Dilation(), 1, operation->Kernel()->Padding());
+            newOp->SetKernel(std::move(kernel));
+            if ( axisOrder == AxisOrder::HWCM )
+            {
+                weights->tensor->Reshape(Shape(1, shape[0], shape[1], shape[3]));
+                weights->tensor->SetAxisOrder(AxisOrder::IHWO);
+            }
+
+            ReplaceOperation(operation, newOp.get());
+            returnOp = newOp.get();
+            RecordOptimisation(operation, returnOp);
+        }
+    }
+
+    return returnOp;
+}
+
 // Reshape Reverse with unsupported shape or axis
 // If a Reverse has >4D shape, or unsupported axis-parameter
 // reshape to a 3D-tensor where W is the reversed axis

@@ -62,6 +62,7 @@ private:
     Operation *RewriteTile(Graph *const graph, Operation *const operation);
     Operation *RewriteMatmul(Graph *const graph, Operation *const operation);
     Operation *RewriteArgmax(Graph *const graph, Operation *const operation);
+    Operation *RewriteDepthwise(Graph *const graph, Operation *const operation);
     Operation *OptimiseElementwise(Graph *const graph, Operation *const operation);
     Operation *RearrangeTranspose(Graph *const graph, Operation *const operation);
     Operation *ReshapeReverse(Graph *const graph, Operation *const operation);
@@ -116,6 +117,7 @@ private:
                 &GraphIrOptimiser::RewriteMatmul,
                 &GraphIrOptimiser::RewriteSelect,
                 &GraphIrOptimiser::RewriteArgmax,
+                &GraphIrOptimiser::RewriteDepthwise,
                 &GraphIrOptimiser::FuseRescale,  // First pass fuse all possible ifm and ofm rescales
                 &GraphIrOptimiser::OptimiseElementwise,
                 &GraphIrOptimiser::RearrangeTranspose,
