@@ -389,7 +389,7 @@ public:
     TYPE operator[](size_t index) const
     {
         assert(index < _count);
-        assert(_strideBytes.Size() <= 2 && "View does not guarantee linear access");
+        assert(((_strideBytes.Size() <= 2) || (_count == 1)) && "View does not guarantee linear access");
         return _get(_data, index * _strideBytes.Depth());
     }
 
@@ -495,14 +495,16 @@ public:
     const TYPE &operator[](size_t index) const
     {
         assert(index < _count);
-        assert(_strideBytes.Size() <= 2 && "View does not guarantee linear access");
+        assert(_strideBytes[-1] == sizeof(TYPE));
+        assert(((_strideBytes.Size() <= 2) || (_count == 1)) && "View does not guarantee linear access");
         return _data[index];
     }
 
     TYPE &operator[](size_t index)
     {
         assert(index < _count);
-        assert(_strideBytes.Size() <= 2 && "View does not guarantee linear access");
+        assert(_strideBytes[-1] == sizeof(TYPE));
+        assert(((_strideBytes.Size() <= 2) || (_count == 1)) && "View does not guarantee linear access");
         return _data[index];
     }
 
