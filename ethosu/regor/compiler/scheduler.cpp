@@ -274,10 +274,7 @@ static int UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *conn)
     // Set tensor format to NHCWB16 for output FeatureMaps, if possible
     if ( IsOFM(usage) )
     {
-        if ( !tensor->needsLinearFormat )
-        {
-            tensor->format = TensorFormat::NHCWB16;
-        }
+        tensor->format = tensor->needsLinearFormat ? TensorFormat::NHWC : TensorFormat::NHCWB16;
     }
 
     return tensor->IsConstant() ? 0 : tensor->AllocationSizeBytes();
