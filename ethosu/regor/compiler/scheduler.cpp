@@ -865,8 +865,10 @@ void Scheduler::ProposeOperatorBuffering(SchedulerOperation *schedOp, SchedulerO
     {
         return;
     }
+    // Snapshot may already contain buffering, which the weight buffering function does not expect
+    int unwantedExistingBuffering = refCost->bufferedWeightTensor.tensor ? refCost->bufferedWeightTensor.tensor->AllocationSizeBytes() : 0;
+    int slackBufferingMemory = stagingLimitBytes - (refSchedule->MemoryUsageAt(refCost->timeIndex) - unwantedExistingBuffering);
 
-    int slackBufferingMemory = stagingLimitBytes - refSchedule->MemoryUsageAt(refCost->timeIndex);
     cost->slackBufferingMemory = slackBufferingMemory;
     cost->slackBufferingCycles = refCost->cycles.opCycles;
 
