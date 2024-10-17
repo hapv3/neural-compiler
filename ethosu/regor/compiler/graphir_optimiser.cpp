@@ -333,7 +333,7 @@ Operation *GraphIrOptimiser::RewriteFullyConnected(Graph *const graph, Operation
             {
                 // Ended up with shape that requires the weights to be reread.
                 // Convert op to conv2d since this enables weight buffering.
-                auto newOp = std::make_shared<Operation>(OpType::Conv2DBias);
+                auto newOp = std::make_shared<Operation>(OpType::Conv2D);
                 newOp->SetRounding(ifm->tensor->Type() == DataType::Int16 ? RoundMode::NATURAL : RoundMode::DBL);
                 ReplaceOperation(operation, newOp.get());
                 returnOp = newOp.get();
@@ -459,7 +459,7 @@ Operation *GraphIrOptimiser::UnrollConv(Graph *const, Operation *const operation
 {
     auto returnOp = operation;
 
-    if ( operation->Type() == OpType::Conv2D || operation->Type() == OpType::Conv2DBias )
+    if ( operation->Type() == OpType::Conv2D )
     {
         const auto ifmConn = operation->Input(TensorUsage::IFM);
         assert(ifmConn);
@@ -1278,7 +1278,7 @@ Operation *GraphIrOptimiser::RewriteDepthwise(Graph *const graph, Operation *con
 
         if ( ifm && (ifm->shape.Depth() == 1) && (multiplier != 1) && ofm && (ofm->shape.Depth() == multiplier) )
         {
-            auto newOp = std::make_shared<Operation>(OpType::Conv2DBias);
+            auto newOp = std::make_shared<Operation>(OpType::Conv2D);
             newOp->SetRounding(ifm->tensor->Type() == DataType::Int16 ? RoundMode::NATURAL : RoundMode::DBL);
             auto kernel = std::make_unique<Kernel>(operation->Kernel()->Size(), operation->Kernel()->Stride(),
                 operation->Kernel()->Dilation(), 1, operation->Kernel()->Padding());

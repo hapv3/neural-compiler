@@ -1676,7 +1676,7 @@ Operation *TFLiteGraphOptimiser::RewriteSquaredDifference(Graph *const, Operatio
 Operation *TFLiteGraphOptimiser::RewriteSpaceToBatchConvBatchToSpace(Graph *const, Operation *const operation)
 {
     auto opType = operation->Type();
-    if ( opType == OpType::DepthwiseConv2DBias || opType == OpType::Conv2DBias )
+    if ( opType == OpType::DepthwiseConv2DBias || opType == OpType::Conv2D )
     {
         auto prevOp = operation->IFM(0)->Writers().empty() ? nullptr : operation->IFM(0)->Writers().front().get();
         auto nextOp = operation->OFM()->Readers().empty() ? nullptr : operation->OFM()->Readers().front().get();
@@ -1714,12 +1714,12 @@ Operation *TFLiteGraphOptimiser::RewriteSpaceToBatchConvBatchToSpace(Graph *cons
     return operation;
 }
 
-// Fixup Conv2DBias and DepthwiseConv2DBias to allow dilation greater than 2.
+// Fixup Conv2D and DepthwiseConv2DBias to allow dilation greater than 2.
 // TODO: Replace with kernel decomposition for supported architectures
 Operation *TFLiteGraphOptimiser::FixupDilationGT2(Graph *const, Operation *const operation)
 {
     auto returnOp = operation;
-    if ( operation->Type() == OpType::Conv2DBias || operation->Type() == OpType::DepthwiseConv2DBias )
+    if ( operation->Type() == OpType::Conv2D || operation->Type() == OpType::DepthwiseConv2DBias )
     {
         auto dilation = operation->Kernel()->Dilation();
         // If dilation in either axis is greater than that supported by hardware then we must manually dilate the kernel

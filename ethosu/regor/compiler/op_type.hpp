@@ -112,7 +112,6 @@ enum class OpType : uint16_t
     Call,
     ConcatEmbeddings,
     Const,
-    Conv2DBias,
     Cos,
     Cumsum,
     Custom,
@@ -242,7 +241,7 @@ constexpr inline bool IsDepthwise(OpType opType)
 
 constexpr inline bool IsConvolution(OpType opType)
 {
-    return opType == OpType::Conv2D || opType == OpType::Conv2DBias || opType == OpType::DepthwiseConv2DBias || opType == OpType::TransposeConv2D;
+    return opType == OpType::Conv2D || opType == OpType::DepthwiseConv2DBias || opType == OpType::TransposeConv2D;
 }
 
 constexpr inline bool IsPooling(OpType opType)

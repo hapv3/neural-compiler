@@ -1314,7 +1314,6 @@ EthosU85NpuOp ArchEthosU85::GetHWOp(OpType type)
     static const std::unordered_map<OpType, EthosU85NpuOp> toNpuOp = {
         {OpType::DepthwiseConv2DBias, EthosU85NpuOp::Depthwise},
         {OpType::Conv2D, EthosU85NpuOp::Convolution},
-        {OpType::Conv2DBias, EthosU85NpuOp::Convolution},
         {OpType::ReduceSum, EthosU85NpuOp::ReduceSum},
         {OpType::FullyConnected, EthosU85NpuOp::VectorProduct},
         {OpType::MatMul, EthosU85NpuOp::VectorProduct},

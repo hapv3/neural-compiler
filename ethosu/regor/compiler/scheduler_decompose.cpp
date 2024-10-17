@@ -157,7 +157,6 @@ bool CanRunOnHardware(Architecture *arch, const SchedulerOperation *schedOp)
 bool CanDecompose(Architecture *, const SchedulerOperation *schedOp)
 {
     if ( schedOp->Type() == OpType::Conv2D ) return true;
-    if ( schedOp->Type() == OpType::Conv2DBias ) return true;
     if ( schedOp->Type() == OpType::DepthwiseConv2DBias ) return true;
     if ( schedOp->Type() == OpType::TransposeConv2D ) return true;
     if ( DecomposeAsElementwise(schedOp->Type()) || schedOp->Type() == OpType::MemoryCopy ) return true;
@@ -573,7 +572,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTransposeConv2D(Archit
         Kernel newKernel = kernel->WithStride({1, 1}).WithPadding({top, left, bottom, right});
 
         // Switch to Conv2D
-        op->_type = OpType::Conv2DBias;
+        op->_type = OpType::Conv2D;
         op->SetKernel(&newKernel);
         result.emplace_back(std::move(op));
     }

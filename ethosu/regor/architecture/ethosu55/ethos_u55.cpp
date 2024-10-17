@@ -623,7 +623,6 @@ EthosU55NpuOp ArchEthosU55::GetHWOp(OpType type)
     static const std::unordered_map<OpType, EthosU55NpuOp> toNpuOp = {
         {OpType::DepthwiseConv2DBias, EthosU55NpuOp::Depthwise},
         {OpType::Conv2D, EthosU55NpuOp::Convolution},
-        {OpType::Conv2DBias, EthosU55NpuOp::Convolution},
         {OpType::FullyConnected, EthosU55NpuOp::VectorProduct},
         {OpType::MaxPool, EthosU55NpuOp::Pooling},
         {OpType::AvgPool, EthosU55NpuOp::Pooling},

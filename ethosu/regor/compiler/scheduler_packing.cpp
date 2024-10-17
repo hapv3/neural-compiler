@@ -500,7 +500,6 @@ std::vector<std::unique_ptr<SchedulerOperation>> SchedulerPacking::DecomposeSche
     switch ( op->Type() )
     {
         case OpType::Conv2D:
-        case OpType::Conv2DBias:
             result = DecomposeConv2D(_arch, std::move(op));
             break;
         case OpType::DepthwiseConv2DBias:

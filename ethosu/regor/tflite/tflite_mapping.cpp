@@ -72,7 +72,7 @@ const std::map<tflite::BuiltinOperator, OpType> TfLiteMapping::_builtinOperatorT
     {tflite::BuiltinOperator::ADD,                              OpType::Add},
     {tflite::BuiltinOperator::AVERAGE_POOL_2D,                  OpType::AvgPool},
     {tflite::BuiltinOperator::CONCATENATION,                    OpType::Concat},
-    {tflite::BuiltinOperator::CONV_2D,                          OpType::Conv2DBias},
+    {tflite::BuiltinOperator::CONV_2D,                          OpType::Conv2D},
     {tflite::BuiltinOperator::DEPTHWISE_CONV_2D,                OpType::DepthwiseConv2DBias},
     {tflite::BuiltinOperator::DEPTH_TO_SPACE,                   OpType::DepthToSpace},
     {tflite::BuiltinOperator::DEQUANTIZE,                       OpType::Dequantize},
@@ -390,9 +390,6 @@ const std::multimap<OpType, TensorUsage> TfLiteMapping::_inputTensorIndices = {
     {OpType::TransposeConv2D,                   TensorUsage::Weights},
     {OpType::TransposeConv2D,                   TensorUsage::IFM},
     {OpType::TransposeConv2D,                   TensorUsage::Scales},
-    {OpType::Conv2DBias,                        TensorUsage::IFM0},
-    {OpType::Conv2DBias,                        TensorUsage::Weights},
-    {OpType::Conv2DBias,                        TensorUsage::Scales},
     {OpType::Cos,                               TensorUsage::IFM0},
     {OpType::Cumsum,                            TensorUsage::IFM0},
     // Custom ops are variadic
