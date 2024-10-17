@@ -98,6 +98,11 @@ bool CanRunOnHardware(Architecture *arch, const SchedulerOperation *schedOp)
         auto &ofmShape = schedOp->OFM()->SliceShape();
         if ( ofmShape.Size() > 2 && ofmShape.Elements() > ofmShape.Width() * ofmShape.Depth() ) return false;
     }
+    if ( IsConvolution(schedOp->Type()) )
+    {
+        auto &ofmShape = schedOp->OFM()->SliceShape();
+        if ( ofmShape.Size() > 3 && ofmShape.Batch() > 1 ) return false;
+    }
     if ( schedOp->Type() == OpType::Transpose )
     {
         auto &ifmShape = schedOp->IFM(0)->SliceShape();
@@ -152,6 +157,7 @@ bool CanRunOnHardware(Architecture *arch, const SchedulerOperation *schedOp)
 bool CanDecompose(Architecture *, const SchedulerOperation *schedOp)
 {
     if ( schedOp->Type() == OpType::Conv2D ) return true;
+    if ( schedOp->Type() == OpType::Conv2DBias ) return true;
     if ( schedOp->Type() == OpType::DepthwiseConv2DBias ) return true;
     if ( schedOp->Type() == OpType::TransposeConv2D ) return true;
     if ( DecomposeAsElementwise(schedOp->Type()) || schedOp->Type() == OpType::MemoryCopy ) return true;
@@ -369,14 +375,15 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv2D(Architecture *a
     std::vector<std::unique_ptr<SchedulerOperation>> result;
     auto *ofmConn = op->Output(TensorUsage::OFM);
     auto *ifmConn = op->Input(TensorUsage::IFM);
-    const auto &ofmShape = ofmConn->shape;
-    const auto &ifmShape = ifmConn->shape;
+    const auto &ofmShape = ofmConn->SliceShape();
+    const auto &ifmShape = ifmConn->SliceShape();
     auto &ofmSlice = ofmConn->slice;
     auto &ifmSlice = ifmConn->slice;
     auto *kernel = op->Kernel();
     auto &padding = kernel->Padding();
     InitializeSlice(ofmSlice, ofmShape.WithZeros(), ofmShape);
     InitializeSlice(ifmSlice, ifmShape.WithZeros().WithHW(-padding.Top(), -padding.Left()), ifmShape);
+
     if ( ofmShape.Batch() > 1 )
     {
         return DecomposeLeadingDimensions(1, arch, std::move(op), DecomposeConv2D);
@@ -404,8 +411,8 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
     auto *ofmConn = op->Output(TensorUsage::OFM);
     auto *ifmConn = op->Input(TensorUsage::IFM);
     auto *weightsConn = op->Input(TensorUsage::Weights);
-    const auto &ofmShape = ofmConn->shape;
-    const auto &ifmShape = ifmConn->shape;
+    const auto &ofmShape = ofmConn->SliceShape();
+    const auto &ifmShape = ifmConn->SliceShape();
     const auto &weightsShape = weightsConn->shape;
     auto &ofmSlice = ofmConn->slice;
     auto &ifmSlice = ifmConn->slice;
