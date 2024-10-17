@@ -295,7 +295,6 @@ inline bool IsScalingValidAndEqual(const TensorConnection &a, const TensorConnec
 // Reshape for example (A, B, N, H, W, C) + (3, 2, 1) -> (A*B*N, H*W, C)
 inline Shape ReshapeTo3D(const Shape &shape, const Shape &axes)
 {
-    assert(shape.Size() > 3);
     assert(axes.Size() == 3);
     assert(axes[0] + axes[1] + axes[2] == shape.Size());
     int h = std::max(1, shape.AxisProduct(0, axes[0]));
@@ -317,6 +316,7 @@ inline Shape ReshapeTo3DAroundAxis(const Shape &shape, int axis)
 // Reshape (B, N, H, W, C) -> (B, N*H*W, C)
 inline Shape ReshapeTo3DAroundEdges(const Shape &shape)
 {
+    assert(shape.Size() > 1);
     return ReshapeTo3D(shape, {1, shape.Size() - 2, 1});
 }
 

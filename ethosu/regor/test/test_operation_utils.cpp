@@ -45,3 +45,68 @@ TEST_CASE("TransposeTypeFromShape")
     auto mask4 = TransposeTypeFromShape(shape4);
     REQUIRE(uint32_t(mask4) == 0x76510243);
 }
+
+TEST_CASE("ReshapeTo3D")
+{
+    Shape shape4D(3, 7, 11, 13);
+    auto shape4Da = ReshapeTo3D(shape4D, {2, 0, 2});
+    REQUIRE(shape4Da == Shape(3 * 7, 1, 11 * 13));
+
+    Shape shape3D(3, 7, 11);
+    auto shape3Da = ReshapeTo3D(shape3D, {0, 1, 2});
+    REQUIRE(shape3Da == Shape(1, 3, 7 * 11));
+
+    Shape shape2D(3, 7);
+    auto shape2Da = ReshapeTo3D(shape2D, {1, 1, 0});
+    REQUIRE(shape2Da == Shape(3, 7, 1));
+
+    Shape shape1D(3);
+    auto shape1Da = ReshapeTo3D(shape1D, {0, 1, 0});
+    REQUIRE(shape1Da == Shape(1, 3, 1));
+}
+
+TEST_CASE("ReshapeTo3DAroundAxis")
+{
+    Shape shape4D(3, 7, 11, 13);
+    auto shape4Da = ReshapeTo3DAroundAxis(shape4D, 0);
+    REQUIRE(shape4Da == Shape(1, 3, 7 * 11 * 13));
+    auto shape4Db = ReshapeTo3DAroundAxis(shape4D, 1);
+    REQUIRE(shape4Db == Shape(3, 7, 11 * 13));
+    auto shape4Dc = ReshapeTo3DAroundAxis(shape4D, 2);
+    REQUIRE(shape4Dc == Shape(3 * 7, 11, 13));
+    auto shape4Dd = ReshapeTo3DAroundAxis(shape4D, 3);
+    REQUIRE(shape4Dd == Shape(3 * 7 * 11, 13, 1));
+
+    Shape shape3D(3, 7, 11);
+    auto shape3Da = ReshapeTo3DAroundAxis(shape3D, 0);
+    REQUIRE(shape3Da == Shape(1, 3, 7 * 11));
+    auto shape3Db = ReshapeTo3DAroundAxis(shape3D, 1);
+    REQUIRE(shape3Db == Shape(3, 7, 11));
+    auto shape3Dc = ReshapeTo3DAroundAxis(shape3D, 2);
+    REQUIRE(shape3Dc == Shape(3 * 7, 11, 1));
+
+    Shape shape2D(3, 7);
+    auto shape2Da = ReshapeTo3DAroundAxis(shape2D, 0);
+    REQUIRE(shape2Da == Shape(1, 3, 7));
+    auto shape2Db = ReshapeTo3DAroundAxis(shape2D, 1);
+    REQUIRE(shape2Db == Shape(3, 7, 1));
+
+    Shape shape1D(3);
+    auto shape1Da = ReshapeTo3DAroundAxis(shape1D, 0);
+    REQUIRE(shape1Da == Shape(1, 3, 1));
+}
+
+TEST_CASE("ReshapeTo3DAroundEdges")
+{
+    Shape shape4D(3, 7, 11, 13);
+    auto shape4Da = ReshapeTo3DAroundEdges(shape4D);
+    REQUIRE(shape4Da == Shape(3, 7 * 11, 13));
+
+    Shape shape3D(3, 7, 11);
+    auto shape3Da = ReshapeTo3DAroundEdges(shape3D);
+    REQUIRE(shape3Da == Shape(3, 7, 11));
+
+    Shape shape2D(3, 7);
+    auto shape2Da = ReshapeTo3DAroundEdges(shape2D);
+    REQUIRE(shape2Da == Shape(3, 1, 7));
+}
