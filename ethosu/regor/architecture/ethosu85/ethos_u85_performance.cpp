@@ -35,6 +35,7 @@ static const Point2i s_SubkernelLimits[] = {
     {8, 8},  // Pooling
     {8, 8},  // ReduceSum
     {8, 8},  // ReduceMinMax
+    {8, 8},  // ArgMax
     {1, 1},  // Elementwise
     {1, 1},  // Resize
     {1, 1},  // Dma
@@ -67,7 +68,8 @@ CycleCost EthosU85Performance::MeasureCycleCost(const PerformanceQuery &query, c
     // Convolution/Vector product cycle calculation
     if ( OpUsesMacs(npuOp) )
     {
-        if ( npuOp == EthosU85NpuOp::Depthwise || npuOp == EthosU85NpuOp::Pooling || npuOp == EthosU85NpuOp::ReduceMinMax )
+        if ( npuOp == EthosU85NpuOp::Depthwise || npuOp == EthosU85NpuOp::Pooling ||
+             npuOp == EthosU85NpuOp::ReduceMinMax || npuOp == EthosU85NpuOp::ArgMax )
         {
             cycles.macs = int64_t(query.kernel->ElementsWH()) * query.ofmShape.Elements();
         }
@@ -161,7 +163,7 @@ int64_t EthosU85Performance::EstimateConvCycles(const PerformanceQuery &query, c
             // Calculate processing cycles
             int numKernelSteps = 0;
             int cycles = 0;
-            if ( npuOp == EthosU85NpuOp::Pooling || npuOp == EthosU85NpuOp::ReduceMinMax )
+            if ( npuOp == EthosU85NpuOp::Pooling || npuOp == EthosU85NpuOp::ReduceMinMax || npuOp == EthosU85NpuOp::ArgMax )
             {
                 numKernelSteps = 1;
                 cycles = std::max(4, subKernelElements) * numUBlocks.Elements() * (ifmBits / 2);
@@ -409,7 +411,8 @@ ElementAccess EthosU85Performance::MeasureElementAccess(const PerformanceQuery &
         Shape ofmBlocks = Shape::DivRoundUp(query.ofmShape, ofmBlock);
 
         int ofmBlockDepth = ofmBlock.Depth();
-        if ( npuOp == EthosU85NpuOp::Depthwise || npuOp == EthosU85NpuOp::Pooling || npuOp == EthosU85NpuOp::ReduceMinMax )
+        if ( npuOp == EthosU85NpuOp::Depthwise || npuOp == EthosU85NpuOp::Pooling ||
+             npuOp == EthosU85NpuOp::ReduceMinMax || npuOp == EthosU85NpuOp::ArgMax )
         {
             ofmBlocks = ofmBlocks.WithDepth(1);
             ofmBlockDepth = query.ifmShape[0].Depth();
@@ -424,7 +427,8 @@ ElementAccess EthosU85Performance::MeasureElementAccess(const PerformanceQuery &
             (Shape::RoundAway(ifmBlock, ifmRounding).ElementsWH() * Shape::RoundAway(query.ifmShape[0], ifmRounding).Depth());
 
         int kernelRead = query.kernel->Size().AreaXY();
-        if ( npuOp != EthosU85NpuOp::Depthwise && npuOp != EthosU85NpuOp::Pooling && npuOp != EthosU85NpuOp::ReduceMinMax )
+        if ( npuOp != EthosU85NpuOp::Depthwise && npuOp != EthosU85NpuOp::Pooling &&
+             npuOp != EthosU85NpuOp::ReduceMinMax && npuOp != EthosU85NpuOp::ArgMax )
         {
             kernelRead *= query.ifmShape[0].Depth();
         }

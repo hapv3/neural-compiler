@@ -1952,7 +1952,7 @@ bool EthosU85RCSGenerator::GenerateStripe(HLCStripe *stripe, MemoryAccesses &mem
     auto opType = stripe->operation->type;
     EthosU85NpuOp npuOp = ArchEthosU85::GetHWOp(opType);
 
-    if ( npuOp == EthosU85NpuOp::Pooling || npuOp == EthosU85NpuOp::ReduceMinMax || npuOp == EthosU85NpuOp::ReduceSum )
+    if ( npuOp == EthosU85NpuOp::Pooling || npuOp == EthosU85NpuOp::ReduceMinMax || npuOp == EthosU85NpuOp::ReduceSum || npuOp == EthosU85NpuOp::ArgMax )
     {
         GeneratePoolingOp(stripe, memoryAccesses);
     }

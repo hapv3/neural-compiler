@@ -350,6 +350,7 @@ void ArchEthosU85::SetupOfmUBlockToOpTable()
     unsigned pool = MaskForNpuOp(EthosU85NpuOp::Pooling);
     unsigned reducesum = MaskForNpuOp(EthosU85NpuOp::ReduceSum);
     unsigned reduceminmax = MaskForNpuOp(EthosU85NpuOp::ReduceMinMax);
+    unsigned argmax = MaskForNpuOp(EthosU85NpuOp::ArgMax);
     unsigned elementwise = MaskForNpuOp(EthosU85NpuOp::Elementwise);
     unsigned resize = MaskForNpuOp(EthosU85NpuOp::Resize);
     unsigned matmul = MaskForNpuOp(EthosU85NpuOp::VectorProduct, true);
@@ -364,12 +365,12 @@ void ArchEthosU85::SetupOfmUBlockToOpTable()
             // 8 bit ifm
             conv | matmul | vectorprod | reducesum | elementwise | resize,
             // 16 bit ifm
-            conv | matmul | vectorprod | depthwise | pool | reducesum | elementwise | reduceminmax | resize,
+            conv | matmul | vectorprod | depthwise | pool | reducesum | elementwise | reduceminmax | argmax | resize,
             // 32 bit ifm
             reducesum | elementwise | reduceminmax | resize,
         };
         _uBlockToOpTable[b_1x1x16] = {
-            depthwise | pool | elementwise | reduceminmax | resize,
+            depthwise | pool | elementwise | reduceminmax | argmax | resize,
             conv | vectorprod | elementwise | resize,  // convolution 1x1 kernel 16 bit ifm
             elementwise | resize
         };
@@ -381,16 +382,16 @@ void ArchEthosU85::SetupOfmUBlockToOpTable()
         unsigned b_1x2x16 = IndexForOfmUBlock(Shape(1, 2, 16));
         _uBlockToOpTable[b_2x2x8] = {
             conv | matmul | vectorprod | reducesum | elementwise | resize,
-            conv | matmul | vectorprod | depthwise | pool | reducesum | elementwise | reduceminmax | resize,
+            conv | matmul | vectorprod | depthwise | pool | reducesum | elementwise | reduceminmax | argmax | resize,
             reducesum | elementwise | reduceminmax | resize
         };
         _uBlockToOpTable[b_1x4x8] = {
             conv | matmul | vectorprod | reducesum | elementwise | resize,
-            conv | matmul | vectorprod | depthwise | pool | reducesum | elementwise | reduceminmax | resize,
+            conv | matmul | vectorprod | depthwise | pool | reducesum | elementwise | reduceminmax | argmax | resize,
             reducesum | elementwise | reduceminmax | resize
         };
         _uBlockToOpTable[b_1x2x16] = {
-            depthwise | pool | elementwise | reduceminmax | resize,
+            depthwise | pool | elementwise | reduceminmax | argmax | resize,
             conv | vectorprod | elementwise | resize,  // convolution 1x1 kernel 16 bit ifm
             elementwise | resize
         };
@@ -400,13 +401,13 @@ void ArchEthosU85::SetupOfmUBlockToOpTable()
         unsigned b_2x2x16 = IndexForOfmUBlock(Shape(2, 2, 16));
         unsigned b_1x4x16 = IndexForOfmUBlock(Shape(1, 4, 16));
         _uBlockToOpTable[b_2x2x16] = {
-            conv | depthwise | vectorprod | pool | reducesum | elementwise | reduceminmax | resize | matmul,
-            conv | depthwise | vectorprod | pool | reducesum | elementwise | reduceminmax | resize | matmul,
+            conv | depthwise | vectorprod | pool | reducesum | elementwise | reduceminmax | argmax | resize | matmul,
+            conv | depthwise | vectorprod | pool | reducesum | elementwise | reduceminmax | argmax | resize | matmul,
             reducesum | elementwise | reduceminmax | resize,
         };
         _uBlockToOpTable[b_1x4x16] = {
-            conv | depthwise | vectorprod | pool | reducesum | elementwise | reduceminmax | resize | matmul,
-            conv | depthwise | vectorprod | pool | reducesum | elementwise | reduceminmax | resize | matmul,
+            conv | depthwise | vectorprod | pool | reducesum | elementwise | reduceminmax | argmax | resize | matmul,
+            conv | depthwise | vectorprod | pool | reducesum | elementwise | reduceminmax | argmax | resize | matmul,
             reducesum | elementwise | reduceminmax | resize
         };
     }
@@ -426,8 +427,8 @@ void ArchEthosU85::SetupOfmUBlockToOpTable()
             elementwise,
         };
         _uBlockToOpTable[b_2x4x16] = {
-            conv | vectorprod | depthwise | pool | reducesum | elementwise | reduceminmax | resize,
-            conv | vectorprod | depthwise | pool | reducesum | elementwise | reduceminmax | resize,
+            conv | vectorprod | depthwise | pool | reducesum | elementwise | reduceminmax | argmax | resize,
+            conv | vectorprod | depthwise | pool | reducesum | elementwise | reduceminmax | argmax | resize,
             reducesum | elementwise | reduceminmax | resize,
         };
     }
@@ -447,8 +448,8 @@ void ArchEthosU85::SetupOfmUBlockToOpTable()
             elementwise,
         };
         _uBlockToOpTable[b_4x4x16] = {
-            conv | vectorprod | depthwise | pool | reducesum | elementwise | reduceminmax | resize,
-            conv | vectorprod | depthwise | pool | reducesum | elementwise | reduceminmax | resize,
+            conv | vectorprod | depthwise | pool | reducesum | elementwise | reduceminmax | argmax | resize,
+            conv | vectorprod | depthwise | pool | reducesum | elementwise | reduceminmax | argmax | resize,
             reducesum | elementwise | reduceminmax | resize,
         };
     }
@@ -892,7 +893,7 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU85::FindBlockConfig(OpType opTyp
     const Shape &ifmShape = (query.ifmShape[1].Elements() > query.ifmShape[0].Elements()) ? query.ifmShape[1] : query.ifmShape[0];
 
     // Operator typing help
-    const bool isPooling = npuOp == EthosU85NpuOp::Pooling || npuOp == EthosU85NpuOp::ReduceMinMax;
+    const bool isPooling = npuOp == EthosU85NpuOp::Pooling || npuOp == EthosU85NpuOp::ReduceMinMax || npuOp == EthosU85NpuOp::ArgMax;
     const bool isReduceSum = npuOp == EthosU85NpuOp::ReduceSum;
     const bool isDepthwise = npuOp == EthosU85NpuOp::Depthwise;
     const bool isElementwise = npuOp == EthosU85NpuOp::Elementwise;
@@ -1321,7 +1322,7 @@ EthosU85NpuOp ArchEthosU85::GetHWOp(OpType type)
         {OpType::AvgPool, EthosU85NpuOp::Pooling},
         {OpType::QuantizedAvgPool, EthosU85NpuOp::Pooling},
         {OpType::QuantizedMaxPool, EthosU85NpuOp::Pooling},
-        {OpType::ArgMax, EthosU85NpuOp::Pooling},
+        {OpType::ArgMax, EthosU85NpuOp::ArgMax},
         {OpType::ReduceMin, EthosU85NpuOp::ReduceMinMax},
         {OpType::ReduceMax, EthosU85NpuOp::ReduceMinMax},
         {OpType::ReduceAny, EthosU85NpuOp::ReduceMinMax},
@@ -1647,7 +1648,7 @@ static const std::unordered_map<EthosU85NpuOp, std::unordered_map<DataType, std:
             {DataType::Bool8, {DataType::Bool8, DataType::Int32, DataType::Int64}},
             {DataType::UInt8, {DataType::UInt8, DataType::Int32, DataType::Int64}},
             {DataType::Int8, {DataType::Int8, DataType::Int32, DataType::Int64}},
-            {DataType::Int16, {DataType::Int16, DataType::Int32}},
+            {DataType::Int16, {DataType::Int16}},
         }},
     {EthosU85NpuOp::ReduceMinMax,
         {
@@ -1663,6 +1664,13 @@ static const std::unordered_map<EthosU85NpuOp, std::unordered_map<DataType, std:
             {DataType::Int8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
             {DataType::Int16, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
             {DataType::Int32, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
+        }},
+    {EthosU85NpuOp::ArgMax,
+        {
+            {DataType::Bool8, {DataType::Int32, DataType::Int64}},
+            {DataType::UInt8, {DataType::Int32, DataType::Int64}},
+            {DataType::Int8, {DataType::Int32, DataType::Int64}},
+            {DataType::Int16, {DataType::Int32, DataType::Int64}},
         }},
     {EthosU85NpuOp::Dma,
         {
@@ -1713,6 +1721,7 @@ bool EthosU85OpGroup::CanRunOnNPU(const ArchitectureOpGroupQuery &op)
         case EthosU85NpuOp::Pooling:
         case EthosU85NpuOp::ReduceMinMax:
         case EthosU85NpuOp::ReduceSum:
+        case EthosU85NpuOp::ArgMax:
         case EthosU85NpuOp::Elementwise:
         case EthosU85NpuOp::Resize:
         case EthosU85NpuOp::Dma:

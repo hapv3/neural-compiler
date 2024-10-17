@@ -58,6 +58,7 @@ enum class EthosU85NpuOp
     Pooling,
     ReduceSum,
     ReduceMinMax,
+    ArgMax,
     Elementwise,
     Resize,
     Dma,
