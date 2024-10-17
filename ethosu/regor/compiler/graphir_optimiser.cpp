@@ -260,7 +260,6 @@ Operation *GraphIrOptimiser::RemoveReshape(Graph *const graph, Operation *const 
         bool isIfmSgOfm = IsTensorInVector(graph->Outputs(), ifm);
 
         // TODO: MLBEDSW-9069: Check CPU operator producer/consumer
-        assert(ifm->Readers().size() == 1 || (ifm->StorageShape() == ofm->StorageShape() && ifm->AxisOrder() == ofm->AxisOrder()));
         // Inserts a copy op if needed before removing reshapes.
         if ( ((isIfmSgIfm || isIfmSgOfm) && (isOfmSgOfm)) ||
              ((ifm->Readers().size() > 1) && (ifm->StorageShape() != ofm->StorageShape() || ifm->AxisOrder() != ofm->AxisOrder())) )
