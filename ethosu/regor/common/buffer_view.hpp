@@ -548,12 +548,12 @@ public:
 
     BufferView(const std::shared_ptr<Buffer> &buffer, int firstElement, int elementBits, const Shape &axisElements, const Shape &strideBytes)
     {
-        assert(elementBits >= 8 && elementBits % 8 == 0);
+        assert((elementBits >= 8 && elementBits % 8 == 0) || (elementBits == 4 && !strideBytes));
         _buffer = buffer;
         _elementBits = elementBits;
         _baseOffset = firstElement;
         _axisElements = axisElements;
-        if ( strideBytes.IsEmpty() )
+        if ( strideBytes.IsEmpty() && elementBits > 4 )
         {
             // Calculate byte strides
             int sz = axisElements.Size();
@@ -601,7 +601,7 @@ public:
 
     BufferView SubView(const Shape &offset, const Shape &size) const
     {
-        assert(size.Elements() < _axisElements.Elements());
+        assert(_strideBytes && size.Elements() < _axisElements.Elements());
         int linearOffset = offset.Dot(_strideBytes);
         return BufferView(_buffer, linearOffset, _elementBits, size, _strideBytes);
     }
@@ -610,7 +610,7 @@ public:
         AS_TYPE (*FUNC)(const void *p, size_t offset) = &BufferReaderValueGet<STORAGE_TYPE, AS_TYPE>>
     BufferReader<AS_TYPE> Values() const
     {
-        assert(HasBuffer());
+        assert(HasBuffer() && _strideBytes);
         const auto *start = const_cast<const class Buffer *>(_buffer.get())->Data<STORAGE_TYPE>() + _baseOffset;
         return BufferReader<AS_TYPE>(_strideBytes, start, _elements, FUNC);
     }
@@ -618,7 +618,7 @@ public:
     template<typename STORAGE_TYPE>
     BufferWriter<STORAGE_TYPE> WritableValues()
     {
-        assert(HasBuffer());
+        assert(HasBuffer() && _strideBytes);
         auto *start = _buffer->Data<STORAGE_TYPE>() + _baseOffset;
         return BufferWriter<STORAGE_TYPE>(_strideBytes, start, _elements);
     }

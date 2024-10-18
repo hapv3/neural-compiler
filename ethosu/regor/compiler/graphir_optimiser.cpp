@@ -108,7 +108,7 @@ Tensor *GraphIrOptimiser::ConvertInt4Tensors(Graph *graph, Tensor *tensor)
     if ( tensor->Type() == DataType::Int4Packed8 && tensor->IsConstant() )
     {
         const auto oldView = tensor->View();
-        const auto oldValues = oldView.Values<int8_t>();
+        const auto oldValues = oldView.RawData<int8_t>();
         const auto size = oldView.Buffer()->Size();
         tensor->SetBuffer(nullptr);
         tensor->ChangeType(DataType::Int8);
@@ -118,12 +118,29 @@ Tensor *GraphIrOptimiser::ConvertInt4Tensors(Graph *graph, Tensor *tensor)
         auto view = tensor->View();
         auto &shape = view.ViewShape();
         auto values = view.WritableValues<int8_t>();
-        for ( int i = 0; i < shape.Elements(); i++ )
+        auto paddedOutShape = Shape::PadAxes(shape, 4, 1);
+        int batch = paddedOutShape.Batch();
+        int height = paddedOutShape.Height();
+        int width = paddedOutShape.Width();
+        int depth = paddedOutShape.Depth();
+        int i = 0;
+        for ( int n = 0; n < batch; n++ )
         {
-            // Convert each element to Int8
-            uint8_t nibbles = oldValues[i / 2];
-            uint8_t val = i & 1 ? (nibbles & 0xF0) >> 4 : nibbles & 0x0F;
-            values[i] = val > 7 ? val - 16 : val;
+            for ( int h = 0; h < height; h++ )
+            {
+                for ( int w = 0; w < width; w++ )
+                {
+                    for ( int c = 0; c < depth; c++ )
+                    {
+                        Shape pos({n, h, w, c}, shape.Size());
+                        // Convert each element to Int8
+                        uint8_t nibbles = oldValues[i / 2];
+                        uint8_t val = i & 1 ? (nibbles & 0xF0) >> 4 : nibbles & 0x0F;
+                        values[pos] = val > 7 ? val - 16 : val;
+                        i++;
+                    }
+                }
+            }
         }
     }
     return returnTensor;
