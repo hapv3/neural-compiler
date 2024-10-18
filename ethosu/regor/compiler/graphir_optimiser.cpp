@@ -407,7 +407,7 @@ Operation *GraphIrOptimiser::RewritePad(Graph *const, Operation *const operation
             // Reshape the IFM/OFM/padding to a 3D shape (HWC) where W dimension is the dimension to pad
             Shape newIfmShape = ReshapeTo3DAroundAxis(ifmConn->shape, axis);
             Shape newOfmShape = ReshapeTo3DAroundAxis(ofmConn->shape, axis);
-            Shape newPaddingBefore = ReshapeTo3DAroundAxis(paddingBefore, axis);
+            Shape newPaddingBefore = ReshapeTo3DAroundAxis(paddingBefore, axis, 0);
 
             const int padBefore = paddingBefore[axis];
             if ( padBefore )

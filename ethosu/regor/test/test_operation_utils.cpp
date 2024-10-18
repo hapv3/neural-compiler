@@ -51,18 +51,26 @@ TEST_CASE("ReshapeTo3D")
     Shape shape4D(3, 7, 11, 13);
     auto shape4Da = ReshapeTo3D(shape4D, {2, 0, 2});
     REQUIRE(shape4Da == Shape(3 * 7, 1, 11 * 13));
+    auto shape4Db = ReshapeTo3D(shape4D, {2, 0, 2}, 0);
+    REQUIRE(shape4Db == Shape(3 * 7, 0, 11 * 13));
 
     Shape shape3D(3, 7, 11);
     auto shape3Da = ReshapeTo3D(shape3D, {0, 1, 2});
     REQUIRE(shape3Da == Shape(1, 3, 7 * 11));
+    auto shape3Db = ReshapeTo3D(shape3D, {0, 1, 2}, 0);
+    REQUIRE(shape3Db == Shape(0, 3, 7 * 11));
 
     Shape shape2D(3, 7);
     auto shape2Da = ReshapeTo3D(shape2D, {1, 1, 0});
     REQUIRE(shape2Da == Shape(3, 7, 1));
+    auto shape2Db = ReshapeTo3D(shape2D, {1, 1, 0}, 0);
+    REQUIRE(shape2Db == Shape(3, 7, 0));
 
     Shape shape1D(3);
     auto shape1Da = ReshapeTo3D(shape1D, {0, 1, 0});
     REQUIRE(shape1Da == Shape(1, 3, 1));
+    auto shape1Db = ReshapeTo3D(shape1D, {0, 1, 0}, 0);
+    REQUIRE(shape1Db == Shape(0, 3, 0));
 }
 
 TEST_CASE("ReshapeTo3DAroundAxis")
@@ -70,30 +78,50 @@ TEST_CASE("ReshapeTo3DAroundAxis")
     Shape shape4D(3, 7, 11, 13);
     auto shape4Da = ReshapeTo3DAroundAxis(shape4D, 0);
     REQUIRE(shape4Da == Shape(1, 3, 7 * 11 * 13));
+    auto shape4Da0 = ReshapeTo3DAroundAxis(shape4D, 0, 0);
+    REQUIRE(shape4Da0 == Shape(0, 3, 7 * 11 * 13));
     auto shape4Db = ReshapeTo3DAroundAxis(shape4D, 1);
     REQUIRE(shape4Db == Shape(3, 7, 11 * 13));
+    auto shape4Db0 = ReshapeTo3DAroundAxis(shape4D, 1, 0);
+    REQUIRE(shape4Db0 == Shape(3, 7, 11 * 13));
     auto shape4Dc = ReshapeTo3DAroundAxis(shape4D, 2);
     REQUIRE(shape4Dc == Shape(3 * 7, 11, 13));
+    auto shape4Dc0 = ReshapeTo3DAroundAxis(shape4D, 2, 0);
+    REQUIRE(shape4Dc0 == Shape(3 * 7, 11, 13));
     auto shape4Dd = ReshapeTo3DAroundAxis(shape4D, 3);
     REQUIRE(shape4Dd == Shape(3 * 7 * 11, 13, 1));
+    auto shape4Dd0 = ReshapeTo3DAroundAxis(shape4D, 3, 0);
+    REQUIRE(shape4Dd0 == Shape(3 * 7 * 11, 13, 0));
 
     Shape shape3D(3, 7, 11);
     auto shape3Da = ReshapeTo3DAroundAxis(shape3D, 0);
     REQUIRE(shape3Da == Shape(1, 3, 7 * 11));
+    auto shape3Da0 = ReshapeTo3DAroundAxis(shape3D, 0, 0);
+    REQUIRE(shape3Da0 == Shape(0, 3, 7 * 11));
     auto shape3Db = ReshapeTo3DAroundAxis(shape3D, 1);
     REQUIRE(shape3Db == Shape(3, 7, 11));
+    auto shape3Db0 = ReshapeTo3DAroundAxis(shape3D, 1, 0);
+    REQUIRE(shape3Db0 == Shape(3, 7, 11));
     auto shape3Dc = ReshapeTo3DAroundAxis(shape3D, 2);
     REQUIRE(shape3Dc == Shape(3 * 7, 11, 1));
+    auto shape3Dc0 = ReshapeTo3DAroundAxis(shape3D, 2, 0);
+    REQUIRE(shape3Dc0 == Shape(3 * 7, 11, 0));
 
     Shape shape2D(3, 7);
     auto shape2Da = ReshapeTo3DAroundAxis(shape2D, 0);
     REQUIRE(shape2Da == Shape(1, 3, 7));
+    auto shape2Da0 = ReshapeTo3DAroundAxis(shape2D, 0, 0);
+    REQUIRE(shape2Da0 == Shape(0, 3, 7));
     auto shape2Db = ReshapeTo3DAroundAxis(shape2D, 1);
     REQUIRE(shape2Db == Shape(3, 7, 1));
+    auto shape2Db0 = ReshapeTo3DAroundAxis(shape2D, 1, 0);
+    REQUIRE(shape2Db0 == Shape(3, 7, 0));
 
     Shape shape1D(3);
     auto shape1Da = ReshapeTo3DAroundAxis(shape1D, 0);
     REQUIRE(shape1Da == Shape(1, 3, 1));
+    auto shape1Da0 = ReshapeTo3DAroundAxis(shape1D, 0, 0);
+    REQUIRE(shape1Da0 == Shape(0, 3, 0));
 }
 
 TEST_CASE("ReshapeTo3DAroundEdges")
@@ -101,12 +129,18 @@ TEST_CASE("ReshapeTo3DAroundEdges")
     Shape shape4D(3, 7, 11, 13);
     auto shape4Da = ReshapeTo3DAroundEdges(shape4D);
     REQUIRE(shape4Da == Shape(3, 7 * 11, 13));
+    auto shape4Da0 = ReshapeTo3DAroundEdges(shape4D, 0);
+    REQUIRE(shape4Da0 == Shape(3, 7 * 11, 13));
 
     Shape shape3D(3, 7, 11);
     auto shape3Da = ReshapeTo3DAroundEdges(shape3D);
     REQUIRE(shape3Da == Shape(3, 7, 11));
+    auto shape3Da0 = ReshapeTo3DAroundEdges(shape3D, 0);
+    REQUIRE(shape3Da0 == Shape(3, 7, 11));
 
     Shape shape2D(3, 7);
     auto shape2Da = ReshapeTo3DAroundEdges(shape2D);
     REQUIRE(shape2Da == Shape(3, 1, 7));
+    auto shape2Da0 = ReshapeTo3DAroundEdges(shape2D, 0);
+    REQUIRE(shape2Da0 == Shape(3, 0, 7));
 }
