@@ -570,24 +570,10 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const, Operation *const operatio
         auto ofmConn = operation->Output(TensorUsage::OFM);
         auto ifmConn = operation->Input(TensorUsage::IFM);
         auto producer = ifmConn->tensor->Writers().size() == 1 ? ifmConn->tensor->Writers().front() : nullptr;
-        // When there is only one producer of the input to the rescale operation and this input has no zero point
-        // adjustment and the producers output has unit scaling it might be possible to fuse this rescale to
-        // the producers output if the constraints of the architecture allows it
-        if ( producer && producer->Output(TensorUsage::OFM)->quantization.EqualScales(Quantization::Unit()) &&
-             ifmConn->quantization.zeroPoints == Quantization::Unit().zeroPoints &&
-             _constraints->SupportsFusedRescale(producer->Type(), TensorUsage::OFM, producer->IFM(0)->Type(),
-                 ofmConn->tensor->Type(), ofmConn->quantization) )
-        {
-            // Propagate rescaling to output of previous op
-            producer->CopyOutput(TensorUsage::OFM, *ofmConn);
-            producer->SetRounding(operation->Rounding());
-            returnOp = producer.get();
-        }
-        // If the rescale could not be fused to the producer of the input to the rescale, check if there
-        // is only one consumer of the output of the rescale and try to fuse to that operation instead.
+        // Check if there is only one consumer of the output of the rescale and try to fuse to that operation.
         // Note: For input fusing we cannot have an output zero point on the Rescale operation (since the
         //       zero point is applied before scaling on inputs), however input zero point is fine.
-        else if ( ofmConn->tensor->Readers().size() == 1 && ofmConn->quantization.zeroPoints == Quantization::Unit().zeroPoints )
+        if ( ofmConn->tensor->Readers().size() == 1 && ofmConn->quantization.zeroPoints == Quantization::Unit().zeroPoints )
         {
             // Copies quantization information from ifm connection and (converted) scales from ofm connection,
             // since these are the scales we want to apply.
@@ -656,6 +642,20 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const, Operation *const operatio
                     }
                 }
             }
+        }
+        // If the rescale could not be fused to the consumer of the output of the rescale, check if there
+        // is only one producer of the input to the rescale operation. If this input has no zero point
+        // adjustment and the producers output has unit scaling, it might be possible to fuse this rescale to
+        // the producers output if the constraints of the architecture allows it
+        if ( returnOp == operation && producer && producer->Output(TensorUsage::OFM)->quantization.EqualScales(Quantization::Unit()) &&
+             ifmConn->quantization.zeroPoints == Quantization::Unit().zeroPoints &&
+             _constraints->SupportsFusedRescale(producer->Type(), TensorUsage::OFM, producer->IFM(0)->Type(),
+                 ofmConn->tensor->Type(), ofmConn->quantization) )
+        {
+            // Propagate rescaling to output of previous op
+            producer->CopyOutput(TensorUsage::OFM, *ofmConn);
+            producer->SetRounding(operation->Rounding());
+            returnOp = producer.get();
         }
     }
     if ( returnOp != operation )
