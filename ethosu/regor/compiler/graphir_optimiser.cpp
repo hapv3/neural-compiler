@@ -312,7 +312,13 @@ Operation *GraphIrOptimiser::RewriteFullyConnected(Graph *const graph, Operation
     UNUSED(graph);
     Operation *returnOp = operation;
     OpType opType = operation->Type();
-    if ( opType == OpType::FullyConnected )
+    auto ifm = operation->Input(TensorUsage::IFM0);
+    const auto kernel = operation->Kernel();
+
+    // Batched Conv2D with kernel 1x1 can be handled the same way as FullyConnected
+    if ( opType == OpType::FullyConnected ||
+         (opType == OpType::Conv2D && ifm->shape.Batch() > 1 && kernel->Size().AreaXY() == 1 &&
+             kernel->Stride().AreaXY() == 1 && kernel->DilatedWH().AreaXY() == 1) )
     {
         const auto &weights = operation->Input(TensorUsage::Weights);
         const auto &shape = weights->tensor->StorageShape();
@@ -326,7 +332,6 @@ Operation *GraphIrOptimiser::RewriteFullyConnected(Graph *const graph, Operation
 
         // Rewrite input shape to batched shape
         auto nInElems = weights->shape.Depth();
-        auto ifm = operation->Input(TensorUsage::IFM0);
         auto &ifmShape = ifm->slice.shape.IsEmpty() ? ifm->shape : ifm->slice.shape;
         auto elems = ifmShape.Elements();
         auto batchSize = elems / nInElems;
@@ -346,16 +351,6 @@ Operation *GraphIrOptimiser::RewriteFullyConnected(Graph *const graph, Operation
             ifmShape = Shape(1, h, w, ifmShape.Depth());
             auto ofm = operation->Output(TensorUsage::OFM);
             ofm->shape = Shape(1, h, w, ofm->shape.Depth());
-            if ( h > 4 || w > 4 )
-            {
-                // Ended up with shape that requires the weights to be reread.
-                // Convert op to conv2d since this enables weight buffering.
-                auto newOp = std::make_shared<Operation>(OpType::Conv2D);
-                newOp->SetRounding(ifm->tensor->Type() == DataType::Int16 ? RoundMode::NATURAL : RoundMode::DBL);
-                ReplaceOperation(operation, newOp.get());
-                returnOp = newOp.get();
-                RecordOptimisation(operation, returnOp);
-            }
         }
     }
     return returnOp;

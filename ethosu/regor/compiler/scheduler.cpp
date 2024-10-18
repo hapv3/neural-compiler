@@ -980,7 +980,7 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
     }
 
     // No buffering required - take all the weights from permanent storage
-    if ( schedOp->Type() == OpType::FullyConnected || !needsDMA ||
+    if ( (schedOp->Type() == OpType::FullyConnected && cost->elementAccess.weightsRefetch == 1) || !needsDMA ||
          _arch->CanSubdivide(schedOp->Type(), ofm->transpose, ofm->reverse) == AxisMask::None || ofm->reverse == ReverseType::C ||
          (ofm->transpose != TransposeType::None && (ofm->transpose & TransposeType::MaskC) != TransposeType::C) ||
          _options.disabled.All(SchedulerFeature::WeightBuffering) )

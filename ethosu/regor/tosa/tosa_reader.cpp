@@ -855,6 +855,10 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                                 {
                                     builder->SetAxisOrder(tensors.at(input_tensors[i]), GraphApi::AxisOrder::HWCM);
                                 }
+                                else if ( tosa_operator.op() == tosaFb::Op::CONV2D )
+                                {
+                                    builder->SetAxisOrder(tensors.at(input_tensors[i]), GraphApi::AxisOrder::OHWI);
+                                }
                             }
                             break;
                         case tosaFb::Op::FULLY_CONNECTED:
