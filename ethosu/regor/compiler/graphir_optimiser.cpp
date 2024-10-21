@@ -1296,7 +1296,7 @@ Operation *GraphIrOptimiser::RewriteDepthwise(Graph *const graph, Operation *con
         if ( ifm && (ifm->shape.Depth() == 1) && (multiplier != 1) && ofm && (ofm->shape.Depth() == multiplier) )
         {
             auto newOp = std::make_shared<Operation>(OpType::Conv2D);
-            newOp->SetRounding(ifm->tensor->Type() == DataType::Int16 ? RoundMode::NATURAL : RoundMode::DBL);
+            newOp->SetRounding(operation->Rounding());
             auto kernel = std::make_unique<Kernel>(operation->Kernel()->Size(), operation->Kernel()->Stride(),
                 operation->Kernel()->Dilation(), 1, operation->Kernel()->Padding());
             newOp->SetKernel(std::move(kernel));
