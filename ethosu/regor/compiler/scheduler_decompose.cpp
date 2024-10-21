@@ -973,10 +973,6 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTranspose(Architecture
         auto ofm = result.back()->OFM();
         ofm->tensor = ofmConn->tensor;
         ofm->quantization = ofmConn->quantization;
-
-        // Remove the original op from the list of consumers and producers
-        std::remove(ifmConn->tensor->consumers.begin(), ifmConn->tensor->consumers.end(), op.get());
-        std::remove(ofmConn->tensor->producers.begin(), ofmConn->tensor->producers.end(), op.get());
     }
 
     return result;
