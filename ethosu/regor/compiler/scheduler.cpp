@@ -1085,7 +1085,8 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
 
                 // Chosen buffering might not fit at all, iterate until it does
                 // or until the minimum usable slice size is reached
-                if ( encodedWeightScales.npuWeightsTensor->maxRangeBytes <= halfBufferLimit || prebufferDepth == OFMSplitDepth )
+                if ( encodedWeightScales.npuWeightsTensor->maxRangeBytes <= halfBufferLimit ||
+                     (prebufferDepth == OFMSplitDepth && bufferingDepth == OFMSplitDepth) )
                 {
                     break;
                 }
