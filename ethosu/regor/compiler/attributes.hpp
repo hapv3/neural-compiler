@@ -161,8 +161,10 @@ struct while_attr_t
 struct transpose_conv2d_attr_t
 {
     Shape outShape;
+    Shape outPadTBLR;
     BEGIN_FIELD_TABLE(transpose_conv2d_attr_t)
         ATTR_FIELD(outShape, 0)
+        ATTR_FIELD(outPadTBLR, 1)
     END_FIELD_TABLE()
 };
 

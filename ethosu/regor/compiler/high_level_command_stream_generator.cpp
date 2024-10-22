@@ -611,7 +611,7 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
     CalcPaddingAndSkirt(kernel, maxIfmShape, ofmShape, ifm0Conn->stepXY, padding, skirt);
 
     int upscaling = 1;
-    if ( ifm0Conn->resamplingMode == ArchResampling::Zeros )
+    if ( ifm0Conn->resamplingMode != ArchResampling::None )
     {
         upscaling = 2;
     }

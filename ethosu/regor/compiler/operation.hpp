@@ -50,6 +50,18 @@ struct TensorSlice
 {
     Shape offset;
     Shape shape;
+    // Initialize a TensorSlice if current offset/shape are invalid
+    void Initialize(const Shape &_offset, const Shape &_shape)
+    {
+        if ( !shape )
+        {
+            shape = _shape;
+        }
+        if ( !offset )
+        {
+            offset = _offset;
+        }
+    }
 };
 
 struct TensorConnection

@@ -80,27 +80,38 @@ static void SetKernel(const std::shared_ptr<Operation> &operation, const Point2i
     Margin pad;
     if ( operation->Type() == OpType::TransposeConv2D )
     {
-        // Calculate TOSA TRANSPOSE_CONV2D out_pad
-        int totalPaddingWidth = (inputShape.Width() - 1) * stride.x + size.x - outputShape.Width();
-        totalPaddingWidth = totalPaddingWidth > 0 ? totalPaddingWidth : 0;
-        int totalPaddingHeight = (inputShape.Height() - 1) * stride.y + size.y - outputShape.Height();
-        totalPaddingHeight = totalPaddingHeight > 0 ? totalPaddingHeight : 0;
-        int padTop = totalPaddingHeight / 2;
-        int padLeft = totalPaddingWidth / 2;
-        int padBottom = totalPaddingHeight - padTop;
-        int padRight = totalPaddingWidth - padLeft;
-        pad = Margin(padTop, padLeft, padBottom, padRight);
-    }
-    else
-    {
-        if ( padding == tflite::Padding::SAME )
+        // Calculate upscaled ifm height/width by multiplying with stride
+        auto ifmWH = inputShape.WH<int>() * stride;
+        int ypad = NeededTotalPadding(ifmWH.y, outputShape.Height(), 1, size.y);
+        int xpad = NeededTotalPadding(ifmWH.x, outputShape.Width(), 1, size.x);
+        if ( stride == Point2i(2, 2) || (stride == Point2i(1, 2) && ifmWH.x == 1 && size.x == 1) ||
+             (stride == Point2i(2, 1) && ifmWH.y == 1 && size.y == 1) )
         {
-            int dw = dilation.x * (size.x - 1) + 1;
-            int xpad = NeededTotalPadding(inputShape.Width(), stride.x, dw);
-            int dh = dilation.y * (size.y - 1) + 1;
-            int ypad = NeededTotalPadding(inputShape.Height(), stride.y, dh);
-            pad = Margin(ypad / 2, xpad / 2, (ypad + 1) / 2, (xpad + 1) / 2);
+            // Padding for upscaled IFM
+            if ( padding == tflite::Padding::SAME )
+            {
+                int bottom = std::max(((ypad + 1) / stride.y) - 1, 0);
+                int top = std::max(size.y - 1 - bottom, 0);
+                int right = std::max(((xpad + 1) / stride.x) - 1, 0);
+                int left = std::max(size.x - 1 - right, 0);
+                pad = Margin(top, left, bottom, right);
+            }
+            else
+            {
+                pad = Margin(size.y - 1, size.x - 1, std::max(size.y - 2, 0), std::max(size.x - 2, 0));
+            }
         }
+        else
+        {
+            pad = Margin((ypad + 1) / 2, (xpad + 1) / 2, ypad / 2, xpad / 2);
+        }
+    }
+    else if ( padding == tflite::Padding::SAME )
+    {
+        auto dWH = dilation * (size - Point2i(1, 1)) + Point2i(1, 1);
+        int xpad = NeededTotalPadding(inputShape.Width(), stride.x, dWH.x);
+        int ypad = NeededTotalPadding(inputShape.Height(), stride.y, dWH.y);
+        pad = Margin(ypad / 2, xpad / 2, (ypad + 1) / 2, (xpad + 1) / 2);
     }
     auto kernel = std::make_unique<Kernel>(size, stride, dilation, depthMultiplier, pad);
     operation->SetKernel(std::move(kernel));
@@ -456,6 +467,9 @@ void TfLiteReader::ParseOperatorOptions(const std::shared_ptr<Operation> &operat
             SetKernel(operation, Point2i(weight_tensor->StorageShape().Width(), weight_tensor->StorageShape().Height()),
                 Point2i(options->stride_w(), options->stride_h()), Point2i(1, 1) /* no dilation */, options->padding());
             activation_function = options->fused_activation_function();
+            auto attr = operation->Attribute<transpose_conv2d_attr_t>();
+            attr->outShape = operation->Output(TensorUsage::OFM)->shape;
+            attr->outPadTBLR = Shape(0, 0, 0, 0);  // TFLite has no out-padding
         }
         break;
 

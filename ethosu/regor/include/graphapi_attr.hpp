@@ -97,7 +97,8 @@ enum class OpAttr : uint32_t
     WHILE_COND = GRAPHAPI_MAKE_ATTR(while, string, 0),
     WHILE_BODY = GRAPHAPI_MAKE_ATTR(while, string, 1),
     // Transpose Conv2D
-    TRANSPOSE_CONV2D_SHAPE = GRAPHAPI_MAKE_ATTR(transpose_conv2d, GraphShape, 0),
+    TRANSPOSE_CONV2D_OUTSHAPE = GRAPHAPI_MAKE_ATTR(transpose_conv2d, GraphShape, 0),
+    TRANSPOSE_CONV2D_OUTPAD = GRAPHAPI_MAKE_ATTR(transpose_conv2d, GraphShape, 1),
     // Transpose
     TRANSPOSE_PERM = GRAPHAPI_MAKE_ATTR(transpose, GraphShape, 0),
     // FFT

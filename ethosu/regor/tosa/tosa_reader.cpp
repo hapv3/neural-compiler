@@ -478,12 +478,12 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         kernel.sizeYXZ[1] = shape.axisNHWC[2];
                         kernel.sizeYXZ[2] = 1;
                         const auto &attr = TosaAttr<tosaFb::Op::TRANSPOSE_CONV2D>::Get(tosa_operator);
-                        tosa_assert(attr.out_pad());
-                        tosa_assert(attr.out_pad()->size() == 4);
-                        kernel.paddingTBLRNF[0] = (*attr.out_pad())[0];
-                        kernel.paddingTBLRNF[1] = (*attr.out_pad())[1];
-                        kernel.paddingTBLRNF[2] = (*attr.out_pad())[2];
-                        kernel.paddingTBLRNF[3] = (*attr.out_pad())[3];
+
+                        // Default-pad IFM with kernel-size-1
+                        // Might be adjusted when rewriting OFM-padding (see graphir_optimiser)
+                        kernel.paddingTBLRNF[0] = kernel.paddingTBLRNF[1] = shape.axisNHWC[1] - 1;
+                        kernel.paddingTBLRNF[2] = kernel.paddingTBLRNF[3] = shape.axisNHWC[2] - 1;
+
                         tosa_assert(attr.stride());
                         tosa_assert(attr.stride()->size() == 2);
                         kernel.strideYXZ[0] = (*attr.stride())[0];
@@ -799,6 +799,19 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                             }
                             input_tensors.push_back(std::move(name));
                         }
+                    }
+                    break;
+                    case tosaFb::Op::TRANSPOSE_CONV2D:
+                    {
+                        const auto &tosa_attr = TosaAttr<tosaFb::Op::TRANSPOSE_CONV2D>::Get(tosa_operator);
+                        tosa_assert(tosa_attr.out_pad());
+                        tosa_assert(tosa_attr.out_pad()->size() == 4);
+                        tosa_assert(tosa_attr.output_shape());
+                        tosa_assert(tosa_attr.output_shape()->size() == 4);
+                        builder_assert(builder->Set(op, OpAttr::TRANSPOSE_CONV2D_OUTSHAPE, ToApiShape(tosa_attr.output_shape())),
+                            "Failed to set OUTSHAPE attribute on TRANSPOSE_CONV2D");
+                        builder_assert(builder->Set(op, OpAttr::TRANSPOSE_CONV2D_OUTPAD, ToApiShape(tosa_attr.out_pad())),
+                            "Failed to set OUTPAD attribute on TRANSPOSE_CONV2D");
                     }
                     break;
                     default:

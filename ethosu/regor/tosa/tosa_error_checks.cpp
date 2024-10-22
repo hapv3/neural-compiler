@@ -651,18 +651,19 @@ void ErrorIfCheck_2rfkujt9lg7eq(const regor::Operation *op, [[maybe_unused]] con
 void ErrorIfCheck_3nelbnmxyemot(const regor::Operation *op, [[maybe_unused]] const Context &context)
 {
     // Operators: TRANSPOSE_CONV2D,
+    auto *attr = op->Attribute<regor::transpose_conv2d_attr_t>();
     static constexpr char constraint[] = "ERROR_IF(OH != (IH - 1) * stride_y + out_pad_top + out_pad_bottom + KH)";
     auto IH = op->Input(TensorUsage::IFM)->shape.Height();
     auto KH = op->Input(TensorUsage::Weights)->shape.Height();
     auto OH = op->Output(TensorUsage::OFM)->shape.Height();
     auto *k = op->Kernel();
-    const auto &padding = k->Padding();
+    const auto &outPadTBLR = attr->outPadTBLR;
     const auto &stride = k->Stride();
     if ( IH < 1 || stride.y < 1 ) throw std::invalid_argument(constraint);
     int64_t term1 = (IH - 1LL) * stride.y;
     if ( term1 >= std::numeric_limits<int64_t>::max() - 3LL * std::numeric_limits<int>::max() )
         throw std::invalid_argument(constraint);
-    int64_t term2 = static_cast<int64_t>(padding.Top()) + padding.Bottom() + KH;
+    int64_t term2 = static_cast<int64_t>(outPadTBLR[0]) + outPadTBLR[1] + KH;
     if ( term1 < 0 || term2 < -term1 ) throw std::invalid_argument(constraint);
     uint64_t resultH = static_cast<uint64_t>(term1) + term2;
     if ( OH != static_cast<int64_t>(resultH) ) throw std::invalid_argument(constraint);
@@ -671,18 +672,19 @@ void ErrorIfCheck_3nelbnmxyemot(const regor::Operation *op, [[maybe_unused]] con
 void ErrorIfCheck_24conlof4w8eh(const regor::Operation *op, [[maybe_unused]] const Context &context)
 {
     // Operators: TRANSPOSE_CONV2D,
+    auto *attr = op->Attribute<regor::transpose_conv2d_attr_t>();
     static constexpr char constraint[] = "ERROR_IF(OW != (IW - 1) * stride_x + out_pad_left + out_pad_right + KW)";
     auto IW = op->Input(TensorUsage::IFM)->shape.Width();
     auto KW = op->Input(TensorUsage::Weights)->shape.Width();
     auto OW = op->Output(TensorUsage::OFM)->shape.Width();
     auto *k = op->Kernel();
-    const auto &padding = k->Padding();
+    const auto &outPadTBLR = attr->outPadTBLR;
     const auto &stride = k->Stride();
     if ( IW < 1 || stride.x < 1 ) throw std::invalid_argument(constraint);
     int64_t term1 = (IW - 1LL) * stride.x;
     if ( term1 >= std::numeric_limits<int64_t>::max() - 3LL * std::numeric_limits<int>::max() )
         throw std::invalid_argument(constraint);
-    int64_t term2 = static_cast<int64_t>(padding.Left()) + padding.Right() + KW;
+    int64_t term2 = static_cast<int64_t>(outPadTBLR[2]) + outPadTBLR[3] + KW;
     if ( term1 < 0 || term2 < -term1 ) throw std::invalid_argument(constraint);
     uint64_t resultW = static_cast<uint64_t>(term1) + term2;
     if ( OW != static_cast<int64_t>(resultW) ) throw std::invalid_argument(constraint);

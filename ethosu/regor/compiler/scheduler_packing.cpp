@@ -396,6 +396,7 @@ void SchedulerPacking::InitSchedulerConnection(
     schedConn->quantization = conn.quantization;
     schedConn->transpose = conn.transpose;
     schedConn->reverse = conn.reverse;
+    schedConn->resamplingMode = ArchResampling::None;
 }
 
 void SchedulerPacking::InitSchedulerTensor(SchedulerTensor *schedTensor, Tensor *tensor, const Graph *graph)
@@ -455,7 +456,6 @@ std::unique_ptr<SchedulerOperation> SchedulerPacking::MakeSchedulerOperation(Ope
             }
             SchedulerConnection *schedConn = IsOFM(item.first) ? schedOp->AddOutput(item.first) : schedOp->AddInput(item.first);
             InitSchedulerConnection(schedConn, schedTensor, item.second);
-            schedConn->resamplingMode = ResamplingMode(item.first, schedOp->Type());
         }
     }
 
@@ -543,12 +543,4 @@ std::vector<std::unique_ptr<SchedulerOperation>> SchedulerPacking::DecomposeSche
     }
     return result;
 }
-
-ArchResampling SchedulerPacking::ResamplingMode(TensorUsage usage, OpType opType) const
-{
-    UNUSED(usage);
-    UNUSED(opType);
-    return ArchResampling::None;
-}
-
 }  // namespace regor

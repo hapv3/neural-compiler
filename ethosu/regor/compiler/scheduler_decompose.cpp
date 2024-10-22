@@ -400,19 +400,6 @@ static void UpdatePaddingAndIfmOffset(SchedulerOperation *op)
     op->SetKernel(&newKernel);
 }
 
-static void InitializeSlice(TensorSlice &slice, const Shape &offset, const Shape &shape)
-{
-    if ( !slice.offset.IsValid() )
-    {
-        slice.offset = offset;
-    }
-    if ( !slice.shape.IsValid() )
-    {
-        slice.shape = shape;
-    }
-}
-
-
 // Return a slice of a tensor
 template<typename SRC_TYPE, typename DST_TYPE = SRC_TYPE>
 static std::shared_ptr<SchedulerTensor> SliceT(SchedulerTensor *tensor, const Shape &offset, const Shape &shape, const Shape &readShape)
@@ -498,8 +485,8 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv2D(Architecture *a
     auto &ifmSlice = ifmConn->slice;
     auto *kernel = op->Kernel();
     auto &padding = kernel->Padding();
-    InitializeSlice(ofmSlice, ofmShape.WithZeros(), ofmShape);
-    InitializeSlice(ifmSlice, ifmShape.WithZeros().WithHW(-padding.Top(), -padding.Left()), ifmShape);
+    ofmSlice.Initialize(ofmShape.WithZeros(), ofmShape);
+    ifmSlice.Initialize(ifmShape.WithZeros().WithHW(-padding.Top(), -padding.Left()), ifmShape);
 
     if ( ofmShape.Batch() > 1 )
     {
@@ -538,8 +525,8 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
     auto &ifmSlice = ifmConn->slice;
     auto *kernel = op->Kernel();
     auto &padding = kernel->Padding();
-    InitializeSlice(ofmSlice, ofmShape.WithZeros(), ofmShape);
-    InitializeSlice(ifmSlice, ifmShape.WithZeros().WithHW(-padding.Top(), -padding.Left()), ifmShape);
+    ofmSlice.Initialize(ofmShape.WithZeros(), ofmShape);
+    ifmSlice.Initialize(ifmShape.WithZeros().WithHW(-padding.Top(), -padding.Left()), ifmShape);
 
     if ( ofmShape.Batch() > 1 )
     {
@@ -669,74 +656,55 @@ static std::shared_ptr<SchedulerTensor> ReverseHW(SchedulerTensor *tensor)
 // Decompose Transpose Conv2D into Conv2D
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTransposeConv2D(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
 {
-    UNUSED(arch);
     std::vector<std::unique_ptr<SchedulerOperation>> result;
-
     auto ifmConn = op->Input(TensorUsage::IFM);
-    auto weightsConn = op->Input(TensorUsage::Weights);
     auto ofmConn = op->Output(TensorUsage::OFM);
-
+    auto weightsConn = op->Input(TensorUsage::Weights);
+    auto ifmShape = ifmConn->SliceShape();
+    auto ofmShape = ofmConn->SliceShape();
+    auto &ifmSlice = ifmConn->slice;
+    auto &ofmSlice = ofmConn->slice;
     auto kernel = op->Kernel();
-    const int32_t kernel_h = kernel->Size().y;
-    assert(kernel_h > 0);
-    const int32_t kernel_w = kernel->Size().x;
-    assert(kernel_w > 0);
-    const int32_t stride_h = kernel->Stride().y;
-    assert(stride_h > 0);
-    const int32_t stride_w = kernel->Stride().x;
-    assert(stride_w > 0);
+    const auto stride = kernel->Stride();
+    const auto kernelSize = kernel->Size();
+    assert(stride.x > 0);
+    assert(stride.y > 0);
+    assert(kernelSize.x > 0);
+    assert(kernelSize.y > 0);
 
-    int actualIfmHeight = ifmConn->shape.Height() * stride_h;
-    int actualIfmWidth = ifmConn->shape.Width() * stride_w;
-    int actualOfmHeight = ofmConn->shape.Height();
-    int actualOfmWidth = ofmConn->shape.Width();
-    int heightPadding = NeededTotalPadding(actualIfmHeight, actualOfmHeight, 1, kernel_h);
-    int widthPadding = NeededTotalPadding(actualIfmWidth, actualOfmWidth, 1, kernel_w);
+    ofmSlice.Initialize(ofmShape.WithZeros(), ofmShape);
+    ifmSlice.Initialize(ifmShape.WithZeros(), ifmShape);
 
-    if ( (stride_h == 1 && stride_w == 1) || (stride_h == 2 && stride_w == 2) ||
-         (stride_h == 1 && stride_w == 2 && ifmConn->shape.Height() == 1 && kernel_h == 1) )
+    if ( ofmShape.Batch() > 1 )
     {
-        // IFM pad for 1x1 stride
-        int bottom = heightPadding / 2;
-        int top = heightPadding - bottom;
-        int right = widthPadding / 2;
-        int left = widthPadding - right;
+        return DecomposeLeadingDimensions(1, arch, std::move(op), DecomposeConv2D);
+    }
 
-        // Reverse H and W weights
-        weightsConn->tensor = ReverseHW(weightsConn->tensor.get());
-
-        if ( (stride_h == 2 || stride_w == 2) )
+    // Convert TransposeConv2D to Conv2D by
+    // if stride == (1,1):
+    //     - reverse weights in X/Y
+    // if stride == (2,2):
+    //     - reverse weights in X/Y
+    //     - Upsample IFM x2 by inserting zeros
+    // Larger strides require decomposition: TODO MLBEDSW-9761
+    if ( stride == Point2i(1, 1) || stride == Point2i(2, 2) ||
+         (stride == Point2i(1, 2) && ifmShape.Width() == 1 && kernelSize.x == 1) ||
+         (stride == Point2i(2, 1) && ifmShape.Height() == 1 && kernelSize.y == 1) )
+    {
+        if ( (stride.x == 2 || stride.y == 2) )
         {
             ifmConn->resamplingMode = ArchResampling::Zeros;
-
-            // IFM pad for 2x2 stride
-            if ( kernel->Padding().IsZero() )
-            {
-                // TFLite VALID padding
-                bottom = std::max(kernel_h - 2, 0);
-                top = kernel_h - 1;
-                right = std::max(kernel_w - 2, 0);
-                left = kernel_w - 1;
-            }
-            else
-            {
-                // TFLite SAME padding
-                bottom = std::max(((heightPadding + 1) / stride_h) - 1, 0);
-                top = std::max(kernel_h - 1 - bottom, 0);
-                right = std::max(((widthPadding + 1) / stride_w) - 1, 0);
-                left = std::max(kernel_w - 1 - right, 0);
-            }
         }
-
-        Kernel newKernel = kernel->WithStride({1, 1}).WithPadding({top, left, bottom, right});
-
-        // Switch to Conv2D
+        // Map to Conv2D by reversing the weights in y and x
+        weightsConn->tensor = ReverseHW(weightsConn->tensor.get());
+        Kernel newKernel = kernel->WithStride({1, 1});
         op->_type = OpType::Conv2D;
         op->SetKernel(&newKernel);
         result.emplace_back(std::move(op));
     }
     else
     {
+        // TODO MLBEDSW-9761: TransposeConv2D Large stride decomposition
         result.emplace_back(std::move(op));
     }
 
@@ -753,14 +721,14 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeElementwise(Architectu
     auto &ifmShape = ifmConn->SliceShape();
     auto &ifmSlice = ifmConn->slice;
 
-    InitializeSlice(ofmSlice, ofmShape.WithZeros(), ofmShape);
-    InitializeSlice(ifmSlice, ifmShape.WithZeros(), ifmShape);
+    ofmSlice.Initialize(ofmShape.WithZeros(), ofmShape);
+    ifmSlice.Initialize(ifmShape.WithZeros(), ifmShape);
     if ( auto ifm2Conn = op->TryInput(TensorUsage::IFM1) )
     {
         auto &ifm2Shape = ifm2Conn->shape;
         auto &ifm2Slice = ifm2Conn->slice;
 
-        InitializeSlice(ifm2Slice, ifm2Shape.WithZeros(), ifm2Shape);
+        ifm2Slice.Initialize(ifm2Shape.WithZeros(), ifm2Shape);
     }
     auto ofmRank = ofmShape.Size();
     if ( ofmRank > 3 && ofmShape.Elements() > ofmShape.Width() * ofmShape.Height() * ofmShape.Depth() )
@@ -785,8 +753,8 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMatmul(Architecture *a
     auto &ifmShape = ifmConn->SliceShape();
     auto &ifmSlice = ifmConn->slice;
 
-    InitializeSlice(ofmSlice, ofmShape.WithZeros(), ofmShape);
-    InitializeSlice(ifmSlice, ifmShape.WithZeros(), ifmShape);
+    ofmSlice.Initialize(ofmShape.WithZeros(), ofmShape);
+    ifmSlice.Initialize(ifmShape.WithZeros(), ifmShape);
 
     // TODO MLBEDSW-9535: large tensor decomposition
     if ( auto ifm2Conn = op->TryInput(TensorUsage::IFM1) )
@@ -794,7 +762,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMatmul(Architecture *a
         auto &ifm2Shape = ifm2Conn->shape;
         auto &ifm2Slice = ifm2Conn->slice;
 
-        InitializeSlice(ifm2Slice, ifm2Shape.WithZeros(), ifm2Shape);
+        ifm2Slice.Initialize(ifm2Shape.WithZeros(), ifm2Shape);
     }
 
     auto ofmRank = ofmShape.Size();
@@ -817,15 +785,15 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(Architecture *a
     auto ifmShape = ifmConn->SliceShape();
     auto &ifmSlice = ifmConn->slice;
 
-    InitializeSlice(ofmSlice, ofmShape.WithZeros(), ofmShape);
-    InitializeSlice(ifmSlice, ifmShape.WithZeros(), ifmShape);
+    ofmSlice.Initialize(ofmShape.WithZeros(), ofmShape);
+    ifmSlice.Initialize(ifmShape.WithZeros(), ifmShape);
 
     if ( auto ifm2Conn = op->TryInput(TensorUsage::IFM1) )
     {
         auto ifm2Shape = ifm2Conn->shape;
         auto &ifm2Slice = ifm2Conn->slice;
 
-        InitializeSlice(ifm2Slice, ifm2Shape.WithZeros(), ifm2Shape);
+        ifm2Slice.Initialize(ifm2Shape.WithZeros(), ifm2Shape);
     }
 
     auto ofmRank = ofmShape.Size();
@@ -859,15 +827,15 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReverse(Architecture *
     auto ifmShape = ifmConn->SliceShape();
     auto &ifmSlice = ifmConn->slice;
 
-    InitializeSlice(ofmSlice, ofmShape.WithZeros(), ofmShape);
-    InitializeSlice(ifmSlice, ifmShape.WithZeros(), ifmShape);
+    ofmSlice.Initialize(ofmShape.WithZeros(), ofmShape);
+    ifmSlice.Initialize(ifmShape.WithZeros(), ifmShape);
 
     if ( auto ifm2Conn = op->TryInput(TensorUsage::IFM1) )
     {
         auto ifm2Shape = ifm2Conn->shape;
         auto &ifm2Slice = ifm2Conn->slice;
 
-        InitializeSlice(ifm2Slice, ifm2Shape.WithZeros(), ifm2Shape);
+        ifm2Slice.Initialize(ifm2Shape.WithZeros(), ifm2Shape);
     }
 
     auto ofmRank = ofmShape.Size();
@@ -1075,8 +1043,8 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTranspose(Architecture
             if ( ifmShape[axis] > MAX_DIM )
             {
                 // Initialize the shapes so that OFM slice is untransposed
-                InitializeSlice(ofmConn->slice, ifmShape.WithZeros(), ifmShape);
-                InitializeSlice(ifmConn->slice, ifmShape.WithZeros(), ifmShape);
+                ofmConn->slice.Initialize(ifmShape.WithZeros(), ifmShape);
+                ifmConn->slice.Initialize(ifmShape.WithZeros(), ifmShape);
 
                 // OFM slice will be transposed by DecomposeLargeAxis
                 LOG_TRACE1("DecomposeTranspose: Axis {} is too large ({})\n", axis, ifmShape[axis]);
