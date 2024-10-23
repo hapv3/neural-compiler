@@ -44,6 +44,7 @@ struct RewriteFunctions
 {
     const std::vector<Tensor *(T::*)(Graph *, Tensor *)> tensorFunction;
     const std::vector<Operation *(T::*)(Graph *, Operation *)> opFunction;
+    const bool fromStart = false;
 };
 
 /// <summary>
@@ -98,16 +99,39 @@ public:
         {
             bool done;
             std::shared_ptr<Operation> op;
+            Entry(bool done_, const std::shared_ptr<Operation> &op_) : done(done_), op(op_) {}
         };
         std::unordered_set<Operation *> opVisited;
         std::unordered_set<Tensor *> tensVisited;
         std::stack<Entry> stack;
 
-        for ( const auto &tensor : graph->Outputs() )
+        if ( rewriteFuncs.fromStart )
         {
-            for ( const auto &op : tensor->Writers() )
+            // Traverse from End and collect operators that are at the start of the graph. Their inputs are only either
+            // - Constant
+            // - Graph inputs
+            Graph::TraverseGraphFromEnd(graph->Outputs(),
+                [&](Operation *op) -> bool
+                {
+                    for ( auto [usage, ifmConn] : op->Inputs().pairs() )
+                    {
+                        if (
+                            !ifmConn.tensor->IsConstant() &&
+                            std::find(graph->Inputs().begin(), graph->Inputs().end(), ifmConn.tensor) == graph->Inputs().end() )
+                            return true;
+                    }
+                    stack.emplace(false, op->shared_from_this());
+                    return true;
+                });
+        }
+        else
+        {
+            for ( const auto &tensor : graph->Outputs() )
             {
-                stack.push(Entry{false, op});
+                for ( const auto &op : tensor->Writers() )
+                {
+                    stack.emplace(false, op);
+                }
             }
         }
 
@@ -143,7 +167,7 @@ public:
                     }
                 }
                 opVisited.insert(updatedOp);
-                stack.push(Entry{true, updatedOp->shared_from_this()});
+                stack.emplace(true, updatedOp->shared_from_this());
 
                 std::array<std::vector<Tensor *>, 2> tensors;
                 for ( const auto &pair : updatedOp->Outputs().pairs() )
@@ -185,13 +209,14 @@ public:
                             }
                             tensVisited.insert(updatedTensor);
                         }
-                        // Check Writers() for tensor, even if visited as we can bypass op updating the tensors.
-                        const std::vector<std::shared_ptr<Operation>> *ops = &updatedTensor->Writers();
+                        // Check Reader/Writers for tensor, even if visited as we can bypass op updating the tensors.
+                        const std::vector<std::shared_ptr<Operation>>
+                            *ops = rewriteFuncs.fromStart ? &updatedTensor->Readers() : &updatedTensor->Writers();
                         for ( const auto &op : *ops )
                         {
                             if ( opVisited.count(op.get()) == 0 )
                             {
-                                stack.push(Entry{false, op});
+                                stack.emplace(false, op);
                             }
                         }
                     }

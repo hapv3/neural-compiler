@@ -137,6 +137,8 @@ public:
         {
             bool done;
             Operation *op;
+            Entry(bool done_, Operation *op_) : done(done_), op(op_) {}
+            Entry(bool done_, const std::shared_ptr<Operation> &op_) : Entry(done_, op_.get()) {}
         };
         std::unordered_set<Operation *> visited;
         std::stack<Entry> stack;
@@ -145,7 +147,7 @@ public:
         {
             for ( const auto &op : tensor->Writers() )
             {
-                stack.push(Entry{false, op.get()});
+                stack.emplace(false, op);
             }
         }
 
@@ -163,14 +165,14 @@ public:
             else if ( visited.count(entry.op) == 0 )
             {
                 visited.insert(entry.op);
-                stack.push(Entry{true, entry.op});
+                stack.emplace(true, entry.op);
                 for ( const auto &pair : entry.op->Inputs().pairs() )
                 {
                     for ( const auto &op : pair.second.tensor->Writers() )
                     {
                         if ( visited.count(op.get()) == 0 )
                         {
-                            stack.push(Entry{false, op.get()});
+                            stack.emplace(false, op);
                         }
                     }
                 }

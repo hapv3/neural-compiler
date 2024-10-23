@@ -58,6 +58,7 @@ add_catch_test(
         test_buffer_view.cpp
         test_scheduler_packing.cpp
         test_operation_utils.cpp
+        test_graphir_optimiser.cpp
     DEPS
         test_common
 )

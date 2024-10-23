@@ -22,6 +22,7 @@
 #include "optimiser_utils.hpp"
 #include "tflite/tflite_schema_generated.hpp"
 
+
 namespace regor
 {
 
@@ -238,6 +239,154 @@ Operation *GraphIrOptimiser::ConvertResizeOffsets(Graph *const graph, Operation 
         ifmConn->Set(slice);
     }
     return returnOp;
+}
+
+template<typename T>
+struct EwShl
+{
+    T operator()(T a, T b)
+    {
+        assert(b >= 0);
+        return T(std::make_unsigned_t<T>(a) << std::make_unsigned_t<T>(b));
+    }
+};
+
+template<typename T>
+static std::vector<T> BroadcastValues(const Tensor *in, const Shape &oShape)
+{
+    const Shape &iShape = in->StorageShape();
+    const auto &iData = in->View().Values<T>();
+    const int elementCnt = oShape.Elements();
+
+    std::vector<T> ret(elementCnt);
+    auto opos = oShape.WithZeros();
+    auto ipos = opos;
+
+    auto posIncr = [&]()
+    {
+        for ( int i = opos.Size() - 1; i >= 0; i-- )
+        {
+            opos[i]++;
+            if ( iShape[i] == oShape[i] )
+            {
+                ipos[i]++;
+            }
+
+            if ( opos[i] < oShape[i] )
+            {
+                return false;
+            }
+
+            opos[i] = 0;
+            ipos[i] = 0;
+        }
+        return true;
+    };
+
+    for ( int i = 0; i < elementCnt; i++ )
+    {
+        ret[i] = iData[ipos];
+        bool done = posIncr();
+        UNUSED(done);
+        assert(done == (i == (elementCnt - 1)));
+    }
+
+    return ret;
+}
+
+template<template<typename> typename F, typename T>
+std::shared_ptr<Buffer> ConstPropEw(Operation *const operation)
+{
+    auto ifmConn0 = operation->Input(TensorUsage::IFM);
+    auto ifmConn1 = operation->Input(TensorUsage::IFM1);
+    auto ofmConn = operation->Output(TensorUsage::OFM);
+    const auto &oShape = ofmConn->tensor->StorageShape();
+    auto *ifm0 = ifmConn0->tensor.get();
+    auto *ifm1 = ifmConn1->tensor.get();
+    auto *ofm = ofmConn->tensor.get();
+
+    auto v0 = BroadcastValues<T>(ifm0, oShape);
+    auto v1 = BroadcastValues<T>(ifm1, oShape);
+    std::vector<T> c(oShape.Elements());
+
+    for ( int i = 0; i < oShape.Elements(); i++ )
+    {
+        c[i] = F<T>()(v0[i], v1[i]);
+    }
+
+    return std::make_shared<Buffer>(std::move(c));
+}
+
+template<template<typename> typename F>
+std::shared_ptr<Buffer> ConstPropEw(Operation *const operation)
+{
+    auto dataType = operation->Output(TensorUsage::OFM)->tensor->Type();
+
+    switch ( dataType )
+    {
+        case DataType::Int8:
+        {
+            return ConstPropEw<F, int8_t>(operation);
+        }
+        break;
+        case DataType::Int16:
+        {
+            return ConstPropEw<F, int16_t>(operation);
+        }
+        break;
+        case DataType::Int32:
+        {
+            return ConstPropEw<F, int32_t>(operation);
+        }
+        break;
+        default:
+            return {};
+            break;
+    }
+}
+
+Operation *GraphIrOptimiser::ConstPropagation(Graph *const graph, Operation *const operation)
+{
+    UNUSED(graph);
+    for ( auto [usage, ifmConn] : operation->Inputs().pairs() )
+    {
+        if ( !IsIFM(usage) ) continue;
+
+        if ( !ifmConn.tensor->IsConstant() )
+        {
+            return operation;
+        }
+    }
+
+    // Op has only constant input and result can be computed
+    std::shared_ptr<Buffer> ofmBuf;
+    switch ( operation->Type() )
+    {
+        case OpType::SHL:
+        {
+            ofmBuf = ConstPropEw<EwShl>(operation);
+        }
+        break;
+        default:
+            break;
+    }
+
+    if ( ofmBuf )
+    {
+        auto *ofmConn = operation->Output(TensorUsage::OFM);
+        auto *ofm = ofmConn->tensor.get();
+        ofm->SetBuffer(ofmBuf);
+
+        // Remove op from ifm readers and ofm writers.
+        // Note the Inputs/Outputs on operation should still be intact to not break the traversal.
+        for ( auto [usage, ifmConn] : operation->Inputs().pairs() )
+        {
+            ifmConn.tensor->RemoveReader(operation->shared_from_this());
+        }
+        ofm->RemoveWriter(operation->shared_from_this());
+    }
+
+    return operation;
 }
 
 Operation *GraphIrOptimiser::RemoveReshape(Graph *const graph, Operation *const operation)

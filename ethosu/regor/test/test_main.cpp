@@ -21,8 +21,11 @@
 
 #include <catch_all.hpp>
 #include <cstdint>
+#include <iostream>
 #include <stack>
 #include <string>
+
+#include "regor.h"
 
 using namespace Catch::Clara;
 
@@ -60,8 +63,17 @@ CATCH_REGISTER_LISTENER(RandomGeneratorManager)
 
 bool OptNightly = false;
 
+extern "C" {
+
+static void LogWriterFunc(const void *data, size_t sizeBytes)
+{
+    std::cout.write(reinterpret_cast<const char *>(data), sizeBytes);
+}
+}
+
 int main(int argc, char **argv)
 {
+    regor_set_logging(LogWriterFunc, ~0u);
     Catch::Session session;
 
     auto cli = session.cli() | Opt(OptNightly)["--nightly"]("This is a nightly run");

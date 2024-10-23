@@ -57,6 +57,10 @@ std::unique_ptr<Graph> CreateGraph(std::vector<std::shared_ptr<Operation>> &ops)
 // -----------------------------
 // Create a Tensor with name, storageshape and datatype
 std::shared_ptr<Tensor> CreateTensor(std::string name, Shape storageShape, DataType dtype);
+// Create a Const Tensor
+template<typename T>
+std::shared_ptr<Tensor> CreateTensor(std::string name, Shape storageShape, DataType dtype, std::vector<T> &&values);
+std::shared_ptr<Tensor> CreateTensor(std::string name, Shape storageShape, DataType dtype, unsigned value);
 // Create a Operation with unary input
 std::shared_ptr<Operation> CreateOperation(OpType opType, TensorUsage ifmUsage, std::shared_ptr<Tensor> &ifm,
     TensorUsage ofmUsage, std::shared_ptr<Tensor> &ofm);

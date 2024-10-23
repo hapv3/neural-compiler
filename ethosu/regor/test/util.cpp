@@ -18,6 +18,7 @@
 
 #include "util.hpp"
 
+#include "common/data_type.hpp"
 #include "common/ini_reader.hpp"
 
 using namespace regor;
@@ -87,14 +88,14 @@ std::unique_ptr<Graph> CreateGraph(std::vector<std::shared_ptr<Operation>> &ops)
     {
         for ( auto &conn : op->Inputs() )
         {
-            if ( conn.tensor->Writers().empty() )
+            if ( conn.tensor->Writers().empty() && !conn.tensor->IsConstant() )
             {
                 inputs.push_back(conn.tensor);
             }
         }
         for ( auto &conn : op->Outputs() )
         {
-            if ( conn.tensor->Readers().empty() )
+            if ( conn.tensor->Readers().empty() && !conn.tensor->IsConstant() )
             {
                 outputs.push_back(conn.tensor);
             }
@@ -111,6 +112,45 @@ std::shared_ptr<Tensor> CreateTensor(std::string name, Shape storageShape, DataT
 {
     auto tensor = std::make_shared<Tensor>(name, dtype, storageShape);
     return tensor;
+}
+
+// Create a Const Tensor
+template<typename T>
+std::shared_ptr<Tensor> CreateTensor(std::string name, Shape storageShape, DataType dtype, std::vector<T> &&values)
+{
+    assert(int(values.size()) == storageShape.Elements());
+    assert(DataTypeSizeBits(dtype) == sizeof(T) * 8);
+    auto buf = std::make_shared<Buffer>(std::move(values));
+    auto tensor = std::make_shared<Tensor>(name, dtype, storageShape, std::move(buf));
+    return tensor;
+}
+
+// Create a Const Tensor
+std::shared_ptr<Tensor> CreateTensor(std::string name, Shape storageShape, DataType dtype, unsigned value)
+{
+    switch ( dtype )
+    {
+        case DataType::Int8:
+            return CreateTensor(std::move(name), std::move(storageShape), dtype,
+                std::vector<int8_t>(storageShape.Elements(), int8_t(value)));
+            break;
+        case DataType::UInt8:
+            return CreateTensor(std::move(name), std::move(storageShape), dtype,
+                std::vector<uint8_t>(storageShape.Elements(), uint8_t(value)));
+            break;
+        case DataType::Int16:
+            return CreateTensor(std::move(name), std::move(storageShape), dtype,
+                std::vector<int16_t>(storageShape.Elements(), int16_t(value)));
+            break;
+        case DataType::Int32:
+            return CreateTensor(std::move(name), std::move(storageShape), dtype,
+                std::vector<int32_t>(storageShape.Elements(), int32_t(value)));
+            break;
+        default:
+            assert(false);
+            return CreateTensor(std::move(name), std::move(storageShape), dtype,
+                std::vector<int8_t>(storageShape.Elements(), int8_t(value)));
+    }
 }
 
 // Create a Operation with unary input

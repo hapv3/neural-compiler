@@ -40,6 +40,7 @@ class GraphIrOptimiser : public GraphOptimiser
     using GraphOptStepArray = std::vector<RewriteFunctions<GraphIrOptimiser>>;
 
 private:
+    Operation *ConstPropagation(Graph *const graph, Operation *const operation);
     Operation *RemoveReshape(Graph *const graph, Operation *const operation);
     Operation *ConvertAttributes(Graph *const graph, Operation *const operation);
     Operation *ConvertResizeOffsets(Graph *const graph, Operation *const operation);
@@ -97,6 +98,13 @@ private:
             {
                 &GraphIrOptimiser::RemoveReshape,
             }
+        },
+        {
+            {},
+            {
+                &GraphIrOptimiser::ConstPropagation,
+            },
+            true,
         },
         {
             {},
