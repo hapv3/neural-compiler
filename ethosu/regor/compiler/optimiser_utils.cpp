@@ -117,19 +117,19 @@ void ReplaceConsumerInput(const Operation *const exemptOperation, std::vector<st
     // Not passed by reference. Original can be modified in loop.
     for ( const auto &consumer : consumerList )
     {
-        Operation *cons = consumer.get();
+        if ( consumer.get() == exemptOperation ) continue;
 
-        for ( const auto &consInput : cons->Inputs().pairs() )
+        for ( const auto &consInput : consumer->Inputs().pairs() )
         {
-            if ( consInput.second.tensor.get() == tensorToReplace && cons != exemptOperation )
+            if ( consInput.second.tensor.get() == tensorToReplace )
             {
                 // Do not want to replace the shape. Only the tensor and add writers.
                 // As ConnectInput but do not replace shape.
-                newTensor->AddReader(cons->shared_from_this());
-                auto *consInputConnection = cons->Input(consInput.first);
+                newTensor->AddReader(consumer);
+                auto *consInputConnection = consumer->Input(consInput.first);
                 if ( consInputConnection->tensor != newTensor )
                 {
-                    consInputConnection->tensor->RemoveReader(cons->shared_from_this());
+                    consInputConnection->tensor->RemoveReader(consumer);
                     consInputConnection->tensor = newTensor;
                 }
             }

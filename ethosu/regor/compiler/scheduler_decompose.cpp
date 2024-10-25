@@ -20,7 +20,8 @@
 
 #include "common/logging.hpp"
 
-#include "operation_util.hpp"
+#include "architecture/architecture_constraints.hpp"
+#include "shape_util.hpp"
 
 #include <numeric>
 #include <optional>

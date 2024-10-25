@@ -173,12 +173,6 @@ Operation *GraphIrOptimiser::ConvertAttributes(Graph *const graph, Operation *co
         ofmConn->quantization.scales[0].shift += attr->shift;
         attr->shift = 0;
     }
-    else if ( opType == OpType::Transpose )
-    {
-        const auto *attr = operation->Attribute<transpose_attr_t>();
-        TensorConnection *ofmConn = operation->Output(TensorUsage::OFM);
-        ofmConn->transpose = TransposeTypeFromShape(attr->perm);
-    }
     else if ( opType == OpType::Reverse )
     {
         // Convert TOSA axis attribute to ReverseType representation
@@ -1465,17 +1459,17 @@ Operation *GraphIrOptimiser::RearrangeTranspose(Graph *const graph, Operation *c
         // 1x8x128x32 + [2, 0, 1, 3] -> 128x1x8x32
         // Compact, with supported permutation vector:
         // 1x8x128x32 + [0, 2, 1, 3] ("NWHC") -> 1x128x8x32
+        Shape perm = attr->perm;
 
         // Don't bother with rearrangement if transpose type is already supported
-        if ( _constraints->SupportsTranspose(OpType::MemoryCopy, ofmConn->transpose) )
+        auto transposeType = TransposeTypeFromShape(perm);
+        if ( _constraints->SupportsTranspose(OpType::Transpose, transposeType) )
         {
             return returnOp;
         }
 
         Shape ifmShape = ifmConn->shape;
         Shape ofmShape = ofmConn->shape;
-        Shape perm = attr->perm;
-        assert(perm);
         int ofmDim = perm.Size() - 1;
         for ( auto onesMask = ofmShape.EqualMask(ofmShape.WithOnes()); onesMask; onesMask >>= 1 )
         {
@@ -1496,7 +1490,6 @@ Operation *GraphIrOptimiser::RearrangeTranspose(Graph *const graph, Operation *c
             ofmDim--;
         }
 
-        ofmConn->transpose = TransposeTypeFromShape(perm);
         attr->perm = perm;
         ifmConn->shape = ifmShape;
         ofmConn->shape = ofmShape;
@@ -1894,10 +1887,7 @@ Operation *GraphIrOptimiser::MoveSplitSliceToConsumer(Graph *const, Operation *c
         auto *ofm = ofmConn->tensor.get();
 
         // TODO: MLBEDSW-9072: Add check that moving split to consumer is valid
-
-        // We can only move to consumer if there is no transpose on the op that we will remove,
-        // otherwise we will lose that transposition.
-        if ( ofm->Readers().size() == 1 && IsNone(ofmConn->transpose) )
+        if ( ofm->Readers().size() == 1 )
         {
             auto cons = ofm->Readers().front();
             auto consOfmConn = cons->Output(TensorUsage::OFM);
@@ -1918,10 +1908,15 @@ Operation *GraphIrOptimiser::MoveSplitSliceToConsumer(Graph *const, Operation *c
                 ifmShapeEqual = consIfm1Conn->shape == ofmConn->shape;
             }
 
+            TransposeType consumerTranspose = TransposeType::None;
+            if ( cons->Type() == OpType::Transpose )
+            {
+                consumerTranspose = TransposeTypeFromShape(cons->Attribute<transpose_attr_t>()->perm);
+            }
+
             // We can only move to consumer if there is no transpose on the op that we move to,
             // otherwise the IFM shape may change and transposition will be wrong.
-            if ( !IsReshape(cons->Type()) && ofmConn->shape == Shape::PadAxes(ofm->StorageShape(), 4, 1) &&
-                 IsNone(consOfmConn->transpose) && ifmShapeEqual )
+            if ( !IsReshape(cons->Type()) && ofmConn->shape == Shape::PadAxes(ofm->StorageShape(), 4, 1) && IsNone(consumerTranspose) && ifmShapeEqual )
             {
                 // Split/Slice can be performed by tensor consumer
                 MoveToConsumer(operation, cons.get());

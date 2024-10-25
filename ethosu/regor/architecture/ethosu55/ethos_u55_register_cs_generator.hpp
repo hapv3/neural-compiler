@@ -125,6 +125,13 @@ struct LutSlot
 /// </summary>
 class EthosU55RCSGenerator : public EthosURegisterCSGenerator<EthosU55RCSGenerator>
 {
+private:
+    ArchEthosU55 *_arch;
+    // For stripes that use LUT: the LUT slot to be used
+    std::unordered_map<const HLCStripe *, int> _stripeToLutSlot;
+    std::vector<LutSlot> _lutSlots;
+    EthosU55Emitter _emit;
+
 public:
     EthosU55RCSGenerator(ArchEthosU55 *arch);
 
@@ -186,7 +193,7 @@ protected:
     //   (in that case, the very last job is added last)
     void GetJobs(const Box &area, const Shape &block, int nrJobsToGet, bool fromStart, std::vector<Box> &jobs);
     // Calculates the value for the BLOCKDEP register
-    int CalcBlockDep(HLCStripe *prevStripe, HLCStripe *stripe);
+    int CalcBlockDep(const HLCStripe *prevStripe, const HLCStripe *stripe);
 
 
 
@@ -225,15 +232,29 @@ protected:
     void GenerateWaits(bool isKernelWait, const MemoryAccesses &memoryAccesses, std::deque<MemoryAccesses> &outstandingAccesses);
     // Save current memory accesses to accessesToUpdate
     void UpdateMemoryAccesses(const MemoryAccesses &memoryAccesses, std::deque<MemoryAccesses> &accessesToUpdate, int maxWaits);
-    // Inserts DMA commands for copying LUTs from constant memory
-    // to LUT memory
-    std::vector<std::unique_ptr<HighLevelCommand>> InsertLUTDMACommands(std::vector<std::unique_ptr<HighLevelCommand>> &cmds);
+
+    struct Temporaries
+    {
+        std::vector<std::unique_ptr<HighLevelCommand>> cmds;
+        std::vector<std::unique_ptr<ArchitectureOpConfig>> configs;
+    };
+
+    // Inserts DMA commands for copying LUTs from constant memory to LUT memory
+    void InsertLUTDMACommand(int index, const HLCStripe *stripe, Temporaries &temps, std::vector<const HighLevelCommand *> &emitted);
     // Inserts DMA commands to handle TILE operations
-    virtual std::vector<std::unique_ptr<HighLevelCommand>> InsertTileDMACommands(std::vector<std::unique_ptr<HighLevelCommand>> &cmds);
+    virtual void InsertTileDMACommand(const HLCStripe *stripe, Temporaries &temps, std::vector<const HighLevelCommand *> &emitted);
 
     //----------------------------------------------------------------------
     // Operations
     //----------------------------------------------------------------------
+
+    struct AccessTracking
+    {
+        std::deque<MemoryAccesses> outstandingNpuAccesses;
+        std::deque<MemoryAccesses> outstandingDmaAccesses;
+        int maxOutstandingDMAOps;
+        int maxOutstandingKernelOps;
+    };
 
     // Generates NPU_OP_* command
     void GenerateOperationCode(OpType opType);
@@ -242,12 +263,13 @@ protected:
     // Conv2D/Depthwise operations
     void GenerateConvolutionOp(const HLCStripe *stripe, MemoryAccesses &memoryAccesses);
     // MaxPool/AvgPool/ResizeBilinear or operations that are mapped to AvgPool
-    void GeneratePoolingOp(HLCStripe *stripe, MemoryAccesses &memoryAccesses);
+    void GeneratePoolingOp(const HLCStripe *stripe, MemoryAccesses &memoryAccesses);
     // Elementwise operations
-    void GenerateElementwiseOp(HLCStripe *stripe, MemoryAccesses &memoryAccesses);
-    bool GenerateStripe(HLCStripe *stripe, MemoryAccesses &memoryAccesses);
+    void GenerateElementwiseOp(const HLCStripe *stripe, MemoryAccesses &memoryAccesses);
+    bool GenerateStripe(const HLCStripe *stripe, const HLCStripe *prevStripe, AccessTracking &accesses);
+    void PrepareCommand(int index, HighLevelCommand *cmd, Temporaries &temps, std::vector<const HighLevelCommand *> &emitted);
     // Generates register commands for DMA operations
-    virtual void GenerateDMA(const HLCDMA *dma, MemoryAccesses &memoryAccesses);
+    virtual void GenerateDMA(const HLCDMA *dma, AccessTracking &accesses);
 
     virtual void GenerateInitialRegisterSetup()
     {
@@ -260,12 +282,6 @@ public:
 
     static uint32_t IdRegister();
     static bool IsSupportedElementwise(const OpType opType);
-
-private:
-    ArchEthosU55 *_arch;
-    // For stripes that use LUT: the LUT slot to be used
-    std::unordered_map<const HLCStripe *, int> _stripeToLutSlot;
-    EthosU55Emitter _emit;
 };
 
 }  // namespace regor

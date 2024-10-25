@@ -26,7 +26,7 @@
 namespace regor
 {
 
-static const Point2i s_SubkernelLimits[] = {
+static const Point2i s_SubkernelLimits[size_t(EthosU55NpuOp::Last) + 1] = {
     {0, 0},  // No kernel
     {8, 8},  // Convolution
     {8, 8},  // Depthwise
@@ -35,11 +35,12 @@ static const Point2i s_SubkernelLimits[] = {
     {8, 8},  // ReduceSum
     {1, 1},  // Elementwise
     {1, 1},  // Dma
+    {0, 0},  // Compound
 };
 
 static constexpr bool OpUsesMacs(EthosU55NpuOp npuOp)
 {
-    return (npuOp != EthosU55NpuOp::Elementwise && npuOp != EthosU55NpuOp::Dma && npuOp != EthosU55NpuOp::None);
+    return (npuOp >= EthosU55NpuOp::Convolution) && (npuOp <= EthosU55NpuOp::ReduceSum);
 }
 
 EthosU55Performance::EthosU55Performance(ArchEthosU55 *arch, const EthosU55PerfInfo *perfInfo) : _arch(arch)
@@ -82,6 +83,12 @@ CycleCost EthosU55Performance::MeasureCycleCost(const PerformanceQuery &query, c
     {
         // TODO: MLBEDSW-8400
         cycles.opCycles = 0;
+    }
+    else if ( npuOp == EthosU55NpuOp::Compound )
+    {
+        // TODO: Measure variable-implementation ops
+        assert(query.type == OpType::Transpose);
+        cycles.opCycles = EstimateMinimumMemoryCycles(query);
     }
     else
     {
@@ -504,9 +511,14 @@ ElementAccess EthosU55Performance::MeasureElementAccess(const PerformanceQuery &
     else if ( query.type == OpType::Tile )
     {
         // IFM0 is read multiple times to cover all elements in ofmShape
-        access.ifmRead[0] = Shape::RoundAway(query.ofmShape[0], ofmRounding).Elements();
+        access.ifmRead[0] = Shape::RoundAway(query.ofmShape, ofmRounding).Elements();
         // Complete OFM is written
-        access.ofmWrite = Shape::RoundAway(query.ofmShape[0], ofmRounding).Elements();
+        access.ofmWrite = access.ifmRead[0];
+    }
+    else if ( query.type == OpType::Transpose )
+    {
+        access.ifmRead[0] = query.ifmShape[0].Elements();
+        access.ofmWrite = query.ofmShape.Elements();
     }
     else
     {

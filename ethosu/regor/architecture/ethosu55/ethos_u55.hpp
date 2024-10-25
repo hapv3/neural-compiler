@@ -65,6 +65,8 @@ enum class EthosU55NpuOp
     ReduceSum,
     Elementwise,
     Dma,
+    Compound,
+    Last = Compound,
 };
 
 /// <summary>

@@ -23,6 +23,7 @@
 #include "common/buffer_view.hpp"
 #include "operation.hpp"
 #include "quantization.hpp"
+#include "shape_util.hpp"
 #include "tensor.hpp"
 
 #include <numeric>
@@ -260,25 +261,6 @@ inline Operation *CreateRescaleAdd(const std::shared_ptr<Tensor> &ifm, const std
     return op;
 }
 
-// Convert a permutation shape (up to 8 elements) to a TransposeType
-// For example:
-// [0, 1, 2, 3] -> 0x0123 ("NHWC")
-// [0, 1, 2] -> 0x0123 ("NHWC")
-// [0, 1] -> 0x0123 ("NHWC")
-// [0] -> 0x0123 ("NHWC")
-// [0, 2, 1, 3] -> 0x0213 ("NWHC")
-// [1, 0, 2] -> 0x0213 ("NWHC")
-inline TransposeType TransposeTypeFromShape(const Shape &perm)
-{
-    const int n = perm.Size();
-    // We can only handle permutation vectors up 8 elements
-    if ( n > 8 ) throw std::invalid_argument("Permutation shape has more than 8 elements");
-    uint32_t mask = perm.ToMask();
-    uint32_t offset = 0x76543210 & ~(0xFFFFFFFF >> (4 * (8 - n)));
-    uint32_t mask8D = mask + offset;
-    return TransposeType(mask8D);
-}
-
 inline TransposeType CalculateTransposeType(const Operation &operation)
 {
     const auto *paramsConn = operation.Input(TensorUsage::Params);
@@ -296,34 +278,6 @@ inline bool IsScalingValidAndEqual(const TensorConnection &a, const TensorConnec
 {
     return (a.quantization.IsValid() && b.quantization.IsValid() && a.quantization.scales == b.quantization.scales &&
             a.quantization.zeroPoints == b.quantization.zeroPoints);
-}
-
-// Reshape for example (A, B, N, H, W, C) + (3, 2, 1) -> (A*B*N, H*W, C)
-inline Shape ReshapeTo3D(const Shape &shape, const Shape &axes, int minAxis = 1)
-{
-    assert(axes.Size() == 3);
-    assert(axes[0] + axes[1] + axes[2] == shape.Size());
-    int h = std::max(minAxis, shape.AxisProduct(0, axes[0]));
-    int w = std::max(minAxis, shape.AxisProduct(axes[0], axes[0] + axes[1]));
-    int c = std::max(minAxis, shape.AxisProduct(axes[0] + axes[1], axes[0] + axes[1] + axes[2]));
-    return Shape(h, w, c);
-}
-
-// Reshape for example (B, N, H, W, C) + W -> (B*N*H, W, C)
-inline Shape ReshapeTo3DAroundAxis(const Shape &shape, int axis, int minAxis = 1)
-{
-    assert(axis >= 0);
-    assert(axis < shape.Size());
-    int outer = axis;
-    int inner = shape.Size() - axis - 1;
-    return ReshapeTo3D(shape, {outer, 1, inner}, minAxis);
-}
-
-// Reshape (B, N, H, W, C) -> (B, N*H*W, C)
-inline Shape ReshapeTo3DAroundEdges(const Shape &shape, int minAxis = 1)
-{
-    assert(shape.Size() > 1);
-    return ReshapeTo3D(shape, {1, shape.Size() - 2, 1}, minAxis);
 }
 
 #undef FOR_ALL_INT_TYPES

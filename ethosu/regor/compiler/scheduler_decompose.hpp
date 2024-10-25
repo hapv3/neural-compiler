@@ -19,7 +19,6 @@
 #pragma once
 
 #include "graph.hpp"
-#include "operation.hpp"
 #include "scheduler_operation.hpp"
 
 #include <vector>

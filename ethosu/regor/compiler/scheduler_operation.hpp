@@ -20,6 +20,7 @@
 
 #include "common/common.hpp"
 
+#include "architecture/architecture.hpp"
 #include "common/ordered_map.hpp"
 #include "kernel.hpp"
 #include "operation.hpp"

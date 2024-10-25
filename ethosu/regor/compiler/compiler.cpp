@@ -217,13 +217,12 @@ public:
 };
 
 
-bool Compiler::Store(const std::vector<std::unique_ptr<Graph>> &graphs,
+void Compiler::Store(const std::vector<std::unique_ptr<Graph>> &graphs,
     const std::vector<std::unordered_map<const Tensor *, Address>> &tensorAddressMaps)
 {
     if ( _compilerOptions.outputFormat == OutputFormat::Raw )
     {
         RawWriter writer;
-
         // This will serialise multiple blobs
         auto buffers = writer.Serialise(graphs, tensorAddressMaps);
 
@@ -245,8 +244,6 @@ bool Compiler::Store(const std::vector<std::unique_ptr<Graph>> &graphs,
         RawBlob *output = new RawBlob(std::move(buffer), offset, int64_t(size));
         _output.push_back(output);
     }
-
-    return true;
 }
 
 
@@ -301,9 +298,18 @@ bool Compiler::Compile()
     }
 
     _optDb.reset();
-    Store(newGraphs, tensorAddressMaps);
-
     _builders.clear();
+
+    try
+    {
+        Store(newGraphs, tensorAddressMaps);
+    }
+    catch ( const std::invalid_argument &ex )
+    {
+        SetLastError(fmt::format("Output error: {} \n", ex.what()));
+        return false;
+    }
+
     return true;
 }
 

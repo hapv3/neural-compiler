@@ -102,7 +102,6 @@ const static Shape MAX_SHAPE(nullptr, 8, 65536);
 ArchEthosU55::ArchEthosU55() : _subkernelMax(8, 8, 65536), _ofmBlockMax(32, 64, 128)
 {
     _weightEncoder = std::make_unique<EthosU55WeightEncoder>(this);
-    _rcsGenerator = std::make_unique<EthosU55RCSGenerator>(this);
     _constraints = std::make_unique<EthosU55Constraints>(this);
 }
 
@@ -175,6 +174,7 @@ void ArchEthosU55::ApplyConfig(const AcceleratorConfig *cfg)
     _shramMemory->SetParameters(1, 0, 0, 1, 1, 1000, 1000);
     _lutMemory = _shramMemory.get();
     _performance = std::unique_ptr<ArchitecturePerformance>(new EthosU55Performance(this, cfg->perfInfo));
+    _rcsGenerator = std::make_unique<EthosU55RCSGenerator>(this);
 }
 
 
@@ -633,6 +633,7 @@ EthosU55NpuOp ArchEthosU55::GetHWOp(OpType type)
         {OpType::ReduceSum, EthosU55NpuOp::ReduceSum},
         {OpType::Rescale, EthosU55NpuOp::Pooling},
         {OpType::Tile, EthosU55NpuOp::Dma},
+        {OpType::Transpose, EthosU55NpuOp::Compound},
     };
     auto pos = toNpuOp.find(type);
     if ( pos != toNpuOp.end() )
@@ -763,7 +764,7 @@ bool EthosU55OpGroup::CanRunOnNPU(const ArchitectureOpGroupQuery &op)
         return false;
     }
 
-    if ( npuOp == EthosU55NpuOp::None )
+    if ( npuOp == EthosU55NpuOp::None || npuOp > EthosU55NpuOp::Compound )
     {
         return false;
     }
@@ -782,21 +783,6 @@ bool EthosU55OpGroup::CanRunOnNPU(const ArchitectureOpGroupQuery &op)
     if ( k->DepthMultiplier() > 1 )
     {
         return false;
-    }
-
-    switch ( npuOp )
-    {
-        case EthosU55NpuOp::Convolution:
-        case EthosU55NpuOp::Depthwise:
-        case EthosU55NpuOp::VectorProduct:
-        case EthosU55NpuOp::Pooling:
-        case EthosU55NpuOp::ReduceSum:
-        case EthosU55NpuOp::Elementwise:
-        case EthosU55NpuOp::Dma:
-            break;
-        default:
-            assert(false && "Unrecognized HWOp");
-            return false;
     }
 
     // Validate that input/outputs shapes don't overflow
@@ -825,7 +811,8 @@ bool EthosU55OpGroup::CanRunOnNPU(const ArchitectureOpGroupQuery &op)
     // Check allowed ifm/ofm type mapping
     if ( npuOp != EthosU55NpuOp::Elementwise )
     {
-        if ( op.type == OpType::LUT || op.type == OpType::MemoryCopy || op.type == OpType::Rescale || op.type == OpType::Tile )
+        if ( op.type == OpType::LUT || op.type == OpType::MemoryCopy || op.type == OpType::Rescale ||
+             op.type == OpType::Tile || op.type == OpType::Transpose )
         {  // TODO: LUT operations end up here due to UseAvgPoolNop although the rules are not the same as
            // for a Pooling operation, so skip checks for now.
             return true;

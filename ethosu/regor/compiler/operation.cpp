@@ -73,8 +73,7 @@ void Operation::CopyInput(TensorUsage usage, const TensorConnection &tensorConne
     ConnectInput(usage, tensorConnection.tensor)
         .Set(tensorConnection.shape)
         .Set(tensorConnection.slice)
-        .Set(tensorConnection.quantization)
-        .Set(tensorConnection.transpose);
+        .Set(tensorConnection.quantization);
 }
 
 TensorConnection &Operation::ConnectInput(TensorUsage usage, const std::shared_ptr<Tensor> &tensor)
@@ -107,8 +106,7 @@ void Operation::CopyOutput(TensorUsage usage, const TensorConnection &tensorConn
     ConnectOutput(usage, tensorConnection.tensor)
         .Set(tensorConnection.shape)
         .Set(tensorConnection.slice)
-        .Set(tensorConnection.quantization)
-        .Set(tensorConnection.transpose);
+        .Set(tensorConnection.quantization);
 }
 
 TensorConnection &Operation::ConnectOutput(TensorUsage usage, const std::shared_ptr<Tensor> &tensor)

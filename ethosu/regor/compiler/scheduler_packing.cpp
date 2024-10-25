@@ -26,6 +26,7 @@
 #include "operation.hpp"
 #include "scheduler_decompose.hpp"
 #include "scheduler_operation.hpp"
+#include "shape_util.hpp"
 #include "tensor.hpp"
 
 #include <vector>
@@ -416,7 +417,6 @@ void SchedulerPacking::InitSchedulerConnection(
     schedConn->slice = {Shape::PadAxes(conn.slice.offset, 4, 0), Shape::PadAxes(conn.slice.shape, 4, 1)};
     schedConn->shape = Shape::PadAxes(conn.shape, 4, 1);
     schedConn->quantization = conn.quantization;
-    schedConn->transpose = conn.transpose;
     schedConn->reverse = conn.reverse;
     schedConn->resamplingMode = ArchResampling::None;
 }
@@ -479,6 +479,7 @@ std::unique_ptr<SchedulerOperation> SchedulerPacking::MakeSchedulerOperation(Ope
             }
             SchedulerConnection *schedConn = IsOFM(item.first) ? schedOp->AddOutput(item.first) : schedOp->AddInput(item.first);
             InitSchedulerConnection(schedConn, schedTensor, item.second);
+            schedConn->transpose = TransposeType::None;
         }
     }
 
@@ -489,6 +490,12 @@ std::unique_ptr<SchedulerOperation> SchedulerPacking::MakeSchedulerOperation(Ope
         int paddedAxes = schedOp->Output(TensorUsage::OFM)->shape.Size() - op->Output(TensorUsage::OFM)->shape.Size();
         assert(paddedAxes >= 0);
         attr->axis += paddedAxes;
+    }
+    // Update OFM transpose mask if operator has the attribute
+    else if ( schedOp->HasAttribute<transpose_attr_t>() )
+    {
+        auto attr = schedOp->Attribute<transpose_attr_t>();
+        schedOp->OFM()->transpose = TransposeTypeFromShape(attr->perm);
     }
 
     // Examine elementwise and set a primary path for cascading.

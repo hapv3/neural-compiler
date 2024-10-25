@@ -19,6 +19,7 @@
 
 #pragma once
 
+#include "architecture/architecture.hpp"
 #include "compiler/graph.hpp"
 #include "compiler/op_type.hpp"
 #include "compiler/operation.hpp"

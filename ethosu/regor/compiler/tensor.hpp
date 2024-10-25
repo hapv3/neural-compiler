@@ -20,7 +20,6 @@
 
 #include "common/common.hpp"
 
-#include "architecture/architecture.hpp"
 #include "common/buffer_view.hpp"
 #include "common/data_type.hpp"
 #include "common/shape.hpp"

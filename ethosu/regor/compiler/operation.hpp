@@ -73,7 +73,6 @@ struct TensorConnection
     // Reading: Split, SplitV, Unpack, Slice, and StridedSlice
     TensorSlice slice;
     Quantization quantization;
-    TransposeType transpose = TransposeType::None;
     ReverseType reverse = ReverseType::None;
 
     TensorConnection &Set(const Shape &s)
@@ -89,11 +88,6 @@ struct TensorConnection
     TensorConnection &Set(const Quantization &q)
     {
         quantization = q;
-        return *this;
-    }
-    TensorConnection &Set(const TransposeType &t)
-    {
-        transpose = t;
         return *this;
     }
     TensorConnection &Set(const ReverseType &r)

@@ -240,6 +240,9 @@ bool EthosU55RCSGenerator::IsSupportedElementwise(const OpType opType)
 
 EthosU55RCSGenerator::EthosU55RCSGenerator(ArchEthosU55 *arch) : _arch(arch)
 {
+    int slots = (_arch->_shram.bankSizeBytes * _arch->_shram.lutBanks) / _arch->_shram.lutSlotSize;
+    assert(slots);
+    _lutSlots.resize(slots);
 }
 
 
@@ -666,7 +669,7 @@ void EthosU55RCSGenerator::GetJobs(const Box &area, const Shape &jobShape, int n
 }
 
 // Calculates the value for the BLOCKDEP register
-int EthosU55RCSGenerator::CalcBlockDep(HLCStripe *prevStripe, HLCStripe *stripe)
+int EthosU55RCSGenerator::CalcBlockDep(const HLCStripe *prevStripe, const HLCStripe *stripe)
 {
     if ( prevStripe == nullptr )
     {
@@ -686,6 +689,7 @@ int EthosU55RCSGenerator::CalcBlockDep(HLCStripe *prevStripe, HLCStripe *stripe)
     }
 
     int ifmIndex = (op->ifm.size() > 1 && op->ifm[1].address == prevOfm.address && op->ifm[1].memArea == prevOfm.memArea) ? 1 : 0;
+    assert(size_t(ifmIndex) < op->ifm.size());
     const auto &ifm = op->ifm[ifmIndex];
     int maxJobs = _arch->MaxBlockdep();
     if ( ifm.address != prevOfm.address || ifm.memArea != prevOfm.memArea )
@@ -1162,64 +1166,39 @@ void EthosU55RCSGenerator::UpdateMemoryAccesses(const MemoryAccesses &memoryAcce
     }
 }
 
-// Inserts DMA commands for copying LUTs from constant memory
-// to LUT memory
-std::vector<std::unique_ptr<HighLevelCommand>>
-EthosU55RCSGenerator::InsertLUTDMACommands(std::vector<std::unique_ptr<HighLevelCommand>> &cmds)
+// Inserts DMA commands for copying LUTs from constant memory to LUT memory
+void EthosU55RCSGenerator::InsertLUTDMACommand(
+    int index, const HLCStripe *stripe, Temporaries &temps, std::vector<const HighLevelCommand *> &emitted)
 {
-    std::vector<std::unique_ptr<HighLevelCommand>> result;
     int lutSlotSize = _arch->_shram.lutSlotSize;
-    int slots = (_arch->_shram.bankSizeBytes * _arch->_shram.lutBanks) / lutSlotSize;
-    std::vector<LutSlot> lutSlots(slots);
-    int timestamp = 0;
-    result.reserve(cmds.size());
-    for ( auto &hlc : cmds )
-    {
-        ++timestamp;
-        if ( hlc->IsStripe() )
-        {
-            auto stripe = static_cast<HLCStripe *>(hlc.get());
-            auto op = stripe->operation;
-            auto config = static_cast<EthosU55OpConfig *>(op->config);
-            if ( op->type == OpType::LUT || (!op->subOps.empty() && op->subOps[0].type == OpType::LUT) )
-            {
-                const auto &srcTens = op->type == OpType::LUT ? op->parameters.lut : op->subOps[0].parameters.lut;
-                assert(config->_layout.lutStart > 0);
-                assert(srcTens.sizeBytes % lutSlotSize == 0);
-                bool alreadyInLutMem;
-                int sizeInSlots = srcTens.sizeBytes / lutSlotSize;
-                int slot = AllocateLutSlot(lutSlots, op.get(), sizeInSlots, timestamp, alreadyInLutMem);
-                _stripeToLutSlot[stripe] = slot;
+    auto op = stripe->operation;
+    auto config = static_cast<EthosU55OpConfig *>(op->config);
 
-                if ( !alreadyInLutMem )
-                {
-                    auto dma = std::make_unique<HLCDMA>();
-                    dma->srcMemArea = srcTens.memArea;
-                    dma->srcAddress = srcTens.address;
-                    dma->length = srcTens.sizeBytes;
-                    dma->destMemArea = _arch->LUTMemory();
-                    dma->destAddress = _arch->_shram.bankSizeBytes * config->_layout.lutStart + slot * lutSlotSize;
-                    result.push_back(std::move(dma));
-                }
-            }
-            else if ( _arch->_shram.reservedEndBanks == 0 )
-            {
-                // LUT is overwritten by SHRAM accumulator buffers; clear slots
-                for ( auto &slot : lutSlots )
-                {
-                    slot.hlcOp = nullptr;
-                    slot.lastUsed = 0;
-                }
-            }
-        }
-        result.push_back(std::move(hlc));
+    assert(op->type == OpType::LUT || (!op->subOps.empty() && op->subOps[0].type == OpType::LUT));
+
+    const auto &srcTens = op->type == OpType::LUT ? op->parameters.lut : op->subOps[0].parameters.lut;
+    assert(config->_layout.lutStart > 0);
+    assert(srcTens.sizeBytes % lutSlotSize == 0);
+    bool alreadyInLutMem;
+    int sizeInSlots = srcTens.sizeBytes / lutSlotSize;
+    int slot = AllocateLutSlot(_lutSlots, op.get(), sizeInSlots, index, alreadyInLutMem);
+    _stripeToLutSlot[stripe] = slot;
+
+    if ( !alreadyInLutMem )
+    {
+        auto dma = std::make_unique<HLCDMA>();
+        dma->srcMemArea = srcTens.memArea;
+        dma->srcAddress = srcTens.address;
+        dma->length = srcTens.sizeBytes;
+        dma->destMemArea = _arch->LUTMemory();
+        dma->destAddress = _arch->_shram.bankSizeBytes * config->_layout.lutStart + slot * lutSlotSize;
+        emitted.push_back(dma.get());
+        temps.cmds.push_back(std::move(dma));
     }
-    return result;
 }
 
 // Inserts DMA commands to handle TILE operations
-std::vector<std::unique_ptr<HighLevelCommand>>
-EthosU55RCSGenerator::InsertTileDMACommands(std::vector<std::unique_ptr<HighLevelCommand>> &cmds)
+void EthosU55RCSGenerator::InsertTileDMACommand(const HLCStripe *stripe, Temporaries &temps, std::vector<const HighLevelCommand *> &emitted)
 {
     // reshape to 3D-tensor where the width-axis is being tiled
     static auto reshapeFunc = [](Shape &shape, int tiledAxis)
@@ -1240,54 +1219,45 @@ EthosU55RCSGenerator::InsertTileDMACommands(std::vector<std::unique_ptr<HighLeve
         shape = {1, height, shape[tiledAxis], channel};
     };
 
-    std::vector<std::unique_ptr<HighLevelCommand>> result;
-    for ( auto &hlc : cmds )
+    auto op = stripe->operation;
+    assert(op->type == OpType::Tile);
+
+    auto &ifm = op->ifm[0];
+    auto &ofm = op->ofm;
+
+    assert(ifm.format == TensorFormat::NHWC);
+    assert(ofm.format == TensorFormat::NHWC);
+
+    const auto &tileParams = op->parameters.tile;
+
+    reshapeFunc(ifm.shape, tileParams.axis);
+    reshapeFunc(ofm.shape, tileParams.axis);
+
+    int srcOffset = 0;
+    int dstOffset = 0;
+    int elemSize = DataTypeSizeBits(ifm.dataType) / 8;
+    int rowBytes = ifm.shape[2] * ifm.shape[3] * elemSize;
+    // each row in the IFM is copied separately
+    // and duplicated based on the multiplier attribute.
+    for ( int h = 0; h < ifm.shape.Height(); h++ )
     {
-        if ( hlc->IsStripe() )
+        for ( int i = 0; i < tileParams.multiplier; i++ )
         {
-            auto stripe = static_cast<HLCStripe *>(hlc.get());
-            auto op = stripe->operation;
-            if ( op->type == OpType::Tile )
-            {
-                auto &ifm = op->ifm[0];
-                auto &ofm = op->ofm;
-
-                assert(ifm.format == TensorFormat::NHWC);
-                assert(ofm.format == TensorFormat::NHWC);
-
-                const auto &tileParams = op->parameters.tile;
-
-                reshapeFunc(ifm.shape, tileParams.axis);
-                reshapeFunc(ofm.shape, tileParams.axis);
-
-                int srcOffset = 0;
-                int dstOffset = 0;
-                int elemSize = DataTypeSizeBits(ifm.dataType) / 8;
-                int rowBytes = ifm.shape[2] * ifm.shape[3] * elemSize;
-                // each row in the IFM is copied separately
-                // and duplicated based on the multiplier attribute.
-                for ( int h = 0; h < ifm.shape.Height(); h++ )
-                {
-                    for ( int i = 0; i < tileParams.multiplier; i++ )
-                    {
-                        auto dma = std::make_unique<HLCDMA>();
-                        dma->srcMemArea = ifm.memArea;
-                        dma->srcAddress = ifm.address + srcOffset;
-                        dma->length = rowBytes;
-                        dma->destMemArea = ofm.memArea;
-                        dma->destAddress = ofm.address + dstOffset;
-                        result.push_back(std::move(dma));
-                        dstOffset += rowBytes;
-                    }
-                    srcOffset += rowBytes;
-                }
-                continue;
-            }
+            auto dma = std::make_unique<HLCDMA>();
+            dma->srcMemArea = ifm.memArea;
+            dma->srcAddress = ifm.address + srcOffset;
+            dma->length = rowBytes;
+            dma->destMemArea = ofm.memArea;
+            dma->destAddress = ofm.address + dstOffset;
+            emitted.push_back(dma.get());
+            temps.cmds.push_back(std::move(dma));
+            dstOffset += rowBytes;
         }
-        result.push_back(std::move(hlc));
+        srcOffset += rowBytes;
     }
-    return result;
 }
+
+
 
 //----------------------------------------------------------------------
 // Operations
@@ -1385,7 +1355,7 @@ void EthosU55RCSGenerator::GenerateConvolutionOp(const HLCStripe *stripe, Memory
 }
 
 // MaxPool/AvgPool/ResizeBilinear or operations that are mapped to AvgPool
-void EthosU55RCSGenerator::GeneratePoolingOp(HLCStripe *stripe, MemoryAccesses &memoryAccesses)
+void EthosU55RCSGenerator::GeneratePoolingOp(const HLCStripe *stripe, MemoryAccesses &memoryAccesses)
 {
     auto op = stripe->operation.get();
     auto pad = stripe->padding;
@@ -1404,7 +1374,7 @@ void EthosU55RCSGenerator::GeneratePoolingOp(HLCStripe *stripe, MemoryAccesses &
 }
 
 // Elementwise operations
-void EthosU55RCSGenerator::GenerateElementwiseOp(HLCStripe *stripe, MemoryAccesses &memoryAccesses)
+void EthosU55RCSGenerator::GenerateElementwiseOp(const HLCStripe *stripe, MemoryAccesses &memoryAccesses)
 {
     auto op = stripe->operation.get();
     auto opType = op->type;
@@ -1436,19 +1406,23 @@ void EthosU55RCSGenerator::GenerateElementwiseOp(HLCStripe *stripe, MemoryAccess
         auto opToScale = GenerateScalingForElementwise(op, ifmIndex);
         GenerateCommon(stripe, useGlobalScale, opToScale, memoryAccesses, ifmIndex);
         int ifm2Index = 1 - ifmIndex;
-        bool isScalar = IsScalar(op->ifm[ifm2Index], scalarValue);
-        GenerateIFM2(opType, op->ifm[ifm2Index], stripe->ifmAreas[ifm2Index], isScalar, scalarValue);
+        assert(size_t(ifm2Index) < stripe->ifmAreas.size());
+        const HLCFeatureMap &ifm2 = op->ifm.at(ifm2Index);
+        bool isScalar = IsScalar(ifm2, scalarValue);
+        GenerateIFM2(opType, ifm2, stripe->ifmAreas[ifm2Index], isScalar, scalarValue);
         if ( !isScalar )
         {
-            memoryAccesses.push_back(ToMemoryAccess(op->ifm[ifm2Index], stripe->ifmAreas[ifm2Index], AccessDirection::Read));
+            memoryAccesses.push_back(ToMemoryAccess(ifm2, stripe->ifmAreas[ifm2Index], AccessDirection::Read));
         }
-        GenerateIFM2Precision(op->ifm[ifm2Index]);
+        GenerateIFM2Precision(ifm2);
         GenerateIFM2Broadcast(ifmShape, ifm2Shape, reversedOperands, isScalar);
     }
 }
 
-bool EthosU55RCSGenerator::GenerateStripe(HLCStripe *stripe, MemoryAccesses &memoryAccesses)
+bool EthosU55RCSGenerator::GenerateStripe(const HLCStripe *stripe, const HLCStripe *prevStripe, AccessTracking &accesses)
 {
+    MemoryAccesses memoryAccesses;
+
     auto opType = stripe->operation->type;
     EthosU55NpuOp npuOp = ArchEthosU55::GetHWOp(opType);
     if ( npuOp == EthosU55NpuOp::Pooling || npuOp == EthosU55NpuOp::ReduceSum )
@@ -1472,12 +1446,21 @@ bool EthosU55RCSGenerator::GenerateStripe(HLCStripe *stripe, MemoryAccesses &mem
     EthosU55OpConfig *config = static_cast<EthosU55OpConfig *>(stripe->operation->config);
     GenerateBlockConfig(config);
     GenerateShramRegisters(config, stripe->operation->ifm.size() >= 2);
+
+    // BLOCKDEP register tracking
+    int blockdep = CalcBlockDep(prevStripe, stripe);
+    Emit(isa::npu_set_blockdep_t(blockdep));
+    GenerateWaits(false, memoryAccesses, accesses.outstandingDmaAccesses);
+    UpdateMemoryAccesses(memoryAccesses, accesses.outstandingNpuAccesses, accesses.maxOutstandingKernelOps);
+    GenerateOperationCode(stripe->operation->type);
     return true;
 }
 
 // Generates register commands for DMA operations
-void EthosU55RCSGenerator::GenerateDMA(const HLCDMA *dma, MemoryAccesses &memoryAccesses)
+void EthosU55RCSGenerator::GenerateDMA(const HLCDMA *dma, AccessTracking &accesses)
 {
+    MemoryAccesses memoryAccesses;
+
     auto srcRegionMode = dma_region_mode::EXTERNAL;
     auto destRegionMode = dma_region_mode::EXTERNAL;
     if ( dma->destMemArea == _arch->LUTMemory() )
@@ -1492,67 +1475,113 @@ void EthosU55RCSGenerator::GenerateDMA(const HLCDMA *dma, MemoryAccesses &memory
     Emit(isa::npu_set_dma0_dst_region_t(ToRegion(dma->destMemArea), destRegionMode, strideMode));
     Emit(isa::npu_set_dma0_dst_t(dma->destAddress));
     Emit(isa::npu_set_dma0_len_t(dma->length));
+
+    // Track memory accesses
     memoryAccesses.emplace_back(AccessDirection::Read, dma->srcMemArea, dma->srcAddress, dma->srcAddress + dma->length);
     memoryAccesses.emplace_back(AccessDirection::Write, dma->destMemArea, dma->destAddress, dma->destAddress + dma->length);
+    GenerateWaits(false, memoryAccesses, accesses.outstandingDmaAccesses);
+    GenerateWaits(true, memoryAccesses, accesses.outstandingNpuAccesses);
+    UpdateMemoryAccesses(memoryAccesses, accesses.outstandingDmaAccesses, accesses.maxOutstandingDMAOps);
+
+    Emit(isa::npu_op_dma_start_t());
 }
+
+void EthosU55RCSGenerator::PrepareCommand(int index, HighLevelCommand *cmd, Temporaries &temps, std::vector<const HighLevelCommand *> &emitted)
+{
+    emitted.clear();
+
+    if ( cmd->IsStripe() )
+    {
+        HLCStripe *stripe = static_cast<HLCStripe *>(cmd);
+        auto op = stripe->operation;
+        if ( op->type == OpType::Tile )
+        {
+            InsertTileDMACommand(stripe, temps, emitted);
+            return;  // Return early to replace original op
+        }
+        else if ( op->type == OpType::LUT || (!op->subOps.empty() && op->subOps[0].type == OpType::LUT) )
+        {
+            InsertLUTDMACommand(index, stripe, temps, emitted);
+        }
+        else if ( _arch->_shram.reservedEndBanks == 0 )
+        {
+            // LUT is overwritten by SHRAM accumulator buffers; clear slots
+            for ( auto &slot : _lutSlots )
+            {
+                slot.hlcOp = nullptr;
+                slot.lastUsed = 0;
+            }
+        }
+    }
+
+    // Emit original op
+    emitted.push_back(cmd);
+}
+
 
 std::vector<uint32_t> EthosU55RCSGenerator::GenerateCommandStream(std::vector<std::unique_ptr<HighLevelCommand>> &highLevelCommandStream,
     std::vector<std::tuple<void *, int, int>> *cmdRanges, bool verbose)
 {
     _emit.Clear();
     _stripeToLutSlot.clear();
+    // Clear lut slots at start of command stream generation
+    for ( auto &slot : _lutSlots )
+    {
+        slot.hlcOp = nullptr;
+        slot.lastUsed = 0;
+    }
+
     GenerateInitialRegisterSetup();
-    auto cmds = InsertLUTDMACommands(highLevelCommandStream);
-    cmds = InsertTileDMACommands(cmds);
-    std::deque<MemoryAccesses> outstandingDmaAccesses;
-    std::deque<MemoryAccesses> outstandingNpuAccesses;
-    int maxOutstandingDMAOps = _arch->MaxOutstandingDMAOps();
-    int maxOutstandingKernelOps = _arch->MaxOutstandingKernelOps();
-    HLCStripe *prevOp = nullptr;
+
+    AccessTracking accesses;
+    accesses.maxOutstandingDMAOps = _arch->MaxOutstandingDMAOps();
+    accesses.maxOutstandingKernelOps = _arch->MaxOutstandingKernelOps();
+
+    const HLCStripe *prevStripe = nullptr;
     std::vector<std::pair<unsigned, std::string>> debugInfo;
-    for ( auto &hlc : cmds )
+
+    Temporaries temporaries;
+    std::vector<const HighLevelCommand *> emitted(4);
+
+    int cmdIndex = 0;
+    for ( const auto &cmd : highLevelCommandStream )
     {
         int emitStart = _emit.Position();
-        if ( hlc->IsStripe() )
+
+        PrepareCommand(cmdIndex, cmd.get(), temporaries, emitted);
+
+        for ( auto hlc : emitted )
         {
-            MemoryAccesses memoryAccesses;
-            auto stripe = static_cast<HLCStripe *>(hlc.get());
-            if ( verbose )
+            if ( hlc->IsStripe() )
             {
-                debugInfo.emplace_back(emitStart, stripe->operation->ToString());
+                auto stripe = static_cast<const HLCStripe *>(hlc);
+                if ( verbose )
+                {
+                    debugInfo.emplace_back(_emit.Position(), stripe->operation->ToString());
+                }
+                if ( !GenerateStripe(stripe, prevStripe, accesses) )
+                {
+                    return std::vector<uint32_t>();
+                }
+                prevStripe = stripe;
             }
-            if ( !GenerateStripe(stripe, memoryAccesses) )
+            else
             {
-                return std::vector<uint32_t>();
-            }
-            // BLOCKDEP register
-            int blockdep = CalcBlockDep(prevOp, stripe);
-            Emit(isa::npu_set_blockdep_t(blockdep));
-            GenerateWaits(false, memoryAccesses, outstandingDmaAccesses);
-            UpdateMemoryAccesses(memoryAccesses, outstandingNpuAccesses, maxOutstandingKernelOps);
-            GenerateOperationCode(stripe->operation->type);
-            prevOp = stripe;
-            // Return command mapping information to the caller
-            int emitEnd = _emit.Position();
-            if ( cmdRanges )
-            {
-                cmdRanges->emplace_back(stripe->operation->_srcKey, emitStart, emitEnd);
+                auto dma = static_cast<const HLCDMA *>(hlc);
+                if ( verbose )
+                {
+                    debugInfo.emplace_back(_emit.Position(), dma->ToString());
+                }
+                GenerateDMA(dma, accesses);
             }
         }
-        else
+
+        // Return command mapping information to the caller
+        if ( cmdRanges && cmd->IsStripe() )
         {
-            MemoryAccesses dmaAccesses;
-            auto dma = static_cast<HLCDMA *>(hlc.get());
-            if ( verbose )
-            {
-                debugInfo.emplace_back(emitStart, dma->ToString());
-            }
-            GenerateDMA(static_cast<HLCDMA *>(hlc.get()), dmaAccesses);
-            GenerateWaits(false, dmaAccesses, outstandingDmaAccesses);
-            GenerateWaits(true, dmaAccesses, outstandingNpuAccesses);
-            UpdateMemoryAccesses(dmaAccesses, outstandingDmaAccesses, maxOutstandingDMAOps);
-            Emit(isa::npu_op_dma_start_t());
+            cmdRanges->emplace_back(static_cast<HLCStripe *>(cmd.get())->operation->_srcKey, emitStart, _emit.Position());
         }
+        cmdIndex++;
     }
     Emit(isa::npu_op_stop_t(0xFFFF));
     if ( verbose )

@@ -94,7 +94,7 @@ public:
 
     bool LoadTosa(const void *input, size_t size);
     bool LoadTflite(const void *input, size_t size);
-    bool Store(const std::vector<std::unique_ptr<Graph>> &graphs,
+    void Store(const std::vector<std::unique_ptr<Graph>> &graphs,
         const std::vector<std::unordered_map<const Tensor *, Address>> &tensorAddressMaps);
 
     bool Compile();

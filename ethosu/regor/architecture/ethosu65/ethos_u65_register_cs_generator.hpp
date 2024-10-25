@@ -34,10 +34,10 @@ public:
 
 protected:
     // Converts TILE operations to DMA commands
-    std::vector<std::unique_ptr<HighLevelCommand>> InsertTileDMACommands(std::vector<std::unique_ptr<HighLevelCommand>> &cmds) override;
+    void InsertTileDMACommand(const HLCStripe *stripe, Temporaries &temps, std::vector<const HighLevelCommand *> &emitted) override;
 
     // Generate register commands for DMA operations
-    void GenerateDMA(const HLCDMA *dma, MemoryAccesses &memoryAccesses) override;
+    void GenerateDMA(const HLCDMA *dma, AccessTracking &accesses) override;
     void GenerateInitialRegisterSetup() override;
 
 private:

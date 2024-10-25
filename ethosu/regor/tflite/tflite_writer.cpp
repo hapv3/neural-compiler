@@ -20,6 +20,7 @@
 
 #include "common/logging.hpp"
 
+#include "architecture/architecture.hpp"
 #include "flatbuffer_utils.hpp"
 #include "tflite_mapping.hpp"
 
