@@ -295,6 +295,8 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeLargeAxis(int a
             newShape[ax] = std::min(maxSlice, maxIndex - newOffset[ax]);
         }
         assert(newOffset[ax] + newShape[ax] <= maxIndex);
+        newOffset = newOffset.Permute(uint32_t(conn->transpose));
+        newShape = newShape.Permute(uint32_t(conn->transpose));
         return {newOffset, newShape};
     };
 
@@ -963,10 +965,9 @@ static std::vector<std::unique_ptr<SchedulerOperation>> SwapAxes(Architecture *a
         ofmConn->quantization = std::move(unitQuantZp);
         ofmConn->transpose = transposeType;
 
-        result.push_back(std::move(op));
         std::swap(shape[a], shape[b]);
 
-        return result;
+        return DecomposeTranspose(arch, std::move(op));
     }
 
     if ( a == 0 && b == 1 )
@@ -1063,21 +1064,42 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTranspose(Architecture
     std::vector<std::unique_ptr<SchedulerOperation>> result;
     auto ifmConn = op->Input(TensorUsage::IFM);
     auto ofmConn = op->Output(TensorUsage::OFM);
-    const auto attr = op->Attribute<transpose_attr_t>();
-    const auto &perm = attr->perm;
-    const auto axes = attr->perm.Size();
+    const auto &ifmShape = ifmConn->SliceShape();
+    const auto axes = ifmShape.Size();
 
-    // Calculate sort order
-    Shape order(nullptr, axes);
-    for ( int i = 0; i < axes; i++ )
-        order[perm[i]] = i;
+    // We can handle all transpositions in a 3D shape
+    if ( axes < 4 || ifmShape.Elements() == ifmShape.Height() * ifmShape.Width() * ifmShape.Depth() )
+    {
+        for ( int axis = 0; axis < axes; axis++ )
+        {
+            if ( ifmShape[axis] > MAX_DIM )
+            {
+                // Initialize the shapes so that OFM slice is untransposed
+                InitializeSlice(ofmConn->slice, ifmShape.WithZeros(), ifmShape);
+                InitializeSlice(ifmConn->slice, ifmShape.WithZeros(), ifmShape);
 
-    auto shape = ifmConn->shape;
+                // OFM slice will be transposed by DecomposeLargeAxis
+                LOG_TRACE1("DecomposeTranspose: Axis {} is too large ({})\n", axis, ifmShape[axis]);
+                return DecomposeLargeAxis(axis, MAX_DIM, arch, std::move(op), DecomposeTranspose);
+            }
+        }
 
-    LOG_TRACE1("DecomposeTranspose: Initial shape ({})\n", shape.ToString());
+        // No decomposition required
+        result.push_back(std::move(op));
+        return result;
+    }
 
-    // Decompose a transpose peforming a selection sort of the axes. Each swap in the selection sort algorithm expands
-    // to one or more transpose ops.
+    // We can handle TransposeType::None as an elementwise, because it's basically a memory copy
+    if ( ofmConn->transpose == TransposeType::None )
+    {
+        LOG_TRACE1("DecomposeTranspose: Decomposing as elementwise\n");
+        return DecomposeElementwise(arch, std::move(op));
+    }
+
+    assert(ifmConn->slice.offset.IsEmpty() && ifmConn->slice.shape.IsEmpty());
+
+    // Decompose a transpose by peforming a selection sort of the axes. Each swap in the selection sort algorithm
+    // expands to one or more transpose ops.
     //
     // Example:
     //
@@ -1091,6 +1113,21 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTranspose(Architecture
     // Swap 1: Pos 0 <-> Pos 1: [7, 3,  11, 13]
     // Swap 2: Pos 1 <-> Pos 3: [7, 13, 11,  3]
     // Swap 3: Pos 2 <-> Pos 3: [7, 13,  3, 11]
+
+    // Calculate sort order
+    Shape order(nullptr, axes);
+    uint32_t mask = uint32_t(ofmConn->transpose);
+    for ( int i = axes - 1; i >= 0; i-- )
+    {
+        const int pos = axes - 1 - (mask & 0xF);
+        order[pos] = i;
+        mask = mask >> 4;
+    }
+
+    auto shape = ifmConn->shape;
+
+    LOG_TRACE1("DecomposeTranspose: Sort order ({})\n", order.ToString());
+    LOG_TRACE1("DecomposeTranspose: Initial shape ({})\n", shape.ToString());
 
     for ( int axis = 0; axis < axes; axis++ )
     {
@@ -1114,22 +1151,26 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTranspose(Architecture
 
     LOG_TRACE1("DecomposeTranspose: Final shape ({})\n", shape.ToString());
 
-    if ( result.empty() )
-    {
-        // Didn't decompose the op
-        result.push_back(std::move(op));
-    }
-    else
-    {
-        // Adjust to that first is read from the original IFM
-        auto ifm = result.front()->IFM(0);
-        ifm->tensor = ifmConn->tensor;
-        ifm->quantization = ifmConn->quantization;
+    assert(!result.empty());
 
-        // Adjust to that last output is written to the original OFM
-        auto ofm = result.back()->OFM();
-        ofm->tensor = ofmConn->tensor;
-        ofm->quantization = ofmConn->quantization;
+    const auto &firstTensor = result.front()->IFM(0)->tensor;
+    const auto &lastTensor = result.back()->OFM()->tensor;
+    for ( auto &subOp : result )
+    {
+        auto ifm = subOp->IFM(0);
+        auto ofm = subOp->OFM();
+        if ( ifm->tensor == firstTensor )
+        {
+            // Adjust to that first is read from the original IFM
+            ifm->tensor = ifmConn->tensor;
+            ifm->quantization = ifmConn->quantization;
+        }
+        if ( ofm->tensor == lastTensor )
+        {
+            // Adjust to that last output is written to the original OFM
+            ofm->tensor = ofmConn->tensor;
+            ofm->quantization = ofmConn->quantization;
+        }
     }
 
     return result;

@@ -1189,8 +1189,8 @@ Operation *GraphIrOptimiser::RearrangeTranspose(Graph *const graph, Operation *c
 
         ofmConn->transpose = TransposeTypeFromShape(perm);
         attr->perm = perm;
-        ifmConn->shape = Shape::PadAxes(ifmShape, 4, 1);
-        ofmConn->shape = Shape::PadAxes(ofmShape, 4, 1);
+        ifmConn->shape = ifmShape;
+        ofmConn->shape = ofmShape;
     }
 
     return returnOp;
