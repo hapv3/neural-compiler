@@ -159,7 +159,7 @@ accelerator name followed by a hyphen, followed by the number of MACs in the
 configuration.  
 **Type: String**  
 **Default: ethos-u55-256**  
-**Choices: [ethos-u55-32, ethos-u55-64, ethos-u55-128, ethos-u55-256, ethos-u65-256, ethos-u65-512]**  
+**Choices: [ethos-u55-32, ethos-u55-64, ethos-u55-128, ethos-u55-256, ethos-u65-256, ethos-u65-512, ethos-u85-128, ethos-u85-256, ethos-u85-512, ethos-u85-1024, ethos-u85-2048]**  
 
 ```bash
 vela network.tflite --accelerator-config ethos-u55-64
