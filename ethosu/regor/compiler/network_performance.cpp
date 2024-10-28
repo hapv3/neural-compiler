@@ -157,6 +157,8 @@ PerformanceResult NetworkPerformance::Measure(Schedule *schedule, OptimiserDatab
 
         for ( const auto &mem : memories )
         {
+            columns.push_back(mem->Name() + "_read_efficiency");
+            columns.push_back(mem->Name() + "_write_efficiency");
             columns.push_back(mem->Name() + EnumToString(AccessType::Lut) + "_ac");
             columns.push_back(mem->Name() + EnumToString(AccessType::Lut) + "_read");
             columns.push_back(mem->Name() + EnumToString(AccessType::Lut) + "_write");
@@ -370,6 +372,9 @@ void NetworkPerformance::AddToDatabase(const PerformanceResult &perf, SchedulerO
     // clang-format on
     for ( const auto mem : memories )
     {
+        // Add read/write transferEfficiencies for all memories
+        row.push_back(std::to_string(perf.memory.at(mem).readTransferEff));
+        row.push_back(std::to_string(perf.memory.at(mem).writeTransferEff));
         // For all usages, add access read and access write:
         for ( int i = 0; i < int(AccessType::Last); i++ )
         {
@@ -497,16 +502,22 @@ PerformanceResult NetworkPerformance::EstimateFullOpPerformance(
     // OFM write
     auto ofm = schedOp->OFM();
     result.memory[ofm->tensor->memArea.memory].access[AccessType::FeatureMap].bytesWritten += byteAccess.ofmWrite;
+    result.memory[ofm->tensor->memArea.memory]
+        .writeTransferOverhead += byteAccess.ofmWrite - DataTypeSizeBits(ofm->tensor->dataType) / 8 * access.ofmWrite;
 
     // IFM1 read
     auto ifm = schedOp->IFM(0);
     result.memory[ifm->tensor->memArea.memory].access[AccessType::FeatureMap].bytesRead += byteAccess.ifmRead[0];
+    result.memory[ifm->tensor->memArea.memory]
+        .readTransferOverhead += byteAccess.ifmRead[0] - DataTypeSizeBits(ifm->tensor->dataType) / 8 * access.ifmRead[0];
 
     // IFM2 read
     auto ifm2 = schedOp->TryIFM(1);
     if ( ifm2 )
     {
         result.memory[ifm2->tensor->memArea.memory].access[AccessType::FeatureMap].bytesRead += byteAccess.ifmRead[1];
+        result.memory[ifm2->tensor->memArea.memory]
+            .readTransferOverhead += byteAccess.ifmRead[1] - DataTypeSizeBits(ifm2->tensor->dataType) / 8 * access.ifmRead[1];
     }
 
     // Weight read
@@ -527,6 +538,8 @@ PerformanceResult NetworkPerformance::EstimateFullOpPerformance(
     int64_t maxMemCycles = 0;
     for ( auto &[mem, stats] : result.memory )
     {
+        int64_t totalReadBytes = 0;
+        int64_t totalWriteBytes = 0;
         float bandwidth = mem->Bandwidth();
         int64_t memBytes = 0;
         for ( auto &[accType, acc] : stats.access )
@@ -536,10 +549,21 @@ PerformanceResult NetworkPerformance::EstimateFullOpPerformance(
             memBytes += bytes;
             int64_t accCycles = int64_t(float(bytes) / bandwidth);
             acc.accessCycles = accCycles;
+            totalReadBytes += acc.bytesRead;
+            totalWriteBytes += acc.bytesWritten;
         }
         // get maximum cycles per memory
         int64_t memCycles = int64_t(float(memBytes) / bandwidth);
         maxMemCycles = std::max(maxMemCycles, memCycles);
+
+        if ( totalReadBytes > 0 )
+        {
+            stats.readTransferEff = float(totalReadBytes - stats.readTransferOverhead) / totalReadBytes;
+        }
+        if ( totalWriteBytes > 0 )
+        {
+            stats.writeTransferEff = float(totalWriteBytes - stats.writeTransferOverhead) / totalWriteBytes;
+        }
     }
 
     result.totalCycles = std::max(result.npuCycles, maxMemCycles);

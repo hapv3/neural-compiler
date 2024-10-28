@@ -63,6 +63,10 @@ struct PerformanceResult
     {
         std::unordered_map<AccessType, MemoryAccess> access;
         int64_t peakUsage = 0;
+        int64_t readTransferOverhead = 0;
+        int64_t writeTransferOverhead = 0;
+        float readTransferEff = 1;
+        float writeTransferEff = 1;
         int64_t AccessCycles() const
         {
             int64_t cycles = 0;
