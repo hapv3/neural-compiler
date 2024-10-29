@@ -1276,7 +1276,7 @@ Operation *GraphIrOptimiser::RewriteDepthwise(Graph *const graph, Operation *con
 {
     UNUSED(graph);
     Operation *returnOp = operation;
-    if ( operation->Type() == OpType::DepthwiseConv2DBias )
+    if ( operation->Type() == OpType::DepthwiseConv2D )
     {
         const auto ifm = operation->Input(TensorUsage::IFM0);
         const auto ofm = operation->Output(TensorUsage::OFM);

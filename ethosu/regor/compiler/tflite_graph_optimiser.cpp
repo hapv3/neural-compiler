@@ -443,7 +443,7 @@ Operation *TFLiteGraphOptimiser::MakeDepthwiseMeanOp(const TensorConnection *ifm
     std::shared_ptr<Tensor> biasTensor, const Quantization &ifmQuant, const Quantization &weightQuant, const Quantization &ofmQuant)
 {
     auto ifm = ifmConn->tensor;
-    auto op = std::make_shared<Operation>(OpType::DepthwiseConv2DBias);
+    auto op = std::make_shared<Operation>(OpType::DepthwiseConv2D);
     op->SetRounding(ifm->Type() == DataType::Int16 ? RoundMode::NATURAL : RoundMode::DBL);
     op->SetKernel(std::make_unique<Kernel>(Point2i(w, h), Point2i(1, 1), Point2i(1, 1)));
 
@@ -1676,7 +1676,7 @@ Operation *TFLiteGraphOptimiser::RewriteSquaredDifference(Graph *const, Operatio
 Operation *TFLiteGraphOptimiser::RewriteSpaceToBatchConvBatchToSpace(Graph *const, Operation *const operation)
 {
     auto opType = operation->Type();
-    if ( opType == OpType::DepthwiseConv2DBias || opType == OpType::Conv2D )
+    if ( opType == OpType::DepthwiseConv2D || opType == OpType::Conv2D )
     {
         auto prevOp = operation->IFM(0)->Writers().empty() ? nullptr : operation->IFM(0)->Writers().front().get();
         auto nextOp = operation->OFM()->Readers().empty() ? nullptr : operation->OFM()->Readers().front().get();
@@ -1714,12 +1714,12 @@ Operation *TFLiteGraphOptimiser::RewriteSpaceToBatchConvBatchToSpace(Graph *cons
     return operation;
 }
 
-// Fixup Conv2D and DepthwiseConv2DBias to allow dilation greater than 2.
+// Fixup Conv2D and DepthwiseConv2D to allow dilation greater than 2.
 // TODO: Replace with kernel decomposition for supported architectures
 Operation *TFLiteGraphOptimiser::FixupDilationGT2(Graph *const, Operation *const operation)
 {
     auto returnOp = operation;
-    if ( operation->Type() == OpType::Conv2D || operation->Type() == OpType::DepthwiseConv2DBias )
+    if ( operation->Type() == OpType::Conv2D || operation->Type() == OpType::DepthwiseConv2D )
     {
         auto dilation = operation->Kernel()->Dilation();
         // If dilation in either axis is greater than that supported by hardware then we must manually dilate the kernel
@@ -1981,15 +1981,15 @@ Operation *TFLiteGraphOptimiser::ConvertMeanOps(Graph *const, Operation *const o
         // When h x w <= 4096     When h x w > 4096 there is a need to split into several ops.
         //                        Do this by splitting up h and change the read_offset/shape.
         //                        Below is an example where ifm is 1x190x64x1
-        //   MEAN                                           MEAN
-        //     |                      |-----------------------|----------------------|
-        // DepthwiseConv2DBias    1_DepthwiseConv2DBias   2_DepthwiseConv2DBias   3_DepthwiseConv2DBias
-        //     |                      |                       |                     |
-        //    MUL                     |---------ADD-----------|                     |
-        //                                       |                                  |
-        //                                       |----------------ADD---------------|
-        //                                                          |
-        //                                                         MUL
+        //     MEAN                                       MEAN
+        //       |                    +---------------------|---------------------+
+        // DepthwiseConv2D    1_DepthwiseConv2D     2_DepthwiseConv2D     3_DepthwiseConv2D
+        //       |                    |                     |                     |
+        //      MUL                   +---------ADD---------+                     |
+        //                                       |                                |
+        //                                       +--------------ADD---------------+
+        //                                                       |
+        //                                                      MUL
         //       1_DepthwiseConv2DBias: read_offset [0, 0, 0, 0]> read_shape [1,  64, 64, 1]>
         //       2_DepthwiseConv2DBias: read_offset [0, 64, 0, 0]> read_shape [1,  64, 64, 1]>
         //       3_DepthwiseConv2DBias: read_offset [0, 128, 0, 0]> read_shape [1,  62, 64, 1]>

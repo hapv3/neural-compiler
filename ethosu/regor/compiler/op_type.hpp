@@ -34,7 +34,7 @@ enum class OpType : uint16_t
     AvgPool,
     Conv2D,
     Conv3D,
-    DepthwiseConv2DBias,
+    DepthwiseConv2D,
     FullyConnected,
     MatMul,
     MaxPool,
@@ -236,12 +236,12 @@ constexpr inline bool DecomposeAsElementwise(OpType opType)
 
 constexpr inline bool IsDepthwise(OpType opType)
 {
-    return opType == OpType::DepthwiseConv2DBias;
+    return opType == OpType::DepthwiseConv2D;
 }
 
 constexpr inline bool IsConvolution(OpType opType)
 {
-    return opType == OpType::Conv2D || opType == OpType::DepthwiseConv2DBias || opType == OpType::TransposeConv2D;
+    return opType == OpType::Conv2D || opType == OpType::DepthwiseConv2D || opType == OpType::TransposeConv2D;
 }
 
 constexpr inline bool IsPooling(OpType opType)

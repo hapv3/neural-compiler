@@ -45,7 +45,7 @@ static constexpr std::pair<tosa::Op, regor::OpType> s_aTosaMapping[] = {
     {tosa::Op::AVG_POOL2D, OpType::AvgPool},
     {tosa::Op::CONV2D,     OpType::Conv2D},
     {tosa::Op::CONV3D,     OpType::Conv3D},
-    {tosa::Op::DEPTHWISE_CONV2D, OpType::DepthwiseConv2DBias},
+    {tosa::Op::DEPTHWISE_CONV2D, OpType::DepthwiseConv2D},
     {tosa::Op::FULLY_CONNECTED,  OpType::FullyConnected},
     {tosa::Op::MATMUL,     OpType::MatMul},
     {tosa::Op::MAX_POOL2D, OpType::MaxPool},

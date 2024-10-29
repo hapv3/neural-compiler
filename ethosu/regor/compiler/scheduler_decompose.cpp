@@ -198,7 +198,7 @@ bool CanRunOnHardware(Architecture *arch, const SchedulerOperation *schedOp)
 bool CanDecompose(Architecture *, const SchedulerOperation *schedOp)
 {
     if ( schedOp->Type() == OpType::Conv2D ) return true;
-    if ( schedOp->Type() == OpType::DepthwiseConv2DBias ) return true;
+    if ( schedOp->Type() == OpType::DepthwiseConv2D ) return true;
     if ( schedOp->Type() == OpType::TransposeConv2D ) return true;
     if ( DecomposeAsElementwise(schedOp->Type()) || schedOp->Type() == OpType::MemoryCopy ) return true;
     if ( schedOp->Type() == OpType::MatMul ) return true;

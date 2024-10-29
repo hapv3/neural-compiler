@@ -2704,7 +2704,7 @@ void ValidateOperator_Version_0_60_0_Profile_BI(const GraphApi::GraphOperation *
         case regor::OpType::Conv3D:
             ValidateOperator_CONV3D(op, context);
             break;
-        case regor::OpType::DepthwiseConv2DBias:
+        case regor::OpType::DepthwiseConv2D:
             ValidateOperator_DEPTHWISE_CONV2D(op, context);
             break;
         case regor::OpType::FullyConnected:

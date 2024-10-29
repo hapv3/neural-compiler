@@ -502,7 +502,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> SchedulerPacking::DecomposeSche
         case OpType::Conv2D:
             result = DecomposeConv2D(_arch, std::move(op));
             break;
-        case OpType::DepthwiseConv2DBias:
+        case OpType::DepthwiseConv2D:
             result = DecomposeDepthwiseConv2D(_arch, std::move(op));
             break;
         case OpType::TransposeConv2D:

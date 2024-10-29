@@ -223,7 +223,7 @@ void ErrorIfCheck_2vhj6e48eyzlr(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "ERROR_IF(OH != idiv_check(IH - 1 + pad_top + pad_bottom - (KH - 1) * dilation_y, stride_y) + 1)";
     auto IH = op->Input(TensorUsage::IFM)->shape.Height();
     int WeightHeightIndex =
-        (op->Type() == regor::OpType::DepthwiseConv2DBias) ?
+        (op->Type() == regor::OpType::DepthwiseConv2D) ?
             0 :
         (op->Type() == regor::OpType::Conv3D) ?
             2 :
@@ -252,7 +252,7 @@ void ErrorIfCheck_147wc580l2tik(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "ERROR_IF(OW != idiv_check(IW - 1 + pad_left + pad_right - (KW - 1) * dilation_x, stride_x) + 1)";
     auto IW = op->Input(TensorUsage::IFM)->shape.Width();
     int WeightWitdhIndex =
-        (op->Type() == regor::OpType::DepthwiseConv2DBias) ?
+        (op->Type() == regor::OpType::DepthwiseConv2D) ?
             1 :
         (op->Type() == regor::OpType::Conv3D) ?
             3 :

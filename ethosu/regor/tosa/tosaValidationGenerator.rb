@@ -25,7 +25,7 @@ REGOR_OP_NAMES = {
   'AVG_POOL2D': 'OpType::AvgPool',
   'CONV2D':   'OpType::Conv2D',
   'CONV3D':   'OpType::Conv3D',
-  'DEPTHWISE_CONV2D': 'OpType::DepthwiseConv2DBias',
+  'DEPTHWISE_CONV2D': 'OpType::DepthwiseConv2D',
   'FULLY_CONNECTED': 'OpType::FullyConnected',
   'MATMUL':   'OpType::MatMul',
   'MAX_POOL2D': 'OpType::MaxPool',
