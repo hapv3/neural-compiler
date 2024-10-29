@@ -142,10 +142,12 @@ public:
     PerformanceResult Measure(Schedule *schedule, OptimiserDatabase *optDb);
 
 private:
+    PerformanceResult ProcessOpPerformance(SchedulerOperation *schedOp, SchedulerOpInfo *cost, Schedule *schedule,
+        SchedulerOperation *prevOp, SchedulerOpInfo *prevCost, const std::unordered_set<ArchitectureMemory *> &memories);
     PerformanceResult EstimateFullOpPerformance(
         SchedulerOperation *schedOp, SchedulerOpInfo *cost, SchedulerOperation *prevOp, SchedulerOpInfo *prevCost);
-    void AddToDatabase(const PerformanceResult &perf, const std::unique_ptr<SchedulerOperation> &schedOp, int opTable,
-        int columns, const std::unordered_set<ArchitectureMemory *> &memories, OptimiserDatabase *optDb);
+    void AddToDatabase(const PerformanceResult &perf, SchedulerOperation *schedOp, int opTable, int columns,
+        const std::unordered_set<ArchitectureMemory *> &memories, OptimiserDatabase *optDb);
 };
 
 

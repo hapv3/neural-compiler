@@ -77,51 +77,44 @@ PerformanceResult NetworkPerformance::Measure(Schedule *schedule, OptimiserDatab
         opTableColumnCount = int(columns.size());
     }
 
-    // TODO MLBEDSW-7954 handle sub-operations
     for ( auto const &schedOp : _ops )
     {
         SchedulerOpInfo *cost = schedule->Cost(schedOp.get());
-        PerformanceResult perf = {};
-        if ( schedOp->IsNpuOp() )
+        PerformanceResult perf = ProcessOpPerformance(schedOp.get(), cost, schedule, prevOp, prevCost, memories);
+        // Calculate total original and encoded weights
+        // Weight statistics is not set on a per-operation level as some operations share weight tensors
+        SchedulerConnection *weightConn = schedOp->TryInput(TensorUsage::Weights);
+        if ( weightConn && cost->npuWeightsTensor )
         {
-            perf = EstimateFullOpPerformance(schedOp.get(), cost, prevOp, prevCost);
-            perf.npuOps = 1;
-            perf.memory[_arch->StagingMemory().memory].peakUsage = schedule->MemoryUsageAt(cost->timeIndex);
-
-            // Calculate total original and encoded weights
-            // Weight statistics is not set on a per-operation level as some operations share weight tensors
-            SchedulerConnection *weightConn = schedOp->TryInput(TensorUsage::Weights);
-            if ( weightConn && cost->npuWeightsTensor )
+            // check if the weight tensor has already been accounted for in total weights
+            auto pos = tensorUids.find(weightConn->tensor->uid);
+            if ( pos == std::end(tensorUids) )
             {
-                // check if the weight tensor has already been accounted for in total weights
-                auto pos = tensorUids.find(weightConn->tensor->uid);
-                if ( pos == std::end(tensorUids) )
-                {
-                    tensorUids.insert(weightConn->tensor->uid);
-                    performance.originalWeights += weightConn->tensor->AllocationSizeBytes();
-                    performance.encodedWeights += cost->npuWeightsTensor->totalWeightBytes;
-                }
+                tensorUids.insert(weightConn->tensor->uid);
+                performance.originalWeights += weightConn->tensor->AllocationSizeBytes();
+                performance.encodedWeights += cost->npuWeightsTensor->totalWeightBytes;
             }
         }
-        else
-        {
-            perf.cpuCycles = 1;  // TODO: model CPU cycle counts
-            perf.cpuOps = 1;
-        }
-        // Insert any missing memories
-        for ( ArchitectureMemory *a : memories )
-        {
-            perf.memory.emplace(a, PerformanceResult::MemoryAccesses{});
-        }
-
         if ( optDb != nullptr )
         {
-            AddToDatabase(perf, schedOp, opTable, opTableColumnCount, memories, optDb);
+            AddToDatabase(perf, schedOp.get(), opTable, opTableColumnCount, memories, optDb);
         }
-
         performance += perf;
         prevOp = schedOp.get();
         prevCost = cost;
+
+        for ( auto const &subOp : schedOp->_subOps )
+        {
+            cost = schedule->Cost(subOp.get());
+            perf = ProcessOpPerformance(subOp.get(), cost, schedule, prevOp, prevCost, memories);
+            if ( optDb != nullptr )
+            {
+                AddToDatabase(perf, subOp.get(), opTable, opTableColumnCount, memories, optDb);
+            }
+            performance += perf;
+            prevOp = subOp.get();
+            prevCost = cost;
+        }
     }
     // TODO: Remove this line and separate memory allocation from usage.
     performance.memory[_arch->StagingMemory().memory].peakUsage = 0;
@@ -137,8 +130,33 @@ PerformanceResult NetworkPerformance::Measure(Schedule *schedule, OptimiserDatab
     return performance;
 }
 
-void NetworkPerformance::AddToDatabase(const PerformanceResult &perf, const std::unique_ptr<SchedulerOperation> &schedOp,
-    int opTable, int /*opTableColumnCount*/, const std::unordered_set<ArchitectureMemory *> &memories, OptimiserDatabase *optDb)
+
+PerformanceResult NetworkPerformance::ProcessOpPerformance(SchedulerOperation *schedOp, SchedulerOpInfo *cost, Schedule *schedule,
+    SchedulerOperation *prevOp, SchedulerOpInfo *prevCost, const std::unordered_set<ArchitectureMemory *> &memories)
+{
+    PerformanceResult perf = {};
+    if ( schedOp->IsNpuOp() )
+    {
+        perf = EstimateFullOpPerformance(schedOp, cost, prevOp, prevCost);
+        perf.npuOps = 1;
+        perf.memory[_arch->StagingMemory().memory].peakUsage = schedule->MemoryUsageAt(cost->timeIndex);
+    }
+    else
+    {
+        perf.cpuCycles = 1;  // TODO: model CPU cycle counts
+        perf.cpuOps = 1;
+    }
+    // Insert any missing memories
+    for ( ArchitectureMemory *a : memories )
+    {
+        perf.memory.emplace(a, PerformanceResult::MemoryAccesses{});
+    }
+    return perf;
+}
+
+
+void NetworkPerformance::AddToDatabase(const PerformanceResult &perf, SchedulerOperation *schedOp, int opTable,
+    int /*opTableColumnCount*/, const std::unordered_set<ArchitectureMemory *> &memories, OptimiserDatabase *optDb)
 {
     // Per-layer calculations
     assert(optDb != nullptr);
