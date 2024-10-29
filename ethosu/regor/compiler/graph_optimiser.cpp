@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -280,10 +280,11 @@ int OptimiserDatabase::OptimisedId(const void *op)
 
 int OptimiserDatabase::SourceOp(const Operation *op, int ext_key)
 {
-    auto pos = _source.find(op);
-    if ( pos != _source.end() )
+    // Op may be a source op or originate from optimised ops in previous graph optimisation pass
+    auto id = SourceId(op);
+    if ( id != 0 )
     {
-        return pos->second;
+        return id;
     }
     _sourceId++;
     _source.emplace(op, _sourceId);
