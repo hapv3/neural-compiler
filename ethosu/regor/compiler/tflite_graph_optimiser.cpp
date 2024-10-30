@@ -1749,8 +1749,6 @@ Operation *TFLiteGraphOptimiser::FixupDilationGT2(Graph *const, Operation *const
             // Width and depth stride same for original and new kernel
             auto strideC = 1;
             auto strideW = weightShape.Depth();
-            auto origStrideH = strideW * origKernelSize.x;
-            auto origStrideO = origStrideH * origKernelSize.y;
             auto newStrideH = strideW * dilatedKernelSize.x;
             auto newStrideO = newStrideH * dilatedKernelSize.y;
 
@@ -1763,9 +1761,9 @@ Operation *TFLiteGraphOptimiser::FixupDilationGT2(Graph *const, Operation *const
                     {
                         for ( int c = 0; c < weightShape.Depth(); c++ )
                         {
-                            auto origKernelIdx = c * strideC + w * strideW + h * origStrideH + oc * origStrideO;
                             auto newKernelIdx = c * strideC + w * strideW * manualDilationW + h * newStrideH * manualDilationH + oc * newStrideO;
-                            newKernelVals[newKernelIdx] = weights[origKernelIdx];
+                            assert(newKernelIdx >= 0 && newKernelIdx < newKernelBufferSize);
+                            newKernelVals[newKernelIdx] = weights[{oc, h, w, c}];
                         }
                     }
                 }
