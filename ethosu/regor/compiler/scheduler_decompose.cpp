@@ -821,11 +821,11 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
     const auto &ifmShape = ifmConn->SliceShape();
     const auto &weightsShape = weightsConn->shape;
     const auto &biasShape = biasConn->shape;
-    const int depthMultiplier = weightsShape.Depth();
     auto &ofmSlice = ofmConn->slice;
     auto &ifmSlice = ifmConn->slice;
     auto *kernel = op->Kernel();
     auto &padding = kernel->Padding();
+    const int depthMultiplier = kernel->DepthMultiplier();
     ofmSlice.Initialize(ofmShape.WithZeros(), ofmShape);
     ifmSlice.Initialize(ifmShape.WithZeros().WithHW(-padding.Top(), -padding.Left()), ifmShape);
 
@@ -842,16 +842,45 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
         transposedOfm->equivalenceId = GenerateUniqueId();
         transposedOfm->consumers.clear();
         transposedOfm->producers.clear();
+
+        // Copies quantization information and slices channels
+        auto constexpr SliceQ = [](const Quantization &quantization, int offset, int step) -> Quantization
+        {
+            assert(offset >= 0);
+            assert(step > 0);
+            Quantization ret = quantization;
+            if ( quantization.scales.size() > 1 )
+            {
+                ret.scales.clear();
+                for ( size_t i = offset; i < quantization.scales.size(); i += step )
+                {
+                    ret.scales.push_back(quantization.scales[i]);
+                }
+            }
+            if ( quantization.zeroPoints.size() > 1 )
+            {
+                ret.zeroPoints.clear();
+                for ( size_t i = offset; i < quantization.zeroPoints.size(); i += step )
+                {
+                    ret.zeroPoints.push_back(quantization.zeroPoints[i]);
+                }
+            }
+            return ret;
+        };
+
         for ( int multiplier = 0; multiplier < depthMultiplier; multiplier++ )
         {
             auto newKernel = kernel->WithDepthMultiplier(1);
             auto subOp = MakeSubOperation(op.get(), &newKernel);
-            auto subWeightsShape = weightsShape.WithDepth(1);
+            auto subWeightsReadShape = Shape(kernel->Size().y, kernel->Size().x, subOfmDepth, depthMultiplier);
+            auto subWeightsShape = subWeightsReadShape.WithDepth(1);
             auto subWeightOffset = weightsShape.WithZeros().WithDepth(multiplier);
             auto subWeightsConn = subOp->Input(TensorUsage::Weights);
-            subWeightsConn->tensor = Slice(weightsConn->tensor.get(), subWeightOffset, subWeightsShape);
+            subWeightsConn->tensor = Slice(weightsConn->tensor.get(), subWeightOffset, subWeightsShape, subWeightsReadShape);
+            subWeightsConn->tensor->srcTensor->SetAxisOrder(AxisOrder::HWCM);
             subWeightsConn->tensor->consumers.push_back(subOp.get());
             subWeightsConn->shape = subWeightsShape;
+            subWeightsConn->quantization = SliceQ(subWeightsConn->quantization, multiplier, depthMultiplier);
             if ( biasShape.Depth() > 1 )
             {
                 auto subBiasReadShape = Shape(subOfmDepth, depthMultiplier);
@@ -862,6 +891,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
                 subBiasConn->tensor->bufferView = subBiasConn->tensor->bufferView.Reshape({subOfmDepth});
                 subBiasConn->tensor->consumers.push_back(subOp.get());
                 subBiasConn->shape = biasShape.WithDepth(subOfmDepth);
+                subBiasConn->quantization = SliceQ(subBiasConn->quantization, multiplier, depthMultiplier);
             }
             auto subOfmConn = subOp->Output(TensorUsage::OFM);
             subOfmConn->tensor = transposedOfm;
