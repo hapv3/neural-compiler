@@ -51,20 +51,17 @@ Tensor *GraphIrOptimiser::ConvertBool8Tensors(Graph *graph, Tensor *tensor)
         if ( tensor->IsConstant() )
         {
             const auto oldView = tensor->View();
-            const auto oldValues = oldView.Values<int8_t>();
+            const auto oldValues = oldView.RawData<int8_t>();
             const auto size = oldView.Buffer()->Size();
 
             // Replace this tensor's buffer with a new buffer since we don't know if the current buffer is writable
-            auto newBuffer = std::make_shared<Buffer>(std::make_unique<uint8_t[]>(size), size);
-            tensor->SetBuffer(newBuffer);
-            auto view = tensor->View();
-            auto &shape = view.ViewShape();
-            auto values = view.WritableValues<int8_t>();
-            for ( int i = 0; i < shape.Elements(); i++ )
+            auto newValues = std::make_unique<uint8_t[]>(size);
+            for ( int i = 0; i < size; i++ )
             {
                 // Convert each element to the internal representation -1 (true) and 0 (false)
-                values[i] = oldValues[i] == 0 ? 0 : -1;
+                newValues[i] = oldValues[i] == 0 ? 0 : -1;
             }
+            tensor->SetBuffer(std::make_shared<Buffer>(std::move(newValues), size));
         }
         else if ( graph->IsInput(tensor) )
         {
