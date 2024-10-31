@@ -1609,15 +1609,16 @@ void Scheduler::ApplySchedule(Schedule *schedule)
             auto pos = cascadeInfo.buffers.find(*schedOp);
             if ( pos != cascadeInfo.buffers.end() )
             {
-                auto bufferTensor = schedOp->IFM(schedOp->PrimaryIfmIndex())->tensor.get();
+                auto ifmConn = schedOp->IFM(schedOp->PrimaryIfmIndex());
+                auto bufferTensor = ifmConn->tensor.get();
                 // Apply memory area
                 bufferTensor->memArea = _arch->StagingMemory();
                 // Apply rolling buffer dimensions
                 Shape bufferShape = pos->second.shape;
                 assert(!bufferTensor->needsLinearFormat);
                 bufferTensor->format = idealFormat;
-                assert(bufferShape.Width() == bufferTensor->storageShape.Width() && "Only y-striping implemented");
-                bufferTensor->storageShape = bufferTensor->storageShape.WithHW(bufferShape.Height(), bufferShape.Width());
+                assert(bufferShape.Width() == ifmConn->shape.Width() && "Only y-striping implemented");
+                bufferTensor->storageShape = ifmConn->shape.WithHW(bufferShape.Height(), bufferShape.Width());
             }
         }
     }
