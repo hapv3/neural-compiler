@@ -851,8 +851,10 @@ void EthosU55RCSGenerator::GenerateActivation(const HLCStripe *stripe, MemoryAcc
         Address lutStart = Address(layout.lutStart) * _arch->_shram.bankSizeBytes + tableIndex * _arch->_shram.lutSlotSize;
         memoryAccesses.emplace_back(AccessDirection::Read, _arch->LUTMemory(), lutStart, lutStart + lutParams.sizeBytes);
     }
-    assert(quantizedMin <= std::numeric_limits<int16_t>::max());
-    assert(quantizedMax <= std::numeric_limits<int16_t>::max());
+    assert(quantizedMin <= std::numeric_limits<uint16_t>::max());
+    assert(quantizedMin >= std::numeric_limits<int16_t>::min());
+    assert(quantizedMax <= std::numeric_limits<uint16_t>::max());
+    assert(quantizedMax >= std::numeric_limits<int16_t>::min());
     Emit(isa::npu_set_activation_t(act, clipRange));
     Emit(isa::npu_set_activation_min_t(uint32_t(quantizedMin)));
     Emit(isa::npu_set_activation_max_t(uint32_t(quantizedMax)));
