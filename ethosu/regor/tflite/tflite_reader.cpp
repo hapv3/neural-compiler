@@ -941,6 +941,7 @@ ExecutionQuery TfLiteReader::OperationToExecQuery(const Operation &operation)
     query.ifmShape = operation.Input(TensorUsage::IFM0)->shape;
     if ( operation.Input(TensorUsage::IFM1) )
     {
+        query.ifm2Type = operation.Input(TensorUsage::IFM1)->tensor->Type();
         query.ifm2Shape = operation.Input(TensorUsage::IFM1)->shape;
     }
     query.ofmShape = operation.Output(TensorUsage::OFM)->shape;

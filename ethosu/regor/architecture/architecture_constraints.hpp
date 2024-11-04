@@ -68,6 +68,7 @@ struct ExecutionQuery
     OpType opType;
     OpType targetType;
     DataType ifmType;
+    DataType ifm2Type;
     Shape ifmShape;
     Shape ifm2Shape;
     Shape ofmShape;
@@ -99,6 +100,11 @@ public:
     bool CanExecute(const ExecutionQuery &query)
     {
         bool valid = true;
+        if ( IsFloat(query.ifmType | query.ifm2Type | query.ofmType) )
+        {
+            return false;
+        }
+
         switch ( query.opType )
         {
             case OpType::MatMul:
