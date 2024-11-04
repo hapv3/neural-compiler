@@ -87,18 +87,24 @@ std::unique_ptr<IWeightEncodingConfig> EthosU55WeightEncoder::GetEncodingConfig(
     params->ifmType = ifmType;
     params->dilation = kernel->Dilation();
 
-    assert(!weights.isScales);
-    Shape ohwiStrides = weights.view->StrideBytes() * 8 / DataTypeSizeBits(weights.type);
-    if ( weights.axisOrder == AxisOrder::IHWO )
+    if ( !weights.isScales )
     {
-        ohwiStrides = ohwiStrides.Extract(3, 1, 2, 0);
+        Shape ohwiStrides = weights.view->StrideBytes() * 8 / DataTypeSizeBits(weights.type);
+        if ( weights.axisOrder == AxisOrder::IHWO )
+        {
+            ohwiStrides = ohwiStrides.Extract(3, 1, 2, 0);
+        }
+        else if ( weights.axisOrder == AxisOrder::HWCM )
+        {
+            ohwiStrides = ohwiStrides.Extract(2, 0, 1, 3);
+        }
+        params->ohwiStrides = std::move(ohwiStrides);
+        params->ohwiStrides[0] = params->ohwiStrides[0] * _arch->_cores;
     }
-    else if ( weights.axisOrder == AxisOrder::HWCM )
+    else
     {
-        ohwiStrides = ohwiStrides.Extract(2, 0, 1, 3);
+        params->ohwiStrides = Shape{nullptr, 4, 0};
     }
-    params->ohwiStrides = std::move(ohwiStrides);
-    params->ohwiStrides[0] = params->ohwiStrides[0] * _arch->_cores;
     params->Rehash();
 
     return params;
@@ -395,7 +401,7 @@ public:
         for ( int i = 0; i < count; i++ )
         {
             int index = _biasIndex + (i * _streams);
-            *biasBuffer++ = _buffer[index % _bufferSize];
+            *biasBuffer++ = _buffer ? static_cast<int64_t>(_buffer[index % _bufferSize]) : 0;
             *quantBuffer++ = _quantization.scales[index % scaleSize];
             _biasCount--;
         }
