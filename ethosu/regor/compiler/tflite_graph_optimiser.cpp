@@ -2705,12 +2705,14 @@ Operation *TFLiteGraphOptimiser::ConvertPad(Graph *const graph, Operation *const
         assert(paramsConn->tensor->Type() == DataType::Int64);
         padValues = paramsConn->tensor->View().Values<int64_t, int>();
     }
-    int top = padValues[2];
-    int bottom = padValues[3];
-    int left = padValues[4];
-    int right = padValues[5];
-    int near = padValues[6];
-    int far = padValues[7];
+    auto pads = paramsConn->tensor->View().Elements();
+    auto padValue = [&](int index) { return (pads > index) ? padValues[index] : 0; };
+    int top = padValue(2);
+    int bottom = padValue(3);
+    int left = padValue(4);
+    int right = padValue(5);
+    int near = padValue(6);
+    int far = padValue(7);
 
     // Create MemoryCopy op that copies IFM to the right place inside the OFM
     Shape shp0 = ofmShape.WithZeros();
