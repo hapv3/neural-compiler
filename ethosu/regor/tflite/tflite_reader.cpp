@@ -570,12 +570,11 @@ void TfLiteReader::ParseOperatorOptions(const std::shared_ptr<Operation> &operat
 
         case tflite::BuiltinOptions::ReshapeOptions:
         {
-            const auto options = GetBuiltinOptions<tflite::ReshapeOptions>(tflite_operator);
             const auto conn = operation->Input(TensorUsage::Params);
-
             if ( conn == nullptr )
             {
-                auto new_shape = options->new_shape();
+                const auto options = tflite_operator->builtin_options_as<tflite::ReshapeOptions>();
+                auto new_shape = options ? options->new_shape() : nullptr;
                 if ( new_shape )
                 {
                     // New shape specified as option. Convert to input tensor.
@@ -585,10 +584,6 @@ void TfLiteReader::ParseOperatorOptions(const std::shared_ptr<Operation> &operat
                     int buffer_size = int(new_shape->size() * (sizeof(int32_t) / sizeof(uint8_t)));
                     tensor->SetBuffer(std::make_shared<Buffer>(buffer_size, buffer_base, true));
                     operation->ConnectInput(TensorUsage::Params, tensor);
-                }
-                else
-                {
-                    operation->SetPassthroughOp();
                 }
             }
         }
