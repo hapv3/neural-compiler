@@ -55,24 +55,9 @@ constexpr uint16_t OpCode(uint64_t cmd)
 }
 }  // namespace
 
-void EthosU85Emitter::StartChaining()
-{
-    // The following commands need to be reset before starting a chain
-    static const std::array<uint16_t, 4> resetCmds = {
-        OpCode(isa::npu_set_ifm_precision_t()),
-        OpCode(isa::npu_set_ifm2_precision_t()),
-        OpCode(isa::npu_set_ifm_zero_point_t()),
-        OpCode(isa::npu_set_ifm2_zero_point_t()),
-    };
-    for ( auto cmd : resetCmds )
-    {
-        _registers.erase(cmd);
-    }
-}
-
 void EthosU85Emitter::ClearChainingRegisters()
 {
-    // The following commands need to be reset after any operation with a chained OFM
+    // The following commands need to be reset before and after any chained operation
     static const std::array<uint16_t, 27> resetCmds = {
         OpCode(isa::npu_set_ifm_precision_t()),
         OpCode(isa::npu_set_ifm_base0_t()),
@@ -2031,7 +2016,7 @@ bool EthosU85RCSGenerator::GenerateOpGroup(HLCStripe *stripe, HLCStripe *prevOp,
     int blockdep = 0;
     if ( isChained )
     {
-        _emit.StartChaining();
+        _emit.ClearChainingRegisters();
         // TODO MLBEDSW-9162: calculate block-dependency for chained operations
     }
     else

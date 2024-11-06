@@ -40,7 +40,6 @@ public:
     int Position() const { return int(_stream.size()); }
     const std::vector<uint32_t> &CommandStream() const { return _stream; }
     void ClearChainingRegisters();
-    void StartChaining();
 
 private:
     bool SetRegister(uint16_t reg, uint64_t value);
