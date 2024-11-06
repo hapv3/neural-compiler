@@ -659,7 +659,7 @@ DecomposeForStrides(Architecture *arch, std::unique_ptr<SchedulerOperation> op, 
 {
     std::vector<std::unique_ptr<SchedulerOperation>> result;
 
-    auto *weightsConn = op->Input(TensorUsage::Weights);
+    auto *weightsConn = op->TryInput(TensorUsage::Weights);
     auto *ofmConn = op->Output(TensorUsage::OFM);
     auto *ifmConn = op->Input(TensorUsage::IFM);
     auto *kernel = op->Kernel();
@@ -750,10 +750,13 @@ DecomposeForStrides(Architecture *arch, std::unique_ptr<SchedulerOperation> op, 
             // TODO: MLBEDSW-9861
             // We are creating many identical weight slices here, need to add caching unless we implement
             // TensorConnection slice support for weights, MLBEDSW-9267
-            regor::TensorSlice weightSlice;
-            weightSlice
-                .offset = weightsConn->SliceShape().WithZeros().WithHeight(weightOffsetXY.y).WithWidth(weightOffsetXY.x);
-            weightSlice.shape = weightsConn->SliceShape().WithHeight(newHeight).WithWidth(newWidth);
+            TensorSlice weightSlice;
+            if ( weightsConn )
+            {
+                weightSlice.offset =
+                    weightsConn->SliceShape().WithZeros().WithHeight(weightOffsetXY.y).WithWidth(weightOffsetXY.x);
+                weightSlice.shape = weightsConn->SliceShape().WithHeight(newHeight).WithWidth(newWidth);
+            }
             auto weightStepXY = Point2i{SX, SY};
             auto newKernel = kernel->WithStride({1, 1}).WithSize({newWidth, newHeight});
             std::unique_ptr<SchedulerOperation> subOp = MakeSubOperation(op.get(), &newKernel);
@@ -761,7 +764,7 @@ DecomposeForStrides(Architecture *arch, std::unique_ptr<SchedulerOperation> op, 
             auto *subIfmConn = subOp->Input(TensorUsage::IFM);
             subIfmConn->slice = std::move(newIfmSlice);
             subIfmConn->stepXY = ifmStrides;
-            if ( weightSlice.offset.Elements() > 0 || weightSlice.shape < weightsConn->SliceShape() )
+            if ( weightsConn && ((weightSlice.offset.WH<int>() != Point2i(0, 0)) || weightSlice.shape < weightsConn->SliceShape()) )
             {
                 auto *subWeightsConn = subOp->Input(TensorUsage::Weights);
                 subWeightsConn->tensor = Slice(weightsConn->tensor.get(), weightSlice.offset, weightSlice.shape, {}, weightStepXY);
@@ -1869,7 +1872,23 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMaxPool(Architecture *
         result.emplace_back(std::move(op));
         return result;
     }
-    // Decomposition for large dimensions & strides is needed here.
+    try
+    {
+        if ( auto newBlockShape = NewOfmBlockShape(arch, op.get()) )
+        {
+            return DecomposeBlocks(arch, std::move(op), newBlockShape, DecomposeMaxPool);
+        }
+    }
+    catch ( const DecompositionFailure & )
+    {
+        UpdatePaddingAndIfmOffset(op.get());
+        result.emplace_back(std::move(op));
+        return result;
+    }
+    if ( arch->Constraints()->SupportsAccumulatorSaveRestore() && op->Kernel()->Stride().AreaXY() > 1 )
+    {
+        return DecomposeForStrides(arch, std::move(op), DecomposeMaxPool);
+    }
     // If we get here, decomposition has failed, the resulting operations will be executed on CPU
     UpdatePaddingAndIfmOffset(op.get());
     result.emplace_back(std::move(op));
