@@ -746,11 +746,11 @@ std::unique_ptr<IVolumeScaleSource> EthosU85WeightEncoder::GetScaleSource(
 }
 
 Quantization EthosU85WeightEncoder::MakeExplicit(const Quantization &ifmQ, const Quantization &weightQ,
-    const Quantization &ofmQ, DataType scaleType, DataType ifmType)
+    const Quantization &ofmQ, DataType scaleType, DataType ifmType, OpType opType)
 {
     if ( DataTypeSizeBits(ifmType) == 16 ) ifmType = DataType::Int16;
 
-    return ethosU85Scaling::RescalePerChannel(ifmQ, weightQ, ofmQ, scaleType, ifmType);
+    return RescalePerChannel(ifmQ, weightQ, ofmQ, scaleType, ifmType, opType);
 }
 
 

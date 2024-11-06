@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -19,6 +19,7 @@
 #include "ethos_u_scaling.hpp"
 
 #include "common/numeric_util.hpp"
+#include "compiler/quantization.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -64,6 +65,54 @@ void SimplifiedElementwiseAddSubScale(double input1Scale, double input2Scale, do
     input2Rescale = input2Scale * f / m;
     double outputRescale = m / (outputScale * f);
     outScale = QuantizedScale(outputRescale);
+}
+
+Quantization RescalePerChannel(const Quantization &ifmQuant, const Quantization &weightQuant,
+    const Quantization &ofmQuant, const DataType scaleDataType, const DataType ifmDataType, OpType opType)
+{
+    if ( ofmQuant.type != QuantizationType::TFLITE )
+    {
+        // Explicit quantized scale has already been set
+        return ofmQuant;
+    }
+
+    Quantization quantResult;
+    quantResult.type = QuantizationType::EXPLICIT;
+    quantResult.zeroPoints = ofmQuant.zeroPoints;
+    quantResult.quantMin = ofmQuant.quantMin;
+    quantResult.quantMax = ofmQuant.quantMax;
+    quantResult.dimension = ofmQuant.dimension;
+    quantResult.forceZeroPoint = ofmQuant.forceZeroPoint;
+
+    if ( !ifmQuant.scales.empty() && !ofmQuant.scales.empty() && !weightQuant.scales.empty() )
+    {
+        bool reducedScale = (scaleDataType == DataType::Int64 && DataTypeSizeBits(ifmDataType) == 16);
+
+        int modIfm = (ifmQuant.scales.size()) == 1 ? 0 : -1;
+        int modOfm = (ofmQuant.scales.size()) == 1 ? 0 : -1;
+
+        quantResult.scales.reserve(weightQuant.scales.size());
+
+        for ( int i = 0; i < int(weightQuant.scales.size()); i++ )
+        {
+            double v = 1.0;
+            float ifmScale = float(ifmQuant.scales[i & modIfm].Dequantize());
+            float ofmScale = float(ofmQuant.scales[i & modOfm].Dequantize());
+            float weightScale = float(weightQuant.scales[i].Dequantize());
+            if ( ifmDataType == DataType::UInt8 || opType == OpType::FullyConnected )
+            {
+                v = double(ifmScale * weightScale) / double(ofmScale);
+            }
+            else if ( ifmDataType == DataType::Int8 || ifmDataType == DataType::Int16 )
+            {
+                v = (double(ifmScale) * double(weightScale)) / double(ofmScale);
+            }
+
+            quantResult.scales.emplace_back(v, reducedScale);
+        }
+    }
+
+    return quantResult;
 }
 
 }  // namespace regor

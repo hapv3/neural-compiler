@@ -23,7 +23,6 @@
 namespace regor
 {
 
-class Quantization;
 struct HLCOperation;
 
 namespace ethosU55Scaling
@@ -32,8 +31,6 @@ namespace ethosU55Scaling
 
 void RescalePooling(HLCOperation *op, bool isNoOp);
 void RescaleElementwise(HLCOperation *op);
-Quantization RescalePerChannel(const Quantization &ifmQuant, const Quantization &weightQuant,
-    const Quantization &ofmQuant, const DataType scaleDataType, const DataType ifmDataType);
 
 }  // namespace ethosU55Scaling
 }  // namespace regor

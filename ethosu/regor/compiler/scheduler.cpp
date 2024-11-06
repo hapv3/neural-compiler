@@ -627,7 +627,7 @@ std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(
         {
             auto scales = op->Input(TensorUsage::Scales);
             auto temp = _arch->WeightEncoder()->MakeExplicit(ifm->quantization, weights->quantization,
-                op->OFM()->quantization, scales->tensor->dataType, ifm->tensor->dataType);
+                op->OFM()->quantization, scales->tensor->dataType, ifm->tensor->dataType, op->Type());
             op->OFM()->quantization = std::move(temp);
             assert(op->OFM()->quantization.type == QuantizationType::EXPLICIT);
         }

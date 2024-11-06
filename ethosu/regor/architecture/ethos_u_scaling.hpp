@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -18,7 +18,10 @@
 
 #pragma once
 
+#include "common/data_type.hpp"
 #include "common/scaling.hpp"
+#include "compiler/op_type.hpp"
+#include "compiler/quantization.hpp"
 
 #include <cstdint>
 
@@ -33,5 +36,8 @@ void QuantizePoolingScaleMaxPrecision(int kernelElements, double rescale, uint32
 // Simplified version of calculating elementwise Add/Sub scales
 void SimplifiedElementwiseAddSubScale(double input1Scale, double input2Scale, double outputScale, int inputShift,
     double &input1Rescale, double &input2Rescale, QuantizedScale &outScale);
+
+Quantization RescalePerChannel(const Quantization &ifmQuant, const Quantization &weightQuant,
+    const Quantization &ofmQuant, const DataType scaleDataType, const DataType ifmDataType, OpType opType);
 
 }  // namespace regor

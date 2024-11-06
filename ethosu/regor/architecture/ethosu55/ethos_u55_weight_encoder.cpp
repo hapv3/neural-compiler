@@ -443,9 +443,9 @@ std::unique_ptr<IVolumeScaleSource> EthosU55WeightEncoder::GetScaleSource(
 }
 
 Quantization EthosU55WeightEncoder::MakeExplicit(const Quantization &ifmQ, const Quantization &weightQ,
-    const Quantization &ofmQ, DataType scaleType, DataType ifmType)
+    const Quantization &ofmQ, DataType scaleType, DataType ifmType, OpType opType)
 {
-    return ethosU55Scaling::RescalePerChannel(ifmQ, weightQ, ofmQ, scaleType, ifmType);
+    return RescalePerChannel(ifmQ, weightQ, ofmQ, scaleType, ifmType, opType);
 }
 
 
