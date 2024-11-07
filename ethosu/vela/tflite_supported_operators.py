@@ -24,6 +24,7 @@ from .data_type import DataType
 from .numeric_util import full_shape
 from .operation import Op
 from .operation import Padding
+from .shape4d import Shape4D
 from .supported_operators_util import docstring_format_args
 from .supported_operators_util import list_formatter
 from .tensor import check_quantized_tens_scaling_equal
@@ -363,6 +364,9 @@ class TFLiteSupportedOperators:
 
         # Transpose specific checks:
         self.specific_constraints[Op.Transpose].append(TFLiteSupportedOperators.constraint_transpose)
+
+        # Softmax specific checks:
+        self.specific_constraints[Op.Softmax].append(TFLiteSupportedOperators.constraint_softmax)
 
     def is_operator_supported(self, op):
         ext_type = optype_to_builtintype(op.type)
@@ -1111,3 +1115,14 @@ class TFLiteSupportedOperators:
             valid = perm.values[0] == 0 and perm.values[1] == 3 and perm.values[3] == 1
 
         return valid, f"Op has ifm_shape: {ifm_shape} and permutation is: {perm.values}"
+
+
+    @classmethod
+    @docstring_format_args(tens_dim_range)
+    def constraint_softmax(cls, op):
+        "The product of IFM width and height must be in the range [{}, {}]"
+        ifm_shape4D = Shape4D(op.inputs[0].shape)
+        _, tens_max = cls.tens_dim_range
+        size = ifm_shape4D.width * ifm_shape4D.height
+        valid = size <= tens_max
+        return valid, f"Op has ifm_shape: {ifm_shape4D} and product is: {size}"
