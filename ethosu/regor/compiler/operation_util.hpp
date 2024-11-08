@@ -280,7 +280,7 @@ inline TransposeType CalculateTransposeType(const Operation &operation)
     // We can only handle permutation vectors up 8 elements
     if ( paramsConn->shape.Depth() > 8 ) throw std::invalid_argument("Permutation vector has more than 8 elements");
     // We can only handle constant permutation vectors
-    if ( !paramsConn->tensor->IsConstant() ) throw std::invalid_argument("Permutation vector in non-constant");
+    if ( !paramsConn->tensor->IsConstant() ) throw std::invalid_argument("Permutation vector is non-constant");
     Shape perm = TensorToShape(paramsConn->tensor.get(), paramsConn->shape.Depth(), 1, 0);
     return TransposeTypeFromShape(perm);
 }

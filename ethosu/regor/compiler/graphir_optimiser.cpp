@@ -1167,6 +1167,7 @@ Operation *GraphIrOptimiser::RearrangeTranspose(Graph *const graph, Operation *c
         Shape ifmShape = ifmConn->shape;
         Shape ofmShape = ofmConn->shape;
         Shape perm = attr->perm;
+        assert(perm);
         int ofmDim = perm.Size() - 1;
         for ( auto onesMask = ofmShape.EqualMask(ofmShape.WithOnes()); onesMask; onesMask >>= 1 )
         {

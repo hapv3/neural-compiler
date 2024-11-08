@@ -1358,8 +1358,8 @@ Operation *TFLiteGraphOptimiser::ConvertTranspose(Graph *const graph, Operation 
         auto *paramsConn = operation->Input(TensorUsage::Params);
         auto *attr = operation->Attribute<transpose_attr_t>();
 
-        // We can only handle permutation vectors up to 4 elements
-        if ( paramsConn->shape.Depth() > 4 ) return returnOp;
+        // We can only handle permutation vectors up to 8 elements
+        if ( paramsConn->shape.Depth() > 8 ) return returnOp;
 
         // We can only handle constant permutation vectors
         if ( !paramsConn->tensor->IsConstant() ) return returnOp;
