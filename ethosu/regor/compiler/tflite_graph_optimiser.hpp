@@ -114,7 +114,7 @@ private:
     Operation *ConvertToLUT8(Operation *op, std::function<double(double)> func, const std::string &name);
 
     // Converts op to int16 interpolating LUT which is generated with the given function.
-    Operation *ConvertToInterpolatingLUT16(Operation *op, std::function<double(double)> func, const std::string &name);
+    Operation *ConvertToInterpolatingLUT16(Operation *op, std::function<float(float)> func, const std::string &name);
 
     // Converts int16 Tanh/Sigmoid to LUT16
     Operation *ConvertTanhSigmoidToLUT16(Operation *const op);

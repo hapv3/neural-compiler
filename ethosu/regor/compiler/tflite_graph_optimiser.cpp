@@ -554,7 +554,7 @@ Operation *TFLiteGraphOptimiser::ConvertToLUT8(Operation *op, std::function<doub
 }
 
 // Converts op to int16 interpolating LUT which is generated with the given function.
-Operation *TFLiteGraphOptimiser::ConvertToInterpolatingLUT16(Operation *op, std::function<double(double)> func, const std::string &name)
+Operation *TFLiteGraphOptimiser::ConvertToInterpolatingLUT16(Operation *op, std::function<float(float)> func, const std::string &name)
 {
     auto ifmConn = op->Input(TensorUsage::IFM0);
     auto ofmConn = op->Output(TensorUsage::OFM);
@@ -566,37 +566,37 @@ Operation *TFLiteGraphOptimiser::ConvertToInterpolatingLUT16(Operation *op, std:
         return op;
     }
 
-    double ifmScale(ifmConn->quantization.scales[0].Dequantize());
-    double ofmScale(ofmConn->quantization.scales[0].Dequantize());
+    float ifmScale(ifmConn->quantization.scales[0].Dequantize());
+    float ofmScale(ofmConn->quantization.scales[0].Dequantize());
     auto zpIn = ifmConn->quantization.zeroPoints[0];
     auto zpOut = ofmConn->quantization.zeroPoints[0];
-    double qMin = std::numeric_limits<int16_t>::min();
-    double qMax = std::numeric_limits<int16_t>::max();
-    double inputMin = ifmScale * (qMin - zpIn);
-    double inputMax = ifmScale * (qMax - zpIn);
-    double outputMin = ofmScale * (qMin - zpOut);
-    double outputMax = ofmScale * (qMax - zpOut);
+    float qMin = std::numeric_limits<int16_t>::min();
+    float qMax = std::numeric_limits<int16_t>::max();
+    float inputMin = ifmScale * (qMin - zpIn);
+    float inputMax = ifmScale * (qMax - zpIn);
+    float outputMin = ofmScale * (qMin - zpOut);
+    float outputMax = ofmScale * (qMax - zpOut);
     const int steps = 512;
-    double step = (inputMax - inputMin) / steps;
-    double halfStep = step / 2.0;
-    double outputScalingInv = (qMax - qMin + 1) / (outputMax - outputMin);
+    float step = (inputMax - inputMin) / steps;
+    float halfStep = step / 2.0;
+    float outputScalingInv = (qMax - qMin + 1) / (outputMax - outputMin);
 
     // Create 32-bit LUT represented by a 16-bit base and 16-bit slope.
     auto lut = std::make_unique<uint32_t[]>(512);
-    double prevLutResult = 0;
+    float prevLutResult = 0;
     for ( int i = 0; i < steps; i++ )
     {
-        double val = func(inputMin + i * step);
-        double valMidpoint = func(inputMin + i * step + halfStep);
-        double valNext = func(inputMin + (i + 1) * step);
-        double sampleVal = RoundAwayZero(val * outputScalingInv);
+        float val = func(inputMin + i * step);
+        float valMidpoint = func(inputMin + i * step + halfStep);
+        float valNext = func(inputMin + (i + 1) * step);
+        float sampleVal = RoundAwayZero(val * outputScalingInv);
 
-        double midpointInterpVal = RoundAwayZero((valNext * outputScalingInv + sampleVal) / 2);
-        double midpointVal = RoundAwayZero(valMidpoint * outputScalingInv);
-        double midpointErr = midpointInterpVal - midpointVal;
-        double bias = RoundAwayZero(midpointErr / 2.0);
+        float midpointInterpVal = RoundAwayZero((valNext * outputScalingInv + sampleVal) / 2);
+        float midpointVal = RoundAwayZero(valMidpoint * outputScalingInv);
+        float midpointErr = midpointInterpVal - midpointVal;
+        float bias = RoundAwayZero(midpointErr / 2.0);
 
-        double lutResult = std::clamp(sampleVal - bias, qMin, qMax);
+        float lutResult = std::clamp(sampleVal - bias, qMin, qMax);
 
         if ( i > 0 )
         {
@@ -606,8 +606,8 @@ Operation *TFLiteGraphOptimiser::ConvertToInterpolatingLUT16(Operation *op, std:
         }
         prevLutResult = lutResult;
     }
-    double val = RoundAwayZero(func(inputMax) * outputScalingInv);
-    double lutResult = std::clamp(val, qMin, qMax);
+    float val = RoundAwayZero(func(inputMax) * outputScalingInv);
+    float lutResult = std::clamp(val, qMin, qMax);
     uint32_t base = uint32_t(prevLutResult);
     uint32_t slope = uint32_t(lutResult - prevLutResult);
     lut[steps - 1] = base + (slope << 16);
@@ -731,14 +731,14 @@ Operation *TFLiteGraphOptimiser::ConvertExpToLUT(Graph *const graph, Operation *
     if ( (ifmType & DataType::Bits8) == DataType::Bits8 )
     {
         returnOp = ConvertToLUT8(
-            operation, [](double x) -> double { return std::exp(x); }, "Exp");
+            operation, [](float x) -> float { return std::exp(x); }, "Exp");
         RecordOptimisation(operation, returnOp);
         operation->Disconnect();
     }
     else if ( ifmType == DataType::Int16 )
     {
         returnOp = ConvertToInterpolatingLUT16(
-            operation, [](double x) -> double { return std::exp(x); }, "Exp16(interp)");
+            operation, [](float x) -> float { return std::exp(x); }, "Exp16(interp)");
         RecordOptimisation(operation, returnOp);
         operation->Disconnect();
     }
@@ -2572,7 +2572,7 @@ Operation *TFLiteGraphOptimiser::ConvertRSqrtToLUT(Graph *const graph, Operation
     }
     else if ( opType == OpType::Rsqrt && ifmConn->tensor->Type() == DataType::Int16 && ofmConn->tensor->Type() == DataType::Int16 )
     {
-        const auto ofmScale = operation->Output(TensorUsage::OFM)->quantization.scales[0].Dequantize();
+        float ofmScale = operation->Output(TensorUsage::OFM)->quantization.scales[0].Dequantize();
         returnOp = ConvertToInterpolatingLUT16(
             operation,
             [&ofmScale](float x) -> float
@@ -2583,7 +2583,7 @@ Operation *TFLiteGraphOptimiser::ConvertRSqrtToLUT(Graph *const graph, Operation
                 }
                 else
                 {
-                    return 1 / std::sqrt(x);
+                    return 1.0f / std::sqrt(x);
                 }
             },
             "Rsqrt16(interp)");
