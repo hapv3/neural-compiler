@@ -642,6 +642,24 @@ flatbuffers::Offset<void> TfLiteWriter::SerialiseOptions(const Operation *operat
         }
         break;
 
+        case tflite::BuiltinOptions::CallOnceOptions:
+        {
+            const auto options = GetBuiltinOptions<tflite::CallOnceOptions>(passthrough);
+            const auto typed_offset = tflite::CreateCallOnceOptions(_flatbuffer, options->init_subgraph_index());
+            offset = typed_offset.Union();
+        }
+        break;
+
+        case tflite::BuiltinOptions::VarHandleOptions:
+        {
+            const auto options = GetBuiltinOptions<tflite::VarHandleOptions>(passthrough);
+            const auto container = _flatbuffer.CreateString(options->container());
+            const auto shared_name = _flatbuffer.CreateString(options->shared_name());
+            const auto typed_offset = tflite::CreateVarHandleOptions(_flatbuffer, container, shared_name);
+            offset = typed_offset.Union();
+        }
+        break;
+
         // Empty option sets can all be written as if they were QuantizeOptions
         case tflite::BuiltinOptions::HardSwishOptions:
         case tflite::BuiltinOptions::MaximumMinimumOptions:
@@ -652,6 +670,8 @@ flatbuffers::Offset<void> TfLiteWriter::SerialiseOptions(const Operation *operat
         case tflite::BuiltinOptions::GatherNdOptions:
         case tflite::BuiltinOptions::ScatterNdOptions:
         case tflite::BuiltinOptions::ArgMaxOptions:
+        case tflite::BuiltinOptions::AssignVariableOptions:
+        case tflite::BuiltinOptions::ReadVariableOptions:
         {
             offset = tflite::CreateQuantizeOptions(_flatbuffer).Union();
         }
@@ -724,7 +744,6 @@ flatbuffers::Offset<void> TfLiteWriter::SerialiseOptions(const Operation *operat
         case tflite::BuiltinOptions::DensifyOptions:
         case tflite::BuiltinOptions::SegmentSumOptions:
         case tflite::BuiltinOptions::CumsumOptions:
-        case tflite::BuiltinOptions::CallOnceOptions:
         case tflite::BuiltinOptions::BroadcastToOptions:
         case tflite::BuiltinOptions::Rfft2dOptions:
         case tflite::BuiltinOptions::Conv3DOptions:
@@ -732,9 +751,6 @@ flatbuffers::Offset<void> TfLiteWriter::SerialiseOptions(const Operation *operat
         case tflite::BuiltinOptions::HashtableFindOptions:
         case tflite::BuiltinOptions::HashtableImportOptions:
         case tflite::BuiltinOptions::HashtableSizeOptions:
-        case tflite::BuiltinOptions::VarHandleOptions:
-        case tflite::BuiltinOptions::ReadVariableOptions:
-        case tflite::BuiltinOptions::AssignVariableOptions:
             LOG_WARN("TfLiteWriter: Built-in options type '{}' is not yet implemented and will be set to default.\n",
                 tflite::EnumNameBuiltinOptions(type));
             break;

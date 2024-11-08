@@ -668,6 +668,8 @@ void TfLiteReader::ParseOperatorOptions(const std::shared_ptr<Operation> &operat
         case tflite::BuiltinOptions::ShapeOptions:
         case tflite::BuiltinOptions::SqueezeOptions:
         case tflite::BuiltinOptions::ReducerOptions:
+        case tflite::BuiltinOptions::CallOnceOptions:
+        case tflite::BuiltinOptions::VarHandleOptions:
             break;
 
         // Empty option sets require no parsing
@@ -680,6 +682,8 @@ void TfLiteReader::ParseOperatorOptions(const std::shared_ptr<Operation> &operat
         case tflite::BuiltinOptions::TransposeOptions:
         case tflite::BuiltinOptions::GatherNdOptions:
         case tflite::BuiltinOptions::ScatterNdOptions:
+        case tflite::BuiltinOptions::ReadVariableOptions:
+        case tflite::BuiltinOptions::AssignVariableOptions:
             break;
 
         case tflite::BuiltinOptions::ConcatEmbeddingsOptions:
@@ -748,7 +752,6 @@ void TfLiteReader::ParseOperatorOptions(const std::shared_ptr<Operation> &operat
         case tflite::BuiltinOptions::DensifyOptions:
         case tflite::BuiltinOptions::SegmentSumOptions:
         case tflite::BuiltinOptions::CumsumOptions:
-        case tflite::BuiltinOptions::CallOnceOptions:
         case tflite::BuiltinOptions::BroadcastToOptions:
         case tflite::BuiltinOptions::Rfft2dOptions:
         case tflite::BuiltinOptions::Conv3DOptions:
@@ -756,9 +759,6 @@ void TfLiteReader::ParseOperatorOptions(const std::shared_ptr<Operation> &operat
         case tflite::BuiltinOptions::HashtableFindOptions:
         case tflite::BuiltinOptions::HashtableImportOptions:
         case tflite::BuiltinOptions::HashtableSizeOptions:
-        case tflite::BuiltinOptions::VarHandleOptions:
-        case tflite::BuiltinOptions::ReadVariableOptions:
-        case tflite::BuiltinOptions::AssignVariableOptions:
             // TODO
             LOG_WARN("TfLiteReader: Built-in options type '{}' is not yet implemented and will be ignored.\n",
                 tflite::EnumNameBuiltinOptions(type));
