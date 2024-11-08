@@ -411,7 +411,7 @@ Operation *Softmax::GetGraphInt16(Operation *const operation, TensorConnection *
     auto *softmax = operation->Attribute<softmax_attr_t>();
     double beta = double(softmax->beta);
     double mul2_out_range = 10.0 / 65535.0;
-    auto quant = ElementwiseMulScale(ifmConn->quantization.scales[0].Dequantize(), beta, mul2_out_range);
+    auto quant = ElementwiseMulScale<double>(ifmConn->quantization.scales[0].Dequantize(), beta, mul2_out_range);
     auto scale_quant = ifmConn->quantization;
     scale_quant.scales[0] = QuantizedScale(beta);
     auto mul2_quant = ofmConn->quantization;

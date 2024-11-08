@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2020-2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2020-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 #
@@ -489,7 +489,7 @@ class SoftMax:
         name = f"{self.op.name}_mul{pass_number}"
         beta = self.op.attrs.get("beta", 1.0)
         mul2_out_range = 10.0 / 65535.0
-        mul2_scale, _ = scaling.elementwise_mul_scale(sub1_ofm.quantization.scale_f32, beta, mul2_out_range)
+        mul2_scale, _ = scaling.elementwise_mul_scale(sub1_ofm.quantization.scale_f32, beta, mul2_out_range, True)
         scale_quant = ifm.quantization.clone()
         scale_quant.scale_f32 = beta
         mul2_quant = ofm.quantization.clone()

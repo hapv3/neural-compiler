@@ -69,8 +69,11 @@ def quantise_pooling_scale(nr_kernel_elements, rescale_bits=0):
 
 
 # Calculate elementwise Mul OFM scale+shift
-def elementwise_mul_scale(input_scale, input2_scale, output_scale):
-    output_rescale = (np.float32(input_scale) * np.float32(input2_scale)) / np.float32(output_scale)
+def elementwise_mul_scale(input_scale, input2_scale, output_scale, use_double=False):
+    if use_double:
+        output_rescale = (np.double(input_scale) * np.double(input2_scale)) / np.double(output_scale)
+    else:
+        output_rescale = (np.float32(input_scale) * np.float32(input2_scale)) / np.float32(output_scale)
     out_scale, out_shift = quantise_scale(output_rescale)
     return out_scale, out_shift
 

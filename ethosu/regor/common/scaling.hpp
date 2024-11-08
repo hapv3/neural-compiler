@@ -17,6 +17,8 @@
 //
 
 #pragma once
+#include "common/numeric_util.hpp"
+
 #include <cstdint>
 
 class QuantizedScale
@@ -47,7 +49,17 @@ public:
 };
 
 /* Calculate elementwise Mul OFM QuantizedScale */
-QuantizedScale ElementwiseMulScale(double inputScale, double input2Scale, double outputScale);
+template<typename T = float>
+QuantizedScale ElementwiseMulScale(double inputScale, double input2Scale, double outputScale)
+{
+    // clamp to single-point precision
+    T ifm1Scale = ClampToType<T>(inputScale);
+    T ifm2Scale = ClampToType<T>(input2Scale);
+    T outScale = ClampToType<T>(outputScale);
+
+    T outputRescale = (ifm1Scale * ifm2Scale) / outScale;
+    return QuantizedScale(outputRescale);
+}
 
 /* Convert int32_t multiplier to int16_t with rounding. */
 int16_t DownScaleInt32ToInt16Multiplier(int32_t mul);
