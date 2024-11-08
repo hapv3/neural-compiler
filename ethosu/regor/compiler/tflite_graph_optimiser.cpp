@@ -2575,7 +2575,7 @@ Operation *TFLiteGraphOptimiser::ConvertRSqrtToLUT(Graph *const graph, Operation
         const auto ofmScale = operation->Output(TensorUsage::OFM)->quantization.scales[0].Dequantize();
         returnOp = ConvertToInterpolatingLUT16(
             operation,
-            [&ofmScale](double x) -> double
+            [&ofmScale](float x) -> float
             {
                 if ( x <= 0.0f )
                 {
