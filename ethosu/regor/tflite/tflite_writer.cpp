@@ -193,13 +193,14 @@ std::unique_ptr<const uint8_t[]> TfLiteWriter::Serialise(const std::vector<std::
         _serialised_subgraphs.push_back(
             tflite::CreateSubGraphDirect(_flatbuffer, &_serialised_tensors, &inputs, &outputs, &_serialised_operations));
 
-        serialised_metadata.push_back(SerialiseTensorAddresses(int(_serialised_subgraphs.size())));
-
-        _tensors.clear();
         _serialised_operations.clear();
         _serialised_tensors.clear();
-        _tensor_addresses.clear();
     }
+
+    serialised_metadata.push_back(SerialiseTensorAddresses(int(_serialised_subgraphs.size())));
+
+    _tensors.clear();
+    _tensor_addresses.clear();
 
     const char *_description = "Vela Optimised";
 
@@ -753,14 +754,13 @@ flatbuffers::Offset<void> TfLiteWriter::SerialiseOptions(const Operation *operat
     return offset;
 }
 
-flatbuffers::Offset<tflite::Metadata> TfLiteWriter::SerialiseTensorAddresses(int subgraph_index)
+flatbuffers::Offset<tflite::Metadata> TfLiteWriter::SerialiseTensorAddresses(int subgraphs)
 {
-    assert(_tensor_addresses.size() == _serialised_tensors.size());
     const int32_t version = 0;
     const auto num_tensors = int32_t(_tensor_addresses.size());
     const auto buffer_index = int32_t(_serialised_buffers.size());
 
-    _tensor_addresses.insert(_tensor_addresses.begin(), {version, subgraph_index, num_tensors});
+    _tensor_addresses.insert(_tensor_addresses.begin(), {version, subgraphs, num_tensors});
 
     const auto buffer_base = reinterpret_cast<uint8_t *>(_tensor_addresses.data());
     const auto buffer_size = _tensor_addresses.size() * (sizeof(int32_t) / sizeof(uint8_t));

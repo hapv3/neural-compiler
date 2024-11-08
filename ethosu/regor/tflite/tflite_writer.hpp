@@ -103,7 +103,7 @@ private:
 
     flatbuffers::Offset<tflite::Tensor> SerialiseTensor(const Tensor *tensor, const Graph &graph);
     flatbuffers::Offset<void> SerialiseOptions(const Operation *operation, OpType type);
-    flatbuffers::Offset<tflite::Metadata> SerialiseTensorAddresses(int subgraph_index);
+    flatbuffers::Offset<tflite::Metadata> SerialiseTensorAddresses(int subgraphs);
 
     flatbuffers::Offset<tflite::Buffer> SerialiseBuffer(const Buffer *buffer);
     flatbuffers::Offset<tflite::Buffer> SerialiseBuffer(const uint8_t *data, int size);
