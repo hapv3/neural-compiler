@@ -79,4 +79,12 @@ endfunction()
 
 regor_add_dependency("${CMAKE_CURRENT_SOURCE_DIR}/dependencies/mlw_codec")
 
+set(CATCH2_DIR "${CMAKE_CURRENT_SOURCE_DIR}/dependencies/thirdparty/Catch2")
+regor_add_dependency("${CATCH2_DIR}")
+target_include_directories(Catch2 SYSTEM INTERFACE ${CATCH2_DIR}/src/catch2)
+list(APPEND CMAKE_MODULE_PATH "${CATCH2_DIR}/CMake")
+list(APPEND CMAKE_MODULE_PATH "${CATCH2_DIR}/extras")
+include(Catch)
+add_library(regor::Catch2 ALIAS Catch2)
+
 include(regor_thirdparty)

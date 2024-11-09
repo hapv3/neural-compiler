@@ -31,13 +31,6 @@ target_include_directories(fmt SYSTEM INTERFACE
     $<INSTALL_INTERFACE:fmt/include>)
 add_library(regor::fmt ALIAS fmt)
 
-set(CATCH2_DIR "dependencies/thirdparty/Catch2")
-add_subdirectory(${CATCH2_DIR})
-target_include_directories(Catch2 SYSTEM INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/${CATCH2_DIR}/src/catch2)
-include(Catch)
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/${CATCH2_DIR}/CMake")
-add_library(regor::Catch2 ALIAS Catch2)
-
 add_library(flatbuffers INTERFACE)
 target_include_directories(flatbuffers SYSTEM INTERFACE
     "${CMAKE_CURRENT_SOURCE_DIR}/dependencies/thirdparty/flatbuffers/include")
