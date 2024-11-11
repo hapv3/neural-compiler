@@ -58,6 +58,7 @@ public:
     {
         return other.scales == scales && other.zeroPoints == zeroPoints;
     }
+    bool IsUnitScale() const { return Quantization::Unit().scales == scales; }
     explicit operator bool() const { return IsValid(); }
 
     Quantization &operator=(const Quantization &other)

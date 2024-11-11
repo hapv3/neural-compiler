@@ -82,10 +82,11 @@ bool EthosU85Constraints::SupportsFusedRescale(
     bool globalScale = quantization.scales.size() == 1;
     int fromBits = DataTypeSizeBits(fromType);
     int toBits = DataTypeSizeBits(toType);
+    bool isUnitScale = quantization.IsUnitScale();
 
     if ( tensorUsage == TensorUsage::IFM )
     {
-        if ( npuOp == EthosU85NpuOp::Elementwise )
+        if ( npuOp == EthosU85NpuOp::Elementwise && globalScale )
         {
             bool fromTypeSupported = (IsInteger(fromType) && fromBits == 8) || fromType == DataType::Int16;
             bool toTypeSupported = (IsInteger(toType) && (toBits == 8 || toBits == 16)) || toType == DataType::Int32;
@@ -100,7 +101,15 @@ bool EthosU85Constraints::SupportsFusedRescale(
             value = (value * qs.scale) >> qs.shift;
             bool noClipping = value >= IntegerMin(toType) && value <= int64_t(IntegerMax(toType));
 
-            return opType != OpType::Div && opType != OpType::Mul && globalScale && fromTypeSupported && toTypeSupported && noClipping;
+            if ( opType == OpType::Div || opType == OpType::Mul )
+            {
+                return fromTypeSupported && toTypeSupported && noClipping && isUnitScale;
+            }
+            return fromTypeSupported && toTypeSupported && noClipping;
+        }
+        else if ( npuOp == EthosU85NpuOp::ReduceSum )
+        {
+            return globalScale;
         }
     }
     else if ( tensorUsage == TensorUsage::OFM )
@@ -110,21 +119,21 @@ bool EthosU85Constraints::SupportsFusedRescale(
         {
             return opType != OpType::Rescale && !IsActivation(opType);
         }
-        if ( npuOp == EthosU85NpuOp::Resize && globalScale )
+        else if ( npuOp == EthosU85NpuOp::Resize && globalScale )
         {
             auto &qs = quantization.scales.front();
             return qs.scale == 1 && qs.shift >= 16;  // Only shift of 16 or more supported
         }
-        if ( npuOp == EthosU85NpuOp::Elementwise && globalScale )
+        else if ( npuOp == EthosU85NpuOp::Elementwise && globalScale )
         {
-            if ( opType == OpType::SHR || opType == OpType::SHL || opType == OpType::Asr || opType == OpType::Div )
-            {
-                return false;
-            }
             bool fromTypeSupported = (IsInteger(fromType) && (fromBits == 8 || fromBits == 16)) || fromType == DataType::Int32;
             if ( opType == OpType::Mul && fromTypeSupported && fromType == DataType::Int32 )
             {
                 return quantization.scales.front().scale == 1;  // Only shift supported
+            }
+            if ( opType == OpType::SHR || opType == OpType::SHL || opType == OpType::Asr || opType == OpType::Div )
+            {
+                return fromTypeSupported && isUnitScale;
             }
             return fromTypeSupported;
         }
