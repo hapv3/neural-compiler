@@ -137,6 +137,10 @@ bool EthosU85Constraints::SupportsFusedRescale(
             }
             return fromTypeSupported;
         }
+        else if ( npuOp == EthosU85NpuOp::ReduceSum )
+        {
+            return globalScale;
+        }
     }
 
     return false;
