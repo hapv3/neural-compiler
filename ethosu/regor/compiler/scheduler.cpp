@@ -665,15 +665,25 @@ std::unique_ptr<Schedule> Scheduler::CreateInitialSchedule()
 
     for ( auto &op : _ops )
     {
-        auto cost = CreateSchedulerOpInfo(op.get(), op->OFM()->SliceShape());
-        cost->cycles = EstimateOpPerformance(op.get(), cost->Config(), op->OFM()->SliceShape().Depth());
-        cost->elementAccess = EstimateOpElementAccess(op.get(), cost->Config(), op->OFM()->SliceShape().Depth());
+        const auto ofm = op->OFM();
+        const auto &ofmShape = ofm->SliceShape();
+        auto cost = CreateSchedulerOpInfo(op.get(), ofmShape);
+        if ( ofmShape )
+        {
+            cost->cycles = EstimateOpPerformance(op.get(), cost->Config(), ofmShape.Depth());
+            cost->elementAccess = EstimateOpElementAccess(op.get(), cost->Config(), ofmShape.Depth());
+        }
         // sub-operations
         for ( auto &subOp : op->SubOps() )
         {
-            auto subCost = CreateSchedulerOpInfo(subOp.get(), subOp->OFM()->SliceShape(), cost);
-            subCost->cycles = EstimateOpPerformance(subOp.get(), subCost->Config(), subOp->OFM()->SliceShape().Depth());
-            subCost->elementAccess = EstimateOpElementAccess(subOp.get(), subCost->Config(), subOp->OFM()->SliceShape().Depth());
+            const auto subOfm = subOp->OFM();
+            const auto &subOfmShape = subOfm->SliceShape();
+            auto subCost = CreateSchedulerOpInfo(subOp.get(), subOfmShape, cost);
+            if ( subOfmShape )
+            {
+                subCost->cycles = EstimateOpPerformance(subOp.get(), subCost->Config(), subOfmShape.Depth());
+                subCost->elementAccess = EstimateOpElementAccess(subOp.get(), subCost->Config(), subOfmShape.Depth());
+            }
             schedule->SetCost(*subOp, std::move(subCost));
         }
         schedule->SetCost(*op, std::move(cost));
@@ -1177,18 +1187,27 @@ std::shared_ptr<Schedule> Scheduler::ProposeMinimalSchedule()
     {
         auto const &schedOp = *pos;
         int minStripeHeight = (prevOp != nullptr) ? prevOp->Kernel()->Stride().y : 1;
-        Shape minStripe = Shape::PadAxes(schedOp->OFM()->SliceShape(), 3, 1);
-        minStripe[-3] = minStripeHeight;
+        const auto ofm = schedOp->OFM();
+        const auto &ofmShape = ofm->SliceShape();
+        Shape minStripe = Shape::PadAxes(ofmShape, 3, 1).WithHeight(minStripeHeight);
         auto cost = CreateSchedulerOpInfo(schedOp.get(), minStripe);
-        cost->cycles = EstimateOpPerformance(schedOp.get(), cost->Config(), schedOp->OFM()->SliceShape().Depth());
-        cost->elementAccess = EstimateOpElementAccess(schedOp.get(), cost->Config(), schedOp->OFM()->SliceShape().Depth());
+        if ( ofmShape )
+        {
+            cost->cycles = EstimateOpPerformance(schedOp.get(), cost->Config(), ofmShape.Depth());
+            cost->elementAccess = EstimateOpElementAccess(schedOp.get(), cost->Config(), ofmShape.Depth());
+        }
 
         // sub-operations use the same stripe as their parent
         for ( auto &subOp : schedOp->SubOps() )
         {
+            const auto subOfm = subOp->OFM();
+            const auto &subOfmShape = subOfm->SliceShape();
             auto subCost = CreateSchedulerOpInfo(subOp.get(), minStripe, cost);
-            subCost->cycles = EstimateOpPerformance(subOp.get(), subCost->Config(), subOp->OFM()->SliceShape().Depth());
-            subCost->elementAccess = EstimateOpElementAccess(subOp.get(), subCost->Config(), subOp->OFM()->SliceShape().Depth());
+            if ( subOfmShape )
+            {
+                subCost->cycles = EstimateOpPerformance(subOp.get(), subCost->Config(), subOfmShape.Depth());
+                subCost->elementAccess = EstimateOpElementAccess(subOp.get(), subCost->Config(), subOfmShape.Depth());
+            }
             minSchedule->SetCost(*subOp, std::move(subCost));
         }
         minSchedule->SetCost(*schedOp, std::move(cost));

@@ -114,7 +114,7 @@ public:
         this->stripeInput[0] = stripeInput1;
         this->stripeInput[1] = stripeInput2;
         this->stripe = stripe_;
-        this->ofmDepthSlices = {0, stripe_.Depth()};
+        this->ofmDepthSlices = {0, stripe_.Size() > 0 ? stripe.Depth() : 0};
     }
 
     SchedulerOpInfo(const SchedulerOpInfo &other) { Copy(other); }

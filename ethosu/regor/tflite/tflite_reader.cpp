@@ -131,13 +131,6 @@ const tflite::Model *TfLiteReader::LoadModel(const void *input, size_t size)
     return tflite::GetModel(buffer);
 }
 
-static Shape OperationOFMShape(OpType type, const Shape &input)
-{
-    assert(type == OpType::Quantize);
-    UNUSED(type);
-    return input;
-}
-
 void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::unique_ptr<Graph>> &graphs,
     OptimiserDatabase *optDb, IArchitectureConstraints *constraints)
 {
@@ -220,7 +213,6 @@ void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::uniqu
             const auto &input_tensors = *tflite_inputs;  // A vector of indices into the `tensors` vector
             int indirect_index = 0;                      // An index into `input_tensors`
             int ifm_count = 0;
-            Shape largestInput;
             for ( const auto &map_entry : TfLiteMapping::InputTensorIndices(op_type) )
             {
                 const TensorUsage usage = map_entry.second;
@@ -232,7 +224,6 @@ void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::uniqu
                         auto &tensor = tensors.at(direct_index);
                         assert(tensorQuantization.count(tensor->Uid()) > 0);
                         operation->ConnectInput(usage, tensor).Set(tensorQuantization[tensor->Uid()]);
-                        largestInput = Shape::Max(tensor->StorageShape(), largestInput);
                     }
                     if ( IsIFM(usage) )
                     {
@@ -267,11 +258,6 @@ void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::uniqu
             for ( const int tensor_index : *tflite_outputs )
             {
                 const auto &ofm = tensors.at(tensor_index);
-                // Correct OFMs with no dimension
-                if ( ofm->StorageShape().Size() == 0 )
-                {
-                    ofm->SetStorageShape(OperationOFMShape(operation->Type(), largestInput));
-                }
                 assert(tensorQuantization.count(ofm->Uid()) > 0);
                 operation->ConnectOutput(MakeTensorUsage(TensorUsage::OFM, ofm_count++), ofm).Set(tensorQuantization[ofm->Uid()]);
             }
