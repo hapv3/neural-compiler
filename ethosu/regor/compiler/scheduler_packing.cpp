@@ -46,6 +46,28 @@ bool AllInputsAreGraphInputs(const SchedulerOperation &op)
     return true;
 }
 
+// Returns true if no IFMs, or if all producers of all IFMs are in the list
+bool AllInputsProducersAreEarlyOps(const SchedulerOperation &op, const std::vector<std::unique_ptr<SchedulerOperation>> &earlyOps)
+{
+    for ( const auto &schedConn : op.inputs )
+    {
+        for ( const auto &producer : schedConn.tensor->producers )
+        {
+            bool producerIsEarlyOp = false;
+            for ( const auto &earlyOp : earlyOps )
+            {
+                if ( producer == earlyOp.get() )
+                {
+                    producerIsEarlyOp = true;
+                    break;
+                }
+            }
+            if ( !producerIsEarlyOp ) return false;
+        }
+    }
+    return true;
+}
+
 // Returns true if no OFMs, or if all OFMs are graph outputs
 bool AllOutputsAreGraphOutputs(const SchedulerOperation &op)
 {
@@ -282,7 +304,7 @@ void SchedulerPacking::ReorderOperations()
     {
         std::unique_ptr<SchedulerOperation> &op = *i;
 
-        if ( !op->IsNpuOp() && AllInputsAreGraphInputs(*op) )
+        if ( !op->IsNpuOp() && (AllInputsAreGraphInputs(*op) || AllInputsProducersAreEarlyOps(*op, earlyOps)) )
         {
             earlyOps.push_back(std::move(*i));
         }
