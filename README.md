@@ -324,6 +324,8 @@ system configuration file format.
 ## Performance
 
 Please see [Vela Performance Estimation Summary](PERFORMANCE.md).
+__NOTE: This is only an estimate. For performance numbers we recommend running
+the compiled network on an FVP Model or FPGA.__
 
 ## Releases
 

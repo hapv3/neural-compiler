@@ -88,6 +88,7 @@ def process(input_name, enable_debug_db, arch, model_reader_options, compiler_op
         nng,
         show_cpu_operations=compiler_options.show_cpu_operations,
         verbose_weights=compiler_options.verbose_weights,
+        verbose_cycle_estimate=compiler_options.verbose_cycle_estimate,
         arch=arch,
     )
 
@@ -122,6 +123,7 @@ def process_regor(
     enable_debug_db,
     output_dir,
     verbose_weights=False,
+    verbose_cycle_estimate=False,
     show_cpu_operations=False,
     verbose_performance=False,
 ):
@@ -161,6 +163,7 @@ def process_regor(
         summary_csv_file,
         compiled_model.opt_database,
         verbose_weights,
+        verbose_cycle_estimate,
         show_cpu_operations,
     )
     if enable_debug_db:
@@ -943,6 +946,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     parser.add_argument("--verbose-operators", action="store_true", help="Enable operator list debug")
     parser.add_argument("--verbose-weights", action="store_true", help="Enable weights information debug")
+    parser.add_argument("--verbose-cycle-estimate", action="store_true", help="Enable cycle estimate information debug")
     parser.add_argument("--verbose-performance", action="store_true", help="Enable performance information debug")
     parser.add_argument("--verbose-progress", action="store_true", help="Enable progress information debug")
     parser.add_argument(
@@ -1175,6 +1179,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             args.enable_debug_db,
             args.output_dir,
             args.verbose_weights,
+            args.verbose_cycle_estimate,
             args.show_cpu_operations,
             args.verbose_performance,
         )
@@ -1191,6 +1196,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             verbose_register_command_stream=args.verbose_register_command_stream,
             verbose_operators=args.verbose_operators,
             verbose_weights=args.verbose_weights,
+            verbose_cycle_estimate=args.verbose_cycle_estimate,
             verbose_performance=args.verbose_performance,
             verbose_progress=args.verbose_progress,
             show_cpu_operations=args.show_cpu_operations,

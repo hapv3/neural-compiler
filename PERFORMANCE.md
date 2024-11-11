@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright 2021-2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 
 SPDX-License-Identifier: Apache-2.0
 
@@ -54,6 +54,15 @@ Total   Off-chip Flash bandwidth                 0.10 MB/batch
 Total   Off-chip Flash bandwidth  per input      0.10 MB/inference (batch size 1)
 
 Neural network macs                             86952 MACs/batch
+```
+
+To display internal cycle estimates for the network use the CLI option
+`--verbose-cycle-estimate`.  
+
+```
+Info: The numbers below are internal compiler estimates.
+For performance numbers the compiled network should be run on an FVP Model or FPGA.
+
 Network Tops/s                                   0.00 Tops/s
 
 NPU cycles                                      21298 cycles/batch
@@ -83,29 +92,31 @@ Design peak Off-chip Flash bandwidth             0.50 GB/s
 ### Accelerator configuration
 
 This shows the selected accelerator configuration.  It identifies the Embedded
-NPU that the compiler is targeting.  **NOTE: It is crucial to select
-the correct device, otherwise a run-time check in the driver will fail.**
+NPU that the compiler is targeting.  
+__NOTE: It is crucial to select the correct device, otherwise a run-time check
+in the driver will fail.__  
 To select a different accelerator configuration use the CLI option
 `--accelerator-config`, see [OPTIONS.md](OPTIONS.md#Accelerator-Configuration).
 
 ### System configuration
 
-The selected system configuration from the provided configuration file or
-`internal-default`.  **NOTE: It is very important to select a system
-configuration that correctly describes the target embedded system.  ** This is
-because the compiler makes some of its optimization decisions based upon this
-information.  Failing to select the correct configuration could result in
+The selected system configuration from the provided configuration file or the
+default value.  
+__NOTE: It is very important to select a system
+configuration that correctly describes the target embedded system.__   
+This is because the compiler makes some of its optimization decisions based upon
+this information.  Failing to select the correct configuration could result in
 run-time errors, bit-inexact operation, or suboptimal operation of the Embedded
 NPU.  To select a different system configuration use the CLI option
 `--system-config`, see [OPTIONS.md](OPTIONS.md#System-Config).
 
 ### Memory mode
 
-The selected memory mode from the provided configuration file or
-internal-default.  **NOTE: It is very important to select a memory
-mode that correctly describes the target embedded system.  ** This is
-because the compiler makes some of its optimization decisions based upon this
-information.  To select a different memory mode use the CLI option
+The selected memory mode from the provided configuration file or the default value.  
+__NOTE: It is very important to select a memory mode that correctly describes
+the target embedded system.__  
+This is because the compiler makes some of its optimization decisions based upon
+this information.  To select a different memory mode use the CLI option
 `--memory-mode`, see [OPTIONS.md](OPTIONS.md#Memory-Mode).
 
 ### Accelerator clock
@@ -209,13 +220,27 @@ block based processing.
 This is the total size of the [NPU Weights](#NPU-Weights-Size) after being
 encoded for the NPU.
 
-## Estimated performance
+## Neural network MACs
 
-The final sections show the estimated required compute power and performance
-for the network.
+This shows the estimated number of MACs in the network per batch.  This number
+includes MACs from convolutions, vector products and pooling operations.
+It does not include MACs from elementwise or any other type of operation.  
 
 ```
 Neural network macs                             86952 MACs/batch
+```
+
+## Estimated performance
+
+__NOTE: This is only an estimate. For performance numbers we recommend running
+the compiled network on an FVP Model or FPGA.__  
+
+The final sections show the estimated required compute power and performance
+for the network.  
+
+This section is only visible if the CLI option `--verbose-cycle-estimate` is provided.  
+
+```
 Network Tops/s                                   0.00 Tops/s
 
 NPU cycles                                      21298 cycles/batch
@@ -227,12 +252,6 @@ Total cycles                                   114098 cycles/batch
 
 Batch Inference time                 0.23 ms, 4382.18 inferences/s (batch size 1)
 ```
-
-### Neural network MACs
-
-This shows the estimated number of MACs in the network per batch.  This number
-includes MACs from convolutions, vector products and pooling operations.
-It does not include MACs from elementwise or any other type of operation.
 
 ### Network Tops/s
 
@@ -260,8 +279,6 @@ than for the operation for every layer that required a DMA transfer.
 ### Batch Inference time
 
 This shows the estimated inference time and inferences per second per batch.
-**NOTE: This is just an estimate, for more accurate numbers we recomend to run
-the compiled network in the software model.**
 
 # Vela Performance Estimation Per-Layer
 

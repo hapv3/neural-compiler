@@ -537,6 +537,18 @@ reordered, padded and encoded for the operators that run on the Ethos-U.
 vela network.tflite --verbose-weights
 ```
 
+### Verbose cycle estimate
+
+Displays the cycle estimate of inference as part of the final summary information.  
+The estimates include number of cycles per batch for NPU, memory accesses and in
+total.  
+__NOTE: This is only an estimate. For performance numbers we recommend running
+the compiled network on an FVP Model or FPGA.__  
+
+```bash
+vela network.tflite --verbose-cycle-estimate
+```
+
 ### Verbose Progress
 
 This option displays progress information of the most time consuming parts of

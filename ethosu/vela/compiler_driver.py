@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2020-2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2020-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -62,6 +62,7 @@ class CompilerOptions:
         verbose_register_command_stream=False,
         verbose_operators=False,
         verbose_weights=False,
+        verbose_cycle_estimate=False,
         verbose_performance=False,
         verbose_progress=False,
         show_cpu_operations=False,
@@ -83,6 +84,7 @@ class CompilerOptions:
         self.verbose_register_command_stream = verbose_register_command_stream
         self.verbose_operators = verbose_operators
         self.verbose_weights = verbose_weights
+        self.verbose_cycle_estimate = verbose_cycle_estimate
         self.verbose_performance = verbose_performance
         self.verbose_progress = verbose_progress
         self.show_cpu_operations = show_cpu_operations

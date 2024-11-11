@@ -261,6 +261,7 @@ def print_performance_metrics_common(
     npu_operations=None,
     show_cpu_operations=False,
     weights_data=None,
+    verbose_cycle_estimate=False,
     f=sys.stdout,
 ):
 
@@ -359,27 +360,35 @@ def print_performance_metrics_common(
         f"Neural network macs                      {int(macs):12d} MACs/batch",
         file=f,
     )
-    print(
-        f"Network Tops/s                           {macs * 2 * inferences_per_second / 1e12:12.2f} Tops/s",
-        file=f,
-    )
+    if verbose_cycle_estimate:
+        print(file=f)
+        print("Info: The numbers below are internal compiler estimates.", file=f)
+        print("For performance numbers the compiled network should be run on an FVP Model or FPGA.", file=f)
+        print(file=f)
+
+        print(
+            f"Network Tops/s                           {macs * 2 * inferences_per_second / 1e12:12.2f} Tops/s",
+            file=f,
+        )
+        print(file=f)
+
+        for kind in PassCycles.all():
+            aug_label = kind.display_name() + " cycles"
+            cyc = cycles[kind]
+            print(f"{aug_label:30}           {int(cyc):12d} cycles/batch", file=f)
+        print(file=f)
+
+        print(
+            f"Batch Inference time              {inference_time * 1000:7.2f} ms,"
+            f" {inferences_per_second:7.2f} inferences/s (batch size {batch_size:d})",
+            file=f,
+        )
     print(file=f)
 
-    for kind in PassCycles.all():
-        aug_label = kind.display_name() + " cycles"
-        cyc = cycles[kind]
-        print(f"{aug_label:30}           {int(cyc):12d} cycles/batch", file=f)
-    print(file=f)
 
-    print(
-        f"Batch Inference time              {inference_time * 1000:7.2f} ms,"
-        f" {inferences_per_second:7.2f} inferences/s (batch size {batch_size:d})",
-        file=f,
-    )
-    print(file=f)
-
-
-def print_performance_metrics(nng, arch, show_cpu_operations=False, verbose_weights=False, f=sys.stdout):
+def print_performance_metrics(
+    nng, arch, show_cpu_operations=False, verbose_weights=False, verbose_cycle_estimate=False, f=sys.stdout
+):
     cpu_operations = []
     npu_operations = []
     ir_only_ops = (
@@ -426,6 +435,7 @@ def print_performance_metrics(nng, arch, show_cpu_operations=False, verbose_weig
         npu_operations,
         show_cpu_operations,
         weights_data,
+        verbose_cycle_estimate,
         f,
     )
 
@@ -511,6 +521,7 @@ def print_regor_performance_metrics(
     csv_filename,
     opt_database,
     verbose_weights=False,
+    verbose_cycle_estimate=False,
     show_cpu_operations=False,
 ):
     # Map from Regor memory names to Vela MemArea
@@ -598,6 +609,7 @@ def print_regor_performance_metrics(
         npu_operations,
         show_cpu_operations,
         weights_data,
+        verbose_cycle_estimate,
         f,
     )
 
