@@ -246,11 +246,11 @@ int64_t EthosU85Performance::EstimateConvCycles(const PerformanceQuery &query, c
     int64_t totalCycles = 0;
     if ( cyclesDpuBlk > cyclesOutputBlk )
     {
-        totalCycles = cyclesDpuBlk * numOfmBlks + cyclesOutputBlk;
+        totalCycles = int64_t(cyclesDpuBlk * numOfmBlks) + cyclesOutputBlk;
     }
     else
     {
-        totalCycles = cyclesOutputBlk * numOfmBlks + cyclesDpuBlk;
+        totalCycles = int64_t(cyclesOutputBlk * numOfmBlks) + cyclesDpuBlk;
     }
 
     return totalCycles;

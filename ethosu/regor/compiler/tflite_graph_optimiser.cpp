@@ -513,7 +513,8 @@ Operation *TFLiteGraphOptimiser::CreateCastToInt32(const TensorConnection *ifmCo
 
 
 // Converts op to int8/uint8 LUT which is generated with the given function.
-Operation *TFLiteGraphOptimiser::ConvertToLUT8(Operation *op, std::function<double(double)> func, const std::string &name)
+template<typename FUNC>
+static Operation *ConvertToLUT8(Operation *op, FUNC func, const std::string &name)
 {
     auto ifmConn = op->Input(TensorUsage::IFM0);
     auto ofmConn = op->Output(TensorUsage::OFM);
@@ -539,7 +540,7 @@ Operation *TFLiteGraphOptimiser::ConvertToLUT8(Operation *op, std::function<doub
     {
         auto xReal = ifmScale * double(x - zpIn);
         auto yReal = func(xReal);
-        int lutVal = int(RoundAwayZero(double(zpOut) + yReal / ofmScale));
+        int lutVal = int(std::round(double(zpOut) + yReal / ofmScale));
         lutVal = std::min(qMax, std::max(qMin, lutVal));
         lut.push_back(uint8_t(lutVal));
     }
@@ -554,7 +555,8 @@ Operation *TFLiteGraphOptimiser::ConvertToLUT8(Operation *op, std::function<doub
 }
 
 // Converts op to int16 interpolating LUT which is generated with the given function.
-Operation *TFLiteGraphOptimiser::ConvertToInterpolatingLUT16(Operation *op, std::function<float(float)> func, const std::string &name)
+template<typename FUNC>
+static Operation *ConvertToInterpolatingLUT16(Operation *op, FUNC func, const std::string &name)
 {
     auto ifmConn = op->Input(TensorUsage::IFM0);
     auto ofmConn = op->Output(TensorUsage::OFM);
@@ -566,8 +568,8 @@ Operation *TFLiteGraphOptimiser::ConvertToInterpolatingLUT16(Operation *op, std:
         return op;
     }
 
-    float ifmScale(ifmConn->quantization.scales[0].Dequantize());
-    float ofmScale(ofmConn->quantization.scales[0].Dequantize());
+    float ifmScale = float(ifmConn->quantization.scales[0].Dequantize());
+    float ofmScale = float(ofmConn->quantization.scales[0].Dequantize());
     auto zpIn = ifmConn->quantization.zeroPoints[0];
     auto zpOut = ofmConn->quantization.zeroPoints[0];
     float qMin = std::numeric_limits<int16_t>::min();
@@ -578,7 +580,7 @@ Operation *TFLiteGraphOptimiser::ConvertToInterpolatingLUT16(Operation *op, std:
     float outputMax = ofmScale * (qMax - zpOut);
     const int steps = 512;
     float step = (inputMax - inputMin) / steps;
-    float halfStep = step / 2.0;
+    float halfStep = step / 2.0f;
     float outputScalingInv = (qMax - qMin + 1) / (outputMax - outputMin);
 
     // Create 32-bit LUT represented by a 16-bit base and 16-bit slope.
@@ -589,12 +591,12 @@ Operation *TFLiteGraphOptimiser::ConvertToInterpolatingLUT16(Operation *op, std:
         float val = func(inputMin + i * step);
         float valMidpoint = func(inputMin + i * step + halfStep);
         float valNext = func(inputMin + (i + 1) * step);
-        float sampleVal = RoundAwayZero(val * outputScalingInv);
+        float sampleVal = std::round(val * outputScalingInv);
 
-        float midpointInterpVal = RoundAwayZero((valNext * outputScalingInv + sampleVal) / 2);
-        float midpointVal = RoundAwayZero(valMidpoint * outputScalingInv);
+        float midpointInterpVal = std::round((valNext * outputScalingInv + sampleVal) / 2.0f);
+        float midpointVal = std::round(valMidpoint * outputScalingInv);
         float midpointErr = midpointInterpVal - midpointVal;
-        float bias = RoundAwayZero(midpointErr / 2.0);
+        float bias = std::round(midpointErr / 2.0f);
 
         float lutResult = std::clamp(sampleVal - bias, qMin, qMax);
 
@@ -606,7 +608,7 @@ Operation *TFLiteGraphOptimiser::ConvertToInterpolatingLUT16(Operation *op, std:
         }
         prevLutResult = lutResult;
     }
-    float val = RoundAwayZero(func(inputMax) * outputScalingInv);
+    float val = float(std::round(func(inputMax) * outputScalingInv));
     float lutResult = std::clamp(val, qMin, qMax);
     uint32_t base = uint32_t(prevLutResult);
     uint32_t slope = uint32_t(lutResult - prevLutResult);
@@ -731,14 +733,14 @@ Operation *TFLiteGraphOptimiser::ConvertExpToLUT(Graph *const graph, Operation *
     if ( (ifmType & DataType::Bits8) == DataType::Bits8 )
     {
         returnOp = ConvertToLUT8(
-            operation, [](float x) -> float { return std::exp(x); }, "Exp");
+            operation, [](double x) -> float { return expf(float(x)); }, "Exp");
         RecordOptimisation(operation, returnOp);
         operation->Disconnect();
     }
     else if ( ifmType == DataType::Int16 )
     {
         returnOp = ConvertToInterpolatingLUT16(
-            operation, [](float x) -> float { return std::exp(x); }, "Exp16(interp)");
+            operation, [](double x) -> float { return expf(float(x)); }, "Exp16(interp)");
         RecordOptimisation(operation, returnOp);
         operation->Disconnect();
     }
@@ -2116,8 +2118,7 @@ Operation *TFLiteGraphOptimiser::ConvertTanhSigmoidToLUT(Graph *const, Operation
     }
     else if ( opType == OpType::Sigmoid )
     {
-        returnOp = ConvertToLUT8(
-            operation, [](double x) -> double { return ClampSigmoid8(x); }, "sigmoid");
+        returnOp = ConvertToLUT8(operation, ClampSigmoid8, "sigmoid");
     }
     else if ( opType == OpType::Tanh )
     {
@@ -2204,7 +2205,7 @@ Operation *TFLiteGraphOptimiser::ConvertPrelu(Graph *const graph, Operation *con
                 }
                 if ( alphaQuant.scales.size() )
                 {
-                    alphaScale = alphaQuant.scales[0].Dequantize();
+                    alphaScale = float(alphaQuant.scales[0].Dequantize());
                 }
 
                 // rescale Min/Max
@@ -2574,7 +2575,7 @@ Operation *TFLiteGraphOptimiser::ConvertRSqrtToLUT(Graph *const graph, Operation
     }
     else if ( opType == OpType::Rsqrt && ifmConn->tensor->Type() == DataType::Int16 && ofmConn->tensor->Type() == DataType::Int16 )
     {
-        float ofmScale = operation->Output(TensorUsage::OFM)->quantization.scales[0].Dequantize();
+        float ofmScale = float(operation->Output(TensorUsage::OFM)->quantization.scales[0].Dequantize());
         returnOp = ConvertToInterpolatingLUT16(
             operation,
             [&ofmScale](float x) -> float

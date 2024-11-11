@@ -70,7 +70,7 @@ T1 CheckedAdd(T1 a, T2 b)
                 "Failed to parse TFLite file\n");
         }
     }
-    return a + b;
+    return T1(a + b);
 }
 
 template<typename T, typename U>

@@ -233,13 +233,7 @@ inline float RoundAway(float value, float align)
     {
         value = value + align - 1;
     }
-    return std::trunc(value / align) * align;
-}
-
-template<typename TYPE>
-TYPE RoundAwayZero(TYPE value)
-{
-    return std::trunc(value + (value < 0 ? -0.5 : 0.5));
+    return std::truncf(value / align) * align;
 }
 
 template<typename TYPE>
@@ -251,7 +245,7 @@ TYPE RoundZero(TYPE value, TYPE align)
 
 inline float RoundZero(float value, float align)
 {
-    return std::trunc(value / align) * align;
+    return std::truncf(value / align) * align;
 }
 
 
