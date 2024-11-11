@@ -72,6 +72,7 @@ std::unique_ptr<const uint8_t[]> TfLiteWriter::Serialise(const std::vector<std::
 
             OpType type = operation->Type();
             tflite::BuiltinOperator builtin_code;
+            tflite::BuiltinOptions builtin_options_type;
             if ( type == OpType::Passthrough )
             {
                 assert(tflite_model);
@@ -84,12 +85,12 @@ std::unique_ptr<const uint8_t[]> TfLiteWriter::Serialise(const std::vector<std::
                     int8_t deprecated_builtin_code = operator_codes->Get(tflite_operator->opcode_index())->deprecated_builtin_code();
                     builtin_code = static_cast<tflite::BuiltinOperator>(deprecated_builtin_code);
                 }
-
-                type = TfLiteMapping::BuiltinOperatorToOpType(builtin_code);
+                builtin_options_type = tflite_operator->builtin_options_type();
             }
             else
             {
                 builtin_code = TfLiteMapping::OpTypeToBuiltinOperator(type);
+                builtin_options_type = TfLiteMapping::OpTypeToBuiltinOptions(type);
             }
 
             // Set deprecated_builtin_code for backwards compatibility
@@ -174,9 +175,8 @@ std::unique_ptr<const uint8_t[]> TfLiteWriter::Serialise(const std::vector<std::
             auto serialised_outputs = _flatbuffer.CreateVector<int32_t>(outputs);
             auto serialised_options = SerialiseOptions(operation, type);
 
-            _serialised_operations.push_back(tflite::CreateOperator(_flatbuffer, opcode_index, serialised_inputs,
-                serialised_outputs, TfLiteMapping::OpTypeToBuiltinOptions(type), serialised_options, custom_options,
-                custom_options_format, mvi, intermediates));
+            _serialised_operations.push_back(tflite::CreateOperator(_flatbuffer, opcode_index, serialised_inputs, serialised_outputs,
+                builtin_options_type, serialised_options, custom_options, custom_options_format, mvi, intermediates));
         }
 
         std::vector<int> inputs, outputs;
@@ -240,15 +240,7 @@ std::vector<const Tensor *> TfLiteWriter::SortedInputTensors(const Operation *op
     }
     while ( operation->Input(MakeTensorUsage(TensorUsage::IFM, ifm)) )
     {
-        if ( IsVariadic(type) )
-        {
-            tensors.push_back(operation->IFM(ifm));
-        }
-        else
-        {
-            LOG_WARN("TfLiteWriter: Unexpected input tensor {} of operator {} will be ignored.\n",
-                operation->IFM(ifm)->Name(), OpTypeToString(operation->Type()));
-        }
+        tensors.push_back(operation->IFM(ifm));
         ifm++;
     }
     return tensors;
@@ -389,11 +381,10 @@ flatbuffers::Offset<void> TfLiteWriter::SerialiseOptions(const Operation *operat
         return 0;
     }
 
-    const auto type = TfLiteMapping::OpTypeToBuiltinOptions(opType);
     flatbuffers::Offset<void> offset = 0;
     const tflite::Operator *const passthrough = static_cast<const tflite::Operator *>(operation->Passthrough());
-
     assert(passthrough);
+    const auto type = passthrough->builtin_options_type();
 
     switch ( type )
     {

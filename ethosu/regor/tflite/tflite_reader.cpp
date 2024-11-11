@@ -247,8 +247,8 @@ void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::uniqu
                     }
                     else
                     {
-                        LOG_WARN("TfLiteReader: Unexpected input tensor {} of operator {} will be ignored.\n",
-                            tensor->Name(), OpTypeToString(operation->Type()));
+                        operation->ConnectInput(MakeTensorUsage(TensorUsage::IFM, ifm_count++), tensor)
+                            .Set(tensorQuantization[tensor->Uid()]);
                     }
                 }
             }
@@ -410,7 +410,6 @@ void TfLiteReader::ParseOperatorOptions(const std::shared_ptr<Operation> &operat
     const tflite::Operator *tflite_operator, OptimiserDatabase *optDb, IArchitectureConstraints *constraints)
 {
     const auto type = tflite_operator->builtin_options_type();
-    assert((type == TfLiteMapping::OpTypeToBuiltinOptions(operation->Type())) || (type == tflite::BuiltinOptions::NONE));
     auto activation_function = tflite::ActivationFunctionType::NONE;
 
     switch ( type )
@@ -781,13 +780,20 @@ void TfLiteReader::ParseOperatorOptions(const std::shared_ptr<Operation> &operat
         LOG_WARN("ExecutionQuery not buildable for operation {}: {}\n", EnumToString(operation->Type()), e.what())
         isValidQuery = false;
     }
-    if ( !isValidQuery || !(constraints->CanExecute(query)) )
+    if ( operation->Type() == OpType::None )
     {
         operation->SetPassthroughOp();
     }
-    else
+    else if ( operation->Type() != OpType::Passthrough )
     {
-        UnFuseActivation(operation, activation_function, optDb);
+        if ( !isValidQuery || !(constraints->CanExecute(query)) )
+        {
+            operation->SetPassthroughOp();
+        }
+        else
+        {
+            UnFuseActivation(operation, activation_function, optDb);
+        }
     }
 }
 

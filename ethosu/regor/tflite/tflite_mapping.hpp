@@ -42,7 +42,15 @@ public:
     {
         return _activationFunctionToOpType.at(type);
     }
-    static OpType BuiltinOperatorToOpType(tflite::BuiltinOperator type) { return _builtinOperatorToOpType.at(type); }
+    static OpType BuiltinOperatorToOpType(tflite::BuiltinOperator type)
+    {
+        auto it = _builtinOperatorToOpType.find(type);
+        if ( it == _builtinOperatorToOpType.end() )
+        {
+            return OpType::None;
+        }
+        return it->second;
+    }
 
     static std::string BuiltinOperatorToString(tflite::BuiltinOperator &type) { return EnumNameBuiltinOperator(type); }
 
@@ -72,7 +80,17 @@ public:
     }
     static tflite::BuiltinOptions OpTypeToBuiltinOptions(OpType type)
     {
-        return _builtinOperatorToBuiltinOptions.at(OpTypeToBuiltinOperator(type));
+        auto it1 = _opTypeToBuiltinOperator.find(type);
+        if ( it1 == _opTypeToBuiltinOperator.end() )
+        {
+            return tflite::BuiltinOptions::NONE;
+        }
+        auto it2 = _builtinOperatorToBuiltinOptions.find(it1->second);
+        if ( it2 == _builtinOperatorToBuiltinOptions.end() )
+        {
+            return tflite::BuiltinOptions::NONE;
+        }
+        return it2->second;
     }
 
     class InputTensorIndices;  // Usage: for (const auto& map_entry : InputTensorIndices(op_type)) {}
