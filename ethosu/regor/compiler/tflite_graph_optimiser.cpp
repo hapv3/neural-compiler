@@ -1912,18 +1912,18 @@ Operation *TFLiteGraphOptimiser::ConvertMeanOps(Graph *const, Operation *const o
         static constexpr int MAX_MEAN_HEIGHT = 64;
         static constexpr int MAX_MEAN_KERNEL_SIZE = 64 * 64;
 
-        // Create a 4D shape to indicate which axis that will be reduced
         Shape reduceAxis = ifmShape.WithZeros();
         for ( int i = 0; i < axisCount; ++i )
         {
             reduceAxis[axisValues[i]] = 1;
         }
-        reduceAxis = Shape::PadAxes(reduceAxis, 4, 0);
+        // Create a 4D shape to indicate which axis that will be reduced
+        Shape reduceAxis4D = Shape::PadAxes(reduceAxis, 4, 0);
 
         Shape ifmShape4D = Shape::PadAxes(ifmShape, 4, 1);
 
         // Check if it is possible to convert the MEAN
-        if ( !MeanOpSupported(operation, reduceAxis, ifmShape4D) )
+        if ( !MeanOpSupported(operation, reduceAxis4D, ifmShape4D) )
         {
             return operation;
         }
@@ -1935,6 +1935,7 @@ Operation *TFLiteGraphOptimiser::ConvertMeanOps(Graph *const, Operation *const o
         {
             for ( int i = 0; i < ifmDims; i++ )
             {
+                // Note: do not use reduceAxis4D here since we are using org dims
                 if ( reduceAxis[i] )
                 {
                     intermediateShape = intermediateShape.Insert(i, 1);
@@ -1945,25 +1946,25 @@ Operation *TFLiteGraphOptimiser::ConvertMeanOps(Graph *const, Operation *const o
 
         // Support mean over depth-axis by left-shifting the C channel
         // From operator checks we can assume that one of H,W,C has shape 1
-        if ( reduceAxis.Depth() && ifmShape4D.Depth() > 1 )
+        if ( reduceAxis4D.Depth() && ifmShape4D.Depth() > 1 )
         {
             // If W=1 reshape NxHx1xC -> NxHxCx1, else reshape Nx1xWxC -> NxWxCx1
             int idxToDelete = ifmShape.Width() == 1 ? 2 : 1;
 
             // Delete axis with size 1
-            reduceAxis = reduceAxis.Erase(idxToDelete);
+            reduceAxis4D = reduceAxis4D.Erase(idxToDelete);
             ifmShape4D = ifmShape4D.Erase(idxToDelete);
             intermediateShape = intermediateShape.Erase(idxToDelete);
 
             // Add another element to set channel-axis to one
-            reduceAxis = reduceAxis.Insert(3, 0);
+            reduceAxis4D = reduceAxis4D.Insert(3, 0);
             ifmShape4D = ifmShape4D.Insert(3, 1);
             intermediateShape = intermediateShape.Insert(3, 1);
         }
 
         // Compute kernel sizes for our convolutions
-        int h = reduceAxis.Height() ? ifmShape4D.Height() : 1;
-        int w = reduceAxis.Width() ? ifmShape4D.Width() : 1;
+        int h = reduceAxis4D.Height() ? ifmShape4D.Height() : 1;
+        int w = reduceAxis4D.Width() ? ifmShape4D.Width() : 1;
 
         assert(CheckSafeMul(w, h));
         int num_elements_in_axis = h * w;
@@ -1971,7 +1972,8 @@ Operation *TFLiteGraphOptimiser::ConvertMeanOps(Graph *const, Operation *const o
         // If one convolution is enough, but height is greater than max kernel height
         // reshape from HxW to 1x(HxW)
         // This can only be done if the mean is computed over both H and W
-        if ( h > MAX_MEAN_HEIGHT && num_elements_in_axis <= MAX_MEAN_KERNEL_SIZE && reduceAxis.Height() && reduceAxis.Width() )
+        if ( h > MAX_MEAN_HEIGHT && num_elements_in_axis <= MAX_MEAN_KERNEL_SIZE && reduceAxis4D.Height() &&
+             reduceAxis4D.Width() )
         {
             ifmShape4D = Shape(ifmShape4D.Batch(), 1, h * w, ifmShape4D.Depth());
             w = h * w;
@@ -2035,8 +2037,8 @@ Operation *TFLiteGraphOptimiser::ConvertMeanOps(Graph *const, Operation *const o
             }
 
             // Calculate read and offset shape
-            int readShapeH = reduceAxis.Height() ? kh : ifmShape4D.Height();
-            int readShapeW = reduceAxis.Width() ? w : ifmShape4D.Width();
+            int readShapeH = reduceAxis4D.Height() ? kh : ifmShape4D.Height();
+            int readShapeW = reduceAxis4D.Width() ? w : ifmShape4D.Width();
 
             Shape readOffset(0, i * heightPerConv, 0, 0);
             Shape readShape = ifmShape4D.WithHW(readShapeH, readShapeW);
