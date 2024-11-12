@@ -1740,8 +1740,8 @@ Operation *TFLiteGraphOptimiser::FixupDilationGT2(Graph *const, Operation *const
 
             // Create new empty kernel with dilated size
             auto origKernelSize = operation->Kernel()->Size();
-            auto dilatedKernelSize = operation->Kernel()->WithDilation({manualDilationH, manualDilationW}).DilatedWH();
-            Kernel dilatedKernel = operation->Kernel()->WithDilation({hwDilationH, hwDilationW}).WithSize(dilatedKernelSize);
+            auto dilatedKernelSize = operation->Kernel()->WithDilation({manualDilationW, manualDilationH}).DilatedWH();
+            Kernel dilatedKernel = operation->Kernel()->WithDilation({hwDilationW, hwDilationH}).WithSize(dilatedKernelSize);
             const int newKernelBufferSize = weightShape.Batch() * dilatedKernel.ElementsWH() * weightShape.Depth();
             operation->SetKernel(std::make_unique<Kernel>(std::move(dilatedKernel)));
 
