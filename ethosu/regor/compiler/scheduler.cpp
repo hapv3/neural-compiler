@@ -988,6 +988,10 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
          _options.disabled.All(SchedulerFeature::WeightBuffering) )
     {
         cost->ofmDepthSlices = std::move(ofmFullDepthSlicesAfterTransposition);
+        // Make sure any former buffering cost is cleared
+        cost->bufferedWeightTensor.buffering = Buffering::None;
+        cost->bufferedWeightTensor.tensor = nullptr;
+        cost->bufferedWeightTensor.preBuffer = false;
         cost->SetWeightScaleTensors(fullWeightScales.npuWeightsTensor, fullWeightScales.npuScalesTensor);
         return;
     }
