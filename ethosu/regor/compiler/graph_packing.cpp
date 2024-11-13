@@ -51,6 +51,8 @@ std::unique_ptr<Graph> GraphPacking::Process(std::vector<std::pair<Operation *, 
     std::shared_ptr<Operation> currentOp = nullptr;
     NPUOperation *currentNpuOp = nullptr;
 
+    bool allowCPUOps = (srcGraph->Notation() != GraphNotation::GraphAPI);
+
     // Pack consecutive NPU ops into a NPUOperation
     for ( auto &schedOp : ops )
     {
@@ -79,7 +81,7 @@ std::unique_ptr<Graph> GraphPacking::Process(std::vector<std::pair<Operation *, 
             }
             currentNpuOp->AddOperation(std::move(schedOp));
         }
-        else
+        else if ( allowCPUOps )
         {
             // Create new CPU operation for the new graph
             assert(schedOp->_srcKey != nullptr);
@@ -112,6 +114,10 @@ std::unique_ptr<Graph> GraphPacking::Process(std::vector<std::pair<Operation *, 
                 const auto newTensor = LookupNewTensor(oldTensor.get(), tensorAddressMap, schedTensor->AllocatedAddress());
                 currentOp->ConnectOutput(usage, newTensor).Set(schedConn.shape).Set(schedConn.quantization);
             }
+        }
+        else
+        {
+            throw std::runtime_error("CPU operations are not supported for GraphAPI input");
         }
     }
 

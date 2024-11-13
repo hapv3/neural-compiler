@@ -423,17 +423,16 @@ std::unique_ptr<Graph> Compiler::CompileGraph(std::unique_ptr<Graph> &graph,
 
     // Get a new graph and NPU operations from the scheduled operations
     std::vector<std::pair<Operation *, std::unique_ptr<NPUOperation>>> npuOps;
-    std::unique_ptr<Graph> newGraph = PackScheduleToGraph(npuOps, scheduleOps, tensorAddressMap, graph.get());
-
-#ifndef NDEBUG
-    // Validate the output graph is NPU-only
-    Graph::TraverseGraphFromEnd(newGraph->Outputs(),
-        [&](Operation *op) -> bool
-        {
-            assert((op->Type() == OpType::CustomNpuOp) || (graph->Notation() != GraphNotation::GraphAPI));
-            return true;
-        });
-#endif
+    std::unique_ptr<Graph> newGraph;
+    try
+    {
+        newGraph = PackScheduleToGraph(npuOps, scheduleOps, tensorAddressMap, graph.get());
+    }
+    catch ( const std::runtime_error &e )
+    {
+        SetLastError(e.what());
+        return nullptr;
+    }
 
     auto customOperatorBuilder = CustomOperatorBuilder(_architecture.get(), schedule.get());
     customOperatorBuilder.AllocateScratchTensors(tensorAddressMap);
