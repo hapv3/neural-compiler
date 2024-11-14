@@ -47,6 +47,7 @@ private:
     std::vector<std::shared_ptr<Tensor>> _inputs;
     std::vector<std::shared_ptr<Tensor>> _outputs;
     std::vector<std::shared_ptr<Tensor>> _persistent;
+    std::vector<std::shared_ptr<Tensor>> _placeholder;
     GraphNotation _notation = GraphNotation::Invalid;
     uint32_t _syntaxVersion = 0;
     const void *_passthrough = nullptr;  // Original flatbuffer description of this model (if it was loaded from one)
@@ -58,9 +59,10 @@ public:
     Graph(GraphNotation nt) : _notation(nt) {}
 
     Graph(const std::string &name, std::vector<std::shared_ptr<Tensor>> inputs, std::vector<std::shared_ptr<Tensor>> outputs,
-        std::vector<std::shared_ptr<Tensor>> persistent, GraphNotation nt, uint32_t version) :
+        std::vector<std::shared_ptr<Tensor>> persistent, std::vector<std::shared_ptr<Tensor>> placeholder, GraphNotation nt, uint32_t version) :
             _name(name),
-            _inputs(std::move(inputs)), _outputs(std::move(outputs)), _persistent(std::move(persistent)), _notation(nt), _syntaxVersion(version)
+            _inputs(std::move(inputs)), _outputs(std::move(outputs)), _persistent(std::move(persistent)),
+            _placeholder(std::move(placeholder)), _notation(nt), _syntaxVersion(version)
     {
     }
 
@@ -83,10 +85,12 @@ public:
     const std::vector<std::shared_ptr<Tensor>> &Inputs() const { return _inputs; }
     const std::vector<std::shared_ptr<Tensor>> &Outputs() const { return _outputs; }
     const std::vector<std::shared_ptr<Tensor>> &Persistent() const { return _persistent; }
+    const std::vector<std::shared_ptr<Tensor>> &Placeholder() const { return _placeholder; }
 
     void AddInput(const std::shared_ptr<Tensor> &input) { _inputs.push_back(input); }
     void AddOutput(const std::shared_ptr<Tensor> &output) { _outputs.push_back(output); }
     void AddPersistent(const std::shared_ptr<Tensor> &tensor) { _persistent.push_back(tensor); }
+    void AddPlaceholder(const std::shared_ptr<Tensor> &tensor) { _placeholder.push_back(tensor); }
 
     bool IsInput(const Tensor *tensor) const
     {
@@ -102,6 +106,12 @@ public:
     {
         return std::find_if(_persistent.begin(), _persistent.end(),
                    [&](const std::shared_ptr<Tensor> &persistent) { return persistent.get() == tensor; }) != _persistent.end();
+    }
+    bool IsPlaceholder(const Tensor *tensor) const
+    {
+        return std::find_if(_placeholder.begin(), _placeholder.end(),
+                   [&](const std::shared_ptr<Tensor> &placeholder) { return placeholder.get() == tensor; }) !=
+               _placeholder.end();
     }
 
     GraphNotation Notation() const

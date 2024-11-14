@@ -181,6 +181,7 @@ void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::uniqu
     {
         std::vector<std::shared_ptr<Tensor>> tensors;
         std::vector<std::shared_ptr<Tensor>> persistent;
+        std::vector<std::shared_ptr<Tensor>> placeholder;
         std::vector<std::shared_ptr<Operation>> operations;
         assert(tflite_subgraph);
         auto tflite_tensors = tflite_subgraph->tensors();
@@ -231,7 +232,6 @@ void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::uniqu
                     }
                 }
             }
-
             while ( indirect_index < int(input_tensors.size()) )
             {
                 const int direct_index = input_tensors[indirect_index++];
@@ -252,6 +252,14 @@ void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::uniqu
                     }
                 }
             }
+            if ( ifm_count == 0 )
+            {
+                // There's no IFMs -- Add a shapeless placeholder tensor because GraphIR requires IFM on all operations.
+                // Also add it to the list of placeholder tensors so we can avoid writing this tensors out later on.
+                auto tensor = std::make_shared<Tensor>(fmt::format("placeholder-for-{}-IFM", ext_key), DataType::None);
+                operation->ConnectInput(TensorUsage::IFM, tensor);
+                placeholder.push_back(std::move(tensor));
+            }
 
             // Connect operation to its output tensors
             int ofm_count = 0;
@@ -261,10 +269,26 @@ void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::uniqu
                 assert(tensorQuantization.count(ofm->Uid()) > 0);
                 operation->ConnectOutput(MakeTensorUsage(TensorUsage::OFM, ofm_count++), ofm).Set(tensorQuantization[ofm->Uid()]);
             }
+            if ( ofm_count == 0 )
+            {
+                // There's no OFM -- Add a shapeless placeholder tensor because GraphIR requires OFM on all operations.
+                // Also add it to the list of placeholder tensors so we can avoid writing this tensors out later on.
+                auto tensor = std::make_shared<Tensor>(fmt::format("placeholder-for-{}-OFM", ext_key), DataType::None);
+                operation->ConnectOutput(TensorUsage::OFM, tensor);
+                placeholder.push_back(std::move(tensor));
+            }
+
+            if ( ifm_count == 0 || ofm_count == 0 )
+            {
+                // NPU operations must have IFM and OFM
+                operation->SetPassthroughOp();
+            }
+
             if ( optDb )
             {
                 optDb->SourceOp(operation.get(), ext_key);
             }
+
             // Interpretation of operator options may depend on input/output tensor information,
             // so the operation must be connected to its tensors before parsing operator options.
             ParseOperatorOptions(operation, tflite_operator, optDb, constraints);
@@ -289,6 +313,11 @@ void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::uniqu
         for ( auto &tensor : persistent )
         {
             graph->AddPersistent(tensor);
+        }
+        for ( auto &tensor : placeholder )
+        {
+            graph->AddPlaceholder(tensor);
+            graph->AddOutput(tensor);
         }
 
         // Find and disconnect any operations which do not precede a graph output. Otherwise they might persist beyond

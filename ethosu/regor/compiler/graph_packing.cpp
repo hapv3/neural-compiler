@@ -164,6 +164,12 @@ std::unique_ptr<Graph> GraphPacking::Process(std::vector<std::pair<Operation *, 
         graph->AddPersistent(LookupNewTensor(tensor.get()));
     }
 
+    // Transfer placeholder tensors from old graph
+    for ( const auto &tensor : srcGraph->Placeholder() )
+    {
+        graph->AddPlaceholder(LookupNewTensor(tensor.get()));
+    }
+
     _oldTensorToNewTensor.clear();
 
     // Save the execution order of all ops in the new graph

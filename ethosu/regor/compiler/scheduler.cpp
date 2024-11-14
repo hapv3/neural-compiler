@@ -259,11 +259,11 @@ static int UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *conn)
         auto ifm0 = consumer->TryIFM(0);
         auto ifm1 = consumer->TryIFM(1);
         auto ifm2 = consumer->TryIFM(2);
-        if ( (ifm0 && ifm0->tensor.get() == tensor &&
+        if ( (ifm0 && ifm0->tensor.get() == tensor && ifm0->SliceShape() && conn->shape &&
                  Shape::PadAxes(ifm0->SliceShape(), 2, 1).WC<int>() != Shape::PadAxes(conn->shape, 2, 1).WC<int>()) ||
-             (ifm1 && ifm1->tensor.get() == tensor &&
+             (ifm1 && ifm1->tensor.get() == tensor && ifm1->SliceShape() && conn->shape &&
                  Shape::PadAxes(ifm1->SliceShape(), 2, 1).WC<int>() != Shape::PadAxes(conn->shape, 2, 1).WC<int>()) ||
-             (ifm2 && ifm2->tensor.get() == tensor &&
+             (ifm2 && ifm2->tensor.get() == tensor && ifm2->SliceShape() && conn->shape &&
                  Shape::PadAxes(ifm2->SliceShape(), 2, 1).WC<int>() != Shape::PadAxes(conn->shape, 2, 1).WC<int>()) )
         {
             tensor->needsLinearFormat = true;

@@ -423,12 +423,13 @@ void SchedulerPacking::InitSchedulerConnection(
 
 void SchedulerPacking::InitSchedulerTensor(SchedulerTensor *schedTensor, Tensor *tensor, const Graph *graph)
 {
+    const auto type = tensor->Type();
     // Take scheduler-local copies of graph tensor parameters.
     schedTensor->format = TensorFormat::NHWC;
     schedTensor->memArea = tensor->IsConstant() ? _arch->ReadonlyMemory() : _arch->FeatureMapMemory();
     schedTensor->storageShape = Shape::PadAxes(tensor->StorageShape(), 4, 1);
-    schedTensor->dataType = tensor->Type();
-    schedTensor->bufferView = IsVariablySized(tensor->Type()) ? BufferView() : tensor->View();
+    schedTensor->dataType = type;
+    schedTensor->bufferView = (IsVariablySized(type) || type == DataType::None) ? BufferView() : tensor->View();
     schedTensor->isGraphInput = graph->IsInput(tensor);
     schedTensor->isGraphOutput = graph->IsOutput(tensor);
     schedTensor->isPersistent = graph->IsPersistent(tensor);

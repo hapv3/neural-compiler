@@ -308,17 +308,27 @@ void ConstraintTensQuantScale(const Model &m_model)
 
 void ConstraintQuantScaleInf(const Operator &op, const SubGraph &subgraph, const BuiltinOperator &builtinOperator, BufferOffsetRef)
 {
-    auto ifm = TensorFromUsage(regor::TensorUsage::IFM, op, builtinOperator, *subgraph.tensors());
-    auto ofm = TensorFromUsage(regor::TensorUsage::OFM, op, builtinOperator, *subgraph.tensors());
-    if ( ifm->quantization() && ifm->quantization()->scale() && ofm->quantization() && ofm->quantization()->scale() )
+    auto *inputs = CheckedPtr(op.inputs());
+    auto *outputs = CheckedPtr(op.outputs());
+    if ( inputs->size() > 0 && outputs->size() > 0 )
     {
-        float ifmScale = (*ifm->quantization()->scale())[0];
-        float ofmScale = (*ofm->quantization()->scale())[0];
-        if ( !std::isfinite(ifmScale / ofmScale) )
+        auto ifm = TensorFromUsage(regor::TensorUsage::IFM, op, builtinOperator, *subgraph.tensors());
+        auto ofm = TensorFromUsage(regor::TensorUsage::OFM, op, builtinOperator, *subgraph.tensors());
+        if ( ifm && ifm->quantization() && ofm && ofm->quantization() )
         {
-            std::string constraint = "Input and Output tensors must have quantization scales that fit within float32 precision";
-            std::string extra = fmt::format("(IFM Scale / OFM Scale)={}", ifmScale / ofmScale);
-            throw InvalidTfLiteException(constraint, extra, op, subgraph, builtinOperator);
+            auto ifmScales = ifm->quantization()->scale();
+            auto ofmScales = ofm->quantization()->scale();
+            if ( ifmScales && ifmScales->size() > 0 && ofmScales && ofmScales->size() > 0 )
+            {
+                float ifmScale = (*ifmScales)[0];
+                float ofmScale = (*ofmScales)[0];
+                if ( !std::isfinite(ifmScale / ofmScale) )
+                {
+                    std::string constraint = "Input and Output tensors must have quantization scales that fit within float32 precision";
+                    std::string extra = fmt::format("(IFM Scale / OFM Scale)={}", ifmScale / ofmScale);
+                    throw InvalidTfLiteException(constraint, extra, op, subgraph, builtinOperator);
+                }
+            }
         }
     }
 }

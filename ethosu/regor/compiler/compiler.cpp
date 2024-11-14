@@ -311,8 +311,9 @@ bool Compiler::BuildNetwork(const char *entryGraph)
     // graph objects. Any un-attached data will be dropped later.
     for ( auto &builder : _builders )
     {
+        std::vector<std::shared_ptr<Tensor>> placeholders;
         auto graph = std::make_unique<Graph>(builder.Name(), builder._inputs, builder._outputs, builder._persistent,
-            GraphNotation::GraphAPI, builder.SyntaxVersion());
+            placeholders, GraphNotation::GraphAPI, builder.SyntaxVersion());
         if ( entryGraph && (builder.Name() == entryGraph) )
         {
             assert(!_entryPoint && "Entrypoint already set");

@@ -135,11 +135,16 @@ std::unique_ptr<const uint8_t[]> TfLiteWriter::Serialise(const std::vector<std::
             std::vector<int> inputs, outputs;
             for ( const auto &tensor : SortedInputTensors(operation, type) )
             {
+                // Skip placeholder tensors
+                if ( graph->IsPlaceholder(tensor) ) continue;
                 inputs.push_back(SerialisedTensorIndex(tensor, tensor_address_map, *graph));
             }
             for ( const auto &connection : operation->Outputs() )
             {
-                outputs.push_back(SerialisedTensorIndex(connection.tensor.get(), tensor_address_map, *graph));
+                const Tensor *tensor = connection.tensor.get();
+                // Skip placeholder tensors
+                if ( graph->IsPlaceholder(tensor) ) continue;
+                outputs.push_back(SerialisedTensorIndex(tensor, tensor_address_map, *graph));
             }
 
             // Unused parameters are set to default or, if present in the input model, passed through unmodified.
@@ -187,6 +192,8 @@ std::unique_ptr<const uint8_t[]> TfLiteWriter::Serialise(const std::vector<std::
         }
         for ( const auto &tensor : graph->Outputs() )
         {
+            if ( graph->IsPlaceholder(tensor.get()) ) continue;
+
             outputs.push_back(SerialisedTensorIndex(tensor.get(), tensor_address_map, *graph));
         }
 

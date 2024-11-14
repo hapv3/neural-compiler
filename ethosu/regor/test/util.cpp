@@ -84,6 +84,7 @@ std::unique_ptr<Graph> CreateGraph(std::vector<std::shared_ptr<Operation>> &ops)
     std::vector<std::shared_ptr<Tensor>> inputs;
     std::vector<std::shared_ptr<Tensor>> outputs;
     std::vector<std::shared_ptr<Tensor>> persistent;
+    std::vector<std::shared_ptr<Tensor>> placeholder;
     for ( const auto &op : ops )
     {
         for ( auto &conn : op->Inputs() )
@@ -101,7 +102,7 @@ std::unique_ptr<Graph> CreateGraph(std::vector<std::shared_ptr<Operation>> &ops)
             }
         }
     }
-    auto graph = std::make_unique<Graph>("testGraph", inputs, outputs, persistent, GraphNotation::GraphAPI, 1);
+    auto graph = std::make_unique<Graph>("testGraph", inputs, outputs, persistent, placeholder, GraphNotation::GraphAPI, 1);
     return graph;
 }
 
