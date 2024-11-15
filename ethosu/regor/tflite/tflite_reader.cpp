@@ -309,6 +309,7 @@ void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::uniqu
 
         // Save a pointer to the model table so we can look up operator_code later
         graph->SetPassthrough(model);
+        graph->SetName(GetString(tflite_subgraph->name()));
 
         // Give graph to caller
         graphs.push_back(std::move(graph));

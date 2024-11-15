@@ -190,8 +190,9 @@ std::unique_ptr<const uint8_t[]> TfLiteWriter::Serialise(const std::vector<std::
             outputs.push_back(SerialisedTensorIndex(tensor.get(), tensor_address_map, *graph));
         }
 
-        _serialised_subgraphs.push_back(
-            tflite::CreateSubGraphDirect(_flatbuffer, &_serialised_tensors, &inputs, &outputs, &_serialised_operations));
+        const char *subGraphName = graph->Name().empty() ? nullptr : graph->Name().c_str();
+        _serialised_subgraphs.push_back(tflite::CreateSubGraphDirect(
+            _flatbuffer, &_serialised_tensors, &inputs, &outputs, &_serialised_operations, subGraphName));
 
         _serialised_operations.clear();
         _serialised_tensors.clear();

@@ -137,6 +137,7 @@ std::unique_ptr<Graph> GraphPacking::Process(std::vector<std::pair<Operation *, 
     _oldOpToNewOp.clear();
 
     auto graph = std::make_unique<Graph>(srcGraph->Notation());
+    graph->SetName(srcGraph->Name());
     graph->SetPassthrough(srcGraph->Passthrough());
 
     // Transfer graph input tensors from old graph

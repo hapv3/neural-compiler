@@ -77,6 +77,7 @@ public:
 
 public:
     const std::string &Name() const { return _name; }
+    void SetName(const std::string &name) { _name = name; }
     uint32_t SyntaxVersion() const { return _syntaxVersion; }
 
     const std::vector<std::shared_ptr<Tensor>> &Inputs() const { return _inputs; }
