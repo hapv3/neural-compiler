@@ -661,6 +661,18 @@ flatbuffers::Offset<void> TfLiteWriter::SerialiseOptions(const Operation *operat
         }
         break;
 
+        case tflite::BuiltinOptions::WhileOptions:
+        {
+            const auto options = GetBuiltinOptions<tflite::WhileOptions>(passthrough);
+            if ( options )
+            {
+                const auto typed_offset = tflite::CreateWhileOptions(
+                    _flatbuffer, options->cond_subgraph_index(), options->body_subgraph_index());
+                offset = typed_offset.Union();
+            }
+        }
+        break;
+
         // Empty option sets can all be written as if they were QuantizeOptions
         case tflite::BuiltinOptions::HardSwishOptions:
         case tflite::BuiltinOptions::MaximumMinimumOptions:
@@ -737,7 +749,6 @@ flatbuffers::Offset<void> TfLiteWriter::SerialiseOptions(const Operation *operat
         case tflite::BuiltinOptions::MatrixDiagOptions:
         case tflite::BuiltinOptions::MatrixSetDiagOptions:
         case tflite::BuiltinOptions::IfOptions:
-        case tflite::BuiltinOptions::WhileOptions:
         case tflite::BuiltinOptions::DepthToSpaceOptions:
         case tflite::BuiltinOptions::NonMaxSuppressionV4Options:
         case tflite::BuiltinOptions::NonMaxSuppressionV5Options:
