@@ -30,7 +30,7 @@ using namespace regor;
 // macs can be specified
 std::string TestConfig(int macs);
 // Parse-helper to create architecture
-void ParseConfig(std::string config, size_t size, std::unique_ptr<Architecture> &arch);
+void ParseConfig(const std::string &config, size_t size, std::unique_ptr<Architecture> &arch);
 // Creates an architecture-object based on default config
 // macs can be specified
 template<typename T>
@@ -43,7 +43,7 @@ std::unique_ptr<Architecture> CreateArchDefault(int macs = 128)
 }
 // Creates an architecture-object
 template<typename T>
-std::unique_ptr<Architecture> CreateArchDefault(std::string config)
+std::unique_ptr<Architecture> CreateArchDefault(const std::string &config)
 {
     std::unique_ptr<Architecture> arch = std::make_unique<T>();
     ParseConfig(config, sizeof(config), arch);
@@ -56,11 +56,11 @@ std::unique_ptr<Graph> CreateGraph(std::vector<std::shared_ptr<Operation>> &ops)
 // Helpers for Graph IR
 // -----------------------------
 // Create a Tensor with name, storageshape and datatype
-std::shared_ptr<Tensor> CreateTensor(std::string name, Shape storageShape, DataType dtype);
+std::shared_ptr<Tensor> CreateTensor(const std::string &name, const Shape &storageShape, DataType dtype);
 // Create a Const Tensor
 template<typename T>
-std::shared_ptr<Tensor> CreateTensor(std::string name, Shape storageShape, DataType dtype, std::vector<T> &&values);
-std::shared_ptr<Tensor> CreateTensor(std::string name, Shape storageShape, DataType dtype, unsigned value);
+std::shared_ptr<Tensor> CreateTensor(const std::string &name, const Shape &storageShape, DataType dtype, std::vector<T> &&values);
+std::shared_ptr<Tensor> CreateTensor(const std::string &name, const Shape &storageShape, DataType dtype, unsigned value);
 // Create a Operation with unary input
 std::shared_ptr<Operation> CreateOperation(OpType opType, TensorUsage ifmUsage, std::shared_ptr<Tensor> &ifm,
     TensorUsage ofmUsage, std::shared_ptr<Tensor> &ofm);
@@ -72,7 +72,7 @@ std::shared_ptr<Operation> CreateOperation(OpType opType, TensorUsage ifmUsage, 
 // -----------------------------
 // Create a SchedulerTensor with name, storageshape and datatype
 // also creates a srcTensor (in GraphIR)
-std::shared_ptr<SchedulerTensor> CreateSchedulerTensor(std::string name, Shape storageShape, DataType dtype);
+std::shared_ptr<SchedulerTensor> CreateSchedulerTensor(const std::string &name, const Shape &storageShape, DataType dtype);
 
 // Create a SchedulerOperation with unary input
 std::unique_ptr<SchedulerOperation> CreateSchedulerOperation(OpType opType, TensorUsage ifmUsage,

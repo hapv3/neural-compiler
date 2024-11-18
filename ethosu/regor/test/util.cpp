@@ -62,7 +62,7 @@ std::string TestConfig(int macs)
 }
 
 // Parse-helper to create architecture
-void ParseConfig(std::string config, size_t size, std::unique_ptr<Architecture> &arch)
+void ParseConfig(const std::string &config, size_t size, std::unique_ptr<Architecture> &arch)
 {
     IniReader reader(config.c_str(), config.size());
     std::string section;
@@ -108,7 +108,7 @@ std::unique_ptr<Graph> CreateGraph(std::vector<std::shared_ptr<Operation>> &ops)
 // Helpers for Graph IR
 // -----------------------------
 // Create a Tensor with name, storageshape and datatype
-std::shared_ptr<Tensor> CreateTensor(std::string name, Shape storageShape, DataType dtype)
+std::shared_ptr<Tensor> CreateTensor(const std::string &name, const Shape &storageShape, DataType dtype)
 {
     auto tensor = std::make_shared<Tensor>(name, dtype, storageShape);
     return tensor;
@@ -116,7 +116,7 @@ std::shared_ptr<Tensor> CreateTensor(std::string name, Shape storageShape, DataT
 
 // Create a Const Tensor
 template<typename T>
-std::shared_ptr<Tensor> CreateTensor(std::string name, Shape storageShape, DataType dtype, std::vector<T> &&values)
+std::shared_ptr<Tensor> CreateTensor(const std::string &name, const Shape &storageShape, DataType dtype, std::vector<T> &&values)
 {
     assert(int(values.size()) == storageShape.Elements());
     assert(DataTypeSizeBits(dtype) == sizeof(T) * 8);
@@ -126,30 +126,25 @@ std::shared_ptr<Tensor> CreateTensor(std::string name, Shape storageShape, DataT
 }
 
 // Create a Const Tensor
-std::shared_ptr<Tensor> CreateTensor(std::string name, Shape storageShape, DataType dtype, unsigned value)
+std::shared_ptr<Tensor> CreateTensor(const std::string &name, const Shape &storageShape, DataType dtype, unsigned value)
 {
     switch ( dtype )
     {
         case DataType::Int8:
-            return CreateTensor(std::move(name), std::move(storageShape), dtype,
-                std::vector<int8_t>(storageShape.Elements(), int8_t(value)));
+            return CreateTensor(name, storageShape, dtype, std::vector<int8_t>(storageShape.Elements(), int8_t(value)));
             break;
         case DataType::UInt8:
-            return CreateTensor(std::move(name), std::move(storageShape), dtype,
-                std::vector<uint8_t>(storageShape.Elements(), uint8_t(value)));
+            return CreateTensor(name, storageShape, dtype, std::vector<uint8_t>(storageShape.Elements(), uint8_t(value)));
             break;
         case DataType::Int16:
-            return CreateTensor(std::move(name), std::move(storageShape), dtype,
-                std::vector<int16_t>(storageShape.Elements(), int16_t(value)));
+            return CreateTensor(name, storageShape, dtype, std::vector<int16_t>(storageShape.Elements(), int16_t(value)));
             break;
         case DataType::Int32:
-            return CreateTensor(std::move(name), std::move(storageShape), dtype,
-                std::vector<int32_t>(storageShape.Elements(), int32_t(value)));
+            return CreateTensor(name, storageShape, dtype, std::vector<int32_t>(storageShape.Elements(), int32_t(value)));
             break;
         default:
             assert(false);
-            return CreateTensor(std::move(name), std::move(storageShape), dtype,
-                std::vector<int8_t>(storageShape.Elements(), int8_t(value)));
+            return CreateTensor(name, storageShape, dtype, std::vector<int8_t>(storageShape.Elements(), int8_t(value)));
     }
 }
 
@@ -176,7 +171,7 @@ std::shared_ptr<Operation> CreateOperation(OpType opType, TensorUsage ifmUsage, 
 // -----------------------------
 // Create a SchedulerTensor with name, storageshape and datatype
 // also creates a srcTensor (in GraphIR)
-std::shared_ptr<SchedulerTensor> CreateSchedulerTensor(std::string name, Shape storageShape, DataType dtype)
+std::shared_ptr<SchedulerTensor> CreateSchedulerTensor(const std::string &name, const Shape &storageShape, DataType dtype)
 {
     auto tensor = CreateTensor(name, storageShape, dtype);
     auto schedTensor = std::make_shared<SchedulerTensor>();
