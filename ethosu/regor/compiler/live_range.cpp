@@ -236,7 +236,7 @@ SchedulerTensor *LiveRangeGraph::ReusableIFM(const std::unique_ptr<SchedulerOper
                 const auto ifmTens = ifmConn.tensor.get();
 
                 if ( IsIFM(usage) && !ifmTens->isGraphOutput && !ifmTens->isPersistent && !ofmTens->isPersistent &&
-                     ifmConn.shape == ofmConn->shape && ifmTens->format == ofmTens->format &&
+                     ifmTens->storageShape == ofmTens->storageShape && ifmTens->format == ofmTens->format &&
                      ifmTens->dataType == ofmTens->dataType && !ShouldBeIgnored(ifmTens, targetMemory) &&
                      ifmTens->consumers.size() == 1 && ofmTens->producers.size() == 1 )
                 {
