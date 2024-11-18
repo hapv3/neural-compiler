@@ -289,10 +289,10 @@ int OptimiserDatabase::SourceOp(const Operation *op, int ext_key)
     _source.emplace(op, _sourceId);
 
     auto k = op->Kernel()->Size();
-    auto o = Shape::PadAxes(op->OFM()->View().ViewShape(), 3, 1);
+    auto o = Shape::PadAxes(op->OFM()->StorageShape(), 3, 1);
     _db->AddRow(_sourceTable, _sourceId,
-        {OpTypeToString(op->Type()), std::to_string(k.x), std::to_string(k.y), std::to_string(o.Width()),
-            std::to_string(o.Height()), std::to_string(o.Depth()), std::to_string(ext_key)});
+        {OpTypeToString(op->Type()), std::to_string(k.x), std::to_string(k.y), o ? std::to_string(o.Width()) : "",
+            o ? std::to_string(o.Height()) : "", o ? std::to_string(o.Depth()) : "", std::to_string(ext_key)});
     return _sourceId;
 }
 
@@ -325,10 +325,10 @@ void OptimiserDatabase::AddOptimised(const void *from, const Operation *to)
     _optimised[to] = std::tuple<int, int>(sourceId, _optId);
 
     auto k = to->Kernel()->Size();
-    auto o = Shape::PadAxes(to->OFM()->View().ViewShape(), 3, 1);
+    Shape o = Shape::PadAxes(to->OFM()->StorageShape(), 3, 1);
     _db->AddRow(_optTable, _optId,
         {std::to_string(sourceId), OpTypeToString(to->Type()), std::to_string(k.x), std::to_string(k.y),
-            std::to_string(o.Width()), std::to_string(o.Height()), std::to_string(o.Depth())});
+            o ? std::to_string(o.Width()) : "", o ? std::to_string(o.Height()) : "", o ? std::to_string(o.Depth()) : ""});
 }
 
 void OptimiserDatabase::AddSubOps(const void *primaryKey, const std::vector<const void *> &subOpKeys)
