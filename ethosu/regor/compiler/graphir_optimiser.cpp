@@ -712,7 +712,7 @@ Operation *GraphIrOptimiser::UnrollConv(Graph *const, Operation *const operation
 /// @param
 /// @param operation Operation to optimise
 /// @return (Possibly) optimised operation
-Operation *GraphIrOptimiser::FuseRescale(Graph *const, Operation *const operation)
+Operation *GraphIrOptimiser::FuseRescale(Graph *const graph, Operation *const operation)
 {
     Operation *returnOp = operation;
     OpType opType = operation->Type();
@@ -728,6 +728,13 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const, Operation *const operatio
         auto ofmConn = operation->Output(TensorUsage::OFM);
         auto ifmConn = operation->Input(TensorUsage::IFM);
         auto producer = ifmConn->tensor->Writers().size() == 1 ? ifmConn->tensor->Writers().front() : nullptr;
+
+        if ( IsTensorInVector(graph->Outputs(), ifmConn->tensor.get()) )
+        {
+            // If ifm is graph output, fusing it not possible
+            return returnOp;
+        }
+
         // Check if there is only one consumer of the output of the rescale and try to fuse to that operation.
         // Note: For input fusing we cannot have an output zero point on the Rescale operation (since the
         //       zero point is applied before scaling on inputs), however input zero point is fine.
