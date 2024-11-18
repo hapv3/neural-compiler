@@ -282,6 +282,9 @@ bool Compiler::Compile()
     // Is used to allocate all constant Npu tensors, in permanent storage
     IncrementalLinearAllocator readOnlyAllocator("read-only NPU tensors");
 
+    // Reset network performance report
+    _perfResult = {};
+
     // Compile each graph/subgraph separately
     std::vector<std::unique_ptr<Graph>> newGraphs;
     std::vector<std::unordered_map<const Tensor *, Address>> tensorAddressMaps;
@@ -419,7 +422,7 @@ std::unique_ptr<Graph> Compiler::CompileGraph(std::unique_ptr<Graph> &graph,
     if ( _compilerOptions.perfReport )
     {
         NetworkPerformance perf(_architecture.get(), scheduleOps);
-        _perfResult = perf.Measure(schedule.get(), _optDb.get());
+        _perfResult += perf.Measure(schedule.get(), _optDb.get());
     }
 
     // Get a new graph and NPU operations from the scheduled operations
