@@ -147,6 +147,44 @@ If you plan to contribute to the Vela project (highly encouraged!) then it is
 recommended to install Vela with the development dependencies (see
 [Vela Testing](TESTING.md) for more details).
 
+##### Build options for C++ files (ethosu/regor) #####
+
+The C++ part of the the Vela compiler can be configured through the following environment variables:
+
+| Variable                   | Description                                             |
+| :------------------------- | :------------------------------------------------------ |
+| CMAKE_BUILD_TYPE           | Control cmake-build-type (Release or Debug)             |
+| CMAKE_BUILD_PARALLEL_LEVEL | Control parallel build level                            |
+| CMAKE_GENERATOR            | Override the default CMAKE generator                    |
+| CMAKE_ARGS                 | Provide additional build-time options (see table below) |
+
+The following build-time options can be provided through CMAKE_ARGS  
+```bash
+# Example (Linux Bash)
+CMAKE_ARGS="-DREGOR_ENABLE_LTO=OFF -DREGOR_ENABLE_WERROR=ON" pip3 install -e .[dev]
+```
+| Option                             | Description                               | Arguments                           |
+| :--------------------------------- | :---------------------------------------- | :---------------------------------- |
+| REGOR_ENABLE_LTO                   | Enable Link Time Optimization             | ON/OFF                              |
+| REGOR_ENABLE_LDGOLD                | Enable Gold linker if available           | ON/OFF                              |
+| REGOR_ENABLE_CCACHE                | Enable ccache if available                | ON/OFF                              |
+| REGOR_ENABLE_WERROR                | Enable warnings as errors                 | ON/OFF                              |
+| REGOR_ENABLE_STD_STATIC            | Link libstdc and libgcc statically        | ON/OFF                              |
+| REGOR_ENABLE_COVERAGE              | Enable Coverage build                     | ON/OFF                              |
+| REGOR_ENABLE_PROFILING             | Enable timer based runtime profiling      | ON/OFF                              |
+| REGOR_ENABLE_ASSERT                | Enable asserts                            | ON/OFF                              |
+| REGOR_ENABLE_EXPENSIVE_CHECKS      | Enable expensive STL GLICXX asserts       | ON/OFF                              |
+| REGOR_ENABLE_RTTI                  | Enable RTTI (run-time type information)   | ON/OFF                              |
+| REGOR_ENABLE_VALGRIND              | Enable Valgrind during check target       | ON/OFF                              |
+| REGOR_ENABLE_TESTING               | Enable unit testing                       | ON/OFF                              |
+| REGOR_ENABLE_CPPCHECK              | Enable CPPCHECK                           | ON/OFF                              |
+| REGOR_SANITIZE                     | Sanitizer setting (forwards to fsanitize) | String                              |
+| REGOR_LOG_TRACE_MASK               | Log trace enable mask                     | int (0->7) (See common/logging.hpp) |
+| REGOR_PACKAGE_NAME                 | CPack package name                        | String                              |
+| REGOR_DEBUG_COMPRESSION            | Debug symbol compression                  | none, zlib, zlib-gnu                |
+| REGOR_PYTHON_BINDINGS_DESTINATION  | Python bindings install destination       | String                              |
+| REGOR_PYEXT_VERSION                | Python extension version                  | String                              |
+
 ## Running
 
 Vela is run with an input `.tflite` or `.tosa` (EXPERIMENTAL) file passed on the
