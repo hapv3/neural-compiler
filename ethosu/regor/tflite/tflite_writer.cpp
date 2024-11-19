@@ -354,7 +354,17 @@ flatbuffers::Offset<tflite::Tensor> TfLiteWriter::SerialiseTensor(const Tensor *
         {
             buffer_index = int(_serialised_buffers.size());
             _buffers[descriptor] = buffer_index;
-            _serialised_buffers.push_back(SerialiseBuffer(buffer));
+            if ( tensor->Type() == DataType::Int48 )
+            {  // Translate values
+                const auto values = tensor->View().Values<int48_t, int64_t>();
+                const auto v = std::vector<int64_t>(values.begin(), values.end());
+                const int size(v.size() * sizeof(int64_t));
+                _serialised_buffers.emplace_back(SerialiseBuffer(reinterpret_cast<const uint8_t *>(v.data()), size));
+            }
+            else
+            {
+                _serialised_buffers.emplace_back(SerialiseBuffer(buffer));
+            }
         }
         else  // Buffer has already been serialised - just reference it
         {

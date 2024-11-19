@@ -68,6 +68,19 @@ TEST_CASE("Linear buffer read/write")
         REQUIRE(count == dataInt8.size());
     }
 
+    SECTION("Compare elements during iterator iteration with type translation")
+    {
+        size_t count = 0;
+        auto values = view_int32_linear.Values<int32_t, int64_t>();
+        auto viewpos = values.begin();
+        for ( auto pos = dataInt32.begin(); pos != dataInt32.end(); pos++, viewpos++ )
+        {
+            REQUIRE(int64_t(*pos) == *viewpos);
+            count++;
+        }
+        REQUIRE(count == dataInt32.size());
+    }
+
     SECTION("Polymorphic indexed access with same reader")
     {
         BufferReader<float> values;

@@ -427,7 +427,8 @@ public:
     private:
         GetFunc _get;
         const void *_data = nullptr;
-        size_t _index;
+        size_t _offset;
+        size_t _strideBytes;
 
     public:
         using value_type = VALUE;
@@ -438,21 +439,24 @@ public:
 
     public:
         iterator_base_t(const iterator_base_t<VALUE> &other) = default;
-        iterator_base_t(GetFunc fn, const void *p, size_t index) : _get(fn), _data(p), _index(index) {}
+        iterator_base_t(GetFunc fn, const void *p, size_t index, size_t strideBytes) :
+                _get(fn), _data(p), _offset(index * strideBytes), _strideBytes(strideBytes)
+        {
+        }
 
         // Value-only access
-        VALUE operator*() { return _get(_data, _index); }
+        VALUE operator*() { return _get(_data, _offset); }
 
         iterator_base_t<VALUE> &operator++()
         {
-            _index++;
+            _offset += _strideBytes;
             return *this;
         }
 
         iterator_base_t<VALUE> operator++(int)
         {
             iterator_base_t<VALUE> tmp = *this;
-            _index++;
+            _offset += _strideBytes;
             return tmp;
         }
 
@@ -461,19 +465,19 @@ public:
         bool operator==(const iterator_base_t<VALUE> &other) const
         {
             assert(_data == other._data);
-            return other._index == _index;
+            return other._offset == _offset;
         }
 
         bool operator!=(const iterator_base_t<VALUE> &other) const
         {
             assert(_data == other._data);
-            return other._index != _index;
+            return other._offset != _offset;
         }
     };
 
     using iterator_t = iterator_base_t<TYPE>;
-    iterator_t begin() const { return iterator_t(_get, _data, 0); }
-    iterator_t end() const { return iterator_t(_get, _data, _count); }
+    iterator_t begin() const { return iterator_t(_get, _data, 0, _strideBytes.Depth()); }
+    iterator_t end() const { return iterator_t(_get, _data, _count, _strideBytes.Depth()); }
 };
 
 /// <summary>
