@@ -245,6 +245,7 @@ bool CanDecompose(Architecture *, const SchedulerOperation *schedOp)
     if ( schedOp->Type() == OpType::ArgMax ) return true;
     if ( schedOp->Type() == OpType::Reverse ) return true;
     if ( schedOp->Type() == OpType::Transpose ) return true;
+    if ( schedOp->Type() == OpType::AvgPool ) return true;
     if ( schedOp->Type() == OpType::MaxPool ) return true;
     if ( schedOp->Type() == OpType::Resize ) return true;
     return false;
@@ -1812,33 +1813,65 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTranspose(Architecture
     return result;
 }
 
+std::vector<std::unique_ptr<SchedulerOperation>> DecomposeAvgPool(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
+{
+    std::vector<std::unique_ptr<SchedulerOperation>> result;
+    auto *ofmConn = op->Output(TensorUsage::OFM);
+    auto *ifmConn = op->Input(TensorUsage::IFM);
+    const auto &ofmShape = ofmConn->SliceShape();
+    const auto &ifmShape = ifmConn->SliceShape();
+    auto &ofmSlice = ofmConn->slice;
+    auto &ifmSlice = ifmConn->slice;
+    auto *kernel = op->Kernel();
+    auto &padding = kernel->Padding();
+    ofmSlice.Initialize(ofmShape.WithZeros(), ofmShape);
+    ifmSlice.Initialize(ifmShape.WithZeros().WithHW(-padding.Top(), -padding.Left()), ifmShape);
+    auto ofmRank = ofmShape.Size();
+    if ( ofmRank > 3 && (ofmShape.Elements() > ofmShape.Height() * ofmShape.Width() * ofmShape.Depth()) )
+    {
+        return DecomposeLeadingDimensions(ofmRank - 3, arch, std::move(op), DecomposeAvgPool);
+    }
+
+    if ( !NeedsDecompose(arch, op.get()) )
+    {
+        UpdatePaddingAndIfmOffset(op.get());
+        result.emplace_back(std::move(op));
+        return result;
+    }
+    // Decomposition for large dimensions & strides is needed here.
+    // If we get here, decomposition has failed, the resulting operations will be executed on CPU
+    UpdatePaddingAndIfmOffset(op.get());
+    result.emplace_back(std::move(op));
+    return result;
+}
+
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMaxPool(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
 {
     std::vector<std::unique_ptr<SchedulerOperation>> result;
-    auto ofmConn = op->Output(TensorUsage::OFM);
-    auto &ofmShape = ofmConn->SliceShape();
+    auto *ofmConn = op->Output(TensorUsage::OFM);
+    auto *ifmConn = op->Input(TensorUsage::IFM);
+    const auto &ofmShape = ofmConn->SliceShape();
+    const auto &ifmShape = ifmConn->SliceShape();
     auto &ofmSlice = ofmConn->slice;
-    auto ifmConn = op->Input(TensorUsage::IFM);
-    auto &ifmShape = ifmConn->SliceShape();
     auto &ifmSlice = ifmConn->slice;
-
+    auto *kernel = op->Kernel();
+    auto &padding = kernel->Padding();
     ofmSlice.Initialize(ofmShape.WithZeros(), ofmShape);
-    ifmSlice.Initialize(ifmShape.WithZeros(), ifmShape);
-
-    if ( auto ifm2Conn = op->TryInput(TensorUsage::IFM1) )
-    {
-        auto &ifm2Shape = ifm2Conn->shape;
-        auto &ifm2Slice = ifm2Conn->slice;
-
-        ifm2Slice.Initialize(ifm2Shape.WithZeros(), ifm2Shape);
-    }
-
+    ifmSlice.Initialize(ifmShape.WithZeros().WithHW(-padding.Top(), -padding.Left()), ifmShape);
     auto ofmRank = ofmShape.Size();
     if ( ofmRank > 3 && (ofmShape.Elements() > ofmShape.Height() * ofmShape.Width() * ofmShape.Depth()) )
     {
         return DecomposeLeadingDimensions(ofmRank - 3, arch, std::move(op), DecomposeMaxPool);
     }
-
+    if ( !NeedsDecompose(arch, op.get()) )
+    {
+        UpdatePaddingAndIfmOffset(op.get());
+        result.emplace_back(std::move(op));
+        return result;
+    }
+    // Decomposition for large dimensions & strides is needed here.
+    // If we get here, decomposition has failed, the resulting operations will be executed on CPU
+    UpdatePaddingAndIfmOffset(op.get());
     result.emplace_back(std::move(op));
     return result;
 }
