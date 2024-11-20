@@ -110,10 +110,23 @@ private:
             {},
             {
                 &GraphIrOptimiser::ConvertAttributes,
+                &GraphIrOptimiser::RewriteRescale,
+                &GraphIrOptimiser::FuseRescale,  // First pass fuse all possible ifm and ofm rescales
+            }
+        },
+        {
+            {},
+            {
+                &GraphIrOptimiser::FuseRescale,  // Second pass, fuse any remaining ofm rescales after ifm fusing in first pass
+            }
+        },
+        {
+            {},
+            {
+                &GraphIrOptimiser::ConvertAttributes,
                 &GraphIrOptimiser::ConvertResizeOffsets,
                 &GraphIrOptimiser::RewriteFullyConnected,
                 &GraphIrOptimiser::FixupPoolStrides,
-                &GraphIrOptimiser::RewriteRescale,
                 &GraphIrOptimiser::RewritePad,
                 &GraphIrOptimiser::RewriteTable,
                 &GraphIrOptimiser::RewriteCast,
@@ -128,7 +141,6 @@ private:
                 &GraphIrOptimiser::RewriteArgmax,
                 &GraphIrOptimiser::RewriteDepthwise,
                 &GraphIrOptimiser::RewriteTransposeConvOFMPadding,
-                &GraphIrOptimiser::FuseRescale,  // First pass fuse all possible ifm and ofm rescales
                 &GraphIrOptimiser::OptimiseElementwise,
                 &GraphIrOptimiser::RearrangeTranspose,
                 &GraphIrOptimiser::ReshapeReverse,
@@ -140,7 +152,6 @@ private:
         {
             {},
             {
-                &GraphIrOptimiser::FuseRescale,  // Second pass, fuse any remaining ofm rescales after ifm fusing in first pass
                 &GraphIrOptimiser::MoveSplitSliceToConsumer
             }
         },

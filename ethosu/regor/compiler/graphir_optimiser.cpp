@@ -1148,7 +1148,7 @@ Operation *GraphIrOptimiser::RewriteReduceSum(Graph *const graph, Operation *con
         assert(axis >= 0);
         assert(axis < ifmConn->shape.Size());
 
-        if ( axis != ifmConn->shape.Size() - 1 && ifmConn->tensor->Type() == DataType::Int32 )
+        if ( axis != ifmConn->shape.Size() - 1 )
         {
             // Replace ReduceSum (axis != C) with a Reshape, Transpose and ReduceSum (axis = C):
             //
@@ -1186,19 +1186,70 @@ Operation *GraphIrOptimiser::RewriteReduceSum(Graph *const graph, Operation *con
             // Remove old ReduceSum op
             operation->Disconnect();
         }
-        else if ( ifmConn->shape.Size() > 3 )
+        else
         {
-            // Replace >3D ReduceSum (axis = C) with 3D ReduceSum:
-            //
-            // 1. Reshape to 3D shape (HWC) where C dimension is the dimension to reduce. For example, 3x5x7x11x13 (5D)
-            //    becomes 105x11x13 (3D).
-            // 2. ReduceSum: HxWxC -> HxWx1.
+            const int64_t zp = ifmConn->quantization.zeroPoints.empty() ? 0 : ifmConn->quantization.zeroPoints[0];
+            const Shape &padInputShape = ifmConn->shape;
+            const Shape padOutputShape = Shape::RoundAway(padInputShape, padInputShape.WithOnes().WithDepth(8));
+            const Shape padPaddings = padOutputShape - padInputShape;
 
-            // Reshape to 3D shape (HWC) where C dimension is the dimension to reduce
-            const Shape ifmShape3D = ReshapeTo3D(ifmConn->shape, {ifmConn->shape.Size() - 2, 1, 1});
+            if ( zp != 0 && padPaddings.GreaterMask(padPaddings.WithZeros()) )
+            {
+                // Replace ReduceSum (zp != 0, depth % 8 != 0, axis = C) with 1x1 Conv2D:
+                //
+                // 1. Reshape to 3D shape (HWC) where C dimension is the dimension to reduce.
+                // 2. 1x1 Conv2D (1x1x1xC weights): HxWxC -> HxWx1.
 
-            operation->Input(TensorUsage::IFM)->Set(ifmShape3D);
-            operation->Output(TensorUsage::OFM)->Set(ifmShape3D.WithDepth(1));
+                // Reshape to 4D shape (NHWC) where C dimension is the dimension to reduce
+                const Shape ifmShape3D = ReshapeTo3D(Shape::PadAxes(ifmConn->shape, 3, 1), {ifmConn->shape.Size() - 2, 1, 1});
+                const Shape ifmShape4D = Shape::PadAxes(ifmShape3D, 4, 1);
+
+                // Create an identity 1x1x1xC weights tensor
+                auto weightsBuffer = std::make_shared<Buffer>(std::vector<int8_t>(ifmShape4D.Depth(), 1));
+                auto weightsTens = CreateConstTensor("weights", DataType::Int8, weightsBuffer);
+                weightsTens->SetStorageShape({1, 1, 1, ifmShape4D.Depth()});
+                weightsTens->SetAxisOrder(AxisOrder::OHWI);
+                auto weightsQuant = ifmConn->quantization;
+                weightsQuant.quantMin = {IntegerMin(DataType::Int8)};
+                weightsQuant.quantMax = {IntegerMax(DataType::Int8)};
+                weightsQuant.zeroPoints = {0};
+                weightsQuant.scales = {{1, 0}};  // Identity
+
+                // Create an identity bias tensor
+                auto biasTens = CreateConstTensor("bias", DataType::Int32, 0);
+                auto biasQuant = ifmConn->quantization;
+                biasQuant.zeroPoints = {0};
+
+                // Replace ReduceSum with a 1x1 Conv2D
+                Kernel kernel({1, 1}, {1, 1}, {1, 1});
+                auto convOp = std::make_shared<Operation>(OpType::Conv2D);
+                convOp->SetKernel(std::make_unique<Kernel>(kernel));
+                convOp->CopyInput(TensorUsage::IFM, *ifmConn);
+                convOp->Input(TensorUsage::IFM)->Set(ifmShape4D);
+                convOp->ConnectInput(TensorUsage::Weights, weightsTens).Set(weightsQuant);
+                convOp->ConnectInput(TensorUsage::Scales, biasTens).Set(biasQuant);
+                convOp->CopyOutput(TensorUsage::OFM, *ofmConn);
+                convOp->Output(TensorUsage::OFM)->Set(ifmShape4D.WithDepth(1));
+                RecordOptimisation(operation, convOp.get());
+                returnOp = convOp.get();
+
+                // Remove old ReduceSum op
+                operation->Disconnect();
+            }
+            else if ( ifmConn->shape.Size() > 3 )
+            {
+                // Replace >3D ReduceSum (axis = C) with 3D ReduceSum:
+                //
+                // 1. Reshape to 3D shape (HWC) where C dimension is the dimension to reduce. For example, 3x5x7x11x13
+                //    (5D) becomes 105x11x13 (3D).
+                // 2. ReduceSum: HxWxC -> HxWx1.
+
+                // Reshape to 3D shape (HWC) where C dimension is the dimension to reduce
+                const Shape ifmShape3D = ReshapeTo3D(ifmConn->shape, {ifmConn->shape.Size() - 2, 1, 1});
+
+                operation->Input(TensorUsage::IFM)->Set(ifmShape3D);
+                operation->Output(TensorUsage::OFM)->Set(ifmShape3D.WithDepth(1));
+            }
         }
     }
 
