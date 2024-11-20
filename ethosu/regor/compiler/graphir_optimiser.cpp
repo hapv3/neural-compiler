@@ -939,6 +939,11 @@ Operation *GraphIrOptimiser::RewriteCast(Graph *const, Operation *const operatio
             ReplaceOperation(operation, copyOp.get());
             RecordOptimisation(operation, copyOp.get());
             returnOp = copyOp.get();
+
+            // Set max range to disable clipping
+            auto copyOpConn = copyOp->Output(TensorUsage::OFM);
+            copyOpConn->quantization.quantMin = {std::numeric_limits<int64_t>::min()};
+            copyOpConn->quantization.quantMax = {std::numeric_limits<int64_t>::max()};
         }
     }
     return returnOp;
