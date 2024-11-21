@@ -1157,7 +1157,7 @@ Operation *GraphIrOptimiser::RewriteReduceSum(Graph *const graph, Operation *con
             // 3. ReduceSum axis C: HxCxW -> HxCx1.
 
             // Calculate 3D shape of IFM where 2nd dimension is the dimension to reduce
-            Shape ifmShape3D = ReshapeTo3DAroundAxis(ifmConn->shape, axis);
+            const Shape ifmShape3D = ReshapeTo3DAroundAxis(ifmConn->shape, axis);
 
             // Create intermediate tensor between Transpose and ReduceSum
             std::shared_ptr<Tensor> transposeTens = ifmConn->tensor->Clone();
@@ -1185,6 +1185,20 @@ Operation *GraphIrOptimiser::RewriteReduceSum(Graph *const graph, Operation *con
 
             // Remove old ReduceSum op
             operation->Disconnect();
+        }
+        else if ( ifmConn->shape.Size() > 3 )
+        {
+            // Replace >3D ReduceSum (axis = C) with 3D ReduceSum:
+            //
+            // 1. Reshape to 3D shape (HWC) where C dimension is the dimension to reduce. For example, 3x5x7x11x13 (5D)
+            //    becomes 105x11x13 (3D).
+            // 2. ReduceSum: HxWxC -> HxWx1.
+
+            // Reshape to 3D shape (HWC) where C dimension is the dimension to reduce
+            const Shape ifmShape3D = ReshapeTo3D(ifmConn->shape, {ifmConn->shape.Size() - 2, 1, 1});
+
+            operation->Input(TensorUsage::IFM)->Set(ifmShape3D);
+            operation->Output(TensorUsage::OFM)->Set(ifmShape3D.WithDepth(1));
         }
     }
 
