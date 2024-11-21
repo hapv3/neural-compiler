@@ -470,8 +470,15 @@ std::unique_ptr<Graph> Compiler::CompileGraph(std::unique_ptr<Graph> &graph,
                 _optDb->AddCommand(std::get<0>(cmd), streamId, std::get<2>(cmd) - 1);
             }
         }
-
-        customOperatorBuilder.Serialise(graphOp, npuOp, registerCommandStream);
+        try
+        {
+            customOperatorBuilder.Serialise(graphOp, npuOp, registerCommandStream);
+        }
+        catch ( const std::runtime_error &e )
+        {
+            SetLastError(e.what());
+            return nullptr;
+        }
     }
 
     return newGraph;

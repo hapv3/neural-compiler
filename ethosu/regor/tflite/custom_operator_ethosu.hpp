@@ -37,7 +37,12 @@ public:
     static std::unique_ptr<Buffer> CreateDriverPayload(
         const std::vector<uint32_t> &registerCommandStream, uint32_t archConfigWord, uint32_t archVersion)
     {
-        assert(registerCommandStream.size() < (1 << 24));  // 64MiB
+        if ( registerCommandStream.size() > (1 << 22) )
+        {
+            double sizeMB = 4.0 * double(registerCommandStream.size()) / (1 << 20);
+            throw std::runtime_error(fmt::format(
+                "The command stream exceeds the hardware limit of 16 MiB (current size: {:.2f} MiB)", sizeMB));
+        }
 
         std::vector<uint8_t> payload;
         payload.reserve(4 * (registerCommandStream.size() + 8));
