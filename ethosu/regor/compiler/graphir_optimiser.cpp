@@ -49,6 +49,11 @@ Tensor *GraphIrOptimiser::ConvertBool8Tensors(Graph *graph, Tensor *tensor)
     Tensor *returnTensor = tensor;
     if ( tensor->Type() == DataType::Bool8 )
     {
+        if ( !tensor->StorageShape() )
+        {
+            // don't convert shapeless tensors
+            return returnTensor;
+        }
         if ( tensor->IsConstant() )
         {
             const auto oldView = tensor->View();

@@ -214,6 +214,7 @@ void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::uniqu
             const auto &input_tensors = *tflite_inputs;  // A vector of indices into the `tensors` vector
             int indirect_index = 0;                      // An index into `input_tensors`
             int ifm_count = 0;
+            bool shapelessTensors = false;
             for ( const auto &map_entry : TfLiteMapping::InputTensorIndices(op_type) )
             {
                 const TensorUsage usage = map_entry.second;
@@ -223,6 +224,7 @@ void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::uniqu
                     if ( direct_index >= 0 )  // -1 indicates an optional tensor is not present
                     {
                         auto &tensor = tensors.at(direct_index);
+                        shapelessTensors = shapelessTensors || !tensor->StorageShape();
                         assert(tensorQuantization.count(tensor->Uid()) > 0);
                         operation->ConnectInput(usage, tensor).Set(tensorQuantization[tensor->Uid()]);
                     }
@@ -238,6 +240,7 @@ void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::uniqu
                 if ( direct_index >= 0 )
                 {
                     auto &tensor = tensors.at(direct_index);
+                    shapelessTensors = shapelessTensors || !tensor->StorageShape();
                     if ( IsVariadic(op_type) )
                     {
                         // Treat all input tensors beyond those specified in the indices map as IFMs.
@@ -266,6 +269,7 @@ void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::uniqu
             for ( const int tensor_index : *tflite_outputs )
             {
                 const auto &ofm = tensors.at(tensor_index);
+                shapelessTensors = shapelessTensors || !ofm->StorageShape();
                 assert(tensorQuantization.count(ofm->Uid()) > 0);
                 operation->ConnectOutput(MakeTensorUsage(TensorUsage::OFM, ofm_count++), ofm).Set(tensorQuantization[ofm->Uid()]);
             }
@@ -281,6 +285,11 @@ void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::uniqu
             if ( ifm_count == 0 || ofm_count == 0 )
             {
                 // NPU operations must have IFM and OFM
+                operation->SetPassthroughOp();
+            }
+
+            if ( shapelessTensors )
+            {
                 operation->SetPassthroughOp();
             }
 
