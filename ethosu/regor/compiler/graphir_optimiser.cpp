@@ -111,40 +111,21 @@ Tensor *GraphIrOptimiser::ConvertInt4Tensors(Graph *graph, Tensor *tensor)
     if ( tensor->Type() == DataType::Int4Packed8 && tensor->IsConstant() )
     {
         const auto oldView = tensor->View();
-        const auto oldValues = oldView.RawData<int8_t>();
-        const auto size = oldView.Buffer()->Size();
+        const auto oldValues = oldView.RawData<uint8_t>();
+        const auto newSize = oldView.Buffer()->Size() * 2;
+
+        auto data = std::make_unique<uint8_t[]>(newSize);
+        for ( int i = 0; i < newSize; i++ )
+        {  // Convert each element to Int8
+            const auto &nibbles = oldValues[i >> 1];
+            uint8_t val = i & 1 ? (nibbles & 0xF0) >> 4 : nibbles & 0x0F;
+            data[i] = val > 7 ? val - 16 : val;
+        }
+
         tensor->SetBuffer(nullptr);
         tensor->ChangeType(DataType::Int8);
         // Replace this tensor's buffer with a new buffer
-        auto newBuffer = std::make_shared<Buffer>(std::make_unique<uint8_t[]>(size * 2), size * 2);
-        tensor->SetBuffer(newBuffer);
-        auto view = tensor->View();
-        auto &shape = view.ViewShape();
-        auto values = view.WritableValues<int8_t>();
-        auto paddedOutShape = Shape::PadAxes(shape, 4, 1);
-        int batch = paddedOutShape.Batch();
-        int height = paddedOutShape.Height();
-        int width = paddedOutShape.Width();
-        int depth = paddedOutShape.Depth();
-        int i = 0;
-        for ( int n = 0; n < batch; n++ )
-        {
-            for ( int h = 0; h < height; h++ )
-            {
-                for ( int w = 0; w < width; w++ )
-                {
-                    for ( int c = 0; c < depth; c++ )
-                    {
-                        Shape pos({n, h, w, c}, shape.Size());
-                        // Convert each element to Int8
-                        uint8_t nibbles = oldValues[i / 2];
-                        uint8_t val = i & 1 ? (nibbles & 0xF0) >> 4 : nibbles & 0x0F;
-                        values[pos] = val > 7 ? val - 16 : val;
-                        i++;
-                    }
-                }
-            }
-        }
+        tensor->SetBuffer(std::make_shared<Buffer>(std::move(data), newSize));
     }
     return returnTensor;
 }
