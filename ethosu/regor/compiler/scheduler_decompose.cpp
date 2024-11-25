@@ -35,6 +35,48 @@ bool NeedsDecompose(Architecture *arch, const SchedulerOperation *schedOp)
     return CanDecompose(arch, schedOp) && !CanRunOnHardware(arch, schedOp);
 }
 
+static std::unique_ptr<SchedulerOperation> MakeMemCopy(const std::shared_ptr<SchedulerTensor> &source,
+    const std::shared_ptr<SchedulerTensor> &dest, const TensorSlice *ofmSlice = nullptr)
+{
+    assert(source->dataType == dest->dataType);
+    assert(ofmSlice == nullptr || ofmSlice->shape + ofmSlice->offset <= dest->storageShape);
+    auto op = std::make_unique<SchedulerOperation>(OpType::MemoryCopy);
+
+    auto kernel = Kernel({1, 1}, {1, 1}, {1, 1});
+    op->SetKernel(&kernel);
+
+    auto ofmConn = op->AddOutput(TensorUsage::OFM);
+    ofmConn->tensor = dest;
+    if ( ofmSlice ) ofmConn->slice = *ofmSlice;
+    if ( ofmConn->tensor->dataType == DataType::Int64 )
+    {  // Copy int64 data as int32 data with 2 x C by cloning destination tensor
+        ofmConn->tensor = std::make_shared<SchedulerTensor>(*dest);
+        ofmConn->tensor->dataType = DataType::Int32;
+        ofmConn->tensor->storageShape = dest->storageShape.WithDepth(2 * dest->storageShape.Depth());
+        ofmConn->tensor->producers.clear();
+        if ( ofmSlice )
+        {
+            ofmConn->slice.offset = ofmSlice->offset.WithDepth(2 * ofmSlice->offset.Depth());
+            ofmConn->slice.shape = ofmSlice->shape.WithDepth(2 * ofmSlice->shape.Depth());
+        }
+    }
+    ofmConn->shape = Shape::PadAxes(ofmConn->tensor->storageShape, 4, 1);
+    ofmConn->tensor->producers.push_back(op.get());
+
+    auto ifmConn = op->AddInput(TensorUsage::IFM);
+    ifmConn->tensor = source;
+    if ( ifmConn->tensor->dataType == DataType::Int64 )
+    {  // Copy int64 data as int32 data with 2 x C by cloning source tensor
+        ifmConn->tensor = std::make_shared<SchedulerTensor>(*source);
+        ifmConn->tensor->dataType = DataType::Int32;
+        ifmConn->tensor->storageShape = source->storageShape.WithDepth(2 * source->storageShape.Depth());
+    }
+    ifmConn->tensor->consumers.push_back(op.get());
+    ifmConn->shape = ofmConn->shape;
+
+    return op;
+}
+
 static std::unique_ptr<SchedulerOperation> MakeTransposeOp(
     const std::shared_ptr<SchedulerTensor> &source, const std::shared_ptr<SchedulerTensor> &dest, const Shape &perm)
 {
@@ -796,7 +838,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
         int subOfmDepth = ofmConn->shape.Depth() / depthMultiplier;
         // Clone ofm tensor with new unique ID for intermediate transposed result
         auto transposedOfm = std::make_shared<SchedulerTensor>(*ofmConn->tensor);
-        transposedOfm->storageShape = ofmConn->shape.WithBatch(depthMultiplier).WithDepth(subOfmDepth);
+        transposedOfm->storageShape = ofmShape.WithBatch(depthMultiplier).WithDepth(subOfmDepth);
         transposedOfm->equivalenceId = GenerateUniqueId();
         transposedOfm->consumers.clear();
         transposedOfm->producers.clear();
@@ -825,15 +867,29 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
             subOfmConn->tensor = transposedOfm;
             subOfmConn->tensor->producers.push_back(subOp.get());
             subOfmConn->shape = transposedOfm->storageShape;
-            subOfmConn->slice.offset = ofmConn->shape.WithZeros().WithBatch(multiplier);
-            subOfmConn->slice.shape = ofmConn->shape.WithDepth(subOfmDepth);
+            subOfmConn->slice.offset = ofmShape.WithZeros().WithBatch(multiplier);
+            subOfmConn->slice.shape = ofmShape.WithDepth(subOfmDepth);
             auto subOps = DecomposeDepthwiseConv2D(arch, std::move(subOp));
             result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
         }
         // Need to transpose result [N, H, W, C] -> [H, W, C, N] (and reshape -> [1, H, W, N*C])
-        auto transposeOp = MakeTransposeOp(transposedOfm, ofmConn->tensor, Shape(1, 2, 3, 0));
+        auto transposeOpOfm = ofmConn->tensor;
+        if ( ofmSlice.offset.Batch() )
+        {  // Need to insert intermediate tensor for memory copy, since DecomposeTranspose
+           // does not handle ofm slice offset
+            transposeOpOfm = std::make_shared<SchedulerTensor>(*transposedOfm);
+            transposedOfm->equivalenceId = GenerateUniqueId();
+            transposedOfm->consumers.clear();
+            transposedOfm->producers.clear();
+        }
+        auto transposeOp = MakeTransposeOp(transposedOfm, transposeOpOfm, Shape(1, 2, 3, 0));
         auto subOps = DecomposeTranspose(arch, std::move(transposeOp));
         result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
+        if ( transposeOpOfm != ofmConn->tensor )
+        {  // Insert memory copy of transposed ofm with slice offset
+            auto copyOp = DecomposeElementwise(arch, MakeMemCopy(transposeOpOfm, ofmConn->tensor, &ofmSlice));
+            result.insert(result.end(), std::make_move_iterator(copyOp.begin()), std::make_move_iterator(copyOp.end()));
+        }
         return result;
     }
     if ( CanRunOnHardware(arch, op.get()) )
