@@ -82,23 +82,6 @@ private:
     std::shared_ptr<Operation> MakeMemoryCopyForSplitOps(const TensorConnection *const ofmConn,
         const TensorConnection *const ifmConn, const Shape &readShape, const Shape &readOffset);
 
-    // Creates the desired shape of either:
-    // - Concat         (Input shape - supply IFM base shape)
-    // - Split/SplitV   (Output shape - supply OFM base shape)
-    //
-    // returns the Desired shape.
-    // Also calculates the axis4D, returned through supplied pointer.
-    Shape MakeConcatSplitDesiredShape(int axis, const Shape &baseShape, int *const axis4D);
-
-    // Creates the desired shape of either:
-    // - pack   (Input shape - supply IFM base shape)
-    // - unpack (Output shape - supply OFM base shape)
-    //
-    // returns the Desired shape.
-    // Unpack keeps the unpacked dimension set to 1.
-    // Also calculates the axis4D, returned through supplied pointer.
-    Shape MakePackUnpackDesiredShape(int axis, const Shape &baseShape, int *const axis4D);
-
     // Creates the desired Output shape of StridedSlice.
     //
     // returns the Desired shape.
@@ -114,6 +97,7 @@ private:
     // Rewrite functions
     Operation *ConvertExpToLUT(Graph *const graph, Operation *const operation);
     Operation *RewritePack(Graph *const graph, Operation *const operation);
+    Operation *RewriteUnpack(Graph *const graph, Operation *const operation);
     Operation *RewriteSplit(Graph *const graph, Operation *const operation);
     Operation *RewriteSlice(Graph *const graph, Operation *const operation);
     Operation *RemoveReshape(Graph *const graph, Operation *const operation);
@@ -203,7 +187,8 @@ public:
             {},
             {
                 &TFLiteGraphOptimiser::RewriteSlice,
-                &TFLiteGraphOptimiser::RewritePack
+                &TFLiteGraphOptimiser::RewritePack,
+                &TFLiteGraphOptimiser::RewriteUnpack
             }
         },
         {

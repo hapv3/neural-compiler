@@ -324,47 +324,6 @@ std::shared_ptr<Operation> TFLiteGraphOptimiser::MakeMemoryCopyForSplitOps(const
 }
 
 
-// Creates the desired shape of either:
-// - Concat         (Input shape - supply IFM base shape)
-// - Split/SplitV   (Output shape - supply OFM base shape)
-//
-// returns the Desired shape.
-// Also calculates the axis4D, returned through supplied pointer.
-Shape TFLiteGraphOptimiser::MakeConcatSplitDesiredShape(int axis, const Shape &baseShape, int *const axis4D)
-{
-    // Convert axis to positive.
-    if ( axis < 0 )
-    {
-        axis += baseShape.Size();
-    }
-    int to4D = (4 - baseShape.Size());
-    *axis4D = axis + to4D;
-    return Shape::PadAxes(baseShape, 4, 1);
-}
-
-
-// Creates the desired shape of either:
-// - pack   (Input shape - supply IFM base shape)
-// - unpack (Output shape - supply OFM base shape)
-//
-// returns the Desired shape.
-// Unpack keeps the unpacked dimension set to 1.
-// Also calculates the axis4D, returned through supplied pointer.
-Shape TFLiteGraphOptimiser::MakePackUnpackDesiredShape(int axis, const Shape &baseShape, int *const axis4D)
-{
-    // Convert axis to positive.
-    if ( axis < 0 )
-    {
-        axis += baseShape.Size() + 1;
-    }
-    Shape tmp = baseShape;
-    tmp = tmp.Insert(axis, 1);
-    int to4D = (4 - tmp.Size());
-    *axis4D = axis + to4D;
-    return Shape::PadAxes(tmp, 4, 1);
-}
-
-
 // Creates the desired Output shape of StridedSlice.
 //
 // returns the Desired shape.
@@ -793,13 +752,60 @@ Operation *TFLiteGraphOptimiser::RewriteSlice(Graph *const graph, Operation *con
     return returnOp;
 }
 
+// Convert TFLite Unpack/Split/SplitV into one or more TOSA Slice
+Operation *TFLiteGraphOptimiser::RewriteUnpack(Graph *const graph, Operation *const operation)
+{
+    UNUSED(graph);
+    Operation *returnOp = operation;
+    const OpType opType = operation->Type();
+    if ( opType == OpType::Unpack || opType == OpType::Split || opType == OpType::SplitV )
+    {
+        const auto *ifmConn = operation->Input(TensorUsage::IFM);
+        auto axis = GetAxis(operation);
+        if ( axis < 0 ) axis = ifmConn->shape.Size() + axis;
+
+        // Offset of first slice
+        Shape sliceOffset = ifmConn->shape.WithZeros();
+
+        for ( auto [usage, ofmConn] : operation->Outputs().pairs() )
+        {
+            if ( !IsOFM(usage) ) continue;
+
+            // Shape of next slice
+            Shape sliceShape;
+            if ( opType == OpType::Unpack ) sliceShape = ofmConn.shape.Insert(axis, 1);
+            else sliceShape = Shape::PadAxes(ofmConn.shape, ifmConn->shape.Size(), 1);
+
+            // Create a new SLICE op
+            auto sliceOp = std::make_shared<Operation>(OpType::Slice);
+            sliceOp->CopyInput(TensorUsage::IFM, *ifmConn);
+            sliceOp->CopyOutput(TensorUsage::OFM, ofmConn);
+            sliceOp->Output(TensorUsage::OFM)->Set(sliceShape);
+            auto *attr = sliceOp->Attribute<slice_attr_t>();
+            assert(sliceOffset + sliceShape <= ifmConn->shape);
+            assert(sliceOffset >= ifmConn->shape.WithZeros());
+            attr->size = sliceShape;
+            attr->begin = sliceOffset;
+            RecordOptimisation(operation, sliceOp.get());
+            returnOp = sliceOp.get();
+
+            // Offset of next slice
+            sliceOffset[axis] += sliceShape[axis];
+        }
+
+        // Remove original op
+        operation->Disconnect();
+    }
+    return returnOp;
+}
+
 Operation *TFLiteGraphOptimiser::RewriteSplit(Graph *const graph, Operation *const operation)
 {
     UNUSED(graph);
     auto *returnOp = operation;
     auto opType = operation->Type();
 
-    if ( opType == OpType::Split || opType == OpType::SplitV || opType == OpType::StridedSlice || opType == OpType::Unpack )
+    if ( opType == OpType::StridedSlice )
     {
         auto *ifmConn = operation->Input(TensorUsage::IFM0);
         assert(ifmConn);
@@ -842,12 +848,6 @@ Operation *TFLiteGraphOptimiser::RewriteSplit(Graph *const graph, Operation *con
             return returnOp;
         }
 
-        Shape unpackShape = Shape();  // Pack/Unpack calculates shape once outside loop.
-        if ( opType == OpType::Unpack )
-        {
-            unpackShape = MakePackUnpackDesiredShape(axis, ofmConn->shape, &axis4D);
-        }
-
         auto idx = 0;
         auto offset = 0;
         auto usage = MakeTensorUsage(TensorUsage::OFM, 0);
@@ -862,19 +862,7 @@ Operation *TFLiteGraphOptimiser::RewriteSplit(Graph *const graph, Operation *con
             Shape readOffset(0, 0, 0, 0);
             Shape readShape(1, 1, 1, 1);
 
-            if ( opType == OpType::Unpack )
-            {
-                ofmConn->shape = unpackShape;
-                readShape = unpackShape;
-                readOffset[axis4D] = offset;
-            }
-            else if ( opType == OpType::Split || opType == OpType::SplitV )
-            {
-                ofmConn->shape = MakeConcatSplitDesiredShape(axis, ofmConn->shape, &axis4D);
-                readShape = ofmConn->shape;
-                readOffset[axis4D] = offset;
-            }
-            else if ( opType == OpType::StridedSlice )
+            if ( opType == OpType::StridedSlice )
             {
                 // TODO: MLBEDSW-9071: Change StridedSlice shape to 4D
                 ofmConn->shape = MakeStridedSliceDesiredShape(operation, ofmConn->shape);
