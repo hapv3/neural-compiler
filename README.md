@@ -94,14 +94,15 @@ The following should be installed prior to the installation of Vela:
    - Development version containing the Python/C API header files
    - e.g. `apt install python3.10-dev` or `yum install python310-devel`
 * Pip3
-* C99 capable compiler and associated toolchain
+* If building from source then C99 and C++17 capable compilers and associated
+toolchains are also required
     - For Linux operating systems, a GNU toolchain is recommended.
     - For Microsoft Windows 10, the Microsoft Visual C++ 14.2 Build Tools are recommended.
       See <https://wiki.python.org/moin/WindowsCompilers>
 
 ## Installation
 
-Vela is available to install as a package from
+Vela is available to install as binary wheels or a source distribution from
 [PyPi](https://pypi.org/project/ethos-u-vela/), or as
 source code from
 [ML Platform](https://review.mlplatform.org/plugins/gitiles/ml/ethos-u/ethos-u-vela).

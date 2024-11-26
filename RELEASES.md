@@ -22,6 +22,40 @@ main feature changes, interface changes and reported defects that have been
 fixed.  The version numbering adheres to the
 [semantic versioning](https://semver.org/) scheme.
 
+## Release 4.1.0 - 26/11/2024
+
+**Main feature changes:**
+
+* Added TOSA v0.80.0 support for Ethos-U85
+  * Base Inference Profile and 8K Level
+  * Includes all integer operators apart from CONV3D, DIM, COND_IF, WHILE_LOOP
+  * Includes decomposition support for CONV2D and elementwise operators
+    * Enabling strides, dilation, tensors, and ranks greater than native Ethos-U can support
+  * Includes variable tensor support
+* Improved Ethos-U85 TOSA operator fusing for better performance
+* Multiple improvements to performance estimation and elementwise chaining
+* Added support for generating and releasing binary wheels. Wheels are released for all
+combinations of Python 3.9-3.13 and Linux (x86-64), Linux (AArch64), Windows (x86-64) and
+macOS (AArch64)
+* Removed internal Vela cycle estimates from summary. See Interface Changes section
+for option to display the estimates.
+
+**Interface changes:**
+
+* Addition of CLI option to display internal Vela performance estimates in the summary:
+  * `--verbose-cycle-estimate
+
+**Reported defect fixes:**
+
+* Ethos-U55/Ethos-U65
+  * Add max kernel size constraint for SOFTMAX (MLCE-1404)
+* Ethos-U85
+  * Update constraint class to reject feature maps with data type float (MLCE-1403)
+  * Reset all chaining registers before primary operation (MLCE-1403)
+* General
+  * Avoid rounding issues by using float during RSQRT int16 LUT table generation
+
+
 ## Release 4.0.0 - 04/09/2024
 
 **Main feature changes:**
