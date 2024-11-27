@@ -218,6 +218,8 @@ public:
 
     bool operator<=(const Shape &other) const { return *this < other || *this == other; }
 
+    bool operator>=(const Shape &other) const { return !(*this < other); }
+
     Shape operator+(const Shape &other) const { return Shape::MaxFunc<std::plus<int32_t>, false, 0>(*this, other); }
 
     Shape operator-(const Shape &other) const { return Shape::MaxFunc<std::minus<int32_t>, false, 0>(*this, other); }

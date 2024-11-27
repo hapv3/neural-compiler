@@ -250,25 +250,6 @@ int TFLiteGraphOptimiser::GetAxis(const Operation *const operation)
 }
 
 
-// Calculate the read shape and offset values for Slice.
-void TFLiteGraphOptimiser::SetSliceOffsetValues(Operation *const operation, Shape &readShape, Shape &readOffset)
-{
-    auto *beginConn = operation->Input(TensorUsage::Params0);
-    auto *sizeConn = operation->Input(TensorUsage::Params1);
-
-    for ( auto idx = 0; idx < beginConn->tensor->View().ViewShape()[0]; idx++ )
-    {
-        auto begin = beginConn->tensor->View().Values<int>()[idx];
-        auto size = sizeConn->tensor->View().Values<int>()[idx];
-        readOffset[idx] = begin;
-        readShape[idx] = size;
-    }
-
-    readOffset = Shape::PadAxes(readOffset, 4, 0);
-    readShape = Shape::PadAxes(readShape, 4, 1);
-}
-
-
 // Calculate the read shape and offset values for StridedSlice.
 void TFLiteGraphOptimiser::SetStridedSliceOffsetValues(
     Operation *const operation, const TensorConnection *const ifmConn, Shape &readShape, Shape &readOffset)
@@ -775,6 +756,42 @@ Operation *TFLiteGraphOptimiser::RewritePack(Graph *const graph, Operation *cons
     return returnOp;
 }
 
+// Convert TFLite Slice into TOSA Slice
+Operation *TFLiteGraphOptimiser::RewriteSlice(Graph *const graph, Operation *const operation)
+{
+    UNUSED(graph);
+    Operation *returnOp = operation;
+    const OpType opType = operation->Type();
+    if ( opType == OpType::Slice )
+    {
+        const auto *ifmConn = operation->Input(TensorUsage::IFM);
+        const auto *ofmConn = operation->Output(TensorUsage::OFM);
+        const auto *beginParamConn = operation->Input(TensorUsage::Params0);
+        const auto *sizeParamConn = operation->Input(TensorUsage::Params1);
+
+        // Skip this op if missing param tensors
+        if ( !beginParamConn || !sizeParamConn )
+        {
+            return returnOp;
+        }
+
+        // Convert param tensors to attributes
+        Shape sliceOffset = TensorToShape(beginParamConn->tensor.get(), beginParamConn->shape.Elements());
+        Shape sliceShape = TensorToShape(sizeParamConn->tensor.get(), sizeParamConn->shape.Elements());
+        for ( int i = 0; i < sliceShape.Size(); i++ )
+        {
+            // Fixup elements that are -1
+            if ( sliceShape[i] == -1 ) sliceShape[i] = ifmConn->shape[i] - sliceOffset[i];
+        }
+        auto *attr = operation->Attribute<slice_attr_t>();
+        assert(sliceOffset + sliceShape <= ifmConn->shape);
+        assert(sliceOffset >= ifmConn->shape.WithZeros());
+        assert(sliceShape == ofmConn->shape);
+        attr->size = sliceShape;
+        attr->begin = sliceOffset;
+    }
+    return returnOp;
+}
 
 Operation *TFLiteGraphOptimiser::RewriteSplit(Graph *const graph, Operation *const operation)
 {
@@ -782,8 +799,7 @@ Operation *TFLiteGraphOptimiser::RewriteSplit(Graph *const graph, Operation *con
     auto *returnOp = operation;
     auto opType = operation->Type();
 
-    if ( opType == OpType::Split || opType == OpType::SplitV || opType == OpType::StridedSlice ||
-         opType == OpType::Slice || opType == OpType::Unpack )
+    if ( opType == OpType::Split || opType == OpType::SplitV || opType == OpType::StridedSlice || opType == OpType::Unpack )
     {
         auto *ifmConn = operation->Input(TensorUsage::IFM0);
         assert(ifmConn);
@@ -857,13 +873,6 @@ Operation *TFLiteGraphOptimiser::RewriteSplit(Graph *const graph, Operation *con
                 ofmConn->shape = MakeConcatSplitDesiredShape(axis, ofmConn->shape, &axis4D);
                 readShape = ofmConn->shape;
                 readOffset[axis4D] = offset;
-            }
-            else if ( opType == OpType::Slice )
-            {
-                ofmConn->shape = Shape::PadAxes(ofmConn->shape, 4, 1);
-                readShape = ifmConn->shape.WithOnes();
-                readOffset = ifmConn->shape.WithZeros();
-                SetSliceOffsetValues(operation, readShape, readOffset);
             }
             else if ( opType == OpType::StridedSlice )
             {

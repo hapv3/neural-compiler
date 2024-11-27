@@ -73,8 +73,6 @@ private:
 
     // Get axis parameter for operator
     int GetAxis(const Operation *const operation);
-    // Calculate the read shape and offset values for Slice.
-    void SetSliceOffsetValues(Operation *const operation, Shape &readShape, Shape &readOffset);
     // Calculate the read shape and offset values for StridedSlice.
     void SetStridedSliceOffsetValues(Operation *const operation, const TensorConnection *const ifmConn, Shape &readShape, Shape &readOffset);
     // Creates MemoryCopy operation for the given ifm/ofm and write offset.
@@ -117,6 +115,7 @@ private:
     Operation *ConvertExpToLUT(Graph *const graph, Operation *const operation);
     Operation *RewritePack(Graph *const graph, Operation *const operation);
     Operation *RewriteSplit(Graph *const graph, Operation *const operation);
+    Operation *RewriteSlice(Graph *const graph, Operation *const operation);
     Operation *RemoveReshape(Graph *const graph, Operation *const operation);
     Operation *ConvertReverse(Graph *const graph, Operation *const operation);
     Operation *ConvertGather(Graph *const graph, Operation *const operation);
@@ -203,6 +202,7 @@ public:
         {
             {},
             {
+                &TFLiteGraphOptimiser::RewriteSlice,
                 &TFLiteGraphOptimiser::RewritePack
             }
         },
