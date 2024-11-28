@@ -74,6 +74,8 @@ struct TensorConnection
     TensorSlice slice;
     Quantization quantization;
     ReverseType reverse = ReverseType::None;
+    RoundMode rounding = RoundMode::AUTO;
+
 
     TensorConnection &Set(const Shape &s)
     {
@@ -95,6 +97,11 @@ struct TensorConnection
         reverse = r;
         return *this;
     }
+    TensorConnection &Set(const RoundMode &r)
+    {
+        rounding = r;
+        return *this;
+    }
 };
 
 
@@ -109,7 +116,6 @@ private:
     OpType _type;
     std::unique_ptr<class Kernel> _kernel;
     DynamicRef _attr;
-    RoundMode _rounding;
     const void *_passthrough = nullptr;  // Original flatbuffer description of this op (if it was loaded from one)
 
 public:
@@ -132,9 +138,6 @@ public:
     const class Kernel *Kernel() const { return _kernel.get(); }
     class Kernel *Kernel() { return _kernel.get(); }
     void SetKernel(std::unique_ptr<class Kernel> kernel) { _kernel = std::move(kernel); }
-
-    RoundMode Rounding() const { return _rounding; }
-    void SetRounding(RoundMode rounding) { _rounding = rounding; }
 
     const void *Passthrough() const { return _passthrough; }
     void SetPassthrough(const void *passthrough) { _passthrough = passthrough; }

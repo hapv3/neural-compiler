@@ -100,20 +100,6 @@ enum class GraphTensorLayout : uint8_t
 };
 
 /// <summary>
-// Operation round mode
-/// </summary>
-enum class GraphRoundMode : uint8_t
-{
-    Double = 0,
-    Truncate = 1,
-    Natural = 2,
-    TruncateToLower = 3,
-    DoubleAsymmetric = 4,
-    Symmetric = 5,
-    Auto = 0xff
-};
-
-/// <summary>
 /// Graph base axis shape
 /// </summary>
 struct GraphShape
@@ -220,7 +206,6 @@ struct IGraphBuilder
     virtual bool Set(GraphOperation *op, OpAttr attr, const Point2 &value) = 0;
     virtual bool Set(GraphOperation *op, OpAttr attr, const char *value) = 0;
     virtual void SetZeroPoint(GraphOperation *op, GraphTensorUsage tensor, double zeroPoint) = 0;
-    virtual void SetRounding(GraphOperation *op, GraphRoundMode roundMode) = 0;
     virtual void SetAxisOrder(GraphTensor *tensor, AxisOrder order) = 0;
     virtual void SetAxisStrides(GraphTensor *tensor, const GraphShape *axisStrides) = 0;
 };

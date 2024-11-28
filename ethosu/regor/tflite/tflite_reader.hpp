@@ -49,7 +49,7 @@ private:
         const std::shared_ptr<Buffer> &buffer, std::unordered_map<UniqueId, Quantization> &tensorQuantization);
     static void ParseOperatorOptions(const std::shared_ptr<Operation> &operation,
         const tflite::Operator *tflite_operator, OptimiserDatabase *optDb, IArchitectureConstraints *constraints);
-    static void SetOperatorRounding(const std::shared_ptr<Operation> &operation);
+    static void SetOFMRounding(const std::shared_ptr<Operation> &operation);
     static void UnFuseActivation(const std::shared_ptr<Operation> &operation, tflite::ActivationFunctionType type, OptimiserDatabase *optDb);
     static void DefaultOperatorOptions(const std::shared_ptr<Operation> &operation);
     static ExecutionQuery OperationToExecQuery(const Operation &operation);

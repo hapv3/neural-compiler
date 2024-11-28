@@ -177,23 +177,6 @@ ifm_upscale_mode ToIfmUpscaleMode(ArchResampling resampling)
     return ifm_upscale_mode::NONE;
 }
 
-RCSRoundMode GetRoundingMode(const HLCOperation *op)
-{
-    switch ( op->rounding )
-    {
-        case HLCRoundMode::NATURAL:
-            return RCSRoundMode::NATURAL;
-        case HLCRoundMode::TRUNCATE:
-            return RCSRoundMode::TRUNCATE;
-        case HLCRoundMode::DBL:
-            return RCSRoundMode::DBL;
-        case HLCRoundMode::AUTO:
-            return RCSRoundMode::DBL;
-        default:
-            return RCSRoundMode::DBL;
-    }
-}
-
 ifm_scale_mode MapRcsIfmScaleModeToInterface(RCSIfmScaleMode rcsScaleMode)
 {
     switch ( rcsScaleMode )
@@ -210,18 +193,20 @@ ifm_scale_mode MapRcsIfmScaleModeToInterface(RCSIfmScaleMode rcsScaleMode)
     }
 }
 
-round_mode MapRcsRoundModeToInterface(RCSRoundMode rcsRoundMode)
+round_mode MapHLCRoundModeToInterface(HLCRoundMode roundMode)
 {
-    switch ( rcsRoundMode )
+    switch ( roundMode )
     {
-        case RCSRoundMode::NATURAL:
+        case HLCRoundMode::NATURAL:
             return round_mode::NATURAL;
-        case RCSRoundMode::TRUNCATE:
+        case HLCRoundMode::TRUNCATE:
             return round_mode::TRUNCATE;
-        case RCSRoundMode::DBL:
+        case HLCRoundMode::AUTO:
+            [[fallthrough]];
+        case HLCRoundMode::DBL:
             return round_mode::DBL;
         default:
-            assert(0 && "Unexpected value, has the interface changed?");
+            assert(false && "usupported HLCRoundMode");
             return round_mode::DBL;
     }
 }
@@ -906,14 +891,14 @@ void EthosU55RCSGenerator::GenerateIFM2Broadcast(const Shape &ifmShape, const Sh
 }
 
 // Generates IFM_PRECISION register
-void EthosU55RCSGenerator::GenerateIFMPrecision(const HLCFeatureMap &fm, RCSIfmScaleMode scaleMode)
+void EthosU55RCSGenerator::GenerateIFMPrecision(const HLCFeatureMap &fm, RCSIfmScaleMode scaleMode, HLCRoundMode roundMode)
 {
     activation_type type = ToActivationType(fm.dataType);
     activation_precision precision = ToActivationPrecision(fm.dataType);
     activation_format format = ToActivationFormat(fm.format);
-    round_mode roundMode = round_mode::DBL;
+    round_mode rounding = MapHLCRoundModeToInterface(roundMode);
     ifm_scale_mode interfaceScaleMode = MapRcsIfmScaleModeToInterface(scaleMode);
-    Emit(isa::npu_set_ifm_precision_t(type, precision, format, interfaceScaleMode, roundMode));
+    Emit(isa::npu_set_ifm_precision_t(type, precision, format, interfaceScaleMode, rounding));
 }
 
 // Generates IFM2_PRECISION register
@@ -926,14 +911,14 @@ void EthosU55RCSGenerator::GenerateIFM2Precision(const HLCFeatureMap &fm)
 }
 
 // Generates OFM_PRECISION register
-void EthosU55RCSGenerator::GenerateOFMPrecision(const HLCFeatureMap &fm, bool useGlobalScale, RCSRoundMode roundMode)
+void EthosU55RCSGenerator::GenerateOFMPrecision(const HLCFeatureMap &fm, bool useGlobalScale)
 {
     activation_type type = ToActivationType(fm.dataType);
     activation_precision precision = ToActivationPrecision(fm.dataType);
     activation_format format = ToActivationFormat(fm.format);
-    round_mode interfaceRoundMode = MapRcsRoundModeToInterface(roundMode);
+    round_mode roundMode = MapHLCRoundModeToInterface(fm.rounding);
     auto scaleMode = useGlobalScale ? ofm_scale_mode::GLOBAL : ofm_scale_mode::PER_CHANNEL;
-    Emit(isa::npu_set_ofm_precision_t(type, precision, format, scaleMode, interfaceRoundMode));
+    Emit(isa::npu_set_ofm_precision_t(type, precision, format, scaleMode, roundMode));
 }
 
 // Generates common IFM registers
@@ -1321,7 +1306,17 @@ void EthosU55RCSGenerator::GenerateCommon(const HLCStripe *stripe, bool useGloba
     auto op = stripe->operation.get();
     GenerateIFM(op->type, op->ifm[ifm0Index], stripe->ifmAreas[ifm0Index]);
     memoryAccesses.push_back(ToMemoryAccess(op->ifm[ifm0Index], stripe->ifmAreas[ifm0Index], AccessDirection::Read));
-    GenerateIFMPrecision(op->ifm[ifm0Index], opToScale);
+
+    // Select rounding based on RCSIfmScaleMode
+    // rounding doesn't matter for RcsIfmScaleMode::OPA_OPB_16
+    // as the scaling is not a fraction.
+    HLCRoundMode rounding = op->ifm[0].rounding;
+    if ( opToScale == RCSIfmScaleMode::OPB_32 )
+    {
+        assert(op->ifm.size() > 1);
+        rounding = op->ifm[1].rounding;
+    }
+    GenerateIFMPrecision(op->ifm[ifm0Index], opToScale, rounding);
     ifm_upscale_mode upscaleMode = ToIfmUpscaleMode(op->ifm[0].resamplingMode);
     Emit(isa::npu_set_ifm_upscale_t(upscaleMode));
     if ( !IsElementwise(op->type) )
@@ -1330,8 +1325,7 @@ void EthosU55RCSGenerator::GenerateCommon(const HLCStripe *stripe, bool useGloba
     }
     GenerateOFM(op->type, op->ofm, stripe->ofmArea);
     memoryAccesses.push_back(ToMemoryAccess(op->ofm, stripe->ofmArea, AccessDirection::Write));
-    RCSRoundMode roundMode = GetRoundingMode(op);
-    GenerateOFMPrecision(op->ofm, useGlobalScale, roundMode);
+    GenerateOFMPrecision(op->ofm, useGlobalScale);
     EthosU55OpConfig *config = static_cast<EthosU55OpConfig *>(stripe->operation->config);
     if ( !IsElementwise(op->type) )
     {

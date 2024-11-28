@@ -249,6 +249,7 @@ static void MakeFeatureMap(const SchedulerConnection *schedConn, HLCFeatureMap &
     fm.transpose = schedConn->transpose;
     fm.reverse = schedConn->reverse;
     fm.resamplingMode = schedConn->resamplingMode;
+    fm.rounding = HLCRoundMode(schedConn->rounding);
     fm.uid = schedConn->tensor->uid;
 }
 
@@ -290,7 +291,6 @@ static HLCSubOperation MakeSubOperation(const std::unique_ptr<SchedulerOperation
         }
     }
     MakeFeatureMap(schedOp->OFM(), hlcSubOp.ofm);
-    hlcSubOp.rounding = HLCRoundMode(schedOp->Rounding());
     hlcSubOp._srcKey = schedOp->_srcKey;
 
     if ( schedOp->Type() == OpType::LeakyRelu )
@@ -317,7 +317,6 @@ static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, 
     op->type = schedOp->Type();
     op->kernel = *schedOp->Kernel();
     op->config = opInfo->Config();
-    op->rounding = HLCRoundMode(schedOp->Rounding());
     op->_srcKey = schedOp->_srcKey;
 
     for ( int i = 0; i < MAX_NUM_IFM; ++i )

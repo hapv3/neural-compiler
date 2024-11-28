@@ -45,7 +45,6 @@ class GraphBuilder : public GraphApi::IGraphBuilder
     using GraphKernel = GraphApi::GraphKernel;
     using GraphOperation = GraphApi::GraphOperation;
     using GraphTensorUsage = GraphApi::GraphTensorUsage;
-    using GraphRoundMode = GraphApi::GraphRoundMode;
     using GraphDataType = GraphApi::GraphDataType;
     using GraphBuffer = GraphApi::GraphBuffer;
     using BufferMapping = GraphApi::BufferMapping;
@@ -88,7 +87,6 @@ public:
     bool Set(GraphOperation *graphOp, GraphApi::OpAttr attr, const GraphApi::Point2 &value) override;
     bool Set(GraphOperation *graphOp, GraphApi::OpAttr attr, const char *value) override;
     void SetZeroPoint(GraphOperation *op, GraphTensorUsage usage, double zeroPoint) override;
-    void SetRounding(GraphOperation *op, GraphRoundMode roundMode) override;
     void SetAxisOrder(GraphTensor *graphTensor, GraphApi::AxisOrder order) override;
     void SetAxisStrides(GraphTensor *graphTensor, const GraphApi::GraphShape *axisStrides) override;
     // Utility

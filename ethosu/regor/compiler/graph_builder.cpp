@@ -217,11 +217,6 @@ GraphApi::GraphOperation *GraphBuilder::CreateOp(tosa::Op tosaType, const GraphK
     {
         op->SetKernel(std::make_unique<Kernel>(Point2i(1, 1), Point2i(1, 1), Point2i(1, 1)));
     }
-    if ( op->Rounding() == RoundMode::AUTO && IsPooling(type) )
-    {
-        // Set a good default for pool operations
-        op->SetRounding(RoundMode::NATURAL);
-    }
     _operations.push_back(op);
 
     return op.get();
@@ -326,6 +321,10 @@ void GraphBuilder::AddOutput(GraphOperation *graphOp, GraphTensorUsage usage, Gr
     auto tmp = GraphAPIUsageToTensorUsage(usage);
     int count = op->CountOutputs(tmp);
     op->ConnectOutput(MakeTensorUsage(tmp, count), tensor->shared_from_this()).Set(Quantization::Unit());
+    if ( IsPooling(op->Type()) )
+    {
+        op->Output(MakeTensorUsage(tmp, count))->Set(RoundMode::NATURAL);
+    }
 }
 
 namespace
@@ -541,12 +540,6 @@ void GraphBuilder::SetZeroPoint(GraphOperation *graphOp, GraphTensorUsage tensor
     {
         conn->quantization.zeroPoints = {int64_t(zeroPoint)};
     }
-}
-
-void GraphBuilder::SetRounding(GraphOperation *graphOp, GraphRoundMode roundMode)
-{
-    auto op = static_cast<Operation *>(graphOp);
-    op->SetRounding(regor::RoundMode(roundMode));
 }
 
 void GraphBuilder::SetAxisOrder(GraphTensor *graphTensor, GraphApi::AxisOrder order)

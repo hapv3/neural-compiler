@@ -78,6 +78,7 @@ struct HLCFeatureMap
     ArchResampling resamplingMode = ArchResampling::None;
     TransposeType transpose = TransposeType::None;
     ReverseType reverse = ReverseType::None;
+    HLCRoundMode rounding;
     UniqueId uid = ~0u;
 
     int AllocationSizeBytes() const { return TensorAllocationBytes(shape, format, dataType); }
@@ -157,7 +158,6 @@ struct HLCSubOperation
     std::vector<HLCFeatureMap> ifm;
     HLCFeatureMap ofm;
     HLCParameters parameters = {};
-    HLCRoundMode rounding;
     void *_srcKey = nullptr;
 };
 

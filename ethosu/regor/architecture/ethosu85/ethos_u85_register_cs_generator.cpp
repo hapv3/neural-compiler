@@ -296,7 +296,7 @@ resize_mode ToResizeMode(ArchResizeMode mode)
 
 round_mode_ofm GetOfmRoundingMode(const HLCOperation *op)
 {
-    switch ( op->rounding )
+    switch ( op->ofm.rounding )
     {
         case HLCRoundMode::NATURAL:
             return round_mode_ofm::NATURAL;
@@ -314,6 +314,23 @@ round_mode_ofm GetOfmRoundingMode(const HLCOperation *op)
             return round_mode_ofm::SYMMETRIC;
         default:
             return round_mode_ofm::DOUBLE_SYMMETRIC;
+    }
+}
+
+round_mode_ifm GetIfmRoundingMode(const HLCOperation *op, int index)
+{
+    assert(index >= 0 && index < int(op->ifm.size()));
+    switch ( op->ifm[index].rounding )
+    {
+        case HLCRoundMode::NATURAL:
+            return round_mode_ifm::NATURAL;
+        case HLCRoundMode::AUTO:
+            [[fallthrough]];
+        case HLCRoundMode::DBL:
+            return round_mode_ifm::DOUBLE_SYMMETRIC;
+        default:
+            assert(false && "ifm with unsupported roundmode");
+            return round_mode_ifm::DOUBLE_SYMMETRIC;
     }
 }
 
@@ -721,7 +738,7 @@ void EthosU85RCSGenerator::GenerateScalingForElementwise(HLCOperation *op)
     QuantizedScale outScale(QuantizedScale::Unit());
     ethosU85Scaling::RescaleElementwise(op);
 
-    auto ifmRoundMode = round_mode_ifm::DOUBLE_SYMMETRIC;
+    auto ifmRoundMode = GetIfmRoundingMode(op, 0);
     uint32_t ifmDoubleRound = 0;
     auto ofmRoundMode = GetOfmRoundingMode(op);
     uint32_t ofmDoubleRound = 0;
@@ -758,7 +775,8 @@ void EthosU85RCSGenerator::GenerateScalingForElementwise(HLCOperation *op)
     if ( ifmCnt == 2 )
     {
         assert(unsigned(input2Scale.shift) < 64);
-        Emit(isa::npu_set_ifm2_scale_t(input2Scale.shift, ifmDoubleRound, ifmRoundMode, input2Scale.scale));
+        auto ifm2RoundMode = GetIfmRoundingMode(op, 1);
+        Emit(isa::npu_set_ifm2_scale_t(input2Scale.shift, ifmDoubleRound, ifm2RoundMode, input2Scale.scale));
     }
     assert(unsigned(outScale.shift) < 64);
     Emit(isa::npu_set_ofm_scale_t(outScale.shift, ofmDoubleRound, ofmRoundMode, outScale.scale));
@@ -1963,7 +1981,6 @@ std::shared_ptr<HLCStripe> EthosU85RCSGenerator::MakeStripeForSubOp(HLCStripe *s
     {
         op->parameters.leaky_relu = subOp.parameters.leaky_relu;
     }
-    op->rounding = subOp.rounding;
     op->config = stripe->operation->config;
     std::shared_ptr<HLCStripe> newStripe = std::make_shared<HLCStripe>(op);
     for ( int i = 0; i < int(subOp.ifm.size()); i++ )

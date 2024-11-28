@@ -138,13 +138,13 @@ Operation *GraphIrOptimiser::ConvertAttributes(Graph *const graph, Operation *co
     {
         const auto *attr = operation->Attribute<asr_attr_t>();
         auto roundMode = attr->round ? RoundMode::NATURAL : RoundMode::TRUNCATE_TO_LOWER;
-        operation->SetRounding(roundMode);
+        operation->Output(TensorUsage::OFM)->Set(roundMode);
     }
     else if ( opType == OpType::Rescale )
     {
         const auto *attr = operation->Attribute<rescale_attr_t>();
         auto roundMode = attr->double_round ? RoundMode::DBL : RoundMode::NATURAL;
-        operation->SetRounding(roundMode);
+        operation->Output(TensorUsage::OFM)->Set(roundMode);
     }
     else if ( opType == OpType::Clamp )
     {
@@ -591,6 +591,7 @@ Operation *GraphIrOptimiser::RewriteRescale(Graph *const, Operation *const opera
                 mulOp->ConnectInput(TensorUsage::IFM1, scaleTensor);
                 mulOp->CopyInput(TensorUsage::IFM0, *ifmConn);
                 mulOp->CopyOutput(TensorUsage::OFM, *ofmConn);
+                mulOp->Output(TensorUsage::OFM)->Set(ofmConn->rounding);
 
                 mulOp->Input(TensorUsage::IFM1)->Set(scaleQuant);
                 mulOp->Input(TensorUsage::IFM0)->Set(ifmQuant).Set(slice);
@@ -618,7 +619,6 @@ Operation *GraphIrOptimiser::RewriteRescale(Graph *const, Operation *const opera
                     // Create elementwise mul operation to handle all the previous scales
                     int endChannel = startChannel + scales.size();
                     auto mulOp = CreateRescalingMul(startChannel, endChannel, scales, shift);
-                    mulOp->SetRounding(operation->Rounding());
                     RecordOptimisation(operation, mulOp.get());
 
                     // reset scales and startChannel
@@ -634,7 +634,6 @@ Operation *GraphIrOptimiser::RewriteRescale(Graph *const, Operation *const opera
             // Emit the final mul operation (or the only one for global scaling)
             int endChannel = ifmConn->shape.Depth();
             auto mulOp = CreateRescalingMul(startChannel, endChannel, scales, shift);
-            mulOp->SetRounding(operation->Rounding());
             RecordOptimisation(operation, mulOp.get());
             returnOp = mulOp.get();
             operation->Disconnect();
@@ -676,10 +675,9 @@ Operation *GraphIrOptimiser::RewritePad(Graph *const, Operation *const operation
 
                 // Fill padded elements with pad_const
                 auto fillOp = std::make_shared<Operation>(OpType::Not);
-                fillOp->SetRounding(RoundMode::NATURAL);
                 fillOp->ConnectInput(TensorUsage::IFM, CreateConstTensor("pad_const", ifmConn->tensor->Type(), not_pad_const));
                 fillOp->CopyOutput(TensorUsage::OFM, *ofmConn);
-                fillOp->Output(TensorUsage::OFM)->Set(newOfmShape).Set({newOfmSliceOffset, newOfmSliceShape});
+                fillOp->Output(TensorUsage::OFM)->Set(newOfmShape).Set({newOfmSliceOffset, newOfmSliceShape}).Set(RoundMode::NATURAL);
                 RecordOptimisation(operation, fillOp.get());
             }
 
@@ -691,20 +689,18 @@ Operation *GraphIrOptimiser::RewritePad(Graph *const, Operation *const operation
 
                 // Fill padded elements with pad_const
                 auto fillOp = std::make_shared<Operation>(OpType::Not);
-                fillOp->SetRounding(RoundMode::NATURAL);
                 fillOp->ConnectInput(TensorUsage::IFM, CreateConstTensor("pad_const", ifmConn->tensor->Type(), not_pad_const));
                 fillOp->CopyOutput(TensorUsage::OFM, *ofmConn);
-                fillOp->Output(TensorUsage::OFM)->Set(newOfmShape).Set({newOfmSliceOffset, newOfmSliceShape});
+                fillOp->Output(TensorUsage::OFM)->Set(newOfmShape).Set({newOfmSliceOffset, newOfmSliceShape}).Set(RoundMode::NATURAL);
                 RecordOptimisation(operation, fillOp.get());
             }
         }
 
         // Copy original IFM to OFM
         auto copyOp = std::make_shared<Operation>(OpType::MemoryCopy);
-        copyOp->SetRounding(RoundMode::NATURAL);
         copyOp->CopyInput(TensorUsage::IFM, *ifmConn);
         copyOp->CopyOutput(TensorUsage::OFM, *ofmConn);
-        copyOp->Output(TensorUsage::OFM)->Set({paddingBefore, ifmConn->shape});
+        copyOp->Output(TensorUsage::OFM)->Set({paddingBefore, ifmConn->shape}).Set(RoundMode::NATURAL);
         RecordOptimisation(operation, copyOp.get());
         returnOp = copyOp.get();
 
@@ -903,6 +899,7 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const graph, Operation *const op
                         }
                         consumer->CopyInput(ifm.first, *ifmConn);
                         ifm.second.quantization = ifmQuant;
+                        consumer->Input(ifm.first)->Set(ofmConn->rounding);
                         returnOp = consumer.get();
                     }
                 }
@@ -919,7 +916,7 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const graph, Operation *const op
         {
             // Propagate rescaling to output of previous op
             producer->CopyOutput(TensorUsage::OFM, *ofmConn);
-            producer->SetRounding(operation->Rounding());
+            producer->Output(TensorUsage::OFM)->Set(ofmConn->rounding);
             returnOp = producer.get();
         }
     }
@@ -988,7 +985,7 @@ Operation *GraphIrOptimiser::RewriteTable(Graph *const graph, Operation *const o
         // Replace TOSA Table op with GraphIR LUT op
         returnOp = CreateLUT(ifmConn->tensor, newLutTensor, ifmConn->quantization, ofmConn->quantization,
             newLutTensor->Type(), &ifmConn->shape, ofmConn->tensor, ifmConn->slice, ofmConn->slice);
-        returnOp->SetRounding(RoundMode::NATURAL);
+        returnOp->Output(TensorUsage::OFM)->Set(RoundMode::NATURAL);
         operation->Disconnect();
     }
     return returnOp;
@@ -1109,10 +1106,10 @@ Operation *GraphIrOptimiser::RewriteConcat(Graph *const graph, Operation *const 
             if ( !IsIFM(usage) ) continue;
 
             auto copyOp = std::make_shared<Operation>(OpType::MemoryCopy);
-            copyOp->SetRounding(RoundMode::NATURAL);
             copyOp->CopyInput(TensorUsage::IFM, ifmConn);
             copyOp->CopyOutput(TensorUsage::OFM, *ofmConn);
             copyOp->Output(TensorUsage::OFM)->Set({ofmSliceOffset, ifmConn.shape});
+            copyOp->Output(TensorUsage::OFM)->Set(RoundMode::NATURAL);
             RecordOptimisation(operation, copyOp.get());
             returnOp = copyOp.get();
 
@@ -1138,10 +1135,10 @@ Operation *GraphIrOptimiser::RewriteSlice(Graph *const graph, Operation *const o
 
         // Replace SLICE with a memory copy with IFM slice
         auto copyOp = std::make_shared<Operation>(OpType::MemoryCopy);
-        copyOp->SetRounding(RoundMode::NATURAL);
         copyOp->CopyInput(TensorUsage::IFM, *ifmConn);
         copyOp->Input(TensorUsage::IFM)->Set({begin, size});
         copyOp->CopyOutput(TensorUsage::OFM, *ofmConn);
+        copyOp->Output(TensorUsage::OFM)->Set(RoundMode::NATURAL);
         RecordOptimisation(operation, copyOp.get());
         returnOp = copyOp.get();
         operation->Disconnect();
@@ -1162,10 +1159,10 @@ Operation *GraphIrOptimiser::RewriteNegate(Graph *const graph, Operation *const 
 
         // Replace NEG(x) with SUB(0, x)
         auto newOp = std::make_shared<Operation>(OpType::Sub);
-        newOp->SetRounding(RoundMode::NATURAL);
         newOp->ConnectInput(TensorUsage::IFM0, CreateConstTensor("const_zero", ifmConn->tensor->Type(), 0));
         newOp->CopyInput(TensorUsage::IFM1, *ifmConn);
         newOp->CopyOutput(TensorUsage::OFM, *ofmConn);
+        newOp->Output(TensorUsage::OFM)->Set(RoundMode::NATURAL);
         RecordOptimisation(operation, newOp.get());
         returnOp = newOp.get();
         operation->Disconnect();
@@ -1676,7 +1673,7 @@ Operation *GraphIrOptimiser::RewriteDepthwise(Graph *const graph, Operation *con
         if ( ifm && (ifm->shape.Depth() == 1) && (multiplier != 1) && ofm && (ofm->shape.Depth() == multiplier) )
         {
             auto newOp = std::make_shared<Operation>(OpType::Conv2D);
-            newOp->SetRounding(operation->Rounding());
+            RoundMode ofmRound = ofm->rounding;
             auto kernel = std::make_unique<Kernel>(operation->Kernel()->Size(), operation->Kernel()->Stride(),
                 operation->Kernel()->Dilation(), 1, operation->Kernel()->Padding());
             newOp->SetKernel(std::move(kernel));
@@ -1687,6 +1684,7 @@ Operation *GraphIrOptimiser::RewriteDepthwise(Graph *const graph, Operation *con
             }
 
             ReplaceOperation(operation, newOp.get());
+            newOp->Output(TensorUsage::OFM)->Set(ofmRound);
             returnOp = newOp.get();
             RecordOptimisation(operation, returnOp);
         }
@@ -1748,17 +1746,18 @@ Operation *GraphIrOptimiser::RewriteTransposeConvOFMPadding(Graph *const graph, 
 
         // Create zero-input tensor that has same shape as the padded OFM-area
         std::string inputName = fmt::format("{}_inputZero", name);
+        RoundMode rounding;
         if ( biasType == DataType::Int48 )
         {
             auto zeroBuf = std::make_shared<Buffer>(std::vector<int16_t>(sliceElements, 0));
             inputZero = std::make_shared<Tensor>(inputName, DataType::Int16, padSlice.shape, zeroBuf);
-            dwOp->SetRounding(RoundMode::NATURAL);
+            rounding = RoundMode::NATURAL;
         }
         else
         {
             auto zeroBuf = std::make_shared<Buffer>(std::vector<int8_t>(sliceElements, 0));
             inputZero = std::make_shared<Tensor>(inputName, DataType::Int8, padSlice.shape, zeroBuf);
-            dwOp->SetRounding(RoundMode::DBL);
+            rounding = RoundMode::DBL;
         }
 
         // Create weights-tensor with 1x1 kernel
@@ -1773,7 +1772,7 @@ Operation *GraphIrOptimiser::RewriteTransposeConvOFMPadding(Graph *const graph, 
         dwOp->ConnectInput(TensorUsage::Weights, weightTensor).Set(Quantization::Unit());
         dwOp->CopyInput(TensorUsage::Scales, *biasConn);
         dwOp->CopyOutput(TensorUsage::OFM, *ofmConn);
-        dwOp->Output(TensorUsage::OFM)->Set(padSlice);
+        dwOp->Output(TensorUsage::OFM)->Set(padSlice).Set(rounding);
 
         RecordOptimisation(operation, dwOp.get());
     };
@@ -1938,7 +1937,7 @@ Operation *GraphIrOptimiser::RewriteArgmax(Graph *const graph, Operation *const 
         ofmShape = ifmShape.WithWidth(1);
         attr->axis = 1;
     }
-    operation->SetRounding(RoundMode::TRUNCATE_TO_LOWER);
+    operation->Output(TensorUsage::OFM)->Set(RoundMode::TRUNCATE_TO_LOWER);
     // Update kernel based on reshapes
     std::unique_ptr<Kernel> kernel = std::make_unique<Kernel>(Point2i(ifmShape[1], 1), Point2i(1, 1), Point2i(1, 1));
     operation->SetKernel(std::move(kernel));

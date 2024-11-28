@@ -65,7 +65,6 @@ Operation *TFLiteGraphOptimiser::MakeMulWithConstTensor(const std::string &name,
 {
     auto ofm = ofmConn.tensor;
     auto op = std::make_shared<Operation>(OpType::Mul);
-    op->SetRounding(RoundMode::DBL);
 
     op->CopyInput(TensorUsage::IFM0, ifmConn);
     op->ConnectInput(TensorUsage::IFM1, constTens).Set(quantization);
@@ -76,7 +75,7 @@ Operation *TFLiteGraphOptimiser::MakeMulWithConstTensor(const std::string &name,
 
     std::shared_ptr<Tensor> cloneOfm = ofm->Clone();
     cloneOfm->SetName(ofmName);
-    op->ConnectOutput(TensorUsage::OFM, cloneOfm).Set(ofmConn.shape).Set(ofmConn.quantization).Set(ofmConn.slice);
+    op->ConnectOutput(TensorUsage::OFM, cloneOfm).Set(ofmConn.shape).Set(ofmConn.quantization).Set(ofmConn.slice).Set(RoundMode::DBL);
 
     return op.get();
 }
@@ -93,7 +92,7 @@ Operation *TFLiteGraphOptimiser::MakeOperation(
     {
         op->CopyInput(TensorUsage::IFM1, *ifm1Conn);
     }
-    op->SetRounding(RoundMode::DBL);
+    op->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
     return op.get();
 }
 
@@ -188,8 +187,7 @@ Operation *TFLiteGraphOptimiser::ConvertLeakyRelu16bit(TensorConnection &ifmConn
         auto minOp = std::make_shared<Operation>(OpType::Minimum);
         minOp->CopyInput(TensorUsage::IFM0, ifmConn);
         minOp->ConnectInput(TensorUsage::IFM1, zeroTens).Set(ifmConn.quantization);
-        minOp->ConnectOutput(TensorUsage::OFM, fmNegative).Set(ifmConn.quantization);
-        minOp->SetRounding(RoundMode::DBL);
+        minOp->ConnectOutput(TensorUsage::OFM, fmNegative).Set(ifmConn.quantization).Set(RoundMode::DBL);
         RecordOptimisation(operation, minOp.get());
 
         // create Mul(alpha)
@@ -203,7 +201,7 @@ Operation *TFLiteGraphOptimiser::ConvertLeakyRelu16bit(TensorConnection &ifmConn
         reluOp->CopyInput(TensorUsage::IFM0, ifmConn);
         reluOp->ConnectOutput(TensorUsage::OFM, fmScaled).Set(ofmConn.quantization);
         reluOp->Output(TensorUsage::OFM)->quantization.quantMin.push_back(ofmConn.quantization.zeroPoints[0]);
-        reluOp->SetRounding(RoundMode::DBL);
+        reluOp->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
         RecordOptimisation(operation, reluOp.get());
 
         // Create Add(Relu, Mul) to add scaled and alpha-multiplied values
@@ -255,13 +253,13 @@ std::shared_ptr<Operation> TFLiteGraphOptimiser::MakeMemoryCopyForConcat(
     const TensorConnection *const ofmConn, const TensorConnection *const ifmConn, const Shape &writeOffset)
 {
     auto op = std::make_shared<Operation>(OpType::MemoryCopy);
-    op->SetRounding(RoundMode::NATURAL);
 
     op->CopyInput(TensorUsage::IFM0, *ifmConn);
     op->ConnectOutput(TensorUsage::OFM, ofmConn->tensor)
         .Set(ofmConn->shape)
         .Set(ofmConn->quantization)
-        .Set({writeOffset, ifmConn->shape});
+        .Set({writeOffset, ifmConn->shape})
+        .Set(RoundMode::NATURAL);
 
     return op;
 }
@@ -273,7 +271,6 @@ Operation *TFLiteGraphOptimiser::MakeDepthwiseMeanOp(const TensorConnection *ifm
 {
     auto ifm = ifmConn->tensor;
     auto op = std::make_shared<Operation>(OpType::DepthwiseConv2D);
-    op->SetRounding(ifm->Type() == DataType::Int16 ? RoundMode::NATURAL : RoundMode::DBL);
     op->SetKernel(std::make_unique<Kernel>(Point2i(w, h), Point2i(1, 1), Point2i(1, 1)));
 
     if ( weightTensor == nullptr )
@@ -316,6 +313,9 @@ Operation *TFLiteGraphOptimiser::MakeDepthwiseMeanOp(const TensorConnection *ifm
     ofm->SetStorageShape(ofmShape4D);
     op->ConnectOutput(TensorUsage::OFM, ofm).Set(ofmQuant);
 
+    auto rounding = ifm->Type() == DataType::Int16 ? RoundMode::NATURAL : RoundMode::DBL;
+    op->Output(TensorUsage::OFM)->Set(rounding);
+
     return op.get();
 }
 
@@ -332,11 +332,10 @@ Operation *TFLiteGraphOptimiser::CreateCastToInt32(const TensorConnection *ifmCo
 
     auto ofmShape4D = Shape::PadAxes(ifmConn->shape, 4, 1);
     auto op = std::make_shared<Operation>(OpType::MemoryCopy);
-    op->SetRounding(RoundMode::NATURAL);
     op->CopyInput(TensorUsage::IFM0, *ifmConn);
     auto ofm = std::make_shared<Tensor>(ifmConn->tensor->Name() + "_32bit", DataType::Int32);
     ofm->SetStorageShape(ofmShape4D);
-    op->ConnectOutput(TensorUsage::OFM, ofm).Set(noScaleQuantZp0);
+    op->ConnectOutput(TensorUsage::OFM, ofm).Set(noScaleQuantZp0).Set(RoundMode::NATURAL);
     return op.get();
 }
 
@@ -379,7 +378,7 @@ static Operation *ConvertToLUT8(Operation *op, FUNC func, const std::string &nam
     // should be the same as the IFM
     auto returnOp = CreateLUT(ifmConn->tensor, lutTens, ifmConn->quantization, ifmConn->quantization, lutTens->Type(),
         &ifmConn->shape, ofmConn->tensor, ifmConn->slice, ofmConn->slice);
-    returnOp->SetRounding(RoundMode::NATURAL);
+    returnOp->Output(TensorUsage::OFM)->Set(RoundMode::NATURAL);
     return returnOp;
 }
 
@@ -449,7 +448,7 @@ static Operation *ConvertToInterpolatingLUT16(Operation *op, FUNC func, const st
     // should be the same as the IFM
     auto returnOp = CreateLUT(ifmConn->tensor, lutTens, ifmConn->quantization, ifmConn->quantization, lutTens->Type(),
         &ifmConn->shape, ofmConn->tensor, ifmConn->slice, ofmConn->slice);
-    returnOp->SetRounding(RoundMode::NATURAL);
+    returnOp->Output(TensorUsage::OFM)->Set(RoundMode::NATURAL);
     return returnOp;
 }
 
@@ -834,7 +833,7 @@ Operation *TFLiteGraphOptimiser::RemoveReshape(Graph *const graph, Operation *co
         if ( (isIfmSgIfm || isIfmSgOfm) && (isOfmSgOfm) )
         {
             auto copyOp = InsertCopyOpAfterTensor(ifmConn->tensor, ifmConn->quantization);
-            copyOp->SetRounding(RoundMode::NATURAL);
+            copyOp->Output(TensorUsage::OFM)->Set(RoundMode::NATURAL);
 
             // reset the ifm to reflect the reshape's new ifm
             ifmConn = operation->Input(TensorUsage::IFM0);
@@ -1031,8 +1030,8 @@ Operation *TFLiteGraphOptimiser::ConvertGather(Graph *const graph, Operation *co
 
             // Replace TFLite GatherV2 with GraphIR Gather
             auto gatherOp = std::make_shared<Operation>(OpType::Gather);
-            gatherOp->SetRounding(RoundMode::DBL);
             ReplaceOperation(operation, gatherOp.get());
+            gatherOp->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
             RecordOptimisation(operation, gatherOp.get());
 
             returnOp = gatherOp.get();
@@ -1111,11 +1110,11 @@ Operation *TFLiteGraphOptimiser::ConvertScatter(Graph *const graph, Operation *c
 
         // Add GraphIR Scatter op
         auto scatterOp = std::make_shared<Operation>(OpType::Scatter);
-        scatterOp->SetRounding(RoundMode::NATURAL);
         scatterOp->ConnectInput(TensorUsage::IFM0, zeroTensor);  // GraphIR Scatter values_in
         scatterOp->CopyInput(TensorUsage::IFM1, *idxConn);       // GraphIR Scatter indices
         scatterOp->CopyInput(TensorUsage::IFM2, *updatesConn);   // GraphIR Scatter input
         scatterOp->CopyOutput(TensorUsage::OFM, *ofmConn);       // GraphIR Scatter values_out
+        scatterOp->Output(TensorUsage::OFM)->Set(RoundMode::NATURAL);
 
         // Remove TFLite ScatterNd op
         operation->Disconnect();
@@ -1233,9 +1232,9 @@ Operation *TFLiteGraphOptimiser::ConvertResize(Graph *const graph, Operation *co
         {
             // Replace ResizeBilinear or ResizeNearestNeighbor with a Resize op
             auto resizeOp = std::make_shared<Operation>(OpType::Resize);
-            resizeOp->SetRounding(RoundMode::SYMMETRIC);
             resizeOp->CopyInput(TensorUsage::IFM, *ifmConn);
             resizeOp->CopyOutput(TensorUsage::OFM, *ofmConn);
+            resizeOp->Output(TensorUsage::OFM)->Set(RoundMode::SYMMETRIC);
 
             // write operator attributes
             auto *attr = resizeOp->Attribute<resize_attr_t>();
@@ -1335,7 +1334,6 @@ Operation *TFLiteGraphOptimiser::ConvertReduceMinMaxAnyAll(Graph *const graph, O
         for ( int axis : axes )
         {
             auto reduceOp = std::make_shared<Operation>(opType);
-            reduceOp->SetRounding(RoundMode::NATURAL);
             auto *reduceOpAttr = reduceOp->Attribute<axis_attr_t>();
             reduceOpAttr->axis = axis;
             reduceOp->CopyInput(TensorUsage::IFM, *prevConn);
@@ -1343,7 +1341,7 @@ Operation *TFLiteGraphOptimiser::ConvertReduceMinMaxAnyAll(Graph *const graph, O
             const auto ofmType = prevConn->tensor->Type();
             const auto ofmShape = prevConn->shape.With(axis, 1);
             const auto ofmTensor = std::make_shared<Tensor>(ofmName, ofmType, ofmShape);
-            reduceOp->ConnectOutput(TensorUsage::OFM, ofmTensor).Set(prevConn->quantization);
+            reduceOp->ConnectOutput(TensorUsage::OFM, ofmTensor).Set(prevConn->quantization).Set(RoundMode::NATURAL);
             RecordOptimisation(operation, reduceOp.get());
             returnOp = reduceOp.get();
 
@@ -1441,12 +1439,12 @@ Operation *TFLiteGraphOptimiser::RewriteBatchMatMul(Graph *const, Operation *con
 
         auto ofmReshaped = Shape(1, n, ofmShape.Width(), ofmShape.Depth());
 
+        auto rounding = ifm->tensor->Type() == DataType::Int16 ? RoundMode::NATURAL : RoundMode::DBL;
         auto newOp = std::make_shared<Operation>(OpType::MatMul);
-        newOp->SetRounding(ifm->tensor->Type() == DataType::Int16 ? RoundMode::NATURAL : RoundMode::DBL);
         newOp->ConnectInput(TensorUsage::IFM0, ifmTensor).Set(ifmReshaped).Set(ifm->quantization);
         newOp->ConnectInput(TensorUsage::IFM1, ifm2Tensor).Set(ifm2Reshaped).Set(ifm2->quantization);
         newOp->CopyOutput(TensorUsage::OFM, *ofm);
-        newOp->Output(TensorUsage::OFM)->Set(ofmReshaped);
+        newOp->Output(TensorUsage::OFM)->Set(ofmReshaped).Set(rounding);
         returnOp = newOp.get();
         RecordOptimisation(operation, returnOp);
         operation->Disconnect();
@@ -1477,11 +1475,11 @@ Operation *TFLiteGraphOptimiser::RewriteFullyConnectDynamic(Graph *const, Operat
         auto ifm2Tensor = transposeOp->Output(TensorUsage::OFM)->tensor;
 
         auto matMulOp = std::make_shared<Operation>(OpType::MatMul);
-        matMulOp->SetRounding(ifm->tensor->Type() == DataType::Int16 ? RoundMode::NATURAL : RoundMode::DBL);
+        auto rounding = ifm->tensor->Type() == DataType::Int16 ? RoundMode::NATURAL : RoundMode::DBL;
 
         matMulOp->ConnectInput(TensorUsage::IFM0, ifm->tensor).Set(ifmShape).Set(ifm->quantization).Set(ifm->slice);
         matMulOp->ConnectInput(TensorUsage::IFM1, ifm2Tensor).Set(ifm2Reshaped).Set(ifm2->quantization).Set(ifm2->slice);
-        matMulOp->ConnectOutput(TensorUsage::OFM, ofm->tensor).Set(ofmShape).Set(ofm->quantization).Set(ofm->slice);
+        matMulOp->ConnectOutput(TensorUsage::OFM, ofm->tensor).Set(ofmShape).Set(ofm->quantization).Set(ofm->slice).Set(rounding);
 
         RecordOptimisation(operation, matMulOp.get());
         returnOp = matMulOp.get();
@@ -1545,7 +1543,7 @@ Operation *TFLiteGraphOptimiser::RewriteSquaredDifference(Graph *const, Operatio
 
         // Scale/shift ifm (for 32-bit operations, scale is not applied but shift is)
         auto mulOp = CreateMul(castOp->Output(TensorUsage::OFM)->tensor, input1MultiplierConst, noScaleQuant, noScaleQuant, noScaleQuant);
-        mulOp->SetRounding(RoundMode::DBL);
+        mulOp->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
         mulOp->Output(TensorUsage::OFM)->quantization.scales.clear();
         mulOp->Output(TensorUsage::OFM)->quantization.scales.push_back(QuantizedScale(1, quantizedRealInput1.shift));
         mulOp->Output(TensorUsage::OFM)->quantization.type = QuantizationType::EXPLICIT;
@@ -1562,7 +1560,7 @@ Operation *TFLiteGraphOptimiser::RewriteSquaredDifference(Graph *const, Operatio
 
         // Scale/shift ifm2 (for 32-bit operations, scale is not applied but shift is)
         mulOp = CreateMul(castOp->Output(TensorUsage::OFM)->tensor, input2MultiplierConst, noScaleQuant, noScaleQuant, noScaleQuant);
-        mulOp->SetRounding(RoundMode::DBL);
+        mulOp->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
         mulOp->Output(TensorUsage::OFM)->quantization.scales.clear();
         mulOp->Output(TensorUsage::OFM)->quantization.scales.push_back(QuantizedScale(1, quantizedRealInput2.shift));
         mulOp->Output(TensorUsage::OFM)->quantization.type = QuantizationType::EXPLICIT;
@@ -1571,19 +1569,19 @@ Operation *TFLiteGraphOptimiser::RewriteSquaredDifference(Graph *const, Operatio
 
         // Calculate the raw diff
         auto subOp = CreateSub(ifmScaled->tensor, ifm2Scaled->tensor, noScaleQuant, noScaleQuant, noScaleQuant);
-        subOp->SetRounding(RoundMode::DBL);
+        subOp->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
         auto rawDiff = subOp->Output(TensorUsage::OFM);
         RecordOptimisation(operation, subOp);
 
         // Calculate the squared diff
         mulOp = CreateMul(rawDiff->tensor, rawDiff->tensor, noScaleQuant, noScaleQuant, noScaleQuant);
-        mulOp->SetRounding(RoundMode::DBL);
+        mulOp->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
         auto squaredRaw = mulOp->Output(TensorUsage::OFM);
         RecordOptimisation(operation, mulOp);
 
         // Scale/shift ofm ((for 32-bit operations, scale is not applied but shift is)
         returnOp = CreateMul(squaredRaw->tensor, outputMultiplierConst, noScaleQuant, noScaleQuant, ofmConn->quantization);
-        returnOp->SetRounding(RoundMode::DBL);
+        returnOp->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
         returnOp->ConnectOutput(TensorUsage::OFM, ofmConn->tensor);
         returnOp->Output(TensorUsage::OFM)->quantization.scales.clear();
         returnOp->Output(TensorUsage::OFM)->quantization.scales.push_back(QuantizedScale(1, quantizedRealOutput.shift));
@@ -1975,7 +1973,7 @@ Operation *TFLiteGraphOptimiser::ConvertMeanOps(Graph *const, Operation *const o
                 // Add result to accumulator tensor
                 Quantization accQuant = op->Output(TensorUsage::OFM)->quantization;
                 op = CreateAdd(accTensor, op->Output(TensorUsage::OFM)->tensor, oneScaleQuantZp0, oneScaleQuantZp0, oneScaleQuantZp0);
-                op->SetRounding(RoundMode::DBL);
+                op->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
                 op->Output(TensorUsage::OFM)->quantization.scales.clear();
                 op->Output(TensorUsage::OFM)->quantization.scales.push_back(QuantizedScale(1, 0));
                 op->Output(TensorUsage::OFM)->quantization.type = QuantizationType::EXPLICIT;
@@ -2003,7 +2001,7 @@ Operation *TFLiteGraphOptimiser::ConvertMeanOps(Graph *const, Operation *const o
         // For int32 scaling is not supported so instead multiply with the scale
         auto scalar = CreateConstTensor(ofmConn->tensor->Name() + "_scalar", outputMultiplier);
         auto op = CreateMul(accTensor, scalar, oneScaleQuantZp0, oneScaleQuantZp0, oneScaleQuantZp0);
-        op->SetRounding(RoundMode::DBL);
+        op->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
 
         // Apply the shift
         QuantizedScale scale(1, outputShift);
@@ -2170,8 +2168,8 @@ Operation *TFLiteGraphOptimiser::ConvertPrelu(Graph *const graph, Operation *con
                     mulAlpha->ConnectOutput(TensorUsage::OFM, mulAlphaTens)
                         .Set(ofmConn->shape)
                         .Set(ofmConn->quantization)
-                        .Set(ofmConn->slice);
-                    mulAlpha->SetRounding(RoundMode::DBL);
+                        .Set(ofmConn->slice)
+                        .Set(RoundMode::DBL);
                     RecordOptimisation(operation, mulAlpha.get());
 
                     TensorConnection *alphaConn = mulAlpha->Output(TensorUsage::OFM);
@@ -2198,7 +2196,7 @@ Operation *TFLiteGraphOptimiser::ConvertPrelu(Graph *const graph, Operation *con
                     maxOp->CopyInput(TensorUsage::IFM0, *alphaConn);
                     maxOp->CopyInput(TensorUsage::IFM1, *identityConn);
                     maxOp->CopyOutput(TensorUsage::OFM, *ofmConn);
-                    maxOp->SetRounding(RoundMode::DBL);
+                    maxOp->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
                     RecordOptimisation(operation, maxOp.get());
                     returnOp = maxOp.get();
                     operation->Disconnect();
@@ -2231,15 +2229,14 @@ Operation *TFLiteGraphOptimiser::ConvertPrelu(Graph *const graph, Operation *con
         minOp->CopyInput(TensorUsage::IFM0, *ifmConn);
         minOp->ConnectInput(TensorUsage::IFM1, zeroTens).Set(noScaleQuant);
         minOp->ConnectOutput(TensorUsage::OFM, fmNegative).Set(ifmConn->quantization);
-        minOp->SetRounding(RoundMode::DBL);
+        minOp->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
         RecordOptimisation(operation, minOp.get());
 
         // and multiply with alpha tensor
         auto mulAlpha = std::make_shared<Operation>(OpType::Mul);
         mulAlpha->CopyInput(TensorUsage::IFM0, *minOp->Output(TensorUsage::OFM));
         mulAlpha->CopyInput(TensorUsage::IFM1, *params);
-        mulAlpha->ConnectOutput(TensorUsage::OFM, fmAlpha).Set(ofmConn->quantization);
-        mulAlpha->SetRounding(RoundMode::DBL);
+        mulAlpha->ConnectOutput(TensorUsage::OFM, fmAlpha).Set(ofmConn->quantization).Set(RoundMode::DBL);
         RecordOptimisation(operation, mulAlpha.get());
 
         // Select (and scale) values > 0
@@ -2247,7 +2244,7 @@ Operation *TFLiteGraphOptimiser::ConvertPrelu(Graph *const graph, Operation *con
         reluOp->CopyInput(TensorUsage::IFM0, *ifmConn);
         reluOp->ConnectOutput(TensorUsage::OFM, fmScaled).Set(ofmConn->quantization);
         reluOp->Output(TensorUsage::OFM)->quantization.quantMin.push_back(ofmConn->quantization.zeroPoints[0]);
-        reluOp->SetRounding(RoundMode::DBL);
+        reluOp->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
         RecordOptimisation(operation, reluOp.get());
 
         // Add scaled and alpha multiplied values
@@ -2255,8 +2252,7 @@ Operation *TFLiteGraphOptimiser::ConvertPrelu(Graph *const graph, Operation *con
         addOp->ConnectInput(TensorUsage::IFM0, fmAlpha).Set(unitQuantOfmZp);
         addOp->ConnectInput(TensorUsage::IFM1, fmScaled).Set(unitQuantOfmZp);
         addOp->CopyOutput(TensorUsage::OFM, *ofmConn);
-        addOp->Output(TensorUsage::OFM)->Set(unitQuantOfmZp);
-        addOp->SetRounding(RoundMode::DBL);
+        addOp->Output(TensorUsage::OFM)->Set(unitQuantOfmZp).Set(RoundMode::DBL);
         RecordOptimisation(operation, addOp.get());
         returnOp = addOp.get();
         operation->Disconnect();
@@ -2413,7 +2409,7 @@ Operation *TFLiteGraphOptimiser::Convert8bitLeakyReluToLUT(Graph *const graph, O
     // should be the same as the IFM
     returnOp = CreateLUT(ifmConn->tensor, lutTens, ifmConn->quantization, ifmConn->quantization, lutTens->Type(),
         &ifmConn->shape, ofmConn->tensor, ifmConn->slice, ofmConn->slice);
-    returnOp->SetRounding(RoundMode::NATURAL);
+    returnOp->Output(TensorUsage::OFM)->Set(RoundMode::NATURAL);
     return returnOp;
 }
 
@@ -2492,7 +2488,7 @@ Operation *TFLiteGraphOptimiser::ConvertRSqrtToLUT(Graph *const graph, Operation
         auto lutTens = CreateConstTensor("rsqrt", ifmConn->tensor->Type(), std::make_shared<Buffer>(std::move(lut)));
         returnOp = CreateLUT(ifmConn->tensor, lutTens, ifmConn->quantization, ifmConn->quantization, lutTens->Type(),
             &ifmConn->shape, ofmConn->tensor, ifmConn->slice, ofmConn->slice);
-        returnOp->SetRounding(RoundMode::NATURAL);
+        returnOp->Output(TensorUsage::OFM)->Set(RoundMode::NATURAL);
     }
     else if ( opType == OpType::Rsqrt && ifmConn->tensor->Type() == DataType::Int16 && ofmConn->tensor->Type() == DataType::Int16 )
     {
@@ -2597,10 +2593,13 @@ void TFLiteGraphOptimiser::MakeMemoryCopyForPad(
 
     auto zeroTens = CreateConstTensor(ofmConn->tensor->Name() + "/" + name, dtype, std::make_shared<Buffer>(std::move(zeroBuf)), &shape);
     auto op = std::make_shared<Operation>(OpType::MemoryCopy);
-    op->SetRounding(RoundMode::NATURAL);
 
     op->ConnectInput(TensorUsage::IFM0, zeroTens).Set(ofmConn->quantization);
-    op->ConnectOutput(TensorUsage::OFM, ofmConn->tensor).Set(ofmConn->shape).Set(ofmConn->quantization).Set({offset, shape});
+    op->ConnectOutput(TensorUsage::OFM, ofmConn->tensor)
+        .Set(ofmConn->shape)
+        .Set(ofmConn->quantization)
+        .Set({offset, shape})
+        .Set(RoundMode::NATURAL);
     RecordOptimisation(operation, op.get());
 }
 

@@ -303,7 +303,7 @@ void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::uniqu
             ParseOperatorOptions(operation, tflite_operator, optDb, constraints);
 
             // Set rounding according to reference
-            SetOperatorRounding(operation);
+            SetOFMRounding(operation);
 
             operations.push_back(operation);
             ext_key++;
@@ -844,7 +844,7 @@ void TfLiteReader::ParseOperatorOptions(const std::shared_ptr<Operation> &operat
     }
 }
 
-void TfLiteReader::SetOperatorRounding(const std::shared_ptr<Operation> &operation)
+void TfLiteReader::SetOFMRounding(const std::shared_ptr<Operation> &operation)
 {
     auto ifm = operation->Input(TensorUsage::IFM)->tensor;
     auto opType = operation->Type();
@@ -861,7 +861,7 @@ void TfLiteReader::SetOperatorRounding(const std::shared_ptr<Operation> &operati
     {
         roundMode = RoundMode::NATURAL;
     }
-    operation->SetRounding(roundMode);
+    operation->Output(TensorUsage::OFM)->Set(roundMode);
 }
 
 void TfLiteReader::UnFuseActivation(const std::shared_ptr<Operation> &operation, tflite::ActivationFunctionType type, OptimiserDatabase *optDb)

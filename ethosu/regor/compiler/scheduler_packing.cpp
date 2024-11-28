@@ -419,6 +419,7 @@ void SchedulerPacking::InitSchedulerConnection(
     schedConn->quantization = conn.quantization;
     schedConn->reverse = conn.reverse;
     schedConn->resamplingMode = ArchResampling::None;
+    schedConn->rounding = conn.rounding;
 }
 
 void SchedulerPacking::InitSchedulerTensor(SchedulerTensor *schedTensor, Tensor *tensor, const Graph *graph)
@@ -444,7 +445,6 @@ std::unique_ptr<SchedulerOperation> SchedulerPacking::MakeSchedulerOperation(Ope
 
     schedOp->SetKernel(op->Kernel());
     schedOp->SetHasScaling(op->HasScaling());
-    schedOp->SetRounding(op->Rounding());
     schedOp->SetAttributeRef(op->AttributeRef());
     schedOp->_srcKey = op;
 

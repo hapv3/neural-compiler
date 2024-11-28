@@ -240,7 +240,7 @@ Operation *Softmax::GetGraph8Bit(Operation *const operation, TensorConnection *i
 
     // PASS 0 - Depthwise Maxpool
     auto op = CreateDepthwiseMaxpool(ifmConn->tensor, ifmConn->shape, ifmConn->quantization, noScaleQuant);
-    op->SetRounding(RoundMode::DBL);
+    op->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
     auto ifmMax = op->Output(TensorUsage::OFM)->tensor;
     RecordOptimisation(operation, op);
 
@@ -248,7 +248,7 @@ Operation *Softmax::GetGraph8Bit(Operation *const operation, TensorConnection *i
     auto subQuant = oneScaleQuant;
     subQuant.zeroPoints[0] = 127;
     op = CreateSub(ifmConn->tensor, ifmMax, ifmConn->quantization, noScaleQuant, subQuant, DataType::Int8, &ifmConn->shape);
-    op->SetRounding(RoundMode::DBL);
+    op->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
     auto ifm_sub = op->Output(TensorUsage::OFM)->tensor;
     RecordOptimisation(operation, op);
 
@@ -256,60 +256,60 @@ Operation *Softmax::GetGraph8Bit(Operation *const operation, TensorConnection *i
     auto expLut = CreateConstTensor("exp_lut", DataType::Int32, std::make_shared<Buffer>(std::move(expTable)));
     op = CreateLUT(ifm_sub, expLut, subQuant, subQuant);
     auto ifm_exp = op->Output(TensorUsage::OFM)->tensor;
-    op->SetRounding(RoundMode::DBL);
+    op->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
     RecordOptimisation(operation, op);
 
     // PASS 2 - ASR
     auto right_shift12 = CreateConstTensor("right_shift12", 12);
     op = CreateAsr(ifm_exp, right_shift12, subQuant, noScaleQuant, noScaleQuantZp0);
-    op->SetRounding(RoundMode::NATURAL);
+    op->Output(TensorUsage::OFM)->Set(RoundMode::NATURAL);
     op->Attribute<asr_attr_t>()->round = true;
     auto rescaled_exp = op->Output(TensorUsage::OFM)->tensor;
     RecordOptimisation(operation, op);
 
     // PASS 3 - Reduce sum
     op = CreateReduceSum(rescaled_exp, noScaleQuantZp0, noScaleQuantZp0);
-    op->SetRounding(RoundMode::NATURAL);
+    op->Output(TensorUsage::OFM)->Set(RoundMode::NATURAL);
     auto sum_of_exp = op->Output(TensorUsage::OFM)->tensor;
     RecordOptimisation(operation, op);
 
     // PASS 4 - CLZ
     op = CreateClz(sum_of_exp, noScaleQuantZp0, noScaleQuantZp0);
-    op->SetRounding(RoundMode::DBL);
+    op->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
     auto headroom_plus_one = op->Output(TensorUsage::OFM)->tensor;
     RecordOptimisation(operation, op);
 
     // PASS 5 - Sub
     auto headroom_offset = CreateConstTensor("headroom_offset", 12 + 31 - DataTypeSizeBits(ofmConn->tensor->Type()));
     op = CreateSub(headroom_offset, headroom_plus_one, noScaleQuantZp0, noScaleQuantZp0, noScaleQuantZp0);
-    op->SetRounding(RoundMode::DBL);
+    op->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
     auto right_shift = op->Output(TensorUsage::OFM)->tensor;
     RecordOptimisation(operation, op);
 
     // PASS 6 - Sub
     auto one = CreateConstTensor("one_const", 1);
     op = CreateSub(headroom_plus_one, one, noScaleQuantZp0, noScaleQuant, noScaleQuantZp0);
-    op->SetRounding(RoundMode::DBL);
+    op->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
     auto headroom = op->Output(TensorUsage::OFM)->tensor;
     RecordOptimisation(operation, op);
 
     // PASS 7 - SHL
     op = CreateShl(sum_of_exp, headroom, noScaleQuantZp0, noScaleQuantZp0, oneScaleQuant);
-    op->SetRounding(RoundMode::DBL);
+    op->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
     auto half_denominator = op->Output(TensorUsage::OFM)->tensor;
     RecordOptimisation(operation, op);
 
     // PASS 8 - Multiply
     auto neg_32_over_17 = CreateConstTensor("neg_32_over_17", -int32_t((32ULL << 29U) / 17U));
     op = CreateMul(half_denominator, neg_32_over_17, oneScaleQuant, oneScaleQuant, twoScaleQuant);
-    op->SetRounding(RoundMode::DBL);
+    op->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
     auto rescaled = op->Output(TensorUsage::OFM)->tensor;
     RecordOptimisation(operation, op);
 
     // PASS 9 - Add
     auto const_48_over_17 = CreateConstTensor("const_48_over_17", int32_t((48ULL << 29U) / 17U));
     op = CreateAdd(rescaled, const_48_over_17, twoScaleQuant, noScaleQuant, oneScaleQuant);
-    op->SetRounding(RoundMode::DBL);
+    op->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
     auto rescale_w_offset = op->Output(TensorUsage::OFM)->tensor;
     RecordOptimisation(operation, op);
 
@@ -321,45 +321,44 @@ Operation *Softmax::GetGraph8Bit(Operation *const operation, TensorConnection *i
     {
         // PASS 10, 15, 20 - MUL
         op = CreateMul(nr_x, half_denominator, oneScaleQuant, oneScaleQuant, twoScaleQuant);
-        op->SetRounding(RoundMode::DBL);
+        op->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
         auto half_denominator_times_x = op->Output(TensorUsage::OFM)->tensor;
         RecordOptimisation(operation, op);
 
         // PASS 11, 16, 21 - SUB
         op = CreateSub(F2_one, half_denominator_times_x, noScaleQuant, twoScaleQuant, oneScaleQuant);
-        op->SetRounding(RoundMode::DBL);
+        op->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
         auto one_minus_half_denominator_times_x = op->Output(TensorUsage::OFM)->tensor;
         RecordOptimisation(operation, op);
 
         // PASS 12, 17, 22 - MUL
         op = CreateMul(nr_x, one_minus_half_denominator_times_x, oneScaleQuant, oneScaleQuant, twoScaleQuant);
-        op->SetRounding(RoundMode::DBL);
+        op->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
         auto to_rescale = op->Output(TensorUsage::OFM)->tensor;
         RecordOptimisation(operation, op);
 
         // PASS 13, 18, 23 - MUL
         op = CreateMul(to_rescale, four, twoScaleQuant, noScaleQuant, noScaleQuantZp0);
-        op->SetRounding(RoundMode::DBL);
+        op->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
         auto to_add = op->Output(TensorUsage::OFM)->tensor;
         RecordOptimisation(operation, op);
 
         // PASS 14, 19, 24 - ADD
         op = CreateAdd(nr_x, to_add, oneScaleQuant, noScaleQuantZp0, oneScaleQuant);
-        op->SetRounding(RoundMode::DBL);
+        op->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
         nr_x = op->Output(TensorUsage::OFM)->tensor;
         RecordOptimisation(operation, op);
     }
 
     // PASS 25 - Multiply
     op = CreateMul(ifm_exp, nr_x, oneScaleQuant, oneScaleQuant, oneScaleQuant);
-    op->SetRounding(RoundMode::DBL);
+    op->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
     auto scaled_exp = op->Output(TensorUsage::OFM)->tensor;
     RecordOptimisation(operation, op);
 
     // PASS 26 - ASR
     auto shrOp = std::make_shared<Operation>(OpType::Asr);
     op = shrOp.get();
-    op->SetRounding(RoundMode::NATURAL);
     op->Attribute<asr_attr_t>()->round = true;
     op->ConnectInput(TensorUsage::IFM, scaled_exp).Set(oneScaleQuant);
     op->ConnectInput(TensorUsage::IFM1, right_shift).Set(noScaleQuantZp0);
@@ -384,6 +383,7 @@ Operation *Softmax::GetGraph8Bit(Operation *const operation, TensorConnection *i
     {
         op->ConnectOutput(TensorUsage::OFM, ofmConn->tensor).Set(ofmConn->quantization).Set(ofmConn->shape);
     }
+    op->Output(TensorUsage::OFM)->Set(RoundMode::NATURAL);
     RecordOptimisation(operation, op);
 
     return op;
@@ -396,14 +396,14 @@ Operation *Softmax::GetGraphInt16(Operation *const operation, TensorConnection *
 
     // PASS 0 - Depthwise Maxpool
     auto op = CreateDepthwiseMaxpool(ifmConn->tensor, ifmConn->shape, ifmConn->quantization, noScaleQuant);
-    op->SetRounding(RoundMode::NATURAL);
+    op->Output(TensorUsage::OFM)->Set(RoundMode::NATURAL);
     auto ifmMax = op->Output(TensorUsage::OFM)->tensor;
     RecordOptimisation(operation, op);
 
     // PASS 1 - Sub
     op = CreateSub(ifmConn->tensor, ifmMax, ifmConn->quantization, noScaleQuant, ifmConn->quantization, DataType::Int32,
         &ifmConn->shape);
-    op->SetRounding(RoundMode::DBL);
+    op->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
     auto sub1_ofm = op->Output(TensorUsage::OFM)->tensor;
     RecordOptimisation(operation, op);
 
@@ -418,14 +418,14 @@ Operation *Softmax::GetGraphInt16(Operation *const operation, TensorConnection *
     mul2_quant.scales[0] = QuantizedScale(mul2_out_range);
     auto scale = CreateConstTensor("mul2_scale", quant.scale);
     op = CreateMul(sub1_ofm, scale, ifmConn->quantization, scale_quant, mul2_quant);
-    op->SetRounding(RoundMode::DBL);
+    op->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
     auto mul2_ofm = op->Output(TensorUsage::OFM)->tensor;
     RecordOptimisation(operation, op);
 
     // PASS 3 - Add
     auto const_add = CreateConstTensor("add3_const", 32767);
     op = CreateAdd(mul2_ofm, const_add, mul2_quant, noScaleQuant, mul2_quant, DataType::Int16);
-    op->SetRounding(RoundMode::DBL);
+    op->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
     auto ifm_add = op->Output(TensorUsage::OFM)->tensor;
     RecordOptimisation(operation, op);
 
@@ -433,52 +433,52 @@ Operation *Softmax::GetGraphInt16(Operation *const operation, TensorConnection *
     auto expBuf = std::make_shared<Buffer>(int(std::size(EXP_LUT)), EXP_LUT, true);
     auto expLut = CreateConstTensor("exp_lut", DataType::Int32, expBuf);
     op = CreateLUT(ifm_add, expLut, mul2_quant, mul2_quant, DataType::Int16);
-    op->SetRounding(RoundMode::DBL);
+    op->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
     auto ifm_exp = op->Output(TensorUsage::OFM)->tensor;
     RecordOptimisation(operation, op);
 
     // PASS 4 - Reduce sum
     op = CreateReduceSum(ifm_exp, mul2_quant, noScaleQuant);
-    op->SetRounding(RoundMode::NATURAL);
+    op->Output(TensorUsage::OFM)->Set(RoundMode::NATURAL);
     auto sum_of_exp = op->Output(TensorUsage::OFM)->tensor;
     RecordOptimisation(operation, op);
 
     // PASS 5 - CLZ
     op = CreateClz(sum_of_exp, noScaleQuant, noScaleQuant);
-    op->SetRounding(RoundMode::DBL);
+    op->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
     auto headroom_plus_one = op->Output(TensorUsage::OFM)->tensor;
     RecordOptimisation(operation, op);
 
     // PASS 6 - Sub
     auto const_31 = CreateConstTensor("const_31", 31);
     op = CreateSub(const_31, headroom_plus_one, noScaleQuant, noScaleQuant, noScaleQuant);
-    op->SetRounding(RoundMode::DBL);
+    op->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
     auto reciprocal_right_shift = op->Output(TensorUsage::OFM)->tensor;
     RecordOptimisation(operation, op);
 
     // PASS 7 - SHL
     auto one = CreateConstTensor("one_const", 1);
     op = CreateShl(one, reciprocal_right_shift, noScaleQuant, noScaleQuant, noScaleQuant);
-    op->SetRounding(RoundMode::DBL);
+    op->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
     auto constant_one = op->Output(TensorUsage::OFM)->tensor;
     RecordOptimisation(operation, op);
 
     // PASS 8 - Sub
     op = CreateSub(sum_of_exp, constant_one, noScaleQuant, noScaleQuant, noScaleQuant);
-    op->SetRounding(RoundMode::DBL);
+    op->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
     auto sum_of_exps_minus_one = op->Output(TensorUsage::OFM)->tensor;
     RecordOptimisation(operation, op);
 
     // # PASS 9 - SHL
     op = CreateShl(sum_of_exps_minus_one, headroom_plus_one, noScaleQuant, noScaleQuant, noScaleQuant);
-    op->SetRounding(RoundMode::DBL);
+    op->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
     auto shifted_sum_minus_one = op->Output(TensorUsage::OFM)->tensor;
     RecordOptimisation(operation, op);
 
     // PASS 10 - ASR
     auto shift = CreateConstTensor("shift_const", 15);
     op = CreateAsr(shifted_sum_minus_one, shift, noScaleQuant, noScaleQuant, noScaleQuant);
-    op->SetRounding(RoundMode::NATURAL);
+    op->Output(TensorUsage::OFM)->Set(RoundMode::NATURAL);
     op->Attribute<asr_attr_t>()->round = true;
     auto shifted_sum_minus_one_16 = op->Output(TensorUsage::OFM)->tensor;
     RecordOptimisation(operation, op);
@@ -486,7 +486,7 @@ Operation *Softmax::GetGraphInt16(Operation *const operation, TensorConnection *
     // PASS 11 - Sub
     auto sub11_const = CreateConstTensor("sub11_const", 32768);
     op = CreateSub(shifted_sum_minus_one_16, sub11_const, noScaleQuant, noScaleQuant, noScaleQuant, DataType::Int16);
-    op->SetRounding(RoundMode::DBL);
+    op->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
     auto reciprocal_scale = op->Output(TensorUsage::OFM)->tensor;
     RecordOptimisation(operation, op);
 
@@ -494,24 +494,24 @@ Operation *Softmax::GetGraphInt16(Operation *const operation, TensorConnection *
     auto oneOverOnePlusXBuf = std::make_shared<Buffer>(int(std::size(ONE_OVER_ONE_PLUS_X_LUT)), ONE_OVER_ONE_PLUS_X_LUT, true);
     auto oneOverOnePlusXLut = CreateConstTensor("one_over_one_plus_x_lut", DataType::Int32, oneOverOnePlusXBuf);
     op = CreateLUT(reciprocal_scale, oneOverOnePlusXLut, noScaleQuant, noScaleQuant, DataType::Int16);
-    op->SetRounding(RoundMode::DBL);
+    op->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
     reciprocal_scale = op->Output(TensorUsage::OFM)->tensor;
     RecordOptimisation(operation, op);
 
     // # PASS 12 - Multiply
     op = CreateMul(ifm_exp, reciprocal_scale, noScaleQuant, noScaleQuant, noScaleQuant, DataType::Int32);
-    op->SetRounding(RoundMode::DBL);
+    op->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
     auto mul_ofm = op->Output(TensorUsage::OFM)->tensor;
     RecordOptimisation(operation, op);
 
     // PASS 13 - ASR
     auto shrOp = std::make_shared<Operation>(OpType::Asr);
     op = shrOp.get();
-    op->SetRounding(RoundMode::NATURAL);
     op->Attribute<asr_attr_t>()->round = true;
     op->ConnectInput(TensorUsage::IFM, mul_ofm).Set(noScaleQuant);
     op->ConnectInput(TensorUsage::IFM1, reciprocal_right_shift).Set(noScaleQuant);
     op->ConnectOutput(TensorUsage::OFM, ofmConn->tensor).Set(ofmConn->quantization).Set(ofmConn->shape);
+    op->Output(TensorUsage::OFM)->Set(RoundMode::NATURAL);
     RecordOptimisation(operation, op);
 
     return op;

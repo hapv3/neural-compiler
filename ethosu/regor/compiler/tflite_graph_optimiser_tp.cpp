@@ -130,7 +130,7 @@ Operation *TFLiteGraphOptimiser::ConvertHardSwishToLUT(Graph *const graph, Opera
         // should be the same as the IFM
         returnOp = CreateLUT(ifmConn->tensor, lutTens, ifmConn->quantization, ifmConn->quantization, lutTens->Type(),
             &ifmConn->shape, ofmConn->tensor, ifmConn->slice, ofmConn->slice);
-        returnOp->SetRounding(RoundMode::NATURAL);
+        returnOp->Output(TensorUsage::OFM)->Set(RoundMode::NATURAL);
     }
 
     if ( operation != returnOp )

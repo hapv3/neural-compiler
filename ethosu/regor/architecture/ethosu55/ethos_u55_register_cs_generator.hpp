@@ -86,13 +86,6 @@ enum class RCSIfmScaleMode : uint8_t
     OPB_32 = 2,
 };
 
-enum class RCSRoundMode : uint8_t
-{
-    DBL = 0,
-    TRUNCATE = 1,
-    NATURAL = 2,
-};
-
 struct MemoryAccess
 {
     AccessDirection direction;
@@ -209,11 +202,11 @@ protected:
     // Generates IFM2_BROADCAST register for binary elementwise operations
     void GenerateIFM2Broadcast(const Shape &ifmShape, const Shape &ifm2Shape, bool reversedOperands, bool isScalar);
     // Generates IFM_PRECISION register
-    void GenerateIFMPrecision(const HLCFeatureMap &fm, RCSIfmScaleMode scaleMode);
+    void GenerateIFMPrecision(const HLCFeatureMap &fm, RCSIfmScaleMode scaleMode, HLCRoundMode roundMode);
     // Generates IFM2_PRECISION register
     void GenerateIFM2Precision(const HLCFeatureMap &fm);
     // Generates OFM_PRECISION register
-    void GenerateOFMPrecision(const HLCFeatureMap &fm, bool useGlobalScale, RCSRoundMode roundMode);
+    void GenerateOFMPrecision(const HLCFeatureMap &fm, bool useGlobalScale);
     // Generates common IFM registers
     void GenerateIFM(OpType opType, const HLCFeatureMap &fm, const Box &inputArea);
     // Generates common IFM2 registers

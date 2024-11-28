@@ -109,6 +109,7 @@ struct SchedulerConnection
     ArchResampling resamplingMode = ArchResampling::None;
     TransposeType transpose = TransposeType::None;
     ReverseType reverse = ReverseType::None;
+    RoundMode rounding = RoundMode::AUTO;
     bool requireFullTensor = false;
     bool preBuffer = false;
     Buffering buffering = Buffering::None;
@@ -146,7 +147,6 @@ public:
     bool _hasScaling = false;
     void *_srcKey = nullptr;
     int _primaryIfmIndex = 0;
-    RoundMode _rounding = RoundMode::DBL;
     AccumulatorControl _accumulatorControl;
     DynamicRef _attr;
     const class SchedulerOperation *_parent = nullptr;
@@ -178,9 +178,6 @@ public:
 
     bool HasScaling() const { return _hasScaling; }
     void SetHasScaling(bool hasScaling) { _hasScaling = hasScaling; }
-
-    RoundMode Rounding() const { return _rounding; }
-    void SetRounding(RoundMode rounding) { _rounding = rounding; }
 
     const AccumulatorControl &AccumulatorMode() const { return _accumulatorControl; }
     void SetAccumulatorMode(const AccumulatorControl &accumulatorControl) { _accumulatorControl = accumulatorControl; }

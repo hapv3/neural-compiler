@@ -61,7 +61,8 @@ bool EthosU55Constraints::SupportsFusedRescale(
         {
             bool fromTypeSupported = IsInteger(fromType) && (fromBits == 8 || fromBits == 16);
             bool toTypeSupported = (IsInteger(toType) && (toBits == 8 || toBits == 16)) || toType == DataType::Int32;
-            // TODO: Only one ifm can have full 32-bit (advanced) rescale, so for now only allow 16-bit (simple) rescale
+            // TODO MLBEDSW-10115: Support full 32-bit (advanced) rescale (with nonzero shift)
+            // For now only allow 16-bit (simple) rescale
             auto &qs = quantization.scales.front();
             bool scaleSupported = qs.shift == 0 && static_cast<int16_t>(qs.scale) == qs.scale;
 
