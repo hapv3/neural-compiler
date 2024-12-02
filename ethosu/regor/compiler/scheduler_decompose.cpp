@@ -1410,6 +1410,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTranspose(Architecture
     }
 
     assert(ifmConn->slice.offset.IsEmpty() && ifmConn->slice.shape.IsEmpty());
+    assert(ofmConn->slice.offset.IsEmpty() && ofmConn->slice.shape.IsEmpty());
 
     // Decompose a transpose by peforming a selection sort of the axes. Each swap in the selection sort algorithm
     // expands to one or more transpose ops.
@@ -1466,22 +1467,15 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTranspose(Architecture
 
     assert(!result.empty());
 
-    const auto &firstTensor = result.front()->IFM(0)->tensor;
     const auto &lastTensor = result.back()->OFM()->tensor;
     for ( auto &subOp : result )
     {
-        auto ifm = subOp->IFM(0);
         auto ofm = subOp->OFM();
-        if ( ifm->tensor == firstTensor )
-        {
-            // Adjust to that first is read from the original IFM
-            ifm->tensor = ifmConn->tensor;
-            ifm->quantization = ifmConn->quantization;
-        }
         if ( ofm->tensor == lastTensor )
         {
             // Adjust to that last output is written to the original OFM
             ofm->tensor = ofmConn->tensor;
+            ofm->tensor->producers.push_back(subOp.get());
             ofm->quantization = ofmConn->quantization;
         }
     }
