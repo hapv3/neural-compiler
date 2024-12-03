@@ -490,7 +490,7 @@ Operation *GraphIrOptimiser::RewriteFullyConnected(Graph *const graph, Operation
     return returnOp;
 }
 
-Operation *GraphIrOptimiser::RewriteRescale(Graph *const, Operation *const operation)
+Operation *GraphIrOptimiser::RewriteRescaleInputs(Graph *const, Operation *const operation)
 {
     Operation *returnOp = operation;
     OpType opType = operation->Type();
@@ -526,6 +526,125 @@ Operation *GraphIrOptimiser::RewriteRescale(Graph *const, Operation *const opera
         auto rescaleOp = operation->shared_from_this();
         rescaleOp->DisconnectInputInvalidatingInputs(TensorUsage::Params);
         rescaleOp->DisconnectInputInvalidatingInputs(TensorUsage::Params1);
+    }
+    return returnOp;
+}
+
+/*
+ * Lower 32-bit Rescale into one (or more) elementwise MUL operations.
+ * Multipliers are moved to a constant-tensor, while the shift value is kept as ofm-quantization
+ *
+ *     IFM (32-bit)              IFM (32-bit)  Multipliers (32-bit)
+ *          |                             \   /
+ *       Rescale           --->            MUL
+ *          |                               |
+ *   OFM (any format)                OFM (any format)
+ *
+ * Global-scaling (one global multiplier):
+ *      Converted into one MUL operation
+ *
+ * Per-Channel scaling (one multiplier per channel):
+ *      The algorithm will attempt to adjust scales to a common shift representation
+ *      to pack consecutive channels into the same MUL operation.
+ *      This can be done as long as the adjustment can be made without precision-loss.
+ *      Worst-case, per-channel scaling is handled with one MUL-operation per channel
+ */
+Operation *GraphIrOptimiser::RewriteRescale(Graph *const, Operation *const operation)
+{
+    Operation *returnOp = operation;
+    OpType opType = operation->Type();
+    if ( opType == OpType::Rescale )
+    {
+        const auto &ifmConn = operation->Input(TensorUsage::IFM0);
+        const auto &ofmConn = operation->Output(TensorUsage::OFM);
+        const Quantization &quant = ofmConn->quantization;
+        DataType ifmType = ifmConn->tensor->Type();
+        DataType ofmType = ofmConn->tensor->Type();
+        const auto attr = operation->Attribute<rescale_attr_t>();
+        if ( attr->input_unsigned )
+        {
+            ifmType = ifmType & ~unsigned(DataType::Signed);
+        }
+        if ( attr->output_unsigned )
+        {
+            ofmType = ofmType & ~unsigned(DataType::Signed);
+        }
+        if ( ifmType == DataType::Int32 && !_constraints->SupportsRescale(ifmType, ofmType) )
+        {
+            auto CreateRescalingMul = [ifmConn, ofmConn](int startChannel, int endChannel, std::vector<int32_t> &scales, int shift)
+            {
+                Shape sliceOffset = ifmConn->shape.WithZeros().WithDepth(startChannel);
+                Shape sliceShape = ifmConn->shape.WithDepth(endChannel - startChannel);
+                TensorSlice slice{sliceOffset, sliceShape};
+
+                auto mulOp = std::make_shared<Operation>(OpType::Mul);
+                auto buf = std::make_shared<Buffer>(scales.size(), scales.data());
+                auto scaleTensor = CreateConstTensor(fmt::format("multipliers_{}_{}", startChannel, endChannel - 1), DataType::Int32, buf);
+
+                Quantization scaleQuant = Quantization::Unit();
+                scaleQuant.type = QuantizationType::EXPLICIT;
+
+                Quantization ifmQuant = ifmConn->quantization;
+                ifmQuant.scales.clear();
+                ifmQuant.scales.push_back({1, 0});
+                ifmQuant.type = QuantizationType::EXPLICIT;
+
+                Quantization ofmQuant = ofmConn->quantization;
+                ofmQuant.scales.clear();
+                ofmQuant.scales.push_back({1, shift});
+                ofmQuant.type = QuantizationType::EXPLICIT;
+
+                mulOp->ConnectInput(TensorUsage::IFM1, scaleTensor);
+                mulOp->CopyInput(TensorUsage::IFM0, *ifmConn);
+                mulOp->CopyOutput(TensorUsage::OFM, *ofmConn);
+
+                mulOp->Input(TensorUsage::IFM1)->Set(scaleQuant);
+                mulOp->Input(TensorUsage::IFM0)->Set(ifmQuant).Set(slice);
+                mulOp->Output(TensorUsage::OFM)->Set(ofmQuant).Set(slice);
+                return mulOp;
+            };
+
+            // Use the first channels shift-value as reference shift
+            // try to adjust multipliers to pack as many consecutive channels in the same mul-operation
+            int shift = quant.scales[0].shift;
+            std::vector<int32_t> scales;
+            int startChannel = 0;
+            for ( auto qscale : quant.scales )
+            {
+                int shiftDiff = qscale.shift - shift;
+                // try to right-shift scale without precision-loss
+                // This can be done if the scale is evenly divisible by 2^shift
+                if ( (shiftDiff >= 0) && (qscale.scale % (1UL << shiftDiff) == 0) )
+                {
+                    scales.push_back(qscale.scale >> shiftDiff);
+                }
+                else
+                {
+                    // Could not adjust the scale without precision loss.
+                    // Create elementwise mul operation to handle all the previous scales
+                    int endChannel = startChannel + scales.size();
+                    auto mulOp = CreateRescalingMul(startChannel, endChannel, scales, shift);
+                    mulOp->SetRounding(operation->Rounding());
+                    RecordOptimisation(operation, mulOp.get());
+
+                    // reset scales and startChannel
+                    startChannel = endChannel;
+                    scales.clear();
+                    scales.push_back(qscale.scale);
+
+                    // update target shift to the current shift-value
+                    shift = qscale.shift;
+                }
+            }
+
+            // Emit the final mul operation (or the only one for global scaling)
+            int endChannel = ifmConn->shape.Depth();
+            auto mulOp = CreateRescalingMul(startChannel, endChannel, scales, shift);
+            mulOp->SetRounding(operation->Rounding());
+            RecordOptimisation(operation, mulOp.get());
+            returnOp = mulOp.get();
+            operation->Disconnect();
+        }
     }
     return returnOp;
 }

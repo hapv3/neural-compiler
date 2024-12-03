@@ -146,6 +146,13 @@ bool EthosU85Constraints::SupportsFusedRescale(
     return false;
 }
 
+bool EthosU85Constraints::SupportsRescale(DataType fromType, DataType toType)
+{
+    UNUSED(fromType);
+    UNUSED(toType);
+    return true;
+}
+
 bool EthosU85Constraints::SupportsGather(OpType opType)
 {
     EthosU85NpuOp npuOp = ArchEthosU85::GetHWOp(opType);

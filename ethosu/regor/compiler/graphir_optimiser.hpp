@@ -49,6 +49,7 @@ private:
     Tensor *ConvertInt4Tensors(Graph *graph, Tensor *tensor);
     Operation *RewriteFullyConnected(Graph *const graph, Operation *const operation);
     Operation *FixupPoolStrides(Graph *const, Operation *const operation);
+    Operation *RewriteRescaleInputs(Graph *const graph, Operation *const operation);
     Operation *RewriteRescale(Graph *const graph, Operation *const operation);
     Operation *RewritePad(Graph *const graph, Operation *const operation);
     Operation *FuseRescale(Graph *const graph, Operation *const operation);
@@ -110,7 +111,7 @@ private:
             {},
             {
                 &GraphIrOptimiser::ConvertAttributes,
-                &GraphIrOptimiser::RewriteRescale,
+                &GraphIrOptimiser::RewriteRescaleInputs,
                 &GraphIrOptimiser::FuseRescale,  // First pass fuse all possible ifm and ofm rescales
             }
         },
@@ -124,6 +125,7 @@ private:
             {},
             {
                 &GraphIrOptimiser::ConvertAttributes,
+                &GraphIrOptimiser::RewriteRescale,
                 &GraphIrOptimiser::ConvertResizeOffsets,
                 &GraphIrOptimiser::RewriteFullyConnected,
                 &GraphIrOptimiser::FixupPoolStrides,

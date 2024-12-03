@@ -113,6 +113,12 @@ bool EthosU55Constraints::SupportsFusedRescale(
     return false;
 }
 
+bool EthosU55Constraints::SupportsRescale(DataType fromType, DataType toType)
+{
+    UNUSED(toType);
+    return DataTypeSizeBits(fromType) <= 16;
+}
+
 bool EthosU55Constraints::SupportsGather(OpType opType)
 {
     UNUSED(opType);
