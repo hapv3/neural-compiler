@@ -161,7 +161,7 @@ Operation *GraphIrOptimiser::ConvertAttributes(Graph *const graph, Operation *co
     }
     else if ( opType == OpType::Mul )
     {
-        const auto *attr = operation->Attribute<mul_attr_t>();
+        auto *attr = operation->Attribute<mul_attr_t>();
         TensorConnection *ofmConn = operation->Output(TensorUsage::OFM);
         // A non-zero shift attribute is only supported with explicit quantization
         assert(attr->shift == 0 || ofmConn->quantization.type == QuantizationType::EXPLICIT);
@@ -169,7 +169,9 @@ Operation *GraphIrOptimiser::ConvertAttributes(Graph *const graph, Operation *co
         {
             ofmConn->quantization.scales.push_back({1, 0});
         }
+        // Move shift attribute to OFM quantization
         ofmConn->quantization.scales[0].shift += attr->shift;
+        attr->shift = 0;
     }
     else if ( opType == OpType::Transpose )
     {
