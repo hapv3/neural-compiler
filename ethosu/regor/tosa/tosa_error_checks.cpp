@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -1720,7 +1720,7 @@ void ErrorIfCheck_1wbutqm1lq6qy(const regor::Operation *op, [[maybe_unused]] con
     auto bits = DataTypeSizeBits(op->IFM(0)->Type());
     auto &zp = op->Input(TensorUsage::IFM)->quantization.zeroPoints;
     auto input_zp = zp.empty() ? 0 : zp[0];
-    auto *attr = op->Attribute<regor::rescale_attr_t>();
+    auto *attr = op->Attribute<regor::sign_attr_t>();
     if ( bits != 8 && (bits != 16 || !attr->input_unsigned) && input_zp != 0 ) throw std::invalid_argument(constraint);
 }
 
@@ -1731,7 +1731,7 @@ void ErrorIfCheck_2x883ovw61v55(const regor::Operation *op, [[maybe_unused]] con
     auto bits = DataTypeSizeBits(op->OFM()->Type());
     auto &zp = op->Output(TensorUsage::OFM)->quantization.zeroPoints;
     auto output_zp = zp.empty() ? 0 : zp[0];
-    auto *attr = op->Attribute<regor::rescale_attr_t>();
+    auto *attr = op->Attribute<regor::sign_attr_t>();
     if ( bits != 8 && (bits != 16 || !attr->output_unsigned) && output_zp != 0 )
         throw std::invalid_argument(constraint);
 }
@@ -1743,7 +1743,7 @@ void ErrorIfCheck_7yfu5xo1ii36(const regor::Operation *op, [[maybe_unused]] cons
     auto bits = DataTypeSizeBits(op->IFM(0)->Type());
     auto &zp = op->Input(TensorUsage::IFM)->quantization.zeroPoints;
     auto input_zp = zp.empty() ? 0 : zp[0];
-    auto *attr = op->Attribute<regor::rescale_attr_t>();
+    auto *attr = op->Attribute<regor::sign_attr_t>();
     if ( bits == 16 && attr->input_unsigned && input_zp != 0 && input_zp != 32768 )
         throw std::invalid_argument(constraint);
 }
@@ -1755,7 +1755,7 @@ void ErrorIfCheck_3kc0n1wjhehqz(const regor::Operation *op, [[maybe_unused]] con
     auto bits = DataTypeSizeBits(op->OFM()->Type());
     auto &zp = op->Output(TensorUsage::OFM)->quantization.zeroPoints;
     auto output_zp = zp.empty() ? 0 : zp[0];
-    auto *attr = op->Attribute<regor::rescale_attr_t>();
+    auto *attr = op->Attribute<regor::sign_attr_t>();
     if ( bits == 16 && attr->output_unsigned && output_zp != 0 && output_zp != 32768 )
         throw std::invalid_argument(constraint);
 }
@@ -1775,7 +1775,7 @@ void ErrorIfCheck_23cyq2l8quj8p(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "ERROR_IF(in_t == i16_t && out_t == i32_t && input_unsigned)";
     auto in_t = op->IFM(0)->Type();
     auto out_t = op->OFM()->Type();
-    auto *attr = op->Attribute<regor::rescale_attr_t>();
+    auto *attr = op->Attribute<regor::sign_attr_t>();
     if ( DataTypeSizeBits(in_t) == 16 && DataTypeSizeBits(out_t) == 32 && attr->input_unsigned )
         throw std::invalid_argument(constraint);
 }
@@ -1786,7 +1786,7 @@ void ErrorIfCheck_13bcaagzywlqq(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "ERROR_IF(in_t == i32_t && out_t == i16_t && output_unsigned)";
     auto in_t = op->IFM(0)->Type();
     auto out_t = op->OFM()->Type();
-    auto *attr = op->Attribute<regor::rescale_attr_t>();
+    auto *attr = op->Attribute<regor::sign_attr_t>();
     if ( DataTypeSizeBits(in_t) == 32 && DataTypeSizeBits(out_t) == 16 && attr->output_unsigned )
         throw std::invalid_argument(constraint);
 }

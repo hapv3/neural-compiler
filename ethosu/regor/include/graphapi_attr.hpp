@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2022-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2022-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -84,8 +84,9 @@ enum class OpAttr : uint32_t
     RESCALE_SCALE32 = GRAPHAPI_MAKE_ATTR(rescale, bool, 0),
     RESCALE_DOUBLE_ROUND = GRAPHAPI_MAKE_ATTR(rescale, bool, 1),
     RESCALE_PER_CHANNEL = GRAPHAPI_MAKE_ATTR(rescale, bool, 2),
-    RESCALE_INPUT_UNSIGNED = GRAPHAPI_MAKE_ATTR(rescale, bool, 3),
-    RESCALE_OUTPUT_UNSIGNED = GRAPHAPI_MAKE_ATTR(rescale, bool, 4),
+    // Sign
+    RESCALE_INPUT_UNSIGNED = GRAPHAPI_MAKE_ATTR(sign, bool, 0),
+    RESCALE_OUTPUT_UNSIGNED = GRAPHAPI_MAKE_ATTR(sign, bool, 1),
     // Mul
     MUL_SHIFT = GRAPHAPI_MAKE_ATTR(mul, int32, 0),
     // Asr

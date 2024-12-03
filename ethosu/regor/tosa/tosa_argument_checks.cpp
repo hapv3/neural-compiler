@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -256,7 +256,7 @@ bool ResolveAndValidateArgument(const regor::Operation *op, const Argument *argu
     if ( !expectedType ) return false;
     if ( op->Type() == OpType::Rescale )
     {
-        auto *attr = op->Attribute<regor::rescale_attr_t>();
+        auto *attr = op->Attribute<regor::sign_attr_t>();
         if ( ((argument->category == Category::Input && argument->name == "input" && attr->input_unsigned) ||
                  (argument->category == Category::Output && argument->name == "output" && attr->output_unsigned)) )
         {

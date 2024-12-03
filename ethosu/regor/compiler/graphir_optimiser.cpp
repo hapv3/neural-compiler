@@ -526,14 +526,16 @@ Operation *GraphIrOptimiser::RewriteRescaleInputs(Graph *const, Operation *const
 }
 
 /*
- * Lower 32-bit Rescale into one (or more) elementwise MUL operations.
- * Multipliers are moved to a constant-tensor, while the shift value is kept as ofm-quantization
+ * Lower Rescale into one (or more) 32-bit elementwise MUL operations.
+ * Multipliers are moved to a constant-tensor, while the shift value is keps as ofm-quantization
  *
- *     IFM (32-bit)              IFM (32-bit)  Multipliers (32-bit)
+ *                            Cast to 32-bit (if necessary)
+ *                                     |
+ *         IFM                   IFM (32-bit)  Multipliers (32-bit)
  *          |                             \   /
  *       Rescale           --->            MUL
  *          |                               |
- *   OFM (any format)                OFM (any format)
+ *         OFM                             OFM
  *
  * Global-scaling (one global multiplier):
  *      Converted into one MUL operation
@@ -555,14 +557,40 @@ Operation *GraphIrOptimiser::RewriteRescale(Graph *const, Operation *const opera
         const Quantization &quant = ofmConn->quantization;
         DataType ifmType = ifmConn->tensor->Type();
         DataType ofmType = ofmConn->tensor->Type();
-        const auto attr = operation->Attribute<rescale_attr_t>();
-        if ( attr->input_unsigned )
+        const auto rescaleAttr = operation->Attribute<rescale_attr_t>();
+        auto signAttr = operation->Attribute<sign_attr_t>();
+        if ( signAttr->input_unsigned )
         {
             ifmType = ifmType & ~unsigned(DataType::Signed);
         }
-        if ( attr->output_unsigned )
+        if ( signAttr->output_unsigned )
         {
             ofmType = ofmType & ~unsigned(DataType::Signed);
+        }
+        if ( ifmType != DataType::Int32 && !_constraints->SupportsRescale(ifmType, ofmType) )
+        {
+            // create cast op to convert to 32-bit ifm
+            if ( ifmConn->tensor->Type() != DataType::Int32 )
+            {
+                auto castOp = std::make_shared<Operation>(OpType::Cast);
+                std::shared_ptr<Tensor> ifm32Tens = ifmConn->tensor->Clone();
+
+                castOp->ConnectInput(TensorUsage::IFM, ifmConn->tensor).quantization.zeroPoints = ifmConn->quantization.zeroPoints;
+                ifmConn->quantization.zeroPoints.clear();
+                ifmConn->quantization.zeroPoints.push_back(0);
+
+                castOp->ConnectOutput(TensorUsage::OFM, ifm32Tens);
+                auto castAttr = castOp->Attribute<sign_attr_t>();
+
+                // move input_unsigned to cast input
+                castAttr->input_unsigned = signAttr->input_unsigned;
+                signAttr->input_unsigned = false;
+
+                ifm32Tens->ChangeType(DataType::Int32);
+                RecordOptimisation(operation, castOp.get());
+                operation->ConnectInput(TensorUsage::IFM, ifm32Tens);
+                ifmType = DataType::Int32;
+            }
         }
         if ( ifmType == DataType::Int32 && !_constraints->SupportsRescale(ifmType, ofmType) )
         {
@@ -620,6 +648,8 @@ Operation *GraphIrOptimiser::RewriteRescale(Graph *const, Operation *const opera
                     // Create elementwise mul operation to handle all the previous scales
                     int endChannel = startChannel + scales.size();
                     auto mulOp = CreateRescalingMul(startChannel, endChannel, scales, shift);
+                    auto mulAttr = mulOp->Attribute<sign_attr_t>();
+                    mulAttr->output_unsigned = signAttr->output_unsigned;
                     RecordOptimisation(operation, mulOp.get());
 
                     // reset scales and startChannel
@@ -635,6 +665,8 @@ Operation *GraphIrOptimiser::RewriteRescale(Graph *const, Operation *const opera
             // Emit the final mul operation (or the only one for global scaling)
             int endChannel = ifmConn->shape.Depth();
             auto mulOp = CreateRescalingMul(startChannel, endChannel, scales, shift);
+            auto mulAttr = mulOp->Attribute<sign_attr_t>();
+            mulAttr->output_unsigned = signAttr->output_unsigned;
             RecordOptimisation(operation, mulOp.get());
             returnOp = mulOp.get();
             operation->Disconnect();
@@ -817,7 +849,8 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const graph, Operation *const op
     if ( opType == OpType::Rescale )
     {
         auto *attr = operation->Attribute<rescale_attr_t>();
-        if ( attr && (attr->input_unsigned || attr->output_unsigned) )
+        auto *signAttr = operation->Attribute<sign_attr_t>();
+        if ( signAttr && (signAttr->input_unsigned || signAttr->output_unsigned) )
         {
             // These type of rescales needs special handling and cannot be fused
             return returnOp;
@@ -1046,6 +1079,14 @@ Operation *GraphIrOptimiser::RewriteCast(Graph *const, Operation *const operatio
             auto copyOpConn = copyOp->Output(TensorUsage::OFM);
             copyOpConn->quantization.quantMin = {std::numeric_limits<int64_t>::min()};
             copyOpConn->quantization.quantMax = {std::numeric_limits<int64_t>::max()};
+        }
+
+        // Copy sign attribute to new operation
+        if ( operation->HasAttribute<sign_attr_t>() )
+        {
+            auto signAttr = operation->Attribute<sign_attr_t>();
+            auto newAttr = returnOp->Attribute<sign_attr_t>();
+            *newAttr = *signAttr;
         }
     }
     return returnOp;

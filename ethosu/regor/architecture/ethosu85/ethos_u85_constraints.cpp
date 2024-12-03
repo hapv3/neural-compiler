@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -156,9 +156,8 @@ bool EthosU85Constraints::SupportsFusedRescale(
 
 bool EthosU85Constraints::SupportsRescale(DataType fromType, DataType toType)
 {
-    UNUSED(fromType);
     UNUSED(toType);
-    return true;
+    return fromType != DataType::UInt16;
 }
 
 bool EthosU85Constraints::SupportsGather(OpType opType)

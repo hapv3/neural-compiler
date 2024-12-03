@@ -600,6 +600,10 @@ bool EthosU85RCSGenerator::IsScalar(const HLCFeatureMap &fm, int32_t &scalarValu
         {
             scalarValue = view.Values<int16_t>()[0];
         }
+        else if ( fm.dataType == DataType::UInt16 )
+        {
+            scalarValue = view.Values<uint16_t>()[0];
+        }
         else if ( fm.dataType == DataType::Int32 )
         {
             scalarValue = view.Values<int32_t>()[0];

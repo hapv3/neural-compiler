@@ -437,21 +437,25 @@ static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, 
             op->parameters.tile.multiplier = multiples[axis];
         }
         break;
-        case OpType::Rescale:
-        {
-            const auto *rescale = schedOp->Attribute<rescale_attr_t>();
-            if ( rescale->input_unsigned )
-            {
-                op->ifm[0].dataType = op->ifm[0].dataType & ~unsigned(DataType::Signed);
-            }
-            if ( rescale->output_unsigned )
-            {
-                op->ofm.dataType = op->ofm.dataType & ~unsigned(DataType::Signed);
-            }
-        }
-        break;
         default:
             break;
+    }
+
+    if ( schedOp->HasAttribute<sign_attr_t>() )
+    {
+        const auto *attr = schedOp->Attribute<sign_attr_t>();
+        if ( attr->input_unsigned )
+        {
+            op->ifm[0].dataType = op->ifm[0].dataType & ~unsigned(DataType::Signed);
+            if ( op->ifm.size() > 1 )
+            {
+                op->ifm[1].dataType = op->ifm[1].dataType & ~unsigned(DataType::Signed);
+            }
+        }
+        if ( attr->output_unsigned )
+        {
+            op->ofm.dataType = op->ofm.dataType & ~unsigned(DataType::Signed);
+        }
     }
     return op;
 }

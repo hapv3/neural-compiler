@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -124,8 +124,15 @@ bool EthosU55Constraints::SupportsFusedRescale(
 
 bool EthosU55Constraints::SupportsRescale(DataType fromType, DataType toType)
 {
-    UNUSED(toType);
-    return DataTypeSizeBits(fromType) <= 16;
+    if ( DataTypeSizeBits(toType) > 16 )
+    {
+        return false;
+    }
+    if ( DataTypeSizeBits(fromType) > 16 )
+    {
+        return false;
+    }
+    return true;
 }
 
 bool EthosU55Constraints::SupportsGather(OpType opType)

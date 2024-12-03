@@ -112,19 +112,25 @@ struct clamp_attr_t
     END_FIELD_TABLE()
 };
 
+struct sign_attr_t
+{
+    bool input_unsigned;
+    bool output_unsigned;
+    BEGIN_FIELD_TABLE(sign_attr_t)
+        ATTR_FIELD(input_unsigned, 0)
+        ATTR_FIELD(output_unsigned, 1)
+    END_FIELD_TABLE()
+};
+
 struct rescale_attr_t
 {
     bool scale32;
     bool double_round;
     bool per_channel;
-    bool input_unsigned;
-    bool output_unsigned;
     BEGIN_FIELD_TABLE(rescale_attr_t)
         ATTR_FIELD(scale32, 0)
         ATTR_FIELD(double_round, 1)
         ATTR_FIELD(per_channel, 2)
-        ATTR_FIELD(input_unsigned, 3)
-        ATTR_FIELD(output_unsigned, 4)
     END_FIELD_TABLE()
 };
 
