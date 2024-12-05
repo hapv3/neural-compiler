@@ -236,11 +236,12 @@ protected:
     void InsertLUTDMACommand(int index, const HLCStripe *stripe, Temporaries &temps, std::vector<const HighLevelCommand *> &emitted);
     // Inserts DMA commands to handle TILE operations
     virtual void InsertTileDMACommand(const HLCStripe *stripe, Temporaries &temps, std::vector<const HighLevelCommand *> &emitted);
+    // Inserts commands to handle transposing
+    virtual void InsertTransposeCommand(const HLCStripe *stripe, Temporaries &temps, std::vector<const HighLevelCommand *> &emitted);
 
     //----------------------------------------------------------------------
     // Operations
     //----------------------------------------------------------------------
-
     struct AccessTracking
     {
         std::deque<MemoryAccesses> outstandingNpuAccesses;

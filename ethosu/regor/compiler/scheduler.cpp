@@ -20,6 +20,7 @@
 
 #include "common/logging.hpp"
 
+#include "architecture/architecture_constraints.hpp"
 #include "architecture/weight_encoder.hpp"
 #include "cascade_builder.hpp"
 #include "common/data_type.hpp"
@@ -193,7 +194,7 @@ static bool CheckLinearFormatForConcatSplit(SchedulerTensor *tensor)
 }
 
 
-static int UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *conn)
+static int UpdateSchedulerTensor(Architecture *arch, TensorUsage usage, SchedulerConnection *conn)
 {
     auto tensor = conn->tensor.get();
 
@@ -222,6 +223,15 @@ static int UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *conn)
         {
             tensor->needsLinearFormat = true;
         }
+        else if ( producer->Type() == OpType::Transpose )
+        {
+            TransposeSupport supported = arch->Constraints()->SupportsTranspose(OpType::Transpose, producer->OFM()->transpose);
+            if ( supported == TransposeSupport::NHWC )
+            {
+                tensor->needsLinearFormat = true;
+            }
+        }
+
         if ( !producer->IsNpuOp() )
         {
             tensor->hasCPUWriters = true;
@@ -248,11 +258,20 @@ static int UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *conn)
             continue;
         }
         // Int32 ReduceSum requires linear format
-        if ( consumer->Type() == OpType::ReduceSum && tensor->dataType == DataType::Int32 )
+        else if ( consumer->Type() == OpType::ReduceSum && tensor->dataType == DataType::Int32 )
         {
             tensor->needsLinearFormat = true;
             continue;
         }
+        else if ( consumer->Type() == OpType::Transpose )
+        {
+            TransposeSupport supported = arch->Constraints()->SupportsTranspose(OpType::Transpose, consumer->OFM()->transpose);
+            if ( supported == TransposeSupport::NHWC )
+            {
+                tensor->needsLinearFormat = true;
+            }
+        }
+
         // Check if consumer shape requires linear format
         // Brick format can only be used if both shapes have equal W and C
         // Need to check full shape on connection since tensor might have many producers (concat)
@@ -295,23 +314,26 @@ Address Scheduler::CreateSchedulerRepresentation()
 
         for ( auto pos : schedOp->outputs.pairs() )
         {
-            opMemoryRequired += UpdateSchedulerTensor(pos.first, &pos.second);
+            assert(!pos.second.tensor->producers.empty());
+            opMemoryRequired += UpdateSchedulerTensor(_arch, pos.first, &pos.second);
         }
 
         for ( auto pos : schedOp->inputs.pairs() )
         {
-            opMemoryRequired += UpdateSchedulerTensor(pos.first, &pos.second);
+            assert(!pos.second.tensor->consumers.empty());
+            opMemoryRequired += UpdateSchedulerTensor(_arch, pos.first, &pos.second);
         }
+
         for ( auto const &subOp : schedOp->SubOps() )
         {
             for ( auto pos : subOp->outputs.pairs() )
             {
-                opMemoryRequired += UpdateSchedulerTensor(pos.first, &pos.second);
+                opMemoryRequired += UpdateSchedulerTensor(_arch, pos.first, &pos.second);
             }
 
             for ( auto pos : subOp->inputs.pairs() )
             {
-                opMemoryRequired += UpdateSchedulerTensor(pos.first, &pos.second);
+                opMemoryRequired += UpdateSchedulerTensor(_arch, pos.first, &pos.second);
             }
         }
         minMemoryRequired = std::max(minMemoryRequired, opMemoryRequired);

@@ -368,10 +368,7 @@ TileBox EthosU55RCSGenerator::GetTiles(const HLCFeatureMap &fm, const Shape &str
     }
     if ( fm.format == TensorFormat::NHCWB16 )
     {
-        for ( int i = 0; i < 4; ++i )
-        {
-            assert(tiles.address[i] % 16 == 0 && "NHCWB16 base address is not 16-byte aligned");
-        }
+        assert((tiles.address[0] | tiles.address[1] | tiles.address[2] | tiles.address[3]) % 16 == 0 && "NHCWB16 base address is not 16-byte aligned");
     }
     return tiles;
 }
@@ -757,8 +754,6 @@ void EthosU55RCSGenerator::GenerateActivation(const HLCStripe *stripe, MemoryAcc
     assert(op->subOps.size() <= 1);
     OpType opType = OpType::None;
     const HLCParameters *parameters = nullptr;
-    assert(stripe->opGroup != nullptr);
-    EthosU55OpGroup *opGroup = static_cast<EthosU55OpGroup *>(stripe->opGroup);
     if ( IsActivation(op->type) )
     {
         // Non-fused activation
@@ -766,7 +761,8 @@ void EthosU55RCSGenerator::GenerateActivation(const HLCStripe *stripe, MemoryAcc
         parameters = &op->parameters;
         assert(op->subOps.empty() || opType == op->subOps[0].type);
     }
-    else if ( !op->subOps.empty() && !opGroup->NeedsAllocation(op->subOps[0].ifm[0].uid) )
+    else if ( !op->subOps.empty() &&
+              (stripe->opGroup && !static_cast<EthosU55OpGroup *>(stripe->opGroup)->NeedsAllocation(op->subOps[0].ifm[0].uid)) )
     {
         // Fused activation
         assert(IsActivation(op->subOps[0].type));
@@ -1242,6 +1238,180 @@ void EthosU55RCSGenerator::InsertTileDMACommand(const HLCStripe *stripe, Tempora
     }
 }
 
+static inline int FirstSwapped(unsigned transpose, int &from)
+{
+    unsigned mask = unsigned(transpose) ^ unsigned(TransposeType::None);
+    for ( int i = 0; i < 8; i++ )
+    {
+        if ( mask & 0xF )
+        {
+            from = (transpose >> (i * 4)) & 0xF;
+            return i;
+        }
+        mask = mask >> 4;
+    }
+    from = 0;
+    return -1;
+}
+
+void EthosU55RCSGenerator::InsertTransposeCommand(const HLCStripe *stripe, Temporaries &temps, std::vector<const HighLevelCommand *> &emitted)
+{
+    auto op = stripe->operation;
+    auto &ifm = op->ifm[0];
+    auto &ofm = op->ofm;
+
+    assert(op->subOps.empty());
+    assert(ifm.format == TensorFormat::NHWC);
+    assert(ofm.format == TensorFormat::NHWC);
+    assert(ifm.shape.Size() <= 4);
+    ifm.shape = Shape::PadAxes(ifm.shape, 4, 0);
+    Shape outShape = ifm.shape.Permute(unsigned(ofm.transpose));
+
+    // Which indexed axes have been swapped
+    unsigned swapMask = unsigned(ofm.transpose) ^ unsigned(TransposeType::None);
+    unsigned validMask = ofm.shape.ShapeMask();
+    bool identity = (swapMask == 0) || (outShape.EqualMask(ofm.shape.WithOnes()) == validMask);
+    if ( identity )
+    {
+        LOG_WARN("RCS: Emitting no-op transpose as a memory copy\n");
+        auto dma = std::make_unique<HLCDMA>();
+        dma->srcMemArea = ifm.memArea;
+        dma->srcAddress = ifm.address;
+        dma->length = DataTypeStorageSizeBytes(ifm.dataType, ifm.shape.Elements());
+        dma->destMemArea = ofm.memArea;
+        dma->destAddress = ofm.address;
+        emitted.push_back(dma.get());
+        temps.cmds.push_back(std::move(dma));
+    }
+    else
+    {
+        // Strided output on AveragePool can swap Height/Width over any channel depth by
+        // adjusting the output strides to place the channel arrays in the required layout.
+        //
+        // IFM [h_pos, w_pos] = h_pos * ifm_stride_h + w_pos * ifm_stride_w
+        // OFM [h_pos, w_pos] = h_pos * ofm_stride_w + w_pos * ofm_stride_h (stride has been swapped)
+        //
+        // Example:
+        // Shape (2,3)            transposed to Shape (3,2)
+        // |0|1|2| ifm_stride_w = 1             |0|3| ofm_stride_w = 1
+        // |4|5|6| ifm_stride_h = 3             |1|4| ofm_stride_h = 2
+        //                                      |2|5|
+        //
+        // This can be used to implement any 2-axis channel swap for 3 axes or fewer.
+        //   NWHC - Transpose volume in a single pass.
+        //   NHCW - Transpose 'height' number of CW1 slices.
+        //   NCWH - Transpose 'width' number of HW1 slices (requires extra IFM striding).
+        HLCFeatureMap inFM = ifm;
+        HLCFeatureMap outFM = ofm;
+
+        // Only two axis swaps can be achieved using AvgPool
+        if ( NonZeroNybbles(swapMask) == 2 )
+        {
+            int elementSize = DataTypeSizeBits(ofm.dataType) / 8;
+
+            // Can only swap 2 axes at once using this method
+            int from;
+            int to = FirstSwapped(unsigned(ofm.transpose), from);
+            from = ifm.shape.Size() - 1 - from;
+            to = ifm.shape.Size() - 1 - to;
+
+            // Place the swappable axes in H/W (works in elements here)
+            outFM.shape = Shape(1, ifm.shape[from], ifm.shape[to], 1);
+            int depth = 1, slices = 1;
+            int ifmStep = 0;
+            int ofmStep = 0;
+
+            // Not all elements participate in the transposed axes
+            if ( outFM.shape.Elements() != ifm.shape.Elements() )
+            {
+                if ( ofm.transpose == TransposeType::NWHC )
+                {
+                    depth = ifm.shape.Depth();
+                    slices = 1;
+                    ifmStep = ofmStep = 0;
+                    assert(from == 1 && to == 2);
+                }
+                else if ( ofm.transpose == TransposeType::NHCW )
+                {
+                    depth = 1;
+                    slices = ifm.shape.Height();
+                    ifmStep = ofmStep = ifm.shape.Depth() * ifm.shape.Width() * elementSize;
+                    assert(from == 2 && to == 3);
+                }
+                else if ( ofm.transpose == TransposeType::NCWH )
+                {
+                    depth = 1;
+                    slices = ifm.shape.Width();
+                    ifmStep = ifm.shape.Depth() * elementSize;
+                    ofmStep = ifm.shape.Height() * elementSize;
+                    assert(from == 1 && to == 3);
+                }
+                else
+                {
+                    assert(false && "Unsupported transpose");
+                }
+            }
+
+            // Recalculate destination as same as source but with output different strides
+            outFM.shape = Shape(1, ifm.shape[from], ifm.shape[to], depth * elementSize);
+            inFM.shape = outFM.shape;
+            // Shapes are measured in terms of bytes, not elements.
+            outFM.dataType = DataType::Int8;
+            inFM.dataType = DataType::Int8;
+
+            // Special case for IFM with sparse strides
+            if ( (slices > 1) && (ofm.transpose == TransposeType::NCWH) )
+            {
+                outFM.strides = Shape(1, elementSize, elementSize * ifm.shape.Width() * ifm.shape.Height(), elementSize);
+                inFM.strides = Shape(1, elementSize * ifm.shape.Width() * ifm.shape.Depth(), elementSize, elementSize);
+            }
+            else
+            {
+                outFM.strides = Shape(1, elementSize * depth, elementSize * depth * outFM.shape.Height(), elementSize);
+                inFM.strides = Shape::GetStridesForShape(inFM.shape, 1);
+            }
+
+            // Repeat the transpose at advancing offsets for each slice
+            for ( int i = 0; i < slices; i++ )
+            {
+                // Create new stripe operations
+                auto cmd = std::make_unique<HLCStripe>(*stripe);
+                cmd->operation = std::make_shared<HLCOperation>();
+                cmd->operation->kernel = Kernel::UnitKernel();
+                cmd->operation->type = OpType::AvgPool;
+                cmd->opGroup = nullptr;
+                cmd->operation->ifm.push_back(inFM);
+                cmd->operation->ofm = outFM;
+                cmd->ofmArea = outFM.shape;
+                cmd->ifmAreas[0] = inFM.shape;
+
+                // Find a common block configuration
+                if ( i == 0 )
+                {
+                    ArchitectureConfigQuery query{};
+                    query.kernel = &cmd->operation->kernel;
+                    query.ifmBits = DataTypeSizeBits(ifm.dataType);
+                    query.ifmShape[0] = inFM.shape;
+                    query.ofmShape = outFM.shape;
+                    query.ofmFormat = TensorFormat::NHWC;
+                    query.transpose = ofm.transpose;
+                    temps.configs.push_back(_arch->FindBlockConfig(cmd->operation->type, query));
+                }
+                cmd->operation->config = temps.configs.back().get();
+                // Add to CMD list
+                emitted.push_back(cmd.get());
+                temps.cmds.push_back(std::move(cmd));
+                // Move to next slice
+                inFM.address += ifmStep;
+                outFM.address += ofmStep;
+            }
+        }
+        else
+        {
+            assert(false && "3-axis swaps must be decomposed");
+        }
+    }
+}
 
 
 //----------------------------------------------------------------------
@@ -1496,6 +1666,11 @@ void EthosU55RCSGenerator::PrepareCommand(int index, HighLevelCommand *cmd, Temp
         else if ( op->type == OpType::LUT || (!op->subOps.empty() && op->subOps[0].type == OpType::LUT) )
         {
             InsertLUTDMACommand(index, stripe, temps, emitted);
+        }
+        else if ( op->type == OpType::Transpose )
+        {
+            InsertTransposeCommand(stripe, temps, emitted);
+            return;
         }
         else if ( _arch->_shram.reservedEndBanks == 0 )
         {

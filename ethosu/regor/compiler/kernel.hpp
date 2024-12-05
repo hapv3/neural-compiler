@@ -158,6 +158,8 @@ public:
         return fmt::format("size={},{} stride={},{}, dilation={},{} padding={}", _size.x, _size.y, _stride.x, _stride.y,
             _dilation.x, _dilation.y, _padding.ToString());
     }
+
+    static Kernel UnitKernel() { return Kernel({1, 1}, {1, 1}, {1, 1}); }
 };
 
 static inline int RequiredInputSize(int value, int stride, int border, int upscale, int rounding = 0)

@@ -264,11 +264,11 @@ public:
     // Compute a product of axes from start to end
     int AxisProduct(int start, int end) const
     {
+        if ( end > Size() ) end = Size();
         if ( start == end ) return 0;
-        int tmp = 1;
-        assert(end <= Size());
         int inner = ToOffset(end - 1);
         int outer = ToOffset(start);
+        int tmp = 1;
         for ( int i = inner; i <= outer; i++ )
         {
             tmp *= At(i);
@@ -509,6 +509,13 @@ public:
 
     unsigned EqualMask(const Shape &other) const { return MinAxisFunc<std::equal_to<int32_t>>(*this, other); }
 
+    unsigned ShapeMask() const
+    {
+        unsigned shift = unsigned(_last);
+        shift = (shift < 32) ? (31u - shift) : 31u;
+        return ~0u >> shift;
+    }
+
     bool IsValid() const { return _last >= 0; }
 
     bool IsDynamic() const { return _dynamic; }
@@ -724,6 +731,7 @@ public:
 
     static Shape PadAxes(const Shape &shape, int axes, int padValue)
     {
+        if ( shape.Size() == axes ) return shape;
         return Shape(shape, std::max(axes, shape.Size()), padValue);
     }
 
@@ -754,20 +762,26 @@ public:
 
     static Shape Wrap(const Shape &a, const Shape &b) { return Shape::MinFunc<op_wrap<int32_t>>(a, b); }
 
+    static Shape GetStridesForShape(const Shape &shape, int elementBytes)
+    {
+        return GetStridesForShape(shape, Shape(elementBytes));
+    }
+
     static Shape GetStridesForShape(const Shape &shape, const Shape &granularity)
     {
-        assert(granularity.Size() >= shape.Size());
         Shape tmp(nullptr, shape.Size());
         if ( shape.IsValid() )
         {
             auto *gran = granularity.Storage();
             auto *from = shape.Storage();
             auto *result = tmp.Storage();
+            int lastGranule = std::min(shape._last, granularity._last);
             result[0] = gran[0];
-            for ( int i = 1; i <= shape._last; i++ )
-            {
+            int i = 1;
+            for ( ; i <= lastGranule; i++ )
                 result[i] = ::RoundAway(result[i - 1] * from[i - 1], gran[i]);
-            }
+            for ( ; i <= shape._last; i++ )
+                result[i] = result[i - 1] * from[i - 1];
         }
         return tmp;
     }

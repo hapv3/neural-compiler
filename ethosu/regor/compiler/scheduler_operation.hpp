@@ -334,10 +334,13 @@ public:
         {
             for ( const auto &item : list->pairs() )
             {
-                auto usage = item.first;
                 const auto &connection = item.second;
-                auto &vec = IsOFM(usage) ? connection.tensor->producers : connection.tensor->consumers;
-                vec.erase(std::remove(vec.begin(), vec.end(), this), vec.end());
+                if ( connection.tensor )
+                {
+                    auto usage = item.first;
+                    auto &vec = IsOFM(usage) ? connection.tensor->producers : connection.tensor->consumers;
+                    vec.erase(std::remove(vec.begin(), vec.end(), this), vec.end());
+                }
             }
         }
         inputs.clear();

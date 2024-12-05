@@ -37,6 +37,14 @@ bool EthosU55Constraints::SupportsMatMul(OpType opType)
 TransposeSupport EthosU55Constraints::SupportsTranspose(OpType opType, TransposeType transposeType)
 {
     if ( IsNone(transposeType) ) return TransposeSupport::Any;
+
+    if ( opType == OpType::Transpose )
+    {
+        if ( transposeType == TransposeType::NWHC || transposeType == TransposeType::NHCW || transposeType == TransposeType::NCWH )
+        {
+            return TransposeSupport::NHWC;
+        }
+    }
     return TransposeSupport::None;
 }
 

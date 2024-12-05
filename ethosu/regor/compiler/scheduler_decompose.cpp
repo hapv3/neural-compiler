@@ -220,6 +220,8 @@ bool CanRunOnHardware(Architecture *arch, const SchedulerOperation *schedOp)
         auto &ofmShape = schedOp->OFM()->SliceShape();
         if ( ofmShape.Size() > 3 && ofmShape.Elements() > ofmShape.Width() * ofmShape.Height() * ofmShape.Depth() )
             return false;
+        if ( arch->Constraints()->SupportsTranspose(schedOp->Type(), schedOp->OFM()->transpose) == TransposeSupport::None )
+            return false;
     }
     auto *ifm = schedOp->TryIFM(0);
     auto *ifm2 = schedOp->TryIFM(1);
@@ -1380,7 +1382,8 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTranspose(Architecture
     const auto axes = ifmShape.Size();
 
     // We can handle all transpositions in a 3D shape
-    if ( axes < 4 || ifmShape.Elements() == ifmShape.Height() * ifmShape.Width() * ifmShape.Depth() )
+    if ( (axes < 4 || ifmShape.Elements() == ifmShape.Height() * ifmShape.Width() * ifmShape.Depth()) &&
+         arch->Constraints()->SupportsTranspose(op->Type(), ofmConn->transpose) != TransposeSupport::None )
     {
         for ( int axis = 0; axis < axes; axis++ )
         {

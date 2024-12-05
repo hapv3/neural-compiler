@@ -376,6 +376,18 @@ constexpr bool IsPowerOfTwo(T x)
     return x > 0 && (x & (x - 1)) == 0;
 }
 
+// Count the number of nonzero nybbles
+inline unsigned NonZeroNybbles(unsigned mask)
+{
+    mask |= mask >> 2;   // technically & with 0xCCCC and 0x2222
+    mask |= mask >> 1;   // but bits don't tavel far enough to leak
+    mask &= 0x11111111;  // =...A...A...A...A...A...A...A...A
+    mask += mask >> 16;  // +...x...x...x...x...B...B...B...B
+    mask += mask >> 8;   // +...x...x...x...x...x...x...C...C
+    mask += mask >> 4;   // +...x...x...x...x...x...x...x...D
+    return mask & 0xF;
+};
+
 template<typename OUT, typename IN>
 OUT ClampToType(IN x)
 {
