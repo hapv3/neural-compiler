@@ -39,22 +39,30 @@ bool EthosU85Constraints::SupportsMatMul(OpType opType)
     return true;
 }
 
-bool EthosU85Constraints::SupportsTranspose(OpType opType, TransposeType transposeType)
+TransposeSupport EthosU85Constraints::SupportsTranspose(OpType opType, TransposeType transposeType)
 {
-    if ( IsNone(transposeType) ) return true;
+    if ( IsNone(transposeType) ) return TransposeSupport::Any;
 
     EthosU85NpuOp npuOp = ArchEthosU85::GetHWOp(opType);
     if ( npuOp == EthosU85NpuOp::None || npuOp == EthosU85NpuOp::Resize || npuOp == EthosU85NpuOp::Dma )
     {
-        return false;
+        return TransposeSupport::None;
     }
     else if ( npuOp == EthosU85NpuOp::Elementwise )
     {
-        return transposeType == TransposeType::None || transposeType == TransposeType::NHCW || transposeType == TransposeType::NCHW;
+        if ( transposeType == TransposeType::None || transposeType == TransposeType::NHCW || transposeType == TransposeType::NCHW )
+        {
+            return TransposeSupport::Any;
+        }
+
+        return TransposeSupport::None;
     }
 
-    return transposeType == TransposeType::None || transposeType == TransposeType::NWHC || transposeType == TransposeType::NHCW ||
-           transposeType == TransposeType::NWCH || transposeType == TransposeType::NCHW || transposeType == TransposeType::NCWH;
+    if ( transposeType == TransposeType::None || transposeType == TransposeType::NWHC || transposeType == TransposeType::NHCW ||
+         transposeType == TransposeType::NWCH || transposeType == TransposeType::NCHW || transposeType == TransposeType::NCWH )
+        return TransposeSupport::Any;
+
+    return TransposeSupport::None;
 }
 
 bool EthosU85Constraints::SupportsReverse(OpType opType, ReverseType reverseTypeMask)

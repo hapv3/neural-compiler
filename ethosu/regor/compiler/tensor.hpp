@@ -87,6 +87,8 @@ public:
     void RemoveReaders();
     void RemoveWriters();
 
+    bool IsSinglePath() const { return _readers.size() == 1 && _writers.size() == 1; }
+
     std::unique_ptr<Tensor> Clone() const;
     std::string ToString() const;
 };

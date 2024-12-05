@@ -67,6 +67,7 @@ private:
     Operation *RewriteDepthwise(Graph *const graph, Operation *const operation);
     Operation *RewriteTransposeConvOFMPadding(Graph *const graph, Operation *const operation);
     Operation *OptimiseElementwise(Graph *const graph, Operation *const operation);
+    Operation *MergeTransposes(Graph *const graph, Operation *const operation);
     Operation *RearrangeTranspose(Graph *const graph, Operation *const operation);
     Operation *ReshapeReverse(Graph *const graph, Operation *const operation);
     void MoveToConsumer(const Operation *const operation, Operation *const cons);
@@ -144,6 +145,7 @@ private:
                 &GraphIrOptimiser::RewriteDepthwise,
                 &GraphIrOptimiser::RewriteTransposeConvOFMPadding,
                 &GraphIrOptimiser::OptimiseElementwise,
+                &GraphIrOptimiser::MergeTransposes,
                 &GraphIrOptimiser::RearrangeTranspose,
                 &GraphIrOptimiser::ReshapeReverse,
                 &GraphIrOptimiser::UnrollConv

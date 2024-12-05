@@ -175,3 +175,87 @@ TEST_CASE("test_graphir_optimiser - ReduceSum")
             REQUIRE(scheduleOps[0]->IFM(0)->quantization.zeroPoints[0] == 0);
     }
 }
+
+TEST_CASE("test_graphir_optimiser - transpose removal")
+{
+    // Create arch
+    auto arch = CreateArchDefault<ArchEthosU85>();
+    std::string err = "noerror";
+    arch->CheckConfiguration(err);
+    REQUIRE(err == "noerror");
+
+    std::vector<std::shared_ptr<Operation>> ops;
+    auto cadd = CreateTensor("CADD", Shape(1, 1, 1, 1), DataType::Int8, 1);
+    auto input = CreateTensor("INPUT", Shape(1, 10, 5, 4), DataType::Int8);
+    auto ofm1 = CreateTensor("OFM", Shape(1, 10, 5, 4), DataType::Int8);
+    auto ofm2 = CreateTensor("OFM", Shape(1, 10, 5, 4), DataType::Int8);
+    auto output = CreateTensor("OUTPUT", Shape(1, 10, 5, 4), DataType::Int8);
+
+    // Add->Transpose(none)->Add
+    ops.push_back(CreateOperation(OpType::Add, TensorUsage::IFM, input, TensorUsage::IFM1, cadd, TensorUsage::OFM, ofm1));
+
+    ops.push_back(CreateOperation(OpType::Transpose, TensorUsage::IFM, ofm1, TensorUsage::OFM, ofm2));
+    transpose_attr_t *attr = ops.back()->Attribute<transpose_attr_t>();
+    attr->perm = Shape(0, 1, 2, 3);
+
+    ops.push_back(CreateOperation(OpType::Add, TensorUsage::IFM, ofm2, TensorUsage::IFM1, cadd, TensorUsage::OFM, output));
+
+    auto graph = CreateGraph(ops);
+
+    GraphOptimiserOptions options;
+    auto optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch->Constraints(), options, nullptr);
+
+    optimiser->Process(graph.get());
+
+    std::vector<Operation *> allOps;
+    graph->GetAllOperations(allOps);
+    REQUIRE(allOps.size() == 2);
+    REQUIRE(allOps.front()->Type() == OpType::Add);
+    REQUIRE(allOps.back()->Type() == OpType::Add);
+    REQUIRE(allOps.front()->Output(TensorUsage::OFM)->tensor == allOps.back()->Input(TensorUsage::IFM)->tensor);
+}
+
+TEST_CASE("test_graphir_optimiser - transpose merge")
+{
+    // Create arch
+    auto arch = CreateArchDefault<ArchEthosU85>();
+    std::string err = "noerror";
+    arch->CheckConfiguration(err);
+    REQUIRE(err == "noerror");
+
+    std::vector<std::shared_ptr<Operation>> ops;
+    auto cadd = CreateTensor("CADD", Shape(1, 1, 1, 1), DataType::Int8, 1);
+    auto input = CreateTensor("INPUT", Shape(1, 10, 4, 5), DataType::Int8);
+    auto ofm1 = CreateTensor("OFM", Shape(1, 10, 4, 5), DataType::Int8);
+    auto ofm2 = CreateTensor("OFM", Shape(1, 10, 5, 4), DataType::Int8);
+    auto ofm3 = CreateTensor("OFM", Shape(1, 10, 4, 5), DataType::Int8);
+    auto output = CreateTensor("OUTPUT", Shape(1, 10, 4, 5), DataType::Int8);
+
+    // Add->Transpose(there)->Transpose(back)->Add
+    ops.push_back(CreateOperation(OpType::Add, TensorUsage::IFM, input, TensorUsage::IFM1, cadd, TensorUsage::OFM, ofm1));
+
+    ops.push_back(CreateOperation(OpType::Transpose, TensorUsage::IFM, ofm1, TensorUsage::OFM, ofm2));
+    transpose_attr_t *attr = ops.back()->Attribute<transpose_attr_t>();
+    attr->perm = Shape(0, 1, 3, 2);
+
+    ops.push_back(CreateOperation(OpType::Transpose, TensorUsage::IFM, ofm2, TensorUsage::OFM, ofm3));
+    attr = ops.back()->Attribute<transpose_attr_t>();
+    attr->perm = Shape(0, 1, 3, 2);
+
+    ops.push_back(CreateOperation(OpType::Add, TensorUsage::IFM, ofm3, TensorUsage::IFM1, cadd, TensorUsage::OFM, output));
+
+    auto graph = CreateGraph(ops);
+
+    GraphOptimiserOptions options;
+    auto optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch->Constraints(), options, nullptr);
+
+    optimiser->Process(graph.get());
+
+    // Result Add->Add
+    std::vector<Operation *> allOps;
+    graph->GetAllOperations(allOps);
+    REQUIRE(allOps.size() == 2);
+    REQUIRE(allOps.front()->Type() == OpType::Add);
+    REQUIRE(allOps.back()->Type() == OpType::Add);
+    REQUIRE(allOps.front()->Output(TensorUsage::OFM)->tensor == allOps.back()->Input(TensorUsage::IFM)->tensor);
+}

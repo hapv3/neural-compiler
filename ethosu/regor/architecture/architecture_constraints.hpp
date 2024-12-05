@@ -79,10 +79,13 @@ struct ExecutionQuery
     bool quantScalingInvalidOrUnequal = false;
 };
 
-namespace Constraints
+enum class TransposeSupport
 {
-
-}  // namespace Constraints
+    None,
+    NHWC = 1,
+    NHCWB16 = 2,
+    Any = NHWC | NHCWB16,
+};
 
 /// <summary>
 /// Architecture capabilties query
@@ -96,7 +99,7 @@ public:
     virtual bool SupportsFusedRescale(OpType opType, TensorUsage tensorUsage, DataType fromType, DataType toType,
         const Quantization &quantization) = 0;
     virtual bool SupportsRescale(DataType fromType, DataType toType) = 0;
-    virtual bool SupportsTranspose(OpType opType, TransposeType transposeType) = 0;
+    virtual TransposeSupport SupportsTranspose(OpType opType, TransposeType transposeType) = 0;
     virtual bool SupportsAccumulatorSaveRestore() = 0;
 
     bool CanExecute(const ExecutionQuery &query)

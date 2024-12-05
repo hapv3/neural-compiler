@@ -383,23 +383,32 @@ std::unique_ptr<Graph> Compiler::CompileGraph(std::unique_ptr<Graph> &graph,
             return nullptr;
         }
     }
-    if ( graph->Notation() == GraphNotation::TFLite )
+
+    try
     {
-        // Run GraphNotation::TFLite Preprocess/optimise step
+        if ( graph->Notation() == GraphNotation::TFLite )
+        {
+            // Run GraphNotation::TFLite Preprocess/optimise step
+            std::unique_ptr<GraphOptimiser> optimiser = GraphOptimiser::MakeGraphOptimiser(
+                GraphNotation::TFLite, _architecture->Constraints(), _graphOptimiserOptions, _optDb.get());
+            if ( optimiser )
+            {
+                optimiser->Process(graph.get());
+            }
+        }
+
+        // Run GraphNotation::GraphAPI Preprocess/optimise step
         std::unique_ptr<GraphOptimiser> optimiser = GraphOptimiser::MakeGraphOptimiser(
-            GraphNotation::TFLite, _architecture->Constraints(), _graphOptimiserOptions, _optDb.get());
+            GraphNotation::GraphAPI, _architecture->Constraints(), _graphOptimiserOptions, _optDb.get());
         if ( optimiser )
         {
             optimiser->Process(graph.get());
         }
     }
-
-    // Run GraphNotation::GraphAPI Preprocess/optimise step
-    std::unique_ptr<GraphOptimiser> optimiser = GraphOptimiser::MakeGraphOptimiser(
-        GraphNotation::GraphAPI, _architecture->Constraints(), _graphOptimiserOptions, _optDb.get());
-    if ( optimiser )
+    catch ( const std::runtime_error &e )
     {
-        optimiser->Process(graph.get());
+        SetLastError(e.what());
+        return nullptr;
     }
 
     // Pack/linearise graph Operations into SchedulerOperations

@@ -1432,6 +1432,93 @@ Operation *GraphIrOptimiser::RewriteTile(Graph *const, Operation *const operatio
     return returnOp;
 }
 
+// Merge adjacent transposes
+Operation *GraphIrOptimiser::MergeTransposes(Graph *const graph, Operation *const operation)
+{
+    UNUSED(graph);
+    Operation *returnOp = operation;
+    const OpType opType = operation->Type();
+    if ( opType == OpType::Transpose )
+    {
+        auto *ifmConn = operation->Input(TensorUsage::IFM);
+        auto *ofmConn = operation->Output(TensorUsage::OFM);
+        auto *ifm = ifmConn->tensor.get();
+        const auto &ofm = ofmConn->tensor;
+        auto *prevOp = ifm->Writers().empty() ? nullptr : ifm->Writers().front().get();
+
+        auto *attr = operation->Attribute<transpose_attr_t>();
+        auto curTranspose = TransposeTypeFromShape(attr->perm);
+        bool opHasQuant = ofmConn->quantization.IsValid() && !ofmConn->quantization.IsUnitScale();
+
+        // Remove no-op transposes if possible
+        if ( IsNone(curTranspose) )
+        {
+            assert(ofmConn->shape == ifmConn->shape);
+            // Transpose is the only operator, it may be peforming memory copy duties.
+            if ( !prevOp && ofm->Readers().empty() )
+            {
+                auto newOp = std::make_shared<Operation>(OpType::MemoryCopy);
+                newOp->CopyInput(TensorUsage::IFM0, *ifmConn);
+                newOp->CopyOutput(TensorUsage::OFM, *ofmConn);
+                operation->Disconnect();
+                returnOp = newOp.get();
+                RecordOptimisation(operation, returnOp);
+            }
+            // Disconnect from surrounding ops, if this is a graph input
+            // or output it remains untouched.
+            else if ( ifm->IsSinglePath() && !opHasQuant && prevOp )
+            {
+                ifm->RemoveWriter(prevOp->shared_from_this());
+                prevOp->ConnectOutput(TensorUsage::OFM, ofm).Set(ofmConn->slice);
+                operation->Disconnect();
+                returnOp = prevOp;
+            }
+            return returnOp;
+        }
+
+        // Transpose is fed by a preceding transpose (single writer, single reader)
+        if ( prevOp && (prevOp->Type() == OpType::Transpose) && ifm->IsSinglePath() )
+        {
+            const auto *prevConn = prevOp->Output(TensorUsage::OFM);
+            assert(prevConn);
+
+            // Can't merge if predecessor reverses or reshapes
+            if ( prevConn->reverse != ReverseType::None || prevConn->shape != ifmConn->shape ) return returnOp;
+
+            // Can't merge if both apply quantization
+            bool prevHasQuant = prevConn->quantization.IsValid() && !prevConn->quantization.IsUnitScale();
+            if ( opHasQuant && prevHasQuant ) return returnOp;
+
+            // Examine previous op's transpose
+            auto *prevAttr = prevOp->Attribute<transpose_attr_t>();
+            auto prevTranspose = TransposeTypeFromShape(prevAttr->perm);
+
+            // Apply both transposes to default axes and examine the resulting transpose
+            static std::array<int, 8> nhwcDefault = {0, 1, 2, 3, 4, 5, 6, 7};
+            int activeAxes = std::min(int(nhwcDefault.size()), ifmConn->shape.Size());
+
+            Shape axes(nhwcDefault.data(), activeAxes);
+            Shape prevMapping = axes.Permute(unsigned(prevTranspose));
+            Shape finalMapping = prevMapping.Permute(unsigned(curTranspose));
+            TransposeType mergedTranspose = TransposeTypeFromShape(finalMapping);
+
+            // The single merged transpose is supported
+            if ( _constraints->SupportsTranspose(OpType::Transpose, mergedTranspose) != TransposeSupport::None )
+            {
+                // Change the transpose attribute on the preceding transpose and remove this one
+                prevAttr->perm = finalMapping;
+                TensorConnection &newConn = prevOp->ConnectOutput(TensorUsage::OFM, ofm);
+                newConn.Set(ofmConn->slice).Set(ofmConn->reverse).Set(ofmConn->shape);
+                if ( !prevHasQuant && opHasQuant ) newConn.Set(ofmConn->quantization);
+                operation->Disconnect();
+                return prevOp;
+            }
+        }
+    }
+
+    return returnOp;
+}
+
 // Rearrange transpose
 Operation *GraphIrOptimiser::RearrangeTranspose(Graph *const graph, Operation *const operation)
 {
@@ -1463,7 +1550,7 @@ Operation *GraphIrOptimiser::RearrangeTranspose(Graph *const graph, Operation *c
 
         // Don't bother with rearrangement if transpose type is already supported
         auto transposeType = TransposeTypeFromShape(perm);
-        if ( _constraints->SupportsTranspose(OpType::Transpose, transposeType) )
+        if ( _constraints->SupportsTranspose(OpType::Transpose, transposeType) != TransposeSupport::None )
         {
             return returnOp;
         }
