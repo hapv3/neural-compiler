@@ -141,11 +141,11 @@ private:
 
 public:
     InvalidTfLiteException(const std::string &constraint, const std::string &extra, const Tensor &tensor) :
-            _constraint(constraint), _extra(std::move(extra)), _tensorName(CheckedPtr(tensor.name())->str())
+            _constraint(constraint), _extra(extra), _tensorName(CheckedPtr(tensor.name())->str())
     {
     }
     InvalidTfLiteException(const std::string &constraint, const std::string &extra, const Operator &op, const SubGraph &subgraph, const BuiltinOperator &builtinOperator) :
-            _constraint(constraint), _extra(std::move(extra)),
+            _constraint(constraint), _extra(extra),
             _tensorName(
                 CheckedPtr(TensorFromUsage(regor::TensorUsage::OFM, op, builtinOperator, *subgraph.tensors())->name())->str()),
             _builtinOperatorName(EnumNameBuiltinOperator(builtinOperator))
