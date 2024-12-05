@@ -73,19 +73,9 @@ private:
 
     // Get axis parameter for operator
     int GetAxis(const Operation *const operation);
-    // Calculate the read shape and offset values for StridedSlice.
-    void SetStridedSliceOffsetValues(Operation *const operation, const TensorConnection *const ifmConn, Shape &readShape, Shape &readOffset);
     // Creates MemoryCopy operation for the given ifm/ofm and write offset.
     std::shared_ptr<Operation> MakeMemoryCopyForConcat(
         const TensorConnection *const ofmConn, const TensorConnection *const ifmConn, const Shape &writeOffset);
-    // Creates a MemoryCopy operation for the given ifm/ofm and readOffset.
-    std::shared_ptr<Operation> MakeMemoryCopyForSplitOps(const TensorConnection *const ofmConn,
-        const TensorConnection *const ifmConn, const Shape &readShape, const Shape &readOffset);
-
-    // Creates the desired Output shape of StridedSlice.
-    //
-    // returns the Desired shape.
-    Shape MakeStridedSliceDesiredShape(Operation *const operation, const Shape &baseShape);
 
     Operation *MakeDepthwiseMeanOp(const TensorConnection *ifmConn, const Shape &ifmShape4D, const Shape &readShape,
         const Shape &readOffset, const Shape &ofmShape4D, int w, int h, const std::string &name, std::shared_ptr<Tensor> &weightTensor,
@@ -98,8 +88,8 @@ private:
     Operation *ConvertExpToLUT(Graph *const graph, Operation *const operation);
     Operation *RewritePack(Graph *const graph, Operation *const operation);
     Operation *RewriteUnpack(Graph *const graph, Operation *const operation);
-    Operation *RewriteSplit(Graph *const graph, Operation *const operation);
     Operation *RewriteSlice(Graph *const graph, Operation *const operation);
+    Operation *RewriteStridedSlice(Graph *const graph, Operation *const operation);
     Operation *RemoveReshape(Graph *const graph, Operation *const operation);
     Operation *ConvertReverse(Graph *const graph, Operation *const operation);
     Operation *ConvertGather(Graph *const graph, Operation *const operation);
@@ -190,14 +180,9 @@ public:
             {},
             {
                 &TFLiteGraphOptimiser::RewriteSlice,
+                &TFLiteGraphOptimiser::RewriteStridedSlice,
                 &TFLiteGraphOptimiser::RewritePack,
                 &TFLiteGraphOptimiser::RewriteUnpack
-            }
-        },
-        {
-            {},
-            {
-                &TFLiteGraphOptimiser::RewriteSplit
             }
         },
         {

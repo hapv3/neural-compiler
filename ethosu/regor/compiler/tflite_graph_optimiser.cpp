@@ -250,50 +250,6 @@ int TFLiteGraphOptimiser::GetAxis(const Operation *const operation)
 }
 
 
-// Calculate the read shape and offset values for StridedSlice.
-void TFLiteGraphOptimiser::SetStridedSliceOffsetValues(
-    Operation *const operation, const TensorConnection *const ifmConn, Shape &readShape, Shape &readOffset)
-{
-    auto *beginConn = operation->Input(TensorUsage::Params0);
-    auto *endConn = operation->Input(TensorUsage::Params1);
-
-    const tflite::Operator *passthrough = static_cast<const tflite::Operator *>(operation->Passthrough());
-    assert(passthrough);
-    auto *opt = passthrough->builtin_options_as_StridedSliceOptions();
-    assert(opt);
-
-    // strides tensor not used.
-    auto beginMask = opt->begin_mask();
-    auto endMask = opt->end_mask();
-
-    readShape = ifmConn->shape;
-
-    for ( auto idx = 0; idx < ifmConn->shape.Size(); idx++ )
-    {
-        // If the i:th bit in the mask is set then the value on offset_tens[i] should be ignored
-        if ( (beginMask & (1 << idx)) == 0 )
-        {
-            readOffset[idx] = beginConn->tensor->View().Values<int>()[idx];
-            if ( readOffset[idx] < 0 )
-            {
-                // Convert offset to positive value
-                readOffset[idx] += ifmConn->shape[idx];
-            }
-        }
-        if ( (endMask & (1 << idx)) == 0 )
-        {
-            readShape[idx] = endConn->tensor->View().Values<int>()[idx];
-            if ( readShape[idx] < 0 )
-            {
-                // Convert offset to positive value
-                readShape[idx] += ifmConn->shape[idx];
-            }
-        }
-    }
-    readOffset = Shape::PadAxes(readOffset, 4, 0);
-}
-
-
 // Creates MemoryCopy operation for the given ifm/ofm and write offset.
 std::shared_ptr<Operation> TFLiteGraphOptimiser::MakeMemoryCopyForConcat(
     const TensorConnection *const ofmConn, const TensorConnection *const ifmConn, const Shape &writeOffset)
@@ -308,73 +264,6 @@ std::shared_ptr<Operation> TFLiteGraphOptimiser::MakeMemoryCopyForConcat(
         .Set({writeOffset, ifmConn->shape});
 
     return op;
-}
-
-
-// Creates a MemoryCopy operation for the given ifm/ofm and readOffset.
-std::shared_ptr<Operation> TFLiteGraphOptimiser::MakeMemoryCopyForSplitOps(const TensorConnection *const ofmConn,
-    const TensorConnection *const ifmConn, const Shape &readShape, const Shape &readOffset)
-{
-    auto op = std::make_shared<Operation>(OpType::MemoryCopy);
-    op->SetRounding(RoundMode::NATURAL);
-    op->ConnectInput(TensorUsage::IFM0, ifmConn->tensor).Set(ifmConn->shape).Set(ifmConn->quantization).Set({readOffset, readShape});
-    op->CopyOutput(TensorUsage::OFM, *ofmConn);
-
-    return op;
-}
-
-
-// Creates the desired Output shape of StridedSlice.
-//
-// returns the Desired shape.
-Shape TFLiteGraphOptimiser::MakeStridedSliceDesiredShape(Operation *const operation, const Shape &baseShape)
-{
-    const tflite::Operator *passthrough = static_cast<const tflite::Operator *>(operation->Passthrough());
-    assert(passthrough);
-    auto *opt = passthrough->builtin_options_as_StridedSliceOptions();
-    assert(opt);
-    unsigned newMask = unsigned(opt->new_axis_mask());
-    unsigned shrinkMask = unsigned(opt->shrink_axis_mask());
-
-    if ( newMask == 0 && shrinkMask == 0 )
-    {
-        return baseShape;
-    }
-    assert((newMask == 0) || (shrinkMask == 0));
-
-    Shape tmp = baseShape;
-    while ( shrinkMask )
-    {
-        auto prevMask = shrinkMask;
-        shrinkMask &= shrinkMask - 1;
-        auto axis = 0;
-        auto diff = prevMask - shrinkMask;
-        diff >>= 1;
-        while ( diff )
-        {
-            diff >>= 1;
-            ++axis;
-        }
-        tmp = tmp.Insert(axis, 1);
-    }
-
-    while ( newMask )
-    {
-        auto prevMask = newMask;
-        newMask &= newMask - 1;
-        auto axis = 0;
-        auto diff = prevMask - newMask;
-        diff >>= 1;
-        while ( diff )
-        {
-            diff >>= 1;
-            ++axis;
-        }
-        tmp = tmp.Erase(axis);
-        newMask >>= 1;
-    }
-
-    return Shape::PadAxes(tmp, 4, 1);
 }
 
 
@@ -752,6 +641,128 @@ Operation *TFLiteGraphOptimiser::RewriteSlice(Graph *const graph, Operation *con
     return returnOp;
 }
 
+
+// Convert TFLite StridedSlice into TOSA Slice
+Operation *TFLiteGraphOptimiser::RewriteStridedSlice(Graph *const graph, Operation *const operation)
+{
+    UNUSED(graph);
+    auto *returnOp = operation;
+    const auto opType = operation->Type();
+    if ( opType == OpType::StridedSlice )
+    {
+        const auto *ifmConn = operation->Input(TensorUsage::IFM);
+        const auto *ofmConn = operation->Output(TensorUsage::OFM);
+        const auto *beginParmConn = operation->Input(TensorUsage::Params0);
+        const auto *endParamConn = operation->Input(TensorUsage::Params1);
+        const auto *stridesParamConn = operation->Input(TensorUsage::Params2);
+
+        // Read StridedSlice attributes
+        int32_t begin_mask = 0;
+        int32_t ellipsis_mask = 0;
+        int32_t end_mask = 0;
+        int32_t new_axis_mask = 0;
+        int32_t shrink_axis_mask = 0;
+        const tflite::Operator *const passthrough = static_cast<const tflite::Operator *>(operation->Passthrough());
+        if ( passthrough )
+        {
+            const auto options = passthrough->builtin_options_as_StridedSliceOptions();
+            if ( options )
+            {
+                begin_mask = options->begin_mask();
+                ellipsis_mask = options->ellipsis_mask();
+                end_mask = options->end_mask();
+                new_axis_mask = options->new_axis_mask();
+                shrink_axis_mask = options->shrink_axis_mask();
+            }
+        }
+
+        const Shape beginAttr = TensorToShape(beginParmConn->tensor.get(), beginParmConn->shape.Elements());
+        const Shape endAttr = TensorToShape(endParamConn->tensor.get(), endParamConn->shape.Elements());
+        const Shape stridesAttr = TensorToShape(stridesParamConn->tensor.get(), stridesParamConn->shape.Elements());
+        const int specShapeSize = std::min({beginAttr.Size(), endAttr.Size(), stridesAttr.Size()});
+
+        // Start off with the full IFM
+        const int ifmShapeSize = ifmConn->shape.Size();
+        Shape sliceOffset(nullptr, ifmShapeSize, 0);
+        Shape sliceShape(ifmConn->shape);
+        Shape sliceStride(nullptr, ifmShapeSize, 1);
+
+        // Process each spec
+        for ( int specIndex = 0, ifmIndex = 0; specIndex < specShapeSize; specIndex++ )
+        {
+            const bool isBegin = (begin_mask & (1 << specIndex)) != 0;
+            const bool isEllipsis = (ellipsis_mask & (1 << specIndex)) != 0;
+            const bool isEnd = (end_mask & (1 << specIndex)) != 0;
+            const bool isNewAxis = (new_axis_mask & (1 << specIndex)) != 0;
+            const bool isShrink = (shrink_axis_mask & (1 << specIndex)) != 0;
+
+            if ( isEllipsis )
+            {
+                // Skip to the end
+                ifmIndex = ifmShapeSize - (specShapeSize - specIndex - 1);
+                assert(ifmIndex >= 0);
+                assert(ifmIndex <= ifmShapeSize);
+            }
+            else
+            {
+                if ( !isBegin || isShrink )
+                {
+                    // Handle the begin value
+                    int begin = beginAttr[specIndex];
+                    if ( begin < 0 ) begin = ifmConn->shape[ifmIndex] + begin;
+                    begin = std::clamp(begin, 0, ifmConn->shape[ifmIndex] - 1);
+                    sliceOffset[ifmIndex] = begin;
+                    sliceShape[ifmIndex] = isShrink ? 1 : ifmConn->shape[ifmIndex] - begin;
+                }
+
+                if ( !isEnd && !isShrink )
+                {
+                    // Handle the end value
+                    int end = endAttr[specIndex];
+                    if ( end < 0 ) end = ifmConn->shape[ifmIndex] + end;
+                    end = std::clamp(end, 1, ifmConn->shape[ifmIndex]);
+                    assert(end > sliceOffset[ifmIndex]);
+                    sliceShape[ifmIndex] = end - sliceOffset[ifmIndex];
+                }
+
+                // Handle the stride value
+                sliceStride[ifmIndex] = stridesAttr[specIndex];
+
+                // Go to next dimension
+                ifmIndex++;
+            }
+        }
+
+        // TODO MLBEDSW-10165: Handle stride != 1
+        if ( sliceStride != sliceStride.WithOnes() )
+        {
+            returnOp->SetPassthroughOp();
+            return returnOp;
+        }
+
+        // Adjust resulting shape for stride
+        sliceShape = Shape::DivRoundUp(sliceShape, sliceStride);
+
+        // Create a new SLICE op
+        auto sliceOp = std::make_shared<Operation>(OpType::Slice);
+        sliceOp->CopyInput(TensorUsage::IFM, *ifmConn);
+        sliceOp->CopyOutput(TensorUsage::OFM, *ofmConn);
+        sliceOp->Output(TensorUsage::OFM)->Set(sliceShape);
+        auto *attr = sliceOp->Attribute<slice_attr_t>();
+        assert(sliceOffset + sliceShape <= ifmConn->shape);
+        assert(sliceOffset >= ifmConn->shape.WithZeros());
+        attr->size = sliceShape;
+        attr->begin = sliceOffset;
+        RecordOptimisation(operation, sliceOp.get());
+        returnOp = sliceOp.get();
+
+        // Remove original op
+        operation->Disconnect();
+    }
+    return returnOp;
+}
+
+
 // Convert TFLite Unpack/Split/SplitV into one or more TOSA Slice
 Operation *TFLiteGraphOptimiser::RewriteUnpack(Graph *const graph, Operation *const operation)
 {
@@ -795,93 +806,6 @@ Operation *TFLiteGraphOptimiser::RewriteUnpack(Graph *const graph, Operation *co
 
         // Remove original op
         operation->Disconnect();
-    }
-    return returnOp;
-}
-
-Operation *TFLiteGraphOptimiser::RewriteSplit(Graph *const graph, Operation *const operation)
-{
-    UNUSED(graph);
-    auto *returnOp = operation;
-    auto opType = operation->Type();
-
-    if ( opType == OpType::StridedSlice )
-    {
-        auto *ifmConn = operation->Input(TensorUsage::IFM0);
-        assert(ifmConn);
-        auto *ofmConn = operation->Output(TensorUsage::OFM);
-        assert(ofmConn);
-        auto axis = GetAxis(operation);
-        auto axis4D = 0;
-
-        if ( opType == OpType::StridedSlice )
-        {
-            const tflite::Operator *passthrough = static_cast<const tflite::Operator *>(operation->Passthrough());
-            assert(passthrough);
-            auto *opt = passthrough->builtin_options_as_StridedSliceOptions();
-            assert(opt);
-            // StridedSlice ellipsis_mask not supported.
-            // StridedSlice new_axis_mask and shrink_axis_mask cannot both be set.
-            const auto ellipsis_mask = opt->ellipsis_mask();
-            const auto new_axis_mask = opt->new_axis_mask();
-            const auto shrink_axis_mask = opt->shrink_axis_mask();
-            if ( ellipsis_mask != 0 || (new_axis_mask != 0 && shrink_axis_mask != 0) )
-            {
-                returnOp->SetPassthroughOp();
-                return returnOp;
-            }
-        }
-
-        // Only rewrite for int8, uint8 and int16 supported.
-        auto ifmType = ifmConn->tensor->Type();
-        if ( ifmType != DataType::Int8 && ifmType != DataType::UInt8 && ifmType != DataType::Int16 )
-        {
-            returnOp->SetPassthroughOp();
-            return returnOp;
-        }
-
-        // Only rewrite for int8, uint8 and int16 supported.
-        auto ofmType = ofmConn->tensor->Type();
-        if ( ofmType != DataType::Int8 && ofmType != DataType::UInt8 && ofmType != DataType::Int16 )
-        {
-            returnOp->SetPassthroughOp();
-            return returnOp;
-        }
-
-        auto idx = 0;
-        auto offset = 0;
-        auto usage = MakeTensorUsage(TensorUsage::OFM, 0);
-        ofmConn = operation->Output(usage);
-        // Set shape on all OFMs
-        while ( ofmConn != nullptr )
-        {
-            // Remove writers from OFM
-            auto *ofm = ofmConn->tensor.get();
-            ofm->RemoveWriters();
-
-            Shape readOffset(0, 0, 0, 0);
-            Shape readShape(1, 1, 1, 1);
-
-            if ( opType == OpType::StridedSlice )
-            {
-                // TODO: MLBEDSW-9071: Change StridedSlice shape to 4D
-                ofmConn->shape = MakeStridedSliceDesiredShape(operation, ofmConn->shape);
-                readShape = ifmConn->shape.WithOnes();
-                readOffset = ifmConn->shape.WithZeros();
-                SetStridedSliceOffsetValues(operation, ifmConn, readShape, readOffset);
-            }
-
-            auto op = MakeMemoryCopyForSplitOps(ofmConn, ifmConn, readShape, readOffset);
-            offset += ofmConn->shape[axis4D];
-
-            usage = MakeTensorUsage(TensorUsage::OFM, ++idx);
-            ofmConn = operation->Output(usage);
-            RecordOptimisation(operation, op.get());
-        }
-        // Replaced by multiple ops.
-        // Will return the original op, which have all the Input/Outputs for the traversal.
-        // But with Writers and Readers cleared.
-        ifmConn->tensor->RemoveReader(operation->shared_from_this());
     }
     return returnOp;
 }
