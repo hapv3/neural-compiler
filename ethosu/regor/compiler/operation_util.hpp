@@ -169,21 +169,27 @@ inline Operation *CreateElementwise(OpType type, const std::shared_ptr<Tensor> &
     auto op = std::make_shared<Operation>(type);
     op->ConnectInput(TensorUsage::IFM, ifm).Set(ifmQuantization);
     if ( ifmShape ) op->Input(TensorUsage::IFM)->shape = *ifmShape;
+    Shape ofmShape;
     if ( ifm2 )
     {
         op->ConnectInput(TensorUsage::IFM1, ifm2).Set(ifm2Quantization);
         if ( ifm2Shape ) op->Input(TensorUsage::IFM1)->shape = *ifm2Shape;
+
+        // Compute the broadcasted OFM shape
+        const Shape &a = op->Input(TensorUsage::IFM0)->shape;
+        const Shape &b = op->Input(TensorUsage::IFM1)->shape;
+        const unsigned dims = std::clamp(std::min(a.Size(), b.Size()), 0, 31);
+        assert(dims < 32);
+        const unsigned mask = (1u << dims) - 1u;
+        assert(((a.EqualMask(a.WithOnes()) | b.EqualMask(b.WithOnes()) | a.EqualMask(b)) & mask) == mask);
+        ofmShape = Shape::Max(a, b);
+    }
+    else
+    {
+        ofmShape = op->Input(TensorUsage::IFM)->shape;
     }
 
     if ( dtype == DataType::None ) dtype = ifm->Type();
-
-    Shape ofmShape = op->Input(TensorUsage::IFM)->shape;
-    // If reverse operands use ifm2 shape as ofm shape
-    if ( ifm2 && ((ofmShape.Elements() == 1 && ifm->IsConstant()) || ofmShape.IsSubShapeOf(op->Input(TensorUsage::IFM1)->shape)) )
-    {
-        ofmShape = ifm2->StorageShape();
-    }
-
     auto ofm = std::make_shared<Tensor>(ifm->Name() + "/" + OpTypeToString(type), dtype);
     ofm->SetStorageShape(ofmShape);
     op->ConnectOutput(TensorUsage::OFM, ofm).Set(ofmQuantization);

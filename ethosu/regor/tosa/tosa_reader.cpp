@@ -270,7 +270,7 @@ TOSA_REGISTER_OP(LOGICAL_NOT,             NONE,                          GraphAp
 TOSA_REGISTER_OP(NEGATE,                  NegateAttribute,               GraphApi::GraphTensorUsage::IFM);
 TOSA_REGISTER_OP(RECIPROCAL,              NONE,                          GraphApi::GraphTensorUsage::IFM);
 TOSA_REGISTER_OP(RSQRT,                   NONE,                          GraphApi::GraphTensorUsage::IFM);
-TOSA_REGISTER_OP(SELECT,                  NONE,                          GraphApi::GraphTensorUsage::IFM, GraphApi::GraphTensorUsage::IFM, GraphApi::GraphTensorUsage::IFM);
+TOSA_REGISTER_OP(SELECT,                  NONE,                          GraphApi::GraphTensorUsage::Params, GraphApi::GraphTensorUsage::IFM, GraphApi::GraphTensorUsage::IFM);
 TOSA_REGISTER_OP(EQUAL,                   NONE,                          GraphApi::GraphTensorUsage::IFM, GraphApi::GraphTensorUsage::IFM);
 TOSA_REGISTER_OP(GREATER,                 NONE,                          GraphApi::GraphTensorUsage::IFM, GraphApi::GraphTensorUsage::IFM);
 TOSA_REGISTER_OP(GREATER_EQUAL,           NONE,                          GraphApi::GraphTensorUsage::IFM, GraphApi::GraphTensorUsage::IFM);

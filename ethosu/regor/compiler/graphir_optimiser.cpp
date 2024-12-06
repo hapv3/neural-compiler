@@ -1067,11 +1067,11 @@ Operation *GraphIrOptimiser::RewriteSelect(Graph *const graph, Operation *const 
     UNUSED(graph);
     Operation *returnOp = operation;
     const OpType opType = operation->Type();
-    if ( opType == OpType::Select )
+    if ( opType == OpType::Select || opType == OpType::SelectV2 )
     {
-        auto selectorConn = operation->Input(TensorUsage::IFM);
-        const auto ifm2Conn = operation->Input(TensorUsage::IFM1);  // Used if selector is true
-        const auto ifm3Conn = operation->Input(TensorUsage::IFM2);  // Used if selector is false
+        auto selectorConn = operation->Input(TensorUsage::Params);
+        const auto ifm0Conn = operation->Input(TensorUsage::IFM0);  // Used if selector is true
+        const auto ifm1Conn = operation->Input(TensorUsage::IFM1);  // Used if selector is false
         const auto ofmConn = operation->Output(TensorUsage::OFM);
 
         // Cast selector IFM (bool8) to same data type as the OFM (if needed)
@@ -1085,10 +1085,10 @@ Operation *GraphIrOptimiser::RewriteSelect(Graph *const graph, Operation *const 
         }
 
         // Break down SELECT(selector, a, b) into OR(AND(a, selector), AND_NOT(b, selector))
-        auto andOp = CreateBinaryElementwise(OpType::And, ifm2Conn->tensor, selectorConn->tensor,
-            ifm2Conn->quantization, selectorConn->quantization, ofmConn->quantization, ofmConn->tensor->Type());
-        auto andNotOp = CreateBinaryElementwise(OpType::AndNot, ifm3Conn->tensor, selectorConn->tensor,
-            ifm3Conn->quantization, selectorConn->quantization, ofmConn->quantization, ofmConn->tensor->Type());
+        auto andOp = CreateBinaryElementwise(OpType::And, ifm0Conn->tensor, selectorConn->tensor,
+            ifm0Conn->quantization, selectorConn->quantization, ofmConn->quantization, ofmConn->tensor->Type());
+        auto andNotOp = CreateBinaryElementwise(OpType::AndNot, ifm1Conn->tensor, selectorConn->tensor,
+            ifm1Conn->quantization, selectorConn->quantization, ofmConn->quantization, ofmConn->tensor->Type());
         auto orOp = CreateBinaryElementwise(OpType::Or, andOp->Output(TensorUsage::OFM)->tensor,
             andNotOp->Output(TensorUsage::OFM)->tensor, ofmConn->quantization, ofmConn->quantization,
             ofmConn->quantization, ofmConn->tensor->Type());

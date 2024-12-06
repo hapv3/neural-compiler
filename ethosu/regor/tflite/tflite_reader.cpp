@@ -723,6 +723,8 @@ void TfLiteReader::ParseOperatorOptions(const std::shared_ptr<Operation> &operat
         case tflite::BuiltinOptions::ScatterNdOptions:
         case tflite::BuiltinOptions::ReadVariableOptions:
         case tflite::BuiltinOptions::AssignVariableOptions:
+        case tflite::BuiltinOptions::SelectOptions:
+        case tflite::BuiltinOptions::SelectV2Options:
             break;
 
         case tflite::BuiltinOptions::ConcatEmbeddingsOptions:
@@ -747,7 +749,6 @@ void TfLiteReader::ParseOperatorOptions(const std::shared_ptr<Operation> &operat
         case tflite::BuiltinOptions::GreaterOptions:
         case tflite::BuiltinOptions::GreaterEqualOptions:
         case tflite::BuiltinOptions::LessEqualOptions:
-        case tflite::BuiltinOptions::SelectOptions:
         case tflite::BuiltinOptions::SliceOptions:
         case tflite::BuiltinOptions::SparseToDenseOptions:
         case tflite::BuiltinOptions::TileOptions:
@@ -787,7 +788,6 @@ void TfLiteReader::ParseOperatorOptions(const std::shared_ptr<Operation> &operat
         case tflite::BuiltinOptions::DepthToSpaceOptions:
         case tflite::BuiltinOptions::NonMaxSuppressionV4Options:
         case tflite::BuiltinOptions::NonMaxSuppressionV5Options:
-        case tflite::BuiltinOptions::SelectV2Options:
         case tflite::BuiltinOptions::DensifyOptions:
         case tflite::BuiltinOptions::SegmentSumOptions:
         case tflite::BuiltinOptions::CumsumOptions:
