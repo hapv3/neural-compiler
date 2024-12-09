@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -54,8 +54,8 @@ public:
     int OptimisedId(const void *op);
     int SourceOp(const Operation *op, int ext_key = -1);
     void AddOptimised(const void *from, const Operation *to);
-    void AddSubOps(const void *primaryKey, const std::vector<const void *> &subOpKeys);
-    void AddCommand(void *key, int stream, int cmdIndex);
+    void AddSubOp(UniqueId primaryUid, UniqueId subOpUid);
+    void AddCommand(void *key, int stream, int cmdIndex, UniqueId id);
     int AddStream();
 };
 

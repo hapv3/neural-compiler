@@ -361,12 +361,11 @@ void Compiler::RecordNPUOp(const NPUOperation &npuOp, const CmdRanges &cmdRanges
         opMap.emplace(scheduleOp->Uid(), scheduleOp.get());
 
         // Add subOps to DB
-        std::vector<const void *> subOpKeys;
         for ( auto &subOp : scheduleOp->SubOps() )
         {
-            subOpKeys.push_back(subOp->_srcKey);
+            opMap.emplace(subOp->Uid(), subOp.get());
+            _optDb->AddSubOp(scheduleOp->Uid(), subOp->Uid());
         }
-        _optDb->AddSubOps(scheduleOp->_srcKey, subOpKeys);
     }
 
     // Record command stream op ranges for this NPU op
@@ -377,7 +376,11 @@ void Compiler::RecordNPUOp(const NPUOperation &npuOp, const CmdRanges &cmdRanges
         if ( opMap.try_get(std::get<0>(cmd), scheduleOp) )
         {
             assert(scheduleOp);
-            _optDb->AddCommand(scheduleOp->_srcKey, streamId, std::get<2>(cmd) - 1);
+            _optDb->AddCommand(scheduleOp->_srcKey, streamId, std::get<2>(cmd) - 1, std::get<0>(cmd));
+        }
+        else
+        {
+            _optDb->AddCommand(nullptr, streamId, std::get<2>(cmd) - 1, std::get<0>(cmd));
         }
     }
 }

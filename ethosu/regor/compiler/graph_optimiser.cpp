@@ -243,7 +243,7 @@ OptimiserDatabase::OptimiserDatabase(Database *db) : _db(db)
     _db->AddColumns(_sourceTable, {"operator", "kernel_w", "kernel_h", "ofm_w", "ofm_h", "ofm_d", "ext_key"});
     _db->AddColumns(_optTable, {"source_id", "operator", "kernel_w", "kernel_h", "ofm_w", "ofm_h", "ofm_d"});
     _db->AddColumns(_groupTable, {"group_id"});
-    _db->AddColumns(_cmdTable, {"offset", "cmdstream_id", "optimised_id"});
+    _db->AddColumns(_cmdTable, {"offset", "cmdstream_id", "optimised_id", "scheduled_id"});
 }
 
 Database *OptimiserDatabase::Get()
@@ -332,35 +332,24 @@ void OptimiserDatabase::AddOptimised(const void *from, const Operation *to)
             o ? std::to_string(o.Width()) : "", o ? std::to_string(o.Height()) : "", o ? std::to_string(o.Depth()) : ""});
 }
 
-void OptimiserDatabase::AddSubOps(const void *primaryKey, const std::vector<const void *> &subOpKeys)
+void OptimiserDatabase::AddSubOp(UniqueId primaryUid, UniqueId subOpUid)
 {
-    if ( subOpKeys.empty() )
-    {
-        return;
-    }
+    assert(primaryUid > 0 && subOpUid > 0);
 
-    assert(primaryKey);
-    auto primaryPos = _optimised.find(primaryKey);
-    assert(primaryPos != _optimised.end());
-    int primaryOptId = std::get<1>(primaryPos->second);
-    _db->AddRow(_groupTable, primaryOptId, {std::to_string(primaryOptId)});
-    for ( auto subOpKey : subOpKeys )
-    {
-        assert(subOpKey);
-        auto subOpPos = _optimised.find(subOpKey);
-        assert(subOpPos != _optimised.end());
-        int subOpOptId = std::get<1>(subOpPos->second);
-        _db->AddRow(_groupTable, subOpOptId, {std::to_string(primaryOptId)});
-    }
+    _db->AddRow(_groupTable, subOpUid, {std::to_string(primaryUid)});
 }
 
-void OptimiserDatabase::AddCommand(void *key, int stream, int cmdIndex)
+void OptimiserDatabase::AddCommand(void *key, int stream, int cmdIndex, UniqueId schedId)
 {
     auto pos = _optimised.find(key);
-    if ( pos != _optimised.end() )
+    if ( key && pos != _optimised.end() )
     {
         int optId = std::get<1>(pos->second);
-        _db->AddRow(_cmdTable, 0, {std::to_string(4 * cmdIndex), std::to_string(stream), std::to_string(optId)});
+        _db->AddRow(_cmdTable, 0, {std::to_string(4 * cmdIndex), std::to_string(stream), std::to_string(optId), std::to_string(schedId)});
+    }
+    else
+    {
+        _db->AddRow(_cmdTable, 0, {std::to_string(4 * cmdIndex), std::to_string(stream), "0", std::to_string(schedId)});
     }
 }
 
