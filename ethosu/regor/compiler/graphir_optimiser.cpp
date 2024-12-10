@@ -902,9 +902,8 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const graph, Operation *const op
                             if ( !sameType ) break;
                         }
                         consumer->CopyInput(ifm.first, *ifmConn);
-                        ifm.second.quantization = std::move(ifmQuant);
+                        ifm.second.quantization = ifmQuant;
                         returnOp = consumer.get();
-                        break;
                     }
                 }
             }
