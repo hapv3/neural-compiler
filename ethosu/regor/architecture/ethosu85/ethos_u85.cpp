@@ -1375,13 +1375,15 @@ bool EthosU85OpGroup::CanStartChain(const ArchitectureOpGroupQuery &op)
 {
     OpType opType = op.type;
     EthosU85NpuOp npuOp = ArchEthosU85::GetHWOp(opType);
+    if ( npuOp == EthosU85NpuOp::None || npuOp == EthosU85NpuOp::Resize || npuOp == EthosU85NpuOp::Dma )
+    {
+        return false;
+    }
     if ( npuOp == EthosU85NpuOp::Pooling && _arch->UseNullPool(opType, DataTypeSizeBits(op.ifm[0].type)) )
     {
         return false;
     }
-    return (
-        npuOp == EthosU85NpuOp::Convolution || npuOp == EthosU85NpuOp::Depthwise ||
-        npuOp == EthosU85NpuOp::Elementwise || npuOp == EthosU85NpuOp::Pooling || npuOp == EthosU85NpuOp::VectorProduct);
+    return true;
 }
 
 int EthosU85OpGroup::ExternalIfms(const ArchitectureOpGroupQuery &op)

@@ -67,6 +67,7 @@ TEST_CASE("test_graphir_optimiser - constant propagation")
         graph->GetAllOperations(allOps);
         REQUIRE(allOps.size() == 2);
 
+        REQUIRE(bool(optimiser));
         optimiser->Process(graph.get());
         allOps.clear();
 
@@ -112,6 +113,7 @@ TEST_CASE("test_graphir_optimiser - constant propagation")
         graph->GetAllOperations(allOps);
         REQUIRE(allOps.size() == 3);
 
+        REQUIRE(bool(optimiser));
         optimiser->Process(graph.get());
         allOps.clear();
 
@@ -124,5 +126,52 @@ TEST_CASE("test_graphir_optimiser - constant propagation")
         {
             REQUIRE(idata[i] == (1 << 2) << 3);
         }
+    }
+}
+
+TEST_CASE("test_graphir_optimiser - ReduceSum")
+{
+    // Create arch
+    auto arch = CreateArchDefault<ArchEthosU85>();
+    std::string err = "noerror";
+    arch->CheckConfiguration(err);
+    REQUIRE(err == "noerror");
+
+    SECTION("Zero point")
+    {
+        constexpr int ZP = 10;
+
+        auto graph = [&]()
+        {
+            std::vector<std::shared_ptr<Operation>> ops;
+            auto ifm = CreateTensor("IFM", Shape(1, 4, 4, 25), DataType::Int8);
+            auto ofm = CreateTensor("OFM", ifm->StorageShape().WithDepth(1), DataType::Int8);
+            auto op = CreateOperation(OpType::ReduceSum, TensorUsage::IFM, ifm, TensorUsage::OFM, ofm);
+            op->Input(TensorUsage::IFM)->quantization.zeroPoints.push_back(ZP);
+            op->Attribute<axis_attr_t>()->axis = ifm->StorageShape().Size() - 1;
+            ops.push_back(std::move(op));
+
+            // Create graph with ops
+            return CreateGraph(ops);
+        }();
+
+        GraphOptimiserOptions options;
+        auto optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch->Constraints(), options, nullptr);
+
+        REQUIRE(bool(optimiser));
+        optimiser->Process(graph.get());
+
+        SchedulerPacking packing(arch.get(), false);
+        auto scheduleOps = packing.Process(graph.get());
+
+        REQUIRE(scheduleOps.size() == 1);
+        REQUIRE(scheduleOps[0]->SubOps().size() == 1);
+        REQUIRE(scheduleOps[0]->SubOps()[0]->IFM(1)->tensor->IsConstant());
+        REQUIRE(scheduleOps[0]->SubOps()[0]->IFM(1)->tensor->bufferView.Elements() == 1);
+        REQUIRE(scheduleOps[0]->SubOps()[0]->IFM(1)->tensor->bufferView.StrideBytes() == sizeof(int32_t));
+        auto view = scheduleOps[0]->SubOps()[0]->IFM(1)->tensor->bufferView.Values<int32_t>();
+        REQUIRE(view[0] == scheduleOps[0]->IFM(0)->shape.Depth() * ZP);
+        if ( scheduleOps[0]->IFM(0)->quantization.zeroPoints.size() > 0 )
+            REQUIRE(scheduleOps[0]->IFM(0)->quantization.zeroPoints[0] == 0);
     }
 }
