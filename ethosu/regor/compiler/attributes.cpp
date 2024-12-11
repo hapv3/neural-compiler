@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -23,7 +23,6 @@
 namespace regor
 {
 
-#define REDUCED_HASH(hash) (hash & 0x000FFFFF)
 #define CASE_MAKE_ATTR_INSTANCE(TYPE_) \
     case REDUCED_HASH(TypeHash<TYPE_>::HASH): \
         return DynamicRef(TypeInfoOf<TYPE_>::Get(true), TypeInfoOf<TYPE_>::SharedNew());

@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -216,8 +216,9 @@ public:
 
     DynamicRef &operator=(const DynamicRef &other)
     {
-        if ( &other != this && other._instance )
+        if ( &other != this )
         {
+            auto tmp = other._info ? other._info->AddRef(other._instance) : nullptr;
             if ( _instance )
             {
                 assert(_info);
@@ -225,8 +226,7 @@ public:
                 _instance = nullptr;
             }
             _info = other._info;
-            _instance = _info->AddRef(other._instance);
-            assert(_instance);
+            _instance = tmp;
         }
         return *this;
     }
@@ -235,6 +235,12 @@ public:
     {
         if ( &other != this )
         {
+            if ( _instance )
+            {
+                assert(_info);
+                _info->Delete(_instance);
+                _instance = nullptr;
+            }
             _info = other._info;
             _instance = other._instance;
             other._instance = nullptr;

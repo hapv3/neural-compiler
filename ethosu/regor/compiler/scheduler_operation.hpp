@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -134,7 +134,7 @@ struct AccumulatorControl
 /// <summary>
 /// Scheduler's representation of executable operations
 /// </summary>
-class SchedulerOperation
+class SchedulerOperation : public Attributable
 {
     friend class SchedulerPacking;
     friend class Scheduler;
@@ -148,7 +148,6 @@ public:
     void *_srcKey = nullptr;
     int _primaryIfmIndex = 0;
     AccumulatorControl _accumulatorControl;
-    DynamicRef _attr;
     const class SchedulerOperation *_parent = nullptr;
     std::vector<std::unique_ptr<SchedulerOperation>> _subOps;  // activations or Ethos-U85 chained ops
     ordered_map<TensorUsage, SchedulerConnection> inputs;
@@ -162,6 +161,9 @@ private:
 public:
     SchedulerOperation(OpType opType) : _type(opType) { _uid = GenerateUniqueId(); }
     ~SchedulerOperation() { Disconnect(); }
+
+    SchedulerOperation &operator=(const SchedulerOperation &) = delete;
+    SchedulerOperation &operator=(SchedulerOperation &&) = delete;
 
 public:
     OpType Type() const { return _type; }
@@ -188,38 +190,7 @@ public:
     int PrimaryIfmIndex() const { return _primaryIfmIndex; }
     void SetPrimaryIfmIndex(int index) { _primaryIfmIndex = index; }
 
-    void SetAttributeRef(DynamicRef attr) { _attr = attr; }
-
-    template<typename TYPE>
-    TYPE *Attribute()
-    {
-        if ( !_attr )
-        {
-            _attr = CreateAttribute(TypeHash<TYPE>::HASH);
-        }
-        else if ( _attr.Info()->Hash() != TypeHash<TYPE>::HASH )
-        {
-            throw std::runtime_error("attribute already assigned for this operator");
-        }
-
-        return static_cast<TYPE *>(_attr.Instance());
-    }
-
-    template<typename TYPE>
-    const TYPE *Attribute() const
-    {
-        if ( !_attr || (_attr.Info()->Hash() != TypeHash<TYPE>::HASH) )
-        {
-            throw std::runtime_error("requested attribute must be already assigned");
-        }
-        return static_cast<const TYPE *>(_attr.Instance());
-    }
-
-    template<typename TYPE>
-    bool HasAttribute() const
-    {
-        return _attr && (_attr.Info()->Hash() == TypeHash<TYPE>::HASH);
-    }
+    void SetAttributes(const Attributes &attr) { _attr = attr; }
 
     // Input connections
     SchedulerConnection *AddInput(TensorUsage usage) { return &inputs[usage]; }

@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -26,6 +26,7 @@
 #include "common/shape.hpp"
 #include "include/graphapi.hpp"
 
+#include <forward_list>
 #include <memory>
 #include <string>
 
@@ -260,6 +261,73 @@ struct pad_attr_t
     END_FIELD_TABLE()
 };
 
-DynamicRef CreateAttribute(uint32_t reducedhash);
+#define REDUCED_HASH(hash) (hash & 0x000FFFFF)
+
+DynamicRef CreateAttribute(uint32_t hash);
+
+// Attribute container - maintains chains of
+// dynamically allocated attribute objects.
+struct Attributes
+{
+    mutable std::forward_list<DynamicRef> _chain;
+
+    DynamicRef *Get(bool create, uint32_t hash) const
+    {
+        for ( auto pos = _chain.begin(); pos != _chain.end(); pos++ )
+        {
+            if ( *pos && (pos->Info()->Hash() == hash || REDUCED_HASH(pos->Info()->Hash()) == hash) ) return &(*pos);
+        }
+        if ( !create ) return nullptr;
+        return &_chain.emplace_front(CreateAttribute(hash));
+    }
+
+    DynamicRef *Require(uint32_t hash) const
+    {
+        DynamicRef *ref = Get(false, hash);
+        if ( !ref ) throw std::runtime_error("requested attribute must be already assigned");
+        return ref;
+    }
+
+    Attributes &operator=(const Attributes &attr)
+    {
+        if ( &attr != this )
+        {
+            _chain = attr._chain;
+        }
+        return *this;
+    }
+};
+
+// Mixin to make objects attributable
+class Attributable
+{
+protected:
+    Attributes _attr;
+
+public:
+    template<typename TYPE>
+    TYPE *Attribute()
+    {
+        return static_cast<TYPE *>(_attr.Get(true, TypeHash<TYPE>::HASH)->Instance());
+    }
+
+    template<typename TYPE>
+    const TYPE *Attribute() const
+    {
+        return static_cast<TYPE *>(_attr.Require(TypeHash<TYPE>::HASH)->Instance());
+    }
+
+    template<typename TYPE>
+    bool HasAttribute() const
+    {
+        return _attr.Get(false, TypeHash<TYPE>::HASH) != nullptr;
+    }
+
+    DynamicRef *AttributeByKey(uint32_t hash) { return _attr.Get(true, hash); }
+
+    const Attributes &AttributeRef() const { return _attr; }
+};
+
+
 
 }  // namespace regor

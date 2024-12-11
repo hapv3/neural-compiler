@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -128,7 +128,7 @@ static std::unique_ptr<SchedulerOperation> MakeSubOperation(const SchedulerOpera
     subOp->SetHasScaling(schedOp->HasScaling());
     subOp->_srcKey = schedOp->_srcKey;
     subOp->SetPrimaryIfmIndex(schedOp->PrimaryIfmIndex());
-    subOp->SetAttributeRef(schedOp->_attr);
+    subOp->SetAttributes(schedOp->AttributeRef());
     subOp->SetAccumulatorMode(schedOp->AccumulatorMode());
     for ( const auto *list : {&schedOp->inputs, &schedOp->outputs} )
     {

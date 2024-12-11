@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -108,21 +108,24 @@ struct TensorConnection
 /// <summary>
 /// Graph Operation representation
 /// </summary>
-class Operation : public std::enable_shared_from_this<Operation>, public GraphApi::GraphOperation
+class Operation : public std::enable_shared_from_this<Operation>, public GraphApi::GraphOperation, public Attributable
 {
 private:
     ordered_map<TensorUsage, TensorConnection> _inputs;
     ordered_map<TensorUsage, TensorConnection> _outputs;
     OpType _type;
     std::unique_ptr<class Kernel> _kernel;
-    DynamicRef _attr;
     const void *_passthrough = nullptr;  // Original flatbuffer description of this op (if it was loaded from one)
 
 public:
     Operation(OpType opType);
     Operation(const Operation &op);
-    OpType Type() const { return _type; }
 
+    Operation &operator=(const Operation &) = delete;
+    Operation &operator=(Operation &&) = delete;
+
+public:
+    OpType Type() const { return _type; }
     const ordered_map<TensorUsage, TensorConnection> &Outputs() const { return _outputs; }
     const ordered_map<TensorUsage, TensorConnection> &Inputs() const { return _inputs; }
 
@@ -155,48 +158,6 @@ public:
     void Disconnect();
     bool IsDisconnected() const;
     bool HasScaling() const;
-
-    template<typename TYPE>
-    TYPE *Attribute()
-    {
-        if ( !_attr )
-        {
-            _attr = CreateAttribute(TypeHash<TYPE>::HASH);
-        }
-        else if ( _attr.Info()->Hash() != TypeHash<TYPE>::HASH )
-        {
-            throw std::runtime_error("attribute already assigned for this operator");
-        }
-
-        return static_cast<TYPE *>(_attr.Instance());
-    }
-
-    template<typename TYPE>
-    const TYPE *Attribute() const
-    {
-        if ( !_attr || (_attr.Info()->Hash() != TypeHash<TYPE>::HASH) )
-        {
-            throw std::runtime_error("requested attribute must be already assigned");
-        }
-        return static_cast<const TYPE *>(_attr.Instance());
-    }
-
-    DynamicRef *AttributeByKey(uint32_t hash)
-    {
-        if ( !_attr )
-        {
-            _attr = CreateAttribute(hash);
-        }
-        return &_attr;
-    }
-
-    const DynamicRef &AttributeRef() const { return _attr; }
-
-    template<typename TYPE>
-    bool HasAttribute() const
-    {
-        return _attr && (_attr.Info()->Hash() == TypeHash<TYPE>::HASH);
-    }
 
 private:
     int CountUsage(const ordered_map<TensorUsage, TensorConnection> &list, TensorUsage usage) const

@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -445,7 +445,7 @@ std::unique_ptr<SchedulerOperation> SchedulerPacking::MakeSchedulerOperation(Ope
 
     schedOp->SetKernel(op->Kernel());
     schedOp->SetHasScaling(op->HasScaling());
-    schedOp->SetAttributeRef(op->AttributeRef());
+    schedOp->SetAttributes(op->AttributeRef());
     schedOp->_srcKey = op;
 
     // Get the inputs from the source op and connect with scheduler specific tensor
