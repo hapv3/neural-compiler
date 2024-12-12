@@ -102,4 +102,8 @@ def write_rawdata_output_from_model(filename, model):
         output_elem_size=[t.element_size for t in model.outputs],
         output_region=[t.region for t in model.outputs],
         output_offset=[t.address for t in model.outputs],
+        variable_shape=[t.shape for t in model.variables],
+        variable_elem_size=[t.element_size for t in model.variables],
+        variable_region=[t.region for t in model.variables],
+        variable_offset=[t.address for t in model.variables],
     )

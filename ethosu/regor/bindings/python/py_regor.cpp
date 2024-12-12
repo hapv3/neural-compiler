@@ -172,6 +172,7 @@ struct PyRegorCompiledRawModel : PyRegorCompiledModel
     PyRegorCompiledRawModelNonConstantTensor scratch_fast;
     std::vector<PyRegorCompiledRawModelNonConstantTensor> inputs;
     std::vector<PyRegorCompiledRawModelNonConstantTensor> outputs;
+    std::vector<PyRegorCompiledRawModelNonConstantTensor> variables;
 };
 
 struct PyRegorCompiledTFLiteModel : PyRegorCompiledModel
@@ -460,6 +461,14 @@ private:
                         shape.insert(shape.end(), header.tensor.output.shape, header.tensor.output.shape + 4);
                         raw.outputs.emplace_back(region, address, size, element_size, shape);
                         break;
+                    case regor_raw_tensor_header_t::RAW_TENSOR_TYPE_VARIABLE:
+                        region = header.tensor.variable.region;
+                        address = header.tensor.variable.address;
+                        data_size = header.tensor.variable.size;
+                        element_size = header.tensor.variable.element_size;
+                        shape.insert(shape.end(), header.tensor.variable.shape, header.tensor.variable.shape + 4);
+                        raw.variables.emplace_back(region, address, size, element_size, shape);
+                        break;
                     default:
                         break;
                 }
@@ -556,7 +565,8 @@ PYBIND11_MODULE(regor, m)
         .def_readwrite("scratch", &PyRegorCompiledRawModel::scratch, "The compiled model scratch area")
         .def_readwrite("scratch_fast", &PyRegorCompiledRawModel::scratch_fast, "The compiled model scratch fast area")
         .def_readwrite("inputs", &PyRegorCompiledRawModel::inputs, "The compiled model inputs")
-        .def_readwrite("outputs", &PyRegorCompiledRawModel::outputs, "The compiled model outputs");
+        .def_readwrite("outputs", &PyRegorCompiledRawModel::outputs, "The compiled model outputs")
+        .def_readwrite("variables", &PyRegorCompiledRawModel::variables, "The compiled model variables");
 
     py::class_<PyRegorCompiledTFLiteModel, PyRegorCompiledModel>(m, "CompiledTFLiteModel", "A Regor-compiled TFLite model")
         .def(py::init<>())

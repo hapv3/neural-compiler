@@ -52,13 +52,13 @@ TEST_CASE("raw_writer")
     const auto input = std::make_shared<Tensor>("input_1", DataType::Int8, Shape({1, 1, 8}));
     REQUIRE_FALSE(input->IsConstant());
 
-    // Build variable tensor
-    const auto variable1 = std::make_shared<Tensor>("variable_1", DataType::Int8, Shape({1, 1, 1, 9}));
-    REQUIRE_FALSE(variable1->IsConstant());
-
     // Build output tensor
     const auto output = std::make_shared<Tensor>("output_1", DataType::Int8, Shape({1, 1, 1, 10}));
     REQUIRE_FALSE(output->IsConstant());
+
+    // Build variable tensor
+    const auto variable1 = std::make_shared<Tensor>("variable_1", DataType::Int8, Shape({1, 1, 1, 9}));
+    REQUIRE_FALSE(variable1->IsConstant());
 
     // Build another variable tensor
     const auto variable2 = std::make_shared<Tensor>("variable_2", DataType::Int8, Shape({1, 1, 1, 11}));
@@ -175,7 +175,6 @@ TEST_CASE("raw_writer")
         REQUIRE(header.tensor.scratch_fast.region == 2);
         REQUIRE(header.tensor.scratch_fast.address == 77);
     }
-
     // Check input
     {
         // Check blob size
@@ -197,7 +196,7 @@ TEST_CASE("raw_writer")
         REQUIRE(header.tensor.input.shape[3] == 8);
     }
 
-    // Check (input) variable
+    // Check output
     {
         // Check blob size
         size_t dataSize = sizeof(regor_raw_tensor_header_t);
@@ -205,27 +204,6 @@ TEST_CASE("raw_writer")
 
         // Check header
         auto &data = blobs[5].first;
-        regor_raw_tensor_header_t header;
-        std::copy_n(data.get(), sizeof(header), reinterpret_cast<uint8_t *>(&header));
-        REQUIRE(header.type == regor_raw_tensor_header_t::RAW_TENSOR_TYPE_VARIABLE);
-        REQUIRE(header.tensor.input.size == 9);
-        REQUIRE(header.tensor.input.region == 1);
-        REQUIRE(header.tensor.input.address == 11);
-        REQUIRE(header.tensor.input.element_size == 1);
-        REQUIRE(header.tensor.input.shape[0] == 1);
-        REQUIRE(header.tensor.input.shape[1] == 1);
-        REQUIRE(header.tensor.input.shape[2] == 1);
-        REQUIRE(header.tensor.input.shape[3] == 9);
-    }
-
-    // Check output
-    {
-        // Check blob size
-        size_t dataSize = sizeof(regor_raw_tensor_header_t);
-        REQUIRE(blobs[6].second == dataSize);
-
-        // Check header
-        auto &data = blobs[6].first;
         regor_raw_tensor_header_t header;
         std::copy_n(data.get(), sizeof(header), reinterpret_cast<uint8_t *>(&header));
         REQUIRE(header.type == regor_raw_tensor_header_t::RAW_TENSOR_TYPE_OUTPUT);
@@ -237,6 +215,27 @@ TEST_CASE("raw_writer")
         REQUIRE(header.tensor.output.shape[1] == 1);
         REQUIRE(header.tensor.output.shape[2] == 1);
         REQUIRE(header.tensor.output.shape[3] == 10);
+    }
+
+    // Check (input) variable
+    {
+        // Check blob size
+        size_t dataSize = sizeof(regor_raw_tensor_header_t);
+        REQUIRE(blobs[6].second == dataSize);
+
+        // Check header
+        auto &data = blobs[6].first;
+        regor_raw_tensor_header_t header;
+        std::copy_n(data.get(), sizeof(header), reinterpret_cast<uint8_t *>(&header));
+        REQUIRE(header.type == regor_raw_tensor_header_t::RAW_TENSOR_TYPE_VARIABLE);
+        REQUIRE(header.tensor.input.size == 9);
+        REQUIRE(header.tensor.input.region == 1);
+        REQUIRE(header.tensor.input.address == 11);
+        REQUIRE(header.tensor.input.element_size == 1);
+        REQUIRE(header.tensor.input.shape[0] == 1);
+        REQUIRE(header.tensor.input.shape[1] == 1);
+        REQUIRE(header.tensor.input.shape[2] == 1);
+        REQUIRE(header.tensor.input.shape[3] == 9);
     }
 
     // Check (output) variable

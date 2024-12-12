@@ -65,12 +65,6 @@ std::vector<std::pair<std::unique_ptr<const uint8_t[]>, size_t>> RawWriter::Seri
         throw std::invalid_argument("RawWriter expects graph with 1 CustomNpuOp");
     }
 
-    const auto &graphInputs = graph->Inputs();
-    std::unordered_set<std::shared_ptr<Tensor>> inputsSet(graphInputs.begin(), graphInputs.end());
-
-    const auto &graphOutputs = graph->Outputs();
-    std::unordered_set<std::shared_ptr<Tensor>> outputsSet(graphOutputs.begin(), graphOutputs.end());
-
     // ethos_u_command_stream in TFLite format
     auto commandStreamTensorConnection = customNpuOp->Input(MakeTensorUsage(TensorUsage::Params, 0));
     auto commandStreamTensor = commandStreamTensorConnection->tensor.get();
@@ -98,35 +92,39 @@ std::vector<std::pair<std::unique_ptr<const uint8_t[]>, size_t>> RawWriter::Seri
         SerialiseScratchFastTensor(stagingTensor, tensor_address_map.at(stagingTensor));
     }
 
-    for ( const auto &[tensorUsage, tensorConnection] : customNpuOp->Inputs().pairs() )
+    // Serialise input tensors
+    for ( const auto &input : graph->Inputs() )
     {
-        auto inputTensor = tensorConnection.tensor.get();
-        if ( graph->IsPersistent(inputTensor) )
+        const Tensor *tensor = input.get();
+        auto tensorUsage = customNpuOp->UsageOfTensor(tensor);
+        if ( IsIFM(tensorUsage) && !tensor->IsConstant() )
         {
-            // Serialise variable (input) tensor
-            SerialiseVariableTensor(inputTensor, tensor_address_map.at(inputTensor));
-        }
-        else if ( IsIFM(tensorUsage) && !inputTensor->IsConstant() )
-        {
-            // Serialise input tensor
-            SerialiseInputTensor(inputTensor, tensor_address_map.at(inputTensor));
+            SerialiseInputTensor(tensor, tensor_address_map.at(tensor));
         }
     }
 
-    for ( const auto &[tensorUsage, tensorConnection] : customNpuOp->Outputs().pairs() )
+    // Serialise output tensors
+    for ( const auto &output : graph->Outputs() )
     {
-        auto outputTensor = tensorConnection.tensor.get();
-        if ( graph->IsPersistent(outputTensor) )
+        const Tensor *tensor = output.get();
+        auto tensorUsage = customNpuOp->UsageOfTensor(tensor);
+        if ( IsOFM(tensorUsage) )
         {
-            // Serialise variable (output) tensor
-            SerialiseVariableTensor(outputTensor, tensor_address_map.at(outputTensor));
-        }
-        else if ( IsOFM(tensorUsage) )
-        {
-            // Serialise output tensor
-            SerialiseOutputTensor(outputTensor, tensor_address_map.at(outputTensor));
+            SerialiseOutputTensor(tensor, tensor_address_map.at(tensor));
         }
     }
+
+    // Serialise persistent tensors
+    for ( const auto &persistent : graph->Persistent() )
+    {
+        const Tensor *tensor = persistent.get();
+        auto tensorUsage = customNpuOp->UsageOfTensor(tensor);
+        if ( (tensorUsage != TensorUsage::None) )
+        {
+            SerialiseVariableTensor(tensor, tensor_address_map.at(tensor));
+        }
+    }
+
 
     return std::move(_raw);
 }

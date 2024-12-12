@@ -122,6 +122,11 @@ def test_ethos_u_vela_with_regor_raw_output(tmp_path):
     assert raw["output_elem_size"][0] == 1
     assert raw["output_region"][0] == 1
     assert raw["output_offset"][0] >= 0
+    # Model contains no variables, check that the values are empty arrays.
+    assert raw["variable_shape"].size == 0
+    assert raw["variable_elem_size"].size == 0
+    assert raw["variable_region"].size == 0
+    assert raw["variable_offset"].size == 0
 
 
 def test_regor():
