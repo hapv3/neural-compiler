@@ -17,6 +17,12 @@ limitations under the License.
 -->
 # Vela
 
+## New repository
+
+The Vela compiler has moved to [Arm's GitLab Instance](https://gitlab.arm.com/artificial-intelligence/ethos-u/ethos-u-vela).
+
+## Introduction
+
 This tool is used to compile a
 [TensorFlow Lite for Microcontrollers](https://www.tensorflow.org/lite/microcontrollers)
 neural network model into an optimised version that can run on an embedded
