@@ -151,7 +151,6 @@ protected:
     MemoryAccess ToMemoryAccess(const HLCFeatureMap &fm, const Box &area, AccessDirection direction);
     // Returns region number used in NPU_SET_..._REGION
     uint32_t ToRegion(const MemArea &memArea);
-    static bool UseZeroPoint0(OpType opType, const HLCFeatureMap &fm, bool isOFM);
     // Checks if the feature map is a scalar, and if so, returns the
     // quantized value in scalarValue.
     static bool IsScalar(const HLCFeatureMap &fm, int32_t &scalarValue);

@@ -2758,6 +2758,31 @@ Operation *TFLiteGraphOptimiser::ConvertPad(Graph *const graph, Operation *const
     return mainOp.get();
 }
 
+Operation *TFLiteGraphOptimiser::ConvertZeroPoint(Graph *const graph, Operation *const operation)
+{
+    UNUSED(graph);
+    auto opType = operation->Type();
+    bool zeroPoint0ForType =
+        opType == OpType::AvgPool || opType == OpType::Resize || opType == OpType::CLZ || opType == OpType::SHL || opType == OpType::Div;
+
+    for ( auto [usage, ifmConn] : operation->Inputs().pairs() )
+    {
+        if ( IsIFM(usage) )
+        {
+            if ( zeroPoint0ForType || DataTypeSizeBits(ifmConn.tensor->Type()) >= 32 )
+                ifmConn.quantization.zeroPoints.clear();
+        }
+    }
+    for ( auto [usage, ofmConn] : operation->Outputs().pairs() )
+    {
+        if ( IsOFM(usage) )
+        {
+            if ( zeroPoint0ForType || opType == OpType::ArgMax ) ofmConn.quantization.zeroPoints.clear();
+        }
+    }
+    return operation;
+}
+
 TFLiteGraphOptimiser::TFLiteGraphOptimiser(IArchitectureConstraints *constraints, const GraphOptimiserOptions &options, OptimiserDatabase *db) :
         GraphOptimiser(constraints, options, db)
 {

@@ -1267,7 +1267,6 @@ static std::vector<std::unique_ptr<SchedulerOperation>> SwapAxes(Architecture *a
         // Connect input/output
         Quantization unitQuantZp = Quantization::Unit();
         unitQuantZp.zeroPoints = tail->quantization.zeroPoints;
-        unitQuantZp.forceZeroPoint = tail->quantization.forceZeroPoint;
         ifmConn->tensor = tail->tensor;
         ifmConn->tensor->consumers.push_back(op.get());
         ifmConn->shape = ifmShape;

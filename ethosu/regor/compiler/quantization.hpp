@@ -42,7 +42,6 @@ public:
     std::vector<int64_t> quantMin;
     std::vector<int64_t> quantMax;
     int dimension = 0;
-    bool forceZeroPoint = false;
 
 public:
     Quantization() = default;
@@ -71,7 +70,6 @@ public:
             quantMin = other.quantMin;
             quantMax = other.quantMax;
             dimension = other.dimension;
-            forceZeroPoint = other.forceZeroPoint;
         }
         return *this;
     }
@@ -86,7 +84,6 @@ public:
             quantMin = std::move(other.quantMin);
             quantMax = std::move(other.quantMax);
             dimension = other.dimension;
-            forceZeroPoint = other.forceZeroPoint;
         }
         return *this;
     }

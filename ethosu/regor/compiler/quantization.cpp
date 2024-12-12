@@ -30,14 +30,14 @@ std::string Quantization::ToString() const
     {
         scale.push_back(fmt::format("(scale:{}, shift:{})", s.scale, s.shift));
     }
-    return fmt::format("scale: [{}], zero_point: [{}], quantMin: [{}], quantMax: [{}], dimension: {}, force_zero_point: {}",
-        fmt::join(scale, ", "), fmt::join(zeroPoints, ", "), fmt::join(quantMin, ", "), fmt::join(quantMax, ", "), dimension, forceZeroPoint);
+    return fmt::format("scale: [{}], zero_point: [{}], quantMin: [{}], quantMax: [{}], dimension: {}",
+        fmt::join(scale, ", "), fmt::join(zeroPoints, ", "), fmt::join(quantMin, ", "), fmt::join(quantMax, ", "), dimension);
 }
 
 bool Quantization::operator==(const Quantization &rhs) const
 {
-    return std::tie(scales, zeroPoints, quantMin, quantMax, dimension, forceZeroPoint) ==
-           std::tie(rhs.scales, rhs.zeroPoints, rhs.quantMin, rhs.quantMax, rhs.dimension, rhs.forceZeroPoint);
+    return std::tie(scales, zeroPoints, quantMin, quantMax, dimension) ==
+           std::tie(rhs.scales, rhs.zeroPoints, rhs.quantMin, rhs.quantMax, rhs.dimension);
 }
 
 bool Quantization::operator!=(const Quantization &rhs) const

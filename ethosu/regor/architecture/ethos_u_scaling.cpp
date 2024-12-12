@@ -82,7 +82,6 @@ Quantization RescalePerChannel(const Quantization &ifmQuant, const Quantization 
     quantResult.quantMin = ofmQuant.quantMin;
     quantResult.quantMax = ofmQuant.quantMax;
     quantResult.dimension = ofmQuant.dimension;
-    quantResult.forceZeroPoint = ofmQuant.forceZeroPoint;
 
     if ( !ifmQuant.scales.empty() && !ofmQuant.scales.empty() && !weightQuant.scales.empty() )
     {

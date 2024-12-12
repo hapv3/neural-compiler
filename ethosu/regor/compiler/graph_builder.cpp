@@ -540,7 +540,6 @@ void GraphBuilder::SetZeroPoint(GraphOperation *graphOp, GraphTensorUsage tensor
     if ( conn )
     {
         conn->quantization.zeroPoints = {int64_t(zeroPoint)};
-        conn->quantization.forceZeroPoint = true;
     }
 }
 

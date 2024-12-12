@@ -165,6 +165,9 @@ private:
     // This is done as fall-back for the PAD operators that remain after ReplacePadByExplicitPadding
     Operation *ConvertPad(Graph *const graph, Operation *const operation);
 
+    // Rewrites zero point as expected by reference
+    Operation *ConvertZeroPoint(Graph *const graph, Operation *const operation);
+
 public:
     // The graph optimisation steps.
     // Order matters, array of rewrites processed in order.
@@ -238,6 +241,7 @@ public:
             {},
             {
                 &TFLiteGraphOptimiser::ConvertPad,
+                &TFLiteGraphOptimiser::ConvertZeroPoint,
             }
         },
         {

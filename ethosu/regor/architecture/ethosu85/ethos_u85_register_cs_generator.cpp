@@ -562,24 +562,6 @@ uint32_t EthosU85RCSGenerator::ToRegion(const MemArea &memArea)
     return uint32_t(region);
 }
 
-bool EthosU85RCSGenerator::UseZeroPoint0(OpType opType, const HLCFeatureMap &fm, bool isOFM)
-{
-    if ( fm.quantization.forceZeroPoint )
-    {
-        return false;
-    }
-    if ( fm.quantization.zeroPoints.empty() || (DataTypeSizeBits(fm.dataType) >= 32 && !isOFM) )
-    {
-        return true;
-    }
-    if ( opType == OpType::ArgMax && isOFM )
-    {
-        return true;
-    }
-    return opType == OpType::AvgPool || opType == OpType::Resize || opType == OpType::CLZ || opType == OpType::SHL || opType == OpType::Div;
-}
-
-
 // Checks if the feature map is a scalar, and if so, returns the
 // quantized value in scalarValue.
 bool EthosU85RCSGenerator::IsScalar(const HLCFeatureMap &fm, int32_t &scalarValue)
@@ -1228,7 +1210,7 @@ void EthosU85RCSGenerator::GenerateIFM(OpType opType, const HLCFeatureMap &fm, c
     }
     // IFM_ZERO_POINT register
     auto &quant = fm.quantization;
-    uint32_t zp = UseZeroPoint0(opType, fm, false) ? 0 : uint32_t(quant.zeroPoints[0]);
+    uint32_t zp = quant.zeroPoints.empty() ? 0 : uint32_t(quant.zeroPoints[0]);
 
     // ifm zero-point is force-emitted if ofm is chained
     Emit(isa::npu_set_ifm_zero_point_t(zp));
@@ -1272,7 +1254,7 @@ void EthosU85RCSGenerator::GenerateIFM2(
     }
     // IFM2_ZERO_POINT register
     auto &quant = fm.quantization;
-    uint32_t zp = UseZeroPoint0(opType, fm, false) ? 0 : uint32_t(quant.zeroPoints[0]);
+    uint32_t zp = quant.zeroPoints.empty() ? 0 : uint32_t(quant.zeroPoints[0]);
 
     // ifm zero-point is force-emitted if ofm is chained
     Emit(isa::npu_set_ifm2_zero_point_t(zp));
@@ -1316,7 +1298,7 @@ void EthosU85RCSGenerator::GenerateOFM(OpType opType, const HLCFeatureMap &fm, c
     }
     // OFM_ZERO_POINT register
     auto &quant = fm.quantization;
-    uint32_t zp = UseZeroPoint0(opType, fm, true) ? 0 : uint32_t(quant.zeroPoints[0]);
+    uint32_t zp = quant.zeroPoints.empty() ? 0 : uint32_t(quant.zeroPoints[0]);
     Emit(isa::npu_set_ofm_zero_point_t(zp));
 }
 
