@@ -1,5 +1,6 @@
 //
 // SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024 Meta Platforms, Inc. and affiliates.
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -67,6 +68,10 @@ private:
         int32_t version;
         tflite::BuiltinOperator type;
         OperatorCodeDesc() = default;
+        OperatorCodeDesc(int8_t _deprecated_builtin_code, const char *_custom_code, int32_t _version, tflite::BuiltinOperator _type) :
+                deprecated_builtin_code(_deprecated_builtin_code), custom_code(_custom_code), version(_version), type(_type)
+        {
+        }
         bool operator==(const OperatorCodeDesc &other) const
         {
             const std::string_view custom_code_a(other.custom_code ? other.custom_code : "");
