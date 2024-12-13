@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -291,7 +291,7 @@ static HLCSubOperation MakeSubOperation(const std::unique_ptr<SchedulerOperation
         }
     }
     MakeFeatureMap(schedOp->OFM(), hlcSubOp.ofm);
-    hlcSubOp._srcKey = schedOp->_srcKey;
+    hlcSubOp._srcId = schedOp->Uid();
 
     if ( schedOp->Type() == OpType::LeakyRelu )
     {
@@ -317,7 +317,7 @@ static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, 
     op->type = schedOp->Type();
     op->kernel = *schedOp->Kernel();
     op->config = opInfo->Config();
-    op->_srcKey = schedOp->_srcKey;
+    op->_srcId = schedOp->Uid();
 
     for ( int i = 0; i < MAX_NUM_IFM; ++i )
     {

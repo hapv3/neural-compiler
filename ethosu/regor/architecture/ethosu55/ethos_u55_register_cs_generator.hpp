@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -272,7 +272,7 @@ protected:
 
 public:
     std::vector<uint32_t> GenerateCommandStream(std::vector<std::unique_ptr<HighLevelCommand>> &highLevelCommandStream,
-        std::vector<std::tuple<void *, int, int>> *cmdRanges, bool verbose) override;
+        CmdRanges *cmdRanges, bool verbose) override;
 
     static uint32_t IdRegister();
     static bool IsSupportedElementwise(const OpType opType);

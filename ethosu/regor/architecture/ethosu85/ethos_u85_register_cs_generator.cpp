@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -1973,7 +1973,7 @@ std::shared_ptr<HLCStripe> EthosU85RCSGenerator::MakeStripeForSubOp(HLCStripe *s
     op->type = subOp.type;
     op->ifm = subOp.ifm;
     op->ofm = subOp.ofm;
-    op->_srcKey = subOp._srcKey;
+    op->_srcId = subOp._srcId;
     if ( IsLUTType(subOp.type) )
     {
         op->parameters.lut = subOp.parameters.lut;
@@ -2003,8 +2003,7 @@ std::shared_ptr<HLCStripe> EthosU85RCSGenerator::MakeStripeForSubOp(HLCStripe *s
 }
 
 bool EthosU85RCSGenerator::GenerateOpGroup(HLCStripe *stripe, HLCStripe *prevOp, MemoryAccesses &memoryAccesses,
-    std::deque<MemoryAccesses> &outstandingDmaAccesses, std::vector<std::pair<unsigned, std::string>> &debugInfo,
-    std::vector<std::tuple<void *, int, int>> *cmdRanges)
+    std::deque<MemoryAccesses> &outstandingDmaAccesses, std::vector<std::pair<unsigned, std::string>> &debugInfo, CmdRanges *cmdRanges)
 {
     assert(stripe->opGroup != nullptr);
     EthosU85OpGroup *opGroup = static_cast<EthosU85OpGroup *>(stripe->opGroup);
@@ -2066,7 +2065,7 @@ bool EthosU85RCSGenerator::GenerateOpGroup(HLCStripe *stripe, HLCStripe *prevOp,
         // Return command mapping information to the caller
         if ( cmdRanges )
         {
-            cmdRanges->emplace_back(stripe->operation->_srcKey, emitStart, _emit.Position());
+            cmdRanges->emplace_back(stripe->operation->_srcId, emitStart, _emit.Position());
         }
 
         if ( isChained )
@@ -2177,8 +2176,8 @@ void EthosU85RCSGenerator::GenerateDMA(const HLCDMA *dma, MemoryAccesses &memory
     }
 }
 
-std::vector<uint32_t> EthosU85RCSGenerator::GenerateCommandStream(std::vector<std::unique_ptr<HighLevelCommand>> &highLevelCommandStream,
-    std::vector<std::tuple<void *, int, int>> *cmdRanges, bool verbose)
+std::vector<uint32_t> EthosU85RCSGenerator::GenerateCommandStream(
+    std::vector<std::unique_ptr<HighLevelCommand>> &highLevelCommandStream, CmdRanges *cmdRanges, bool verbose)
 {
     _emit.Clear();
     _stripeToLutSlot.clear();

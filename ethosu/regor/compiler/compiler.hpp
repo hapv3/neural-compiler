@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -21,6 +21,7 @@
 #include "common/common.hpp"
 
 #include "architecture/architecture.hpp"
+#include "architecture/register_command_stream_generator.hpp"
 #include "database.hpp"
 #include "graph.hpp"
 #include "graph_builder.hpp"
@@ -124,7 +125,7 @@ public:
 
 private:
     bool BuildNetwork(const char *entryGraph);
-    void RecordSubOps(const std::vector<std::unique_ptr<SchedulerOperation>> &scheduleOps);
+    void RecordNPUOp(const NPUOperation &npuOp, const CmdRanges &cmdRanges);
 
     std::unique_ptr<Graph> CompileGraph(std::unique_ptr<Graph> &graph, IncrementalLinearAllocator &readOnlyAllocator,
         std::unordered_map<const Tensor *, Address> &tensorAddressMap);

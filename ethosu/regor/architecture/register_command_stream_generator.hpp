@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -29,12 +29,14 @@
 namespace regor
 {
 
+using CmdRanges = std::vector<std::tuple<UniqueId, int, int>>;
+
 class IRegisterCommandStreamGenerator
 {
 public:
     virtual ~IRegisterCommandStreamGenerator() = default;
-    virtual std::vector<uint32_t> GenerateCommandStream(std::vector<std::unique_ptr<HighLevelCommand>> &highLevelCommandStream,
-        std::vector<std::tuple<void *, int, int>> *genRanges, bool verbose) = 0;
+    virtual std::vector<uint32_t> GenerateCommandStream(
+        std::vector<std::unique_ptr<HighLevelCommand>> &highLevelCommandStream, CmdRanges *cmdRanges, bool verbose) = 0;
     virtual void PrintCommandStream(const std::vector<uint32_t> &stream, std::vector<std::pair<unsigned, std::string>> &debugInfo) = 0;
 };
 

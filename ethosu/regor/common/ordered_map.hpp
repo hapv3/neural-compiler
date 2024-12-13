@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -96,18 +96,17 @@ protected:
     //  - The traversal order list
     struct Node
     {
-        typename std::aligned_storage<sizeof(VALUE), alignof(VALUE)>::type value;  // Untyped value storage (place
-                                                                                   // first)
-        KEY key;                                                                   // Map key
-        INDEXER order_next = NODE_UNLINKED;                                        // order forwards traversal
-        INDEXER order_prev = NODE_UNLINKED;                                        // order backwards traversal
+        alignas(alignof(VALUE)) uint8_t value[sizeof(VALUE)];  // Untyped value storage (place first)
+        KEY key;                                               // Map key
+        INDEXER order_next = NODE_UNLINKED;                    // order forwards traversal
+        INDEXER order_prev = NODE_UNLINKED;                    // order backwards traversal
         INDEXER hash_next = HASH_FREE;  // Same hash collision relocation (-2=free, -1=used/end, otherwise=next bucket)
 
         Node() = default;
 
-        VALUE &Value() { return *reinterpret_cast<VALUE *>(&value); }
+        VALUE &Value() { return *reinterpret_cast<VALUE *>(reinterpret_cast<void *>(&value)); }
 
-        const VALUE &Value() const { return *reinterpret_cast<const VALUE *>(&value); }
+        const VALUE &Value() const { return *reinterpret_cast<const VALUE *>(reinterpret_cast<const void *>(&value)); }
 
         void copy_links(Node &other)
         {

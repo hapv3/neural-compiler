@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -349,18 +349,35 @@ bool Compiler::BuildNetwork(const char *entryGraph)
     return true;
 }
 
-void Compiler::RecordSubOps(const std::vector<std::unique_ptr<SchedulerOperation>> &scheduleOps)
+void Compiler::RecordNPUOp(const NPUOperation &npuOp, const CmdRanges &cmdRanges)
 {
-    if ( _optDb )
+    assert(_optDb);
+    const auto &scheduleOps = npuOp.Operations();
+    ordered_map<UniqueId, SchedulerOperation *> opMap(scheduleOps.size());
+
+    // Record scheduler operations
+    for ( const auto &scheduleOp : scheduleOps )
     {
-        for ( auto &scheduleOp : scheduleOps )
+        opMap.emplace(scheduleOp->Uid(), scheduleOp.get());
+
+        // Add subOps to DB
+        std::vector<const void *> subOpKeys;
+        for ( auto &subOp : scheduleOp->SubOps() )
         {
-            std::vector<const void *> subOpKeys;
-            for ( auto &subOp : scheduleOp->SubOps() )
-            {
-                subOpKeys.push_back(subOp->_srcKey);
-            }
-            _optDb->AddSubOps(scheduleOp->_srcKey, subOpKeys);
+            subOpKeys.push_back(subOp->_srcKey);
+        }
+        _optDb->AddSubOps(scheduleOp->_srcKey, subOpKeys);
+    }
+
+    // Record command stream op ranges for this NPU op
+    int streamId = _optDb->AddStream();
+    for ( auto const &cmd : cmdRanges )
+    {
+        SchedulerOperation *scheduleOp;
+        if ( opMap.try_get(std::get<0>(cmd), scheduleOp) )
+        {
+            assert(scheduleOp);
+            _optDb->AddCommand(scheduleOp->_srcKey, streamId, std::get<2>(cmd) - 1);
         }
     }
 }
@@ -415,9 +432,6 @@ std::unique_ptr<Graph> Compiler::CompileGraph(std::unique_ptr<Graph> &graph,
     SchedulerPacking packing(_architecture.get(), _schedulerOptions.disabled.All(SchedulerFeature::Grouping));
     auto scheduleOps = packing.Process(graph.get());
 
-    // Add subOps to debugDB
-    RecordSubOps(scheduleOps);
-
     // Schedule the linearised operation sequence
     Scheduler scheduler(_architecture.get(), _schedulerOptions, "graph", scheduleOps);
     std::shared_ptr<Schedule> schedule;
@@ -467,7 +481,7 @@ std::unique_ptr<Graph> Compiler::CompileGraph(std::unique_ptr<Graph> &graph,
         auto highLevelCommandStream = hlcsGenerator.GenerateCommandStream(npuOp, schedule.get(), _compilerOptions.verboseHighLevelCommandStream);
 
         // Generate LLCS for output
-        std::vector<std::tuple<void *, int, int>> cmdRanges;
+        CmdRanges cmdRanges;
         auto registerCommandStream = _architecture->RegisterCommandStreamGenerator()->GenerateCommandStream(
             highLevelCommandStream, &cmdRanges, _compilerOptions.verboseRegisterCommandStream);
 
@@ -479,12 +493,9 @@ std::unique_ptr<Graph> Compiler::CompileGraph(std::unique_ptr<Graph> &graph,
 
         if ( _optDb )
         {
-            int streamId = _optDb->AddStream();
-            for ( auto const &cmd : cmdRanges )
-            {
-                _optDb->AddCommand(std::get<0>(cmd), streamId, std::get<2>(cmd) - 1);
-            }
+            RecordNPUOp(*npuOp, cmdRanges);
         }
+
         try
         {
             customOperatorBuilder.Serialise(graphOp, npuOp, registerCommandStream);

@@ -1724,8 +1724,8 @@ void EthosU55RCSGenerator::PrepareCommand(int index, HighLevelCommand *cmd, Temp
 }
 
 
-std::vector<uint32_t> EthosU55RCSGenerator::GenerateCommandStream(std::vector<std::unique_ptr<HighLevelCommand>> &highLevelCommandStream,
-    std::vector<std::tuple<void *, int, int>> *cmdRanges, bool verbose)
+std::vector<uint32_t> EthosU55RCSGenerator::GenerateCommandStream(
+    std::vector<std::unique_ptr<HighLevelCommand>> &highLevelCommandStream, CmdRanges *cmdRanges, bool verbose)
 {
     _emit.Clear();
     _stripeToLutSlot.clear();
@@ -1784,7 +1784,7 @@ std::vector<uint32_t> EthosU55RCSGenerator::GenerateCommandStream(std::vector<st
         // Return command mapping information to the caller
         if ( cmdRanges && cmd->IsStripe() )
         {
-            cmdRanges->emplace_back(static_cast<HLCStripe *>(cmd.get())->operation->_srcKey, emitStart, _emit.Position());
+            cmdRanges->emplace_back(static_cast<HLCStripe *>(cmd.get())->operation->_srcId, emitStart, _emit.Position());
         }
         cmdIndex++;
     }

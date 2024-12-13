@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -231,7 +231,7 @@ protected:
     bool GenerateStripe(HLCStripe *stripe, MemoryAccesses &memoryAccesses);
     std::shared_ptr<HLCStripe> MakeStripeForSubOp(HLCStripe *stripe, HLCSubOperation &subOp);
     bool GenerateOpGroup(HLCStripe *stripe, HLCStripe *prevOp, MemoryAccesses &memoryAccesses, std::deque<MemoryAccesses> &outstandingDmaAccesses,
-        std::vector<std::pair<unsigned, std::string>> &debugInfo, std::vector<std::tuple<void *, int, int>> *cmdRanges);
+        std::vector<std::pair<unsigned, std::string>> &debugInfo, CmdRanges *cmdRanges);
     // Generates register commands for DMA operations
     void GenerateDMA(const HLCDMA *dma, MemoryAccesses &memoryAccesses);
 
@@ -242,7 +242,7 @@ protected:
 
 public:
     std::vector<uint32_t> GenerateCommandStream(std::vector<std::unique_ptr<HighLevelCommand>> &highLevelCommandStream,
-        std::vector<std::tuple<void *, int, int>> *cmdRanges, bool verbose) override;
+        CmdRanges *cmdRanges, bool verbose) override;
     static uint32_t ConfigRegister(int macs, int cmdStreamVersion, int numAxiSram, int numAxiExt, int numWd, int product);
     static bool IsSupportedElementwise(const OpType opType);
     static uint32_t IdRegister();
