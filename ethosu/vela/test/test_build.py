@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -59,7 +59,7 @@ def fixture_source_readme(vela_path: Path) -> str:
 def test_build_correct_readme_links(built_sdist: TarFile, source_readme: str):
     """Test that PKG-INFO file contains README.md metadata with correct links."""
     md_link_pattern = r"(!?\[.+?\]\((.+?)\))"
-    url = "https://review.mlplatform.org/plugins/gitiles/ml/ethos-u/ethos-u-vela/+/refs/tags/3.7.0/"
+    url = "https://gitlab.arm.com/artificial-intelligence/ethos-u/ethos-u-vela/-/blob/3.7.0/"
     # Extract the name of the package
     dist_tar_name = str(built_sdist.name).replace(".gz", "")
     package_name = Path(dist_tar_name).stem

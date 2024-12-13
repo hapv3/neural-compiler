@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright 2021, 2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+SPDX-FileCopyrightText: Copyright 2021, 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 
 SPDX-License-Identifier: Apache-2.0
 
@@ -19,41 +19,34 @@ limitations under the License.
 
 If the Vela community encounters a bug, then we highly encourage the community
 to report it. When issuing a report, use the
-[Maniphest bug tracker](https://developer.mlplatform.org/maniphest/)
-that is part of Phabricator on ML Platform. This site enables any Vela user to
-discuss and share any Vela related issue with the community.
+[Vela issue tracker](https://gitlab.arm.com/artificial-intelligence/ethos-u/ethos-u-vela/-/issues)
+that is part of the Vela project on Arm's GitLab Instance. This site enables any
+Vela user to discuss and share any Vela related issue with the community.
 
 The only prerequisite for this process is a GitHub account, which will be used
-when creating an account on ML platform.
+when creating an account on Arm's GitLab Instance.
 
 If you also have a fix for the bug you have identified, then we encourage
 you to follow the [contributions guide](CONTRIBUTIONS.md).
 
 The bug reporting process in its entirety is detailed below.
 
-## Maniphest bug tracker
+## Vela issue tracker
 
-ML Platform uses a bug tracking system known as
-[Maniphest](https://developer.mlplatform.org/maniphest/),
-which is part of the Phabricator tool set.
+On the Vela issue tracker, one can add active bugs which will then be
+addressable by the Vela community.
 
-On the Maniphest platform, one can add active bugs using the Tasks and Bugs
-tab which will then be addressable by the Vela community.
+The system is accessible directly via the link above.
 
-The system is accessible directly via the link above. Alternatively, one can
-navigate to [ML Platform](https://mlplatform.org) and select the "Developers"
-drop down menu followed by "Development Tracker", which will bring you to
-Phabricator. In order to initiate a bug report, select "Tasks and Bugs".
-
-Anyone can browse the Maniphest bug tracker, since it is a public forum.
+Anyone can browse the Vela issue tracker, since it is a public forum.
 However, in order to file your own ticket you need to be logged in
-to an account on ML Platform. These can be created by clicking "Register" at
-<https://developer.mlplatform.org/auth/> and then linking a GitHub ID.
+to an account on Arm's GitLab Instance. These can be created by clicking
+"GitHub" at <https://gitlab.arm.com/users/sign_in> and then linking a GitHub ID.
 
 ### Proprietary or Sensitive Information
 
-As mentioned previously, ML Platform and the Maniphest Bug tracking system
-are public forums. As such, anyone can see information posted to them.
+As mentioned previously, the Vela issue tracker system is a public forum.
+As such, anyone can see information posted to it.
 Therefore, any proprietary information you wish to share should be done using
 Arm's ML Model Review described below.
 
@@ -90,10 +83,10 @@ As mentioned, the second step is detailed below.
 ### Opening the form
 
 To add a new bug report, navigate to the
-[Bug tracker](https://developer.mlplatform.org/maniphest/).
+[Vela issue tracker](https://gitlab.arm.com/artificial-intelligence/ethos-u/ethos-u-vela/-/issues).
 
-Click the button "+ Create Task" or navigate to
-[the following page](https://developer.mlplatform.org/maniphest/task/edit/form/default/)
+Click the button "New issue" or navigate to
+[the following page](https://gitlab.arm.com/artificial-intelligence/ethos-u/ethos-u-vela/-/issues/new)
 
 ### Title
 
@@ -101,16 +94,9 @@ Write a title that describes the problem in a short and meaningful way.
 An example of a good title is "AssertionError in weight_compressor.py
 when optimizing DS-CNN". An example of a poor title is "Vela crashes on Linux".
 
-### Assigned To
+### Type
 
-Leave this field blank, the report will be assigned when work is started on it.
-
-### Status
-
-If you were able to resolve the bug before submission and this ticket is simply
-a notification to the Vela Community, select the "Resolved" option. Also,
-follow the [contributions guide](CONTRIBUTIONS.md) in order to apply your fix.
-If the bug has not yet been resolved, select the "Open" option instead.
+'Issue' will be preselected and the only option.
 
 ### Description
 
@@ -141,39 +127,28 @@ Attached to the description you can find a toolbox, which contains a button to
 upload files. This shall not be used to upload any network files, instead use
 [ML Model Review](https://www.arm.com/resources/contact-us/ml-model-review).
 
-### Visible To
+### Confidential issues
 
-ML Platform and the Manifest Bug Tracking System are public forums.
+The Vela project and the issue tracker are public forums.
 As such, anyone can see information posted to them.
 
 Thus, any proprietary information you wish to share should be done using Arm's
-[ML Model Review](https://www.arm.com/resources/contact-us/ml-model-review).
+[ML Model Review](https://www.arm.com/resources/contact-us/ml-model-review)
 described below.
 
 Hence, the content of the report should be freely viewable to the public
-and thus the "Public" option should be selected in the "Visility" field.
-
-### Editable by
-
-In this field, restrict the editing privileges to yourself and members of the
-Vela Optimizer group. This is done by selecting "Subscribers" in the
-"Object Policies" entry of the "Editable by" drop down menu.
-
-Proceed by navigating down to the "Subscribers" field and typing in both your
-username and "Vela Optimizer". To clarify, your username and "Vela Optimizer"
-shall be separate entries in the "Subscribers" field.
-
-### Tags
-
-Finally, add "Vela Optimizer" in the "Tags" field. This ensures that the bug
-is directed to the Vela team, enabling a rapid triage of the problem.
+and thus the "This issue is confidential..." option should not be selected.
 
 ### Submitting the report
 
-Submit the report by clicking the "Create New Task" button.
+Submit the report by clicking the "Create issue" button.
 
 A confirmation e-mail will be sent out to the linked e-mail address.
 Any further changes to the report will be sent out in the same way.
+
+If you also have a fix for the issue being reported then please follow the
+[Vela Contributions Guide](CONTRIBUTIONS.md) to submit your patch. Also, please
+include a link to your merge request in the issue description.
 
 ## Arm's [ML Model Review](https://www.arm.com/resources/contact-us/ml-model-review) process.
 

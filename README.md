@@ -17,12 +17,6 @@ limitations under the License.
 -->
 # Vela
 
-## New repository
-
-The Vela compiler has moved to [Arm's GitLab Instance](https://gitlab.arm.com/artificial-intelligence/ethos-u/ethos-u-vela).
-
-## Introduction
-
 This tool is used to compile a
 [TensorFlow Lite for Microcontrollers](https://www.tensorflow.org/lite/microcontrollers)
 neural network model into an optimised version that can run on an embedded
@@ -111,7 +105,7 @@ toolchains are also required
 Vela is available to install as binary wheels or a source distribution from
 [PyPi](https://pypi.org/project/ethos-u-vela/), or as
 source code from
-[ML Platform](https://review.mlplatform.org/plugins/gitiles/ml/ethos-u/ethos-u-vela).
+[Arm's GitLab Instance](https://gitlab.arm.com/artificial-intelligence/ethos-u/ethos-u-vela).
 Both methods will automatically install all the required dependencies.
 
 ### PyPi
@@ -122,15 +116,15 @@ Install Vela from PyPi using the following command:
 pip3 install ethos-u-vela
 ```
 
-### ML Platform
+### Arm's GitLab Instance
 
 First obtain the source code by either downloading the desired TGZ file from:  
-<https://review.mlplatform.org/plugins/gitiles/ml/ethos-u/ethos-u-vela>
+<https://gitlab.arm.com/artificial-intelligence/ethos-u/ethos-u-vela>
 
 Or by cloning the git repository:
 
 ```bash
-git clone https://review.mlplatform.org/ml/ethos-u/ethos-u-vela.git
+git clone https://git.gitlab.arm.com/artificial-intelligence/ethos-u/ethos-u-vela.git
 ```
 
 Once you have the source code, Vela can be installed using the following

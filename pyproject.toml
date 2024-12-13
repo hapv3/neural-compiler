@@ -52,7 +52,7 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://review.mlplatform.org/plugins/gitiles/ml/ethos-u/ethos-u-vela"
+Homepage = "https://gitlab.arm.com/artificial-intelligence/ethos-u/ethos-u-vela"
 
 [project.scripts]
 vela = "ethosu.vela.vela:main"
