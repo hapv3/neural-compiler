@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -214,31 +214,6 @@ Shape ShapeFromTens(const Tensor *tens)
         if ( size > 0 ) return Shape(tens->shape()->data(), size);
     }
     return Shape();
-}
-
-Shape _getSliceOffsets(Shape input_shape, const Tensor *offset_tens, int offset_mask, BufferOffsetRef buffers, bool is_begin)
-{
-    Shape offsets(nullptr, input_shape.Size());
-    for ( int i = 0; i < input_shape.Size(); i++ )
-    {
-        // For strided slice operator: get start or end offsets
-        if ( !is_begin )
-        {
-            offsets[i] = CheckedAdd(offsets[i], input_shape[i]);
-        }
-        // If the i:th bit in the mask is not set then the value in offset_tens[i] should be used, otherwise it
-        // should be ignored
-        if ( (offset_mask & (1 << i)) == 0 )
-        {
-            offsets[i] = DataFromBuffer<int>(buffers, offset_tens->buffer(), i);
-            if ( offsets[i] < 0 )
-            {
-                // Convert negative indexing to positive ones
-                offsets[i] = CheckedAdd(offsets[i], input_shape[i]);
-            }
-        }
-    }
-    return offsets;
 }
 
 void ConstraintEmptyConstTensors(const Model &m_model)
@@ -659,35 +634,6 @@ void ConstraintPadOutputShape(const Operator &op, const SubGraph &subgraph, cons
     }
 }
 
-void ConstraintSliceRanges(const Operator &op, const SubGraph &subgraph, const BuiltinOperator &builtinOperator, BufferOffsetRef buffers)
-{
-    auto ifm = TensorFromUsage(regor::TensorUsage::IFM, op, builtinOperator, *subgraph.tensors());
-    auto ifmShape = ShapeFromTens(ifm);
-
-    auto begin = TensorFromUsage(MakeTensorUsage(regor::TensorUsage::Params, 0), op, builtinOperator, *subgraph.tensors());
-    auto end = TensorFromUsage(MakeTensorUsage(regor::TensorUsage::Params, 1), op, builtinOperator, *subgraph.tensors());
-    auto StridedSliceOptions = CheckedPtr(op.builtin_options_as_StridedSliceOptions());
-
-    auto begin_mask = StridedSliceOptions->begin_mask();
-    auto end_mask = StridedSliceOptions->end_mask();
-    auto shrink_axis_mask = StridedSliceOptions->shrink_axis_mask();
-
-    auto offsetBegin = _getSliceOffsets(ifmShape, begin, begin_mask, buffers, true);
-    auto offsetEnd = _getSliceOffsets(ifmShape, end, end_mask, buffers, false);
-    assert(offsetBegin.Size() == ifmShape.Size() && offsetEnd.Size() == ifmShape.Size());
-
-    for ( int i = 0; i < ifmShape.Size(); i++ )
-    {
-        // Note: Vela does some options handling here, which I'm guessing should be done in the TFLite reader in Regor.
-        if ( offsetEnd[i] <= offsetBegin[i] && (shrink_axis_mask & (1 << i)) == 0 )
-        {
-            std::string constraint = "Slice end values must be greater than begin values";
-            std::string extra = fmt::format("Offset begin={}, Offset end={}", offsetBegin.ToString(), offsetEnd.ToString());
-            throw InvalidTfLiteException(constraint, extra, op, subgraph, builtinOperator);
-        }
-    }
-}
-
 void ConstraintMatchingInputsTypes(const Operator &op, const SubGraph &subgraph, const BuiltinOperator &builtinOperator, BufferOffsetRef)
 {
     auto ifm = TensorFromUsage(regor::TensorUsage::IFM, op, builtinOperator, *subgraph.tensors());
@@ -994,7 +940,6 @@ regor::ordered_map<BuiltinOperator, OpCheckVec> GetSpecificConstraints()
 
     // StridedSliceSpecificChecks
     specificOpConstraints[BuiltinOperator::STRIDED_SLICE].emplace_back(&ConstraintStridedsliceInputCount);
-    specificOpConstraints[BuiltinOperator::STRIDED_SLICE].emplace_back(&ConstraintSliceRanges);
 
     // FullyConnectedSpecificChecks
     specificOpConstraints[BuiltinOperator::FULLY_CONNECTED].emplace_back(&ConstraintKeepDimIfmOfm);
