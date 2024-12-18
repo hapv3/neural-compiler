@@ -21,6 +21,7 @@
 
 #include <cassert>
 #include <cstdint>
+#include <limits>
 #include <string>
 
 namespace regor
@@ -196,7 +197,9 @@ inline constexpr int DataTypeStorageSizeBytes(DataType type, int elements)
     const int storageBits = DataTypeStorageSizeBits(type);
     const int bits = IsPacked(type) ? DataTypeSizeBits(type) : storageBits;
     assert(storageBits >= 8);
-    return (((elements * bits) + storageBits - 1) / storageBits) * (storageBits / 8);
+    int64_t result = (((int64_t(elements) * bits) + storageBits - 1) / storageBits) * (storageBits / 8);
+    assert(result < std::numeric_limits<int>::max());
+    return int(result);
 }
 
 
