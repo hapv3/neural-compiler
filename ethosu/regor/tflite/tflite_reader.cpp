@@ -553,14 +553,6 @@ void TfLiteReader::ParseOperatorOptions(const std::shared_ptr<Operation> &operat
                 auto biasTens = std::make_shared<Tensor>(weight_tensor->Name() + "_bias", biasType, Shape(1, 1, 1, elems), buf);
                 operation->ConnectInput(TensorUsage::Scales, biasTens);
             }
-            if ( options->keep_num_dims() )
-            {
-                auto &ofmShape = operation->Output(TensorUsage::OFM)->shape;
-                assert(ofmShape[1] <= weight_tensor->StorageShape()[0]);
-                ofmShape = Shape(ofmShape[0], ofmShape[1]);
-                auto &ifmShape = operation->Input(TensorUsage::IFM)->shape;
-                ifmShape = Shape(ofmShape[0], ifmShape[-1]);
-            }
         }
         break;
 
