@@ -71,4 +71,17 @@ inline Shape ReshapeTo3DAroundEdges(const Shape &shape, int minAxis = 1)
     return ReshapeTo3D(shape, {1, shape.Size() - 2, 1}, minAxis);
 }
 
+inline Shape ReshapeToNHWC(Shape shape)
+{
+    if ( !shape.IsValid() )
+    {
+        shape = {0, 0, 0, 0};
+    }
+    int batch = shape.AxisProduct(0, shape.Size() - 3);
+    shape = Shape::PadAxes(shape, 4, 1).Extract(0, -3, -2, -1);
+    shape[0] = batch;
+    return shape;
+}
+
+
 }  // namespace regor

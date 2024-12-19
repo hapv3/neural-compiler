@@ -22,6 +22,7 @@
 #include "common/logging.hpp"
 
 #include "architecture/architecture.hpp"
+#include "compiler/shape_util.hpp"
 #include "ethos_u85.hpp"
 
 namespace regor
@@ -63,8 +64,11 @@ CycleCost EthosU85Performance::MeasureCycleCostForSparsity(const PerformanceQuer
 CycleCost EthosU85Performance::MeasureCycleCost(const PerformanceQuery &query, const std::vector<FusionQuery> &fused)
 {
     CycleCost cycles;
+    EthosU85Cycles cycleComponents;
+
     auto npuOp = _arch->GetHWOp(query.type);
     const bool sparse = query.weightFormat & WeightFormat::Sparse2_4;
+    const bool recordToDb = _db && _nextId != -1;
     // Convolution/Vector product cycle calculation
     if ( OpUsesMacs(npuOp) )
     {
@@ -79,14 +83,21 @@ CycleCost EthosU85Performance::MeasureCycleCost(const PerformanceQuery &query, c
         }
         cycles.macs /= sparse ? 2 : 1;
 
-        cycles.opCycles = EstimateConvCycles(query, fused);
+        cycleComponents = EstimateConvCycles(query, fused);
+        cycles.opCycles = cycleComponents.cycles;
     }
     // Elementwise cycle calculation
     else if ( npuOp == EthosU85NpuOp::Elementwise )
     {
+        auto [totCCPerElem, aoCCPerElem, cmdCCPerElem] = EstimateOutputCyclesPerElement(query, fused);
         auto ofmShape =
             (query.ofmFormat == TensorFormat::NHCWB16) ? Shape::RoundAway(query.ofmShape, Shape(1, 1, 1, 16)) : query.ofmShape;
-        cycles.opCycles = int64_t(EstimateOutputCyclesPerElement(query, fused) * float(ofmShape.Elements()));
+        cycles.opCycles = int64_t(totCCPerElem * float(ofmShape.Elements()));
+        if ( recordToDb )
+        {
+            cycleComponents.aoCycles = int64_t(aoCCPerElem * float(ofmShape.Elements()));
+            cycleComponents.cmdCycles = int64_t(cmdCCPerElem * float(ofmShape.Elements()));
+        }
     }
     // Resize cycle calculation
     else if ( npuOp == EthosU85NpuOp::Resize )
@@ -108,6 +119,32 @@ CycleCost EthosU85Performance::MeasureCycleCost(const PerformanceQuery &query, c
         assert(false && "Unknown operator cycle costing");
     }
 
+    if ( recordToDb )
+    {
+        assert(_mainTable != -1);
+        EthosU85OpConfig *opConfig = static_cast<EthosU85OpConfig *>(query.config);
+
+        std::vector<std::string> row = {
+            OpUsesMacs(npuOp) ? std::to_string(cycleComponents.macCycles) : "",
+            std::to_string(cycleComponents.aoCycles),
+            std::to_string(cycleComponents.cmdCycles),
+            opConfig ? EnumToString(opConfig->Traversal()) : "",
+        };
+        auto shapeToStrings = [&row](const std::vector<int> &shape)
+        {
+            std::transform(shape.begin(), shape.end(), std::back_inserter(row),
+                [](int n) -> std::string { return n ? std::to_string(n) : ""; });
+        };
+
+
+        shapeToStrings(ReshapeToNHWC(opConfig ? opConfig->IfmBlock() : Shape()).ToList<int>());
+        shapeToStrings(ReshapeToNHWC(opConfig ? opConfig->OfmBlock() : Shape()).ToList<int>());
+        shapeToStrings(ReshapeToNHWC(opConfig ? opConfig->OfmUBlock() : Shape()).ToList<int>());
+
+        _db->AddRow(_mainTable, _nextId, std::move(row));
+        _nextId = -1;
+    }
+
     return cycles;
 }
 
@@ -121,7 +158,7 @@ int64_t EthosU85Performance::MemToMemCycles(const ArchitectureMemory *dest, cons
     return std::max(fromCycles, toCycles);
 }
 
-int64_t EthosU85Performance::EstimateConvCycles(const PerformanceQuery &query, const std::vector<FusionQuery> &fused)
+EthosU85Cycles EthosU85Performance::EstimateConvCycles(const PerformanceQuery &query, const std::vector<FusionQuery> &fused)
 {
     EthosU85OpConfig *opConfig = static_cast<EthosU85OpConfig *>(query.config);
     auto npuOp = _arch->GetHWOp(query.type);
@@ -228,7 +265,10 @@ int64_t EthosU85Performance::EstimateConvCycles(const PerformanceQuery &query, c
     {
         numOfmBlks *= std::max(static_cast<float>(query.ofmShape[i]) / ofmBlock[i], 1.0f);
     }
-    int64_t cyclesOutputBlk = int64_t(EstimateOutputCyclesPerElement(query, fused) * float(ofmBlock.Elements()));
+    auto [totCCPerElem, aoCCPerElem, cmdCCPerElem] = EstimateOutputCyclesPerElement(query, fused);
+    auto aoCycles = int64_t(aoCCPerElem * float(ofmBlock.Elements()));
+    auto cmdCycles = int64_t(cmdCCPerElem * float(ofmBlock.Elements()));
+    auto cyclesOutputBlk = int64_t(totCCPerElem * float(ofmBlock.Elements()));
 
     // Scale and bias tensor
     if ( query.constShape.Size() > 0 && query.constShape.Depth() > 0 )
@@ -237,11 +277,15 @@ int64_t EthosU85Performance::EstimateConvCycles(const PerformanceQuery &query, c
         cyclesOutputBlk = std::max(cyclesOutputBlk, int64_t(cyclesBiasBlk));
     }
 
-    int64_t cycles_cmd = EstimateMinimumMemoryCycles(query);
-    cycles_cmd = (cycles_cmd + cyclesOutputBlk + cyclesDpuBlk) / 4;  // Per DPU
+    int64_t cmdCycles2 = EstimateMinimumMemoryCycles(query);
+    cmdCycles2 = (cmdCycles2 + cyclesOutputBlk + cyclesDpuBlk) / 4;  // Per DPU
 
-    cyclesDpuBlk = std::max(cyclesDpuBlk, cycles_cmd);
-    cyclesOutputBlk = std::max(cyclesOutputBlk, cycles_cmd);
+    int64_t cyclesAO = aoCycles * numOfmBlks + cyclesDpuBlk;
+    int64_t cyclesDpu = cyclesDpuBlk * numOfmBlks + cyclesOutputBlk;
+
+    cmdCycles = std::max(cmdCycles, cmdCycles2);
+    cyclesDpuBlk = std::max(cyclesDpuBlk, cmdCycles2);
+    cyclesOutputBlk = std::max(cyclesOutputBlk, cmdCycles2);
 
     int64_t totalCycles = 0;
     if ( cyclesDpuBlk > cyclesOutputBlk )
@@ -251,9 +295,10 @@ int64_t EthosU85Performance::EstimateConvCycles(const PerformanceQuery &query, c
     else
     {
         totalCycles = int64_t(cyclesOutputBlk * numOfmBlks) + cyclesDpuBlk;
+        cmdCycles = cmdCycles * numOfmBlks + cyclesDpuBlk;
     }
 
-    return totalCycles;
+    return {totalCycles, cyclesDpu, cyclesAO, cmdCycles};
 }
 
 static int64_t EstimateMemoryTransfer(int cores, bool isRead, ArchitectureMemory *memory, TensorFormat format,
@@ -342,7 +387,7 @@ int64_t EthosU85Performance::EstimateMinimumMemoryCycles(const PerformanceQuery 
 }
 
 
-float EthosU85Performance::EstimateOutputCyclesPerElement(const PerformanceQuery &query, const std::vector<FusionQuery> &fused)
+EthosU85ElementCycles EthosU85Performance::EstimateOutputCyclesPerElement(const PerformanceQuery &query, const std::vector<FusionQuery> &fused)
 {
     EthosU85OpConfig *opConfig = static_cast<EthosU85OpConfig *>(query.config);
     auto npuOp = _arch->GetHWOp(query.type);
@@ -379,16 +424,18 @@ float EthosU85Performance::EstimateOutputCyclesPerElement(const PerformanceQuery
     }
 
     float cyclesPerElement = std::max(_perfInfo->outputCycles[outputPerfIndex], _perfInfo->activationCycles[activationPerfIndex]);
-
+    float cycleCmd = 0;
+    float aoCyclesPerElement = cyclesPerElement;
     if ( npuOp == EthosU85NpuOp::Elementwise )
     {
         int numElemsBlk = opConfig->OfmBlock().Elements();
         assert(numElemsBlk > 0);
-        float cycleCmd = (float(EstimateMinimumMemoryCycles(query)) / float(numElemsBlk) + cyclesPerElement) / 4.0f;  // per DPU
+        cycleCmd = (float(EstimateMinimumMemoryCycles(query)) / float(numElemsBlk) + cyclesPerElement) / 4.0f;  // per
+                                                                                                                // DPU
         cyclesPerElement = std::max(cyclesPerElement, cycleCmd);
     }
 
-    return cyclesPerElement;
+    return {cyclesPerElement, aoCyclesPerElement, cycleCmd};
 }
 
 ElementAccess EthosU85Performance::MeasureElementAccess(const PerformanceQuery &query)
@@ -563,6 +610,12 @@ int64_t EthosU85Performance::WeightDecodeCycles(
         weightsPerCycle = weightsPerCore * _arch->_cores;
     }
     int64_t decodeCycles = weights.size / weightsPerCycle;
+    if ( _db && _nextId != -1 )
+    {
+        assert(_wdTable != -1);
+        _db->AddRow(_wdTable, _nextId, {std::to_string(decodeCycles)});
+        _nextId = -1;
+    }
 
     MemChannel channel = (format & WeightFormat::Fast) ? MemChannel::FastWeight : MemChannel::Weight;
     int64_t dmaCycles = int64_t(float(weights.encodedSize) / ChannelBW(weightsMemory, channel));
@@ -596,6 +649,40 @@ float EthosU85Performance::ChannelBW(const ArchitectureMemory *mem, const MemCha
     float channelBW = std::min(mem->Bandwidth(), static_cast<float>(mem->MaxBurstLength() * transactionUtil / latency * 0.8));
 
     return channelBW;
+}
+
+void EthosU85Performance::InitDatabase(Database *optDB)
+{
+    _db = optDB;
+    _mainTable = _db->AddTable("perf_debug_main");
+    _wdTable = _db->AddTable("perf_debug_wd");
+
+    std::vector<std::string> columns = {
+        "mac_cycles",
+        "ao_cycles",
+        "cmd_cycles",
+        "traversal",
+    };
+
+    std::vector<std::string> shapes = {"ifm_block", "ofm_block", "ofm_ublock"};
+
+    for ( auto &shape : shapes )
+    {
+        columns.push_back(shape + "_n");
+        columns.push_back(shape + "_h");
+        columns.push_back(shape + "_w");
+        columns.push_back(shape + "_c");
+    }
+    _db->AddColumns(_mainTable, std::move(columns));
+    _db->AddColumns(_wdTable, {"wd_cycles"});
+}
+
+void EthosU85Performance::RecordToDB(int opId)
+{
+    if ( _db )
+    {
+        _nextId = opId;
+    }
 }
 
 }  // namespace regor

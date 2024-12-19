@@ -33,6 +33,21 @@ struct EthosU55PerfInfo
     float activationCycles[3];
 };
 
+struct EthosU55Cycles
+{
+    int64_t cycles;
+    int64_t macCycles;
+    int64_t aoCycles;
+    int64_t cmdCycles;
+};
+
+struct EthosU55ElementCycles
+{
+    float cycles;
+    float aoCycles;
+    float cmdCycles;
+};
+
 /// <summary>
 /// Profiles performance analysis for Ethos-U55
 /// </summary>
@@ -41,6 +56,10 @@ class EthosU55Performance : public ArchitecturePerformance
 protected:
     ArchEthosU55 *_arch;
     const EthosU55PerfInfo *_perfInfo;
+    Database *_db = nullptr;
+    int _nextId = -1;
+    int _mainTable = -1;
+    int _wdTable = -1;
 
 public:
     EthosU55Performance(ArchEthosU55 *arch, const EthosU55PerfInfo *perfInfo);
@@ -54,10 +73,12 @@ public:
     int64_t WeightDecodeCycles(const PerformanceQuery &query, const WeightStats &weights, Flags<WeightFormat> format,
         ArchitectureMemory *weightsMemory) override;
     float ChannelBW(const ArchitectureMemory *mem, MemChannel channel) override;
+    void InitDatabase(Database *optDB) override;
+    void RecordToDB(int opId) override;
 
 private:
-    int64_t EstimateConvCycles(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);
-    float EstimateOutputCyclesPerElement(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);
+    EthosU55Cycles EstimateConvCycles(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);
+    EthosU55ElementCycles EstimateOutputCyclesPerElement(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);
     int64_t EstimateMinimumMemoryCycles(const PerformanceQuery &query);
 };
 

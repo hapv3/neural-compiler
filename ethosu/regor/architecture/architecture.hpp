@@ -28,6 +28,7 @@
 #include "common/scaling.hpp"
 #include "common/shape.hpp"
 #include "common/transpose_type.hpp"
+#include "compiler/database.hpp"
 #include "compiler/kernel.hpp"
 #include "compiler/op_type.hpp"
 #include "compiler/tensor_properties.hpp"
@@ -305,6 +306,8 @@ public:
     virtual int64_t WeightDecodeCycles(const PerformanceQuery &query, const WeightStats &weights,
         Flags<WeightFormat> format, ArchitectureMemory *weightsMemory) = 0;
     virtual float ChannelBW(const ArchitectureMemory *mem, MemChannel channel) = 0;
+    virtual void InitDatabase(Database *db) = 0;
+    virtual void RecordToDB(int opId) = 0;
 };
 
 enum class IniParseResult

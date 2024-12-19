@@ -30,6 +30,13 @@ BEGIN_ENUM_TABLE(regor::MemUsage)
     ADD_ENUM_NAME(Staging)
 END_ENUM_TABLE()
 
+BEGIN_ENUM_TABLE(regor::TensorFormat)
+    ADD_ENUM_NAME(Unknown)
+    ADD_ENUM_NAME(NHWC)
+    ADD_ENUM_NAME(NHCWB16)
+    ADD_ENUM_NAME(WeightsEncoded)
+END_ENUM_TABLE()
+
 namespace regor
 {
 

@@ -32,12 +32,13 @@ namespace regor
 /// <summary>
 /// Performance information for a whole schedule
 /// </summary>
-enum AccessType
+enum class AccessType
 {
     Lut = 0,
     FeatureMap = 1,
     Weights = 2,
     Scales = 3,
+    Last,
 };
 
 struct PerformanceResult
@@ -146,8 +147,8 @@ private:
         SchedulerOperation *prevOp, SchedulerOpInfo *prevCost, const std::unordered_set<ArchitectureMemory *> &memories);
     PerformanceResult EstimateFullOpPerformance(
         SchedulerOperation *schedOp, SchedulerOpInfo *cost, SchedulerOperation *prevOp, SchedulerOpInfo *prevCost);
-    void AddToDatabase(const PerformanceResult &perf, SchedulerOperation *schedOp, int opTable, int columns,
-        const std::unordered_set<ArchitectureMemory *> &memories, OptimiserDatabase *optDb);
+    void AddToDatabase(const PerformanceResult &perf, SchedulerOperation *schedOp, SchedulerOpInfo *cost, int opTable,
+        int perfDebugTable, const std::unordered_set<ArchitectureMemory *> &memories, OptimiserDatabase *optDb);
 };
 
 

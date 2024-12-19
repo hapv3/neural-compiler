@@ -20,6 +20,7 @@
 
 #include "common/common.hpp"
 
+#include "compiler/shape_util.hpp"
 #include "database.hpp"
 #include "graph_optimiser.hpp"
 
@@ -50,13 +51,14 @@ PerformanceResult NetworkPerformance::Measure(Schedule *schedule, OptimiserDatab
         _arch->LUTMemory().memory, _arch->StagingMemory().memory});
     std::unordered_set<MemArea, MemArea::hash> regions(
         {_arch->ReadonlyMemory(), _arch->FeatureMapMemory(), _arch->LUTMemory(), _arch->StagingMemory()});
-    int opTable = 0;
-    int opTableColumnCount = 0;
     std::unordered_set<UniqueId> tensorUids;
+    int opTable = 0;
+    int perfDebugTable = 0;
 
     if ( optDb )
     {
         db = optDb->Get();
+        _arch->Performance()->InitDatabase(db);
         opTable = db->AddTable("perf");
         std::vector<std::string> columns = {
             "source_id",
@@ -74,7 +76,102 @@ PerformanceResult NetworkPerformance::Measure(Schedule *schedule, OptimiserDatab
             columns.push_back(label);
         }
         db->AddColumns(opTable, columns);
-        opTableColumnCount = int(columns.size());
+
+        perfDebugTable = db->AddTable("perf_debug");
+
+        columns = {};
+        const std::vector<std::string> shapeColumns = {
+            "ifm_shape",
+            "ifm2_shape",
+            "ofm_shape",
+            "ifm_slice",
+            "ifm2_slice",
+            "ofm_slice",
+            "ifm_stripe",
+            "ifm2_stripe",
+            "ofm_stripe",
+        };
+
+        for ( auto &shape : shapeColumns )
+        {
+            columns.push_back(shape + "_n");
+            columns.push_back(shape + "_h");
+            columns.push_back(shape + "_w");
+            columns.push_back(shape + "_c");
+        }
+
+        columns.insert(columns.end(),
+            {
+                "ifm_memory",
+                "ifm2_memory",
+                "ofm_memory",
+                "ifm_format",
+                "ifm2_format",
+                "ofm_format",
+                "ifm_dtype",
+                "ifm2_dtype",
+                "ofm_dtype",
+                "ifm_pre_buffering",
+                "ifm2_pre_buffering",
+                "ifm_buffering",
+                "ifm2_buffering",
+                "reverse_type",
+                "transpose_type",
+                "time_index",
+                "cascade",
+                "weight_format",
+                "weight_dtype",
+                "weight_total_bytes",
+                "weight_max_range_bytes",
+                "weight_sub_streams",
+                "weight_distinct",
+                "weight_zero",
+                "scales_dtype",
+                "scales_total_bytes",
+                "scales_max_range_bytes",
+                "ofm_depth_slices",
+                "weight_pre_buffer",
+                "weight_buffering",
+                "weight_transfer_cycles",
+                "kernel_depth_multiplier",
+            });
+
+        columns.emplace_back("kernel_padding_T");
+        columns.emplace_back("kernel_padding_B");
+        columns.emplace_back("kernel_padding_L");
+        columns.emplace_back("kernel_padding_R");
+        columns.emplace_back("kernel_padding_N");
+        columns.emplace_back("kernel_padding_F");
+
+        const std::vector<std::string> xyzColumns = {
+            "kernel_size",
+            "kernel_dilation",
+            "kernel_stride",
+        };
+        for ( auto &xyzCol : xyzColumns )
+        {
+            columns.push_back(xyzCol + "_x");
+            columns.push_back(xyzCol + "_y");
+            columns.push_back(xyzCol + "_z");
+        }
+
+        for ( const auto &mem : memories )
+        {
+            columns.push_back(mem->Name() + EnumToString(AccessType::Lut) + "_ac");
+            columns.push_back(mem->Name() + EnumToString(AccessType::Lut) + "_read");
+            columns.push_back(mem->Name() + EnumToString(AccessType::Lut) + "_write");
+            columns.push_back(mem->Name() + EnumToString(AccessType::FeatureMap) + "_ac");
+            columns.push_back(mem->Name() + EnumToString(AccessType::FeatureMap) + "_read");
+            columns.push_back(mem->Name() + EnumToString(AccessType::FeatureMap) + "_write");
+            columns.push_back(mem->Name() + EnumToString(AccessType::Weights) + "_ac");
+            columns.push_back(mem->Name() + EnumToString(AccessType::Weights) + "_read");
+            columns.push_back(mem->Name() + EnumToString(AccessType::Weights) + "_write");
+            columns.push_back(mem->Name() + EnumToString(AccessType::Scales) + "_ac");
+            columns.push_back(mem->Name() + EnumToString(AccessType::Scales) + "_read");
+            columns.push_back(mem->Name() + EnumToString(AccessType::Scales) + "_write");
+        }
+
+        db->AddColumns(perfDebugTable, std::move(columns));
     }
 
     for ( auto const &schedOp : _ops )
@@ -97,7 +194,7 @@ PerformanceResult NetworkPerformance::Measure(Schedule *schedule, OptimiserDatab
         }
         if ( optDb != nullptr )
         {
-            AddToDatabase(perf, schedOp.get(), opTable, opTableColumnCount, memories, optDb);
+            AddToDatabase(perf, schedOp.get(), cost, opTable, perfDebugTable, memories, optDb);
         }
         performance += perf;
         prevOp = schedOp.get();
@@ -109,7 +206,7 @@ PerformanceResult NetworkPerformance::Measure(Schedule *schedule, OptimiserDatab
             perf = ProcessOpPerformance(subOp.get(), cost, schedule, prevOp, prevCost, memories);
             if ( optDb != nullptr )
             {
-                AddToDatabase(perf, subOp.get(), opTable, opTableColumnCount, memories, optDb);
+                AddToDatabase(perf, subOp.get(), cost, opTable, perfDebugTable, memories, optDb);
             }
             performance += perf;
             prevOp = subOp.get();
@@ -155,8 +252,8 @@ PerformanceResult NetworkPerformance::ProcessOpPerformance(SchedulerOperation *s
 }
 
 
-void NetworkPerformance::AddToDatabase(const PerformanceResult &perf, SchedulerOperation *schedOp, int opTable,
-    int /*opTableColumnCount*/, const std::unordered_set<ArchitectureMemory *> &memories, OptimiserDatabase *optDb)
+void NetworkPerformance::AddToDatabase(const PerformanceResult &perf, SchedulerOperation *schedOp, SchedulerOpInfo *cost,
+    int opTable, int perfDebugTable, const std::unordered_set<ArchitectureMemory *> &memories, OptimiserDatabase *optDb)
 {
     // Per-layer calculations
     assert(optDb != nullptr);
@@ -188,7 +285,110 @@ void NetworkPerformance::AddToDatabase(const PerformanceResult &perf, SchedulerO
         row.push_back(std::to_string(perf.memory.at(mem).AccessCycles()));
     }
 
-    db->AddRow(opTable, schedOp->Index(), std::move(row));
+    db->AddRow(opTable, schedOp->Uid(), std::move(row));
+
+    row = {};
+    auto shapeToStrings = [&row](const std::vector<int> &shape)
+    {
+        std::transform(shape.begin(), shape.end(), std::back_inserter(row),
+            [](int n) -> std::string { return n ? std::to_string(n) : ""; });
+    };
+    // clang-format off
+    // FM shapes
+    shapeToStrings(ReshapeToNHWC(schedOp->IFM(0)->shape).ToList<int>());
+    shapeToStrings(ReshapeToNHWC(schedOp->TryIFM(1) ? schedOp->IFM(1)->shape : Shape()).ToList<int>());
+    shapeToStrings(ReshapeToNHWC(schedOp->OFM()->shape).ToList<int>());
+    // Slice shapes
+    shapeToStrings(ReshapeToNHWC(schedOp->IFM(0)->slice.shape).ToList<int>());
+    shapeToStrings(ReshapeToNHWC(schedOp->TryIFM(1) ? schedOp->IFM(1)->slice.shape : Shape()).ToList<int>());
+    shapeToStrings(ReshapeToNHWC(schedOp->OFM()->slice.shape).ToList<int>());
+    // Stripe shapes
+    shapeToStrings(ReshapeToNHWC(cost->stripeInput[0]).ToList<int>());
+    shapeToStrings(ReshapeToNHWC(schedOp->TryIFM(1) ? cost->stripeInput[1] : Shape()).ToList<int>());
+    shapeToStrings(ReshapeToNHWC(cost->stripe).ToList<int>());
+
+    row.insert(row.end(), {
+        // FM Memory
+        fmt::format("{}", schedOp->IFM(0)->tensor->memArea.memory->Name()),
+        fmt::format("{}", schedOp->TryIFM(1) ? schedOp->IFM(1)->tensor->memArea.memory->Name() : ""),
+        fmt::format("{}", schedOp->OFM()->tensor->memArea.memory->Name()),
+        // Formats
+        fmt::format("{}", EnumToString(schedOp->IFM(0)->tensor->format)),
+        fmt::format("{}", schedOp->TryIFM(1) ? EnumToString(schedOp->IFM(1)->tensor->format) : ""),
+        fmt::format("{}", EnumToString(schedOp->OFM()->tensor->format)),
+        // Data types
+        fmt::format("{}", EnumToString(schedOp->IFM(0)->tensor->dataType)),
+        fmt::format("{}", schedOp->TryIFM(1) ? EnumToString(schedOp->IFM(1)->tensor->dataType) : ""),
+        fmt::format("{}", EnumToString(schedOp->OFM()->tensor->dataType)),
+        // IFM Buffering
+        std::to_string(schedOp->IFM(0)->preBuffer),
+        schedOp->TryIFM(1) ? std::to_string(schedOp->IFM(1)->preBuffer) : "",
+        EnumToString(schedOp->IFM(0)->buffering),
+        schedOp->TryIFM(1) ? EnumToString(schedOp->IFM(1)->buffering) : "",
+        // Transpose and Reverse Types
+        EnumToString(schedOp->OFM()->transpose),
+        EnumToString(schedOp->OFM()->reverse),
+        // Timeindex
+        std::to_string(cost->timeIndex),
+        // Cascade
+        std::to_string(cost->cascade),
+        // Weights
+        cost->npuWeightsTensor ? cost->npuWeightsTensor->config->Format().ToString() : "",
+        cost->npuWeightsTensor ? EnumToString(cost->npuWeightsTensor->dataType) : "",
+        cost->npuWeightsTensor ? std::to_string(cost->npuWeightsTensor->totalWeightBytes) : "",
+        cost->npuWeightsTensor ? std::to_string(cost->npuWeightsTensor->maxRangeBytes) : "",
+        cost->npuWeightsTensor ? std::to_string(cost->npuWeightsTensor->subStreams) : "",
+        cost->npuWeightsTensor ? std::to_string(cost->npuWeightsTensor->distinctWeights) : "",
+        cost->npuWeightsTensor ? std::to_string(cost->npuWeightsTensor->zeroCount) : "",
+        // Scales
+        cost->npuScalesTensor ? EnumToString(cost->npuScalesTensor->dataType) : "",
+        cost->npuScalesTensor ? std::to_string(cost->npuScalesTensor->totalWeightBytes) : "",
+        cost->npuScalesTensor ? std::to_string(cost->npuScalesTensor->maxRangeBytes) : "",
+        // Weight Buffering
+        fmt::format("{}", fmt::join(cost->ofmDepthSlices, "|")),
+        cost->bufferedWeightTensor.tensor ? std::to_string(cost->bufferedWeightTensor.preBuffer) : "",
+        cost->bufferedWeightTensor.tensor ? EnumToString(cost->bufferedWeightTensor.buffering) : "",
+        cost->bufferedWeightTensor.tensor ? std::to_string(cost->fullWeightTransferCycles) : "",
+        // Kernel
+        std::to_string(schedOp->Kernel()->DepthMultiplier()),
+        std::to_string(schedOp->Kernel()->Padding().Top()),
+        std::to_string(schedOp->Kernel()->Padding().Bottom()),
+        std::to_string(schedOp->Kernel()->Padding().Left()),
+        std::to_string(schedOp->Kernel()->Padding().Right()),
+        std::to_string(schedOp->Kernel()->Padding().Near()),
+        std::to_string(schedOp->Kernel()->Padding().Far()),
+        std::to_string(schedOp->Kernel()->Size3D().x),
+        std::to_string(schedOp->Kernel()->Size3D().y),
+        std::to_string(schedOp->Kernel()->Size3D().z),
+        std::to_string(schedOp->Kernel()->Dilation3D().x),
+        std::to_string(schedOp->Kernel()->Dilation3D().y),
+        std::to_string(schedOp->Kernel()->Dilation3D().z),
+        std::to_string(schedOp->Kernel()->Stride3D().x),
+        std::to_string(schedOp->Kernel()->Stride3D().y),
+        std::to_string(schedOp->Kernel()->Stride3D().z),
+    });
+    // clang-format on
+    for ( const auto mem : memories )
+    {
+        // For all usages, add access read and access write:
+        for ( int i = 0; i < int(AccessType::Last); i++ )
+        {
+            if ( perf.memory.at(mem).access.find(static_cast<AccessType>(i)) != perf.memory.at(mem).access.end() )
+            {
+                row.push_back(std::to_string(perf.memory.at(mem).access.at(static_cast<AccessType>(i)).accessCycles));
+                row.push_back(std::to_string(perf.memory.at(mem).access.at(static_cast<AccessType>(i)).bytesRead));
+                row.push_back(std::to_string(perf.memory.at(mem).access.at(static_cast<AccessType>(i)).bytesWritten));
+            }
+            else
+            {
+                row.emplace_back("");
+                row.emplace_back("");
+                row.emplace_back("");
+            }
+        }
+    }
+
+    db->AddRow(perfDebugTable, schedOp->Uid(), std::move(row));
 }
 
 
@@ -200,7 +400,22 @@ PerformanceResult NetworkPerformance::EstimateFullOpPerformance(
     PerformanceQuery query = Scheduler::InitPerfQuery(schedOp, cost->Config(), -1, wgtFormat);
     std::vector<FusionQuery> fused = Scheduler::InitFusionQuery(schedOp);
 
+    // Memory that NPU will source weights from for operations
+    ArchitectureMemory *weightsMemory = cost->npuWeightsTensor ? cost->npuWeightsTensor->memArea.memory : nullptr;
+
+    _arch->Performance()->RecordToDB(schedOp->Uid());
     CycleCost cycles = _arch->Performance()->MeasureCycleCost(query, fused);
+
+    if ( cost->npuWeightsTensor )
+    {
+        WeightStats weightStats;
+        weightStats.size = cost->npuWeightsTensor->totalSourceBytes;
+        weightStats.encodedSize = cost->npuWeightsTensor->totalWeightBytes;
+        weightStats.zeroCount = cost->npuWeightsTensor->zeroCount;
+        weightStats.distinctWeights = cost->npuWeightsTensor->distinctWeights;
+        _arch->Performance()->RecordToDB(schedOp->Uid());
+        _arch->Performance()->WeightDecodeCycles(query, weightStats, query.weightFormat, weightsMemory);
+    }
 
     PerformanceResult result;
     result.npuCycles = cycles.opCycles;
@@ -237,9 +452,6 @@ PerformanceResult NetworkPerformance::EstimateFullOpPerformance(
             result.memory[dstMemory].access[AccessType::Lut].bytesWritten += copySize;
         }
     }
-
-    // Memory that NPU will source weights from for operations
-    ArchitectureMemory *weightsMemory = cost->npuWeightsTensor ? cost->npuWeightsTensor->memArea.memory : nullptr;
 
     if ( weightsMemory && cost->bufferedWeightTensor.tensor )
     {

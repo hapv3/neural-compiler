@@ -284,6 +284,7 @@ regor_lib(
         "compiler/scheduler.cpp"
         "compiler/scheduler_decompose.cpp"
         "compiler/scheduler_packing.cpp"
+        "compiler/scheduler_operation.cpp"
         "compiler/softmax.cpp"
         "compiler/tensor.cpp"
         "compiler/tensor_allocator.cpp"
