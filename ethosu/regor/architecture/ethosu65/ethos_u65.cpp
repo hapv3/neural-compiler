@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -46,7 +46,6 @@ static const ArchEthosU55::AcceleratorConfig s_EthosU65Configs[] = {
 
 ArchEthosU65::ArchEthosU65()
 {
-    _rcsGenerator = std::make_unique<EthosU65RCSGenerator>(this);
 }
 
 bool ArchEthosU65::ParseConfig(IniReader *reader)
@@ -79,6 +78,7 @@ bool ArchEthosU65::ParseConfig(IniReader *reader)
     }
 
     ApplyConfig(cfg);
+    _rcsGenerator = std::make_unique<EthosU65RCSGenerator>(this);
 
     return true;
 }
