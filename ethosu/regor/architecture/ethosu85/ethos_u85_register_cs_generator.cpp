@@ -775,7 +775,8 @@ void EthosU85RCSGenerator::GenerateScalingForElementwise(HLCOperation *op)
     if ( ifmCnt == 2 )
     {
         assert(unsigned(input2Scale.shift) < 64);
-        auto ifm2RoundMode = GetIfmRoundingMode(op, 1);
+        // Use ifmRoundeMode since ifmCnt is forced to 2 for LeakyRelu
+        auto ifm2RoundMode = opType == OpType::LeakyRelu ? ifmRoundMode : GetIfmRoundingMode(op, 1);
         Emit(isa::npu_set_ifm2_scale_t(input2Scale.shift, ifmDoubleRound, ifm2RoundMode, input2Scale.scale));
     }
     assert(unsigned(outScale.shift) < 64);
