@@ -416,7 +416,7 @@ This is a list of constraints that the RSQRT operator must satisfy in order to b
 
 - At least one Input's shape must match the OFM's shape
 - IFM and OFM data types must match
-- IFM must be int8
+- IFM must be int8 or uint8
 
 ### Ethos-U55 and Ethos-U65 TFLite SLICE Constraints
 

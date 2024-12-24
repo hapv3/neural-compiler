@@ -1,4 +1,5 @@
 # SPDX-FileCopyrightText: Copyright 2020-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2025 Meta Platforms, Inc. and affiliates.
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -46,7 +47,7 @@ from .lstm import Lstm
 from .lut import convert_to_lut
 from .lut import create_lut_8bit_op
 from .lut import create_lut_int16_op
-from .lut import create_lut_rsqrt_int8_op
+from .lut import create_lut_rsqrt_8bit_op
 from .numeric_util import clamp_sigmoid
 from .numeric_util import full_shape
 from .numeric_util import round_away_zero
@@ -2572,7 +2573,7 @@ def convert_ops_to_lut(op: Operation, arch, nng) -> Operation:
             assert False, f"Unsupported data type {op.ifm.dtype} for {op.type}"
 
     if op.type == Op.Rsqrt:
-        return create_lut_rsqrt_int8_op(op)
+        return create_lut_rsqrt_8bit_op(op)
 
     return op
 
@@ -3008,6 +3009,25 @@ def convert_conv_groups(op: Operation, arch, nng):
 
     return op
 
+def rewrite_rsqrt(op: Operation, arch, nng) -> Operation:
+    if op.type != Op.Rsqrt:
+        return op
+
+    ifm, ofm = op.get_ifm_ofm()
+    if ifm.dtype != DataType.int8 or ifm.dtype != ofm.dtype:
+        return op
+
+    prev_op = ifm.ops[0]
+    next_op = ofm.consumer_list[0]
+
+    if prev_op.type == Op.Quantize and prev_op.ifm.dtype == DataType.uint8:
+        op.set_input_tensor(prev_op.ifm, 0)
+        op.ifm.consumer_list.remove(prev_op)
+
+    if next_op.type == Op.Quantize and next_op.ofm.dtype == DataType.uint8:
+        op.set_output_tensor(next_op.ofm)
+
+    return op
 
 def supported_operator_check(op, arch, nng):
     op.run_on_npu = arch.tflite_supported_operators.is_operator_supported(op)
@@ -3080,6 +3100,16 @@ def tflite_optimise_graph(nng, arch, force_symmetric_int_weights):
             arch,
             [],
             [bypass_memory_only_ops],
+            rewrite_unsupported=False,
+        )
+
+    for idx, sg in enumerate(nng.subgraphs):
+        nng.subgraphs[idx] = rewrite_graph.rewrite_graph_pre_order(
+            nng,
+            sg,
+            arch,
+            [],
+            [rewrite_rsqrt],
             rewrite_unsupported=False,
         )
 

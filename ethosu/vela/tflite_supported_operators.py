@@ -1,4 +1,5 @@
 # SPDX-FileCopyrightText: Copyright 2020-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2025 Meta Platforms, Inc. and affiliates.
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -357,7 +358,7 @@ class TFLiteSupportedOperators:
         self.specific_constraints[op_type].append(TFLiteSupportedOperators.constraint_lstm_weight_dimensions)
 
         # Rsqrt specific checks
-        self.specific_constraints[Op.Rsqrt].append(TFLiteSupportedOperators.constraint_rsqrt_input_int8)
+        self.specific_constraints[Op.Rsqrt].append(TFLiteSupportedOperators.constraint_rsqrt_input_8bit)
 
         # Slice specific checks:
         self.specific_constraints[Op.Slice].append(TFLiteSupportedOperators.constraint_slice_inputs_const)
@@ -1061,10 +1062,10 @@ class TFLiteSupportedOperators:
         return valid, "Op recurrent weights are not 2D"
 
     @staticmethod
-    def constraint_rsqrt_input_int8(op):
-        "IFM must be int8"
+    def constraint_rsqrt_input_8bit(op):
+        "IFM must be int8 or uint8"
         ifm_dtype = op.ifm.dtype
-        valid = ifm_dtype == DataType.int8
+        valid = ifm_dtype == DataType.int8 or ifm_dtype == DataType.uint8
         return valid, f"Op has ifm_dtype={ifm_dtype}"
 
     @staticmethod

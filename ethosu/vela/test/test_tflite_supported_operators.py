@@ -1,4 +1,5 @@
 # SPDX-FileCopyrightText: Copyright 2020-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2025 Meta Platforms, Inc. and affiliates.
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -740,9 +741,9 @@ def test_rsqrt_support():
     # Test supported op (int8)
     op = testutil.create_elemwise_op(Op.Rsqrt, "op", [1, 8, 8, 8], [1, 8, 8, 8], [1, 8, 8, 8], datatype=DataType.int8)
     assert support.is_operator_supported(op)
-    # Test not supported op (uint8)
+    # Test supported op (uint8)
     op = testutil.create_elemwise_op(Op.Rsqrt, "op", [1, 8, 8, 8], [1, 8, 8, 8], [1, 8, 8, 8], datatype=DataType.uint8)
-    assert not support.is_operator_supported(op)
+    assert support.is_operator_supported(op)
     # Test not supported op (int16)
     op = testutil.create_elemwise_op(Op.Rsqrt, "op", [1, 8, 8, 8], [1, 8, 8, 8], [1, 8, 8, 8], datatype=DataType.int16)
     assert not support.is_operator_supported(op)
