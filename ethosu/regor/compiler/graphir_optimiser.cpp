@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -1315,6 +1315,7 @@ Operation *GraphIrOptimiser::RewriteReduceSum(Graph *const graph, Operation *con
                 subOp->ConnectInput(TensorUsage::IFM, reduceSumTens);
                 subOp->ConnectInput(TensorUsage::IFM1, zpTens);
                 subOp->CopyOutput(TensorUsage::OFM, *ofmConn);
+                subOp->Output(TensorUsage::OFM)->Set(ofmConn->rounding);
                 RecordOptimisation(operation, subOp.get());
                 returnOp = subOp.get();
 
