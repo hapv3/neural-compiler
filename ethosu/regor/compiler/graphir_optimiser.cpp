@@ -383,14 +383,15 @@ Operation *GraphIrOptimiser::RemoveReshape(Graph *const graph, Operation *const 
         auto *ifm = ifmConn->tensor.get();
         auto *ofm = ofmConn->tensor.get();
 
-        // Check if ifm/ofm are network ifm/ofm
+        // Check if ifm/ofm are network ifm/ofm or constant
+        bool isIfmConst = ifm->IsConstant();
         bool isIfmSgIfm = IsTensorInVector(graph->Inputs(), ifm);
         bool isOfmSgOfm = IsTensorInVector(graph->Outputs(), ofm);
         bool isIfmSgOfm = IsTensorInVector(graph->Outputs(), ifm);
 
         // TODO: MLBEDSW-9069: Check CPU operator producer/consumer
         // Inserts a copy op if needed before removing reshapes.
-        if ( ((isIfmSgIfm || isIfmSgOfm) && (isOfmSgOfm)) ||
+        if ( ((isIfmSgIfm || isIfmSgOfm || isIfmConst) && (isOfmSgOfm)) ||
              ((ifm->Readers().size() > 1) && (ifm->StorageShape() != ofm->StorageShape() || ifm->AxisOrder() != ofm->AxisOrder())) )
         {
             auto copyOp = InsertCopyOpAfterTensor(ifmConn->tensor, ifmConn->quantization);

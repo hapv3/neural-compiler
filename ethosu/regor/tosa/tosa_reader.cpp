@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -977,9 +977,12 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
             }
 
             // Add graph inputs and outputs
-            for ( auto ten : SafeDeref(tosa_basicblock->inputs()) )
+            if ( tosa_basicblock->inputs() )
             {
-                builder->AddInput(tensors.at(ten->str()));
+                for ( auto ten : SafeDeref(tosa_basicblock->inputs()) )
+                {
+                    builder->AddInput(tensors.at(ten->str()));
+                }
             }
             for ( auto ten : SafeDeref(tosa_basicblock->outputs()) )
             {
