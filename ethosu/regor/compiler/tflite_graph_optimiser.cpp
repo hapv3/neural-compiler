@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -2677,6 +2677,95 @@ Operation *TFLiteGraphOptimiser::ConvertPad(Graph *const graph, Operation *const
         Shape offset = shp0.WithHeight(top).WithWidth(left).WithDepth(ofmShape.Depth() - far);
         MakeMemoryCopyForPad("far", operation, ofmConn, shape, offset);
     }
+    operation->Disconnect();
+    return mainOp.get();
+}
+
+void TFLiteGraphOptimiser::MakeMemoryCopyForMirrorPad(const Operation *operation, TensorConnection *ifmConn, const Shape &readShape,
+    const Shape &readOffset, TensorConnection *ofmConn, const Shape &writeShape, const Shape &writeOffset, ReverseType reverseAxis)
+{
+    auto op = std::make_shared<Operation>(OpType::MemoryCopy);
+
+    op->ConnectInput(TensorUsage::IFM0, ifmConn->tensor).Set(ifmConn->shape).Set(ifmConn->quantization).Set({readOffset, readShape});
+
+    op->ConnectOutput(TensorUsage::OFM, ofmConn->tensor)
+        .Set(ofmConn->shape)
+        .Set(ofmConn->quantization)
+        .Set({writeOffset, writeShape})
+        .Set(RoundMode::NATURAL)
+        .Set(reverseAxis);
+
+    RecordOptimisation(operation, op.get());
+}
+
+Operation *TFLiteGraphOptimiser::ConvertMirrorPad(Graph *const graph, Operation *const operation)
+{
+    UNUSED(graph);
+    if ( operation->Type() != OpType::MirrorPad )
+    {
+        return operation;
+    }
+    const auto &ifmConn = operation->Input(TensorUsage::IFM0);
+    const auto &ifmShape = ifmConn->shape;
+    const auto &ofmConn = operation->Output(TensorUsage::OFM);
+    const auto &ofmShape = ofmConn->shape;
+    const auto &paramsConn = operation->Input(TensorUsage::Params);
+    BufferReader<int> padValues;
+    if ( paramsConn->tensor->Type() == DataType::Int32 )
+    {
+        padValues = paramsConn->tensor->View().Values<int32_t, int>();
+    }
+    else
+    {
+        assert(paramsConn->tensor->Type() == DataType::Int64);
+        padValues = paramsConn->tensor->View().Values<int64_t, int>();
+    }
+    auto pads = paramsConn->tensor->View().Elements();
+    auto padValue = [&](int index) { return (pads > index) ? padValues[index] : 0; };
+    int top = padValue(2);
+    int bottom = padValue(3);
+    int left = padValue(4);
+    int right = padValue(5);
+
+    auto *attr = operation->Attribute<mirror_pad_mode_attr_t>();
+    assert((attr->mode >= tflite::MirrorPadMode::MIN) && (attr->mode <= tflite::MirrorPadMode::MAX));
+    int modeOffset = (attr->mode == tflite::MirrorPadMode::REFLECT) ? 1 : 0;
+
+    // Create MemoryCopy op that copies IFM to the right place inside the OFM
+    Shape zeroShape = ofmShape.WithZeros();
+    auto mainOp = MakeMemoryCopyForConcat(ofmConn, ifmConn, zeroShape.WithHeight(top).WithWidth(left));
+    RecordOptimisation(operation, mainOp.get());
+
+    // Add operations that fill the borders of the OFM
+    if ( top > 0 )
+    {
+        Shape shape = ifmShape.WithHeight(top);
+        Shape readOffset = zeroShape.WithHeight(modeOffset);
+        Shape writeOffset = zeroShape.WithWidth(left);
+        MakeMemoryCopyForMirrorPad(operation, ifmConn, shape, readOffset, ofmConn, shape, writeOffset, ReverseType::H);
+    }
+    if ( bottom > 0 )
+    {
+        Shape shape = ifmShape.WithHeight(bottom);
+        Shape readOffset = zeroShape.WithHeight(ifmShape.Height() - bottom - modeOffset);
+        Shape writeOffset = zeroShape.WithWidth(left).WithHeight(ofmShape.Height() - bottom);
+        MakeMemoryCopyForMirrorPad(operation, ifmConn, shape, readOffset, ofmConn, shape, writeOffset, ReverseType::H);
+    }
+    if ( left > 0 )
+    {
+        Shape shape = ofmShape.WithWidth(left);
+        Shape readOffset = zeroShape.WithWidth(left + modeOffset);
+        Shape writeOffset = zeroShape;
+        MakeMemoryCopyForMirrorPad(operation, ofmConn, shape, readOffset, ofmConn, shape, writeOffset, ReverseType::W);
+    }
+    if ( right > 0 )
+    {
+        Shape shape = ofmShape.WithWidth(right);
+        Shape readOffset = zeroShape.WithWidth(ifmShape.Width() + left - right - modeOffset);
+        Shape writeOffset = zeroShape.WithWidth(ofmShape.Width() - right);
+        MakeMemoryCopyForMirrorPad(operation, ofmConn, shape, readOffset, ofmConn, shape, writeOffset, ReverseType::W);
+    }
+
     operation->Disconnect();
     return mainOp.get();
 }

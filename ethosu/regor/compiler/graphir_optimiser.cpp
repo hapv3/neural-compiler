@@ -1967,10 +1967,10 @@ void GraphIrOptimiser::MoveToConsumer(const Operation *const operation, Operatio
 Operation *GraphIrOptimiser::MoveSplitSliceToConsumer(Graph *const, Operation *const operation)
 {
     auto *ifmConn = operation->Input(TensorUsage::IFM0);
+    auto *ofmConn = operation->Output(TensorUsage::OFM);
 
-    if ( operation->Type() == OpType::MemoryCopy && ifmConn->slice.offset.Size() > 0 )
+    if ( operation->Type() == OpType::MemoryCopy && ifmConn->slice.offset.Size() > 0 && (ofmConn->reverse == ReverseType::None) )
     {
-        auto *ofmConn = operation->Output(TensorUsage::OFM);
         auto *ofm = ofmConn->tensor.get();
 
         // TODO: MLBEDSW-9072: Add check that moving split to consumer is valid

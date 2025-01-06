@@ -30,6 +30,11 @@
 #include <memory>
 #include <string>
 
+namespace tflite
+{
+enum class MirrorPadMode : int8_t;
+}  // namespace tflite
+
 namespace regor
 {
 
@@ -261,6 +266,14 @@ struct pad_attr_t
     END_FIELD_TABLE()
 };
 
+struct mirror_pad_mode_attr_t
+{
+    tflite::MirrorPadMode mode;
+    BEGIN_FIELD_TABLE(mirror_pad_mode_attr_t)
+        ATTR_FIELD(mode, 0)
+    END_FIELD_TABLE()
+};
+
 #define REDUCED_HASH(hash) (hash & 0x000FFFFF)
 
 DynamicRef CreateAttribute(uint32_t hash);
@@ -327,7 +340,6 @@ public:
 
     const Attributes &AttributeRef() const { return _attr; }
 };
-
 
 
 }  // namespace regor

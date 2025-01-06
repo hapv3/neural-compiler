@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -155,6 +155,13 @@ private:
     // This is done as fall-back for the PAD operators that remain after ReplacePadByExplicitPadding
     Operation *ConvertPad(Graph *const graph, Operation *const operation);
 
+    void MakeMemoryCopyForMirrorPad(const Operation *operation, TensorConnection *ifmConn, const Shape &readShape,
+        const Shape &readOffset, TensorConnection *ofmConn, const Shape &writeShape, const Shape &writeOffset, ReverseType reverseAxis);
+
+    // Rewrites MIRROR_PAD operator to a MemoryCopy that copies the IFM to the OFM
+    // followed by up to 4 MemoryCopy operators that append the padding at the borders.
+    Operation *ConvertMirrorPad(Graph *const graph, Operation *const operation);
+
     // Rewrites zero point as expected by reference
     Operation *ConvertZeroPoint(Graph *const graph, Operation *const operation);
 
@@ -220,6 +227,7 @@ public:
                 &TFLiteGraphOptimiser::ConvertScatter,
                 &TFLiteGraphOptimiser::ConvertResize,
                 &TFLiteGraphOptimiser::ConvertTranspose,
+                &TFLiteGraphOptimiser::ConvertMirrorPad,
             }
         },
         {
