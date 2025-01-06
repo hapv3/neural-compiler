@@ -45,6 +45,16 @@ static double ClampSigmoid8(double value)
     return ClampSigmoid(value, 8.0);
 };
 
+enum class PadAxis : int
+{
+    Top = 6,
+    Bottom = 5,
+    Left = 4,
+    Right = 3,
+    Near = 2,
+    Far = 1,
+};
+
 /// <summary>
 /// TFLite Graph optimiser
 /// </summary>
@@ -135,6 +145,10 @@ private:
 
     // Converts RSqrt to a LUT based solution.
     Operation *ConvertRSqrtToLUT(Graph *const graph, Operation *const operation);
+
+    int GetPadValue(BufferReader<int> &padValues, int dimensions, PadAxis axis);
+
+    BufferReader<int> GetPadValuesFromTensor(const std::shared_ptr<Tensor> tensor);
 
     // Based on explicit padding provided in a PAD operation, returns adjusted value for
     // padAfter that provides equivalent results when used with explicit padding

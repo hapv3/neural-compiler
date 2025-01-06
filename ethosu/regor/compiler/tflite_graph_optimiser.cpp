@@ -2514,6 +2514,27 @@ Operation *TFLiteGraphOptimiser::ConvertRSqrtToLUT(Graph *const graph, Operation
     return returnOp;
 }
 
+int TFLiteGraphOptimiser::GetPadValue(BufferReader<int> &padValues, int numPadValues, PadAxis axis)
+{
+    int index = numPadValues - static_cast<int>(axis);
+    return index < 0 ? 0 : padValues[index];
+}
+
+BufferReader<int> TFLiteGraphOptimiser::GetPadValuesFromTensor(const std::shared_ptr<Tensor> tensor)
+{
+    BufferReader<int> padValues;
+    if ( tensor->Type() == DataType::Int32 )
+    {
+        padValues = tensor->View().Values<int32_t, int>();
+    }
+    else
+    {
+        assert(tensor->Type() == DataType::Int64);
+        padValues = tensor->View().Values<int64_t, int>();
+    }
+    return padValues;
+}
+
 // Based on explicit padding provided in a PAD operation, returns adjusted value for
 // padAfter that provides equivalent results when used with explicit padding
 int TFLiteGraphOptimiser::CalcPadAfter(int inputSize, int stride, int filterSize, int padBefore, int padAfter)
@@ -2551,11 +2572,14 @@ Operation *TFLiteGraphOptimiser::ReplacePadByExplicitPadding(Graph *const graph,
         {
             return operation;
         }
-        const auto padValues = padOp->Input(MakeTensorUsage(TensorUsage::Params, 0))->tensor->View().Values<int32_t>();
-        int top = padValues[2];
-        int bottom = padValues[3];
-        int left = padValues[4];
-        int right = padValues[5];
+        auto padTensor = padOp->Input(TensorUsage::Params)->tensor;
+        BufferReader<int> padValues = GetPadValuesFromTensor(padTensor);
+        int numPadValues = padTensor->View().Elements();
+        int top = GetPadValue(padValues, numPadValues, PadAxis::Top);
+        int bottom = GetPadValue(padValues, numPadValues, PadAxis::Bottom);
+        int left = GetPadValue(padValues, numPadValues, PadAxis::Left);
+        int right = GetPadValue(padValues, numPadValues, PadAxis::Right);
+
         const auto &k = operation->Kernel();
         const auto &kwh = k->DilatedWH();
         if ( left + right >= kwh.x || top + bottom >= kwh.y )
@@ -2614,24 +2638,15 @@ Operation *TFLiteGraphOptimiser::ConvertPad(Graph *const graph, Operation *const
     const auto &ofmConn = operation->Output(TensorUsage::OFM);
     const auto &ofmShape = ofmConn->shape;
     const auto &paramsConn = operation->Input(TensorUsage::Params);
-    BufferReader<int> padValues;
-    if ( paramsConn->tensor->Type() == DataType::Int32 )
-    {
-        padValues = paramsConn->tensor->View().Values<int32_t, int>();
-    }
-    else
-    {
-        assert(paramsConn->tensor->Type() == DataType::Int64);
-        padValues = paramsConn->tensor->View().Values<int64_t, int>();
-    }
-    auto pads = paramsConn->tensor->View().Elements();
-    auto padValue = [&](int index) { return (pads > index) ? padValues[index] : 0; };
-    int top = padValue(2);
-    int bottom = padValue(3);
-    int left = padValue(4);
-    int right = padValue(5);
-    int near = padValue(6);
-    int far = padValue(7);
+
+    BufferReader<int> padValues = GetPadValuesFromTensor(paramsConn->tensor);
+    int numPadValues = paramsConn->tensor->View().Elements();
+    int top = GetPadValue(padValues, numPadValues, PadAxis::Top);
+    int bottom = GetPadValue(padValues, numPadValues, PadAxis::Bottom);
+    int left = GetPadValue(padValues, numPadValues, PadAxis::Left);
+    int right = GetPadValue(padValues, numPadValues, PadAxis::Right);
+    int near = GetPadValue(padValues, numPadValues, PadAxis::Near);
+    int far = GetPadValue(padValues, numPadValues, PadAxis::Far);
 
     // Create MemoryCopy op that copies IFM to the right place inside the OFM
     Shape shp0 = ofmShape.WithZeros();
@@ -2706,22 +2721,13 @@ Operation *TFLiteGraphOptimiser::ConvertMirrorPad(Graph *const graph, Operation 
     const auto &ofmConn = operation->Output(TensorUsage::OFM);
     const auto &ofmShape = ofmConn->shape;
     const auto &paramsConn = operation->Input(TensorUsage::Params);
-    BufferReader<int> padValues;
-    if ( paramsConn->tensor->Type() == DataType::Int32 )
-    {
-        padValues = paramsConn->tensor->View().Values<int32_t, int>();
-    }
-    else
-    {
-        assert(paramsConn->tensor->Type() == DataType::Int64);
-        padValues = paramsConn->tensor->View().Values<int64_t, int>();
-    }
-    auto pads = paramsConn->tensor->View().Elements();
-    auto padValue = [&](int index) { return (pads > index) ? padValues[index] : 0; };
-    int top = padValue(2);
-    int bottom = padValue(3);
-    int left = padValue(4);
-    int right = padValue(5);
+
+    BufferReader<int> padValues = GetPadValuesFromTensor(paramsConn->tensor);
+    int numPadValues = paramsConn->tensor->View().Elements();
+    int top = GetPadValue(padValues, numPadValues, PadAxis::Top);
+    int bottom = GetPadValue(padValues, numPadValues, PadAxis::Bottom);
+    int left = GetPadValue(padValues, numPadValues, PadAxis::Left);
+    int right = GetPadValue(padValues, numPadValues, PadAxis::Right);
 
     auto *attr = operation->Attribute<mirror_pad_mode_attr_t>();
     assert((attr->mode >= tflite::MirrorPadMode::MIN) && (attr->mode <= tflite::MirrorPadMode::MAX));

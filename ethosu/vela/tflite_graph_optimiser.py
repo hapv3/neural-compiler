@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2020-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2020-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -1916,15 +1916,15 @@ def convert_mirror_pad(op: Operation, arch, nng):
     if op.type != Op.MirrorPad or not op.run_on_npu:
         return op
 
-    _, (top, bot), (left, right), _ = op.ifm2.values
+    top, left, bot, right, _, _ = get_pad_values_from_input(op.ifm2.values)
     mode = op.attrs["mode"]  # 0 = reflect, 1 = symmetric
 
     ifm = op.ifm
     ofm = op.ofm
     ofm.ops = []
     elem_size = 2 if ofm.dtype == DataType.int16 else 1
-    n, h, w, c = ifm.shape
-    _, oh, ow, _ = ofm.shape
+    n, h, w, c = Shape4D(ifm.shape)
+    _, oh, ow, _ = Shape4D(ofm.shape)
     # Force linear format on OFM to allow negative stride multipliers
     ofm.force_linear_format = True
 
