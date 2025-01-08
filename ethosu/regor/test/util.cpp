@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -20,6 +20,9 @@
 
 #include "common/data_type.hpp"
 #include "common/ini_reader.hpp"
+
+#include <mutex>
+#include <thread>
 
 using namespace regor;
 
@@ -182,14 +185,38 @@ std::shared_ptr<SchedulerTensor> CreateSchedulerTensor(const std::string &name, 
     return schedTensor;
 }
 
+static struct temporary_op_scope_t
+{
+    std::vector<std::shared_ptr<Operation>> _ops;
+    std::mutex _lock;
+
+    void add_op(const std::shared_ptr<Operation> &op)
+    {
+        std::lock_guard lock(_lock);
+        _ops.push_back(op);
+    }
+
+    ~temporary_op_scope_t()
+    {
+        try
+        {
+            for ( const auto &op : _ops )
+                op->Disconnect();
+        }
+        catch ( std::bad_weak_ptr & )
+        {
+        }
+    }
+} s_ops;
+
+
 // Create a SchedulerOperation with unary input
 std::unique_ptr<SchedulerOperation> CreateSchedulerOperation(OpType opType, TensorUsage ifmUsage,
     std::shared_ptr<SchedulerTensor> &ifm, TensorUsage ofmUsage, std::shared_ptr<SchedulerTensor> &ofm)
 {
     // use static vector to keep operation reference alive
-    static std::vector<std::shared_ptr<Operation>> ops;
     auto op = CreateOperation(opType, ifmUsage, ifm->srcTensor, ofmUsage, ofm->srcTensor);
-    ops.push_back(op);
+    s_ops.add_op(op);
 
     auto schedOp = std::make_unique<SchedulerOperation>(opType);
     schedOp->_srcKey = static_cast<void *>(op.get());
