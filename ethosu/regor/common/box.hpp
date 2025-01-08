@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -40,6 +40,9 @@ public:
     }
 
     Box(const Shape &end) : Box(end.WithZeros(), end) {}
+
+    Shape &Start() { return _start; }
+    Shape &End() { return _end; }
 
     const Shape &Start() const { return _start; }
     const Shape &End() const { return _end; }

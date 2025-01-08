@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -227,6 +227,11 @@ public:
     Shape operator%(const Shape &other) const { return Shape::MaxFunc<std::modulus<int32_t>, false, 1>(*this, other); }
 
     Shape operator/(const Shape &other) const { return Shape::MaxFunc<std::divides<int32_t>, false, 1>(*this, other); }
+
+    Shape operator*(const Shape &other) const
+    {
+        return Shape::MaxFunc<std::multiplies<int32_t>, false, 1>(*this, other);
+    }
 
     Shape operator*(int scale) const { return Shape::ScalarFunc<std::multiplies<int32_t>>(*this, scale); }
 

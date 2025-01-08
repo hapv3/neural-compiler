@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -992,8 +992,12 @@ void EthosU55RCSGenerator::GenerateOFM(OpType opType, const HLCFeatureMap &fm, c
     Emit(isa::npu_set_ofm_base2_t(tiles.address[2]));
     Emit(isa::npu_set_ofm_base3_t(tiles.address[3]));
     // OFM size
-    Emit(isa::npu_set_ofm_height_m1_t(DivRoundUp(boxSize.Height(), fm.stepXY.y) - 1));
-    Emit(isa::npu_set_ofm_width_m1_t(DivRoundUp(boxSize.Width(), fm.stepXY.x) - 1));
+    unsigned heightM1 = DivRoundUp(boxSize.Height(), fm.stepXY.y) - 1;
+    unsigned widthM1 = DivRoundUp(boxSize.Width(), fm.stepXY.x) - 1;
+    assert(isa::npu_set_ofm_height_m1_t(heightM1).get_height_m1() == heightM1);
+    assert(isa::npu_set_ofm_width_m1_t(widthM1).get_width_m1() == widthM1);
+    Emit(isa::npu_set_ofm_height_m1_t(heightM1));
+    Emit(isa::npu_set_ofm_width_m1_t(widthM1));
     // Tile related registers
     Emit(isa::npu_set_ofm_height0_m1_t(tiles.height0 - 1));
     Emit(isa::npu_set_ofm_height1_m1_t(tiles.height1 - 1));
@@ -1264,6 +1268,7 @@ void EthosU55RCSGenerator::InsertTransposeCommand(const HLCStripe *stripe, Tempo
     assert(ifm.format == TensorFormat::NHWC);
     assert(ofm.format == TensorFormat::NHWC);
     assert(ifm.shape.Size() <= 4);
+    assert(((ofm.transpose == TransposeType::NWHC) || !ifm.slice.shape || (ifm.shape == ifm.slice.shape)) && "Implementation cannot be sliced");
     ifm.shape = Shape::PadAxes(ifm.shape, 4, 0);
     Shape outShape = ifm.shape.Permute(unsigned(ofm.transpose));
 
@@ -1308,6 +1313,8 @@ void EthosU55RCSGenerator::InsertTransposeCommand(const HLCStripe *stripe, Tempo
         if ( NonZeroNybbles(swapMask) == 2 )
         {
             int elementSize = DataTypeSizeBits(ofm.dataType) / 8;
+            // Activation element size must be supported since EthosU55 ignores channel stride for NHWC format tensors
+            assert(elementSize <= 2);
 
             // Can only swap 2 axes at once using this method
             int from;
@@ -1315,18 +1322,20 @@ void EthosU55RCSGenerator::InsertTransposeCommand(const HLCStripe *stripe, Tempo
             from = ifm.shape.Size() - 1 - from;
             to = ifm.shape.Size() - 1 - to;
 
+            // May be decomposing NWHC in depth
+            Shape sliceShape = ifm.slice.shape ? ifm.slice.shape : ifm.shape;
+
             // Place the swappable axes in H/W (works in elements here)
-            outFM.shape = Shape(1, ifm.shape[from], ifm.shape[to], 1);
             int depth = 1, slices = 1;
             int ifmStep = 0;
             int ofmStep = 0;
 
             // Not all elements participate in the transposed axes
-            if ( outFM.shape.Elements() != ifm.shape.Elements() )
+            if ( (sliceShape[from] * sliceShape[to]) != sliceShape.Elements() )
             {
                 if ( ofm.transpose == TransposeType::NWHC )
                 {
-                    depth = ifm.shape.Depth();
+                    depth = sliceShape.Depth();
                     slices = 1;
                     ifmStep = ofmStep = 0;
                     assert(from == 1 && to == 2);
@@ -1355,9 +1364,12 @@ void EthosU55RCSGenerator::InsertTransposeCommand(const HLCStripe *stripe, Tempo
             // Recalculate destination as same as source but with output different strides
             outFM.shape = Shape(1, ifm.shape[from], ifm.shape[to], depth * elementSize);
             inFM.shape = outFM.shape;
-            // Shapes are measured in terms of bytes, not elements.
-            outFM.dataType = DataType::Int8;
-            inFM.dataType = DataType::Int8;
+            // Input address (potential depth slices)
+            inFM.address = AddressForCoordinate(ifm, ifm.strides, ifm.slice.offset);
+            inFM.slice.offset = inFM.slice.offset.WithZeros();
+            // Output address (potential depth slices)
+            outFM.address = AddressForCoordinate(ofm, ofm.strides, ofm.slice.offset);
+            outFM.slice.offset = outFM.slice.offset.WithZeros();
 
             // Special case for IFM with sparse strides
             if ( (slices > 1) && (ofm.transpose == TransposeType::NCWH) )
@@ -1368,7 +1380,7 @@ void EthosU55RCSGenerator::InsertTransposeCommand(const HLCStripe *stripe, Tempo
             else
             {
                 outFM.strides = Shape(1, elementSize * depth, elementSize * depth * outFM.shape.Height(), elementSize);
-                inFM.strides = Shape::GetStridesForShape(inFM.shape, 1);
+                inFM.strides = Shape::GetStridesForShape(inFM.shape, elementSize);
             }
 
             // Repeat the transpose at advancing offsets for each slice
@@ -1525,6 +1537,8 @@ void EthosU55RCSGenerator::GeneratePoolingOp(const HLCStripe *stripe, MemoryAcce
     auto pad = stripe->padding;
     auto padSum = pad.top + pad.left + pad.bottom + pad.right;
     bool useGlobalScale = !op->scales;
+    HLCStripe modifiedStripe(nullptr);
+
     if ( _arch->UseAvgPoolNop(op->type) )
     {
         assert(op->kernel.Size() == Point2i(1, 1));
@@ -1532,6 +1546,28 @@ void EthosU55RCSGenerator::GeneratePoolingOp(const HLCStripe *stripe, MemoryAcce
         assert(op->kernel.Dilation() == Point2i(1, 1));
         assert(op->kernel.DepthMultiplier() == 1);
         assert(useGlobalScale);
+        assert(op->ifm.size() > 0);
+        // Op is being used as a 32-bit unscaled memory copy but
+        // we do not support more than 16-bit activations so adjust
+        // the tensor types and strides.
+        if ( op->type == OpType::MemoryCopy && (op->ifm[0].dataType == op->ofm.dataType) && DataTypeSizeBits(op->ofm.dataType) == 32 )
+        {
+            assert(op->ifm[0].format == TensorFormat::NHWC);
+            assert(op->ofm.format == TensorFormat::NHWC);
+            modifiedStripe = *stripe;
+            op->ifm[0].dataType = DataType::Int16;
+            op->ifm[0].shape[-1] *= 2;
+            op->ifm[0].strides[-1] /= 2;
+            modifiedStripe.ifmAreas[0].Start() = modifiedStripe.ifmAreas[0].Start() * Shape(2);
+            modifiedStripe.ifmAreas[0].End() = modifiedStripe.ifmAreas[0].End() * Shape(2);
+
+            op->ofm.dataType = DataType::Int16;
+            op->ofm.shape[-1] *= 2;
+            op->ofm.strides[-1] /= 2;
+            modifiedStripe.ofmArea.Start() = modifiedStripe.ofmArea.Start() * Shape(2);
+            modifiedStripe.ofmArea.End() = modifiedStripe.ofmArea.End() * Shape(2);
+            stripe = &modifiedStripe;
+        }
     }
     GenerateCommon(stripe, useGlobalScale, RCSIfmScaleMode::OPA_OPB_16, memoryAccesses);
     GenerateOFMScalingForPooling(op, useGlobalScale);
