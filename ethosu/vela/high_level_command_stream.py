@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2020-2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2020-2023, 2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -179,7 +179,7 @@ class Box:
         return Block.from_shape(self.get_size_shape())
 
     def __str__(self):
-        return "<Box %s - %s>" % (self.start_coord, self.end_coord)
+        return "<Box %s - %s>" % ([int(x) for x in self.start_coord], [int(x) for x in self.end_coord])
 
     __repr__ = __str__
 

@@ -349,6 +349,18 @@ TileBox EthosU55RCSGenerator::GetTiles(const HLCFeatureMap &fm, const Shape &str
     }
     int fmSize = fm.AllocationSizeBytes();
     tiles.address[0] = AddressForCoordinate(fm, strides, area.Start());
+    auto elementSize = DataTypeSizeBits(fm.dataType) / 8;
+    auto depth = fm.shape.Depth();
+    if ( fm.reverse == ReverseType::H )
+    {
+        assert(fm.format == TensorFormat::NHWC);
+        tiles.address[0] += (tiles.height0 - 1) * fm.shape.Width() * depth * elementSize;
+    }
+    if ( fm.reverse == ReverseType::W )
+    {
+        assert(fm.format == TensorFormat::NHWC);
+        tiles.address[0] += (tiles.width0 - 1) * depth * elementSize;
+    }
     assert(fm.address <= tiles.address[0] && tiles.address[0] < fm.address + fmSize);
     if ( area.End().Width() > crossingX )
     {
@@ -1008,6 +1020,17 @@ void EthosU55RCSGenerator::GenerateOFM(OpType opType, const HLCFeatureMap &fm, c
     Emit(isa::npu_set_ofm_width0_m1_t(tiles.width0 - 1));
     Emit(isa::npu_set_ofm_depth_m1_t(boxSize.Depth() - 1));
     // OFM_STRIDE registers
+    // Make X/Y stride negative if the OFM should be reversed in that axis.
+    if ( fm.reverse == ReverseType::H )
+    {
+        assert(fm.format == TensorFormat::NHWC);
+        strides = strides.WithHeight(-strides.Height());
+    }
+    if ( fm.reverse == ReverseType::W )
+    {
+        assert(fm.format == TensorFormat::NHWC);
+        strides = strides.WithWidth(-strides.Width());
+    }
     Emit(isa::npu_set_ofm_stride_y_t(strides.Height() * fm.stepXY.y));
     Emit(isa::npu_set_ofm_stride_x_t(strides.Width() * fm.stepXY.x));
     Emit(isa::npu_set_ofm_stride_c_t(strides.Depth()));

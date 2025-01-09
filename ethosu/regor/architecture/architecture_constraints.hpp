@@ -102,6 +102,7 @@ public:
     virtual TransposeSupport SupportsTranspose(OpType opType, TransposeType transposeType) = 0;
     virtual bool SupportsAccumulatorSaveRestore() = 0;
     virtual bool SupportsLeakyRelu(bool quantized, DataType type) = 0;
+    virtual bool SupportsNegativeStrides() = 0;
 
     bool CanExecute(const ExecutionQuery &query)
     {

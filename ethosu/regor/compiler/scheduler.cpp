@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -207,6 +207,11 @@ static int UpdateSchedulerTensor(Architecture *arch, TensorUsage usage, Schedule
 
     // Force linear output from Reverse for C dimension because brick output from Reverse has special requirements
     if ( IsOFM(usage) && conn->reverse == ReverseType::C )
+    {
+        tensor->needsLinearFormat = true;
+    }
+    // Force linear format for any reversal using negative striding
+    if ( arch->Constraints()->SupportsNegativeStrides() && conn->reverse != ReverseType::None )
     {
         tensor->needsLinearFormat = true;
     }

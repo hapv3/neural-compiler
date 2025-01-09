@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -41,6 +41,7 @@ public:
     bool SupportsArgMax(OpType opType) override;
     bool SupportsCast(OpType opType, DataType ifmType, DataType ofmType) override;
     bool SupportsNonMatchingShapes(const Shape &ifmShape, const Shape &ifm2Shape, const Shape &ofmShape) override;
+    bool SupportsNegativeStrides() override { return true; };
 
 private:
     ArchEthosU55 *_arch;
