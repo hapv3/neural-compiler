@@ -1,5 +1,5 @@
 #
-# SPDX-FileCopyrightText: Copyright 2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2023,2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -33,19 +33,3 @@ set(CMAKE_AR ${_CXX_COMPILER_AR})
 find_program(_CXX_COMPILER_RANLIB "${CMAKE_TOOLCHAIN_PREFIX}ranlib" REQUIRED)
 set(CMAKE_CXX_COMPILER_RANLIB ${_CXX_COMPILER_RANLIB})
 set(CMAKE_RANLIB ${_CXX_COMPILER_RANLIB})
-
-# Find GCC base path and use it
-find_program(_GCC_PATH gcc REQUIRED)
-get_filename_component(_GCC_PATH ${_GCC_PATH} DIRECTORY)
-add_compile_options(--gcc-toolchain=${_GCC_PATH}/..)
-add_link_options(--gcc-toolchain=${_GCC_PATH}/..)
-
-# Add system headers from GCC
-execute_process(COMMAND cpp -xc++ -Wp,-v /dev/null OUTPUT_QUIET ERROR_VARIABLE cpp_out)
-string(REPLACE " " ";" cpp_out "${cpp_out}")
-string(REPLACE "\n" ";" cpp_out "${cpp_out}")
-foreach (e ${cpp_out})
-    if (IS_DIRECTORY "${e}")
-        include_directories(SYSTEM ${e})
-    endif()
-endforeach()
