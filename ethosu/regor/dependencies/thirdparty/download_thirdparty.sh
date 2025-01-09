@@ -1,4 +1,22 @@
 #!/bin/bash
+#
+# SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the License); you may
+# not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an AS IS BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
 # Script to download and prune the required thirdparty software.
 # The script should be run from the directory in which it resides. It uses
 # git clone to fetch the required software before copying just the files that
@@ -28,7 +46,7 @@ __HERE_DOC__
 
 
 # FlatBuffers
-version=v24.3.25
+version=v24.12.23
 clone_url=https://github.com/google/flatbuffers.git
 output_dir=${cwd}/flatbuffers
 thirdparty_md_text+="\n* FlatBuffers [${version}](https://github.com/google/flatbuffers/releases/tag/${version}) - \n"
@@ -42,7 +60,7 @@ cp -r ${download_dir}/include ${output_dir}
 git add ${output_dir}
 
 # fmt
-version=10.2.1
+version=11.1.1
 clone_url=https://github.com/fmtlib/fmt.git
 output_dir=${cwd}/fmt
 thirdparty_md_text+="\n* fmt [${version}](https://github.com/fmtlib/fmt/releases/tag/${version}) - \n"
@@ -57,7 +75,7 @@ cp -r ${download_dir}/src ${output_dir}
 git add ${output_dir}
 
 # Catch2
-version=v3.5.3
+version=v3.8.0
 clone_url=https://github.com/catchorg/Catch2.git
 output_dir=${cwd}/Catch2
 thirdparty_md_text+="\n* Catch2 [${version}](https://github.com/catchorg/Catch2/releases/tag/${version}) - \n"
@@ -94,7 +112,7 @@ cp -r ${download_dir}/internal ${output_dir}
 git add ${output_dir}
 
 # pybind11
-version=v2.11.1
+version=v2.13.6
 clone_url=https://github.com/pybind/pybind11.git
 output_dir=${cwd}/pybind11
 thirdparty_md_text+="\n* pybind11 [${version}](https://github.com/pybind/pybind11/releases/tag/${version}) - \n"

@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -22,7 +22,7 @@
 
 #include "common/bit_flags.hpp"
 
-BEGIN_ENUM_TABLE(ReverseType)
+BEGIN_ENUM_TABLE(regor::ReverseType)
     ADD_ENUM_NAME(None)
     ADD_ENUM_NAME(C)
     ADD_ENUM_NAME(W)
@@ -33,6 +33,8 @@ BEGIN_ENUM_TABLE(ReverseType)
     ADD_ENUM_NAME(Dynamic)
 END_ENUM_TABLE()
 
+namespace regor
+{
 // Calculate a bitmask of the reversed axes for the operation
 Flags<ReverseType> ToReverseMask(const Shape &shape, int ofmRank)
 {
@@ -53,3 +55,5 @@ Flags<ReverseType> ToReverseMask(const Shape &shape, int ofmRank)
     }
     return mask;
 }
+
+}  // namespace regor

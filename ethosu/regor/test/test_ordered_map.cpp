@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2022-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2022-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -1210,7 +1210,7 @@ TEST_CASE("ordered_map: .at behaviour")
         auto &text2 = map.at(333);  // throws, jumping past the REQUIRE(false)
         REQUIRE(false);
     }
-    catch ( std::out_of_range &ex )
+    catch ( std::out_of_range & )
     {
     }
 }

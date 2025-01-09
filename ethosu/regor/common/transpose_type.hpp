@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -21,6 +21,8 @@
 #include <cassert>
 #include <cstdint>
 
+namespace regor
+{
 enum class TransposeType : uint32_t
 {
     C = 0x0,
@@ -37,6 +39,7 @@ enum class TransposeType : uint32_t
 
 inline constexpr TransposeType operator>>(TransposeType type, uint32_t size)
 {
+    assert(size < 32);
     return TransposeType(uint32_t(type) >> size);
 }
 
@@ -49,3 +52,5 @@ inline constexpr bool IsNone(TransposeType type)
 {
     return type == TransposeType::None;
 }
+
+}  // namespace regor

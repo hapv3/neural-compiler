@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -22,6 +22,8 @@
 
 TEST_CASE("TransposeType ToReverseMask")
 {
+    using namespace regor;
+
     Flags<ReverseType> C = ReverseType::C;
     Flags<ReverseType> W = ReverseType::W;
     Flags<ReverseType> H = ReverseType::H;

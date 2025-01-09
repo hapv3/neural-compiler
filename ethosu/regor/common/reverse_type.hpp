@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -20,6 +20,8 @@
 #include "common/bit_flags.hpp"
 #include "common/shape.hpp"
 
+namespace regor
+{
 enum class ReverseType : uint32_t
 {
     None = 0x0,
@@ -33,3 +35,5 @@ enum class ReverseType : uint32_t
 };
 
 Flags<ReverseType> ToReverseMask(const Shape &shape, int ofmRank);
+
+}  // namespace regor

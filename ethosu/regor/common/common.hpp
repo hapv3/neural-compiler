@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -52,19 +52,9 @@
 #include <string_view>
 #include <type_traits>
 
-template<typename ENUMTYPE, std::enable_if_t<std::is_enum_v<ENUMTYPE>, int> = 0>
-constexpr std::underlying_type_t<ENUMTYPE> format_as(ENUMTYPE e) noexcept
-{
-    return static_cast<std::underlying_type_t<ENUMTYPE>>(e);
-}
-
 namespace regor
 {
-template<typename ENUMTYPE, std::enable_if_t<std::is_enum_v<ENUMTYPE>, int> = 0>
-constexpr std::underlying_type_t<ENUMTYPE> format_as(ENUMTYPE e) noexcept
-{
-    return static_cast<std::underlying_type_t<ENUMTYPE>>(e);
-}
+using fmt::enums::format_as;
 }  // namespace regor
 
 #define DECLARE_ENUM_AS_FLAGS(ENUM_) \

@@ -22,7 +22,10 @@ namespace Detail {
         const int hexThreshold = 255;
 
         struct Endianness {
-            enum Arch { Big, Little };
+            enum Arch : uint8_t {
+                Big,
+                Little
+            };
 
             static Arch which() {
                 int one = 1;
@@ -239,13 +242,13 @@ std::string StringMaker<unsigned char>::convert(unsigned char value) {
     return ::Catch::Detail::stringify(static_cast<char>(value));
 }
 
-int StringMaker<float>::precision = 5;
+int StringMaker<float>::precision = std::numeric_limits<float>::max_digits10;
 
 std::string StringMaker<float>::convert(float value) {
     return Detail::fpToString(value, precision) + 'f';
 }
 
-int StringMaker<double>::precision = 10;
+int StringMaker<double>::precision = std::numeric_limits<double>::max_digits10;
 
 std::string StringMaker<double>::convert(double value) {
     return Detail::fpToString(value, precision);

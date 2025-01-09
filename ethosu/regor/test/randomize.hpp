@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -56,8 +56,16 @@ namespace
 template<typename T, std::enable_if_t<std::numeric_limits<T>::is_integer, int> = 0>
 void randomize(T &value, T min_value = std::numeric_limits<T>::min(), T max_value = std::numeric_limits<T>::max())
 {
-    std::uniform_int_distribution<T> dist(min_value, max_value);
-    value = dist(default_rnd_generator);
+    if constexpr ( sizeof(T) == 1 )
+    {
+        std::uniform_int_distribution<int> dist(min_value, max_value);
+        value = T(dist(default_rnd_generator));
+    }
+    else
+    {
+        std::uniform_int_distribution<T> dist(min_value, max_value);
+        value = dist(default_rnd_generator);
+    }
 }
 
 // Usage:

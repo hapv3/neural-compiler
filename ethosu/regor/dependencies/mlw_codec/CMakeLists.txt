@@ -1,5 +1,5 @@
 #
-# SPDX-FileCopyrightText: Copyright 2022-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2022-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -21,7 +21,7 @@ cmake_policy(SET CMP0063 NEW)
 project(mlw_codec VERSION 1.0 DESCRIPTION "MLW Codec" LANGUAGES C CXX)
 include(GNUInstallDirs)
 
-if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+if (NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Debug)
 endif()
 
