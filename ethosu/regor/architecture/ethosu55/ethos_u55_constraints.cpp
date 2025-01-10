@@ -102,9 +102,10 @@ bool EthosU55Constraints::SupportsFusedRescale(
         else if ( npuOp == EthosU55NpuOp::Elementwise && globalScale )
         {
             bool fromTypeSupported = (IsInteger(fromType) && (fromBits == 8 || fromBits == 16)) || fromType == DataType::Int32;
-            if ( opType == OpType::Mul && fromType == DataType::Int32 )
+            if ( fromType == DataType::Int32 )
             {
-                return quantization.scales.front().scale == 1;  // Only shift supported for MUL int32
+                // For 32-bit operations scale is not applied but shift is
+                return quantization.scales.front().scale == 1;
             }
             if ( opType == OpType::Minimum || opType == OpType::Maximum || opType == OpType::Asr ||
                  opType == OpType::SHL || opType == OpType::CLZ || opType == OpType::LeakyRelu )
