@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright 2021, 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+SPDX-FileCopyrightText: Copyright 2021, 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 
 SPDX-License-Identifier: Apache-2.0
 
@@ -27,7 +27,7 @@ The only prerequisite for this process is a GitHub account, which will be used
 when creating an account on Arm's GitLab Instance.
 
 If you also have a fix for the bug you have identified, then we encourage
-you to follow the [contributions guide](CONTRIBUTIONS.md).
+you to follow the [contributions guide](CONTRIBUTING.md).
 
 The bug reporting process in its entirety is detailed below.
 
@@ -147,7 +147,7 @@ A confirmation e-mail will be sent out to the linked e-mail address.
 Any further changes to the report will be sent out in the same way.
 
 If you also have a fix for the issue being reported then please follow the
-[Vela Contributions Guide](CONTRIBUTIONS.md) to submit your patch. Also, please
+[Vela Contributions Guide](CONTRIBUTING.md) to submit your patch. Also, please
 include a link to your merge request in the issue description.
 
 ## Arm's [ML Model Review](https://www.arm.com/resources/contact-us/ml-model-review) process.

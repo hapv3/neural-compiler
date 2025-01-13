@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright 2020-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+SPDX-FileCopyrightText: Copyright 2020-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 
 SPDX-License-Identifier: Apache-2.0
 
@@ -343,7 +343,7 @@ report bugs.
 
 ## Contributions
 
-Please see [Vela Contributions](CONTRIBUTIONS.md).
+Please see [Vela Contributions](CONTRIBUTING.md).
 
 ## Debug Database
 

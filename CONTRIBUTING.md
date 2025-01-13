@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright 2020-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+SPDX-FileCopyrightText: Copyright 2020-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 
 SPDX-License-Identifier: Apache-2.0
 
@@ -27,13 +27,17 @@ formatting and linting tools described in [Vela Testing](TESTING.md)
 
 ## Submitting
 
-In order to submit a contribution push your patch to the
-[Vela GitLab project](https://gitlab.arm.com/artificial-intelligence/ethos-u/ethos-u-vela)
-using the address `git@git.gitlab.arm.com:artificial-intelligence/ethos-u/ethos-u-vela.git`.
+In order to submit a contribution to the
+[Vela GitLab project](https://gitlab.arm.com/artificial-intelligence/ethos-u/ethos-u-vela), 
+please read and follow the 
+[Arm GitLab contributions guide](https://gitlab.arm.com/documentation/contributions)
+on how to create a fork of the project.
 To do this you will need to sign-in to the platform using a GitHub account and
-add your SSH key under your settings. If there is a problem adding the SSH key make sure
-there is a valid email address in the Email Addresses field.  
-In the commit message please include a Signed-off-by (described below).
+add your SSH key under your settings.  If there is a problem adding the SSH key
+make sure there is a valid email address in the Email Addresses field.  
+In the commit message please include a Signed-off-by (described below).  
+When the merge request is created, make sure the target project is
+`artificial-intelligence/ethos-u/ethos-u-vela` and the target branch is `main`.
 
 
 ## Contribution Guidelines

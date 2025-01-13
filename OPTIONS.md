@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright 2020-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+SPDX-FileCopyrightText: Copyright 2020-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 
 SPDX-License-Identifier: Apache-2.0
 
@@ -641,8 +641,9 @@ vela network.tflite --accelerator-config ethos-u55-256 --config Arm/vela.ini --s
 Hardware vendors and/or users may wish to contribute their own configuration
 files for various SoC platforms by adding a .ini file in an appropriate
 directory under the ethosu/config_files directory.  This can be done by
-following the process outlined in CONTRIBUTIONS.md. These can then be accessed
-with `--config <DirectoryName>/config.ini` as in the example above.
+following the process outlined in [CONTRIBUTING.md](CONTRIBUTING.md).  These can
+then be accessed with `--config <DirectoryName>/config.ini` as in the example
+above.
 
 To use configuration files located outside the config_files directory, provide
 its absolute path to `--config`. The `--list-config-files` option can be used to
