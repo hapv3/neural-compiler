@@ -83,31 +83,31 @@ bool EthosU85Constraints::SupportsReverse(OpType opType, ReverseType reverseType
     return true;
 }
 
-bool EthosU85Constraints::SupportsFusedRescale(
-    OpType opType, TensorUsage tensorUsage, DataType fromType, DataType toType, const Quantization &quantization)
+bool EthosU85Constraints::SupportsFusedRescale(OpType opType, TensorUsage tensorUsage, DataType rescaleFromType,
+    DataType rescaleToType, DataType opFromType, DataType opToType, const Quantization &quantization)
 {
     auto npuOp = ArchEthosU85::GetHWOp(opType);
     bool globalScale = quantization.scales.size() == 1;
-    int fromBits = DataTypeSizeBits(fromType);
-    int toBits = DataTypeSizeBits(toType);
     bool isUnitScale = quantization.IsUnitScale();
 
     if ( tensorUsage == TensorUsage::IFM )
     {
+        int fromBits = DataTypeSizeBits(rescaleFromType);
+        int toBits = DataTypeSizeBits(opToType);
         if ( npuOp == EthosU85NpuOp::Elementwise && globalScale )
         {
-            bool fromTypeSupported = (IsInteger(fromType) && fromBits == 8) || fromType == DataType::Int16;
-            bool toTypeSupported = (IsInteger(toType) && (toBits == 8 || toBits == 16)) || toType == DataType::Int32;
+            bool fromTypeSupported = (IsInteger(rescaleFromType) && fromBits == 8) || rescaleFromType == DataType::Int16;
+            bool toTypeSupported = (IsInteger(opToType) && (toBits == 8 || toBits == 16)) || opToType == DataType::Int32;
 
             auto &qs = quantization.scales.front();
             // Make sure shift is valid
             if ( qs.shift < 0 || qs.shift > 63 ) return false;
             // Make sure the rescale can be done without clipping
             int64_t zp = quantization.zeroPoints.front();
-            int64_t value = (zp < 0 ? int64_t(IntegerMax(fromType)) : IntegerMin(fromType));
+            int64_t value = (zp < 0 ? int64_t(IntegerMax(rescaleFromType)) : IntegerMin(rescaleFromType));
             value = value - zp;
             value = (value * qs.scale) >> qs.shift;
-            bool noClipping = value >= IntegerMin(toType) && value <= int64_t(IntegerMax(toType));
+            bool noClipping = value >= IntegerMin(rescaleToType) && value <= int64_t(IntegerMax(rescaleToType));
 
             if ( opType == OpType::Div || opType == OpType::Mul )
             {
@@ -122,6 +122,8 @@ bool EthosU85Constraints::SupportsFusedRescale(
     }
     else if ( tensorUsage == TensorUsage::OFM )
     {
+        int fromBits = DataTypeSizeBits(opFromType);
+        int toBits = DataTypeSizeBits(rescaleToType);
         if ( npuOp == EthosU85NpuOp::Convolution || npuOp == EthosU85NpuOp::Depthwise ||
              npuOp == EthosU85NpuOp::Pooling || npuOp == EthosU85NpuOp::VectorProduct )
         {
@@ -134,8 +136,8 @@ bool EthosU85Constraints::SupportsFusedRescale(
         }
         else if ( npuOp == EthosU85NpuOp::Elementwise && globalScale )
         {
-            bool fromTypeSupported = (IsInteger(fromType) && (fromBits == 8 || fromBits == 16)) || fromType == DataType::Int32;
-            if ( opType == OpType::Mul && fromTypeSupported && fromType == DataType::Int32 )
+            bool fromTypeSupported = (IsInteger(opFromType) && (fromBits == 8 || fromBits == 16)) || opFromType == DataType::Int32;
+            if ( opType == OpType::Mul && fromTypeSupported && opFromType == DataType::Int32 )
             {
                 return quantization.scales.front().scale == 1;  // Only shift supported
             }

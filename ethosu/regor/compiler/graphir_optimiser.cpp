@@ -860,12 +860,6 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const graph, Operation *const op
         auto ifmConn = operation->Input(TensorUsage::IFM);
         auto producer = ifmConn->tensor->Writers().size() == 1 ? ifmConn->tensor->Writers().front() : nullptr;
 
-        if ( IsTensorInVector(graph->Outputs(), ifmConn->tensor.get()) )
-        {
-            // If ifm is graph output, fusing it not possible
-            return returnOp;
-        }
-
         // Convert scales to have 0 shift if possible, since this can improve fusing for Ethos-U55/65
         auto ConvertedScales = [](const TensorConnection *conn)
         {
@@ -881,9 +875,11 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const graph, Operation *const op
         };
 
         // Check if there is only one consumer of the output of the rescale and try to fuse to that operation.
-        // Note: For input fusing we cannot have an output zero point on the Rescale operation (since the
+        // Do not fuse if the connecting tensor is also a graph-output.
+        // Note (ZeroPoints): For input fusing we cannot have an output zero point on the Rescale operation (since the
         //       zero point is applied before scaling on inputs), however input zero point is fine.
-        if ( ofmConn->tensor->Readers().size() == 1 && ofmConn->quantization.zeroPoints == Quantization::Unit().zeroPoints )
+        if ( ofmConn->tensor->Readers().size() == 1 && ofmConn->quantization.zeroPoints == Quantization::Unit().zeroPoints &&
+             !IsTensorInVector(graph->Outputs(), ofmConn->tensor.get()) )
         {
             // Propagate rescaling to input of next op
             auto consumer = ofmConn->tensor->Readers().front();
@@ -898,36 +894,46 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const graph, Operation *const op
             {
                 if ( ifm.second.tensor == ofmConn->tensor )
                 {
+                    auto consumerOfmCon = consumer->Output(TensorUsage::OFM);
                     // This is the input of the next operation that consumes the rescaled values,
                     // check that this input does not already have scaling and that fusing is allowed
                     // by the constraints of the architecture.
                     if ( ifm.second.quantization.EqualScales(Quantization::Unit()) &&
                          _constraints->SupportsFusedRescale(consumer->Type(), TensorUsage::IFM, ifmConn->tensor->Type(),
-                             ofmConn->tensor->Type(), ifmQuant) )
+                             ofmConn->tensor->Type(), ifm.second.tensor->Type(), consumerOfmCon->tensor->Type(), ifmQuant) )
                     {
                         // If the consumer is a binary elementwise make sure that both inputs have
                         // the same data type after fusing.
                         if ( IsBinaryElementwise(consumer->Type()) )
                         {
-                            auto otherIfmCon = consumer->Input(
+                            auto consumerOtherIfmCon = consumer->Input(
                                 ofmConn->tensor.get() == consumer->IFM(0) ? TensorUsage::IFM1 : TensorUsage::IFM0);
+
                             auto otherProducer =
-                                otherIfmCon->tensor->Writers().size() == 1 ? otherIfmCon->tensor->Writers().front() : nullptr;
+                                consumerOtherIfmCon->tensor->Writers().size() == 1 ?
+                                    consumerOtherIfmCon->tensor->Writers().front() :
+                                    nullptr;
+
                             // Both ifms must have same type after fusing (no rescale fused to this input case)
-                            bool sameType = otherIfmCon->tensor->Type() == ifmConn->tensor->Type();
+                            bool sameType = consumerOtherIfmCon->tensor->Type() == ifmConn->tensor->Type();
                             // Is there a Rescale for the other ifm
                             if ( otherProducer && otherProducer->Type() == OpType::Rescale )
                             {
                                 // Check if the other ifm rescale can be fused
+                                auto opSign = otherProducer->Attribute<sign_attr_t>();
+                                bool otherFusedTensorInGraphOutputs = IsTensorInVector(
+                                    graph->Outputs(), consumerOtherIfmCon->tensor.get());
+                                bool otherRescaleUnsigned = opSign ? (opSign->input_unsigned || opSign->output_unsigned) : false;
+
                                 auto otherIfmQuant = otherProducer->Input(TensorUsage::IFM)->quantization;
                                 otherIfmQuant.scales = ConvertedScales(otherProducer->Output(TensorUsage::OFM));
-
-                                if ( otherIfmCon->quantization.EqualScales(Quantization::Unit()) &&
+                                if ( consumerOtherIfmCon->quantization.EqualScales(Quantization::Unit()) && !otherRescaleUnsigned && !otherFusedTensorInGraphOutputs &&
                                      _constraints->SupportsFusedRescale(consumer->Type(), TensorUsage::IFM,
-                                         otherProducer->IFM(0)->Type(), otherProducer->OFM()->Type(), otherIfmQuant) )
+                                         otherProducer->IFM(0)->Type(), otherProducer->OFM()->Type(),
+                                         consumerOtherIfmCon->tensor->Type(), consumerOfmCon->tensor->Type(), otherIfmQuant) )
                                 {
-                                    // and if so that both ifms will have the same type, either when this rescale is
-                                    // fused or not.
+                                    // If other input can be fused, check that both ifms will have the same type,
+                                    // either when this rescale is fused or not.
                                     sameType = sameType || otherProducer->IFM(0)->Type() == ifmConn->tensor->Type();
                                 }
                             }
@@ -954,8 +960,10 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const graph, Operation *const op
 
         if ( returnOp == operation && producer && producer->Output(TensorUsage::OFM)->quantization.EqualScales(Quantization::Unit()) &&
              ifmConn->quantization.zeroPoints == Quantization::Unit().zeroPoints &&
-             _constraints->SupportsFusedRescale(
-                 producer->Type(), TensorUsage::OFM, producer->IFM(0)->Type(), ofmConn->tensor->Type(), ofmQuant) )
+             // fused tensor cannot be in graph-outputs
+             !IsTensorInVector(graph->Outputs(), ifmConn->tensor.get()) &&
+             _constraints->SupportsFusedRescale(producer->Type(), TensorUsage::OFM, ifmConn->tensor->Type(),
+                 ofmConn->tensor->Type(), producer->IFM(0)->Type(), producer->OFM()->Type(), ofmQuant) )
         {
             // Propagate rescaling to output of previous op
             producer->CopyOutput(TensorUsage::OFM, *ofmConn);

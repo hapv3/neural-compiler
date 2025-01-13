@@ -31,7 +31,8 @@ public:
     bool SupportsMatMul(OpType opType) override;
     TransposeSupport SupportsTranspose(OpType opType, TransposeType transposeType) override;
     bool SupportsReverse(OpType opType, ReverseType reverseTypeMask) override;
-    bool SupportsFusedRescale(OpType opType, TensorUsage tensorUsage, DataType fromType, DataType toType, const Quantization &quantization) override;
+    bool SupportsFusedRescale(OpType opType, TensorUsage tensorUsage, DataType rescaleFromType, DataType rescaleToType,
+        DataType opFromType, DataType opToType, const Quantization &quantization) override;
     bool SupportsRescale(DataType fromType, DataType toType) override;
     bool SupportsAccumulatorSaveRestore() override { return false; }
     bool SupportsGather(OpType opType) override;

@@ -96,8 +96,8 @@ public:
     virtual ~IArchitectureConstraints() = default;
 
     virtual bool SupportsReverse(OpType opType, ReverseType reverseTypeMask) = 0;
-    virtual bool SupportsFusedRescale(OpType opType, TensorUsage tensorUsage, DataType fromType, DataType toType,
-        const Quantization &quantization) = 0;
+    virtual bool SupportsFusedRescale(OpType opType, TensorUsage tensorUsage, DataType rescaleFromType,
+        DataType rescaleToType, DataType opFromType, DataType opToType, const Quantization &quantization) = 0;
     virtual bool SupportsRescale(DataType fromType, DataType toType) = 0;
     virtual TransposeSupport SupportsTranspose(OpType opType, TransposeType transposeType) = 0;
     virtual bool SupportsAccumulatorSaveRestore() = 0;
