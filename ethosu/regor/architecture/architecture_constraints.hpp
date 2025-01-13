@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -101,6 +101,7 @@ public:
     virtual bool SupportsRescale(DataType fromType, DataType toType) = 0;
     virtual TransposeSupport SupportsTranspose(OpType opType, TransposeType transposeType) = 0;
     virtual bool SupportsAccumulatorSaveRestore() = 0;
+    virtual bool SupportsLeakyRelu(bool quantized, DataType type) = 0;
 
     bool CanExecute(const ExecutionQuery &query)
     {
@@ -141,7 +142,6 @@ public:
     }
 
 protected:
-    virtual bool SupportsLeakyRelu(bool quantized, DataType type) = 0;
     virtual bool SupportsMatMul(OpType opType) = 0;
     virtual bool SupportsGather(OpType opType) = 0;
     virtual bool SupportsScatter(OpType opType) = 0;

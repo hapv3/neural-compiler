@@ -2291,10 +2291,6 @@ Operation *TFLiteGraphOptimiser::ConvertLeakyRelu(Graph *const graph, Operation 
         float alpha = attr->alpha;
         auto ifm = ifmConn->tensor.get();
         auto ofm = ofmConn->tensor.get();
-        bool quantScalingInvalidOrUnequal = !IsScalingValidAndEqual(*ifmConn, *ofmConn);
-        ExecutionQuery query{};
-        query.quantScalingInvalidOrUnequal = quantScalingInvalidOrUnequal;
-        query.ifmType = ifm->Type();
 
         if ( alpha == 0 || std::isinf(1 / alpha) )
         {
@@ -2318,7 +2314,7 @@ Operation *TFLiteGraphOptimiser::ConvertLeakyRelu(Graph *const graph, Operation 
             returnOp = Convert8bitLeakyReluToLUT(graph, operation, alpha);
             RecordOptimisation(operation, returnOp);
         }
-        else if ( alpha < 0 || isConvertedPrelu || !_constraints->CanExecute(query) )
+        else if ( alpha < 0 || isConvertedPrelu || !_constraints->SupportsLeakyRelu(!IsScalingValidAndEqual(*ifmConn, *ofmConn), ifm->Type()) )
         {
             // Use 16-bit lowering to Mul + Max or Min + Mul + Relu + Add
             returnOp = ConvertLeakyRelu16bit(*ifmConn, *ofmConn, operation);
