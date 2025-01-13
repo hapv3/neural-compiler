@@ -959,7 +959,7 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const graph, Operation *const op
         {
             // Propagate rescaling to output of previous op
             producer->CopyOutput(TensorUsage::OFM, *ofmConn);
-            producer->Output(TensorUsage::OFM)->Set(ofmConn->rounding);
+            producer->Output(TensorUsage::OFM)->Set(ofmConn->rounding).Set(ofmQuant);
             returnOp = producer.get();
         }
     }
