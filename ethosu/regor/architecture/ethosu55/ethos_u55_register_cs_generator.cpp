@@ -1018,7 +1018,9 @@ void EthosU55RCSGenerator::GenerateOFM(OpType opType, const HLCFeatureMap &fm, c
     Emit(isa::npu_set_ofm_height0_m1_t(tiles.height0 - 1));
     Emit(isa::npu_set_ofm_height1_m1_t(tiles.height1 - 1));
     Emit(isa::npu_set_ofm_width0_m1_t(tiles.width0 - 1));
-    Emit(isa::npu_set_ofm_depth_m1_t(boxSize.Depth() - 1));
+    unsigned depthM1 = boxSize.Depth() - 1;
+    assert(isa::npu_set_ofm_depth_m1_t(depthM1).get_depth_m1() == depthM1);
+    Emit(isa::npu_set_ofm_depth_m1_t(depthM1));
     // OFM_STRIDE registers
     // Make X/Y stride negative if the OFM should be reversed in that axis.
     if ( fm.reverse == ReverseType::H )
@@ -1302,7 +1304,7 @@ void EthosU55RCSGenerator::InsertTransposeCommand(const HLCStripe *stripe, Tempo
     // Which indexed axes have been swapped
     unsigned swapMask = unsigned(ofm.transpose) ^ unsigned(TransposeType::None);
     unsigned validMask = ofm.shape.ShapeMask();
-    bool identity = (swapMask == 0) || (outShape.EqualMask(ofm.shape.WithOnes()) == validMask);
+    bool identity = (swapMask == 0) || (outShape.EqualMask(ofm.shape.WithOnes()) == validMask) || (ifm.shape.ElementsWH() == 1);
     if ( identity )
     {
         LOG_WARN("RCS: Emitting no-op transpose as a memory copy\n");
@@ -1340,8 +1342,9 @@ void EthosU55RCSGenerator::InsertTransposeCommand(const HLCStripe *stripe, Tempo
         if ( NonZeroNybbles(swapMask) == 2 )
         {
             int elementSize = DataTypeSizeBits(ofm.dataType) / 8;
-            // Activation element size must be supported since EthosU55 ignores channel stride for NHWC format tensors
-            assert(elementSize <= 2);
+            // Activation element size must be supported or contiguous-channel bytes preserved
+            // when transposed since Ethos-U55 ignores channel stride for NHWC tensors.
+            assert(!((elementSize > 2) && (ofm.transpose == TransposeType::NCWH)));
 
             // Can only swap 2 axes at once using this method
             int from;
@@ -1376,6 +1379,7 @@ void EthosU55RCSGenerator::InsertTransposeCommand(const HLCStripe *stripe, Tempo
                 }
                 else if ( ofm.transpose == TransposeType::NCWH )
                 {
+                    assert(elementSize <= 2);
                     depth = 1;
                     slices = ifm.shape.Width();
                     ifmStep = ifm.shape.Depth() * elementSize;
@@ -1388,15 +1392,28 @@ void EthosU55RCSGenerator::InsertTransposeCommand(const HLCStripe *stripe, Tempo
                 }
             }
 
+            bool as16Bit = (outFM.dataType == DataType::Int16);
             // Recalculate destination as same as source but with output different strides
-            outFM.shape = Shape(1, ifm.shape[from], ifm.shape[to], depth * elementSize);
+            outFM.shape = Shape(1, ifm.shape[from], ifm.shape[to], depth * (as16Bit ? 1 : elementSize));
             inFM.shape = outFM.shape;
+            // Measure shapes in terms of bytes where necessary.
+            if ( !as16Bit )
+            {
+                outFM.dataType = DataType::Int8;
+                inFM.dataType = DataType::Int8;
+            }
             // Input address (potential depth slices)
-            inFM.address = AddressForCoordinate(ifm, ifm.strides, ifm.slice.offset);
-            inFM.slice.offset = inFM.slice.offset.WithZeros();
+            if ( ifm.slice.offset )
+            {
+                inFM.address = AddressForCoordinate(ifm, ifm.strides, ifm.slice.offset);
+                inFM.slice.offset = ifm.slice.offset.WithZeros();
+            }
             // Output address (potential depth slices)
-            outFM.address = AddressForCoordinate(ofm, ofm.strides, ofm.slice.offset);
-            outFM.slice.offset = outFM.slice.offset.WithZeros();
+            if ( ofm.slice.offset )
+            {
+                outFM.address = AddressForCoordinate(ofm, ofm.strides, ofm.slice.offset);
+                outFM.slice.offset = ofm.slice.offset.WithZeros();
+            }
 
             // Special case for IFM with sparse strides
             if ( (slices > 1) && (ofm.transpose == TransposeType::NCWH) )
@@ -1407,7 +1424,7 @@ void EthosU55RCSGenerator::InsertTransposeCommand(const HLCStripe *stripe, Tempo
             else
             {
                 outFM.strides = Shape(1, elementSize * depth, elementSize * depth * outFM.shape.Height(), elementSize);
-                inFM.strides = Shape::GetStridesForShape(inFM.shape, elementSize);
+                inFM.strides = Shape::GetStridesForShape(inFM.shape, (as16Bit ? elementSize : 1));
             }
 
             // Repeat the transpose at advancing offsets for each slice
