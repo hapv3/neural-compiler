@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -457,4 +457,22 @@ TEST_CASE("To Mask")
     Shape shape2(1, 0, 3, 2);
     uint32_t mask2 = shape2.ToMask();
     REQUIRE((mask2 == 0x2301));
+}
+
+TEST_CASE("Is reduced equal")
+{
+    Shape shape1a(3, 3);
+    Shape shape1b(1, 1, 3, 3);
+    REQUIRE(Shape::IsReducedEqual(shape1a, shape1b));
+    REQUIRE(Shape::IsReducedEqual(shape1b, shape1a));
+
+    Shape shape3a(3, 3);
+    Shape shape3b(3, 3, 1);
+    REQUIRE_FALSE(Shape::IsReducedEqual(shape3a, shape3b));
+    REQUIRE_FALSE(Shape::IsReducedEqual(shape3b, shape3a));
+
+    Shape shape2a(1);
+    Shape shape2b(1, 1, 1);
+    REQUIRE(Shape::IsReducedEqual(shape2a, shape2b));
+    REQUIRE(Shape::IsReducedEqual(shape2b, shape2a));
 }

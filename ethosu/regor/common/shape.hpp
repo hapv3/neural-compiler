@@ -556,6 +556,12 @@ public:
         return true;
     }
 
+    // Returns true if two shapes are equal, ignoring leading dimensions that are 1
+    static bool IsReducedEqual(const Shape &a, const Shape &b)
+    {
+        return MaxAxisFunc<std::not_equal_to<int32_t>, 1>(a, b) == 0;
+    }
+
     template<typename TYPE>
     int ToNHWC(TYPE *buffer, size_t length) const
     {
@@ -661,6 +667,32 @@ private:
             result[i] = FUNC()(pa[i], pb[i]);
         }
         return tmp;
+    }
+
+    template<typename FUNC, int MISSING_VALUE = 0>
+    static unsigned MaxAxisFunc(const Shape &a, const Shape &b)
+    {
+        bool a_longer = a.Size() >= b.Size();
+        int length = a_longer ? a.Size() : b.Size();
+        assert(length < 32);
+        int shortest = a_longer ? b.Size() : a.Size();
+        assert(shortest < 32);
+
+        auto *pa = a.Storage();
+        auto *pb = b.Storage();
+        unsigned axisMask = 0;
+
+        int i = 0;
+        for ( ; i < shortest; i++ )
+        {
+            if ( FUNC()(pa[i], pb[i]) ) axisMask |= 1 << i;
+        }
+        for ( ; i < length; i++ )
+        {
+            if ( a_longer && FUNC()(pa[i], MISSING_VALUE) ) axisMask |= 1 << i;
+            else if ( !a_longer && FUNC()(MISSING_VALUE, pb[i]) ) axisMask |= 1 << i;
+        }
+        return axisMask;
     }
 
     // Apply a function to the maximum number of axes between two shapes. For missing

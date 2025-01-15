@@ -2035,7 +2035,6 @@ Operation *GraphIrOptimiser::MoveSplitSliceToConsumer(Graph *const, Operation *c
         if ( ofm->Readers().size() == 1 )
         {
             auto cons = ofm->Readers().front();
-            auto consOfmConn = cons->Output(TensorUsage::OFM);
             auto *consIfm0 = cons->IFM(0);
             auto *consIfm1 = cons->IFM(1);
 
@@ -2044,15 +2043,16 @@ Operation *GraphIrOptimiser::MoveSplitSliceToConsumer(Graph *const, Operation *c
             {
                 // Check if ifm0 consumer has correct shape
                 auto *consIfm0Conn = cons->Input(TensorUsage::IFM0);
-                ifmShapeEqual = consIfm0Conn->shape == ofmConn->shape;
+                ifmShapeEqual = Shape::IsReducedEqual(consIfm0Conn->shape, ofmConn->shape);
             }
             else if ( consIfm1 != nullptr && consIfm1 == ofm )
             {
                 // Check if ifm1 consumer has correct shape
                 auto *consIfm1Conn = cons->Input(TensorUsage::IFM1);
-                ifmShapeEqual = consIfm1Conn->shape == ofmConn->shape;
+                ifmShapeEqual = Shape::IsReducedEqual(consIfm1Conn->shape, ofmConn->shape);
             }
 
+            // Calculate the consumer transpose type
             TransposeType consumerTranspose = TransposeType::None;
             if ( cons->Type() == OpType::Transpose )
             {
@@ -2061,7 +2061,7 @@ Operation *GraphIrOptimiser::MoveSplitSliceToConsumer(Graph *const, Operation *c
 
             // We can only move to consumer if there is no transpose on the op that we move to,
             // otherwise the IFM shape may change and transposition will be wrong.
-            if ( !IsReshape(cons->Type()) && ofmConn->shape == Shape::PadAxes(ofm->StorageShape(), 4, 1) && IsNone(consumerTranspose) && ifmShapeEqual )
+            if ( !IsReshape(cons->Type()) && Shape::IsReducedEqual(ofmConn->shape, ofm->StorageShape()) && IsNone(consumerTranspose) && ifmShapeEqual )
             {
                 // Split/Slice can be performed by tensor consumer
                 MoveToConsumer(operation, cons.get());
