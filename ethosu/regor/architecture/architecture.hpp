@@ -372,6 +372,7 @@ public:
     MemArea StagingMemory();
     MemArea InputFeatureMapMemory();
     MemArea OutputFeatureMapMemory();
+    MemArea CPUMemory();
 
     IniParseResult ParseSection(const std::string &section, IniReader *reader);
     // Select named memories

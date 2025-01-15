@@ -90,6 +90,11 @@ MemArea Architecture::OutputFeatureMapMemory()
     return MemArea(_featuremapMemory, usage);
 }
 
+MemArea Architecture::CPUMemory()
+{
+    return MemArea(_featuremapMemory, MemUsage::None);
+}
+
 IniParseResult Architecture::ParseSection(const std::string &section, IniReader *reader)
 {
     // Parse the architecture config (must happen first in INI file ).
