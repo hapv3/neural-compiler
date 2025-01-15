@@ -2797,6 +2797,148 @@ Operation *TFLiteGraphOptimiser::ConvertZeroPoint(Graph *const graph, Operation 
     return operation;
 }
 
+// Return a slice of a tensor
+template<typename TYPE>
+static std::shared_ptr<Tensor>
+SliceConstTensor(const TensorConnection *conn, const Shape &sliceShape, const Shape &sliceOffset, const std::string &Name)
+{
+    assert((sliceShape.Size() == 4) && (sliceOffset.Size() == 4));
+
+    // Create a sub-view to read only a slice of the tensor
+    auto subBufferView = conn->tensor->View().SubView(sliceOffset, sliceShape);
+    BufferReader<TYPE> values = subBufferView.Values<TYPE, TYPE>();
+
+    // Create a new buffer to hold the slice
+    int size = sliceShape.Elements();
+    auto newBuffer = std::make_shared<Buffer>(std::make_unique<TYPE[]>(size), size);
+    BufferView newBufferView(newBuffer, 0, 8 * sizeof(TYPE), sliceShape, {});
+    auto newValues = newBufferView.WritableValues<TYPE>();
+
+    // Copy the values over to the new buffer
+    for ( int n = 0; n < sliceShape.Batch(); n++ )
+    {
+        for ( int h = 0; h < sliceShape.Height(); h++ )
+        {
+            for ( int w = 0; w < sliceShape.Width(); w++ )
+            {
+                for ( int c = 0; c < sliceShape.Depth(); c++ )
+                {
+                    Shape pos({n, h, w, c}, sliceShape.Size());
+                    newValues[pos] = values[pos];
+                }
+            }
+        }
+    }
+
+    return std::make_shared<Tensor>(Name, conn->tensor->Type(), sliceShape, std::move(newBuffer));
+}
+
+// Converts a convolution group with N groups into N * Conv2D ops each operating on a 1/N part of
+// the original channels. Finally, all of the individual results will be concatenated depth-wise into
+// the OFM tensor.
+Operation *TFLiteGraphOptimiser::ConvertConvolutionGroup(Graph *const graph, Operation *const operation)
+{
+    UNUSED(graph);
+    if ( operation->Type() != OpType::Conv2D )
+    {
+        return operation;
+    }
+
+    const auto &ifmConn = operation->Input(TensorUsage::IFM0);
+    const auto &ifmShape = ifmConn->shape;
+    const auto &weightConn = operation->Input(TensorUsage::Weights);
+    const auto &weightShape = weightConn->shape;
+    const auto &biasConn = operation->Input(TensorUsage::Scales);
+    const auto &biasShape = biasConn->shape;
+    const auto &ofmConn = operation->Output(TensorUsage::OFM);
+    const auto &ofmShape = ofmConn->shape;
+
+    // Calculate the number of convolution groups based of the shape of the IFM read by
+    // the convolution, accounting for partial reads of the IFM.
+    auto ifmReadShape = ifmConn->slice.shape.IsEmpty() ? ifmShape : ifmConn->slice.shape;
+    auto numGroups = ifmReadShape.Depth() / weightShape.Depth();
+    if ( numGroups == 1 )
+    {
+        return operation;
+    }
+
+    // Create final Concat operation
+    auto concatOp = std::make_shared<Operation>(OpType::Concat);
+    concatOp->CopyOutput(TensorUsage::OFM, *ofmConn);
+    concatOp->Attribute<axis_attr_t>()->axis = -1;
+
+    // Create 'numGroups' number of convolutions, each reading a depth-wise slice of the IFM.
+    int kernelsPerGroup = weightShape.Batch() / numGroups;
+    Shape zeroShape = ifmReadShape.WithZeros();
+    Shape ifmSlice = ifmReadShape.WithDepth(ifmReadShape.Depth() / numGroups);
+    Shape ofmSlice = ofmShape.WithDepth(ofmShape.Depth() / numGroups);
+    Shape weightSlice = weightShape.WithBatch(kernelsPerGroup);
+    Shape biasSlice = biasShape.WithDepth(kernelsPerGroup);
+
+    const auto &weightName = weightConn->tensor->Name();
+    const auto &ofmName = ofmConn->tensor->Name();
+    Operation *finalOp = nullptr;
+    for ( int i = 0; i < numGroups; i++ )
+    {
+        // Create Convolution and connect the IFM sliced and offset
+        auto convGroupOp = std::make_shared<Operation>(OpType::Conv2D);
+        convGroupOp->ConnectInput(TensorUsage::IFM0, ifmConn->tensor)
+            .Set(ifmReadShape)
+            .Set(ifmConn->quantization)
+            .Set({zeroShape.WithDepth(i * ifmSlice.Depth()), ifmSlice});
+
+        // Create and connect intermediate OFM
+        auto ofmConvGroup = std::make_shared<Tensor>(ofmName + "_convgroup_output" + std::to_string(i), ofmConn->tensor->Type(), ofmSlice);
+        convGroupOp->ConnectOutput(TensorUsage::OFM, ofmConvGroup).Set(ofmSlice).Set(ofmConn->quantization).Set(ofmConn->rounding);
+
+        // Copy the kernel from the original operation
+        convGroupOp->SetKernel(std::make_unique<Kernel>(*operation->Kernel()));
+
+        // Extract a slice out of the weight tensor
+        assert(weightConn->tensor->Type() & DataType::Bits8);
+        Shape weightOffset = zeroShape.WithBatch(i * weightSlice.Batch());
+        auto weightSubTensor =
+            weightConn->tensor->Type() == DataType::UInt8 ?
+                SliceConstTensor<uint8_t>(weightConn, weightSlice, weightOffset, weightName + "weights" + std::to_string(i)) :
+                SliceConstTensor<int8_t>(weightConn, weightSlice, weightOffset, weightName + "weights" + std::to_string(i));
+
+        // Slice quantization info for weights and bias
+        Quantization newWeightQuant = weightConn->quantization;
+        newWeightQuant.scales.clear();
+        newWeightQuant.zeroPoints.clear();
+        Quantization newBiasQuant = biasConn->quantization;
+        newBiasQuant.scales.clear();
+        newBiasQuant.zeroPoints.clear();
+        for ( int j = 0; j < kernelsPerGroup; j++ )
+        {
+            newWeightQuant.scales.push_back(weightConn->quantization.scales[j + (i * kernelsPerGroup)]);
+            newWeightQuant.zeroPoints.push_back(weightConn->quantization.zeroPoints[j + (i * kernelsPerGroup)]);
+            newBiasQuant.scales.push_back(biasConn->quantization.scales[j + (i * kernelsPerGroup)]);
+            newBiasQuant.zeroPoints.push_back(biasConn->quantization.zeroPoints[j + (i * kernelsPerGroup)]);
+        }
+
+        // Connect weights slice
+        convGroupOp->ConnectInput(TensorUsage::Weights, weightSubTensor).Set(weightShape).Set(newWeightQuant);
+
+        // Connect the bias and scales slice
+        convGroupOp->ConnectInput(TensorUsage::Scales, biasConn->tensor)
+            .Set(biasShape)
+            .Set(newBiasQuant)
+            .Set({zeroShape.WithDepth(i * biasSlice.Depth()), biasSlice});
+
+        // Connect intermediate OFM to Concat op
+        concatOp->ConnectInput(MakeTensorUsage(TensorUsage::IFM, i), ofmConvGroup)
+            .Set(ofmSlice)
+            .Set(convGroupOp->Output(TensorUsage::OFM)->quantization);
+
+        RecordOptimisation(operation, convGroupOp.get());
+    }
+
+    RecordOptimisation(operation, concatOp.get());
+    operation->Disconnect();
+    return concatOp.get();
+}
+
 TFLiteGraphOptimiser::TFLiteGraphOptimiser(IArchitectureConstraints *constraints, const GraphOptimiserOptions &options, OptimiserDatabase *db) :
         GraphOptimiser(constraints, options, db)
 {
