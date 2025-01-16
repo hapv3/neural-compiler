@@ -26,6 +26,7 @@
 #include "compiler/tensor_properties.hpp"
 
 #include <optional>
+#include <unordered_map>
 #include <unordered_set>
 
 using namespace tosa::validator::checks;
