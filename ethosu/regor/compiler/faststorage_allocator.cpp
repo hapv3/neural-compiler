@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -17,6 +17,8 @@
 //
 
 #include "compiler/faststorage_allocator.hpp"
+
+#include "common/logging.hpp"
 
 #include "architecture/architecture.hpp"
 #include "common/vector_span.hpp"
@@ -139,6 +141,7 @@ void FastStorageAllocator::AllocateFeatureMaps(const std::vector<std::unique_ptr
             if ( !ofm->tensor->consumers.empty() && !ofm->tensor->hasCPUReaders && !ofm->tensor->isGraphOutput &&
                  _scratchedFms.count(ofm->tensor.get()) == 0 && opGroup->NeedsAllocation(ofm->tensor->uid) )
             {
+                LOG_TRACE1("Candidate fast storage tensor: {}\n", ofm->tensor->Name());
                 _scratchedFms[ofm->tensor.get()] = ofm->tensor->memArea;
                 ofm->tensor->memArea = fastStorage;
             }
@@ -148,6 +151,7 @@ void FastStorageAllocator::AllocateFeatureMaps(const std::vector<std::unique_ptr
                 if ( !ofm->tensor->consumers.empty() && !ofm->tensor->hasCPUReaders && !ofm->tensor->isGraphOutput &&
                      _scratchedFms.count(ofm->tensor.get()) == 0 && opGroup->NeedsAllocation(ofm->tensor->uid) )
                 {
+                    LOG_TRACE1("Candidate fast storage tensor: {}\n", ofm->tensor->Name());
                     _scratchedFms[ofm->tensor.get()] = ofm->tensor->memArea;
                     ofm->tensor->memArea = fastStorage;
                 }
@@ -161,13 +165,7 @@ void FastStorageAllocator::AllocateFeatureMaps(const std::vector<std::unique_ptr
     int maxUsage;
     _maxMemUsage = lrGraph.GetTemporalMemoryUsage(maxUsage);
 
-    if ( maxUsage <= _stagingLimit )
-    {
-        // All feature maps fit in fast storage
-        ElementwiseSanitizer(schedOps, schedule, fastStorage, lrGraph);
-        return;
-    }
-    // Not all feature maps fit in fast storage
+    // Collect all live ranges that can potentially be in fast storage
     _baseMemUsage = _maxMemUsage;
     std::vector<LiveRange *> lrs;
     for ( auto lr : lrGraph.LiveRanges() )
@@ -186,9 +184,45 @@ void FastStorageAllocator::AllocateFeatureMaps(const std::vector<std::unique_ptr
         }
     }
 
+    // Collect time indices of all CPU operators
+    std::vector<int> cpuTimeIndices;
+    for ( auto &schedOp : schedOps )
+    {
+        if ( !schedOp->IsNpuOp() )
+        {
+            auto cost = schedule->Cost(schedOp.get());
+            cpuTimeIndices.push_back(cost->timeIndex);
+        }
+    }
+    assert(std::is_sorted(cpuTimeIndices.begin(), cpuTimeIndices.end()));
+
+    // Evict live ranges that cross a CPU operator
+    std::vector<LiveRange *> npuOnlyLrs;
+    for ( auto lr : lrs )
+    {
+        auto cpuTimeIndex = std::lower_bound(cpuTimeIndices.begin(), cpuTimeIndices.end(), lr->startTime);
+        if ( cpuTimeIndex != cpuTimeIndices.end() && *cpuTimeIndex <= lr->endTime )
+        {
+            // Live range crosses CPU operator
+            LOG_TRACE1("Evicting cross-CPU live range {}-{}\n", lr->startTime, lr->endTime);
+            Evict(lr);
+        }
+        else
+        {
+            npuOnlyLrs.push_back(lr);
+        }
+    }
+
+    if ( maxUsage <= _stagingLimit )
+    {
+        // All feature maps fit in fast storage
+        ElementwiseSanitizer(schedOps, schedule, fastStorage, lrGraph);
+        return;
+    }
+
     // Perform a first sweep to keep/evict live ranges that are obviously too big
     std::vector<LiveRange *> canFitLrs;
-    for ( auto lr : lrs )
+    for ( auto lr : npuOnlyLrs )
     {
         // Highest memory usage in this live range
         int baseUsage = *std::max_element(&_baseMemUsage[lr->startTime], &_baseMemUsage[lr->endTime + 1]);

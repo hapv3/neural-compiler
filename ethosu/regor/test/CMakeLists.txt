@@ -1,5 +1,5 @@
 
-# SPDX-FileCopyrightText: Copyright 2021, 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2021, 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -59,6 +59,7 @@ add_catch_test(
         test_scheduler_packing.cpp
         test_operation_utils.cpp
         test_graphir_optimiser.cpp
+        test_fast_storage_allocator.cpp
     DEPS
         test_common
 )

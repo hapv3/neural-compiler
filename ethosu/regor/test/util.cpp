@@ -21,6 +21,7 @@
 #include "common/data_type.hpp"
 #include "common/ini_reader.hpp"
 
+#include <memory>
 #include <mutex>
 #include <thread>
 
@@ -59,7 +60,7 @@ std::string TestConfig(int macs)
     // System configuration
     config += "[system]\n";
     config += "const=flash\n";
-    config += "feature_maps=sram\n";
+    config += "feature_maps=dram\n";
     config += "staging=sram\n";
     return config;
 }
@@ -157,6 +158,7 @@ std::shared_ptr<Operation> CreateOperation(OpType opType, TensorUsage ifmUsage, 
     TensorUsage ofmUsage, std::shared_ptr<Tensor> &ofm)
 {
     auto op = std::make_shared<Operation>(opType);
+    op->SetKernel(std::make_unique<Kernel>(Kernel::UnitKernel()));
     op->ConnectInput(ifmUsage, ifm);
     op->ConnectOutput(ofmUsage, ofm);
     return op;
@@ -219,6 +221,7 @@ std::unique_ptr<SchedulerOperation> CreateSchedulerOperation(OpType opType, Tens
     s_ops.add_op(op);
 
     auto schedOp = std::make_unique<SchedulerOperation>(opType);
+    schedOp->SetKernel(op->Kernel());
     schedOp->_srcKey = static_cast<void *>(op.get());
     // ifm
     auto *ifmConn = schedOp->AddInput(ifmUsage);
