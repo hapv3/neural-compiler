@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 // SPDX-FileCopyrightText: Copyright 2024 Meta Platforms, Inc. and affiliates.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -39,9 +39,9 @@ namespace regor
 class TfLiteWriter
 {
 public:
-    TfLiteWriter()
+    TfLiteWriter(size_t fbSizeCap = size_t{1U << 31}) :
+            _flatbuffer(flatbuffers::FlatBufferBuilder()), _fbSizeCap(fbSizeCap)
     {
-        _flatbuffer = flatbuffers::FlatBufferBuilder();  // TODO: Determine sensible starting size (default is 1KB)
     }
 
     std::unique_ptr<const uint8_t[]> Serialise(const std::vector<std::unique_ptr<Graph>> &graphs,
@@ -49,6 +49,10 @@ public:
         int64_t &output_buffer_offset, size_t &output_buffer_size);
 
 private:
+    std::unique_ptr<const uint8_t[]> SerialiseImpl(const std::vector<std::unique_ptr<Graph>> &graphs,
+        const std::vector<std::unordered_map<const Tensor *, Address>> &tensor_address_maps,
+        int64_t &output_buffer_offset, size_t &output_buffer_size);
+
     struct BufferDesc
     {
         const uint8_t *data = nullptr;
@@ -110,9 +114,131 @@ private:
     flatbuffers::Offset<tflite::Tensor> SerialiseTensor(const Tensor *tensor, const Graph &graph);
     flatbuffers::Offset<void> SerialiseOptions(const Operation *operation, OpType type);
     flatbuffers::Offset<tflite::Metadata> SerialiseTensorAddresses(int subgraphs);
+    void SerialiseTensorBuffer(const Tensor *tensor);
 
+    class ResultBuffer
+    {
+        std::unique_ptr<uint8_t[]> _buf;
+        size_t _reserved = 0;
+        size_t _offset = 0;
+        size_t _wr = 0;
+
+    public:
+        ResultBuffer(flatbuffers::FlatBufferBuilder &fb)
+        {
+            // Can convert to unique_ptr because std::default_delete() is equivalent to
+            // flatbuffer::DefaultAllocator::deallocate()
+            //  - i.e. they both do `delete base`
+            size_t size, offset;
+            auto ptr = fb.ReleaseRaw(size, offset);
+
+            _buf.reset(ptr);
+            _reserved = size;
+            _offset = offset;
+            _wr = size;
+        }
+
+        uint8_t *begin() { return &_buf[_offset]; }
+
+        size_t reserved() const { return _reserved; }
+
+        void reserve(size_t size)
+        {
+            if ( reserved() >= size ) return;
+
+            auto buf = std::make_unique<uint8_t[]>(size);
+            std::copy_n(begin(), _reserved - _offset, &buf[0]);
+            _buf.reset(buf.release());
+            _reserved = size;
+            _offset = 0;
+        }
+
+        size_t push(const uint8_t *buf, size_t size)
+        {
+            reserve(_wr + size);
+
+            auto wr = _wr;
+            std::copy_n(buf, size, &_buf[_wr]);
+            _wr += size;
+            return wr;
+        }
+
+        size_t pos() const { return _wr; }
+
+        void align(size_t alignment)
+        {
+            _wr = (_wr + alignment - 1) & ~(alignment - 1);
+            reserve(_wr);
+        }
+
+        std::unique_ptr<const uint8_t[]> release(size_t &size, int64_t &offset)
+        {
+            size = _wr - _offset;
+            offset = int64_t(_offset);
+
+            _reserved = 0;
+            _offset = 0;
+            _wr = 0;
+            return std::unique_ptr<const uint8_t[]>(_buf.release());
+        }
+    };
+
+    std::vector<size_t> SerialiseOffsetBuffers(ResultBuffer &res);
+    void FixupFbBuffers(uint8_t *model, const std::vector<size_t> &offsetBufferOffset);
+
+    class OffsetBufferDesc
+    {
+        typedef void (*DeleteFunc)(void *);
+        DeleteFunc _deleter = nullptr;
+        void *_obj = nullptr;
+        const uint8_t *_data = nullptr;
+        size_t _size = 0;
+
+        template<typename TYPE>
+        static inline void DeleteVector(void *v)
+        {
+            using vec = std::vector<TYPE>;
+            delete static_cast<vec *>(v);
+        }
+
+    public:
+        template<typename T>
+        OffsetBufferDesc(std::unique_ptr<std::vector<T>> &&buf)
+        {
+            auto *vec = buf.release();
+            assert(vec);
+            _deleter = &OffsetBufferDesc::DeleteVector<T>;
+            _obj = vec;
+            _data = reinterpret_cast<const uint8_t *>(vec->data());
+            _size = vec->size() * sizeof(T);
+        }
+
+        OffsetBufferDesc(const Buffer *buffer) : OffsetBufferDesc(buffer->Data<uint8_t>(), buffer->Size()) {}
+
+        OffsetBufferDesc(const uint8_t *data, size_t size) : _data(data), _size(size) {}
+
+        ~OffsetBufferDesc()
+        {
+            if ( _deleter )
+            {
+                assert(_obj);
+                _deleter(_obj);
+            }
+        }
+
+        const uint8_t *data() const { return _data; }
+        size_t size() const { return _size; }
+    };
+
+    std::vector<OffsetBufferDesc> _offset_buffers;
+    bool _useBufferOffset = false;
+    const size_t _fbSizeCap;
+
+    static constexpr size_t BUFFER_ALIGNMENT = 16ULL;
+
+    void CheckFlatBufferSize();
     flatbuffers::Offset<tflite::Buffer> SerialiseBuffer(const Buffer *buffer);
-    flatbuffers::Offset<tflite::Buffer> SerialiseBuffer(const uint8_t *data, int size);
+    flatbuffers::Offset<tflite::Buffer> SerialiseBuffer(const uint8_t *data, size_t size);
 
     struct TfLiteKernel
     {

@@ -24,6 +24,8 @@
 #include "flatbuffer_utils.hpp"
 #include "tflite_mapping.hpp"
 
+#include <memory>
+#include <stdexcept>
 #include <unordered_map>
 #include <vector>
 
@@ -47,7 +49,56 @@ flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<tflite::DimensionMet
 namespace regor
 {
 
+struct FlatBuffersSizeException : public std::runtime_error
+{
+    FlatBuffersSizeException() : std::runtime_error("FlatBuffers size") {}
+};
+
 std::unique_ptr<const uint8_t[]> TfLiteWriter::Serialise(const std::vector<std::unique_ptr<Graph>> &graphs,
+    const std::vector<std::unordered_map<const Tensor *, Address>> &tensor_address_maps, int64_t &output_buffer_offset, size_t &output_buffer_size)
+{
+    std::unique_ptr<const uint8_t[]> ret;
+    bool retryWithBufferOffset = false;
+
+    try
+    {
+        ret = SerialiseImpl(graphs, tensor_address_maps, output_buffer_offset, output_buffer_size);
+    }
+    catch ( const FlatBuffersSizeException & )
+    {
+        retryWithBufferOffset = true;
+    }
+
+    if ( retryWithBufferOffset )
+    {
+        _opcodes.clear();
+        _buffers.clear();
+        _serialised_opcodes.clear();
+        _serialised_subgraphs.clear();
+        _serialised_buffers.clear();
+        _tensors.clear();
+        _serialised_operations.clear();
+        _serialised_tensors.clear();
+        _tensor_addresses.clear();
+        _offset_buffers.clear();
+        _flatbuffer.Clear();
+
+        _useBufferOffset = true;
+        ret = SerialiseImpl(graphs, tensor_address_maps, output_buffer_offset, output_buffer_size);
+    }
+
+    return ret;
+}
+
+void TfLiteWriter::CheckFlatBufferSize()
+{
+    if ( _flatbuffer.GetSize() >= _fbSizeCap )
+    {
+        throw FlatBuffersSizeException();
+    }
+}
+
+std::unique_ptr<const uint8_t[]> TfLiteWriter::SerialiseImpl(const std::vector<std::unique_ptr<Graph>> &graphs,
     const std::vector<std::unordered_map<const Tensor *, Address>> &tensor_address_maps, int64_t &output_buffer_offset, size_t &output_buffer_size)
 {
     // The zeroth buffer is always present and always empty
@@ -58,7 +109,6 @@ std::unique_ptr<const uint8_t[]> TfLiteWriter::Serialise(const std::vector<std::
     for ( const auto &graph : graphs )
     {
         const auto &tensor_address_map = tensor_address_maps.at(_serialised_subgraphs.size());
-        std::vector<Operation *> operations;
         std::set<const Operation *> skip;
 
         for ( const auto &operation : graph->ScheduledOrder() )
@@ -223,15 +273,61 @@ std::unique_ptr<const uint8_t[]> TfLiteWriter::Serialise(const std::vector<std::
 
     tflite::FinishModelBuffer(_flatbuffer, model);
 
-    // Transfer ownership of the finished buffer from the flatbuffer builder to the caller
-    size_t size, offset;
-    const uint8_t *base = _flatbuffer.ReleaseRaw(size, offset);
-    output_buffer_offset = offset;
-    output_buffer_size = int(size - offset);
+    CheckFlatBufferSize();
 
-    // Can convert to unique_ptr because std::default_delete() equivalent to flatbuffer::DefaultAllocator::deallocate()
-    //  - i.e. they both do `delete base`
-    return std::unique_ptr<const uint8_t[]>(base);
+    // Transfer ownership of the finished buffer from the flatbuffer builder to the caller
+    ResultBuffer ret(_flatbuffer);
+
+    // Following the model, place offset tensor buffers at the end of the file
+    if ( _useBufferOffset )
+    {
+        // Serialise buffers at the end of the file
+        auto offsetBufferOffset = SerialiseOffsetBuffers(ret);
+
+        // Fixup indirect buffer offsets via the mutable API
+        FixupFbBuffers(ret.begin(), offsetBufferOffset);
+    }
+
+    return ret.release(output_buffer_size, output_buffer_offset);
+}
+
+
+std::vector<size_t> TfLiteWriter::SerialiseOffsetBuffers(ResultBuffer &res)
+{
+    // Reserve buffer
+    auto align = [](size_t sz) { return (sz + BUFFER_ALIGNMENT - 1) & ~(BUFFER_ALIGNMENT - 1); };
+
+    size_t newSize = res.pos() + BUFFER_ALIGNMENT;
+    for ( const auto &buf : _offset_buffers )
+    {
+        newSize = align(newSize) + buf.size();
+    }
+    res.reserve(newSize);
+
+    std::vector<size_t> offsetBufferOffset;
+    offsetBufferOffset.reserve(_offset_buffers.size());
+
+    for ( const auto &buf : _offset_buffers )
+    {
+        res.align(BUFFER_ALIGNMENT);
+        offsetBufferOffset.push_back(res.push(buf.data(), buf.size()));
+    }
+    return offsetBufferOffset;
+}
+
+
+void TfLiteWriter::FixupFbBuffers(uint8_t *model, const std::vector<size_t> &offsetBufferOffset)
+{
+    auto tflite_buffers = tflite::GetMutableModel(model)->mutable_buffers();
+    assert(tflite_buffers);
+    assert(tflite_buffers->size() == (offsetBufferOffset.size() + 1));
+    assert(_offset_buffers.size() == offsetBufferOffset.size());
+    for ( size_t i = 0; i < offsetBufferOffset.size(); i++ )
+    {
+        auto tflite_buffer = tflite_buffers->GetMutableObject(flatbuffers::uoffset_t(i + 1));
+        tflite_buffer->mutate_offset(offsetBufferOffset[i]);
+        tflite_buffer->mutate_size(_offset_buffers[i].size());
+    }
 }
 
 
@@ -367,17 +463,7 @@ flatbuffers::Offset<tflite::Tensor> TfLiteWriter::SerialiseTensor(const Tensor *
         {
             buffer_index = int(_serialised_buffers.size());
             _buffers[descriptor] = buffer_index;
-            if ( tensor->Type() == DataType::Int48 )
-            {  // Translate values
-                const auto values = tensor->View().Values<int48_t, int64_t>();
-                const auto v = std::vector<int64_t>(values.begin(), values.end());
-                const int size(v.size() * sizeof(int64_t));
-                _serialised_buffers.emplace_back(SerialiseBuffer(reinterpret_cast<const uint8_t *>(v.data()), size));
-            }
-            else
-            {
-                _serialised_buffers.emplace_back(SerialiseBuffer(buffer));
-            }
+            SerialiseTensorBuffer(tensor);
         }
         else  // Buffer has already been serialised - just reference it
         {
@@ -813,9 +899,37 @@ flatbuffers::Offset<tflite::Metadata> TfLiteWriter::SerialiseTensorAddresses(int
 
     const auto buffer_base = reinterpret_cast<uint8_t *>(_tensor_addresses.data());
     const auto buffer_size = _tensor_addresses.size() * (sizeof(int32_t) / sizeof(uint8_t));
-    _serialised_buffers.push_back(SerialiseBuffer(buffer_base, int(buffer_size)));
+    _serialised_buffers.push_back(SerialiseBuffer(buffer_base, buffer_size));
+    if ( _useBufferOffset )
+    {
+        _offset_buffers.emplace_back(buffer_base, buffer_size);
+    }
 
     return tflite::CreateMetadataDirect(_flatbuffer, "OfflineMemoryAllocation", uint32_t(buffer_index));
+}
+
+void TfLiteWriter::SerialiseTensorBuffer(const Tensor *tensor)
+{
+    if ( tensor->Type() == DataType::Int48 )
+    {  // Translate values
+        const auto values = tensor->View().Values<int48_t, int64_t>();
+        auto v = std::make_unique<std::vector<int64_t>>(values.begin(), values.end());
+        const auto size = v->size() * sizeof(int64_t);
+        _serialised_buffers.emplace_back(SerialiseBuffer(reinterpret_cast<const uint8_t *>(v->data()), size));
+        if ( _useBufferOffset )
+        {
+            _offset_buffers.emplace_back(std::move(v));
+        }
+    }
+    else
+    {
+        const auto buffer = tensor->View().Buffer();
+        _serialised_buffers.emplace_back(SerialiseBuffer(buffer));
+        if ( _useBufferOffset )
+        {
+            _offset_buffers.emplace_back(buffer);
+        }
+    }
 }
 
 flatbuffers::Offset<tflite::Buffer> TfLiteWriter::SerialiseBuffer(const Buffer *buffer)
@@ -823,10 +937,24 @@ flatbuffers::Offset<tflite::Buffer> TfLiteWriter::SerialiseBuffer(const Buffer *
     return SerialiseBuffer(buffer->Data<uint8_t>(), buffer->Size());
 }
 
-flatbuffers::Offset<tflite::Buffer> TfLiteWriter::SerialiseBuffer(const uint8_t *data, int size)
+flatbuffers::Offset<tflite::Buffer> TfLiteWriter::SerialiseBuffer(const uint8_t *data, size_t size)
 {
-    _flatbuffer.ForceVectorAlignment(size, 1, 16);  // 16-byte alignment
-    return tflite::CreateBuffer(_flatbuffer, _flatbuffer.CreateVector<uint8_t>(data, size));
+    flatbuffers::Offset<tflite::Buffer> ret;
+
+    _flatbuffer.ForceVectorAlignment(size, sizeof(uint8_t), BUFFER_ALIGNMENT);  // 16-byte alignment
+    if ( _useBufferOffset )
+    {
+        _flatbuffer.ForceDefaults(true);
+        ret = tflite::CreateBuffer(_flatbuffer);
+        _flatbuffer.ForceDefaults(false);
+    }
+    else
+    {
+        ret = tflite::CreateBuffer(_flatbuffer, _flatbuffer.CreateVector<uint8_t>(data, size));
+    }
+    CheckFlatBufferSize();
+
+    return ret;
 }
 
 }  // namespace regor

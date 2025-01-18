@@ -215,11 +215,11 @@ public:
         }
     }
 
-    py::object PyCompile(py::bytes &input, const std::string &fmt)
+    py::object PyCompile(const py::buffer &input, const std::string &fmt)
     {
         // Extract input buffer and size of input buffer
-        py::buffer_info info(py::buffer(input).request());
-        const void *in_data = reinterpret_cast<const void *>(info.ptr);
+        py::buffer_info info(input.request());
+        const void *in_data = static_cast<const void *>(info.ptr);
         size_t in_size = size_t(std::max<py::ssize_t>(info.size, 0));
 
         // Compile the input buffer and return a subclass of PyRegorCompiledModel
@@ -574,7 +574,7 @@ PYBIND11_MODULE(regor, m)
 
     m.def(
         "compile",
-        [](const std::string &arch, py::bytes &input, const std::string &fmt, const std::string &sysconfig,
+        [](const std::string &arch, py::buffer input, const std::string &fmt, const std::string &sysconfig,
             const std::string &options = "", bool verbose = false) -> py::object
         {
             PyRegor pyr(arch, verbose);

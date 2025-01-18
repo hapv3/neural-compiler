@@ -246,7 +246,8 @@ void ConstraintEmptyConstTensors(const Model &m_model)
                         auto tensor = tensors[BoundsCheckedIndex(input, tensors)];
                         auto buffer = buffers[BoundsCheckedIndex(tensor->buffer(), buffers)];
                         // Buffer 0 is a special buffer that is used for empty tensors
-                        if ( tensor->buffer() != 0 && (!buffer->data() || buffer->data()->size() == 0) )
+                        if ( (tensor->buffer() > 0 && (!buffer->data() || buffer->data()->size() == 0) && buffer->offset() <= 1) ||
+                             (buffer->offset() > 1 && buffer->size() == 0) )
                         {
                             std::string constraint = "Constant tensors must not have empty buffers";
                             std::string extra = "Found Constant Tensor with empty buffer";

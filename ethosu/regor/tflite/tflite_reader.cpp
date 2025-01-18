@@ -38,6 +38,7 @@
 #include "tflite_schema_generated.hpp"
 
 #include <cassert>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -131,8 +132,8 @@ const tflite::Model *TfLiteReader::LoadModel(const void *input, size_t size)
     return tflite::GetModel(buffer);
 }
 
-void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::unique_ptr<Graph>> &graphs,
-    OptimiserDatabase *optDb, IArchitectureConstraints *constraints)
+void TfLiteReader::LoadGraphs(const uint8_t *input, const tflite::Model *model,
+    std::vector<std::unique_ptr<Graph>> &graphs, OptimiserDatabase *optDb, IArchitectureConstraints *constraints)
 {
     assert(model);
 
@@ -164,9 +165,14 @@ void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::uniqu
 
     for ( const auto &tflite_buffer : *tflite_buffers )
     {
-        if ( tflite_buffer->data() )
+        if ( tflite_buffer->offset() > 1 )
         {
-            uint8_t *data = const_cast<uint8_t *>(tflite_buffer->data()->data());
+            const uint8_t *data = &input[tflite_buffer->offset()];
+            buffers.push_back(std::make_shared<Buffer>(tflite_buffer->size(), data, true));
+        }
+        else if ( tflite_buffer->data() )
+        {
+            const uint8_t *data = tflite_buffer->data()->data();
             buffers.push_back(std::make_shared<Buffer>(tflite_buffer->data()->size(), data, true));
         }
         else
@@ -305,7 +311,7 @@ void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::uniqu
             // Set rounding according to reference
             SetOFMRounding(operation);
 
-            operations.push_back(operation);
+            operations.push_back(std::move(operation));
             ext_key++;
         }
 
@@ -362,7 +368,7 @@ void TfLiteReader::LoadGraphs(const tflite::Model *model, std::vector<std::uniqu
 void TfLiteReader::LoadGraphs(const void *input, size_t size, std::vector<std::unique_ptr<Graph>> &graphs,
     OptimiserDatabase *optDb, IArchitectureConstraints *constraints)
 {
-    LoadGraphs(LoadModel(input, size), graphs, optDb, constraints);
+    LoadGraphs(reinterpret_cast<const uint8_t *>(input), LoadModel(input, size), graphs, optDb, constraints);
 }
 
 std::shared_ptr<Tensor> TfLiteReader::ParseTensor(const tflite::Tensor *tflite_tensor,

@@ -19,6 +19,7 @@
 """Compile a neural network model for Arm Ethos-U NPUs."""
 import argparse
 import glob
+import mmap
 import os
 import sys
 import time
@@ -130,10 +131,9 @@ def process_regor(
     os.makedirs(output_dir, exist_ok=True)
 
     with open(input_name, "rb") as f:
-        network = f.read()
-    fmt = get_format(network)
-
-    compiled_model = regor.compile(accelerator, network, fmt, system_config, options=options, verbose=True)
+        with mmap.mmap(f.fileno(), length=0, access=mmap.ACCESS_READ) as network:
+            fmt = get_format(network)
+            compiled_model = regor.compile(accelerator, network, fmt, system_config, options=options, verbose=True)
 
     model_name = os.path.splitext(os.path.basename(input_name))[0]
 
@@ -851,10 +851,10 @@ def get_compiler_config(
     return config
 
 
-def get_format(in_data: bytes) -> str:
+def get_format(in_data: mmap.mmap) -> str:
     """Infere format based on input file."""
     ret = "UNDEFINED"
-    if len(in_data) < 8:
+    if in_data.size() < 8:
         return ret
     second_word = int.from_bytes(in_data[4:8], "little")
     if second_word == TFLITE_MAGIC:

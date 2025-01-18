@@ -194,7 +194,7 @@ void FastStorageAllocator::AllocateFeatureMaps(const std::vector<std::unique_ptr
             cpuTimeIndices.push_back(cost->timeIndex);
         }
     }
-    assert(std::is_sorted(cpuTimeIndices.begin(), cpuTimeIndices.end()));
+    assert(std::is_sorted(cpuTimeIndices.cbegin(), cpuTimeIndices.cend()));
 
     // Evict live ranges that cross a CPU operator
     std::vector<LiveRange *> npuOnlyLrs;

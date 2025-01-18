@@ -3,7 +3,7 @@
 // To reproduce:
 //   flatc version 23.12.23
 //   schema.fbs @v2.17.1
-//   flatc --cpp --scoped-enums --reflect-names schema.fbs
+//   flatc --cpp --scoped-enums --reflect-names --gen-mutable schema.fbs
 //   sed -i 's/ARG_MAX/ARGMAX/g' tflite_schema_generated.hpp
 
 
@@ -3248,6 +3248,9 @@ struct CustomQuantization FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table
   const ::flatbuffers::Vector<uint8_t> *custom() const {
     return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_CUSTOM);
   }
+  ::flatbuffers::Vector<uint8_t> *mutable_custom() {
+    return GetPointer<::flatbuffers::Vector<uint8_t> *>(VT_CUSTOM);
+  }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_CUSTOM) &&
@@ -3309,14 +3312,26 @@ struct QuantizationParameters FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::T
   const ::flatbuffers::Vector<float> *min() const {
     return GetPointer<const ::flatbuffers::Vector<float> *>(VT_MIN);
   }
+  ::flatbuffers::Vector<float> *mutable_min() {
+    return GetPointer<::flatbuffers::Vector<float> *>(VT_MIN);
+  }
   const ::flatbuffers::Vector<float> *max() const {
     return GetPointer<const ::flatbuffers::Vector<float> *>(VT_MAX);
+  }
+  ::flatbuffers::Vector<float> *mutable_max() {
+    return GetPointer<::flatbuffers::Vector<float> *>(VT_MAX);
   }
   const ::flatbuffers::Vector<float> *scale() const {
     return GetPointer<const ::flatbuffers::Vector<float> *>(VT_SCALE);
   }
+  ::flatbuffers::Vector<float> *mutable_scale() {
+    return GetPointer<::flatbuffers::Vector<float> *>(VT_SCALE);
+  }
   const ::flatbuffers::Vector<int64_t> *zero_point() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_ZERO_POINT);
+  }
+  ::flatbuffers::Vector<int64_t> *mutable_zero_point() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_ZERO_POINT);
   }
   tflite::QuantizationDetails details_type() const {
     return static_cast<tflite::QuantizationDetails>(GetField<uint8_t>(VT_DETAILS_TYPE, 0));
@@ -3328,8 +3343,14 @@ struct QuantizationParameters FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::T
   const tflite::CustomQuantization *details_as_CustomQuantization() const {
     return details_type() == tflite::QuantizationDetails::CustomQuantization ? static_cast<const tflite::CustomQuantization *>(details()) : nullptr;
   }
+  void *mutable_details() {
+    return GetPointer<void *>(VT_DETAILS);
+  }
   int32_t quantized_dimension() const {
     return GetField<int32_t>(VT_QUANTIZED_DIMENSION, 0);
+  }
+  bool mutate_quantized_dimension(int32_t _quantized_dimension = 0) {
+    return SetField<int32_t>(VT_QUANTIZED_DIMENSION, _quantized_dimension, 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -3444,6 +3465,9 @@ struct Int32Vector FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<int32_t> *values() const {
     return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_VALUES);
   }
+  ::flatbuffers::Vector<int32_t> *mutable_values() {
+    return GetPointer<::flatbuffers::Vector<int32_t> *>(VT_VALUES);
+  }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_VALUES) &&
@@ -3497,6 +3521,9 @@ struct Uint16Vector FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   };
   const ::flatbuffers::Vector<uint16_t> *values() const {
     return GetPointer<const ::flatbuffers::Vector<uint16_t> *>(VT_VALUES);
+  }
+  ::flatbuffers::Vector<uint16_t> *mutable_values() {
+    return GetPointer<::flatbuffers::Vector<uint16_t> *>(VT_VALUES);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -3552,6 +3579,9 @@ struct Uint8Vector FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   };
   const ::flatbuffers::Vector<uint8_t> *values() const {
     return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_VALUES);
+  }
+  ::flatbuffers::Vector<uint8_t> *mutable_values() {
+    return GetPointer<::flatbuffers::Vector<uint8_t> *>(VT_VALUES);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -3613,8 +3643,14 @@ struct DimensionMetadata FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table 
   tflite::DimensionType format() const {
     return static_cast<tflite::DimensionType>(GetField<int8_t>(VT_FORMAT, 0));
   }
+  bool mutate_format(tflite::DimensionType _format = static_cast<tflite::DimensionType>(0)) {
+    return SetField<int8_t>(VT_FORMAT, static_cast<int8_t>(_format), 0);
+  }
   int32_t dense_size() const {
     return GetField<int32_t>(VT_DENSE_SIZE, 0);
+  }
+  bool mutate_dense_size(int32_t _dense_size = 0) {
+    return SetField<int32_t>(VT_DENSE_SIZE, _dense_size, 0);
   }
   tflite::SparseIndexVector array_segments_type() const {
     return static_cast<tflite::SparseIndexVector>(GetField<uint8_t>(VT_ARRAY_SEGMENTS_TYPE, 0));
@@ -3632,6 +3668,9 @@ struct DimensionMetadata FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table 
   const tflite::Uint8Vector *array_segments_as_Uint8Vector() const {
     return array_segments_type() == tflite::SparseIndexVector::Uint8Vector ? static_cast<const tflite::Uint8Vector *>(array_segments()) : nullptr;
   }
+  void *mutable_array_segments() {
+    return GetPointer<void *>(VT_ARRAY_SEGMENTS);
+  }
   tflite::SparseIndexVector array_indices_type() const {
     return static_cast<tflite::SparseIndexVector>(GetField<uint8_t>(VT_ARRAY_INDICES_TYPE, 0));
   }
@@ -3647,6 +3686,9 @@ struct DimensionMetadata FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table 
   }
   const tflite::Uint8Vector *array_indices_as_Uint8Vector() const {
     return array_indices_type() == tflite::SparseIndexVector::Uint8Vector ? static_cast<const tflite::Uint8Vector *>(array_indices()) : nullptr;
+  }
+  void *mutable_array_indices() {
+    return GetPointer<void *>(VT_ARRAY_INDICES);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -3750,11 +3792,20 @@ struct SparsityParameters FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table
   const ::flatbuffers::Vector<int32_t> *traversal_order() const {
     return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_TRAVERSAL_ORDER);
   }
+  ::flatbuffers::Vector<int32_t> *mutable_traversal_order() {
+    return GetPointer<::flatbuffers::Vector<int32_t> *>(VT_TRAVERSAL_ORDER);
+  }
   const ::flatbuffers::Vector<int32_t> *block_map() const {
     return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_BLOCK_MAP);
   }
+  ::flatbuffers::Vector<int32_t> *mutable_block_map() {
+    return GetPointer<::flatbuffers::Vector<int32_t> *>(VT_BLOCK_MAP);
+  }
   const ::flatbuffers::Vector<::flatbuffers::Offset<tflite::DimensionMetadata>> *dim_metadata() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<tflite::DimensionMetadata>> *>(VT_DIM_METADATA);
+  }
+  ::flatbuffers::Vector<::flatbuffers::Offset<tflite::DimensionMetadata>> *mutable_dim_metadata() {
+    return GetPointer<::flatbuffers::Vector<::flatbuffers::Offset<tflite::DimensionMetadata>> *>(VT_DIM_METADATA);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -3833,11 +3884,20 @@ struct VariantSubType FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<int32_t> *shape() const {
     return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_SHAPE);
   }
+  ::flatbuffers::Vector<int32_t> *mutable_shape() {
+    return GetPointer<::flatbuffers::Vector<int32_t> *>(VT_SHAPE);
+  }
   tflite::TensorType type() const {
     return static_cast<tflite::TensorType>(GetField<int8_t>(VT_TYPE, 0));
   }
+  bool mutate_type(tflite::TensorType _type = static_cast<tflite::TensorType>(0)) {
+    return SetField<int8_t>(VT_TYPE, static_cast<int8_t>(_type), 0);
+  }
   bool has_rank() const {
     return GetField<uint8_t>(VT_HAS_RANK, 0) != 0;
+  }
+  bool mutate_has_rank(bool _has_rank = 0) {
+    return SetField<uint8_t>(VT_HAS_RANK, static_cast<uint8_t>(_has_rank), 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -3918,32 +3978,62 @@ struct Tensor FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<int32_t> *shape() const {
     return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_SHAPE);
   }
+  ::flatbuffers::Vector<int32_t> *mutable_shape() {
+    return GetPointer<::flatbuffers::Vector<int32_t> *>(VT_SHAPE);
+  }
   tflite::TensorType type() const {
     return static_cast<tflite::TensorType>(GetField<int8_t>(VT_TYPE, 0));
+  }
+  bool mutate_type(tflite::TensorType _type = static_cast<tflite::TensorType>(0)) {
+    return SetField<int8_t>(VT_TYPE, static_cast<int8_t>(_type), 0);
   }
   uint32_t buffer() const {
     return GetField<uint32_t>(VT_BUFFER, 0);
   }
+  bool mutate_buffer(uint32_t _buffer = 0) {
+    return SetField<uint32_t>(VT_BUFFER, _buffer, 0);
+  }
   const ::flatbuffers::String *name() const {
     return GetPointer<const ::flatbuffers::String *>(VT_NAME);
+  }
+  ::flatbuffers::String *mutable_name() {
+    return GetPointer<::flatbuffers::String *>(VT_NAME);
   }
   const tflite::QuantizationParameters *quantization() const {
     return GetPointer<const tflite::QuantizationParameters *>(VT_QUANTIZATION);
   }
+  tflite::QuantizationParameters *mutable_quantization() {
+    return GetPointer<tflite::QuantizationParameters *>(VT_QUANTIZATION);
+  }
   bool is_variable() const {
     return GetField<uint8_t>(VT_IS_VARIABLE, 0) != 0;
+  }
+  bool mutate_is_variable(bool _is_variable = 0) {
+    return SetField<uint8_t>(VT_IS_VARIABLE, static_cast<uint8_t>(_is_variable), 0);
   }
   const tflite::SparsityParameters *sparsity() const {
     return GetPointer<const tflite::SparsityParameters *>(VT_SPARSITY);
   }
+  tflite::SparsityParameters *mutable_sparsity() {
+    return GetPointer<tflite::SparsityParameters *>(VT_SPARSITY);
+  }
   const ::flatbuffers::Vector<int32_t> *shape_signature() const {
     return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_SHAPE_SIGNATURE);
+  }
+  ::flatbuffers::Vector<int32_t> *mutable_shape_signature() {
+    return GetPointer<::flatbuffers::Vector<int32_t> *>(VT_SHAPE_SIGNATURE);
   }
   bool has_rank() const {
     return GetField<uint8_t>(VT_HAS_RANK, 0) != 0;
   }
+  bool mutate_has_rank(bool _has_rank = 0) {
+    return SetField<uint8_t>(VT_HAS_RANK, static_cast<uint8_t>(_has_rank), 0);
+  }
   const ::flatbuffers::Vector<::flatbuffers::Offset<tflite::VariantSubType>> *variant_tensors() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<tflite::VariantSubType>> *>(VT_VARIANT_TENSORS);
+  }
+  ::flatbuffers::Vector<::flatbuffers::Offset<tflite::VariantSubType>> *mutable_variant_tensors() {
+    return GetPointer<::flatbuffers::Vector<::flatbuffers::Offset<tflite::VariantSubType>> *>(VT_VARIANT_TENSORS);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -4085,20 +4175,38 @@ struct StablehloGatherOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::T
   const ::flatbuffers::Vector<int64_t> *offset_dims() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_OFFSET_DIMS);
   }
+  ::flatbuffers::Vector<int64_t> *mutable_offset_dims() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_OFFSET_DIMS);
+  }
   const ::flatbuffers::Vector<int64_t> *collapsed_slice_dims() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_COLLAPSED_SLICE_DIMS);
+  }
+  ::flatbuffers::Vector<int64_t> *mutable_collapsed_slice_dims() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_COLLAPSED_SLICE_DIMS);
   }
   const ::flatbuffers::Vector<int64_t> *start_index_map() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_START_INDEX_MAP);
   }
+  ::flatbuffers::Vector<int64_t> *mutable_start_index_map() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_START_INDEX_MAP);
+  }
   int64_t index_vector_dim() const {
     return GetField<int64_t>(VT_INDEX_VECTOR_DIM, 0);
+  }
+  bool mutate_index_vector_dim(int64_t _index_vector_dim = 0) {
+    return SetField<int64_t>(VT_INDEX_VECTOR_DIM, _index_vector_dim, 0);
   }
   const ::flatbuffers::Vector<int64_t> *slice_sizes() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_SLICE_SIZES);
   }
+  ::flatbuffers::Vector<int64_t> *mutable_slice_sizes() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_SLICE_SIZES);
+  }
   bool indices_are_sorted() const {
     return GetField<uint8_t>(VT_INDICES_ARE_SORTED, 0) != 0;
+  }
+  bool mutate_indices_are_sorted(bool _indices_are_sorted = 0) {
+    return SetField<uint8_t>(VT_INDICES_ARE_SORTED, static_cast<uint8_t>(_indices_are_sorted), 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -4200,6 +4308,9 @@ struct StablehloTransposeOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers
   const ::flatbuffers::Vector<int64_t> *permutation() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_PERMUTATION);
   }
+  ::flatbuffers::Vector<int64_t> *mutable_permutation() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_PERMUTATION);
+  }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_PERMUTATION) &&
@@ -4258,17 +4369,32 @@ struct StablehloDotGeneralOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffer
   const ::flatbuffers::Vector<int64_t> *lhs_batching_dimensions() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_LHS_BATCHING_DIMENSIONS);
   }
+  ::flatbuffers::Vector<int64_t> *mutable_lhs_batching_dimensions() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_LHS_BATCHING_DIMENSIONS);
+  }
   const ::flatbuffers::Vector<int64_t> *rhs_batching_dimensions() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_RHS_BATCHING_DIMENSIONS);
+  }
+  ::flatbuffers::Vector<int64_t> *mutable_rhs_batching_dimensions() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_RHS_BATCHING_DIMENSIONS);
   }
   const ::flatbuffers::Vector<int64_t> *lhs_contracting_dimensions() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_LHS_CONTRACTING_DIMENSIONS);
   }
+  ::flatbuffers::Vector<int64_t> *mutable_lhs_contracting_dimensions() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_LHS_CONTRACTING_DIMENSIONS);
+  }
   const ::flatbuffers::Vector<int64_t> *rhs_contracting_dimensions() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_RHS_CONTRACTING_DIMENSIONS);
   }
+  ::flatbuffers::Vector<int64_t> *mutable_rhs_contracting_dimensions() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_RHS_CONTRACTING_DIMENSIONS);
+  }
   const ::flatbuffers::Vector<tflite::StablehloPrecisionConfig> *precision_config() const {
     return GetPointer<const ::flatbuffers::Vector<tflite::StablehloPrecisionConfig> *>(VT_PRECISION_CONFIG);
+  }
+  ::flatbuffers::Vector<tflite::StablehloPrecisionConfig> *mutable_precision_config() {
+    return GetPointer<::flatbuffers::Vector<tflite::StablehloPrecisionConfig> *>(VT_PRECISION_CONFIG);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -4369,20 +4495,38 @@ struct StablehloReduceWindowOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuff
   const ::flatbuffers::Vector<int64_t> *window_dimensions() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_WINDOW_DIMENSIONS);
   }
+  ::flatbuffers::Vector<int64_t> *mutable_window_dimensions() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_WINDOW_DIMENSIONS);
+  }
   const ::flatbuffers::Vector<int64_t> *window_strides() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_WINDOW_STRIDES);
+  }
+  ::flatbuffers::Vector<int64_t> *mutable_window_strides() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_WINDOW_STRIDES);
   }
   const ::flatbuffers::Vector<int64_t> *base_dilations() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_BASE_DILATIONS);
   }
+  ::flatbuffers::Vector<int64_t> *mutable_base_dilations() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_BASE_DILATIONS);
+  }
   const ::flatbuffers::Vector<int64_t> *window_dilations() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_WINDOW_DILATIONS);
+  }
+  ::flatbuffers::Vector<int64_t> *mutable_window_dilations() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_WINDOW_DILATIONS);
   }
   const ::flatbuffers::Vector<int64_t> *padding() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_PADDING);
   }
+  ::flatbuffers::Vector<int64_t> *mutable_padding() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_PADDING);
+  }
   int32_t body_subgraph_index() const {
     return GetField<int32_t>(VT_BODY_SUBGRAPH_INDEX, 0);
+  }
+  bool mutate_body_subgraph_index(int32_t _body_subgraph_index = 0) {
+    return SetField<int32_t>(VT_BODY_SUBGRAPH_INDEX, _body_subgraph_index, 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -4487,8 +4631,14 @@ struct StablehloWhileOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Ta
   int32_t cond_subgraph_index() const {
     return GetField<int32_t>(VT_COND_SUBGRAPH_INDEX, 0);
   }
+  bool mutate_cond_subgraph_index(int32_t _cond_subgraph_index = 0) {
+    return SetField<int32_t>(VT_COND_SUBGRAPH_INDEX, _cond_subgraph_index, 0);
+  }
   int32_t body_subgraph_index() const {
     return GetField<int32_t>(VT_BODY_SUBGRAPH_INDEX, 0);
+  }
+  bool mutate_body_subgraph_index(int32_t _body_subgraph_index = 0) {
+    return SetField<int32_t>(VT_BODY_SUBGRAPH_INDEX, _body_subgraph_index, 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -4542,11 +4692,20 @@ struct StablehloSortOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tab
   int64_t dimension() const {
     return GetField<int64_t>(VT_DIMENSION, 0);
   }
+  bool mutate_dimension(int64_t _dimension = 0) {
+    return SetField<int64_t>(VT_DIMENSION, _dimension, 0);
+  }
   bool is_stable() const {
     return GetField<uint8_t>(VT_IS_STABLE, 0) != 0;
   }
+  bool mutate_is_stable(bool _is_stable = 0) {
+    return SetField<uint8_t>(VT_IS_STABLE, static_cast<uint8_t>(_is_stable), 0);
+  }
   int32_t comparator_subgraph_index() const {
     return GetField<int32_t>(VT_COMPARATOR_SUBGRAPH_INDEX, 0);
+  }
+  bool mutate_comparator_subgraph_index(int32_t _comparator_subgraph_index = 0) {
+    return SetField<int32_t>(VT_COMPARATOR_SUBGRAPH_INDEX, _comparator_subgraph_index, 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -4604,6 +4763,9 @@ struct StablehloConcatenateOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffe
   int64_t dimension() const {
     return GetField<int64_t>(VT_DIMENSION, 0);
   }
+  bool mutate_dimension(int64_t _dimension = 0) {
+    return SetField<int64_t>(VT_DIMENSION, _dimension, 0);
+  }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<int64_t>(verifier, VT_DIMENSION, 8) &&
@@ -4647,6 +4809,9 @@ struct StablehloBroadcastInDimOptions FLATBUFFERS_FINAL_CLASS : private ::flatbu
   };
   const ::flatbuffers::Vector<int64_t> *broadcast_dimensions() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_BROADCAST_DIMENSIONS);
+  }
+  ::flatbuffers::Vector<int64_t> *mutable_broadcast_dimensions() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_BROADCAST_DIMENSIONS);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -4703,8 +4868,14 @@ struct StablehloCompareOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::
   tflite::StablehloComparisonDirection comparison_direction() const {
     return static_cast<tflite::StablehloComparisonDirection>(GetField<uint32_t>(VT_COMPARISON_DIRECTION, 0));
   }
+  bool mutate_comparison_direction(tflite::StablehloComparisonDirection _comparison_direction = static_cast<tflite::StablehloComparisonDirection>(0)) {
+    return SetField<uint32_t>(VT_COMPARISON_DIRECTION, static_cast<uint32_t>(_comparison_direction), 0);
+  }
   tflite::StablehloComparisonType compare_type() const {
     return static_cast<tflite::StablehloComparisonType>(GetField<uint32_t>(VT_COMPARE_TYPE, 0));
+  }
+  bool mutate_compare_type(tflite::StablehloComparisonType _compare_type = static_cast<tflite::StablehloComparisonType>(0)) {
+    return SetField<uint32_t>(VT_COMPARE_TYPE, static_cast<uint32_t>(_compare_type), 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -4755,6 +4926,9 @@ struct StablehloDynamicSliceOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuff
   };
   const ::flatbuffers::Vector<int64_t> *slice_sizes() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_SLICE_SIZES);
+  }
+  ::flatbuffers::Vector<int64_t> *mutable_slice_sizes() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_SLICE_SIZES);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -4812,11 +4986,20 @@ struct StablehloPadOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tabl
   const ::flatbuffers::Vector<int64_t> *edge_padding_low() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_EDGE_PADDING_LOW);
   }
+  ::flatbuffers::Vector<int64_t> *mutable_edge_padding_low() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_EDGE_PADDING_LOW);
+  }
   const ::flatbuffers::Vector<int64_t> *edge_padding_high() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_EDGE_PADDING_HIGH);
   }
+  ::flatbuffers::Vector<int64_t> *mutable_edge_padding_high() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_EDGE_PADDING_HIGH);
+  }
   const ::flatbuffers::Vector<int64_t> *interior_padding() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_INTERIOR_PADDING);
+  }
+  ::flatbuffers::Vector<int64_t> *mutable_interior_padding() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_INTERIOR_PADDING);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -4892,6 +5075,9 @@ struct StablehloIotaOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tab
   int64_t iota_dimension() const {
     return GetField<int64_t>(VT_IOTA_DIMENSION, 0);
   }
+  bool mutate_iota_dimension(int64_t _iota_dimension = 0) {
+    return SetField<int64_t>(VT_IOTA_DIMENSION, _iota_dimension, 0);
+  }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<int64_t>(verifier, VT_IOTA_DIMENSION, 8) &&
@@ -4941,20 +5127,38 @@ struct StablehloCustomCallOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffer
   const ::flatbuffers::String *call_target_name() const {
     return GetPointer<const ::flatbuffers::String *>(VT_CALL_TARGET_NAME);
   }
+  ::flatbuffers::String *mutable_call_target_name() {
+    return GetPointer<::flatbuffers::String *>(VT_CALL_TARGET_NAME);
+  }
   bool has_side_effect() const {
     return GetField<uint8_t>(VT_HAS_SIDE_EFFECT, 0) != 0;
+  }
+  bool mutate_has_side_effect(bool _has_side_effect = 0) {
+    return SetField<uint8_t>(VT_HAS_SIDE_EFFECT, static_cast<uint8_t>(_has_side_effect), 0);
   }
   const ::flatbuffers::String *backend_config() const {
     return GetPointer<const ::flatbuffers::String *>(VT_BACKEND_CONFIG);
   }
+  ::flatbuffers::String *mutable_backend_config() {
+    return GetPointer<::flatbuffers::String *>(VT_BACKEND_CONFIG);
+  }
   int32_t api_version() const {
     return GetField<int32_t>(VT_API_VERSION, 0);
+  }
+  bool mutate_api_version(int32_t _api_version = 0) {
+    return SetField<int32_t>(VT_API_VERSION, _api_version, 0);
   }
   const ::flatbuffers::Vector<int32_t> *called_computations() const {
     return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_CALLED_COMPUTATIONS);
   }
+  ::flatbuffers::Vector<int32_t> *mutable_called_computations() {
+    return GetPointer<::flatbuffers::Vector<int32_t> *>(VT_CALLED_COMPUTATIONS);
+  }
   const ::flatbuffers::Vector<uint8_t> *custom_attributes() const {
     return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_CUSTOM_ATTRIBUTES);
+  }
+  ::flatbuffers::Vector<uint8_t> *mutable_custom_attributes() {
+    return GetPointer<::flatbuffers::Vector<uint8_t> *>(VT_CUSTOM_ATTRIBUTES);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -5057,8 +5261,14 @@ struct StablehloReduceOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::T
   const ::flatbuffers::Vector<int64_t> *dimensions() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_DIMENSIONS);
   }
+  ::flatbuffers::Vector<int64_t> *mutable_dimensions() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_DIMENSIONS);
+  }
   int32_t body_subgraph_index() const {
     return GetField<int32_t>(VT_BODY_SUBGRAPH_INDEX, 0);
+  }
+  bool mutate_body_subgraph_index(int32_t _body_subgraph_index = 0) {
+    return SetField<int32_t>(VT_BODY_SUBGRAPH_INDEX, _body_subgraph_index, 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -5124,11 +5334,20 @@ struct StablehloSliceOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Ta
   const ::flatbuffers::Vector<int64_t> *start_indices() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_START_INDICES);
   }
+  ::flatbuffers::Vector<int64_t> *mutable_start_indices() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_START_INDICES);
+  }
   const ::flatbuffers::Vector<int64_t> *limit_indices() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_LIMIT_INDICES);
   }
+  ::flatbuffers::Vector<int64_t> *mutable_limit_indices() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_LIMIT_INDICES);
+  }
   const ::flatbuffers::Vector<int64_t> *strides() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_STRIDES);
+  }
+  ::flatbuffers::Vector<int64_t> *mutable_strides() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_STRIDES);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -5220,53 +5439,104 @@ struct StablehloConvolutionOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffe
   const ::flatbuffers::Vector<int64_t> *window_strides() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_WINDOW_STRIDES);
   }
+  ::flatbuffers::Vector<int64_t> *mutable_window_strides() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_WINDOW_STRIDES);
+  }
   const ::flatbuffers::Vector<int64_t> *padding() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_PADDING);
+  }
+  ::flatbuffers::Vector<int64_t> *mutable_padding() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_PADDING);
   }
   const ::flatbuffers::Vector<int64_t> *lhs_dilation() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_LHS_DILATION);
   }
+  ::flatbuffers::Vector<int64_t> *mutable_lhs_dilation() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_LHS_DILATION);
+  }
   const ::flatbuffers::Vector<int64_t> *rhs_dilation() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_RHS_DILATION);
+  }
+  ::flatbuffers::Vector<int64_t> *mutable_rhs_dilation() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_RHS_DILATION);
   }
   const ::flatbuffers::Vector<uint8_t> *window_reversal() const {
     return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_WINDOW_REVERSAL);
   }
+  ::flatbuffers::Vector<uint8_t> *mutable_window_reversal() {
+    return GetPointer<::flatbuffers::Vector<uint8_t> *>(VT_WINDOW_REVERSAL);
+  }
   int64_t input_batch_dimension() const {
     return GetField<int64_t>(VT_INPUT_BATCH_DIMENSION, 0);
+  }
+  bool mutate_input_batch_dimension(int64_t _input_batch_dimension = 0) {
+    return SetField<int64_t>(VT_INPUT_BATCH_DIMENSION, _input_batch_dimension, 0);
   }
   int64_t input_feature_dimension() const {
     return GetField<int64_t>(VT_INPUT_FEATURE_DIMENSION, 0);
   }
+  bool mutate_input_feature_dimension(int64_t _input_feature_dimension = 0) {
+    return SetField<int64_t>(VT_INPUT_FEATURE_DIMENSION, _input_feature_dimension, 0);
+  }
   const ::flatbuffers::Vector<int64_t> *input_spatial_dimensions() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_INPUT_SPATIAL_DIMENSIONS);
+  }
+  ::flatbuffers::Vector<int64_t> *mutable_input_spatial_dimensions() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_INPUT_SPATIAL_DIMENSIONS);
   }
   int64_t kernel_input_feature_dimension() const {
     return GetField<int64_t>(VT_KERNEL_INPUT_FEATURE_DIMENSION, 0);
   }
+  bool mutate_kernel_input_feature_dimension(int64_t _kernel_input_feature_dimension = 0) {
+    return SetField<int64_t>(VT_KERNEL_INPUT_FEATURE_DIMENSION, _kernel_input_feature_dimension, 0);
+  }
   int64_t kernel_output_feature_dimension() const {
     return GetField<int64_t>(VT_KERNEL_OUTPUT_FEATURE_DIMENSION, 0);
+  }
+  bool mutate_kernel_output_feature_dimension(int64_t _kernel_output_feature_dimension = 0) {
+    return SetField<int64_t>(VT_KERNEL_OUTPUT_FEATURE_DIMENSION, _kernel_output_feature_dimension, 0);
   }
   const ::flatbuffers::Vector<int64_t> *kernel_spatial_dimensions() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_KERNEL_SPATIAL_DIMENSIONS);
   }
+  ::flatbuffers::Vector<int64_t> *mutable_kernel_spatial_dimensions() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_KERNEL_SPATIAL_DIMENSIONS);
+  }
   int64_t output_batch_dimension() const {
     return GetField<int64_t>(VT_OUTPUT_BATCH_DIMENSION, 0);
+  }
+  bool mutate_output_batch_dimension(int64_t _output_batch_dimension = 0) {
+    return SetField<int64_t>(VT_OUTPUT_BATCH_DIMENSION, _output_batch_dimension, 0);
   }
   int64_t output_feature_dimension() const {
     return GetField<int64_t>(VT_OUTPUT_FEATURE_DIMENSION, 0);
   }
+  bool mutate_output_feature_dimension(int64_t _output_feature_dimension = 0) {
+    return SetField<int64_t>(VT_OUTPUT_FEATURE_DIMENSION, _output_feature_dimension, 0);
+  }
   const ::flatbuffers::Vector<int64_t> *output_spatial_dimensions() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_OUTPUT_SPATIAL_DIMENSIONS);
+  }
+  ::flatbuffers::Vector<int64_t> *mutable_output_spatial_dimensions() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_OUTPUT_SPATIAL_DIMENSIONS);
   }
   int64_t feature_group_count() const {
     return GetField<int64_t>(VT_FEATURE_GROUP_COUNT, 0);
   }
+  bool mutate_feature_group_count(int64_t _feature_group_count = 0) {
+    return SetField<int64_t>(VT_FEATURE_GROUP_COUNT, _feature_group_count, 0);
+  }
   int64_t batch_group_count() const {
     return GetField<int64_t>(VT_BATCH_GROUP_COUNT, 0);
   }
+  bool mutate_batch_group_count(int64_t _batch_group_count = 0) {
+    return SetField<int64_t>(VT_BATCH_GROUP_COUNT, _batch_group_count, 0);
+  }
   const ::flatbuffers::Vector<tflite::StablehloPrecisionConfig> *precision_config() const {
     return GetPointer<const ::flatbuffers::Vector<tflite::StablehloPrecisionConfig> *>(VT_PRECISION_CONFIG);
+  }
+  ::flatbuffers::Vector<tflite::StablehloPrecisionConfig> *mutable_precision_config() {
+    return GetPointer<::flatbuffers::Vector<tflite::StablehloPrecisionConfig> *>(VT_PRECISION_CONFIG);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -5472,23 +5742,44 @@ struct StablehloScatterOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::
   bool indices_are_sorted() const {
     return GetField<uint8_t>(VT_INDICES_ARE_SORTED, 0) != 0;
   }
+  bool mutate_indices_are_sorted(bool _indices_are_sorted = 0) {
+    return SetField<uint8_t>(VT_INDICES_ARE_SORTED, static_cast<uint8_t>(_indices_are_sorted), 0);
+  }
   const ::flatbuffers::Vector<int64_t> *update_window_dims() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_UPDATE_WINDOW_DIMS);
+  }
+  ::flatbuffers::Vector<int64_t> *mutable_update_window_dims() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_UPDATE_WINDOW_DIMS);
   }
   const ::flatbuffers::Vector<int64_t> *inserted_window_dims() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_INSERTED_WINDOW_DIMS);
   }
+  ::flatbuffers::Vector<int64_t> *mutable_inserted_window_dims() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_INSERTED_WINDOW_DIMS);
+  }
   const ::flatbuffers::Vector<int64_t> *scatter_dims_to_operand_dims() const {
     return GetPointer<const ::flatbuffers::Vector<int64_t> *>(VT_SCATTER_DIMS_TO_OPERAND_DIMS);
+  }
+  ::flatbuffers::Vector<int64_t> *mutable_scatter_dims_to_operand_dims() {
+    return GetPointer<::flatbuffers::Vector<int64_t> *>(VT_SCATTER_DIMS_TO_OPERAND_DIMS);
   }
   int64_t index_vector_dim() const {
     return GetField<int64_t>(VT_INDEX_VECTOR_DIM, 0);
   }
+  bool mutate_index_vector_dim(int64_t _index_vector_dim = 0) {
+    return SetField<int64_t>(VT_INDEX_VECTOR_DIM, _index_vector_dim, 0);
+  }
   bool unique_indices() const {
     return GetField<uint8_t>(VT_UNIQUE_INDICES, 0) != 0;
   }
+  bool mutate_unique_indices(bool _unique_indices = 0) {
+    return SetField<uint8_t>(VT_UNIQUE_INDICES, static_cast<uint8_t>(_unique_indices), 0);
+  }
   int32_t update_computation_subgraph_index() const {
     return GetField<int32_t>(VT_UPDATE_COMPUTATION_SUBGRAPH_INDEX, 0);
+  }
+  bool mutate_update_computation_subgraph_index(int32_t _update_computation_subgraph_index = 0) {
+    return SetField<int32_t>(VT_UPDATE_COMPUTATION_SUBGRAPH_INDEX, _update_computation_subgraph_index, 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -5596,6 +5887,9 @@ struct StablehloRngBitGeneratorOptions FLATBUFFERS_FINAL_CLASS : private ::flatb
   tflite::RngAlgorithm algorithm() const {
     return static_cast<tflite::RngAlgorithm>(GetField<int8_t>(VT_ALGORITHM, 0));
   }
+  bool mutate_algorithm(tflite::RngAlgorithm _algorithm = static_cast<tflite::RngAlgorithm>(0)) {
+    return SetField<int8_t>(VT_ALGORITHM, static_cast<int8_t>(_algorithm), 0);
+  }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<int8_t>(verifier, VT_ALGORITHM, 1) &&
@@ -5646,23 +5940,44 @@ struct Conv2DOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   tflite::Padding padding() const {
     return static_cast<tflite::Padding>(GetField<int8_t>(VT_PADDING, 0));
   }
+  bool mutate_padding(tflite::Padding _padding = static_cast<tflite::Padding>(0)) {
+    return SetField<int8_t>(VT_PADDING, static_cast<int8_t>(_padding), 0);
+  }
   int32_t stride_w() const {
     return GetField<int32_t>(VT_STRIDE_W, 0);
+  }
+  bool mutate_stride_w(int32_t _stride_w = 0) {
+    return SetField<int32_t>(VT_STRIDE_W, _stride_w, 0);
   }
   int32_t stride_h() const {
     return GetField<int32_t>(VT_STRIDE_H, 0);
   }
+  bool mutate_stride_h(int32_t _stride_h = 0) {
+    return SetField<int32_t>(VT_STRIDE_H, _stride_h, 0);
+  }
   tflite::ActivationFunctionType fused_activation_function() const {
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
+  }
+  bool mutate_fused_activation_function(tflite::ActivationFunctionType _fused_activation_function = static_cast<tflite::ActivationFunctionType>(0)) {
+    return SetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(_fused_activation_function), 0);
   }
   int32_t dilation_w_factor() const {
     return GetField<int32_t>(VT_DILATION_W_FACTOR, 1);
   }
+  bool mutate_dilation_w_factor(int32_t _dilation_w_factor = 1) {
+    return SetField<int32_t>(VT_DILATION_W_FACTOR, _dilation_w_factor, 1);
+  }
   int32_t dilation_h_factor() const {
     return GetField<int32_t>(VT_DILATION_H_FACTOR, 1);
   }
+  bool mutate_dilation_h_factor(int32_t _dilation_h_factor = 1) {
+    return SetField<int32_t>(VT_DILATION_H_FACTOR, _dilation_h_factor, 1);
+  }
   tflite::TensorType quantized_bias_type() const {
     return static_cast<tflite::TensorType>(GetField<int8_t>(VT_QUANTIZED_BIAS_TYPE, 0));
+  }
+  bool mutate_quantized_bias_type(tflite::TensorType _quantized_bias_type = static_cast<tflite::TensorType>(0)) {
+    return SetField<int8_t>(VT_QUANTIZED_BIAS_TYPE, static_cast<int8_t>(_quantized_bias_type), 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -5751,26 +6066,50 @@ struct Conv3DOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   tflite::Padding padding() const {
     return static_cast<tflite::Padding>(GetField<int8_t>(VT_PADDING, 0));
   }
+  bool mutate_padding(tflite::Padding _padding = static_cast<tflite::Padding>(0)) {
+    return SetField<int8_t>(VT_PADDING, static_cast<int8_t>(_padding), 0);
+  }
   int32_t stride_d() const {
     return GetField<int32_t>(VT_STRIDE_D, 0);
+  }
+  bool mutate_stride_d(int32_t _stride_d = 0) {
+    return SetField<int32_t>(VT_STRIDE_D, _stride_d, 0);
   }
   int32_t stride_w() const {
     return GetField<int32_t>(VT_STRIDE_W, 0);
   }
+  bool mutate_stride_w(int32_t _stride_w = 0) {
+    return SetField<int32_t>(VT_STRIDE_W, _stride_w, 0);
+  }
   int32_t stride_h() const {
     return GetField<int32_t>(VT_STRIDE_H, 0);
+  }
+  bool mutate_stride_h(int32_t _stride_h = 0) {
+    return SetField<int32_t>(VT_STRIDE_H, _stride_h, 0);
   }
   tflite::ActivationFunctionType fused_activation_function() const {
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
   }
+  bool mutate_fused_activation_function(tflite::ActivationFunctionType _fused_activation_function = static_cast<tflite::ActivationFunctionType>(0)) {
+    return SetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(_fused_activation_function), 0);
+  }
   int32_t dilation_d_factor() const {
     return GetField<int32_t>(VT_DILATION_D_FACTOR, 1);
+  }
+  bool mutate_dilation_d_factor(int32_t _dilation_d_factor = 1) {
+    return SetField<int32_t>(VT_DILATION_D_FACTOR, _dilation_d_factor, 1);
   }
   int32_t dilation_w_factor() const {
     return GetField<int32_t>(VT_DILATION_W_FACTOR, 1);
   }
+  bool mutate_dilation_w_factor(int32_t _dilation_w_factor = 1) {
+    return SetField<int32_t>(VT_DILATION_W_FACTOR, _dilation_w_factor, 1);
+  }
   int32_t dilation_h_factor() const {
     return GetField<int32_t>(VT_DILATION_H_FACTOR, 1);
+  }
+  bool mutate_dilation_h_factor(int32_t _dilation_h_factor = 1) {
+    return SetField<int32_t>(VT_DILATION_H_FACTOR, _dilation_h_factor, 1);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -5863,20 +6202,38 @@ struct Pool2DOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   tflite::Padding padding() const {
     return static_cast<tflite::Padding>(GetField<int8_t>(VT_PADDING, 0));
   }
+  bool mutate_padding(tflite::Padding _padding = static_cast<tflite::Padding>(0)) {
+    return SetField<int8_t>(VT_PADDING, static_cast<int8_t>(_padding), 0);
+  }
   int32_t stride_w() const {
     return GetField<int32_t>(VT_STRIDE_W, 0);
+  }
+  bool mutate_stride_w(int32_t _stride_w = 0) {
+    return SetField<int32_t>(VT_STRIDE_W, _stride_w, 0);
   }
   int32_t stride_h() const {
     return GetField<int32_t>(VT_STRIDE_H, 0);
   }
+  bool mutate_stride_h(int32_t _stride_h = 0) {
+    return SetField<int32_t>(VT_STRIDE_H, _stride_h, 0);
+  }
   int32_t filter_width() const {
     return GetField<int32_t>(VT_FILTER_WIDTH, 0);
+  }
+  bool mutate_filter_width(int32_t _filter_width = 0) {
+    return SetField<int32_t>(VT_FILTER_WIDTH, _filter_width, 0);
   }
   int32_t filter_height() const {
     return GetField<int32_t>(VT_FILTER_HEIGHT, 0);
   }
+  bool mutate_filter_height(int32_t _filter_height = 0) {
+    return SetField<int32_t>(VT_FILTER_HEIGHT, _filter_height, 0);
+  }
   tflite::ActivationFunctionType fused_activation_function() const {
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
+  }
+  bool mutate_fused_activation_function(tflite::ActivationFunctionType _fused_activation_function = static_cast<tflite::ActivationFunctionType>(0)) {
+    return SetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(_fused_activation_function), 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -5958,23 +6315,44 @@ struct DepthwiseConv2DOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::T
   tflite::Padding padding() const {
     return static_cast<tflite::Padding>(GetField<int8_t>(VT_PADDING, 0));
   }
+  bool mutate_padding(tflite::Padding _padding = static_cast<tflite::Padding>(0)) {
+    return SetField<int8_t>(VT_PADDING, static_cast<int8_t>(_padding), 0);
+  }
   int32_t stride_w() const {
     return GetField<int32_t>(VT_STRIDE_W, 0);
+  }
+  bool mutate_stride_w(int32_t _stride_w = 0) {
+    return SetField<int32_t>(VT_STRIDE_W, _stride_w, 0);
   }
   int32_t stride_h() const {
     return GetField<int32_t>(VT_STRIDE_H, 0);
   }
+  bool mutate_stride_h(int32_t _stride_h = 0) {
+    return SetField<int32_t>(VT_STRIDE_H, _stride_h, 0);
+  }
   int32_t depth_multiplier() const {
     return GetField<int32_t>(VT_DEPTH_MULTIPLIER, 0);
+  }
+  bool mutate_depth_multiplier(int32_t _depth_multiplier = 0) {
+    return SetField<int32_t>(VT_DEPTH_MULTIPLIER, _depth_multiplier, 0);
   }
   tflite::ActivationFunctionType fused_activation_function() const {
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
   }
+  bool mutate_fused_activation_function(tflite::ActivationFunctionType _fused_activation_function = static_cast<tflite::ActivationFunctionType>(0)) {
+    return SetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(_fused_activation_function), 0);
+  }
   int32_t dilation_w_factor() const {
     return GetField<int32_t>(VT_DILATION_W_FACTOR, 1);
   }
+  bool mutate_dilation_w_factor(int32_t _dilation_w_factor = 1) {
+    return SetField<int32_t>(VT_DILATION_W_FACTOR, _dilation_w_factor, 1);
+  }
   int32_t dilation_h_factor() const {
     return GetField<int32_t>(VT_DILATION_H_FACTOR, 1);
+  }
+  bool mutate_dilation_h_factor(int32_t _dilation_h_factor = 1) {
+    return SetField<int32_t>(VT_DILATION_H_FACTOR, _dilation_h_factor, 1);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -6058,11 +6436,20 @@ struct ConcatEmbeddingsOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::
   int32_t num_channels() const {
     return GetField<int32_t>(VT_NUM_CHANNELS, 0);
   }
+  bool mutate_num_channels(int32_t _num_channels = 0) {
+    return SetField<int32_t>(VT_NUM_CHANNELS, _num_channels, 0);
+  }
   const ::flatbuffers::Vector<int32_t> *num_columns_per_channel() const {
     return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_NUM_COLUMNS_PER_CHANNEL);
   }
+  ::flatbuffers::Vector<int32_t> *mutable_num_columns_per_channel() {
+    return GetPointer<::flatbuffers::Vector<int32_t> *>(VT_NUM_COLUMNS_PER_CHANNEL);
+  }
   const ::flatbuffers::Vector<int32_t> *embedding_dim_per_channel() const {
     return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_EMBEDDING_DIM_PER_CHANNEL);
+  }
+  ::flatbuffers::Vector<int32_t> *mutable_embedding_dim_per_channel() {
+    return GetPointer<::flatbuffers::Vector<int32_t> *>(VT_EMBEDDING_DIM_PER_CHANNEL);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -6136,6 +6523,9 @@ struct LSHProjectionOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tab
   tflite::LSHProjectionType type() const {
     return static_cast<tflite::LSHProjectionType>(GetField<int8_t>(VT_TYPE, 0));
   }
+  bool mutate_type(tflite::LSHProjectionType _type = static_cast<tflite::LSHProjectionType>(0)) {
+    return SetField<int8_t>(VT_TYPE, static_cast<int8_t>(_type), 0);
+  }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<int8_t>(verifier, VT_TYPE, 1) &&
@@ -6182,11 +6572,20 @@ struct SVDFOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   int32_t rank() const {
     return GetField<int32_t>(VT_RANK, 0);
   }
+  bool mutate_rank(int32_t _rank = 0) {
+    return SetField<int32_t>(VT_RANK, _rank, 0);
+  }
   tflite::ActivationFunctionType fused_activation_function() const {
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
   }
+  bool mutate_fused_activation_function(tflite::ActivationFunctionType _fused_activation_function = static_cast<tflite::ActivationFunctionType>(0)) {
+    return SetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(_fused_activation_function), 0);
+  }
   bool asymmetric_quantize_inputs() const {
     return GetField<uint8_t>(VT_ASYMMETRIC_QUANTIZE_INPUTS, 0) != 0;
+  }
+  bool mutate_asymmetric_quantize_inputs(bool _asymmetric_quantize_inputs = 0) {
+    return SetField<uint8_t>(VT_ASYMMETRIC_QUANTIZE_INPUTS, static_cast<uint8_t>(_asymmetric_quantize_inputs), 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -6245,8 +6644,14 @@ struct RNNOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   tflite::ActivationFunctionType fused_activation_function() const {
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
   }
+  bool mutate_fused_activation_function(tflite::ActivationFunctionType _fused_activation_function = static_cast<tflite::ActivationFunctionType>(0)) {
+    return SetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(_fused_activation_function), 0);
+  }
   bool asymmetric_quantize_inputs() const {
     return GetField<uint8_t>(VT_ASYMMETRIC_QUANTIZE_INPUTS, 0) != 0;
+  }
+  bool mutate_asymmetric_quantize_inputs(bool _asymmetric_quantize_inputs = 0) {
+    return SetField<uint8_t>(VT_ASYMMETRIC_QUANTIZE_INPUTS, static_cast<uint8_t>(_asymmetric_quantize_inputs), 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -6300,11 +6705,20 @@ struct SequenceRNNOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table
   bool time_major() const {
     return GetField<uint8_t>(VT_TIME_MAJOR, 0) != 0;
   }
+  bool mutate_time_major(bool _time_major = 0) {
+    return SetField<uint8_t>(VT_TIME_MAJOR, static_cast<uint8_t>(_time_major), 0);
+  }
   tflite::ActivationFunctionType fused_activation_function() const {
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
   }
+  bool mutate_fused_activation_function(tflite::ActivationFunctionType _fused_activation_function = static_cast<tflite::ActivationFunctionType>(0)) {
+    return SetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(_fused_activation_function), 0);
+  }
   bool asymmetric_quantize_inputs() const {
     return GetField<uint8_t>(VT_ASYMMETRIC_QUANTIZE_INPUTS, 0) != 0;
+  }
+  bool mutate_asymmetric_quantize_inputs(bool _asymmetric_quantize_inputs = 0) {
+    return SetField<uint8_t>(VT_ASYMMETRIC_QUANTIZE_INPUTS, static_cast<uint8_t>(_asymmetric_quantize_inputs), 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -6365,14 +6779,26 @@ struct BidirectionalSequenceRNNOptions FLATBUFFERS_FINAL_CLASS : private ::flatb
   bool time_major() const {
     return GetField<uint8_t>(VT_TIME_MAJOR, 0) != 0;
   }
+  bool mutate_time_major(bool _time_major = 0) {
+    return SetField<uint8_t>(VT_TIME_MAJOR, static_cast<uint8_t>(_time_major), 0);
+  }
   tflite::ActivationFunctionType fused_activation_function() const {
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
+  }
+  bool mutate_fused_activation_function(tflite::ActivationFunctionType _fused_activation_function = static_cast<tflite::ActivationFunctionType>(0)) {
+    return SetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(_fused_activation_function), 0);
   }
   bool merge_outputs() const {
     return GetField<uint8_t>(VT_MERGE_OUTPUTS, 0) != 0;
   }
+  bool mutate_merge_outputs(bool _merge_outputs = 0) {
+    return SetField<uint8_t>(VT_MERGE_OUTPUTS, static_cast<uint8_t>(_merge_outputs), 0);
+  }
   bool asymmetric_quantize_inputs() const {
     return GetField<uint8_t>(VT_ASYMMETRIC_QUANTIZE_INPUTS, 0) != 0;
+  }
+  bool mutate_asymmetric_quantize_inputs(bool _asymmetric_quantize_inputs = 0) {
+    return SetField<uint8_t>(VT_ASYMMETRIC_QUANTIZE_INPUTS, static_cast<uint8_t>(_asymmetric_quantize_inputs), 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -6440,17 +6866,32 @@ struct FullyConnectedOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Ta
   tflite::ActivationFunctionType fused_activation_function() const {
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
   }
+  bool mutate_fused_activation_function(tflite::ActivationFunctionType _fused_activation_function = static_cast<tflite::ActivationFunctionType>(0)) {
+    return SetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(_fused_activation_function), 0);
+  }
   tflite::FullyConnectedOptionsWeightsFormat weights_format() const {
     return static_cast<tflite::FullyConnectedOptionsWeightsFormat>(GetField<int8_t>(VT_WEIGHTS_FORMAT, 0));
+  }
+  bool mutate_weights_format(tflite::FullyConnectedOptionsWeightsFormat _weights_format = static_cast<tflite::FullyConnectedOptionsWeightsFormat>(0)) {
+    return SetField<int8_t>(VT_WEIGHTS_FORMAT, static_cast<int8_t>(_weights_format), 0);
   }
   bool keep_num_dims() const {
     return GetField<uint8_t>(VT_KEEP_NUM_DIMS, 0) != 0;
   }
+  bool mutate_keep_num_dims(bool _keep_num_dims = 0) {
+    return SetField<uint8_t>(VT_KEEP_NUM_DIMS, static_cast<uint8_t>(_keep_num_dims), 0);
+  }
   bool asymmetric_quantize_inputs() const {
     return GetField<uint8_t>(VT_ASYMMETRIC_QUANTIZE_INPUTS, 0) != 0;
   }
+  bool mutate_asymmetric_quantize_inputs(bool _asymmetric_quantize_inputs = 0) {
+    return SetField<uint8_t>(VT_ASYMMETRIC_QUANTIZE_INPUTS, static_cast<uint8_t>(_asymmetric_quantize_inputs), 0);
+  }
   tflite::TensorType quantized_bias_type() const {
     return static_cast<tflite::TensorType>(GetField<int8_t>(VT_QUANTIZED_BIAS_TYPE, 0));
+  }
+  bool mutate_quantized_bias_type(tflite::TensorType _quantized_bias_type = static_cast<tflite::TensorType>(0)) {
+    return SetField<int8_t>(VT_QUANTIZED_BIAS_TYPE, static_cast<int8_t>(_quantized_bias_type), 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -6520,6 +6961,9 @@ struct SoftmaxOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   float beta() const {
     return GetField<float>(VT_BETA, 0.0f);
   }
+  bool mutate_beta(float _beta = 0.0f) {
+    return SetField<float>(VT_BETA, _beta, 0.0f);
+  }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<float>(verifier, VT_BETA, 4) &&
@@ -6565,8 +7009,14 @@ struct ConcatenationOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tab
   int32_t axis() const {
     return GetField<int32_t>(VT_AXIS, 0);
   }
+  bool mutate_axis(int32_t _axis = 0) {
+    return SetField<int32_t>(VT_AXIS, _axis, 0);
+  }
   tflite::ActivationFunctionType fused_activation_function() const {
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
+  }
+  bool mutate_fused_activation_function(tflite::ActivationFunctionType _fused_activation_function = static_cast<tflite::ActivationFunctionType>(0)) {
+    return SetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(_fused_activation_function), 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -6619,8 +7069,14 @@ struct AddOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   tflite::ActivationFunctionType fused_activation_function() const {
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
   }
+  bool mutate_fused_activation_function(tflite::ActivationFunctionType _fused_activation_function = static_cast<tflite::ActivationFunctionType>(0)) {
+    return SetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(_fused_activation_function), 0);
+  }
   bool pot_scale_int16() const {
     return GetField<uint8_t>(VT_POT_SCALE_INT16, 1) != 0;
+  }
+  bool mutate_pot_scale_int16(bool _pot_scale_int16 = 1) {
+    return SetField<uint8_t>(VT_POT_SCALE_INT16, static_cast<uint8_t>(_pot_scale_int16), 1);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -6672,6 +7128,9 @@ struct MulOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   tflite::ActivationFunctionType fused_activation_function() const {
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
   }
+  bool mutate_fused_activation_function(tflite::ActivationFunctionType _fused_activation_function = static_cast<tflite::ActivationFunctionType>(0)) {
+    return SetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(_fused_activation_function), 0);
+  }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<int8_t>(verifier, VT_FUSED_ACTIVATION_FUNCTION, 1) &&
@@ -6715,6 +7174,9 @@ struct L2NormOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   };
   tflite::ActivationFunctionType fused_activation_function() const {
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
+  }
+  bool mutate_fused_activation_function(tflite::ActivationFunctionType _fused_activation_function = static_cast<tflite::ActivationFunctionType>(0)) {
+    return SetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(_fused_activation_function), 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -6763,14 +7225,26 @@ struct LocalResponseNormalizationOptions FLATBUFFERS_FINAL_CLASS : private ::fla
   int32_t radius() const {
     return GetField<int32_t>(VT_RADIUS, 0);
   }
+  bool mutate_radius(int32_t _radius = 0) {
+    return SetField<int32_t>(VT_RADIUS, _radius, 0);
+  }
   float bias() const {
     return GetField<float>(VT_BIAS, 0.0f);
+  }
+  bool mutate_bias(float _bias = 0.0f) {
+    return SetField<float>(VT_BIAS, _bias, 0.0f);
   }
   float alpha() const {
     return GetField<float>(VT_ALPHA, 0.0f);
   }
+  bool mutate_alpha(float _alpha = 0.0f) {
+    return SetField<float>(VT_ALPHA, _alpha, 0.0f);
+  }
   float beta() const {
     return GetField<float>(VT_BETA, 0.0f);
+  }
+  bool mutate_beta(float _beta = 0.0f) {
+    return SetField<float>(VT_BETA, _beta, 0.0f);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -6838,17 +7312,32 @@ struct LSTMOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   tflite::ActivationFunctionType fused_activation_function() const {
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
   }
+  bool mutate_fused_activation_function(tflite::ActivationFunctionType _fused_activation_function = static_cast<tflite::ActivationFunctionType>(0)) {
+    return SetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(_fused_activation_function), 0);
+  }
   float cell_clip() const {
     return GetField<float>(VT_CELL_CLIP, 0.0f);
+  }
+  bool mutate_cell_clip(float _cell_clip = 0.0f) {
+    return SetField<float>(VT_CELL_CLIP, _cell_clip, 0.0f);
   }
   float proj_clip() const {
     return GetField<float>(VT_PROJ_CLIP, 0.0f);
   }
+  bool mutate_proj_clip(float _proj_clip = 0.0f) {
+    return SetField<float>(VT_PROJ_CLIP, _proj_clip, 0.0f);
+  }
   tflite::LSTMKernelType kernel_type() const {
     return static_cast<tflite::LSTMKernelType>(GetField<int8_t>(VT_KERNEL_TYPE, 0));
   }
+  bool mutate_kernel_type(tflite::LSTMKernelType _kernel_type = static_cast<tflite::LSTMKernelType>(0)) {
+    return SetField<int8_t>(VT_KERNEL_TYPE, static_cast<int8_t>(_kernel_type), 0);
+  }
   bool asymmetric_quantize_inputs() const {
     return GetField<uint8_t>(VT_ASYMMETRIC_QUANTIZE_INPUTS, 0) != 0;
+  }
+  bool mutate_asymmetric_quantize_inputs(bool _asymmetric_quantize_inputs = 0) {
+    return SetField<uint8_t>(VT_ASYMMETRIC_QUANTIZE_INPUTS, static_cast<uint8_t>(_asymmetric_quantize_inputs), 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -6923,20 +7412,38 @@ struct UnidirectionalSequenceLSTMOptions FLATBUFFERS_FINAL_CLASS : private ::fla
   tflite::ActivationFunctionType fused_activation_function() const {
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
   }
+  bool mutate_fused_activation_function(tflite::ActivationFunctionType _fused_activation_function = static_cast<tflite::ActivationFunctionType>(0)) {
+    return SetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(_fused_activation_function), 0);
+  }
   float cell_clip() const {
     return GetField<float>(VT_CELL_CLIP, 0.0f);
+  }
+  bool mutate_cell_clip(float _cell_clip = 0.0f) {
+    return SetField<float>(VT_CELL_CLIP, _cell_clip, 0.0f);
   }
   float proj_clip() const {
     return GetField<float>(VT_PROJ_CLIP, 0.0f);
   }
+  bool mutate_proj_clip(float _proj_clip = 0.0f) {
+    return SetField<float>(VT_PROJ_CLIP, _proj_clip, 0.0f);
+  }
   bool time_major() const {
     return GetField<uint8_t>(VT_TIME_MAJOR, 0) != 0;
+  }
+  bool mutate_time_major(bool _time_major = 0) {
+    return SetField<uint8_t>(VT_TIME_MAJOR, static_cast<uint8_t>(_time_major), 0);
   }
   bool asymmetric_quantize_inputs() const {
     return GetField<uint8_t>(VT_ASYMMETRIC_QUANTIZE_INPUTS, 0) != 0;
   }
+  bool mutate_asymmetric_quantize_inputs(bool _asymmetric_quantize_inputs = 0) {
+    return SetField<uint8_t>(VT_ASYMMETRIC_QUANTIZE_INPUTS, static_cast<uint8_t>(_asymmetric_quantize_inputs), 0);
+  }
   bool diagonal_recurrent_tensors() const {
     return GetField<uint8_t>(VT_DIAGONAL_RECURRENT_TENSORS, 0) != 0;
+  }
+  bool mutate_diagonal_recurrent_tensors(bool _diagonal_recurrent_tensors = 0) {
+    return SetField<uint8_t>(VT_DIAGONAL_RECURRENT_TENSORS, static_cast<uint8_t>(_diagonal_recurrent_tensors), 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -7017,20 +7524,38 @@ struct BidirectionalSequenceLSTMOptions FLATBUFFERS_FINAL_CLASS : private ::flat
   tflite::ActivationFunctionType fused_activation_function() const {
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
   }
+  bool mutate_fused_activation_function(tflite::ActivationFunctionType _fused_activation_function = static_cast<tflite::ActivationFunctionType>(0)) {
+    return SetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(_fused_activation_function), 0);
+  }
   float cell_clip() const {
     return GetField<float>(VT_CELL_CLIP, 0.0f);
+  }
+  bool mutate_cell_clip(float _cell_clip = 0.0f) {
+    return SetField<float>(VT_CELL_CLIP, _cell_clip, 0.0f);
   }
   float proj_clip() const {
     return GetField<float>(VT_PROJ_CLIP, 0.0f);
   }
+  bool mutate_proj_clip(float _proj_clip = 0.0f) {
+    return SetField<float>(VT_PROJ_CLIP, _proj_clip, 0.0f);
+  }
   bool merge_outputs() const {
     return GetField<uint8_t>(VT_MERGE_OUTPUTS, 0) != 0;
+  }
+  bool mutate_merge_outputs(bool _merge_outputs = 0) {
+    return SetField<uint8_t>(VT_MERGE_OUTPUTS, static_cast<uint8_t>(_merge_outputs), 0);
   }
   bool time_major() const {
     return GetField<uint8_t>(VT_TIME_MAJOR, 1) != 0;
   }
+  bool mutate_time_major(bool _time_major = 1) {
+    return SetField<uint8_t>(VT_TIME_MAJOR, static_cast<uint8_t>(_time_major), 1);
+  }
   bool asymmetric_quantize_inputs() const {
     return GetField<uint8_t>(VT_ASYMMETRIC_QUANTIZE_INPUTS, 0) != 0;
+  }
+  bool mutate_asymmetric_quantize_inputs(bool _asymmetric_quantize_inputs = 0) {
+    return SetField<uint8_t>(VT_ASYMMETRIC_QUANTIZE_INPUTS, static_cast<uint8_t>(_asymmetric_quantize_inputs), 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -7107,8 +7632,14 @@ struct ResizeBilinearOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Ta
   bool align_corners() const {
     return GetField<uint8_t>(VT_ALIGN_CORNERS, 0) != 0;
   }
+  bool mutate_align_corners(bool _align_corners = 0) {
+    return SetField<uint8_t>(VT_ALIGN_CORNERS, static_cast<uint8_t>(_align_corners), 0);
+  }
   bool half_pixel_centers() const {
     return GetField<uint8_t>(VT_HALF_PIXEL_CENTERS, 0) != 0;
+  }
+  bool mutate_half_pixel_centers(bool _half_pixel_centers = 0) {
+    return SetField<uint8_t>(VT_HALF_PIXEL_CENTERS, static_cast<uint8_t>(_half_pixel_centers), 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -7161,8 +7692,14 @@ struct ResizeNearestNeighborOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuff
   bool align_corners() const {
     return GetField<uint8_t>(VT_ALIGN_CORNERS, 0) != 0;
   }
+  bool mutate_align_corners(bool _align_corners = 0) {
+    return SetField<uint8_t>(VT_ALIGN_CORNERS, static_cast<uint8_t>(_align_corners), 0);
+  }
   bool half_pixel_centers() const {
     return GetField<uint8_t>(VT_HALF_PIXEL_CENTERS, 0) != 0;
+  }
+  bool mutate_half_pixel_centers(bool _half_pixel_centers = 0) {
+    return SetField<uint8_t>(VT_HALF_PIXEL_CENTERS, static_cast<uint8_t>(_half_pixel_centers), 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -7213,6 +7750,9 @@ struct CallOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   };
   uint32_t subgraph() const {
     return GetField<uint32_t>(VT_SUBGRAPH, 0);
+  }
+  bool mutate_subgraph(uint32_t _subgraph = 0) {
+    return SetField<uint32_t>(VT_SUBGRAPH, _subgraph, 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -7321,6 +7861,9 @@ struct ReshapeOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   };
   const ::flatbuffers::Vector<int32_t> *new_shape() const {
     return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_NEW_SHAPE);
+  }
+  ::flatbuffers::Vector<int32_t> *mutable_new_shape() {
+    return GetPointer<::flatbuffers::Vector<int32_t> *>(VT_NEW_SHAPE);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -7442,11 +7985,20 @@ struct SkipGramOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   int32_t ngram_size() const {
     return GetField<int32_t>(VT_NGRAM_SIZE, 0);
   }
+  bool mutate_ngram_size(int32_t _ngram_size = 0) {
+    return SetField<int32_t>(VT_NGRAM_SIZE, _ngram_size, 0);
+  }
   int32_t max_skip_size() const {
     return GetField<int32_t>(VT_MAX_SKIP_SIZE, 0);
   }
+  bool mutate_max_skip_size(int32_t _max_skip_size = 0) {
+    return SetField<int32_t>(VT_MAX_SKIP_SIZE, _max_skip_size, 0);
+  }
   bool include_all_ngrams() const {
     return GetField<uint8_t>(VT_INCLUDE_ALL_NGRAMS, 0) != 0;
+  }
+  bool mutate_include_all_ngrams(bool _include_all_ngrams = 0) {
+    return SetField<uint8_t>(VT_INCLUDE_ALL_NGRAMS, static_cast<uint8_t>(_include_all_ngrams), 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -7504,6 +8056,9 @@ struct SpaceToDepthOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tabl
   int32_t block_size() const {
     return GetField<int32_t>(VT_BLOCK_SIZE, 0);
   }
+  bool mutate_block_size(int32_t _block_size = 0) {
+    return SetField<int32_t>(VT_BLOCK_SIZE, _block_size, 0);
+  }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_BLOCK_SIZE, 4) &&
@@ -7547,6 +8102,9 @@ struct DepthToSpaceOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tabl
   };
   int32_t block_size() const {
     return GetField<int32_t>(VT_BLOCK_SIZE, 0);
+  }
+  bool mutate_block_size(int32_t _block_size = 0) {
+    return SetField<int32_t>(VT_BLOCK_SIZE, _block_size, 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -7593,8 +8151,14 @@ struct SubOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   tflite::ActivationFunctionType fused_activation_function() const {
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
   }
+  bool mutate_fused_activation_function(tflite::ActivationFunctionType _fused_activation_function = static_cast<tflite::ActivationFunctionType>(0)) {
+    return SetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(_fused_activation_function), 0);
+  }
   bool pot_scale_int16() const {
     return GetField<uint8_t>(VT_POT_SCALE_INT16, 1) != 0;
+  }
+  bool mutate_pot_scale_int16(bool _pot_scale_int16 = 1) {
+    return SetField<uint8_t>(VT_POT_SCALE_INT16, static_cast<uint8_t>(_pot_scale_int16), 1);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -7645,6 +8209,9 @@ struct DivOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   };
   tflite::ActivationFunctionType fused_activation_function() const {
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
+  }
+  bool mutate_fused_activation_function(tflite::ActivationFunctionType _fused_activation_function = static_cast<tflite::ActivationFunctionType>(0)) {
+    return SetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(_fused_activation_function), 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -7722,6 +8289,9 @@ struct EmbeddingLookupSparseOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuff
   tflite::CombinerType combiner() const {
     return static_cast<tflite::CombinerType>(GetField<int8_t>(VT_COMBINER, 0));
   }
+  bool mutate_combiner(tflite::CombinerType _combiner = static_cast<tflite::CombinerType>(0)) {
+    return SetField<int8_t>(VT_COMBINER, static_cast<int8_t>(_combiner), 0);
+  }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<int8_t>(verifier, VT_COMBINER, 1) &&
@@ -7767,8 +8337,14 @@ struct GatherOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   int32_t axis() const {
     return GetField<int32_t>(VT_AXIS, 0);
   }
+  bool mutate_axis(int32_t _axis = 0) {
+    return SetField<int32_t>(VT_AXIS, _axis, 0);
+  }
   int32_t batch_dims() const {
     return GetField<int32_t>(VT_BATCH_DIMS, 0);
+  }
+  bool mutate_batch_dims(int32_t _batch_dims = 0) {
+    return SetField<int32_t>(VT_BATCH_DIMS, _batch_dims, 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -7916,6 +8492,9 @@ struct ReducerOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   bool keep_dims() const {
     return GetField<uint8_t>(VT_KEEP_DIMS, 0) != 0;
   }
+  bool mutate_keep_dims(bool _keep_dims = 0) {
+    return SetField<uint8_t>(VT_KEEP_DIMS, static_cast<uint8_t>(_keep_dims), 0);
+  }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<uint8_t>(verifier, VT_KEEP_DIMS, 1) &&
@@ -7959,6 +8538,9 @@ struct SqueezeOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   };
   const ::flatbuffers::Vector<int32_t> *squeeze_dims() const {
     return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_SQUEEZE_DIMS);
+  }
+  ::flatbuffers::Vector<int32_t> *mutable_squeeze_dims() {
+    return GetPointer<::flatbuffers::Vector<int32_t> *>(VT_SQUEEZE_DIMS);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -8014,6 +8596,9 @@ struct SplitOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   int32_t num_splits() const {
     return GetField<int32_t>(VT_NUM_SPLITS, 0);
   }
+  bool mutate_num_splits(int32_t _num_splits = 0) {
+    return SetField<int32_t>(VT_NUM_SPLITS, _num_splits, 0);
+  }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_NUM_SPLITS, 4) &&
@@ -8057,6 +8642,9 @@ struct SplitVOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   };
   int32_t num_splits() const {
     return GetField<int32_t>(VT_NUM_SPLITS, 0);
+  }
+  bool mutate_num_splits(int32_t _num_splits = 0) {
+    return SetField<int32_t>(VT_NUM_SPLITS, _num_splits, 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -8107,20 +8695,38 @@ struct StridedSliceOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tabl
   int32_t begin_mask() const {
     return GetField<int32_t>(VT_BEGIN_MASK, 0);
   }
+  bool mutate_begin_mask(int32_t _begin_mask = 0) {
+    return SetField<int32_t>(VT_BEGIN_MASK, _begin_mask, 0);
+  }
   int32_t end_mask() const {
     return GetField<int32_t>(VT_END_MASK, 0);
+  }
+  bool mutate_end_mask(int32_t _end_mask = 0) {
+    return SetField<int32_t>(VT_END_MASK, _end_mask, 0);
   }
   int32_t ellipsis_mask() const {
     return GetField<int32_t>(VT_ELLIPSIS_MASK, 0);
   }
+  bool mutate_ellipsis_mask(int32_t _ellipsis_mask = 0) {
+    return SetField<int32_t>(VT_ELLIPSIS_MASK, _ellipsis_mask, 0);
+  }
   int32_t new_axis_mask() const {
     return GetField<int32_t>(VT_NEW_AXIS_MASK, 0);
+  }
+  bool mutate_new_axis_mask(int32_t _new_axis_mask = 0) {
+    return SetField<int32_t>(VT_NEW_AXIS_MASK, _new_axis_mask, 0);
   }
   int32_t shrink_axis_mask() const {
     return GetField<int32_t>(VT_SHRINK_AXIS_MASK, 0);
   }
+  bool mutate_shrink_axis_mask(int32_t _shrink_axis_mask = 0) {
+    return SetField<int32_t>(VT_SHRINK_AXIS_MASK, _shrink_axis_mask, 0);
+  }
   bool offset() const {
     return GetField<uint8_t>(VT_OFFSET, 0) != 0;
+  }
+  bool mutate_offset(bool _offset = 0) {
+    return SetField<uint8_t>(VT_OFFSET, static_cast<uint8_t>(_offset), 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -8229,8 +8835,14 @@ struct CastOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   tflite::TensorType in_data_type() const {
     return static_cast<tflite::TensorType>(GetField<int8_t>(VT_IN_DATA_TYPE, 0));
   }
+  bool mutate_in_data_type(tflite::TensorType _in_data_type = static_cast<tflite::TensorType>(0)) {
+    return SetField<int8_t>(VT_IN_DATA_TYPE, static_cast<int8_t>(_in_data_type), 0);
+  }
   tflite::TensorType out_data_type() const {
     return static_cast<tflite::TensorType>(GetField<int8_t>(VT_OUT_DATA_TYPE, 0));
+  }
+  bool mutate_out_data_type(tflite::TensorType _out_data_type = static_cast<tflite::TensorType>(0)) {
+    return SetField<int8_t>(VT_OUT_DATA_TYPE, static_cast<int8_t>(_out_data_type), 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -8378,6 +8990,9 @@ struct ArgMaxOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   tflite::TensorType output_type() const {
     return static_cast<tflite::TensorType>(GetField<int8_t>(VT_OUTPUT_TYPE, 0));
   }
+  bool mutate_output_type(tflite::TensorType _output_type = static_cast<tflite::TensorType>(0)) {
+    return SetField<int8_t>(VT_OUTPUT_TYPE, static_cast<int8_t>(_output_type), 0);
+  }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<int8_t>(verifier, VT_OUTPUT_TYPE, 1) &&
@@ -8421,6 +9036,9 @@ struct ArgMinOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   };
   tflite::TensorType output_type() const {
     return static_cast<tflite::TensorType>(GetField<int8_t>(VT_OUTPUT_TYPE, 0));
+  }
+  bool mutate_output_type(tflite::TensorType _output_type = static_cast<tflite::TensorType>(0)) {
+    return SetField<int8_t>(VT_OUTPUT_TYPE, static_cast<int8_t>(_output_type), 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -8694,17 +9312,32 @@ struct TransposeConvOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tab
   tflite::Padding padding() const {
     return static_cast<tflite::Padding>(GetField<int8_t>(VT_PADDING, 0));
   }
+  bool mutate_padding(tflite::Padding _padding = static_cast<tflite::Padding>(0)) {
+    return SetField<int8_t>(VT_PADDING, static_cast<int8_t>(_padding), 0);
+  }
   int32_t stride_w() const {
     return GetField<int32_t>(VT_STRIDE_W, 0);
+  }
+  bool mutate_stride_w(int32_t _stride_w = 0) {
+    return SetField<int32_t>(VT_STRIDE_W, _stride_w, 0);
   }
   int32_t stride_h() const {
     return GetField<int32_t>(VT_STRIDE_H, 0);
   }
+  bool mutate_stride_h(int32_t _stride_h = 0) {
+    return SetField<int32_t>(VT_STRIDE_H, _stride_h, 0);
+  }
   tflite::ActivationFunctionType fused_activation_function() const {
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
   }
+  bool mutate_fused_activation_function(tflite::ActivationFunctionType _fused_activation_function = static_cast<tflite::ActivationFunctionType>(0)) {
+    return SetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(_fused_activation_function), 0);
+  }
   tflite::TensorType quantized_bias_type() const {
     return static_cast<tflite::TensorType>(GetField<int8_t>(VT_QUANTIZED_BIAS_TYPE, 0));
+  }
+  bool mutate_quantized_bias_type(tflite::TensorType _quantized_bias_type = static_cast<tflite::TensorType>(0)) {
+    return SetField<int8_t>(VT_QUANTIZED_BIAS_TYPE, static_cast<int8_t>(_quantized_bias_type), 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -8805,6 +9438,9 @@ struct SparseToDenseOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tab
   };
   bool validate_indices() const {
     return GetField<uint8_t>(VT_VALIDATE_INDICES, 0) != 0;
+  }
+  bool mutate_validate_indices(bool _validate_indices = 0) {
+    return SetField<uint8_t>(VT_VALIDATE_INDICES, static_cast<uint8_t>(_validate_indices), 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -8913,6 +9549,9 @@ struct ShapeOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   };
   tflite::TensorType out_type() const {
     return static_cast<tflite::TensorType>(GetField<int8_t>(VT_OUT_TYPE, 0));
+  }
+  bool mutate_out_type(tflite::TensorType _out_type = static_cast<tflite::TensorType>(0)) {
+    return SetField<int8_t>(VT_OUT_TYPE, static_cast<int8_t>(_out_type), 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -9025,14 +9664,26 @@ struct FakeQuantOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   float min() const {
     return GetField<float>(VT_MIN, 0.0f);
   }
+  bool mutate_min(float _min = 0.0f) {
+    return SetField<float>(VT_MIN, _min, 0.0f);
+  }
   float max() const {
     return GetField<float>(VT_MAX, 0.0f);
+  }
+  bool mutate_max(float _max = 0.0f) {
+    return SetField<float>(VT_MAX, _max, 0.0f);
   }
   int32_t num_bits() const {
     return GetField<int32_t>(VT_NUM_BITS, 0);
   }
+  bool mutate_num_bits(int32_t _num_bits = 0) {
+    return SetField<int32_t>(VT_NUM_BITS, _num_bits, 0);
+  }
   bool narrow_range() const {
     return GetField<uint8_t>(VT_NARROW_RANGE, 0) != 0;
+  }
+  bool mutate_narrow_range(bool _narrow_range = 0) {
+    return SetField<uint8_t>(VT_NARROW_RANGE, static_cast<uint8_t>(_narrow_range), 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -9097,8 +9748,14 @@ struct PackOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   int32_t values_count() const {
     return GetField<int32_t>(VT_VALUES_COUNT, 0);
   }
+  bool mutate_values_count(int32_t _values_count = 0) {
+    return SetField<int32_t>(VT_VALUES_COUNT, _values_count, 0);
+  }
   int32_t axis() const {
     return GetField<int32_t>(VT_AXIS, 0);
+  }
+  bool mutate_axis(int32_t _axis = 0) {
+    return SetField<int32_t>(VT_AXIS, _axis, 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -9181,6 +9838,9 @@ struct OneHotOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   };
   int32_t axis() const {
     return GetField<int32_t>(VT_AXIS, 0);
+  }
+  bool mutate_axis(int32_t _axis = 0) {
+    return SetField<int32_t>(VT_AXIS, _axis, 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -9355,8 +10015,14 @@ struct UnpackOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   int32_t num() const {
     return GetField<int32_t>(VT_NUM, 0);
   }
+  bool mutate_num(int32_t _num = 0) {
+    return SetField<int32_t>(VT_NUM, _num, 0);
+  }
   int32_t axis() const {
     return GetField<int32_t>(VT_AXIS, 0);
+  }
+  bool mutate_axis(int32_t _axis = 0) {
+    return SetField<int32_t>(VT_AXIS, _axis, 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -9600,6 +10266,9 @@ struct LeakyReluOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   float alpha() const {
     return GetField<float>(VT_ALPHA, 0.0f);
   }
+  bool mutate_alpha(float _alpha = 0.0f) {
+    return SetField<float>(VT_ALPHA, _alpha, 0.0f);
+  }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<float>(verifier, VT_ALPHA, 4) &&
@@ -9676,6 +10345,9 @@ struct MirrorPadOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   tflite::MirrorPadMode mode() const {
     return static_cast<tflite::MirrorPadMode>(GetField<int8_t>(VT_MODE, 0));
   }
+  bool mutate_mode(tflite::MirrorPadMode _mode = static_cast<tflite::MirrorPadMode>(0)) {
+    return SetField<int8_t>(VT_MODE, static_cast<int8_t>(_mode), 0);
+  }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<int8_t>(verifier, VT_MODE, 1) &&
@@ -9719,6 +10391,9 @@ struct UniqueOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   };
   tflite::TensorType idx_out_type() const {
     return static_cast<tflite::TensorType>(GetField<int8_t>(VT_IDX_OUT_TYPE, 2));
+  }
+  bool mutate_idx_out_type(tflite::TensorType _idx_out_type = static_cast<tflite::TensorType>(2)) {
+    return SetField<int8_t>(VT_IDX_OUT_TYPE, static_cast<int8_t>(_idx_out_type), 2);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -9893,8 +10568,14 @@ struct ReverseSequenceOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::T
   int32_t seq_dim() const {
     return GetField<int32_t>(VT_SEQ_DIM, 0);
   }
+  bool mutate_seq_dim(int32_t _seq_dim = 0) {
+    return SetField<int32_t>(VT_SEQ_DIM, _seq_dim, 0);
+  }
   int32_t batch_dim() const {
     return GetField<int32_t>(VT_BATCH_DIM, 0);
+  }
+  bool mutate_batch_dim(int32_t _batch_dim = 0) {
+    return SetField<int32_t>(VT_BATCH_DIM, _batch_dim, 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -10043,8 +10724,14 @@ struct IfOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   int32_t then_subgraph_index() const {
     return GetField<int32_t>(VT_THEN_SUBGRAPH_INDEX, 0);
   }
+  bool mutate_then_subgraph_index(int32_t _then_subgraph_index = 0) {
+    return SetField<int32_t>(VT_THEN_SUBGRAPH_INDEX, _then_subgraph_index, 0);
+  }
   int32_t else_subgraph_index() const {
     return GetField<int32_t>(VT_ELSE_SUBGRAPH_INDEX, 0);
+  }
+  bool mutate_else_subgraph_index(int32_t _else_subgraph_index = 0) {
+    return SetField<int32_t>(VT_ELSE_SUBGRAPH_INDEX, _else_subgraph_index, 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -10096,6 +10783,9 @@ struct CallOnceOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   int32_t init_subgraph_index() const {
     return GetField<int32_t>(VT_INIT_SUBGRAPH_INDEX, 0);
   }
+  bool mutate_init_subgraph_index(int32_t _init_subgraph_index = 0) {
+    return SetField<int32_t>(VT_INIT_SUBGRAPH_INDEX, _init_subgraph_index, 0);
+  }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_INIT_SUBGRAPH_INDEX, 4) &&
@@ -10141,8 +10831,14 @@ struct WhileOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   int32_t cond_subgraph_index() const {
     return GetField<int32_t>(VT_COND_SUBGRAPH_INDEX, 0);
   }
+  bool mutate_cond_subgraph_index(int32_t _cond_subgraph_index = 0) {
+    return SetField<int32_t>(VT_COND_SUBGRAPH_INDEX, _cond_subgraph_index, 0);
+  }
   int32_t body_subgraph_index() const {
     return GetField<int32_t>(VT_BODY_SUBGRAPH_INDEX, 0);
+  }
+  bool mutate_body_subgraph_index(int32_t _body_subgraph_index = 0) {
+    return SetField<int32_t>(VT_BODY_SUBGRAPH_INDEX, _body_subgraph_index, 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -10388,11 +11084,20 @@ struct BatchMatMulOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table
   bool adj_x() const {
     return GetField<uint8_t>(VT_ADJ_X, 0) != 0;
   }
+  bool mutate_adj_x(bool _adj_x = 0) {
+    return SetField<uint8_t>(VT_ADJ_X, static_cast<uint8_t>(_adj_x), 0);
+  }
   bool adj_y() const {
     return GetField<uint8_t>(VT_ADJ_Y, 0) != 0;
   }
+  bool mutate_adj_y(bool _adj_y = 0) {
+    return SetField<uint8_t>(VT_ADJ_Y, static_cast<uint8_t>(_adj_y), 0);
+  }
   bool asymmetric_quantize_inputs() const {
     return GetField<uint8_t>(VT_ASYMMETRIC_QUANTIZE_INPUTS, 0) != 0;
+  }
+  bool mutate_asymmetric_quantize_inputs(bool _asymmetric_quantize_inputs = 0) {
+    return SetField<uint8_t>(VT_ASYMMETRIC_QUANTIZE_INPUTS, static_cast<uint8_t>(_asymmetric_quantize_inputs), 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -10451,8 +11156,14 @@ struct CumsumOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   bool exclusive() const {
     return GetField<uint8_t>(VT_EXCLUSIVE, 0) != 0;
   }
+  bool mutate_exclusive(bool _exclusive = 0) {
+    return SetField<uint8_t>(VT_EXCLUSIVE, static_cast<uint8_t>(_exclusive), 0);
+  }
   bool reverse() const {
     return GetField<uint8_t>(VT_REVERSE, 0) != 0;
+  }
+  bool mutate_reverse(bool _reverse = 0) {
+    return SetField<uint8_t>(VT_REVERSE, static_cast<uint8_t>(_reverse), 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -10570,11 +11281,20 @@ struct HashtableOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   int32_t table_id() const {
     return GetField<int32_t>(VT_TABLE_ID, 0);
   }
+  bool mutate_table_id(int32_t _table_id = 0) {
+    return SetField<int32_t>(VT_TABLE_ID, _table_id, 0);
+  }
   tflite::TensorType key_dtype() const {
     return static_cast<tflite::TensorType>(GetField<int8_t>(VT_KEY_DTYPE, 0));
   }
+  bool mutate_key_dtype(tflite::TensorType _key_dtype = static_cast<tflite::TensorType>(0)) {
+    return SetField<int8_t>(VT_KEY_DTYPE, static_cast<int8_t>(_key_dtype), 0);
+  }
   tflite::TensorType value_dtype() const {
     return static_cast<tflite::TensorType>(GetField<int8_t>(VT_VALUE_DTYPE, 0));
+  }
+  bool mutate_value_dtype(tflite::TensorType _value_dtype = static_cast<tflite::TensorType>(0)) {
+    return SetField<int8_t>(VT_VALUE_DTYPE, static_cast<int8_t>(_value_dtype), 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -10729,8 +11449,14 @@ struct VarHandleOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::String *container() const {
     return GetPointer<const ::flatbuffers::String *>(VT_CONTAINER);
   }
+  ::flatbuffers::String *mutable_container() {
+    return GetPointer<::flatbuffers::String *>(VT_CONTAINER);
+  }
   const ::flatbuffers::String *shared_name() const {
     return GetPointer<const ::flatbuffers::String *>(VT_SHARED_NAME);
+  }
+  ::flatbuffers::String *mutable_shared_name() {
+    return GetPointer<::flatbuffers::String *>(VT_SHARED_NAME);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -10861,8 +11587,14 @@ struct RandomOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   int64_t seed() const {
     return GetField<int64_t>(VT_SEED, 0);
   }
+  bool mutate_seed(int64_t _seed = 0) {
+    return SetField<int64_t>(VT_SEED, _seed, 0);
+  }
   int64_t seed2() const {
     return GetField<int64_t>(VT_SEED2, 0);
+  }
+  bool mutate_seed2(int64_t _seed2 = 0) {
+    return SetField<int64_t>(VT_SEED2, _seed2, 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -10913,6 +11645,9 @@ struct BucketizeOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   };
   const ::flatbuffers::Vector<float> *boundaries() const {
     return GetPointer<const ::flatbuffers::Vector<float> *>(VT_BOUNDARIES);
+  }
+  ::flatbuffers::Vector<float> *mutable_boundaries() {
+    return GetPointer<::flatbuffers::Vector<float> *>(VT_BOUNDARIES);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -10967,6 +11702,9 @@ struct GeluOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   };
   bool approximate() const {
     return GetField<uint8_t>(VT_APPROXIMATE, 0) != 0;
+  }
+  bool mutate_approximate(bool _approximate = 0) {
+    return SetField<uint8_t>(VT_APPROXIMATE, static_cast<uint8_t>(_approximate), 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -11364,6 +12102,9 @@ struct ReduceWindowOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tabl
   tflite::ReduceWindowFunction reduce_function() const {
     return static_cast<tflite::ReduceWindowFunction>(GetField<int32_t>(VT_REDUCE_FUNCTION, 0));
   }
+  bool mutate_reduce_function(tflite::ReduceWindowFunction _reduce_function = static_cast<tflite::ReduceWindowFunction>(0)) {
+    return SetField<int32_t>(VT_REDUCE_FUNCTION, static_cast<int32_t>(_reduce_function), 0);
+  }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_REDUCE_FUNCTION, 4) &&
@@ -11411,14 +12152,26 @@ struct OperatorCode FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   int8_t deprecated_builtin_code() const {
     return GetField<int8_t>(VT_DEPRECATED_BUILTIN_CODE, 0);
   }
+  bool mutate_deprecated_builtin_code(int8_t _deprecated_builtin_code = 0) {
+    return SetField<int8_t>(VT_DEPRECATED_BUILTIN_CODE, _deprecated_builtin_code, 0);
+  }
   const ::flatbuffers::String *custom_code() const {
     return GetPointer<const ::flatbuffers::String *>(VT_CUSTOM_CODE);
+  }
+  ::flatbuffers::String *mutable_custom_code() {
+    return GetPointer<::flatbuffers::String *>(VT_CUSTOM_CODE);
   }
   int32_t version() const {
     return GetField<int32_t>(VT_VERSION, 1);
   }
+  bool mutate_version(int32_t _version = 1) {
+    return SetField<int32_t>(VT_VERSION, _version, 1);
+  }
   tflite::BuiltinOperator builtin_code() const {
     return static_cast<tflite::BuiltinOperator>(GetField<int32_t>(VT_BUILTIN_CODE, 0));
+  }
+  bool mutate_builtin_code(tflite::BuiltinOperator _builtin_code = static_cast<tflite::BuiltinOperator>(0)) {
+    return SetField<int32_t>(VT_BUILTIN_CODE, static_cast<int32_t>(_builtin_code), 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -11502,17 +12255,32 @@ struct StableHLOCompositeOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers
   const ::flatbuffers::String *name() const {
     return GetPointer<const ::flatbuffers::String *>(VT_NAME);
   }
+  ::flatbuffers::String *mutable_name() {
+    return GetPointer<::flatbuffers::String *>(VT_NAME);
+  }
   int32_t decomposition_subgraph_index() const {
     return GetField<int32_t>(VT_DECOMPOSITION_SUBGRAPH_INDEX, 0);
+  }
+  bool mutate_decomposition_subgraph_index(int32_t _decomposition_subgraph_index = 0) {
+    return SetField<int32_t>(VT_DECOMPOSITION_SUBGRAPH_INDEX, _decomposition_subgraph_index, 0);
   }
   const ::flatbuffers::Vector<uint8_t> *composite_attributes() const {
     return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_COMPOSITE_ATTRIBUTES);
   }
+  ::flatbuffers::Vector<uint8_t> *mutable_composite_attributes() {
+    return GetPointer<::flatbuffers::Vector<uint8_t> *>(VT_COMPOSITE_ATTRIBUTES);
+  }
   tflite::CustomOptionsFormat composite_attributes_format() const {
     return static_cast<tflite::CustomOptionsFormat>(GetField<int8_t>(VT_COMPOSITE_ATTRIBUTES_FORMAT, 0));
   }
+  bool mutate_composite_attributes_format(tflite::CustomOptionsFormat _composite_attributes_format = static_cast<tflite::CustomOptionsFormat>(0)) {
+    return SetField<int8_t>(VT_COMPOSITE_ATTRIBUTES_FORMAT, static_cast<int8_t>(_composite_attributes_format), 0);
+  }
   int32_t version() const {
     return GetField<int32_t>(VT_VERSION, 0);
+  }
+  bool mutate_version(int32_t _version = 0) {
+    return SetField<int32_t>(VT_VERSION, _version, 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -11614,11 +12382,20 @@ struct Operator FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   uint32_t opcode_index() const {
     return GetField<uint32_t>(VT_OPCODE_INDEX, 0);
   }
+  bool mutate_opcode_index(uint32_t _opcode_index = 0) {
+    return SetField<uint32_t>(VT_OPCODE_INDEX, _opcode_index, 0);
+  }
   const ::flatbuffers::Vector<int32_t> *inputs() const {
     return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_INPUTS);
   }
+  ::flatbuffers::Vector<int32_t> *mutable_inputs() {
+    return GetPointer<::flatbuffers::Vector<int32_t> *>(VT_INPUTS);
+  }
   const ::flatbuffers::Vector<int32_t> *outputs() const {
     return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_OUTPUTS);
+  }
+  ::flatbuffers::Vector<int32_t> *mutable_outputs() {
+    return GetPointer<::flatbuffers::Vector<int32_t> *>(VT_OUTPUTS);
   }
   tflite::BuiltinOptions builtin_options_type() const {
     return static_cast<tflite::BuiltinOptions>(GetField<uint8_t>(VT_BUILTIN_OPTIONS_TYPE, 0));
@@ -12005,23 +12782,44 @@ struct Operator FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const tflite::RightShiftOptions *builtin_options_as_RightShiftOptions() const {
     return builtin_options_type() == tflite::BuiltinOptions::RightShiftOptions ? static_cast<const tflite::RightShiftOptions *>(builtin_options()) : nullptr;
   }
+  void *mutable_builtin_options() {
+    return GetPointer<void *>(VT_BUILTIN_OPTIONS);
+  }
   const ::flatbuffers::Vector<uint8_t> *custom_options() const {
     return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_CUSTOM_OPTIONS);
+  }
+  ::flatbuffers::Vector<uint8_t> *mutable_custom_options() {
+    return GetPointer<::flatbuffers::Vector<uint8_t> *>(VT_CUSTOM_OPTIONS);
   }
   tflite::CustomOptionsFormat custom_options_format() const {
     return static_cast<tflite::CustomOptionsFormat>(GetField<int8_t>(VT_CUSTOM_OPTIONS_FORMAT, 0));
   }
+  bool mutate_custom_options_format(tflite::CustomOptionsFormat _custom_options_format = static_cast<tflite::CustomOptionsFormat>(0)) {
+    return SetField<int8_t>(VT_CUSTOM_OPTIONS_FORMAT, static_cast<int8_t>(_custom_options_format), 0);
+  }
   const ::flatbuffers::Vector<uint8_t> *mutating_variable_inputs() const {
     return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_MUTATING_VARIABLE_INPUTS);
+  }
+  ::flatbuffers::Vector<uint8_t> *mutable_mutating_variable_inputs() {
+    return GetPointer<::flatbuffers::Vector<uint8_t> *>(VT_MUTATING_VARIABLE_INPUTS);
   }
   const ::flatbuffers::Vector<int32_t> *intermediates() const {
     return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_INTERMEDIATES);
   }
+  ::flatbuffers::Vector<int32_t> *mutable_intermediates() {
+    return GetPointer<::flatbuffers::Vector<int32_t> *>(VT_INTERMEDIATES);
+  }
   uint64_t large_custom_options_offset() const {
     return GetField<uint64_t>(VT_LARGE_CUSTOM_OPTIONS_OFFSET, 0);
   }
+  bool mutate_large_custom_options_offset(uint64_t _large_custom_options_offset = 0) {
+    return SetField<uint64_t>(VT_LARGE_CUSTOM_OPTIONS_OFFSET, _large_custom_options_offset, 0);
+  }
   uint64_t large_custom_options_size() const {
     return GetField<uint64_t>(VT_LARGE_CUSTOM_OPTIONS_SIZE, 0);
+  }
+  bool mutate_large_custom_options_size(uint64_t _large_custom_options_size = 0) {
+    return SetField<uint64_t>(VT_LARGE_CUSTOM_OPTIONS_SIZE, _large_custom_options_size, 0);
   }
   tflite::BuiltinOptions2 builtin_options_2_type() const {
     return static_cast<tflite::BuiltinOptions2>(GetField<uint8_t>(VT_BUILTIN_OPTIONS_2_TYPE, 0));
@@ -12092,6 +12890,9 @@ struct Operator FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   }
   const tflite::StableHLOCompositeOptions *builtin_options_2_as_StableHLOCompositeOptions() const {
     return builtin_options_2_type() == tflite::BuiltinOptions2::StableHLOCompositeOptions ? static_cast<const tflite::StableHLOCompositeOptions *>(builtin_options_2()) : nullptr;
+  }
+  void *mutable_builtin_options_2() {
+    return GetPointer<void *>(VT_BUILTIN_OPTIONS_2);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -12845,17 +13646,32 @@ struct SubGraph FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<::flatbuffers::Offset<tflite::Tensor>> *tensors() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<tflite::Tensor>> *>(VT_TENSORS);
   }
+  ::flatbuffers::Vector<::flatbuffers::Offset<tflite::Tensor>> *mutable_tensors() {
+    return GetPointer<::flatbuffers::Vector<::flatbuffers::Offset<tflite::Tensor>> *>(VT_TENSORS);
+  }
   const ::flatbuffers::Vector<int32_t> *inputs() const {
     return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_INPUTS);
+  }
+  ::flatbuffers::Vector<int32_t> *mutable_inputs() {
+    return GetPointer<::flatbuffers::Vector<int32_t> *>(VT_INPUTS);
   }
   const ::flatbuffers::Vector<int32_t> *outputs() const {
     return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_OUTPUTS);
   }
+  ::flatbuffers::Vector<int32_t> *mutable_outputs() {
+    return GetPointer<::flatbuffers::Vector<int32_t> *>(VT_OUTPUTS);
+  }
   const ::flatbuffers::Vector<::flatbuffers::Offset<tflite::Operator>> *operators() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<tflite::Operator>> *>(VT_OPERATORS);
   }
+  ::flatbuffers::Vector<::flatbuffers::Offset<tflite::Operator>> *mutable_operators() {
+    return GetPointer<::flatbuffers::Vector<::flatbuffers::Offset<tflite::Operator>> *>(VT_OPERATORS);
+  }
   const ::flatbuffers::String *name() const {
     return GetPointer<const ::flatbuffers::String *>(VT_NAME);
+  }
+  ::flatbuffers::String *mutable_name() {
+    return GetPointer<::flatbuffers::String *>(VT_NAME);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -12955,11 +13771,20 @@ struct Buffer FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<uint8_t> *data() const {
     return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_DATA);
   }
+  ::flatbuffers::Vector<uint8_t> *mutable_data() {
+    return GetPointer<::flatbuffers::Vector<uint8_t> *>(VT_DATA);
+  }
   uint64_t offset() const {
     return GetField<uint64_t>(VT_OFFSET, 0);
   }
+  bool mutate_offset(uint64_t _offset = 0) {
+    return SetField<uint64_t>(VT_OFFSET, _offset, 0);
+  }
   uint64_t size() const {
     return GetField<uint64_t>(VT_SIZE, 0);
+  }
+  bool mutate_size(uint64_t _size = 0) {
+    return SetField<uint64_t>(VT_SIZE, _size, 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -13033,8 +13858,14 @@ struct Metadata FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::String *name() const {
     return GetPointer<const ::flatbuffers::String *>(VT_NAME);
   }
+  ::flatbuffers::String *mutable_name() {
+    return GetPointer<::flatbuffers::String *>(VT_NAME);
+  }
   uint32_t buffer() const {
     return GetField<uint32_t>(VT_BUFFER, 0);
+  }
+  bool mutate_buffer(uint32_t _buffer = 0) {
+    return SetField<uint32_t>(VT_BUFFER, _buffer, 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -13099,8 +13930,14 @@ struct TensorMap FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::String *name() const {
     return GetPointer<const ::flatbuffers::String *>(VT_NAME);
   }
+  ::flatbuffers::String *mutable_name() {
+    return GetPointer<::flatbuffers::String *>(VT_NAME);
+  }
   uint32_t tensor_index() const {
     return GetField<uint32_t>(VT_TENSOR_INDEX, 0);
+  }
+  bool mutate_tensor_index(uint32_t _tensor_index = 0) {
+    return SetField<uint32_t>(VT_TENSOR_INDEX, _tensor_index, 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -13167,14 +14004,26 @@ struct SignatureDef FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<::flatbuffers::Offset<tflite::TensorMap>> *inputs() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<tflite::TensorMap>> *>(VT_INPUTS);
   }
+  ::flatbuffers::Vector<::flatbuffers::Offset<tflite::TensorMap>> *mutable_inputs() {
+    return GetPointer<::flatbuffers::Vector<::flatbuffers::Offset<tflite::TensorMap>> *>(VT_INPUTS);
+  }
   const ::flatbuffers::Vector<::flatbuffers::Offset<tflite::TensorMap>> *outputs() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<tflite::TensorMap>> *>(VT_OUTPUTS);
+  }
+  ::flatbuffers::Vector<::flatbuffers::Offset<tflite::TensorMap>> *mutable_outputs() {
+    return GetPointer<::flatbuffers::Vector<::flatbuffers::Offset<tflite::TensorMap>> *>(VT_OUTPUTS);
   }
   const ::flatbuffers::String *signature_key() const {
     return GetPointer<const ::flatbuffers::String *>(VT_SIGNATURE_KEY);
   }
+  ::flatbuffers::String *mutable_signature_key() {
+    return GetPointer<::flatbuffers::String *>(VT_SIGNATURE_KEY);
+  }
   uint32_t subgraph_index() const {
     return GetField<uint32_t>(VT_SUBGRAPH_INDEX, 0);
+  }
+  bool mutate_subgraph_index(uint32_t _subgraph_index = 0) {
+    return SetField<uint32_t>(VT_SUBGRAPH_INDEX, _subgraph_index, 0);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -13267,26 +14116,50 @@ struct Model FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   uint32_t version() const {
     return GetField<uint32_t>(VT_VERSION, 0);
   }
+  bool mutate_version(uint32_t _version = 0) {
+    return SetField<uint32_t>(VT_VERSION, _version, 0);
+  }
   const ::flatbuffers::Vector<::flatbuffers::Offset<tflite::OperatorCode>> *operator_codes() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<tflite::OperatorCode>> *>(VT_OPERATOR_CODES);
+  }
+  ::flatbuffers::Vector<::flatbuffers::Offset<tflite::OperatorCode>> *mutable_operator_codes() {
+    return GetPointer<::flatbuffers::Vector<::flatbuffers::Offset<tflite::OperatorCode>> *>(VT_OPERATOR_CODES);
   }
   const ::flatbuffers::Vector<::flatbuffers::Offset<tflite::SubGraph>> *subgraphs() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<tflite::SubGraph>> *>(VT_SUBGRAPHS);
   }
+  ::flatbuffers::Vector<::flatbuffers::Offset<tflite::SubGraph>> *mutable_subgraphs() {
+    return GetPointer<::flatbuffers::Vector<::flatbuffers::Offset<tflite::SubGraph>> *>(VT_SUBGRAPHS);
+  }
   const ::flatbuffers::String *description() const {
     return GetPointer<const ::flatbuffers::String *>(VT_DESCRIPTION);
+  }
+  ::flatbuffers::String *mutable_description() {
+    return GetPointer<::flatbuffers::String *>(VT_DESCRIPTION);
   }
   const ::flatbuffers::Vector<::flatbuffers::Offset<tflite::Buffer>> *buffers() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<tflite::Buffer>> *>(VT_BUFFERS);
   }
+  ::flatbuffers::Vector<::flatbuffers::Offset<tflite::Buffer>> *mutable_buffers() {
+    return GetPointer<::flatbuffers::Vector<::flatbuffers::Offset<tflite::Buffer>> *>(VT_BUFFERS);
+  }
   const ::flatbuffers::Vector<int32_t> *metadata_buffer() const {
     return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_METADATA_BUFFER);
+  }
+  ::flatbuffers::Vector<int32_t> *mutable_metadata_buffer() {
+    return GetPointer<::flatbuffers::Vector<int32_t> *>(VT_METADATA_BUFFER);
   }
   const ::flatbuffers::Vector<::flatbuffers::Offset<tflite::Metadata>> *metadata() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<tflite::Metadata>> *>(VT_METADATA);
   }
+  ::flatbuffers::Vector<::flatbuffers::Offset<tflite::Metadata>> *mutable_metadata() {
+    return GetPointer<::flatbuffers::Vector<::flatbuffers::Offset<tflite::Metadata>> *>(VT_METADATA);
+  }
   const ::flatbuffers::Vector<::flatbuffers::Offset<tflite::SignatureDef>> *signature_defs() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<tflite::SignatureDef>> *>(VT_SIGNATURE_DEFS);
+  }
+  ::flatbuffers::Vector<::flatbuffers::Offset<tflite::SignatureDef>> *mutable_signature_defs() {
+    return GetPointer<::flatbuffers::Vector<::flatbuffers::Offset<tflite::SignatureDef>> *>(VT_SIGNATURE_DEFS);
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -17669,6 +18542,14 @@ inline const tflite::Model *GetModel(const void *buf) {
 
 inline const tflite::Model *GetSizePrefixedModel(const void *buf) {
   return ::flatbuffers::GetSizePrefixedRoot<tflite::Model>(buf);
+}
+
+inline Model *GetMutableModel(void *buf) {
+  return ::flatbuffers::GetMutableRoot<Model>(buf);
+}
+
+inline tflite::Model *GetMutableSizePrefixedModel(void *buf) {
+  return ::flatbuffers::GetMutableSizePrefixedRoot<tflite::Model>(buf);
 }
 
 inline const char *ModelIdentifier() {
