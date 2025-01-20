@@ -1447,6 +1447,7 @@ void EthosU55RCSGenerator::InsertTransposeCommand(const HLCStripe *stripe, Tempo
                     ArchitectureConfigQuery query{};
                     query.kernel = &cmd->operation->kernel;
                     query.ifmBits = DataTypeSizeBits(ifm.dataType);
+                    query.ofmBits = DataTypeSizeBits(ofm.dataType);
                     query.ifmShape[0] = inFM.shape;
                     query.ofmShape = outFM.shape;
                     query.ofmFormat = TensorFormat::NHWC;

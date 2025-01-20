@@ -71,6 +71,12 @@ public:
         this->uid = GenerateUniqueId();
     }
 
+    void RemoveReader(const SchedulerOperation *op)
+    {
+        auto end = std::remove(consumers.begin(), consumers.end(), op);
+        consumers.erase(end, consumers.end());
+    }
+
     void SetAddress(Address address)
     {
         assert(allocatedAddress == -1 && address >= 0);
@@ -224,6 +230,17 @@ public:
     }
     SchedulerConnection *IFM(int index) { return &inputs.at(MakeTensorUsage(TensorUsage::IFM, index)); }
     const SchedulerConnection *IFM(int index) const { return &inputs.at(MakeTensorUsage(TensorUsage::IFM, index)); }
+
+    // Invalidates all pointers to input connections.
+    void RemoveInput(TensorUsage usage)
+    {
+        auto inputConnection = inputs.try_ref(usage);
+        if ( inputConnection )
+        {
+            if ( inputConnection->tensor ) inputConnection->tensor->RemoveReader(this);
+            inputs.erase(usage);
+        }
+    }
 
     // Output connections
     SchedulerConnection *AddOutput(TensorUsage usage) { return &outputs[usage]; }

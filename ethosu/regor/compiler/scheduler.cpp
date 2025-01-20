@@ -391,6 +391,7 @@ std::unique_ptr<ArchitectureOpConfig> GetOpConfig(Architecture *arch, SchedulerO
     query.ifmShape[0] = ifmShape;
     query.ifmShape[1] = ifm2Shape;
     query.ifmBits = DataTypeSizeBits(ifm->tensor->dataType);
+    query.ofmBits = DataTypeSizeBits(ofm->tensor->dataType);
     query.kernel = op->Kernel();
     query.lutBytes = op->TryInput(TensorUsage::LUT) ? 2048 : 0;
     query.scaled = op->HasScaling();
@@ -680,7 +681,8 @@ std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(
     {
         blockConfig = parentInfo ? parentInfo->Config()->Clone() : GetOpConfig(_arch, op, ifmShape, ifm2Shape, ofmShape, weightFormat);
     }
-    if ( !weights && op->OFM()->quantization.scales.size() > 1 )
+    auto scales = op->TryInput(TensorUsage::Scales);
+    if ( !weights && (op->OFM()->quantization.scales.size() > 1 || scales) )
     {
         WeightsRef weightsRef;
         weightsRef.isScales = true;
@@ -690,7 +692,8 @@ std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(
         auto encodingParams = _arch->WeightEncoder()->GetEncodingConfig(
             blockConfig.get(), weightsRef, op->Kernel(), ifm->tensor->dataType, depthOffsets, weightFormat);
 
-        weightScales = EncodeQuantizationScaleTensor(std::move(encodingParams), op->OFM()->quantization);
+        const SchedulerTensor *scaleTensor = scales ? scales->tensor.get() : nullptr;
+        weightScales = EncodeQuantizationScaleTensor(std::move(encodingParams), op->OFM()->quantization, scaleTensor);
     }
     // Finally construct and populate operator information (cost)
     auto opInfo = std::make_unique<SchedulerOpInfo>(std::move(blockConfig), ifmShape, ifm2Shape, ofmShape);
@@ -1852,12 +1855,13 @@ static int ApplyZeroPointOHWI(const WeightTransformParam *param, int value)
     return value;
 }
 
-WeightScaleTensors Scheduler::EncodeQuantizationScaleTensor(std::unique_ptr<IWeightEncodingConfig> encodingParams, Quantization &ofmQuantization)
+WeightScaleTensors Scheduler::EncodeQuantizationScaleTensor(std::unique_ptr<IWeightEncodingConfig> encodingParams,
+    const Quantization &ofmQuantization, const SchedulerTensor *scales)
 {
     SchedulerTensor scaleTens;
     scaleTens.dataType = DataType::Int32;
-
-    return TryEncodeWeightAndScaleTensor(encodingParams.get(), nullptr, &scaleTens, {}, ofmQuantization, false, true);
+    if ( scales == nullptr ) scales = &scaleTens;
+    return TryEncodeWeightAndScaleTensor(encodingParams.get(), nullptr, scales, {}, ofmQuantization, false, true);
 }
 
 WeightScaleTensors Scheduler::EncodeWeightAndScaleTensor(std::unique_ptr<IWeightEncodingConfig> encodingParams, const SchedulerTensor *weightTens,

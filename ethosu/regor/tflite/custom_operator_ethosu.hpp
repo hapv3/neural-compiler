@@ -220,14 +220,15 @@ private:
         {
             const auto offset = tensor->AllocatedAddress();
             const auto allocation = tensor->AllocationSizeBytes();
-            const auto size = tensor->srcTensor->View().Buffer()->Size();
+            const auto buffer = tensor->srcTensor ? tensor->srcTensor->View().Buffer() : tensor->bufferView.Buffer();
+            const auto size = buffer->Size();
 
             assert(tensor->memArea.usage % MemUsage::ReadOnly);
             assert((offset >= 0) && (allocation >= 0));                         // Has been allocated
             assert((offset + allocation) <= Address(_readOnlyBuffer->Size()));  // Allocation fits in buffer
             assert(size <= allocation);                                         // Tensor fits in allocation
 
-            std::copy_n(tensor->srcTensor->View().Buffer()->Data<uint8_t>(), size, _readOnlyBuffer->Data<uint8_t>() + offset);
+            std::copy_n(buffer->Data<uint8_t>(), size, _readOnlyBuffer->Data<uint8_t>() + offset);
         }
     }
 };

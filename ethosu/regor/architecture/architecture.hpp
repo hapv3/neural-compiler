@@ -202,6 +202,7 @@ struct ArchitectureConfigQuery
     Shape ofmShape;
     Shape ifmShape[2];
     int ifmBits;
+    int ofmBits;
     Kernel *kernel;
     int lutBytes;
     bool scaled;

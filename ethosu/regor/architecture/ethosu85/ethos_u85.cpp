@@ -912,7 +912,7 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU85::FindBlockConfig(OpType opTyp
     // Accumulator settings
     EthosU85Accumulator accType = EthosU85Accumulator::Acc32;
     if ( (query.ifmBits == 16 && !isPooling && query.scaled) ||  // Normal 16-bit selection
-         (query.ifmBits > 32) )                                  // Special case for Rescale int48
+         (query.ifmBits > 32) || (query.ofmBits > 32) )          // Special case for Rescale int48
     {
         accType = EthosU85Accumulator::Acc48;
     }

@@ -445,9 +445,10 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         kernelPtr = &kernel;
                         tosa_assert(input_tensors.size() > 1);
                         const auto &shape = shapes.at(input_tensors[1]);
-                        kernel.sizeYXZ[0] = shape.axisNHWC[1];
-                        kernel.sizeYXZ[1] = shape.axisNHWC[2];
-                        kernel.sizeYXZ[2] = shape.axisNHWC[0];
+                        tosa_assert(shape.count == 5);
+                        kernel.sizeYXZ[0] = shape.axisNHWC[2];
+                        kernel.sizeYXZ[1] = shape.axisNHWC[3];
+                        kernel.sizeYXZ[2] = shape.axisNHWC[1];
                         const auto &attr = TosaAttr<tosaFb::Op::CONV3D>::Get(tosa_operator);
                         tosa_assert(attr.pad());
                         tosa_assert(attr.pad()->size() == 6);

@@ -1470,6 +1470,10 @@ void EthosU85RCSGenerator::GenerateAccFormat(const HLCStripe *stripe)
     {
         accType = config->Acc();
         accSrc = config->AccSource();
+        assert(
+            accSrc != ArchAccumulatorSource::Ifm2 ||
+            (stripe->operation->ifm[1].dataType == DataType::Int32 && accType == EthosU85Accumulator::Acc32) ||
+            (stripe->operation->ifm[1].dataType == DataType::Int64 && accType == EthosU85Accumulator::Acc48));
     }
 
     acc_format format = accType == EthosU85Accumulator::Acc32 ? acc_format::I32 : acc_format::I48;
@@ -1694,8 +1698,9 @@ void EthosU85RCSGenerator::GenerateOperationCode(const HLCOperation *op)
     }
     else if ( IsConvolution(opType) || IsVectorProduct(opType) )
     {
-        // Dynamic weights when op->ifm.size() == 2, _weights_ifm2 parameter should be True
-        Emit(isa::npu_op_conv_t(op->ifm.size() == 2));
+        // Dynamic weights when op->ifm.size() == 2 and acc source != ifm2, _weights_ifm2 parameter should be True
+        auto accSource = static_cast<EthosU85OpConfig *>(op->config)->AccSource();
+        Emit(isa::npu_op_conv_t(op->ifm.size() == 2 && accSource != ArchAccumulatorSource::Ifm2));
     }
     else if ( IsElementwise(opType) )
     {
@@ -1777,18 +1782,22 @@ void EthosU85RCSGenerator::GenerateCommon(const HLCStripe *stripe, bool useGloba
 void EthosU85RCSGenerator::GenerateConvolutionOp(const HLCStripe *stripe, MemoryAccesses &memoryAccesses)
 {
     auto op = stripe->operation.get();
+    EthosU85OpConfig *config = static_cast<EthosU85OpConfig *>(op->config);
     QuantizedScale ofmScale(1, 0);
     bool useGlobalScale = false;
     ethosU85Scaling::RescaleConvolution(op);
 
     if ( op->ifm.size() == 2 )
     {
-        // Dynamic weights
-        assert(ToActivationPrecision(op->ifm[0].dataType) == ToActivationPrecision(op->ifm[1].dataType));
-        useGlobalScale = true;
         GenerateIFM2Precision(op->ifm[1], false, false);
         GenerateIFM2(op->type, op->ifm[1], stripe->ifmAreas[1], false, 0, -1);
-        Emit(isa::npu_set_weight_format_t(weight_format::SWD, weight_sparsity::NONE));  // Reset weight format
+        if ( config->AccSource() != ArchAccumulatorSource::Ifm2 )
+        {
+            // Dynamic weights
+            assert(ToActivationPrecision(op->ifm[0].dataType) == ToActivationPrecision(op->ifm[1].dataType));
+            useGlobalScale = true;
+            Emit(isa::npu_set_weight_format_t(weight_format::SWD, weight_sparsity::NONE));  // Reset weight format
+        }
     }
 
     if ( !op->ofm.quantization.scales.empty() )

@@ -76,6 +76,7 @@ static std::unique_ptr<Schedule> CreateSchedule(std::unique_ptr<Architecture> &a
         ArchitectureConfigQuery query{};
         query.kernel = op->Kernel();
         query.ifmBits = DataTypeSizeBits(ifm->tensor->dataType);
+        query.ofmBits = DataTypeSizeBits(ofm->tensor->dataType);
         query.ifmShape[0] = ifm->shape;
         query.ofmShape = ofm->shape;
         query.transpose = TransposeType::None;

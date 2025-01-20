@@ -118,11 +118,12 @@ static std::unique_ptr<SchedulerOperation> MakeTransposeOp(
     return op;
 }
 
-static std::unique_ptr<SchedulerOperation> MakeSubOperation(const SchedulerOperation *schedOp, const Kernel *newKernel = nullptr)
+static std::unique_ptr<SchedulerOperation>
+MakeSubOperation(const SchedulerOperation *schedOp, const Kernel *newKernel = nullptr, OpType type = OpType::None)
 {
     assert(schedOp->SubOps().empty());
     assert(schedOp->Parent() == nullptr);
-    auto subOp = std::make_unique<SchedulerOperation>(schedOp->Type());
+    auto subOp = std::make_unique<SchedulerOperation>(type != OpType::None ? type : schedOp->Type());
     subOp->SetKernel(newKernel ? newKernel : schedOp->Kernel());
     subOp->SetHasScaling(schedOp->HasScaling());
     subOp->_srcKey = schedOp->_srcKey;
@@ -179,6 +180,7 @@ static std::unique_ptr<ArchitectureOpConfig> GetOpConfig(Architecture *arch, con
         qConfig.ifmShape[1] = ifm1->SliceShape();
     }
     qConfig.ifmBits = DataTypeSizeBits(ifm->tensor->dataType);
+    qConfig.ofmBits = DataTypeSizeBits(ofm->tensor->dataType);
     qConfig.kernel = schedOp->Kernel();
     qConfig.lutBytes = schedOp->TryInput(TensorUsage::LUT) ? 2048 : 0;
     qConfig.scaled = schedOp->HasScaling();
@@ -264,6 +266,7 @@ bool CanRunOnHardware(Architecture *arch, const SchedulerOperation *schedOp)
 bool CanDecompose(Architecture *, const SchedulerOperation *schedOp)
 {
     if ( schedOp->Type() == OpType::Conv2D ) return true;
+    if ( schedOp->Type() == OpType::Conv3D ) return true;
     if ( schedOp->Type() == OpType::DepthwiseConv2D ) return true;
     if ( schedOp->Type() == OpType::TransposeConv2D ) return true;
     if ( DecomposeAsElementwise(schedOp->Type()) || schedOp->Type() == OpType::MemoryCopy ) return true;
@@ -487,6 +490,9 @@ template<typename SRC_TYPE, typename DST_TYPE = SRC_TYPE>
 static std::shared_ptr<SchedulerTensor>
 SliceT(SchedulerTensor *tensor, const Shape &offset, const Shape &shape, const Shape &readShape, const Point2i &stepXY)
 {
+    constexpr int MAX_RANK = 5;
+    assert(shape.Size() <= MAX_RANK);
+    assert(offset.Size() <= MAX_RANK);
     auto paddedInShape = Shape::PadAxes(readShape ? readShape : tensor->bufferView.ViewShape(), shape.Size(), 1);
     const auto &inBufferView = tensor->bufferView.Reshape(paddedInShape).SubView(offset, shape);
     const auto &inBufferValues = inBufferView.Values<SRC_TYPE, DST_TYPE>();
@@ -498,21 +504,21 @@ SliceT(SchedulerTensor *tensor, const Shape &offset, const Shape &shape, const S
     auto outBufferValues = outBufferView.WritableValues<DST_TYPE>();
 
     // Copy values into the output buffer
-    auto paddedOutShape = Shape::PadAxes(shape, 4, 1);
-    int batch = paddedOutShape.Batch();
-    int height = paddedOutShape.Height();
-    int width = paddedOutShape.Width();
-    int depth = paddedOutShape.Depth();
-    for ( int n = 0; n < batch; n++ )
+    auto paddedOutShape = Shape::PadAxes(shape, MAX_RANK, 1);
+    auto ndhwc = paddedOutShape.WithZeros();
+    for ( ndhwc[0] = 0; ndhwc[0] < paddedOutShape[0]; ndhwc[0]++ )
     {
-        for ( int h = 0; h < height; h += stepXY.y )
+        for ( ndhwc[1] = 0; ndhwc[1] < paddedOutShape[1]; ndhwc[1]++ )
         {
-            for ( int w = 0; w < width; w += stepXY.x )
+            for ( ndhwc[2] = 0; ndhwc[2] < paddedOutShape[2]; ndhwc[2] += stepXY.y )
             {
-                for ( int c = 0; c < depth; c++ )
+                for ( ndhwc[3] = 0; ndhwc[3] < paddedOutShape[3]; ndhwc[3] += stepXY.x )
                 {
-                    Shape pos({n, h, w, c}, shape.Size());
-                    outBufferValues[pos] = inBufferValues[pos];
+                    for ( ndhwc[4] = 0; ndhwc[4] < paddedOutShape[4]; ndhwc[4]++ )
+                    {
+                        Shape pos(ndhwc, shape.Size());
+                        outBufferValues[pos] = inBufferValues[pos];
+                    }
                 }
             }
         }
@@ -748,6 +754,7 @@ DecomposeForStrides(Architecture *arch, std::unique_ptr<SchedulerOperation> op, 
             auto weightStepXY = Point2i{SX, SY};
             auto newKernel = kernel->WithStride({1, 1}).WithSize({newWidth, newHeight});
             std::unique_ptr<SchedulerOperation> subOp = MakeSubOperation(op.get(), &newKernel);
+            subOp->RemoveInput(TensorUsage::IFM1);  // Remove acc input
             auto *subIfmConn = subOp->Input(TensorUsage::IFM);
             subIfmConn->slice = std::move(newIfmSlice);
             subIfmConn->stepXY = ifmStrides;
@@ -768,8 +775,15 @@ DecomposeForStrides(Architecture *arch, std::unique_ptr<SchedulerOperation> op, 
     accMode.outputEnabled = true;
     result.back()->SetAccumulatorMode(accMode);
     accMode = result.front()->AccumulatorMode();
-    accMode.source = AccumulatorSource::Reset;
+    accMode.source = op->AccumulatorMode().source;
     result.front()->SetAccumulatorMode(accMode);
+    // Reconnect acc input
+    if ( accMode.source == AccumulatorSource::Ifm2 )
+    {
+        auto subOpIfm2 = result.front()->AddInput(TensorUsage::IFM1);
+        *subOpIfm2 = *op->Input(TensorUsage::IFM1);
+        subOpIfm2->tensor->consumers.push_back(result.front().get());
+    }
     return result;
 }
 
@@ -823,6 +837,177 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv2D(Architecture *a
     }
     // If we get here, decomposition has failed, the resulting operations will be executed on CPU
     UpdatePaddingAndIfmOffset(op.get());
+    result.emplace_back(std::move(op));
+    return result;
+}
+
+std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv3D(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
+{
+    std::vector<std::unique_ptr<SchedulerOperation>> result;
+    auto *ofmConn = op->Output(TensorUsage::OFM);
+    auto *ifmConn = op->Input(TensorUsage::IFM);
+    auto *weightsConn = op->Input(TensorUsage::Weights);
+    const auto &ofmShape = ofmConn->SliceShape();
+    const auto &ifmShape = ifmConn->SliceShape();
+    auto &ofmSlice = ofmConn->slice;
+    auto &ifmSlice = ifmConn->slice;
+    auto *kernel = op->Kernel();
+    auto &padding = kernel->Padding();
+    ofmSlice.Initialize(ofmShape.WithZeros(), ofmShape);
+    ifmSlice.Initialize(ifmShape.WithZeros(), ifmShape);
+
+    if ( ofmShape[0] > 1 )  // Batch
+    {
+        return DecomposeLeadingDimensions(1, arch, std::move(op), DecomposeConv3D);
+    }
+    const int OD = ofmSlice.shape[1];
+    const int ID = ifmSlice.shape[1];
+    const int KD = kernel->Size3D().z;
+    if ( (arch->Constraints()->SupportsAccumulatorSaveRestore() || KD == 1) && weightsConn->tensor->IsConstant() )
+    {
+        auto InitConnection = [](SchedulerConnection *dst, SchedulerConnection *src, int dOffset, int dSize)
+        {
+            dst->shape = Shape(src->SliceShape(), 4);
+            // Handle batch
+            dst->shape[0] *= src->shape[0];
+            dst->slice.offset = dst->shape.WithZeros().WithBatch(src->slice.offset[0] * dSize + dOffset);
+            dst->slice.shape = dst->shape.WithBatch(1);
+        };
+        // Create SchedulerTensor for ACC
+        auto acc = std::make_shared<SchedulerTensor>();
+        acc->memArea = ofmConn->tensor->memArea;
+        acc->dataType = ifmConn->tensor->dataType == DataType::Int16 ? DataType::Int64 : DataType::Int32;
+        acc->storageShape = Shape(ofmShape, 4).WithBatch(1);
+        acc->uid = acc->equivalenceId = GenerateUniqueId();
+        const auto ifm0uid = GenerateUniqueId();
+        for ( int od = 0; od < OD; od++ )
+        {
+            std::vector<std::unique_ptr<SchedulerOperation>> conv2dSubOps;
+            for ( int kd = 0; kd < KD; kd++ )
+            {
+                const int id = od * kernel->Stride3D().z - padding.Near() + kd * kernel->Dilation3D().z;
+                if ( id >= 0 && id < ID )
+                {
+                    auto subOp = MakeSubOperation(op.get(), nullptr, OpType::Conv2D);
+                    InitConnection(subOp->Output(TensorUsage::OFM), ofmConn, od, OD);
+                    InitConnection(subOp->Input(TensorUsage::IFM), ifmConn, id, ID);
+                    // Update slice offset for DecomposeConv2D pad handling
+                    auto subOpIfm = subOp->Input(TensorUsage::IFM);
+                    subOpIfm->slice.offset = subOpIfm->slice.offset.WithHW(-padding.Top(), -padding.Left());
+
+                    auto subOpWeights = subOp->Input(TensorUsage::Weights);
+                    if ( KD > 1 )
+                    {
+                        auto offset = subOpWeights->shape.WithZeros().With(1, kd);
+                        subOpWeights->tensor = Slice(subOpWeights->tensor.get(), offset, subOpWeights->shape.With(1, 1));
+                        subOpWeights->tensor->consumers.push_back(subOp.get());
+                    }
+                    // New weight shape
+                    auto subOpWeightShape = subOpWeights->shape.Erase(1);
+                    subOpWeights->shape = subOpWeights->tensor->storageShape = subOpWeightShape;
+                    subOpWeights->tensor->bufferView = subOpWeights->tensor->bufferView.Reshape(subOpWeightShape);
+
+                    conv2dSubOps.emplace_back(std::move(subOp));
+                }
+            }
+            if ( conv2dSubOps.empty() )
+            {
+                // Kernel in padding only area, need to broadcast bias to OFM,
+                // using Rescale with bias and ifm zero point as input
+                auto unitKernel = Kernel::UnitKernel();
+                auto subOp = MakeSubOperation(op.get(), &unitKernel, OpType::Rescale);
+                subOp->RemoveInput(TensorUsage::Weights);
+                InitConnection(subOp->Output(TensorUsage::OFM), ofmConn, od, OD);
+
+                // Create SchedulerTensor for 0 input
+                auto subOpIfm = subOp->Input(TensorUsage::IFM);
+                auto ifm0 = std::make_shared<SchedulerTensor>();
+                ifm0->dataType = subOpIfm->tensor->dataType;
+                ifm0->memArea = subOp->Input(TensorUsage::Scales)->tensor->memArea;
+                ifm0->format = TensorFormat::NHWC;
+                const auto &ifm0shape = subOp->Output(TensorUsage::OFM)->slice.shape;
+                const auto bufSize = ifm0shape.Elements();
+                const int64_t ifmZp = subOpIfm->quantization.zeroPoints.empty() ? 0 : subOpIfm->quantization.zeroPoints.front();
+                std::shared_ptr<Buffer> ifm0buf;
+                switch ( ifm0->dataType )
+                {
+                    case DataType::Int8:
+                        ifm0buf = std::make_shared<Buffer>(std::vector<int8_t>(bufSize, int8_t(ifmZp)));
+                        break;
+                    case DataType::Int16:
+                        ifm0buf = std::make_shared<Buffer>(std::vector<int16_t>(bufSize, int16_t(ifmZp)));
+                        break;
+                    default:
+                        assert(false && "Unsupported ifm data type");
+                        break;
+                }
+                ifm0->bufferView = BufferView(ifm0buf, 0, DataTypeStorageSizeBits(ifm0->dataType), ifm0shape, {});
+                ifm0->storageShape = ifm0->bufferView.ViewShape();
+                ifm0->uid = ifm0->equivalenceId = ifm0uid;
+
+                subOpIfm->tensor = std::move(ifm0);
+                subOpIfm->tensor->consumers.push_back(subOp.get());
+                subOpIfm->shape = ifm0shape;
+                subOpIfm->slice.offset = ifm0shape.WithZeros();
+                subOpIfm->slice.shape = ifm0shape;
+
+                // TODO: MLBEDSW-9759 Pooling Decomposition
+                result.emplace_back(std::move(subOp));
+            }
+            else if ( conv2dSubOps.size() > 1 )
+            {
+                auto &tail = conv2dSubOps.back();
+                auto bias = tail->Input(TensorUsage::Scales);
+
+                // Create SchedulerTensor for 0 (no) bias
+                auto bias0 = std::make_shared<SchedulerTensor>(*bias->tensor);
+                auto bias0buf = std::make_shared<Buffer>(std::make_unique<int64_t>(0));
+                assert(DataTypeStorageSizeBits(bias0->dataType) <= int(8 * sizeof(int64_t)));
+                bias0->bufferView = BufferView(bias0buf, 0, DataTypeStorageSizeBits(bias0->dataType), {1}, {});
+                bias0->storageShape = bias0->bufferView.ViewShape();
+                bias0->uid = bias0->equivalenceId = GenerateUniqueId();
+                bias0->consumers.clear();
+
+                for ( auto subOp = conv2dSubOps.begin(); subOp != conv2dSubOps.end(); ++subOp )
+                {
+                    if ( subOp != conv2dSubOps.begin() )
+                    {
+                        // Acc source ifm2 for all but first subop
+                        (*subOp)->AddInput(TensorUsage::IFM1, acc)->shape = acc->storageShape;
+                        (*subOp)->SetAccumulatorMode({AccumulatorSource::Ifm2, true});
+                    }
+                    if ( *subOp != tail )
+                    {
+                        // Remove scaling and bias and set ofm = acc tensor
+                        // (used as acc input for next op) for all but last subop
+                        auto subOpOfm = (*subOp)->OFM();
+                        auto subOpIfm = (*subOp)->IFM(0);
+                        auto subOpWeights = (*subOp)->Input(TensorUsage::Weights);
+                        auto subOpBias = (*subOp)->Input(TensorUsage::Scales);
+                        subOpOfm->tensor = acc;
+                        subOpOfm->tensor->producers.push_back((*subOp).get());
+                        subOpOfm->shape = acc->storageShape;
+                        subOpOfm->slice.offset = subOpOfm->shape.WithZeros();
+                        subOpOfm->quantization.scales = {QuantizedScale::Unit()};
+                        subOpIfm->quantization.scales = {QuantizedScale::Unit()};
+                        subOpWeights->quantization.scales = {QuantizedScale::Unit()};
+                        subOpBias->tensor->RemoveReader((*subOp).get());
+                        subOpBias->tensor = bias0;
+                        subOpBias->tensor->consumers.push_back((*subOp).get());
+                        subOpBias->shape = bias0->storageShape;
+                    }
+                }
+            }
+            auto end = std::make_move_iterator(conv2dSubOps.end());
+            for ( auto subOp = std::make_move_iterator(conv2dSubOps.begin()); subOp != end; ++subOp )
+            {
+                auto subOps = DecomposeConv2D(arch, *subOp);
+                result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
+            }
+        }
+        return result;
+    }
+    // If we get here, decomposition has failed, the resulting operations will be executed on CPU
     result.emplace_back(std::move(op));
     return result;
 }

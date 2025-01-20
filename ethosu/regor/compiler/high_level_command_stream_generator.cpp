@@ -60,7 +60,7 @@ enum class TransformLimit
 static Box TransformWithStridesAndSkirt(const Box &outputArea, const Shape *strides, const Point2i &inputStep,
     const HLCPadding *skirt, const Shape &ifmShape, OpType opType, const Shape &concatOffsets, const Shape &splitOffset,
     const Shape &splitShape, int dilatedKernelHeight, int upscalingFactor, int &padTop, int &padBottom,
-    TransformLimit limit = TransformLimit::None, TransposeType transposeType = TransposeType::None)
+    TransformLimit limit = TransformLimit::None, TransposeType transposeType = TransposeType::None, bool accIfm = false)
 {
     Shape outputAreaStart = outputArea.Start().Unpermute(uint32_t(transposeType));
     Shape outputAreaEnd = outputArea.End().Unpermute(uint32_t(transposeType));
@@ -109,6 +109,9 @@ static Box TransformWithStridesAndSkirt(const Box &outputArea, const Shape *stri
         start = splitOffset;
         end = start + splitShape;
     }
+
+    if ( accIfm ) return Box(start, end);
+
     end = Shape::Min(end, Shape::Max(ifmShape, Shape(1, 1, 1, 1)).WithHW(ifmShape.Height() * upscalingFactor, ifmShape.Width() * upscalingFactor));
     padTop = 0;
     padBottom = 0;
@@ -170,7 +173,7 @@ static Box TransformWithStridesAndSkirt(const Box &outputArea, const Shape *stri
 }
 
 static std::pair<Box, HLCPadding> TransformWithInputOutputSteps(const Box &inputArea, const Point2i &inputStep,
-    const Box &outputArea, const Point2i &outputStep, class Kernel *kernel, const HLCPadding &padding, const Shape &ifmShape)
+    const Box &outputArea, const Point2i &outputStep, const Kernel *kernel, const HLCPadding &padding, const Shape &ifmShape)
 {
     const auto &stride = kernel->Stride();
     const auto dilatedWH = kernel->DilatedWH();
@@ -663,10 +666,11 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
                 {
                     if ( !IsIFM(fm.usage) ) continue;
                     auto ifmConn = op->Input(fm.usage);
+                    bool accIfm = op->AccumulatorMode().source == AccumulatorSource::Ifm2 && fm.usage == TensorUsage::IFM1;
                     // Calculate input area based on the output area
                     auto inputArea = TransformWithStridesAndSkirt(outputArea, &strides, ifmConn->stepXY, &skirt, ifmConn->shape,
                         opType, ofmConn->slice.offset, ifmConn->slice.offset, ifmConn->slice.shape, dilatedKernelHeight,
-                        upscaling, hlcStripe->padding.top, hlcStripe->padding.bottom, ifmLimit, ofmConn->transpose);
+                        upscaling, hlcStripe->padding.top, hlcStripe->padding.bottom, ifmLimit, ofmConn->transpose, accIfm);
                     if ( ofmConn->stepXY != Point2i{1, 1} || ifmConn->stepXY != Point2i{1, 1} )
                     {
                         std::tie(inputArea, hlcStripe->padding) = TransformWithInputOutputSteps(inputArea,

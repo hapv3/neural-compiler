@@ -36,6 +36,7 @@ bool NeedsDecompose(Architecture *arch, const SchedulerOperation *schedOp);
 bool CanRunOnHardware(Architecture *arch, const SchedulerOperation *schedOp);
 bool CanDecompose(Architecture *arch, const SchedulerOperation *schedOp);
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv2D(Architecture *arch, std::unique_ptr<SchedulerOperation> op);
+std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv3D(Architecture *arch, std::unique_ptr<SchedulerOperation> op);
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Architecture *arch, std::unique_ptr<SchedulerOperation> op);
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTransposeConv2D(Architecture *arch, std::unique_ptr<SchedulerOperation> op);
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeElementwise(Architecture *arch, std::unique_ptr<SchedulerOperation> op);
