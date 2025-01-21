@@ -655,6 +655,33 @@ public:
         return start + _baseOffset;
     }
 
+    template<typename TYPE>
+    BufferReader<TYPE> Values(DataType dataType)
+    {
+        switch ( dataType )
+        {
+            case DataType::Int8:
+                return Values<int8_t, TYPE>();
+            case DataType::UInt8:
+                return Values<uint8_t, TYPE>();
+            case DataType::Int16:
+                return Values<int16_t, TYPE>();
+            case DataType::UInt16:
+                return Values<uint16_t, TYPE>();
+            case DataType::Int32:
+                return Values<int32_t, TYPE>();
+            case DataType::UInt32:
+                return Values<uint32_t, TYPE>();
+            case DataType::Int64:
+                return Values<int64_t, TYPE>();
+            case DataType::UInt64:
+                return Values<uint64_t, TYPE>();
+            default:
+                assert(false && "Unexepected DataType");
+                return Values<TYPE>();
+        }
+    }
+
     const class Buffer *Buffer() const { return _buffer.get(); }
 };
 

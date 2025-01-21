@@ -2595,7 +2595,7 @@ Operation *TFLiteGraphOptimiser::ReplacePadByExplicitPadding(Graph *const graph,
         // Potential for future optimization: in certain cases also Pad+AvgPool can be handled
         // by changing to Depthwise.
         auto padOp = operation->IFM(0)->Writers()[0].get();
-        if ( padOp->Type() != OpType::Pad )
+        if ( padOp->Type() != OpType::Pad || padOp->Attribute<pad_attr_t>()->pad_const != 0 )
         {
             return operation;
         }
@@ -2640,92 +2640,26 @@ Operation *TFLiteGraphOptimiser::ReplacePadByExplicitPadding(Graph *const graph,
     return operation;
 }
 
-void TFLiteGraphOptimiser::MakeMemoryCopyForPad(
-    const char *name, const Operation *operation, TensorConnection *ofmConn, const Shape &shape, const Shape &offset)
-{
-    auto dtype = ofmConn->tensor->Type();
-    std::vector<uint8_t> zeroBuf(DataTypeStorageSizeBytes(dtype, shape.Elements()));
-    std::fill(zeroBuf.begin(), zeroBuf.end(), uint8_t(ofmConn->quantization.zeroPoints[0]));
-
-    auto zeroTens = CreateConstTensor(ofmConn->tensor->Name() + "/" + name, dtype, std::make_shared<Buffer>(std::move(zeroBuf)), &shape);
-    auto op = std::make_shared<Operation>(OpType::MemoryCopy);
-
-    op->ConnectInput(TensorUsage::IFM0, zeroTens).Set(ofmConn->quantization);
-    op->ConnectOutput(TensorUsage::OFM, ofmConn->tensor)
-        .Set(ofmConn->shape)
-        .Set(ofmConn->quantization)
-        .Set({offset, shape})
-        .Set(RoundMode::NATURAL);
-    RecordOptimisation(operation, op.get());
-}
-
-// Rewrites PAD operator to a MemoryCopy that copies the IFM to the OFM
-// + up to 4 MemoryCopy operators that fill the OFM with zeros at the borders.
-// This is done as fall-back for the PAD operators that remain after ReplacePadByExplicitPadding
-Operation *TFLiteGraphOptimiser::ConvertPad(Graph *const graph, Operation *const operation)
+// Lower PadV2 to TOSA Pad
+Operation *TFLiteGraphOptimiser::ConvertPadV2(Graph *const graph, Operation *const operation)
 {
     UNUSED(graph);
-    if ( operation->Type() != OpType::Pad )
+    if ( operation->Type() == OpType::PadV2 )
     {
-        return operation;
-    }
-    const auto &ifmConn = operation->Input(TensorUsage::IFM0);
-    const auto &ifmShape = ifmConn->shape;
-    const auto &ofmConn = operation->Output(TensorUsage::OFM);
-    const auto &ofmShape = ofmConn->shape;
-    const auto &paramsConn = operation->Input(TensorUsage::Params);
+        auto padOp = std::make_shared<Operation>(OpType::Pad);
+        padOp->CopyInput(TensorUsage::IFM, *operation->Input(TensorUsage::IFM));
+        padOp->CopyInput(TensorUsage::Params, *operation->Input(TensorUsage::Params0));
+        padOp->CopyOutput(TensorUsage::OFM, *operation->Output(TensorUsage::OFM));
 
-    BufferReader<int> padValues = GetPadValuesFromTensor(paramsConn->tensor);
-    int numPadValues = paramsConn->tensor->View().Elements();
-    int top = GetPadValue(padValues, numPadValues, PadAxis::Top);
-    int bottom = GetPadValue(padValues, numPadValues, PadAxis::Bottom);
-    int left = GetPadValue(padValues, numPadValues, PadAxis::Left);
-    int right = GetPadValue(padValues, numPadValues, PadAxis::Right);
-    int near = GetPadValue(padValues, numPadValues, PadAxis::Near);
-    int far = GetPadValue(padValues, numPadValues, PadAxis::Far);
+        const auto &attr = padOp->Attribute<pad_attr_t>();
+        const auto padConstTens = operation->Input(TensorUsage::Params1)->tensor;
+        attr->pad_const = padConstTens->View().Values<int>(padConstTens->Type())[0];
 
-    // Create MemoryCopy op that copies IFM to the right place inside the OFM
-    Shape shp0 = ofmShape.WithZeros();
-    auto mainOp = MakeMemoryCopyForConcat(ofmConn, ifmConn, shp0.WithHeight(top).WithWidth(left).WithDepth(near));
-    RecordOptimisation(operation, mainOp.get());
-    // Add operations that fill the borders of the OFM
-    if ( top > 0 )
-    {
-        Shape shape = ofmShape.WithHeight(top);
-        MakeMemoryCopyForPad("top", operation, ofmConn, shape, shp0);
+        RecordOptimisation(operation, padOp.get());
+        operation->Disconnect();
+        return padOp.get();
     }
-    if ( bottom > 0 )
-    {
-        Shape shape = ofmShape.WithHeight(bottom);
-        Shape offset = shp0.WithHeight(ofmShape.Height() - bottom);
-        MakeMemoryCopyForPad("bottom", operation, ofmConn, shape, offset);
-    }
-    if ( left > 0 )
-    {
-        Shape shape = ifmShape.WithWidth(left).WithDepth(ofmShape.Depth());
-        Shape offset = shp0.WithHeight(top);
-        MakeMemoryCopyForPad("left", operation, ofmConn, shape, offset);
-    }
-    if ( right > 0 )
-    {
-        Shape shape = ifmShape.WithWidth(right).WithDepth(ofmShape.Depth());
-        Shape offset = shp0.WithHeight(top).WithWidth(ofmShape.Width() - right);
-        MakeMemoryCopyForPad("right", operation, ofmConn, shape, offset);
-    }
-    if ( near > 0 )
-    {
-        Shape shape = ifmShape.WithDepth(near);
-        Shape offset = shp0.WithHeight(top).WithWidth(left);
-        MakeMemoryCopyForPad("near", operation, ofmConn, shape, offset);
-    }
-    if ( far > 0 )
-    {
-        Shape shape = ifmShape.WithDepth(far);
-        Shape offset = shp0.WithHeight(top).WithWidth(left).WithDepth(ofmShape.Depth() - far);
-        MakeMemoryCopyForPad("far", operation, ofmConn, shape, offset);
-    }
-    operation->Disconnect();
-    return mainOp.get();
+    return operation;
 }
 
 void TFLiteGraphOptimiser::MakeMemoryCopyForMirrorPad(const Operation *operation, TensorConnection *ifmConn, const Shape &readShape,

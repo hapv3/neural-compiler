@@ -162,13 +162,8 @@ private:
     // This is the most efficient way to implement PAD, but cannot be done for all pad sizes.
     Operation *ReplacePadByExplicitPadding(Graph *const graph, Operation *const operation);
 
-    void MakeMemoryCopyForPad(const char *name, const Operation *operation, TensorConnection *ofmConn,
-        const Shape &shape, const Shape &offset);
-
-    // Rewrites PAD operator to a MemoryCopy that copies the IFM to the OFM
-    // + up to 4 MemoryCopy operators that fill the OFM with zeros at the borders.
-    // This is done as fall-back for the PAD operators that remain after ReplacePadByExplicitPadding
-    Operation *ConvertPad(Graph *const graph, Operation *const operation);
+    // Lower PadV2 to TOSA Pad
+    Operation *ConvertPadV2(Graph *const graph, Operation *const operation);
 
     void MakeMemoryCopyForMirrorPad(const Operation *operation, TensorConnection *ifmConn, const Shape &readShape,
         const Shape &readOffset, TensorConnection *ofmConn, const Shape &writeShape, const Shape &writeOffset, ReverseType reverseAxis);
@@ -249,12 +244,12 @@ public:
                 &TFLiteGraphOptimiser::ConvertResize,
                 &TFLiteGraphOptimiser::ConvertTranspose,
                 &TFLiteGraphOptimiser::ConvertMirrorPad,
+                &TFLiteGraphOptimiser::ConvertPadV2,
             }
         },
         {
             {},
             {
-                &TFLiteGraphOptimiser::ConvertPad,
                 &TFLiteGraphOptimiser::ConvertZeroPoint,
             }
         },

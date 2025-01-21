@@ -727,6 +727,12 @@ void TfLiteReader::ParseOperatorOptions(const std::shared_ptr<Operation> &operat
         }
         break;
 
+        case tflite::BuiltinOptions::PadOptions:
+        {
+            operation->Attribute<pad_attr_t>()->pad_const = 0;
+        }
+        break;
+
         case tflite::BuiltinOptions::ResizeBilinearOptions:
         case tflite::BuiltinOptions::ResizeNearestNeighborOptions:
             break;
@@ -745,7 +751,7 @@ void TfLiteReader::ParseOperatorOptions(const std::shared_ptr<Operation> &operat
         case tflite::BuiltinOptions::NONE:
         case tflite::BuiltinOptions::HardSwishOptions:
         case tflite::BuiltinOptions::MaximumMinimumOptions:
-        case tflite::BuiltinOptions::PadOptions:
+        case tflite::BuiltinOptions::PadV2Options:
         case tflite::BuiltinOptions::DequantizeOptions:
         case tflite::BuiltinOptions::QuantizeOptions:
         case tflite::BuiltinOptions::TransposeOptions:
@@ -775,7 +781,6 @@ void TfLiteReader::ParseOperatorOptions(const std::shared_ptr<Operation> &operat
         case tflite::BuiltinOptions::CastOptions:
         case tflite::BuiltinOptions::LessOptions:
         case tflite::BuiltinOptions::NegOptions:
-        case tflite::BuiltinOptions::PadV2Options:
         case tflite::BuiltinOptions::GreaterOptions:
         case tflite::BuiltinOptions::GreaterEqualOptions:
         case tflite::BuiltinOptions::LessEqualOptions:
