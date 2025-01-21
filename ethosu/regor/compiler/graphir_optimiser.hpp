@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -73,6 +73,10 @@ private:
     void MoveToConsumer(const Operation *const operation, Operation *const cons);
     Operation *MoveSplitSliceToConsumer(Graph *const, Operation *const operation);
     Operation *UnrollConv(Graph *const, Operation *const operation);
+    // Utility/Helper methods
+    Operation *MakeFillOperation(TensorConnection *const ofmConn, const Shape &ofmShape, const TensorSlice &ofmSlice,
+        std::shared_ptr<Tensor> padTensor, OpType opType);
+
     // The graph optimisation steps.
     // Order matters, array of rewrites processed in order.
     // clang-format off

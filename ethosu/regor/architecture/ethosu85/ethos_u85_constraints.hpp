@@ -43,6 +43,7 @@ public:
     bool SupportsCast(OpType opType, DataType ifmType, DataType ofmType) override;
     bool SupportsNonMatchingShapes(const Shape &ifmShape, const Shape &ifm2Shape, const Shape &ofmShape) override;
     bool SupportsNegativeStrides() override { return false; };
+    bool SupportsNot() override { return true; };
 
 private:
     ArchEthosU85 *_arch;
