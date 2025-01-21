@@ -152,8 +152,10 @@ def rewrite_split_ops(tens, arch, nng):
         else:
             # The read shape is relative to each start offset
             # Limit read shape to the size of the IFM - offset is not necessarily limited
-            ifm_dims = split_op.ifm_shapes[0].as_list()
-            read_shape = Shape4D([min(oe, ifm_dim) - os for oe, os, ifm_dim in zip(offset_end, offset_start, ifm_dims)])
+            ifm_dims_4D = split_op.ifm_shapes[0].as_list()
+            offset_end_4D = Shape4D(offset_end).as_list()
+            offset_start_4D = Shape4D(offset_start).as_list()
+            read_shape = Shape4D([min(oe, ifm_dim) - os for oe, os, ifm_dim in zip(offset_end_4D, offset_start_4D, ifm_dims_4D)])
 
         # For Split the offset cannot be extracted from the tensor so it has to
         # be calculated from the index of the output tensor
