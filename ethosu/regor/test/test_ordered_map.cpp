@@ -37,9 +37,9 @@ bool operator==(const std::array<int, 1> &lhs, const std::array<int, 1> &rhs)
 template<typename KEY, typename VAL>
 static void CheckInsertionOrder(const ordered_map<KEY, VAL> &uut, const std::unordered_map<KEY, VAL> &ref, const KEY expected_keys[])
 {
-    REQUIRE(uut.size() == int(ref.size()));
+    REQUIRE(uut.size() == ref.size());
 
-    int i = 0;
+    size_t i = 0;
     for ( auto pair : uut.pairs() )
     {
         REQUIRE(i < uut.size());
@@ -81,7 +81,7 @@ TEST_CASE("ordered_map: Retains insertion order")
     // 3: Using a combination of all three
     for ( int test = 0; test < 4; ++test )
     {
-        for ( int capacity = 1; capacity <= 256; capacity *= 2 )
+        for ( size_t capacity = 1; capacity <= 256; capacity *= 2 )
         {
             ordered_map<Key, Val> uut{capacity};
             std::unordered_map<Key, Val> ref;
@@ -112,7 +112,7 @@ TEST_CASE("ordered_map: Retains insertion order")
                 }
             }
 
-            REQUIRE(uut.size() == int(ref.size()));
+            REQUIRE(uut.size() == ref.size());
 
             CheckInsertionOrder<Key, Val>(uut, ref, u"An orde_mapwilyst");
 
@@ -176,7 +176,7 @@ TEST_CASE("ordered_map: Reinserts")
     using Key = char16_t;
     using Val = std::array<int, 1>;
 
-    for ( int capacity = 1; capacity <= 256; capacity *= 2 )
+    for ( size_t capacity = 1; capacity <= 256; capacity *= 2 )
     {
         ordered_map<Key, Val> uut{capacity};
         std::unordered_map<Key, Val> ref;
@@ -239,7 +239,7 @@ TEST_CASE("ordered_map: Reorders")
     using Key = char16_t;
     using Val = int;
 
-    for ( int capacity = 1; capacity <= 256; capacity *= 2 )
+    for ( size_t capacity = 1; capacity <= 256; capacity *= 2 )
     {
         ordered_map<Key, Val> uut{capacity};
         std::unordered_map<Key, Val> ref;
@@ -307,7 +307,7 @@ TEST_CASE("ordered_map: Swaps")
     using Key = char16_t;
     using Val = int;
 
-    for ( int capacity = 1; capacity <= 256; capacity *= 2 )
+    for ( size_t capacity = 1; capacity <= 256; capacity *= 2 )
     {
         ordered_map<Key, Val> uut{capacity};
         std::unordered_map<Key, Val> ref;
@@ -411,7 +411,7 @@ TEST_CASE("ordered_map: Resizes (move assignable)")
 
     static_assert(std::is_move_assignable_v<Val>);
 
-    for ( int capacity = 1; capacity <= 256; capacity *= 2 )
+    for ( size_t capacity = 1; capacity <= 256; capacity *= 2 )
     {
         ordered_map<Key, Val> uut{capacity};
 
@@ -446,7 +446,7 @@ TEST_CASE("ordered_map: Resizes (trivially copyable)")
     static_assert(!std::is_move_assignable_v<Val>);
     static_assert(std::is_trivially_copyable_v<Val>);
 
-    for ( int capacity = 1; capacity <= 256; capacity *= 2 )
+    for ( size_t capacity = 1; capacity <= 256; capacity *= 2 )
     {
         ordered_map<Key, Val> uut{capacity};
 
@@ -482,7 +482,7 @@ TEST_CASE("ordered_map: Resizes (not move assignable, not trivially copyable)")
     static_assert(!std::is_move_assignable_v<Val>);
     static_assert(!std::is_trivially_copyable_v<Val>);
 
-    for ( int capacity = 1; capacity <= 256; capacity *= 2 )
+    for ( size_t capacity = 1; capacity <= 256; capacity *= 2 )
     {
         ordered_map<Key, Val> uut{capacity};
 
@@ -599,7 +599,7 @@ TEST_CASE("ordered_map: Behaves like a map")
     using Key = unsigned char;
     using Val = int;
 
-    for ( int capacity = 1; capacity <= 256; capacity *= 2 )
+    for ( size_t capacity = 1; capacity <= 256; capacity *= 2 )
     {
         ordered_map<Key, Val> uut{capacity};
         std::unordered_map<Key, Val> ref;
@@ -643,7 +643,7 @@ TEST_CASE("ordered_map: Behaves like a map")
             {
                 // Capacity
                 case MapLikeOp::Size:
-                    CHECK(uut.size() == int(ref.size()));
+                    CHECK(uut.size() == ref.size());
                     break;
                 case MapLikeOp::Empty:
                     CHECK(uut.empty() == ref.empty());
@@ -778,7 +778,7 @@ TEST_CASE("ordered_map: Behaves like a map")
                 case MapLikeOp::CheckAll:
                 case MapLikeOp::Clear:  // Recently added elements may have never been checked, so check before clearing
                 default:
-                    CHECK(uut.size() == int(ref.size()));
+                    CHECK(uut.size() == ref.size());
                     CHECK(uut.empty() == ref.empty());
                     for ( auto &pair : ref )
                     {
@@ -798,7 +798,7 @@ TEST_CASE("ordered_map: Behaves like a map")
             {
                 // Additional checks after every operation in debug mode to end the test closer to the point of failure.
                 // Disabled by default in case the act of reading the uut after every write masks a bug.
-                REQUIRE(uut.size() == int(ref.size()));
+                REQUIRE(uut.size() == ref.size());
                 REQUIRE(uut.empty() == ref.empty());
                 for ( auto &pair : ref )
                 {
@@ -892,7 +892,7 @@ TEST_CASE("ordered_map: Behaves like a vector")
     using Key = size_t;
     using Val = Key;
 
-    for ( int capacity = 1; capacity <= 256; capacity *= 2 )
+    for ( size_t capacity = 1; capacity <= 256; capacity *= 2 )
     {
         ordered_map<Key, Val> uut{capacity};
         std::vector<Val> ref;
@@ -959,7 +959,7 @@ TEST_CASE("ordered_map: Behaves like a vector")
             {
                 // Capacity
                 case VectorLikeOp::Size:
-                    CHECK(uut.size() == int(ref.size()));
+                    CHECK(uut.size() == ref.size());
                     break;
                 case VectorLikeOp::Empty:
                     CHECK(uut.empty() == ref.empty());
@@ -1074,7 +1074,7 @@ TEST_CASE("ordered_map: Behaves like a vector")
                     uut[keyval] = keyval;
                     break;
                 case VectorLikeOp::PushBackSeveral:  // Add several elements in a row
-                    elements_to_add = int(urandom_range(1, capacity));
+                    elements_to_add = int(urandom_range(1, unsigned(capacity)));
                     break;
 
                 // Iterate through every element
@@ -1082,7 +1082,7 @@ TEST_CASE("ordered_map: Behaves like a vector")
                 case VectorLikeOp::Clear:  // Recently added elements may have never been checked, so check before
                                            // clearing
                 {
-                    CHECK(uut.size() == int(ref.size()));
+                    CHECK(uut.size() == ref.size());
                     CHECK(uut.empty() == ref.empty());
                     auto actual_it = uut.begin();
                     for ( auto expect : ref )
@@ -1115,7 +1115,7 @@ TEST_CASE("ordered_map: Behaves like a vector")
             {
                 // Additional checks after every operation in debug mode to end the test closer to the point of failure.
                 // Disabled by default in case the act of reading the uut after every write masks a bug.
-                REQUIRE(uut.size() == int(ref.size()));
+                REQUIRE(uut.size() == ref.size());
                 REQUIRE(uut.empty() == ref.empty());
                 auto actual_it = uut.begin();
                 for ( auto expect : ref )
@@ -1191,7 +1191,7 @@ static const std::pair<int, std::string> defaultValues[] = {
 TEST_CASE("ordered_map: initialised construction")
 {
     ordered_map<int, std::string> map(defaultValues, std::size(defaultValues));
-    REQUIRE(map.size() == int(std::size(defaultValues)));
+    REQUIRE(map.size() == std::size(defaultValues));
     auto pos = map.begin();
     for ( size_t i = 0; i < std::size(defaultValues); i++ )
     {
@@ -1252,4 +1252,31 @@ TEST_CASE("ordered_map: key_of inverse query")
     REQUIRE(temp == 555);
     REQUIRE(map.key_of("text1", temp));
     REQUIRE(temp == 111);
+}
+
+TEST_CASE("ordered_map: zero initial capacity")
+{
+    ordered_map<int, std::string> map;
+    REQUIRE(map.capacity() == 0);
+    map[1] = "hello";
+    REQUIRE(map.capacity() > 0);
+}
+
+TEST_CASE("ordered_map: unsigned indexer")
+{
+    ordered_map<int, int, armstd::ordered_map_hash<int>, uint8_t> map(127);
+
+    for ( int i = 0; i < 253; i++ )
+    {
+        map.emplace(i, i);
+    }
+
+    bool allPresent = true;
+    for ( int i = 0; i < 253; i++ )
+    {
+        allPresent = allPresent && (map.at(i) == i);
+    }
+
+    REQUIRE(map.capacity() == 253);  // Internal sizing behaviour should clamp
+    REQUIRE(allPresent);
 }

@@ -654,14 +654,14 @@ void TfLiteReader::ParseOperatorOptions(const std::shared_ptr<Operation> &operat
         case tflite::BuiltinOptions::SplitOptions:
         {
             int num_splits = GetBuiltinOptions<tflite::SplitOptions>(tflite_operator)->num_splits();
-            if ( num_splits != operation->Outputs().size() ) operation->SetPassthroughOp();
+            if ( size_t(num_splits) != operation->Outputs().size() ) operation->SetPassthroughOp();
         }
         break;
 
         case tflite::BuiltinOptions::SplitVOptions:
         {
             int num_splits = GetBuiltinOptions<tflite::SplitVOptions>(tflite_operator)->num_splits();
-            if ( num_splits != operation->Outputs().size() ) operation->SetPassthroughOp();
+            if ( size_t(num_splits) != operation->Outputs().size() ) operation->SetPassthroughOp();
         }
         break;
 

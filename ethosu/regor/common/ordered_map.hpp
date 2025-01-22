@@ -90,6 +90,8 @@ protected:
     static constexpr INDEXER HASH_FREE = INDEXER(-2);
     static constexpr INDEXER HASH_END = INDEXER(-1);
     static constexpr INDEXER NODE_UNLINKED = INDEXER(-1);
+    static constexpr size_t DEFAULT_INITIAL_SIZE = 3;
+    static constexpr size_t MAX_INDEX_CAPACITY = size_t(std::numeric_limits<INDEXER>::max() - 2);
 
     // Node stores two arrays in one allocation.
     //  - Items array, mapping key->untyped storage
@@ -117,19 +119,22 @@ protected:
     };
 
     std::unique_ptr<Node[]> _items;       // Bulk node store
-    int _capacity = 0;                    // Total allocated capacity
-    int _itemCount = 0;                   // Number of inserted/valid items
+    INDEXER _capacity = 0;                // Total allocated capacity
+    INDEXER _itemCount = 0;               // Number of inserted/valid items
     INDEXER _tableSize = 0;               // Hash table size
     INDEXER _orderBegin = NODE_UNLINKED;  // First item in insertion order
     INDEXER _orderLast = NODE_UNLINKED;   // Last item in insertion order
     INDEXER _allocWatermark = 0;          // Location of last overflow allocation
 
 public:
-    ordered_map(int initialCapacity = 3) { resize(initialCapacity); }
+    ordered_map(size_t initialCapacity = 0)
+    {
+        if ( initialCapacity ) resize(initialCapacity);
+    }
 
     ordered_map(std::initializer_list<std::pair<KEY, VALUE>> init)
     {
-        resize(int(init.size()));
+        resize(init.size());
         for ( auto &pair : init )
         {
             emplace(pair.first, pair.second);
@@ -138,7 +143,7 @@ public:
 
     ordered_map(const std::pair<KEY, VALUE> *pairs, size_t count)
     {
-        resize(int(count));
+        resize(count);
         while ( count-- )
         {
             emplace(pairs->first, pairs->second);
@@ -204,10 +209,12 @@ public:
     ~ordered_map() { clear(); }
 
 public:
-    int size() const { return _itemCount; }
+    size_t size() const { return size_t(_itemCount); }
     bool empty() const { return _itemCount == 0; }
+    size_t capacity() const { return size_t(_capacity); }
     bool contains(const KEY &key) const
     {
+        if ( empty() ) return false;
         int index = table_index_of(key);
         return find_node(index, key) != nullptr;
     }
@@ -241,6 +248,7 @@ public:
     template<class... Args>
     VALUE &emplace(const KEY &key, Args &&...args)
     {
+        if ( !_tableSize ) resize(DEFAULT_INITIAL_SIZE);
         int index = table_index_of(key);
         Node *node = find_node(index, key);
         if ( node == nullptr )
@@ -259,6 +267,7 @@ public:
 
     void insert(const KEY &key, const VALUE &value)
     {
+        if ( !_tableSize ) resize(DEFAULT_INITIAL_SIZE);
         int index = table_index_of(key);
         Node *node = find_node(index, key);
         if ( node == nullptr )
@@ -274,6 +283,7 @@ public:
 
     void insert(const KEY &key, VALUE &&value)
     {
+        if ( !_tableSize ) resize(DEFAULT_INITIAL_SIZE);
         int index = table_index_of(key);
         Node *node = find_node(index, key);
         if ( node == nullptr )
@@ -302,6 +312,7 @@ public:
 
     void reinsert(const KEY &key, const VALUE &value)
     {
+        if ( !_tableSize ) resize(DEFAULT_INITIAL_SIZE);
         int index = table_index_of(key);
         Node *node = find_node(index, key);
         if ( node == nullptr )
@@ -330,6 +341,7 @@ public:
 
     void reinsert(const KEY &key, VALUE &&value)
     {
+        if ( !_tableSize ) resize(DEFAULT_INITIAL_SIZE);
         int index = table_index_of(key);
         Node *node = find_node(index, key);
         if ( node == nullptr )
@@ -378,6 +390,7 @@ public:
 
     VALUE &operator[](const KEY &key)
     {
+        if ( !_tableSize ) resize(DEFAULT_INITIAL_SIZE);
         int index = table_index_of(key);
         Node *node = find_node(index, key);
         if ( node == nullptr )
@@ -398,6 +411,7 @@ public:
 
     const VALUE &at(const KEY &key) const
     {
+        if ( !_tableSize ) throw std::out_of_range("not initialised");
         int index = table_index_of(key);
         const Node *node = find_node(index, key);
         if ( node == nullptr ) throw std::out_of_range("missing key");
@@ -408,6 +422,7 @@ public:
 
     bool try_get(const KEY &key, VALUE &value) const
     {
+        if ( empty() ) return false;
         int index = table_index_of(key);
         const Node *node = find_node(index, key);
         if ( node != nullptr )
@@ -420,6 +435,7 @@ public:
 
     const VALUE *try_ref(const KEY &key) const
     {
+        if ( empty() ) return nullptr;
         int index = table_index_of(key);
         const Node *node = find_node(index, key);
         if ( node != nullptr )
@@ -671,6 +687,7 @@ public:
 
     int erase(const KEY &key)
     {
+        if ( !_tableSize ) return 0;
         int index = table_index_of(key);
         int prevIndex = -1;  // local sentinel - not the indexer value
         Node *node = find_node(index, key, &prevIndex);
@@ -716,6 +733,7 @@ public:
 
     bool key_of(const VALUE &value, KEY &key) const
     {
+        if ( !_tableSize ) return false;
         int order = _orderBegin;
         while ( order != NODE_UNLINKED )
         {
@@ -731,10 +749,8 @@ public:
     }
 
 private:
-    ordered_map(this_class_t &other, int capacity)
+    ordered_map(this_class_t &other, size_t capacity)
     {
-        assert(capacity < std::numeric_limits<INDEXER>::max() - 2);  // Capacity exceeds indexer
-
         resize(capacity);
 
         // Duplicate in source's insertion order
@@ -751,11 +767,16 @@ private:
         }
     }
 
-    void resize(int capacity)
+    void resize(size_t capacity)
     {
-        int newTableSize = hashtable_size(capacity);
-        assert(capacity < std::numeric_limits<INDEXER>::max() - 2);  // Capacity exceeds indexer
-        if ( capacity <= _capacity ) return;
+        // Resize capacity limited to chosen indexer
+        capacity = std::min(capacity, MAX_INDEX_CAPACITY);
+        INDEXER newTableSize = INDEXER(hashtable_size(capacity));
+        if ( capacity <= size_t(_capacity) )
+        {
+            assert(_capacity != MAX_INDEX_CAPACITY && "Reached Indexer Limit");
+            return;
+        }
 
         // Same hash table size, just move old items into the new item storage
         if ( !_items || _tableSize == newTableSize )
@@ -775,9 +796,9 @@ private:
                 }
             }
             _items = std::move(newItems);
-            _capacity = capacity;
+            _capacity = INDEXER(capacity);
             _tableSize = INDEXER(newTableSize);
-            _allocWatermark = INDEXER(capacity - 1);
+            _allocWatermark = PURE_HASH_CHAINS ? _tableSize : 0;
         }
         else  // Rehash by stealing the internals of another map
         {
@@ -905,6 +926,7 @@ private:
     void update_node_order(Node *node)
     {
         const auto index = INDEXER(node - _items.get());
+        assert(size_t(index) < MAX_INDEX_CAPACITY);
         if ( node->order_prev == NODE_UNLINKED )
         {
             _orderBegin = index;
@@ -936,11 +958,13 @@ private:
             {
                 node->order_next = position->order_next;
                 node->order_prev = INDEXER(position - _items.get());
+                assert(size_t(node->order_prev) < MAX_INDEX_CAPACITY);
             }
             else
             {
                 node->order_next = INDEXER(position - _items.get());
                 node->order_prev = position->order_prev;
+                assert(size_t(node->order_next) < MAX_INDEX_CAPACITY);
             }
 
             update_node_order(node);
@@ -963,6 +987,8 @@ private:
         // Point them at each other instead.
         const auto firstIndex = INDEXER(first - _items.get());
         const auto secondIndex = INDEXER(second - _items.get());
+        assert(size_t(firstIndex) < MAX_INDEX_CAPACITY);
+        assert(size_t(secondIndex) < MAX_INDEX_CAPACITY);
 
         if ( firstPrev == secondIndex )
         {
@@ -984,6 +1010,7 @@ private:
     {
         // Initial index must be within the hashtable
         assert(index >= 0 && index < _tableSize);
+        assert(_items);
 
         // Node is unallocated
         if ( _items[index].hash_next == HASH_FREE )
@@ -1039,53 +1066,53 @@ private:
         void operator()(TYPE &dst, TYPE &src) const { std::memcpy(&dst, &src, sizeof(TYPE)); }
     };
 
-    int table_index_of(const KEY &key, int tableSize) const { return int(HASH()(key, size_t(tableSize))); }
+    int table_index_of(const KEY &key, INDEXER tableSize) const
+    {
+        assert(tableSize);
+        return int(HASH()(key, size_t(tableSize)));
+    }
     int table_index_of(const KEY &key) const { return table_index_of(key, _tableSize); }
 
     int find_free_index()
     {
-        const int minAlloc = PURE_HASH_CHAINS ? _tableSize : 0;
+        const INDEXER MIN_ALLOC = PURE_HASH_CHAINS ? _tableSize : 0;
 
-        // Crude search for a free slot (start at the watermark)
-        for ( int i = _allocWatermark; i >= minAlloc; --i )
+        // Search for a free slot, starting before the watermark.
+        INDEXER i = _allocWatermark;
+        do
         {
+            i--;
+            if ( (i < MIN_ALLOC) || (i >= _capacity) ) i = _capacity - 1;
             if ( _items[i].hash_next == HASH_FREE )
             {
-                _allocWatermark = INDEXER(i - 1);
+                _allocWatermark = i;  // Watermark should be a valid (but used) slot.
+                assert(_allocWatermark >= MIN_ALLOC && _allocWatermark < _capacity);
                 return i;
             }
-        }
-        for ( int i = _capacity - 1; i > _allocWatermark; --i )
-        {
-            if ( _items[i].hash_next == HASH_FREE )
-            {
-                _allocWatermark = INDEXER(i - 1);
-                return i;
-            }
-        }
+        } while ( i != _allocWatermark );
+
         return -1;  // Error, no free slots
     }
 
-    int hashtable_size(int &capacity)
+    size_t hashtable_size(size_t &capacity)
     {
         // Prime table is tuned for rehashing while the capacity is small. Whereas
         // table sizes for larger capacities are sparser, when rehashing is expensive.
         // Note: Not all starting capacities give the same resize pattern!
         // clang-format off
-        static constexpr int primes[] = { 3, 7, 11, 13, 17, 19, 23, 31, 41, 67, 97, 131,
-                                          197, 257, 509, 1021, 2039, 4093, 8191, 16381 };
+        static constexpr size_t primes[] = { 3, 7, 11, 13, 17, 19, 23, 31, 41, 67, 97, 131,
+                                             197, 257, 509, 1021, 2039, 4093, 8191, 16381 };
         // clang-format on
-        assert(capacity < std::numeric_limits<INDEXER>::max() - 2);  // Capacity exceeds indexer
-        capacity = std::max(capacity, 2);
+        capacity = std::max<size_t>(capacity, 2);
 
         // Estimate to expect ~1 collision per element
-        int estimatedTableSize = (capacity + 1) / 2;
-        int tableSize = 2;
+        size_t estimatedTableSize = (capacity + 1) / 2;
+        size_t tableSize = 2;
         // Choose a conservative prime hashtable size for small capacities
         // (stops rehashing after final table size has been seen)
-        for ( int i : primes )
+        for ( size_t i : primes )
         {
-            if ( i > estimatedTableSize )
+            if ( i > estimatedTableSize || tableSize >= MAX_INDEX_CAPACITY )
             {
                 break;
             }
@@ -1093,7 +1120,7 @@ private:
         }
 
         // Ensure capacity includes space other than just the table
-        capacity = std::max(capacity, tableSize * 2);
+        capacity = std::min(std::max(capacity, tableSize * 2), MAX_INDEX_CAPACITY);
         assert(tableSize != 0);
         return tableSize;
     }

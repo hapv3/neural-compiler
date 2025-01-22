@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -609,13 +609,13 @@ flatbuffers::Offset<void> TfLiteWriter::SerialiseOptions(const Operation *operat
 
         case tflite::BuiltinOptions::SplitOptions:
         {
-            offset = tflite::CreateSplitOptions(_flatbuffer, operation->Outputs().size()).Union();
+            offset = tflite::CreateSplitOptions(_flatbuffer, int(operation->Outputs().size())).Union();
         }
         break;
 
         case tflite::BuiltinOptions::SplitVOptions:
         {
-            offset = tflite::CreateSplitVOptions(_flatbuffer, operation->Outputs().size()).Union();
+            offset = tflite::CreateSplitVOptions(_flatbuffer, int(operation->Outputs().size())).Union();
         }
         break;
 

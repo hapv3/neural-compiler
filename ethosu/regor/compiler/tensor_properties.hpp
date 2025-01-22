@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -75,9 +75,10 @@ constexpr inline bool IsIFM(TensorUsage usage)
     return (usage & TensorUsage::TypeMask) == TensorUsage::IFM;
 }
 
-constexpr inline TensorUsage MakeTensorUsage(TensorUsage type, int index)
+template<typename NUMERIC>
+constexpr inline TensorUsage MakeTensorUsage(TensorUsage type, NUMERIC index)
 {
-    return TensorUsage(uint32_t(type) | (index << 8));
+    return TensorUsage(uint32_t(type) | (uint32_t(index) << 8));
 }
 
 constexpr inline int GetUsageIndex(TensorUsage usage)
