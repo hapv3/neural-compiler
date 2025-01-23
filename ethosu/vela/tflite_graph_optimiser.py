@@ -1288,7 +1288,11 @@ def fixup_relus_with_differing_ifm_ofm_scaling(op: Operation, arch, nng) -> Oper
 
             relu_fused_op.add_input_tensor(ifm)
             relu_fused_op.set_output_tensor(ofm)
-            relu_fused_op.set_ifm_ofm_shapes()
+
+            # Original shape should be used in case modifications has been done to the
+            # actual tensor (bypass_memory_only_ops)
+            relu_fused_op.ifm_shapes.append(op.ifm_shapes[0])
+            relu_fused_op.ofm_shapes.append(op.ofm_shapes[0])
             op = relu_fused_op
     return op
 
