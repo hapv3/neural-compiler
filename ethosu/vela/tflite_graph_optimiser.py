@@ -593,7 +593,7 @@ def convert_argmax_to_depthwise_conv_and_max_pool(op: Operation, arch, nng) -> O
         # To extract 7 least significant bits and swap reverse index back to real index using a LUT activation, we set
         # the base value to c-1 and slope to -128. The 16-bit LUT uses a table of 32-bit values where the top 16 bits
         # represent the slope and bottom 16 bits the base which are used to interpolate the activation value.
-        slope = (-128 & 0xFFFF) << 16  # Top 16 bits of 32 bit LUT table value
+        slope = np.uint32((-128 & 0xFFFF) << 16)  # Top 16 bits of 32 bit LUT table value
         base = c - 1  # Bottom 16 bits of the LUT table value
         lut_tensor = create_const_tensor(
             "maxpool_LUT_extract_7_LSB",
@@ -2535,7 +2535,7 @@ def convert_mean_to_depthwise_conv(op, arch, nng):
         shift = round_down_log2(num_elements_in_axis)
         shift = min(shift, 32)
         shift = min(shift, 31 + output_shift)
-        output_multiplier = (output_multiplier << shift) // num_elements_in_axis
+        output_multiplier = np.int32((np.int64(output_multiplier) << shift) // num_elements_in_axis)
         output_shift = output_shift - shift
 
         # Convert to vela representation shift
