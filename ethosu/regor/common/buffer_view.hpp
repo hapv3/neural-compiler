@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -410,7 +410,7 @@ public:
     TYPE operator[](size_t index) const
     {
         assert(index < _count);
-        assert(((_strideBytes.Size() <= 2) || (_count == 1)) && "View does not guarantee linear access");
+        assert(((index == 0) || (_strideBytes.Size() <= 2)) && "View does not guarantee linear access");
         return _get(_data, index * _strideBytes.Depth());
     }
 
@@ -438,6 +438,7 @@ public:
         using iterator_category = std::forward_iterator_tag;
 
     public:
+        iterator_base_t() = default;
         iterator_base_t(const iterator_base_t<VALUE> &other) = default;
         iterator_base_t(GetFunc fn, const void *p, size_t index, size_t strideBytes) :
                 _get(fn), _data(p), _offset(index * strideBytes), _strideBytes(strideBytes)
@@ -520,7 +521,7 @@ public:
     {
         assert(index < _count);
         assert(_strideBytes[-1] == sizeof(TYPE));
-        assert(((_strideBytes.Size() <= 2) || (_count == 1)) && "View does not guarantee linear access");
+        assert(((index == 0) || (_strideBytes.Size() <= 2)) && "View does not guarantee linear access");
         return _data[index];
     }
 
@@ -528,7 +529,7 @@ public:
     {
         assert(index < _count);
         assert(_strideBytes[-1] == sizeof(TYPE));
-        assert(((_strideBytes.Size() <= 2) || (_count == 1)) && "View does not guarantee linear access");
+        assert(((index == 0) || (_strideBytes.Size() <= 2)) && "View does not guarantee linear access");
         return _data[index];
     }
 

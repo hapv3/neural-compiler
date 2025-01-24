@@ -2122,25 +2122,24 @@ Operation *TFLiteGraphOptimiser::ConvertPrelu(Graph *const graph, Operation *con
                 int64_t alphaZp = 0;
                 int alphaMin = 0;
                 int alphaMax = 0;
-                if ( params->tensor->Type() == DataType::Int8 )
+                BufferReader<int> reader;
+                switch ( params->tensor->Type() )
                 {
-                    auto *alphaBuf = alpha.Buffer()->Data<int8_t>();
-                    alphaMin = *std::min_element(alphaBuf, alphaBuf + alphaSize);
-                    alphaMax = *std::max_element(alphaBuf, alphaBuf + alphaSize);
-                }
-                else if ( params->tensor->Type() == DataType::UInt8 )
-                {
-                    auto *alphaBuf = alpha.Buffer()->Data<uint8_t>();
-                    alphaMin = *std::min_element(alphaBuf, alphaBuf + alphaSize);
-                    alphaMax = *std::max_element(alphaBuf, alphaBuf + alphaSize);
-                }
-                else if ( params->tensor->Type() == DataType::Int16 )
-                {
-                    auto *alphaBuf = alpha.Buffer()->Data<int16_t>();
-                    alphaMin = *std::min_element(alphaBuf, alphaBuf + alphaSize);
-                    alphaMax = *std::max_element(alphaBuf, alphaBuf + alphaSize);
-                }
-
+                    case DataType::Int8:
+                        reader = alpha.Values<int8_t, int>();
+                        break;
+                    case DataType::UInt8:
+                        reader = alpha.Values<uint8_t, int>();
+                        break;
+                    case DataType::Int16:
+                        reader = alpha.Values<int16_t, int>();
+                        break;
+                    default:
+                        assert(false);
+                };
+                auto alphaMinMax = std::minmax_element(reader.begin(), reader.end());
+                alphaMin = *alphaMinMax.first;
+                alphaMax = *alphaMinMax.second;
                 if ( alphaQuant.zeroPoints.size() )
                 {
                     alphaZp = alphaQuant.zeroPoints[0];
@@ -2163,8 +2162,7 @@ Operation *TFLiteGraphOptimiser::ConvertPrelu(Graph *const graph, Operation *con
                     lreluOp->CopyOutput(TensorUsage::OFM, *ofmConn);
                     auto *attr = lreluOp->Attribute<leaky_relu_attr_t>();
                     attr->alpha = scaledAlphaMin;
-                    // and then optimize LeakyRelU
-                    returnOp = ConvertLeakyRelu(graph, lreluOp.get());
+                    returnOp = lreluOp.get();
                     RecordOptimisation(operation, returnOp);
                     operation->Disconnect();
                     return returnOp;
