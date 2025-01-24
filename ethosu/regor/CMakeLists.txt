@@ -39,6 +39,7 @@ regor_policy(69 NEW)
 regor_policy(91 NEW)
 regor_policy(92 NEW)
 regor_policy(94 NEW)
+regor_policy(117 NEW)
 
 #############################################################################
 # Project
