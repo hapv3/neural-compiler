@@ -1002,7 +1002,8 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const graph, Operation *const op
         auto ofmQuant = ofmConn->quantization;
         ofmQuant.scales = ConvertedScales(ofmConn);
 
-        if ( returnOp == operation && producer && producer->Output(TensorUsage::OFM)->quantization.EqualScales(Quantization::Unit()) &&
+        if ( returnOp == operation && producer && ifmConn->tensor->Readers().size() == 1 &&
+             producer->Output(TensorUsage::OFM)->quantization.EqualScales(Quantization::Unit()) &&
              ifmConn->quantization.zeroPoints == Quantization::Unit().zeroPoints &&
              // fused tensor cannot be in graph-outputs
              !IsTensorInVector(graph->Outputs(), ifmConn->tensor.get()) &&
