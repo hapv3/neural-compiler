@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -74,7 +74,6 @@ public:
     bool operator==(ENUM val) const { return _raw == TYPE(val); }
     bool operator!=(ENUM val) const { return _raw != TYPE(val); }
     bool operator<(ENUM val) const { return _raw < TYPE(val); }
-    operator bool() const { return _raw != 0; }
     operator ENUM() const { return ENUM(_raw); }
     explicit operator unsigned() const { return unsigned(_raw); }
 
@@ -123,6 +122,9 @@ public:
     Flags<ENUM> operator|(ENUM val) const { return Flags<ENUM>(ENUM(_raw | TYPE(val))); }
     Flags<ENUM> operator^(ENUM val) const { return Flags<ENUM>(ENUM(_raw ^ TYPE(val))); }
     Flags<ENUM> operator~() const { return Flags<ENUM>(ENUM(~_raw)); }
+    // Flag presence check. Use as if an infix replacement for '&' for testing flags.
+    bool operator%(ENUM val) const { return (_raw & TYPE(val)) != 0; }
+    bool operator!() const { return _raw == 0; }
 
     // Extract non-bitfield item
     unsigned GetUInt(ENUM offset, int bits) { return (_raw >> int(offset)) & ((1u << bits) - 1u); }

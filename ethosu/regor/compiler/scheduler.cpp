@@ -500,7 +500,7 @@ std::unique_ptr<ArchitectureOpConfig> MaybeGetSparsityConfig(regor::Architecture
 {
     using WF = Flags<WeightFormat>;
     std::unique_ptr<ArchitectureOpConfig> blockConfigSparse;
-    if ( supportedFormat & WF(WeightFormat::Sparse2_4) )
+    if ( supportedFormat % WeightFormat::Sparse2_4 )
     {
         blockConfigSparse = GetOpConfig(arch, op, ifmShape, ifm2Shape, ofmShape, WF(WeightFormat::Default, WeightFormat::Sparse2_4));
     }
@@ -524,12 +524,12 @@ WeightScaleEncoding Scheduler::EncodeBestWeightFormat(
         auto perfSparse = EstimateOpPerformanceForSparsity(op, blockConfigSparse.get(), op->OFM()->SliceShape().Depth());
         if ( perfSparse.opCycles > perfDefault.opCycles )
         {
-            supportedFormats &= ~WF(WeightFormat::Sparse2_4);
+            supportedFormats.Unset(WeightFormat::Sparse2_4);
         }
     }
-    else if ( supportedFormats & WeightFormat::Sparse2_4 )
+    else if ( supportedFormats % WeightFormat::Sparse2_4 )
     {  // No block config available for sparse 2_4, so disable.
-        supportedFormats &= ~WF(WeightFormat::Sparse2_4);
+        supportedFormats.Unset(WeightFormat::Sparse2_4);
     }
 
     std::vector<WeightScaleEncoding> encodingResults;
@@ -546,9 +546,9 @@ WeightScaleEncoding Scheduler::EncodeBestWeightFormat(
     for ( auto weightFormat : formatList )
     {
         if ( (weightFormat & supportedFormats) != weightFormat ) continue;
-        bool checkFastDecoder = !(weightFormat & WF(WeightFormat::Fast)) && (supportedFormats & WF(WeightFormat::Fast));
+        bool checkFastDecoder = !(weightFormat % WeightFormat::Fast) && (supportedFormats % WeightFormat::Fast);
 
-        auto *blockConfig = (weightFormat & WF(WeightFormat::Sparse2_4)) ? blockConfigSparse.get() : blockConfigDefault.get();
+        auto *blockConfig = (weightFormat % WeightFormat::Sparse2_4) ? blockConfigSparse.get() : blockConfigDefault.get();
         if ( !blockConfig )
         {
             throw std::runtime_error("Failed to find block configuration\n");
@@ -565,15 +565,15 @@ WeightScaleEncoding Scheduler::EncodeBestWeightFormat(
             if ( checkFastDecoder &&
                  !UseFastDecoder(_arch, op, _options.optimizationStrategy, encoding.weightScales.npuWeightsTensor.get()) )
             {
-                supportedFormats &= ~WF(WeightFormat::Fast);
+                supportedFormats.Unset(WeightFormat::Fast);
             }
             encodingResults.emplace_back(std::move(encoding));
         }
         catch ( const WeightEncodeException & )
         {
-            if ( weightFormat & WF(WeightFormat::Sparse2_4) )
+            if ( weightFormat % WeightFormat::Sparse2_4 )
             {
-                supportedFormats &= ~WF(WeightFormat::Sparse2_4);
+                supportedFormats.Unset(WeightFormat::Sparse2_4);
             }
             continue;
         }
@@ -581,7 +581,7 @@ WeightScaleEncoding Scheduler::EncodeBestWeightFormat(
     assert(!encodingResults.empty());
     auto bestEncoding = ChooseBestWeightFormat(_arch, op, _options.optimizationStrategy, encodingResults);
     bestEncoding.blockConfig =
-        (bestEncoding.weightScales.npuWeightsTensor->config->Format() & WF(WeightFormat::Sparse2_4)) ? std::move(blockConfigSparse) : std::move(blockConfigDefault);
+        (bestEncoding.weightScales.npuWeightsTensor->config->Format() % WeightFormat::Sparse2_4) ? std::move(blockConfigSparse) : std::move(blockConfigDefault);
     return bestEncoding;
 }
 

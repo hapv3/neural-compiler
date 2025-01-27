@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -595,9 +595,8 @@ ElementAccess EthosU85Performance::ElementTransferToBytes(const PerformanceQuery
 int64_t EthosU85Performance::WeightDecodeCycles(
     const PerformanceQuery &, const WeightStats &weights, Flags<WeightFormat> format, ArchitectureMemory *weightsMemory)
 {
-    using WF = Flags<WeightFormat>;
     int weightsPerCycle;
-    if ( format & WF(WeightFormat::Fast) )
+    if ( format % WeightFormat::Fast )
     {
         weightsPerCycle = (weights.distinctWeights < 16) ? 64 : 32;
     }
@@ -617,7 +616,7 @@ int64_t EthosU85Performance::WeightDecodeCycles(
         _nextId = -1;
     }
 
-    MemChannel channel = (format & WeightFormat::Fast) ? MemChannel::FastWeight : MemChannel::Weight;
+    MemChannel channel = (format % WeightFormat::Fast) ? MemChannel::FastWeight : MemChannel::Weight;
     int64_t dmaCycles = int64_t(float(weights.encodedSize) / ChannelBW(weightsMemory, channel));
     dmaCycles += weightsMemory->ReadLatency();
     return std::max(decodeCycles, dmaCycles);

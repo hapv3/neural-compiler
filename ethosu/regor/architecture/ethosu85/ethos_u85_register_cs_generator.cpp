@@ -1336,8 +1336,8 @@ void EthosU85RCSGenerator::GenerateWeights(const HLCStripe *stripe, MemoryAccess
 
     EthosU85OpConfig *config = static_cast<EthosU85OpConfig *>(stripe->operation->config);
 
-    auto wgtFormat = (weights->format & WeightFormat::Fast) ? weight_format::FWD : weight_format::SWD;
-    auto wgtSparsity = (weights->format & WeightFormat::Sparse2_4) ? weight_sparsity::SPARSE_2_4 : weight_sparsity::NONE;
+    auto wgtFormat = (weights->format % WeightFormat::Fast) ? weight_format::FWD : weight_format::SWD;
+    auto wgtSparsity = (weights->format % WeightFormat::Sparse2_4) ? weight_sparsity::SPARSE_2_4 : weight_sparsity::NONE;
     Emit(isa::npu_set_weight_format_t(wgtFormat, wgtSparsity));
 
     int depth = stripe->weightRangeDepth;

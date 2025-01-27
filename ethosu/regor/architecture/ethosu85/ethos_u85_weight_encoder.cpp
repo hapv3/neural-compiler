@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -119,7 +119,7 @@ std::unique_ptr<IWeightEncodingConfig> EthosU85WeightEncoder::GetEncodingConfig(
 int EthosU85WeightEncoder::StreamsRequired(IWeightEncodingConfig *config, const Shape & /*weightShape*/, int &scaleStreamsRequired)
 {
     scaleStreamsRequired = 1;
-    return config->Format() & WeightFormat::Fast ? 1 : _arch->_cores;
+    return config->Format() % WeightFormat::Fast ? 1 : _arch->_cores;
 }
 
 static int EncodeBias32(int64_t bias, int32_t scale, int shift, uint8_t data[10])
@@ -588,8 +588,8 @@ std::unique_ptr<IVolumeWeightSource> EthosU85WeightEncoder::GetWeightSource(
     int ofmUBlockDepth = cfg->ofmUBlock.Depth();
 
     int ifmBitDepth = DataTypeSizeBits(cfg->ifmType);
-    bool isFast = cfg->Format() & WeightFormat::Fast;
-    bool isSparse = cfg->Format() & WeightFormat::Sparse2_4;
+    bool isFast = cfg->Format() % WeightFormat::Fast;
+    bool isSparse = cfg->Format() % WeightFormat::Sparse2_4;
 
     if ( weightType == DataType::UInt8 )
     {
@@ -757,7 +757,7 @@ Quantization EthosU85WeightEncoder::MakeExplicit(const Quantization &ifmQ, const
 WeightsInfo EthosU85WeightEncoder::EncodeWeights(IWeightEncodingConfig *config, IWeightSource *source, std::vector<uint8_t> &result)
 {
     EthosUEncodingConfig *cfg = static_cast<EthosUEncodingConfig *>(config);
-    auto fn = (cfg->Format() & WeightFormat::Fast) ? mle_encode_fwd_proxy : mle_encode_proxy;
+    auto fn = (cfg->Format() % WeightFormat::Fast) ? mle_encode_fwd_proxy : mle_encode_proxy;
     unsigned flags = MLW_ENCODE_FLAG_NONE;
     if ( cfg->Format().All(WeightFormat::Fast, WeightFormat::Sparse2_4) ) flags |= MLW_ENCODE_NO_PALETTE_LUT;
     auto res = fn(source, 128 * 1024, result, flags);

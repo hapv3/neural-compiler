@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -222,7 +222,7 @@ private:
             const auto allocation = tensor->AllocationSizeBytes();
             const auto size = tensor->srcTensor->View().Buffer()->Size();
 
-            assert(tensor->memArea.usage & MemUsage::ReadOnly);
+            assert(tensor->memArea.usage % MemUsage::ReadOnly);
             assert((offset >= 0) && (allocation >= 0));                         // Has been allocated
             assert((offset + allocation) <= Address(_readOnlyBuffer->Size()));  // Allocation fits in buffer
             assert(size <= allocation);                                         // Tensor fits in allocation
