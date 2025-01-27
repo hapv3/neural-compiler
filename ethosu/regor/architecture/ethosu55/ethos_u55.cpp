@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -634,6 +634,7 @@ EthosU55NpuOp ArchEthosU55::GetHWOp(OpType type)
         {OpType::Rescale, EthosU55NpuOp::Pooling},
         {OpType::Tile, EthosU55NpuOp::Dma},
         {OpType::Transpose, EthosU55NpuOp::Compound},
+        {OpType::MatMul, EthosU55NpuOp::Compound},
     };
     auto pos = toNpuOp.find(type);
     if ( pos != toNpuOp.end() )
@@ -812,7 +813,7 @@ bool EthosU55OpGroup::CanRunOnNPU(const ArchitectureOpGroupQuery &op)
     if ( npuOp != EthosU55NpuOp::Elementwise )
     {
         if ( op.type == OpType::LUT || op.type == OpType::MemoryCopy || op.type == OpType::Rescale ||
-             op.type == OpType::Tile || op.type == OpType::Transpose )
+             op.type == OpType::Tile || op.type == OpType::Transpose || npuOp == EthosU55NpuOp::Compound )
         {  // TODO: LUT operations end up here due to UseAvgPoolNop although the rules are not the same as
            // for a Pooling operation, so skip checks for now.
             return true;

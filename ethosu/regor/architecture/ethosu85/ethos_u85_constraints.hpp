@@ -37,13 +37,13 @@ public:
     bool SupportsAccumulatorSaveRestore() override { return true; }
     bool SupportsGather(OpType opType) override;
     bool SupportsScatter(OpType opType) override;
-    bool SupportsSigmoidTanhLutInt16(OpType opType) override;
     bool SupportsResize(const ResizeSupportQuery &query) override;
     bool SupportsArgMax(OpType opType) override;
     bool SupportsCast(OpType opType, DataType ifmType, DataType ofmType) override;
     bool SupportsNonMatchingShapes(const Shape &ifmShape, const Shape &ifm2Shape, const Shape &ofmShape) override;
     bool SupportsNegativeStrides() override { return false; };
     bool SupportsNot() override { return true; };
+    Flags<QueryResult> OperatorQuery(OpType opType, const ArchOperatorQuery *query, ArchRequirements *req) override;
 
 private:
     ArchEthosU85 *_arch;

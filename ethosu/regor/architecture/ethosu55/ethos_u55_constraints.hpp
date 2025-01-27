@@ -24,8 +24,11 @@ namespace regor
 
 class EthosU55Constraints : public IArchitectureConstraints
 {
+private:
+    ArchEthosU55 *_arch = nullptr;
+
 public:
-    EthosU55Constraints(ArchEthosU55 *arch) : _arch(arch) {}
+    EthosU55Constraints(ArchEthosU55 *arch);
 
     bool SupportsLeakyRelu(bool quantized, DataType type) override;
     bool SupportsMatMul(OpType opType) override;
@@ -37,16 +40,13 @@ public:
     bool SupportsAccumulatorSaveRestore() override { return false; }
     bool SupportsGather(OpType opType) override;
     bool SupportsScatter(OpType opType) override;
-    bool SupportsSigmoidTanhLutInt16(OpType opType) override;
     bool SupportsResize(const ResizeSupportQuery &query) override;
     bool SupportsArgMax(OpType opType) override;
     bool SupportsCast(OpType opType, DataType ifmType, DataType ofmType) override;
     bool SupportsNonMatchingShapes(const Shape &ifmShape, const Shape &ifm2Shape, const Shape &ofmShape) override;
     bool SupportsNegativeStrides() override { return true; };
     bool SupportsNot() override { return false; };
-
-private:
-    ArchEthosU55 *_arch;
+    Flags<QueryResult> OperatorQuery(OpType opType, const ArchOperatorQuery *query, ArchRequirements *req) override;
 };
 
 }  // namespace regor

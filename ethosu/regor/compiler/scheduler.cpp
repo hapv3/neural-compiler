@@ -230,10 +230,15 @@ static int UpdateSchedulerTensor(Architecture *arch, TensorUsage usage, Schedule
         }
         else if ( producer->Type() == OpType::Transpose )
         {
-            TransposeSupport supported = arch->Constraints()->SupportsTranspose(OpType::Transpose, producer->OFM()->transpose);
-            if ( supported == TransposeSupport::NHWC )
+            ArchRequirements req;
+            ArchOperatorQuery query;
+            query.transposeMask = producer->OFM()->transpose;
+            if ( arch->Constraints()->OperatorQuery(OpType::Transpose, &query, &req).Any(QueryResult::Native) )
             {
-                tensor->needsLinearFormat = true;
+                if ( req.ofmFormat == TensorFormat::NHWC )
+                {
+                    tensor->needsLinearFormat = true;
+                }
             }
         }
 
@@ -270,10 +275,15 @@ static int UpdateSchedulerTensor(Architecture *arch, TensorUsage usage, Schedule
         }
         else if ( consumer->Type() == OpType::Transpose )
         {
-            TransposeSupport supported = arch->Constraints()->SupportsTranspose(OpType::Transpose, consumer->OFM()->transpose);
-            if ( supported == TransposeSupport::NHWC )
+            ArchRequirements req;
+            ArchOperatorQuery query;
+            query.transposeMask = consumer->OFM()->transpose;
+            if ( arch->Constraints()->OperatorQuery(OpType::Transpose, &query, &req).Any(QueryResult::Native) )
             {
-                tensor->needsLinearFormat = true;
+                if ( req.ofmFormat == TensorFormat::NHWC )
+                {
+                    tensor->needsLinearFormat = true;
+                }
             }
         }
 

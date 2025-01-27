@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -281,5 +281,15 @@ inline bool IsScalingValidAndEqual(const TensorConnection &a, const TensorConnec
 }
 
 #undef FOR_ALL_INT_TYPES
+
+inline ArchFM &Set(ArchFM &fm, const Tensor *src)
+{
+    if ( src )
+    {
+        fm.type = src->Type();
+        fm.shape = src->StorageShape();
+    }
+    return fm;
+}
 
 }  // namespace regor

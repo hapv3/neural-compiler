@@ -48,6 +48,7 @@ enum class TensorUsage : uint32_t
     Params = 0x05,
     LUT = 0x06,
     State = 0x07,
+    Scratch = 0x08,
     UserDefined = 0x1E,
     Last,
     TypeMask = 0x1F,
@@ -59,6 +60,7 @@ enum class TensorUsage : uint32_t
     Params0 = Params,
     Params1 = 0x100 | Params,
     Params2 = 0x200 | Params,
+    Scratch0 = Scratch,
 };
 
 DECLARE_ENUM_AS_FLAGS(TensorUsage)

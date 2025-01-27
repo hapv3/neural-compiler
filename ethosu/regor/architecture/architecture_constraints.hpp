@@ -79,12 +79,63 @@ struct ExecutionQuery
     bool quantScalingInvalidOrUnequal = false;
 };
 
+struct ArchOperatorQuery
+{
+    ArchFM ifm[2];
+    ArchFM ofm;
+    ReverseType reverseMask = ReverseType::None;
+    TransposeType transposeMask = TransposeType::None;
+    struct
+    {
+        ResizeSupportQuery resize;
+    } specific;
+    ~ArchOperatorQuery(){};
+};
+
+enum class ArchRequirement
+{
+    None = 0,
+    ScratchTensor = 1,
+    OutputFormat = 2,
+    OpSubstitution = 4,
+};
+
+struct ArchRequirements
+{
+    Flags<ArchRequirement> req;
+    struct
+    {
+        Shape size;
+        DataType type = DataType::None;
+        TensorFormat format = TensorFormat::Unknown;
+    } scratch;
+    TensorFormat ofmFormat = TensorFormat::Unknown;
+    OpType substitution = OpType::None;
+};
+
 enum class TransposeSupport
 {
     None,
     NHWC = 1,
     NHCWB16 = 2,
     Any = NHWC | NHCWB16,
+};
+
+// Results for operator queries can return a combination of the
+// following flags.
+// Native - Operator supported natively in some or all cases (see other flags).
+// Constrained - Not all operator cases have support (detailed queries may fail).
+// HasRequirements - Cases are supported if architecture requirements are met.
+enum class QueryResult
+{
+    None = 0,
+    Unsupported = 1,
+    Native = 2,
+    Constrained = 4,
+    HasRequirements = 8,
+    NativeHasReq = Native | HasRequirements,
+    NativeConstrained = Native | Constrained,
+    NativeConstrainedHasReq = Native | Constrained | HasRequirements,
 };
 
 /// <summary>
@@ -104,6 +155,7 @@ public:
     virtual bool SupportsLeakyRelu(bool quantized, DataType type) = 0;
     virtual bool SupportsNegativeStrides() = 0;
     virtual bool SupportsNot() = 0;
+    virtual Flags<QueryResult> OperatorQuery(OpType opType, const ArchOperatorQuery *query, ArchRequirements *req = nullptr) = 0;
 
     bool CanExecute(const ExecutionQuery &query)
     {
@@ -133,6 +185,9 @@ public:
             case OpType::Cast:
                 valid = SupportsCast(query.opType, query.ifmType, query.ofmType);
                 break;
+            case OpType::Resize:
+                valid = SupportsResize(query.resizeQuery);
+                break;
             default:
                 break;
         }
@@ -147,7 +202,6 @@ protected:
     virtual bool SupportsMatMul(OpType opType) = 0;
     virtual bool SupportsGather(OpType opType) = 0;
     virtual bool SupportsScatter(OpType opType) = 0;
-    virtual bool SupportsSigmoidTanhLutInt16(OpType opType) = 0;
     virtual bool SupportsResize(const ResizeSupportQuery &query) = 0;
     virtual bool SupportsArgMax(OpType opType) = 0;
     virtual bool SupportsCast(OpType opType, DataType ifmType, DataType ofmType) = 0;

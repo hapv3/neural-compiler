@@ -1752,6 +1752,10 @@ void EthosU55RCSGenerator::PrepareCommand(int index, HighLevelCommand *cmd, Temp
             InsertTransposeCommand(stripe, temps, emitted);
             return;
         }
+        else if ( op->type == OpType::MatMul )
+        {
+            return;  // Delete until implemented
+        }
         else if ( _arch->_shram.reservedEndBanks == 0 )
         {
             // LUT is overwritten by SHRAM accumulator buffers; clear slots

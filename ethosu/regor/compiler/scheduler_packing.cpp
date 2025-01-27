@@ -125,6 +125,7 @@ void SchedulerPacking::FilterOperations(const std::vector<Operation *> &executio
     for ( Operation *op : executionList )
     {
         auto schedOp = MakeSchedulerOperation(op, graph);
+
         if ( NeedsDecompose(_arch, schedOp.get()) )
         {
             auto schedOps = DecomposeSchedulerOperation(std::move(schedOp));
@@ -521,6 +522,31 @@ std::unique_ptr<SchedulerOperation> SchedulerPacking::MakeSchedulerOperation(Ope
             schedOp->SetPrimaryIfmIndex(1);
         }
     }
+
+    // Check that the Architecture understands what do to with this operator
+    const auto ofmConn = schedOp->OFM();
+    const auto ifm0Conn = schedOp->TryIFM(0);
+    const auto ifm1Conn = schedOp->TryIFM(1);
+    ArchOperatorQuery query;
+    Set(query.ifm[0], ifm0Conn);
+    Set(query.ifm[1], ifm1Conn);
+    Set(query.ofm, ofmConn);
+    query.reverseMask = ofmConn->reverse;
+    query.transposeMask = ofmConn->transpose;
+    query.specific.resize = {};
+
+    ArchRequirements req;
+    if ( _arch->Constraints()->OperatorQuery(op->Type(), &query, &req).Any(QueryResult::Native) )
+    {
+        // Operator requires a scratch tensor
+        if ( req.req.Any(ArchRequirement::ScratchTensor) && req.scratch.size )
+        {
+            auto scratchTensor = std::make_shared<SchedulerTensor>(req.scratch.type, req.scratch.size, req.scratch.format);
+            SchedulerConnection *scratchConn = schedOp->AddInput(TensorUsage::Scratch0, scratchTensor);
+            scratchConn->shape = req.scratch.size;
+        }
+    }
+
     return schedOp;
 }
 

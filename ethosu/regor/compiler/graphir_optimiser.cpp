@@ -1603,8 +1603,9 @@ Operation *GraphIrOptimiser::MergeTransposes(Graph *const graph, Operation *cons
             Shape finalMapping = prevMapping.Permute(unsigned(curTranspose));
             TransposeType mergedTranspose = TransposeTypeFromShape(finalMapping);
 
-            // The single merged transpose is supported
-            if ( _constraints->SupportsTranspose(OpType::Transpose, mergedTranspose) != TransposeSupport::None )
+            ArchOperatorQuery query;
+            query.transposeMask = mergedTranspose;
+            if ( _constraints->OperatorQuery(OpType::Transpose, &query, nullptr).Any(QueryResult::Native) )
             {
                 // Change the transpose attribute on the preceding transpose and remove this one
                 prevAttr->perm = finalMapping;
@@ -1650,8 +1651,9 @@ Operation *GraphIrOptimiser::RearrangeTranspose(Graph *const graph, Operation *c
         Shape perm = attr->perm;
 
         // Don't bother with rearrangement if transpose type is already supported
-        auto transposeType = TransposeTypeFromShape(perm);
-        if ( _constraints->SupportsTranspose(OpType::Transpose, transposeType) != TransposeSupport::None )
+        ArchOperatorQuery query;
+        query.transposeMask = TransposeTypeFromShape(perm);
+        if ( _constraints->OperatorQuery(OpType::Transpose, &query, nullptr).Any(QueryResult::Native) )
         {
             return returnOp;
         }

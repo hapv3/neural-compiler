@@ -20,7 +20,6 @@
 
 #include "common/logging.hpp"
 
-#include "architecture/architecture_constraints.hpp"
 #include "shape_util.hpp"
 
 #include <numeric>
@@ -206,6 +205,17 @@ bool CanRunOnHardware(Architecture *arch, const SchedulerOperation *schedOp)
     {
         auto &ofmShape = schedOp->OFM()->SliceShape();
         if ( ofmShape.Size() > 2 && ofmShape.Elements() > ofmShape.Width() * ofmShape.Depth() ) return false;
+
+        const auto ofmConn = schedOp->OFM();
+        ArchOperatorQuery query;
+        Set(query.ifm[0], schedOp->IFM(0));
+        Set(query.ifm[1], schedOp->IFM(1));
+        Set(query.ofm, ofmConn);
+        query.transposeMask = ofmConn->transpose;
+        if ( !arch->Constraints()->OperatorQuery(OpType::MatMul, &query, nullptr).Any(QueryResult::Native) )
+        {
+            return false;
+        }
     }
     if ( IsConvolution(schedOp->Type()) )
     {
@@ -220,8 +230,13 @@ bool CanRunOnHardware(Architecture *arch, const SchedulerOperation *schedOp)
         auto &ofmShape = schedOp->OFM()->SliceShape();
         if ( ofmShape.Size() > 3 && ofmShape.Elements() > ofmShape.Width() * ofmShape.Height() * ofmShape.Depth() )
             return false;
-        if ( arch->Constraints()->SupportsTranspose(schedOp->Type(), schedOp->OFM()->transpose) == TransposeSupport::None )
+
+        ArchOperatorQuery query;
+        query.transposeMask = schedOp->OFM()->transpose;
+        if ( !arch->Constraints()->OperatorQuery(OpType::Transpose, &query, nullptr).Any(QueryResult::Native) )
+        {
             return false;
+        }
     }
     auto *ifm = schedOp->TryIFM(0);
     auto *ifm2 = schedOp->TryIFM(1);
@@ -1381,9 +1396,12 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTranspose(Architecture
     const auto &ifmShape = ifmConn->SliceShape();
     const auto axes = ifmShape.Size();
 
+    ArchOperatorQuery query;
+    query.transposeMask = ofmConn->transpose;
+    bool supported = arch->Constraints()->OperatorQuery(OpType::Transpose, &query, nullptr).Any(QueryResult::Native);
+
     // We can handle all transpositions in a 3D shape
-    if ( (axes < 4 || ifmShape.Elements() == ifmShape.Height() * ifmShape.Width() * ifmShape.Depth()) &&
-         arch->Constraints()->SupportsTranspose(op->Type(), ofmConn->transpose) != TransposeSupport::None )
+    if ( (axes < 4 || ifmShape.Elements() == ifmShape.Height() * ifmShape.Width() * ifmShape.Depth()) && supported )
     {
         for ( int axis = 0; axis < axes; axis++ )
         {

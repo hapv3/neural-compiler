@@ -23,6 +23,30 @@
 namespace regor
 {
 
+// Unsupported operators - must be sorted ascending
+static constexpr OpType s_unsupportedU55[] = {
+    OpType::None,
+    OpType::ArgMax,
+    OpType::Gather,
+    OpType::Scatter,
+    OpType::Resize,
+    OpType::Cast,
+};
+
+static_assert(is_sorted(s_unsupportedU55), "list must be sorted");
+
+// Short query
+static constexpr std::pair<OpType, QueryResult> s_shortU55[] = {
+    {OpType::Transpose, QueryResult::NativeConstrained},
+};
+
+static_assert(is_sorted(s_shortU55, [](const auto &a, const auto &b) { return a.first < b.first; }), "list must be sorted");
+
+
+EthosU55Constraints::EthosU55Constraints(ArchEthosU55 *arch) : _arch(arch)
+{
+}
+
 bool EthosU55Constraints::SupportsLeakyRelu(bool quantized, DataType type)
 {
     return quantized == false && type == DataType::Int16;
@@ -155,12 +179,6 @@ bool EthosU55Constraints::SupportsResize(const ResizeSupportQuery &query)
     return false;
 }
 
-bool EthosU55Constraints::SupportsSigmoidTanhLutInt16(OpType opType)
-{
-    UNUSED(opType);
-    return false;
-}
-
 bool EthosU55Constraints::SupportsArgMax(OpType opType)
 {
     UNUSED(opType);
@@ -174,9 +192,87 @@ bool EthosU55Constraints::SupportsCast(OpType opType, DataType ifmType, DataType
     UNUSED(ofmType);
     return false;
 }
+
 bool EthosU55Constraints::SupportsNonMatchingShapes(const Shape &ifmShape, const Shape &ifm2Shape, const Shape &ofmShape)
 {
     return (ifmShape == ofmShape) || (ifm2Shape && (ifm2Shape == ofmShape));
 }
+
+
+Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchOperatorQuery *query, ArchRequirements *req)
+{
+    // Check unsupported operator list before further checks
+    auto posUnsupported = std::equal_range(std::begin(s_unsupportedU55), std::end(s_unsupportedU55), opType);
+    if ( posUnsupported.first != posUnsupported.second )
+    {
+        return QueryResult::Unsupported;
+    }
+
+    // Short query (no additional detail)
+    if ( !query )
+    {
+        auto posShort = std::equal_range(std::begin(s_shortU55), std::end(s_shortU55),
+            std::pair<OpType, QueryResult>{opType, {}}, [](const auto &a, const auto &b) { return a.first < b.first; });
+        if ( posShort.first != posShort.second )
+        {
+            return posShort.first->second;
+        }
+        return QueryResult::Native;
+    }
+
+    // Float types always unsupported
+    if ( (query->ifm[0].shape && IsFloat(query->ifm[0].type)) || (query->ifm[1].shape && IsFloat(query->ifm[1].type)) ||
+         (query->ofm.shape && IsFloat(query->ofm.type)) )
+    {
+        return QueryResult::Unsupported;
+    }
+
+    // Reverse never supported
+    if ( query->reverseMask != ReverseType::None )
+    {
+        return QueryResult::Unsupported;
+    }
+
+    // Detailed operator queries
+    if ( !IsNone(query->transposeMask) )
+    {
+        if ( opType == OpType::Transpose )
+        {
+            if ( query->transposeMask == TransposeType::NWHC || query->transposeMask == TransposeType::NHCW ||
+                 query->transposeMask == TransposeType::NCWH )
+            {
+                if ( req ) req->ofmFormat = TensorFormat::NHWC;
+                return QueryResult::NativeConstrainedHasReq;
+            }
+        }
+        return QueryResult::Unsupported;
+    }
+
+    if ( opType == OpType::MatMul )
+    {
+        if ( req )
+        {
+            req->req = ArchRequirement::ScratchTensor;
+            req->scratch.size = query->ofm.shape;
+            req->scratch.type = DataType::Int32;
+            req->scratch.format = TensorFormat::NHWC;
+        }
+        return QueryResult::Unsupported;
+    }
+    else if ( (opType == OpType::Sigmoid) || (opType == OpType::Tanh) )
+    {
+        if ( query->ifm[0].type != DataType::Int16 )
+        {
+            if ( req )
+            {
+                req->req = ArchRequirement::OpSubstitution;
+                req->substitution = OpType::LUT;
+            }
+            return QueryResult::NativeHasReq;
+        }
+    }
+    return QueryResult::Native;
+}
+
 
 }  // namespace regor

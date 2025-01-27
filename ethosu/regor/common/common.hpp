@@ -49,6 +49,7 @@
 #include <fmt/ranges.h>
 #include <cassert>
 #include <cstdint>
+#include <functional>
 #include <string_view>
 #include <type_traits>
 
@@ -164,5 +165,28 @@ static constexpr uint32_t PlatformTypeHash()
     }
     return FNVHashBytes(p, int(e - p));
 }
+
+// <algorithm> version not constexpr until C++20
+template<typename TYPE, size_t SIZE, typename LESS>
+constexpr bool is_sorted(const TYPE (&list)[SIZE], LESS func)
+{
+    if constexpr ( SIZE > 1 )
+    {
+        const TYPE *v = list;
+        for ( size_t i = 1; i < SIZE; i++ )
+        {
+            if ( func(list[i], *v) ) return false;
+            v = list + i;
+        }
+    }
+    return true;
+}
+
+template<typename TYPE, size_t SIZE>
+constexpr bool is_sorted(const TYPE (&list)[SIZE])
+{
+    return is_sorted(list, std::less<TYPE>());
+}
+
 
 }  // namespace regor

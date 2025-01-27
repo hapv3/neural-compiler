@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2022-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2022-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -133,25 +133,13 @@ static constexpr std::pair<GraphApi::GraphDataType, regor::DataType> s_aTypeMapp
 };
 // clang-format on
 
-template<typename A, typename B, size_t SIZE>
-constexpr bool is_sorted(const std::pair<A, B> (&list)[SIZE])
-{
-    A v = list[0].first;
-    for ( size_t i = 1; i < SIZE; i++ )
-    {
-        if ( list[i].first < v ) return false;
-        v = list[i].first;
-    }
-    return true;
-}
-
-static_assert(is_sorted(s_aTosaMapping), "TOSA mapping must be sorted");
+static_assert(is_sorted(s_aTosaMapping, [](const auto &a, const auto &b) { return a.first < b.first; }), "TOSA mapping must be sorted");
 
 bool map_tosa_op(tosa::Op op, regor::OpType &tosaOp)
 {
     auto pos = std::equal_range(std::begin(s_aTosaMapping), std::end(s_aTosaMapping),
         std::pair<tosa::Op, regor::OpType>(op, {}), [](const auto &a, const auto &b) { return a.first < b.first; });
-    if ( pos.first == std::end(s_aTosaMapping) )
+    if ( pos.first == pos.second )
     {
         return false;
     }
@@ -160,14 +148,14 @@ bool map_tosa_op(tosa::Op op, regor::OpType &tosaOp)
     return true;
 }
 
-static_assert(is_sorted(s_aTypeMapping), "Type mapping must be sorted");
+static_assert(is_sorted(s_aTypeMapping, [](const auto &a, const auto &b) { return a.first < b.first; }), "Type mapping must be sorted");
 
 bool map_data_type(GraphApi::GraphDataType type, regor::DataType &out)
 {
     auto pos = std::equal_range(std::begin(s_aTypeMapping), std::end(s_aTypeMapping),
         std::pair<GraphApi::GraphDataType, regor::DataType>(type, {}),
         [](const auto &a, const auto &b) { return a.first < b.first; });
-    if ( pos.first == std::end(s_aTypeMapping) )
+    if ( pos.first == pos.second )
     {
         return false;
     }

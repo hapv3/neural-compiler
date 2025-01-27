@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include "architecture/architecture_constraints.hpp"
 #include "graph.hpp"
 #include "scheduler_operation.hpp"
 
@@ -42,5 +43,18 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMatmul(Architecture *a
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(Architecture *arch, std::unique_ptr<SchedulerOperation> op);
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReverse(Architecture *arch, std::unique_ptr<SchedulerOperation> op);
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTranspose(Architecture *arch, std::unique_ptr<SchedulerOperation> op);
+
+
+// Operator query helpers
+inline ArchFM &Set(ArchFM &fm, const SchedulerConnection *conn)
+{
+    if ( conn )
+    {
+        fm.type = conn->tensor->dataType;
+        fm.shape = conn->slice.shape ? conn->slice.shape : conn->shape;
+        fm.format = conn->tensor->format;
+    }
+    return fm;
+}
 
 }  // namespace regor

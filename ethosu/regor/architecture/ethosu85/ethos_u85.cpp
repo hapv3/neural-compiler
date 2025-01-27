@@ -1456,14 +1456,13 @@ bool EthosU85OpGroup::Fuse(const ArchitectureOpGroupQuery &op, const std::vector
         return false;
     }
 
-    // Can't fuse a transpose type that's not supported by primaryOp in opgroup
-    if ( _arch->_constraints->SupportsTranspose(_ops[0].type, op.ofm.transpose) == TransposeSupport::None )
-    {
-        return false;
-    }
+    EthosU85Constraints *constraints = static_cast<EthosU85Constraints *>(_arch->_constraints.get());
 
-    // Can't fuse a reverse type that's not supported by primaryOp in opgroup
-    if ( !_arch->_constraints->SupportsReverse(_ops[0].type, op.ofm.reverse) )
+    // Can't fuse a transpose or reverse type that's not supported by primaryOp in opgroup
+    ArchOperatorQuery query;
+    query.reverseMask = op.ofm.reverse;
+    query.transposeMask = op.ofm.transpose;
+    if ( !constraints->OperatorQuery(_ops[0].type, &query, nullptr).Any(QueryResult::Native) )
     {
         return false;
     }
@@ -1780,15 +1779,14 @@ bool EthosU85OpGroup::CanRunOnNPU(const ArchitectureOpGroupQuery &op)
             return true;
         }
 
-        if ( op.type == OpType::Transpose )
+        ArchOperatorQuery query;
+        query.transposeMask = op.ofm.transpose;
+        query.reverseMask = op.ofm.reverse;
+        if ( !_arch->_constraints->OperatorQuery(OpType::MemoryCopy, &query, nullptr).Any(QueryResult::Native) )
         {
-            return _arch->_constraints->SupportsTranspose(OpType::MemoryCopy, op.ofm.transpose) != TransposeSupport::None;
+            return false;
         }
 
-        if ( op.type == OpType::Reverse )
-        {
-            return _arch->_constraints->SupportsReverse(OpType::MemoryCopy, op.ofm.reverse);
-        }
         auto map = s_opDataTypeSupport.find(npuOp);
         if ( map == s_opDataTypeSupport.end() )
         {

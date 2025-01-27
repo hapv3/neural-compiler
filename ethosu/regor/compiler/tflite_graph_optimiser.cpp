@@ -2049,25 +2049,40 @@ Operation *TFLiteGraphOptimiser::ConvertTanhSigmoidToLUT(Graph *const, Operation
     auto ifmConn = operation->Input(TensorUsage::IFM0);
     auto ifm = ifmConn->tensor.get();
 
-    if ( ifm->Type() == DataType::Int16 && (opType == OpType::Sigmoid || opType == OpType::Tanh) )
+    if ( !(opType == OpType::Sigmoid || opType == OpType::Tanh) )
     {
-        ExecutionQuery query{};
-        query.opType = opType;
-        if ( _constraints->CanExecute(query) )
-        {
-            returnOp = ConvertTanhSigmoidToLUT16(operation);
-        }
-    }
-    else if ( opType == OpType::Sigmoid )
-    {
-        returnOp = ConvertToLUT8(operation, ClampSigmoid8, "sigmoid");
-    }
-    else if ( opType == OpType::Tanh )
-    {
-        returnOp = ConvertToLUT8(
-            operation, [](double x) -> double { return std::tanh(x); }, "tanh");
+        return returnOp;
     }
 
+    ArchOperatorQuery query;
+    Set(query.ifm[0], ifm);
+    Set(query.ofm, operation->OFM());
+    ArchRequirements req;
+    auto qresult = _constraints->OperatorQuery(opType, &query, &req);
+    assert(qresult.Any(QueryResult::Native));
+
+    if ( qresult.Any(QueryResult::HasRequirements) )
+    {
+        if ( req.req.Any(ArchRequirement::OpSubstitution) && (req.substitution == OpType::LUT) )
+        {
+            if ( ifm->Type() == DataType::Int16 )
+            {
+                returnOp = ConvertTanhSigmoidToLUT16(operation);
+            }
+            else
+            {
+                if ( opType == OpType::Tanh )
+                {
+                    returnOp = ConvertToLUT8(
+                        operation, [](double x) -> double { return std::tanh(x); }, "tanh");
+                }
+                else
+                {
+                    returnOp = ConvertToLUT8(operation, ClampSigmoid8, "sigmoid");
+                }
+            }
+        }
+    }
 
     if ( operation != returnOp )
     {

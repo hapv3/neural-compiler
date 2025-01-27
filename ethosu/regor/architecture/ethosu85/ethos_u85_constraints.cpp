@@ -23,6 +23,21 @@
 
 namespace regor
 {
+
+// Unsupported operators - must be sorted ascending
+static constexpr OpType s_unsupportedU85[] = {OpType::None};
+
+static_assert(is_sorted(s_unsupportedU85), "list must be sorted");
+
+
+// Short query
+static constexpr std::pair<OpType, QueryResult> s_shortU85[] = {
+    {OpType::Transpose, QueryResult::Native},
+};
+
+static_assert(is_sorted(s_shortU85, [](const auto &a, const auto &b) { return a.first < b.first; }), "list must be sorted");
+
+
 bool EthosU85Constraints::SupportsLeakyRelu(bool /*quantized*/, DataType /*type*/)
 {
     return true;
@@ -41,7 +56,7 @@ bool EthosU85Constraints::SupportsMatMul(OpType opType)
 
 TransposeSupport EthosU85Constraints::SupportsTranspose(OpType opType, TransposeType transposeType)
 {
-    if ( IsNone(transposeType) ) return TransposeSupport::Any;
+    if ( transposeType == TransposeType::None ) return TransposeSupport::Any;
 
     EthosU85NpuOp npuOp = ArchEthosU85::GetHWOp(opType);
     if ( npuOp == EthosU85NpuOp::None || npuOp == EthosU85NpuOp::Resize || npuOp == EthosU85NpuOp::Dma )
@@ -184,11 +199,6 @@ bool EthosU85Constraints::SupportsScatter(OpType opType)
     return true;
 }
 
-bool EthosU85Constraints::SupportsSigmoidTanhLutInt16(OpType opType)
-{
-    return (opType == OpType::Sigmoid || opType == OpType::Tanh);
-}
-
 bool EthosU85Constraints::SupportsArgMax(OpType opType)
 {
     EthosU85NpuOp npuOp = ArchEthosU85::GetHWOp(opType);
@@ -226,60 +236,64 @@ bool EthosU85Constraints::SupportsResize(const ResizeSupportQuery &query)
     int d_w = query.scaleX.d;
     int n_h = query.scaleY.n;
     int d_h = query.scaleY.d;
-    bool supported = true;
 
     if ( n_h > 2048 )
     {
         LOG_WARN("Resize height scale numerator ({}) exceeds maximum size (2048).\n", n_h);
-        supported = false;
+        return false;
     }
     if ( n_w > 2048 )
     {
         LOG_WARN("Resize width scale numerator ({}) exceeds maximum size (2048).\n", n_w);
-        supported = false;
+        return false;
     }
     if ( query.offsetY >= n_h || query.offsetY < -n_h )
     {
         LOG_WARN("Resize height offset: {} is outside the valid range [-height_numerator, height_numerator) = [{}, {})\n",
             query.offsetY, -n_h, n_h);
-        supported = false;
+        return false;
     }
     if ( query.offsetX >= n_w || query.offsetX < -n_w )
     {
         LOG_WARN("Resize width offset: {} is outside the valid range [-with_numerator, width_numerator) = [{}, {})\n",
             query.offsetX, -n_w, n_w);
-        supported = false;
+        return false;
     }
 
     if ( query.mode == ArchResizeMode::Bilinear )
     {
-        // Get scale fractions and verify that scale-factor is a power of two.
+        if ( d_w == 0 || d_h == 0 )
+        {
+            LOG_WARN("ResizeBilinear w/h divisors can't be zero\n");
+            return false;
+        }
 
+        // Get scale fractions and verify that scale-factor is a power of two.
         if ( n_w % d_w != 0 )
         {
             LOG_WARN("ResizeBilinear width scale-factor is not an integer: {}/{}\n", n_w, d_w);
-            supported = false;
+            return false;
         }
         if ( n_h % d_h != 0 )
         {
             LOG_WARN("ResizeBilinear height scale-factor is not an integer: {}/{}\n", n_h, d_h);
-            supported = false;
+            return false;
         }
         int scale_w = n_w / d_w;
         int scale_h = n_h / d_h;
         if ( !IsPowerOfTwo(scale_w) )
         {
             LOG_WARN("ResizeBilinear width scale-factor is not a power of two: {}\n", double(n_w) / d_w);
-            supported = false;
+            return false;
         }
         if ( !IsPowerOfTwo(scale_h) )
         {
             LOG_WARN("ResizeBilinear height scale-factor is not a power of two: {}\n", double(n_h) / d_h);
-            supported = false;
+            return false;
         }
-        return supported;
     }
-    return supported;
+
+    return true;
 }
 
 bool EthosU85Constraints::SupportsCast(OpType opType, DataType ifmType, DataType ofmType)
@@ -290,6 +304,65 @@ bool EthosU85Constraints::SupportsCast(OpType opType, DataType ifmType, DataType
 bool EthosU85Constraints::SupportsNonMatchingShapes(const Shape &ifmShape, const Shape &ifm2Shape, const Shape &ofmShape)
 {
     return true;
+}
+
+
+Flags<QueryResult> EthosU85Constraints::OperatorQuery(OpType opType, const ArchOperatorQuery *query, ArchRequirements *req)
+{
+    // Check unsupported operator list first
+    auto posUnsupported = std::equal_range(std::begin(s_unsupportedU85), std::end(s_unsupportedU85), opType);
+    if ( posUnsupported.first != std::end(s_unsupportedU85) )
+    {
+        return QueryResult::Unsupported;
+    }
+
+    // Short query (no additional detail)
+    if ( !query )
+    {
+        auto posShort = std::equal_range(std::begin(s_shortU85), std::end(s_shortU85),
+            std::pair<OpType, QueryResult>{opType, {}}, [](const auto &a, const auto &b) { return a.first < b.first; });
+        if ( posShort.first != std::end(s_shortU85) )
+        {
+            return posShort.first->second;
+        }
+        return QueryResult::Native;
+    }
+
+    // Float types always unsupported
+    if ( (query->ifm[0].shape && IsFloat(query->ifm[0].type)) || (query->ifm[1].shape && IsFloat(query->ifm[1].type)) ||
+         (query->ofm.shape && IsFloat(query->ofm.type)) )
+    {
+        return QueryResult::Unsupported;
+    }
+
+    if ( query->transposeMask != TransposeType::None )
+    {
+        TransposeSupport tmp = SupportsTranspose(opType, query->transposeMask);
+        if ( tmp == TransposeSupport::None ) return QueryResult::Unsupported;
+    }
+
+    if ( query->reverseMask != ReverseType::None )
+    {
+        if ( !SupportsReverse(opType, query->reverseMask) ) return QueryResult::Unsupported;
+    }
+
+    // Operator specific
+    if ( opType == OpType::Resize )
+    {
+        if ( !query->specific.resize.ifmShape ) return QueryResult::Unsupported;  // TODO: remove from ResizeQuery
+        if ( !SupportsResize(query->specific.resize) ) return QueryResult::Unsupported;
+    }
+    else if ( (opType == OpType::Sigmoid) || (opType == OpType::Tanh) )
+    {
+        if ( req )
+        {
+            req->req = ArchRequirement::OpSubstitution;
+            req->substitution = OpType::LUT;
+        }
+        return QueryResult::NativeHasReq;
+    }
+
+    return QueryResult::Native;
 }
 
 }  // namespace regor

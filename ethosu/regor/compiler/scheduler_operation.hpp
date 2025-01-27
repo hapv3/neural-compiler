@@ -50,7 +50,7 @@ public:
     MemArea memArea;
     Shape storageShape;
     BufferView bufferView;
-    DataType dataType;
+    DataType dataType = DataType::None;
     bool hasCPUReaders = false;
     bool hasCPUWriters = false;
     bool isGraphInput = false;
@@ -62,6 +62,14 @@ public:
     UniqueId uid = ~0u;  // Packing must initialise
     std::vector<SchedulerOperation *> producers;
     std::vector<SchedulerOperation *> consumers;
+
+    SchedulerTensor() {}
+
+    SchedulerTensor(DataType type, const Shape &shape, TensorFormat fmt = TensorFormat::Unknown) :
+            format(fmt), storageShape(shape), dataType(type)
+    {
+        this->uid = GenerateUniqueId();
+    }
 
     void SetAddress(Address address)
     {
@@ -193,7 +201,16 @@ public:
     void SetAttributes(const Attributes &attr) { _attr = attr; }
 
     // Input connections
-    SchedulerConnection *AddInput(TensorUsage usage) { return &inputs[usage]; }
+    SchedulerConnection *AddInput(TensorUsage usage, const std::shared_ptr<SchedulerTensor> &tensor = {})
+    {
+        auto &conn = inputs[usage];
+        if ( tensor )
+        {
+            conn.tensor = tensor;
+            tensor->consumers.push_back(this);
+        }
+        return &conn;
+    }
 
     const SchedulerConnection *TryInput(TensorUsage usage) const { return inputs.try_ref(usage); }
     SchedulerConnection *TryInput(TensorUsage usage) { return inputs.try_ref(usage); }
@@ -242,7 +259,7 @@ public:
             for ( const auto &item : list->pairs() )
             {
                 auto usage = item.first & TensorUsage::TypeMask;
-                if ( usage == TensorUsage::IFM || usage == TensorUsage::OFM || usage == TensorUsage::LUT )
+                if ( usage == TensorUsage::IFM || usage == TensorUsage::OFM || usage == TensorUsage::LUT || usage == TensorUsage::Scratch )
                 {
                     if ( _opGroup == nullptr || _opGroup->NeedsAllocation(item.second.tensor->uid) )
                     {
@@ -259,7 +276,7 @@ public:
                 for ( const auto &item : list->pairs() )
                 {
                     auto usage = item.first & TensorUsage::TypeMask;
-                    if ( usage == TensorUsage::IFM || usage == TensorUsage::OFM || usage == TensorUsage::LUT )
+                    if ( usage == TensorUsage::IFM || usage == TensorUsage::OFM || usage == TensorUsage::LUT || usage == TensorUsage::Scratch )
                     {
                         if ( _opGroup == nullptr || _opGroup->NeedsAllocation(item.second.tensor->uid) )
                         {

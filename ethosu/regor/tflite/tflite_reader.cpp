@@ -1052,6 +1052,7 @@ ExecutionQuery TfLiteReader::OperationToExecQuery(const Operation &operation)
         }
         case OpType::ResizeBilinear:
         case OpType::ResizeNearestNeighbor:
+            query.opType = OpType::Resize;
             query.resizeQuery = CalculateResizeSupportQuery(operation);
             break;
         default:
