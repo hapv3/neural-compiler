@@ -43,6 +43,10 @@ variables:
 workflow:
     auto_cancel:
         on_new_commit: interruptible
+    rules:
+    -   if: $CI_PIPELINE_SOURCE == 'merge_request_event'
+    -   if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    -   if: $CI_COMMIT_TAG
 
 # This job does not produce any artifacts, however the result from the build
 # will be stored in the cache
