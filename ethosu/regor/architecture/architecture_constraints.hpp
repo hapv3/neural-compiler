@@ -58,8 +58,9 @@ enum class ArchRequirement
 {
     None = 0,
     ScratchTensor = 1,
-    OutputFormat = 2,
-    OpSubstitution = 4,
+    OpSubstitution = 2,
+    OutputFormat = 4,
+    InputFormat = 8,
 };
 
 struct ArchRequirements
@@ -71,6 +72,8 @@ struct ArchRequirements
         DataType type = DataType::None;
         TensorFormat format = TensorFormat::Unknown;
     } scratch;
+    TensorFormat ifmFormat = TensorFormat::Unknown;
+    TensorFormat ifm1Format = TensorFormat::Unknown;
     TensorFormat ofmFormat = TensorFormat::Unknown;
     OpType substitution = OpType::None;
 };
@@ -95,8 +98,10 @@ enum class QueryResult
     Native = 2,
     Constrained = 4,
     HasRequirements = 8,
+    Decompose = 16,
     NativeHasReq = Native | HasRequirements,
     NativeConstrained = Native | Constrained,
+    NativeDecompose = Native | Decompose,
     NativeConstrainedHasReq = Native | Constrained | HasRequirements,
 };
 

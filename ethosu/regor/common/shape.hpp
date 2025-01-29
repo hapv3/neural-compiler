@@ -466,6 +466,12 @@ public:
     }
 
     template<typename TYPE>
+    Point2<TYPE> WC(TYPE pad) const
+    {
+        return Point2<TYPE>((_last > 0) ? TYPE(At(1)) : pad, (_last < 0) ? pad : TYPE(At(0)));
+    }
+
+    template<typename TYPE>
     Point2<TYPE> WH() const
     {
         assert(Size() >= 3);
@@ -482,6 +488,13 @@ public:
     int ElementsWH() const
     {
         int64_t result = int64_t(Width()) * Height();
+        assert(result <= std::numeric_limits<int>::max());
+        return int(result);
+    }
+
+    int ElementsWC() const
+    {
+        int64_t result = int64_t(Width()) * Depth();
         assert(result <= std::numeric_limits<int>::max());
         return int(result);
     }
@@ -768,7 +781,7 @@ public:
 
     static Shape PadAxes(const Shape &shape, int axes, int padValue)
     {
-        if ( shape.Size() == axes ) return shape;
+        if ( shape.Size() >= axes ) return shape;
         return Shape(shape, std::max(axes, shape.Size()), padValue);
     }
 

@@ -33,6 +33,7 @@ TfLiteSupportedOperatorsU55::TfLiteSupportedOperatorsU55(IArchitectureConstraint
         // clang-format off
         OpType::Add,
         OpType::AvgPool,
+        OpType::BatchMatMul,
         OpType::Concat,
         OpType::Conv2D,
         OpType::DepthwiseConv2D,

@@ -942,7 +942,7 @@ void EthosU55RCSGenerator::GenerateOFMPrecision(const HLCFeatureMap &fm, bool us
 }
 
 // Generates common IFM registers
-void EthosU55RCSGenerator::GenerateIFM(OpType opType, const HLCFeatureMap &fm, const Box &inputArea)
+void EthosU55RCSGenerator::GenerateIFM(const HLCFeatureMap &fm, const Box &inputArea)
 {
     CheckAddresses(fm);
     Emit(isa::npu_set_ifm_region_t(ToRegion(fm.memArea)));
@@ -970,7 +970,7 @@ void EthosU55RCSGenerator::GenerateIFM(OpType opType, const HLCFeatureMap &fm, c
 }
 
 // Generates common IFM2 registers
-void EthosU55RCSGenerator::GenerateIFM2(OpType opType, const HLCFeatureMap &fm, const Box &inputArea, bool isScalar, int32_t scalarValue)
+void EthosU55RCSGenerator::GenerateIFM2(const HLCFeatureMap &fm, const Box &inputArea, bool isScalar, int32_t scalarValue)
 {
     if ( isScalar )
     {
@@ -1003,7 +1003,7 @@ void EthosU55RCSGenerator::GenerateIFM2(OpType opType, const HLCFeatureMap &fm, 
 }
 
 // Generates OFM registers
-void EthosU55RCSGenerator::GenerateOFM(OpType opType, const HLCFeatureMap &fm, const Box &outputArea)
+void EthosU55RCSGenerator::GenerateOFM(const HLCFeatureMap &fm, const Box &outputArea)
 {
     CheckAddresses(fm);
     Emit(isa::npu_set_ofm_region_t(ToRegion(fm.memArea)));
@@ -1483,6 +1483,135 @@ void EthosU55RCSGenerator::InsertTransposeCommand(const HLCStripe *stripe, Tempo
     }
 }
 
+namespace MatMul
+{
+inline int Cols(const Shape &shape)
+{
+    return shape.Depth();
+}
+inline int Rows(const Shape &shape)
+{
+    return shape.Width();
+}
+inline int Batch(const Shape &shape)
+{
+    return shape.Height();
+}
+}  // namespace MatMul
+
+void EthosU55RCSGenerator::InsertMatMulCommand(const HLCStripe *stripe, Temporaries &temps, std::vector<const HighLevelCommand *> &emitted)
+{
+    auto op = stripe->operation.get();
+    assert(op && op->ifm.size() > 2);
+    // Expect 3 inputs 2 IFM and one scratch tensor
+    if ( op->ifm.size() < 3 )
+    {
+        return;
+    }
+
+    HLCFeatureMap inFM0 = op->ifm[0];
+    HLCFeatureMap inFM1 = op->ifm[1];
+    HLCFeatureMap tempFM = op->ifm[2];
+    HLCFeatureMap outFM = op->ofm;
+
+    assert(op->subOps.empty());
+    assert(tempFM.dataType == DataType::Int32);
+    assert(inFM1.format == TensorFormat::NHWC);
+    assert(outFM.format == TensorFormat::NHWC);
+    assert(tempFM.format == TensorFormat::NHWC);
+
+    // Ensure shapes are in the form: 1, Batch=Height, Rows=Width, Cols=Depth
+    inFM0.shape = Shape::PadAxes(inFM0.shape, 4, 1);
+    inFM1.shape = Shape::PadAxes(inFM1.shape, 4, 1);
+    outFM.shape = Shape::PadAxes(outFM.shape, 4, 1);
+
+    assert((!inFM0.slice.shape || (inFM0.shape.WC<int>() == inFM0.slice.shape.WC<int>())) && "Implementation cannot be sliced in depth");
+    assert(MatMul::Cols(inFM0.shape) == MatMul::Cols(inFM1.shape) && (MatMul::Rows(inFM1.shape) == MatMul::Cols(outFM.shape)) && "Second ifm must be pre-transposed");
+
+    // Minimum required temporary space is one IFM0 W/C slice.
+    // Batches can be executed en-masse or as smaller H-slices (deduce from size of temporary space)
+    bool lowMemoryMode = (tempFM.shape.Elements() < inFM0.shape.Elements()) && (tempFM.shape.Elements() >= inFM0.shape.ElementsWC());
+    assert(lowMemoryMode || (tempFM.shape.Elements() >= inFM0.shape.Elements()));
+
+    // Execute batches individually if required
+    int maxSteps = MatMul::Cols(outFM.shape);
+    int batchLoops = 1;
+    int batches = MatMul::Batch(outFM.shape);
+    if ( lowMemoryMode )
+    {
+        std::swap(batches, batchLoops);
+    }
+    // Broadcast H/C slices
+    Shape ifm0Shape = Shape(1, batches, MatMul::Rows(inFM0.shape), MatMul::Cols(inFM0.shape));
+    Shape ifm1Shape = Shape(1, batches, 1, MatMul::Cols(inFM1.shape));
+
+    // Temporary unquantized tensor for MUL result
+    tempFM.slice.offset = ifm0Shape.WithZeros();
+    tempFM.slice.shape = ifm0Shape;
+    tempFM.strides = Shape::GetStridesForShape(tempFM.shape, Shape(sizeof(uint32_t)));
+    tempFM.quantization = Quantization::Unit();
+    assert(tempFM.usage == TensorUsage::Scratch);
+
+    // Final output tensor slice sizes
+    Shape ofmShape = Shape(1, batches, MatMul::Rows(ifm0Shape), 1);
+    EthosU55OpConfig *reduceConfig = static_cast<EthosU55OpConfig *>(stripe->operation->config);
+    EthosU55OpConfig *mulConfig = reduceConfig->PrevConfig();
+    assert(reduceConfig && mulConfig);
+
+    // Push quantisation on to the last operation
+    QuantizedScale qs0 = inFM0.quantization.scales.empty() ? QuantizedScale::Unit() : inFM0.quantization.scales[0];
+    QuantizedScale qs1 = inFM1.quantization.scales.empty() ? QuantizedScale::Unit() : inFM1.quantization.scales[0];
+    QuantizedScale qOfm = outFM.quantization.scales.empty() ? QuantizedScale::Unit() : outFM.quantization.scales[0];
+    inFM0.quantization.scales.clear();
+    inFM1.quantization.scales.clear();
+    outFM.quantization.scales.clear();
+
+    double scaling = (qs0.Dequantize() * qs1.Dequantize()) / qOfm.Dequantize();
+    outFM.quantization.type = QuantizationType::EXPLICIT;
+    outFM.quantization.scales.push_back(QuantizedScale(scaling));
+
+    for ( int batch = 0; batch < batchLoops; batch++ )
+    {
+        Shape ifm1Start(0, batch, 0, 0);
+        Shape ofmStart(0, batch, 0, 0);
+        for ( int step = 0; step < maxSteps; step++ )
+        {
+            // Step 1: MUL: IFM0 x IFM1 -> TEMP BUFFER
+            // Create Multiply stripe operation
+            auto mul = std::make_unique<HLCStripe>(std::make_shared<HLCOperation>());
+            mul->operation->type = OpType::Mul;
+            mul->operation->kernel = Kernel::UnitKernel();
+            mul->operation->ifm.push_back(inFM0);
+            mul->operation->ifm.push_back(inFM1);
+            mul->operation->ofm = tempFM;
+            mul->operation->config = mulConfig;
+            mul->ofmArea = ifm0Shape;
+            mul->ifmAreas.emplace_back(ifm0Shape);
+            mul->ifmAreas.emplace_back(ifm1Start, Box::Size(ifm1Shape));
+            mul->opGroup = nullptr;
+            emitted.push_back(mul.get());
+            temps.cmds.push_back(std::move(mul));
+
+            // Step 2: REDUCE SUM: TEMP BUFFER -> OFM
+            // Create Reduce sum stripe operation
+            auto sum = std::make_unique<HLCStripe>(std::make_shared<HLCOperation>());
+            sum->operation->type = OpType::ReduceSum;
+            sum->operation->kernel = Kernel::UnitKernel();
+            sum->operation->ifm.push_back(tempFM);
+            sum->operation->ofm = outFM;
+            sum->operation->config = reduceConfig;
+            sum->ofmArea = Box(ofmStart, Box::Size(ofmShape));
+            sum->ifmAreas.emplace_back(tempFM.slice.shape);
+            sum->opGroup = nullptr;
+            emitted.push_back(sum.get());
+            temps.cmds.push_back(std::move(sum));
+
+            // Move to next input offset and output slice
+            ifm1Start[-2] += 1;
+            ofmStart[-1] += 1;
+        }
+    }
+}
 
 //----------------------------------------------------------------------
 // Operations
@@ -1544,7 +1673,7 @@ void EthosU55RCSGenerator::GenerateCommon(const HLCStripe *stripe, bool useGloba
     MemoryAccesses &memoryAccesses, int ifm0Index)
 {
     auto op = stripe->operation.get();
-    GenerateIFM(op->type, op->ifm[ifm0Index], stripe->ifmAreas[ifm0Index]);
+    GenerateIFM(op->ifm[ifm0Index], stripe->ifmAreas[ifm0Index]);
     memoryAccesses.push_back(ToMemoryAccess(op->ifm[ifm0Index], stripe->ifmAreas[ifm0Index], AccessDirection::Read));
 
     // Select rounding based on RCSIfmScaleMode
@@ -1563,7 +1692,7 @@ void EthosU55RCSGenerator::GenerateCommon(const HLCStripe *stripe, bool useGloba
     {
         GeneratePadding(stripe->padding);
     }
-    GenerateOFM(op->type, op->ofm, stripe->ofmArea);
+    GenerateOFM(op->ofm, stripe->ofmArea);
     memoryAccesses.push_back(ToMemoryAccess(op->ofm, stripe->ofmArea, AccessDirection::Write));
     GenerateOFMPrecision(op->ofm, useGlobalScale);
     EthosU55OpConfig *config = static_cast<EthosU55OpConfig *>(stripe->operation->config);
@@ -1667,7 +1796,7 @@ void EthosU55RCSGenerator::GenerateElementwiseOp(const HLCStripe *stripe, Memory
         assert(size_t(ifm2Index) < stripe->ifmAreas.size());
         const HLCFeatureMap &ifm2 = op->ifm.at(ifm2Index);
         bool isScalar = IsScalar(ifm2, scalarValue);
-        GenerateIFM2(opType, ifm2, stripe->ifmAreas[ifm2Index], isScalar, scalarValue);
+        GenerateIFM2(ifm2, stripe->ifmAreas[ifm2Index], isScalar, scalarValue);
         if ( !isScalar )
         {
             memoryAccesses.push_back(ToMemoryAccess(ifm2, stripe->ifmAreas[ifm2Index], AccessDirection::Read));
@@ -1768,7 +1897,8 @@ void EthosU55RCSGenerator::PrepareCommand(int index, HighLevelCommand *cmd, Temp
         }
         else if ( op->type == OpType::MatMul )
         {
-            return;  // Delete until implemented
+            InsertMatMulCommand(stripe, temps, emitted);
+            return;
         }
         else if ( _arch->_shram.reservedEndBanks == 0 )
         {

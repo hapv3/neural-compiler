@@ -204,16 +204,13 @@ bool CanRunOnHardware(Architecture *arch, const SchedulerOperation *schedOp)
     }
     if ( schedOp->Type() == OpType::MatMul )
     {
-        auto &ofmShape = schedOp->OFM()->SliceShape();
-        if ( ofmShape.Size() > 2 && ofmShape.Elements() > ofmShape.Width() * ofmShape.Depth() ) return false;
-
         const auto ofmConn = schedOp->OFM();
         ArchOperatorQuery query;
         Set(query.ifm[0], schedOp->IFM(0));
         Set(query.ifm[1], schedOp->IFM(1));
         Set(query.ofm, ofmConn);
         query.transposeMask = ofmConn->transpose;
-        if ( !arch->Constraints()->OperatorQuery(OpType::MatMul, &query, nullptr).Any(QueryResult::Native) )
+        if ( (arch->Constraints()->OperatorQuery(OpType::MatMul, &query, nullptr) & QueryResult::NativeDecompose) != QueryResult::Native )
         {
             return false;
         }

@@ -284,6 +284,7 @@ struct ElementAccess
     int ofmWrite = 0;
     int weightsRefetch = 0;
     int constRead[2] = {0, 0};
+    int tmpRead = 0, tmpWrite = 0;
 };
 
 enum class MemChannel

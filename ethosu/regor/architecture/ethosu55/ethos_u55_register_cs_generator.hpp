@@ -210,11 +210,11 @@ protected:
     // Generates OFM_PRECISION register
     void GenerateOFMPrecision(const HLCFeatureMap &fm, bool useGlobalScale);
     // Generates common IFM registers
-    void GenerateIFM(OpType opType, const HLCFeatureMap &fm, const Box &inputArea);
+    void GenerateIFM(const HLCFeatureMap &fm, const Box &inputArea);
     // Generates common IFM2 registers
-    void GenerateIFM2(OpType opType, const HLCFeatureMap &fm, const Box &inputArea, bool isScalar, int32_t scalarValue);
+    void GenerateIFM2(const HLCFeatureMap &fm, const Box &inputArea, bool isScalar, int32_t scalarValue);
     // Generates OFM registers
-    void GenerateOFM(OpType opType, const HLCFeatureMap &fm, const Box &outputArea);
+    void GenerateOFM(const HLCFeatureMap &fm, const Box &outputArea);
     // Generates WEIGHT registers
     void GenerateWeights(const HLCStripe *stripe, MemoryAccesses &memoryAccesses);
     // Generates SCALE registers
@@ -240,6 +240,8 @@ protected:
     virtual void InsertTileDMACommand(const HLCStripe *stripe, Temporaries &temps, std::vector<const HighLevelCommand *> &emitted);
     // Inserts commands to handle transposing
     virtual void InsertTransposeCommand(const HLCStripe *stripe, Temporaries &temps, std::vector<const HighLevelCommand *> &emitted);
+    // Inserts commands to handle MATMUL operations
+    void InsertMatMulCommand(const HLCStripe *stripe, Temporaries &temps, std::vector<const HighLevelCommand *> &emitted);
 
     //----------------------------------------------------------------------
     // Operations

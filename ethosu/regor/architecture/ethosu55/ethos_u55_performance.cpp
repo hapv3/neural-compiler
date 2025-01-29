@@ -560,8 +560,6 @@ ElementAccess EthosU55Performance::MeasureElementAccess(const PerformanceQuery &
     {
         // IFM0 is read multiple times to cover all elements in ofmShape
         access.ifmRead[0] = Shape::RoundAway(query.ofmShape, ofmRounding).Elements();
-        // Complete OFM is written
-        access.ofmWrite = access.ifmRead[0];
     }
     else if ( query.type == OpType::Transpose )
     {
@@ -569,8 +567,11 @@ ElementAccess EthosU55Performance::MeasureElementAccess(const PerformanceQuery &
     }
     else if ( query.type == OpType::MatMul )
     {
-        access.ifmRead[0] = query.ifmShape[0].Elements();
+        // Requires pretransposed operand
+        int cols = query.ifmShape[1].Width();
+        access.ifmRead[0] = query.ifmShape[0].Elements() * cols;
         access.ifmRead[1] = query.ifmShape[1].Elements();
+        access.tmpRead = access.tmpWrite = access.ifmRead[0];
     }
     else
     {

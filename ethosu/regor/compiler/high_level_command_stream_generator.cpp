@@ -254,7 +254,7 @@ static void MakeFeatureMap(TensorUsage usage, const SchedulerConnection *schedCo
     fm.reverse = schedConn->reverse;
     fm.resamplingMode = schedConn->resamplingMode;
     fm.rounding = HLCRoundMode(schedConn->rounding);
-    fm.uid = schedConn->tensor->uid;
+    fm.uid = schedTens->uid;
 }
 
 static std::unique_ptr<HLCWeights> MakeWeights(NpuWeightTensor *srcTensor, Buffering buffering, SchedulerTensor *bufTensor = nullptr)
@@ -284,18 +284,30 @@ static HLCSubOperation MakeSubOperation(const std::unique_ptr<SchedulerOperation
     HLCSubOperation hlcSubOp;
     hlcSubOp.type = schedOp->Type();
     auto lutConn = schedOp->TryInput(TensorUsage::LUT);
-
+    size_t ifms = 0;
     for ( const auto &input : schedOp->inputs.pairs() )
     {
-        std::vector<HLCFeatureMap>::iterator at;
-        if ( IsIFM(input.first) )
+        if ( IsIFM(input.first) || GetUsageType(input.first) == TensorUsage::Scratch )
         {
-            at = hlcSubOp.ifm.emplace(std::upper_bound(hlcSubOp.ifm.begin(), hlcSubOp.ifm.end(), input.first,
-                [](TensorUsage usage, const HLCFeatureMap &fm) { return usage < fm.usage; }));
+            std::vector<HLCFeatureMap>::iterator at;
+            if ( IsIFM(input.first) )
+            {
+                // Insert IFMs, into the IFM section [0..ifms) sorted into order.
+                at = hlcSubOp.ifm.emplace(std::upper_bound(hlcSubOp.ifm.begin(),
+                    hlcSubOp.ifm.begin() + std::min(ifms, hlcSubOp.ifm.size()), input.first,
+                    [](TensorUsage usage, const HLCFeatureMap &fm) { return usage < fm.usage; }));
+                ifms++;  // Increase size of IFM section
+            }
+            else
+            {
+                // Non-IFM tensors get appended
+                at = hlcSubOp.ifm.emplace(hlcSubOp.ifm.end());
+            }
             MakeFeatureMap(input.first, &input.second, *at);
         }
     }
     MakeFeatureMap(TensorUsage::OFM, schedOp->OFM(), hlcSubOp.ofm);
+
     hlcSubOp._srcId = schedOp->Uid();
 
     if ( schedOp->Type() == OpType::LeakyRelu )
@@ -323,18 +335,29 @@ static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, 
     op->kernel = *schedOp->Kernel();
     op->config = opInfo->Config();
     op->_srcId = schedOp->Uid();
-
+    size_t ifms = 0;
     for ( const auto &input : schedOp->inputs.pairs() )
     {
-        std::vector<HLCFeatureMap>::iterator at;
-        if ( IsIFM(input.first) )
+        if ( IsIFM(input.first) || GetUsageType(input.first) == TensorUsage::Scratch )
         {
-            at = op->ifm.emplace(std::upper_bound(op->ifm.begin(), op->ifm.end(), input.first,
-                [](TensorUsage usage, const HLCFeatureMap &fm) { return usage < fm.usage; }));
+            std::vector<HLCFeatureMap>::iterator at;
+            if ( IsIFM(input.first) )
+            {
+                // Insert IFMs, into the IFM section [0..ifms) sorted into order.
+                at = op->ifm.emplace(std::upper_bound(op->ifm.begin(), op->ifm.begin() + std::min(ifms, op->ifm.size()),
+                    input.first, [](TensorUsage usage, const HLCFeatureMap &fm) { return usage < fm.usage; }));
+                ifms++;  // Increase size of IFM section
+            }
+            else
+            {
+                // Non-IFM tensors get appended
+                at = op->ifm.emplace(op->ifm.end());
+            }
             MakeFeatureMap(input.first, &input.second, *at);
         }
     }
     MakeFeatureMap(TensorUsage::OFM, schedOp->OFM(), op->ofm);
+
 #ifndef NDEBUG
     op->name = schedOp->OFM()->tensor->Name();
 #endif

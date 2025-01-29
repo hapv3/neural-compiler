@@ -244,6 +244,19 @@ public:
     SchedulerConnection *IFM(int index) { return &inputs.at(MakeTensorUsage(TensorUsage::IFM, index)); }
     const SchedulerConnection *IFM(int index) const { return &inputs.at(MakeTensorUsage(TensorUsage::IFM, index)); }
 
+    SchedulerConnection *HasInput(const SchedulerTensor *tensor, TensorUsage &as)
+    {
+        for ( const auto &pair : inputs.pairs() )
+        {
+            if ( pair.second.tensor.get() == tensor )
+            {
+                as = pair.first;
+                return &pair.second;
+            }
+        }
+        return nullptr;
+    }
+
     // Invalidates all pointers to input connections.
     void RemoveInput(TensorUsage usage)
     {

@@ -209,6 +209,13 @@ Flags<QueryResult> EthosU85Constraints::OperatorQuery(OpType opType, const ArchO
         }
         return QueryResult::NativeHasReq;
     }
+    else if ( opType == OpType::MatMul )
+    {
+        if ( (query->ofm.shape.Size() >= 2) && query->ofm.shape.Elements() > query->ofm.shape.ElementsWC() )
+        {
+            return QueryResult::NativeDecompose;
+        }
+    }
 
     return QueryResult::Native;
 }

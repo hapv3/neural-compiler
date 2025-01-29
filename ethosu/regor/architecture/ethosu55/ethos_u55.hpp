@@ -33,7 +33,7 @@
 namespace regor
 {
 
-enum EthosU55SHRamElements
+enum EthosU55SHRamElements : uint8_t
 {
     SHRAM_IFM8 = 0,
     SHRAM_IFM16 = 1,
@@ -46,7 +46,7 @@ enum EthosU55SHRamElements
     SHRAM_Last = SHRAM_Acc40
 };
 
-enum class EthosUTraversal
+enum class EthosUTraversal : uint8_t
 {
     DepthFirst = 0,
     PartKernel = 1,
@@ -91,10 +91,11 @@ private:
     SHRAMLayout _layout;
     Shape _ifmBlock;
     Shape _ofmBlock;
+    int _bankSize = 0;
     EthosU55SHRamElements _accumulatorType = SHRAM_Acc32;
     EthosUTraversal _traversal = EthosUTraversal::DepthFirst;
-    int _bankSize = 0;
-    int _ifmDepthBufScaling = 0;
+    int8_t _ifmDepthBufScaling = 0;
+    std::unique_ptr<EthosU55OpConfig> _prevConfig;
 
 public:
     EthosUTraversal Traversal() const { return _traversal; }
@@ -107,6 +108,9 @@ public:
     Point2i OptimalStripeGranule() override;
     int OptimalDepthGranule() override;
     std::string ToString(bool full) override;
+
+    void AttachPrevConfig(std::unique_ptr<EthosU55OpConfig> prev);
+    EthosU55OpConfig *PrevConfig();
 };
 
 /// <summary>
@@ -216,7 +220,7 @@ protected:
     Shape OfmUBlock() { return _ofmUBlock; }
     void ApplyConfig(const AcceleratorConfig *cfg);
 
-    std::unique_ptr<ArchitectureOpConfig> FindBlockConfig(OpType opType, const ArchitectureConfigQuery &query);
+    std::unique_ptr<EthosU55OpConfig> FindBlockConfig(OpType opType, const ArchitectureConfigQuery &query);
 
     bool TryBlockConfig(EthosU55OpConfig::SHRAMLayout &layout, int ewUsage, const Shape &ofmBlock, const Shape &ifmBlock,
         int ifmBits, int ifmGranule, int accBits, int accGranule, int lutBanks, int ifmDepthBufScaling);

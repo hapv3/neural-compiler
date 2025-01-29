@@ -166,7 +166,8 @@ void ArchEthosU55::ApplyConfig(const AcceleratorConfig *cfg)
 
     // SHRAM layout information
     _shram.reservedOutputBanks = 2;
-    _shram.bankSizeBytes = 1024, _shram.totalBanks = cfg->shramBanks;
+    _shram.bankSizeBytes = 1024;
+    _shram.totalBanks = cfg->shramBanks;
     _shram.reservedEndBanks = (_shram.totalBanks > 16) ? 2 : 0;
 
     _shramMemory = std::make_unique<ArchitectureMemory>("shram", _shram.bankSizeBytes * _shram.totalBanks);
@@ -182,6 +183,33 @@ void ArchEthosU55::ApplyConfig(const AcceleratorConfig *cfg)
 
 std::unique_ptr<ArchitectureOpConfig> ArchEthosU55::GetOpConfig(OpType opType, const ArchitectureConfigQuery &query)
 {
+    // Compound configuration:
+    if ( opType == OpType::MatMul )
+    {
+        ArchitectureConfigQuery tmpQuery = query;
+        Kernel unitKernel = Kernel::UnitKernel();
+        int batches = query.ofmShape.Height();
+        // Block configuration for the Elementwise Mul
+        tmpQuery.kernel = &unitKernel;
+        tmpQuery.ifmBits = query.ifmBits;
+        tmpQuery.ifmShape[1] = Shape(1, batches, 1, query.ifmShape[1].Depth());
+        tmpQuery.ofmShape = query.ifmShape[0];
+        tmpQuery.ofmFormat = TensorFormat::NHWC;
+        tmpQuery.ofmBits = 32;
+        tmpQuery.transpose = TransposeType::None;
+        auto mulConfig = FindBlockConfig(OpType::Mul, tmpQuery);
+        // Block configuration for the Reduced Sum
+        tmpQuery.ofmShape = Shape(1, batches, query.ifmShape[0].Width(), 1);
+        tmpQuery.ofmBits = query.ofmBits;
+        tmpQuery.ofmFormat = query.ofmFormat;
+        auto reduceConfig = FindBlockConfig(OpType::ReduceSum, tmpQuery);
+        assert(mulConfig.get());
+        assert(reduceConfig.get());
+        reduceConfig->AttachPrevConfig(std::move(mulConfig));
+
+        return std::unique_ptr<ArchitectureOpConfig>(reduceConfig.release());
+    }
+    // Single op configurations
     auto config = FindBlockConfig(opType, query);
     return config;
 }
@@ -285,7 +313,7 @@ static Shape FitBlockForOFM(const Shape &ofmShape, const Kernel *kernel, const S
 }
 
 
-std::unique_ptr<ArchitectureOpConfig> ArchEthosU55::FindBlockConfig(OpType opType, const ArchitectureConfigQuery &query)
+std::unique_ptr<EthosU55OpConfig> ArchEthosU55::FindBlockConfig(OpType opType, const ArchitectureConfigQuery &query)
 {
     assert(query.ifmBits > 0 && query.ifmBits <= 32);
     assert(query.ofmShape.Size() > 2 && "Insufficient dimensions to search for block config");
@@ -298,6 +326,12 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU55::FindBlockConfig(OpType opTyp
 
     EthosU55NpuOp npuOp = GetHWOp(opType);
     assert(npuOp != EthosU55NpuOp::None);
+    if ( (npuOp == EthosU55NpuOp::Compound) && (opType == OpType::MatMul) )
+    {
+        // The block config of the final output operator
+        npuOp = EthosU55NpuOp::ReduceSum;
+        opType = OpType::ReduceSum;
+    }
 
     // Figure out if SHRAM should be portioned for elementwise
     ElementwiseUsage ewUsage = ElementwiseUsage::No;
@@ -493,11 +527,11 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU55::FindBlockConfig(OpType opTyp
     // Return the best configuration
     if ( bestCost != std::numeric_limits<float>::infinity() )
     {
-        return std::unique_ptr<ArchitectureOpConfig>(config.release());
+        return config;
     }
 
     // Didn't find a configuration
-    return std::unique_ptr<ArchitectureOpConfig>();
+    return {};
 }
 
 
@@ -591,6 +625,10 @@ std::unique_ptr<ArchitectureOpConfig> EthosU55OpConfig::Clone()
     config->_ofmBlock = _ofmBlock;
     config->_ifmBlock = _ifmBlock;
     config->_layout = _layout;
+    if ( _prevConfig )
+    {
+        config->_prevConfig.reset(static_cast<EthosU55OpConfig *>(_prevConfig->Clone().release()));
+    }
     return std::unique_ptr<ArchitectureOpConfig>(config.release());
 }
 
@@ -620,6 +658,17 @@ std::string EthosU55OpConfig::ToString(bool full)
     }
     return tmp;
 }
+
+void EthosU55OpConfig::AttachPrevConfig(std::unique_ptr<EthosU55OpConfig> prev)
+{
+    _prevConfig = std::move(prev);
+}
+
+EthosU55OpConfig *EthosU55OpConfig::PrevConfig()
+{
+    return _prevConfig.get();
+}
+
 
 EthosU55NpuOp ArchEthosU55::GetHWOp(OpType type)
 {

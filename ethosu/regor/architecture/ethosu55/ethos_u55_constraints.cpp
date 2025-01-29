@@ -199,7 +199,12 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
             if ( query->transposeMask == TransposeType::NWHC || query->transposeMask == TransposeType::NHCW ||
                  query->transposeMask == TransposeType::NCWH )
             {
-                if ( req ) req->ofmFormat = TensorFormat::NHWC;
+                if ( req )
+                {
+                    req->req.Set(ArchRequirement::OutputFormat, ArchRequirement::InputFormat);
+                    req->ifmFormat = TensorFormat::NHWC;
+                    req->ofmFormat = TensorFormat::NHWC;
+                }
                 return QueryResult::NativeConstrainedHasReq;
             }
         }
@@ -210,12 +215,18 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
     {
         if ( req )
         {
-            req->req = ArchRequirement::ScratchTensor;
-            req->scratch.size = query->ofm.shape;
-            req->scratch.type = DataType::Int32;
-            req->scratch.format = TensorFormat::NHWC;
+            req->req.Set(ArchRequirement::ScratchTensor, ArchRequirement::OutputFormat, ArchRequirement::InputFormat);
+            if ( query->ifm[0].shape )
+            {
+                req->scratch.size = query->ifm[0].shape.WithDepth(query->ifm[0].shape.Depth() + 1);
+                req->scratch.type = DataType::Int32;
+                req->scratch.format = TensorFormat::NHWC;
+            }
+            req->ifmFormat = TensorFormat::Unknown;
+            req->ifm1Format = TensorFormat::NHWC;  // IFM1 and OFM are depth-sliced
+            req->ofmFormat = TensorFormat::NHWC;   // and cannot be addressed if B16
         }
-        return QueryResult::Unsupported;
+        return QueryResult::NativeHasReq;
     }
     else if ( (opType == OpType::Sigmoid) || (opType == OpType::Tanh) )
     {

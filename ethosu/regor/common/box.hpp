@@ -31,6 +31,13 @@ private:
     Shape _end;
 
 public:
+    struct Size
+    {
+        const Shape &_size;
+        Size(const Shape &size) : _size(size){};
+    };
+
+public:
     Box() = default;
 
     Box(const Shape &start, const Shape &end) : _start(start), _end(end)
@@ -38,6 +45,8 @@ public:
         assert(start.Size() == end.Size());
         assert(start <= end);
     }
+
+    Box(const Shape &start, const Box::Size &size) : _start(start), _end(start + size._size) {}
 
     Box(const Shape &end) : Box(end.WithZeros(), end) {}
 
