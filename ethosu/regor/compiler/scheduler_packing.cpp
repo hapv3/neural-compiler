@@ -538,7 +538,6 @@ std::unique_ptr<SchedulerOperation> SchedulerPacking::MakeSchedulerOperation(Ope
     Set(query.ofm, ofmConn);
     query.reverseMask = ofmConn->reverse;
     query.transposeMask = ofmConn->transpose;
-    query.specific.resize = {};
 
     ArchRequirements req;
     if ( _arch->Constraints()->OperatorQuery(op->Type(), &query, &req).Any(QueryResult::Native) )

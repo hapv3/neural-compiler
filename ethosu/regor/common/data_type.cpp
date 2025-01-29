@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -43,6 +43,7 @@ BEGIN_ENUM_TABLE(regor::DataType)
     ADD_ENUM_NAME(UInt8)
     ADD_ENUM_NAME(UInt16)
     ADD_ENUM_NAME(UInt32)
+    ADD_ENUM_NAME(UInt48)
     ADD_ENUM_NAME(UInt64)
     ADD_ENUM_NAME(QInt)
     ADD_ENUM_NAME(QInt4)
@@ -57,6 +58,7 @@ BEGIN_ENUM_TABLE(regor::DataType)
     ADD_ENUM_NAME(QUInt16)
     ADD_ENUM_NAME(QUInt32)
     ADD_ENUM_NAME(Float)
+    ADD_ENUM_NAME(BFloat16)
     ADD_ENUM_NAME(Float16)
     ADD_ENUM_NAME(Float32)
     ADD_ENUM_NAME(Float64)

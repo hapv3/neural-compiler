@@ -34,6 +34,8 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "include/regor.h"
+
 BEGIN_ENUM_TABLE(regor::EthosU55SHRamElements)
     ADD_ENUM_NAME(SHRAM_IFM8)
     ADD_ENUM_NAME(SHRAM_IFM16)
@@ -650,6 +652,11 @@ EthosU55NpuOp ArchEthosU55::GetHWOp(OpType type)
         return EthosU55NpuOp::Pooling;
     }
     return EthosU55NpuOp::None;
+}
+
+void ArchEthosU55::Call(std::function<void(const std::string &)> callBack)
+{
+    callBack(REGOR_ARCH_ETHOSU55);
 }
 
 int EthosU55OpGroup::Add(const ArchitectureOpGroupQuery &op, const std::vector<int> &dependsOn)

@@ -45,50 +45,12 @@ struct ArchFM
     TensorFormat format = {};
 };
 
-/// <summary>
-/// Information for querying support for Resize
-/// </summary>
-struct ResizeSupportQuery
-{
-    ArchResizeMode mode;
-    GraphApi::FractionND scaleY;
-    GraphApi::FractionND scaleX;
-    int offsetY;
-    int offsetX;
-    Shape ifmShape;
-};
-
-const std::array<OpType, 10> elemWiseMainOps = {OpType::Minimum, OpType::Maximum, OpType::Add, OpType::Mul, OpType::Sub,
-    OpType::Abs, OpType::Exp, OpType::LeakyRelu, OpType::Rsqrt, OpType::SquaredDifference};
-/// <summary>
-/// Information for querying whether an operation can be executed by the hardware
-/// </summary>
-struct ExecutionQuery
-{
-    OpType opType;
-    OpType targetType;
-    DataType ifmType;
-    DataType ifm2Type;
-    Shape ifmShape;
-    Shape ifm2Shape;
-    Shape ofmShape;
-    DataType ofmType;
-    TransposeType transposeType;
-    ReverseType reverseTypeMask;
-    ResizeSupportQuery resizeQuery;
-    bool quantScalingInvalidOrUnequal = false;
-};
-
 struct ArchOperatorQuery
 {
     ArchFM ifm[2];
     ArchFM ofm;
     ReverseType reverseMask = ReverseType::None;
     TransposeType transposeMask = TransposeType::None;
-    struct
-    {
-        ResizeSupportQuery resize;
-    } specific;
     ~ArchOperatorQuery(){};
 };
 
@@ -145,67 +107,15 @@ class IArchitectureConstraints
 {
 public:
     virtual ~IArchitectureConstraints() = default;
-
-    virtual bool SupportsReverse(OpType opType, ReverseType reverseTypeMask) = 0;
+    virtual bool SupportsFusedReverse(OpType opType, ReverseType reverseTypeMask) = 0;
     virtual bool SupportsFusedRescale(OpType opType, TensorUsage tensorUsage, DataType rescaleFromType,
         DataType rescaleToType, DataType opFromType, DataType opToType, const Quantization &quantization) = 0;
-    virtual bool SupportsRescale(DataType fromType, DataType toType) = 0;
-    virtual TransposeSupport SupportsTranspose(OpType opType, TransposeType transposeType) = 0;
+    virtual TransposeSupport SupportsFusedTranspose(OpType opType, TransposeType transposeType) = 0;
     virtual bool SupportsAccumulatorSaveRestore() = 0;
-    virtual bool SupportsLeakyRelu(bool quantized, DataType type) = 0;
     virtual bool SupportsNegativeStrides() = 0;
-    virtual bool SupportsNot() = 0;
-    virtual Flags<QueryResult> OperatorQuery(OpType opType, const ArchOperatorQuery *query, ArchRequirements *req = nullptr) = 0;
-
-    bool CanExecute(const ExecutionQuery &query)
-    {
-        bool valid = true;
-        if ( IsFloat(query.ifmType | query.ifm2Type | query.ofmType) )
-        {
-            return false;
-        }
-
-        switch ( query.opType )
-        {
-            case OpType::MatMul:
-                valid = SupportsMatMul(query.opType);
-                break;
-            case OpType::ReverseV2:
-                valid = SupportsReverse(query.targetType, query.reverseTypeMask);
-                break;
-            case OpType::Gather:
-                valid = SupportsGather(query.opType);
-                break;
-            case OpType::Scatter:
-                valid = SupportsScatter(query.opType);
-                break;
-            case OpType::ArgMax:
-                valid = SupportsArgMax(query.opType);
-                break;
-            case OpType::Cast:
-                valid = SupportsCast(query.opType, query.ifmType, query.ofmType);
-                break;
-            case OpType::Resize:
-                valid = SupportsResize(query.resizeQuery);
-                break;
-            default:
-                break;
-        }
-        if ( std::find(elemWiseMainOps.begin(), elemWiseMainOps.end(), query.opType) != elemWiseMainOps.end() )
-        {
-            valid = SupportsNonMatchingShapes(query.ifmShape, query.ifm2Shape, query.ofmShape);
-        }
-        return valid;
-    }
-
-protected:
-    virtual bool SupportsMatMul(OpType opType) = 0;
-    virtual bool SupportsGather(OpType opType) = 0;
-    virtual bool SupportsScatter(OpType opType) = 0;
-    virtual bool SupportsResize(const ResizeSupportQuery &query) = 0;
-    virtual bool SupportsArgMax(OpType opType) = 0;
-    virtual bool SupportsCast(OpType opType, DataType ifmType, DataType ofmType) = 0;
-    virtual bool SupportsNonMatchingShapes(const Shape &ifmShape, const Shape &ifm2Shape, const Shape &ofmShape) = 0;
+    virtual bool SupportsElementwiseLeakyRelu(bool quantized, DataType type) = 0;
+    virtual bool SupportsRescale(DataType fromType, DataType toType) = 0;
+    virtual Flags<QueryResult> OperatorQuery(OpType opType, const ArchOperatorQuery *query = nullptr, ArchRequirements *req = nullptr) = 0;
 };
 
 }  // namespace regor

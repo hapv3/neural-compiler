@@ -30,22 +30,14 @@ private:
 public:
     EthosU55Constraints(ArchEthosU55 *arch);
 
-    bool SupportsLeakyRelu(bool quantized, DataType type) override;
-    bool SupportsMatMul(OpType opType) override;
-    TransposeSupport SupportsTranspose(OpType opType, TransposeType transposeType) override;
-    bool SupportsReverse(OpType opType, ReverseType reverseTypeMask) override;
+    bool SupportsFusedReverse(OpType opType, ReverseType reverseTypeMask) override;
     bool SupportsFusedRescale(OpType opType, TensorUsage tensorUsage, DataType rescaleFromType, DataType rescaleToType,
         DataType opFromType, DataType opToType, const Quantization &quantization) override;
-    bool SupportsRescale(DataType fromType, DataType toType) override;
+    TransposeSupport SupportsFusedTranspose(OpType opType, TransposeType transposeType) override;
     bool SupportsAccumulatorSaveRestore() override { return false; }
-    bool SupportsGather(OpType opType) override;
-    bool SupportsScatter(OpType opType) override;
-    bool SupportsResize(const ResizeSupportQuery &query) override;
-    bool SupportsArgMax(OpType opType) override;
-    bool SupportsCast(OpType opType, DataType ifmType, DataType ofmType) override;
-    bool SupportsNonMatchingShapes(const Shape &ifmShape, const Shape &ifm2Shape, const Shape &ofmShape) override;
     bool SupportsNegativeStrides() override { return true; };
-    bool SupportsNot() override { return false; };
+    bool SupportsElementwiseLeakyRelu(bool quantized, DataType type) override;
+    bool SupportsRescale(DataType fromType, DataType toType) override;
     Flags<QueryResult> OperatorQuery(OpType opType, const ArchOperatorQuery *query, ArchRequirements *req) override;
 };
 

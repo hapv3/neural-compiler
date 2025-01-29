@@ -37,24 +37,7 @@ static constexpr std::pair<OpType, QueryResult> s_shortU85[] = {
 
 static_assert(is_sorted(s_shortU85, [](const auto &a, const auto &b) { return a.first < b.first; }), "list must be sorted");
 
-
-bool EthosU85Constraints::SupportsLeakyRelu(bool /*quantized*/, DataType /*type*/)
-{
-    return true;
-}
-
-bool EthosU85Constraints::SupportsMatMul(OpType opType)
-{
-    EthosU85NpuOp npuOp = ArchEthosU85::GetHWOp(opType);
-    if ( npuOp == EthosU85NpuOp::None )
-    {
-        return false;
-    }
-
-    return true;
-}
-
-TransposeSupport EthosU85Constraints::SupportsTranspose(OpType opType, TransposeType transposeType)
+TransposeSupport EthosU85Constraints::SupportsFusedTranspose(OpType opType, TransposeType transposeType)
 {
     if ( transposeType == TransposeType::None ) return TransposeSupport::Any;
 
@@ -80,7 +63,7 @@ TransposeSupport EthosU85Constraints::SupportsTranspose(OpType opType, Transpose
     return TransposeSupport::None;
 }
 
-bool EthosU85Constraints::SupportsReverse(OpType opType, ReverseType reverseTypeMask)
+bool EthosU85Constraints::SupportsFusedReverse(OpType opType, ReverseType reverseTypeMask)
 {
     Flags<ReverseType> reverseMask(reverseTypeMask);
     // Do not support non-constant axes
@@ -177,136 +160,6 @@ bool EthosU85Constraints::SupportsRescale(DataType fromType, DataType toType)
     return fromType != DataType::UInt16;
 }
 
-bool EthosU85Constraints::SupportsGather(OpType opType)
-{
-    EthosU85NpuOp npuOp = ArchEthosU85::GetHWOp(opType);
-    if ( npuOp == EthosU85NpuOp::None )
-    {
-        return false;
-    }
-
-    return true;
-}
-
-bool EthosU85Constraints::SupportsScatter(OpType opType)
-{
-    EthosU85NpuOp npuOp = ArchEthosU85::GetHWOp(opType);
-    if ( npuOp == EthosU85NpuOp::None )
-    {
-        return false;
-    }
-
-    return true;
-}
-
-bool EthosU85Constraints::SupportsArgMax(OpType opType)
-{
-    EthosU85NpuOp npuOp = ArchEthosU85::GetHWOp(opType);
-    if ( npuOp == EthosU85NpuOp::None )
-    {
-        return false;
-    }
-
-    return true;
-}
-
-bool EthosU85Constraints::SupportsResize(const ResizeSupportQuery &query)
-{
-    /* Supported operator checks for resize operations
-     *
-     *  * Scaling numerators must be less than or equal to 2048
-     *  * Offsets must be in the range [-numerator, numerator) for each axis
-     *  * The following constraints apply to upscale-factors
-     *    mode REPLICATE:
-     *      Any width and height upscale-factors are supported
-     *    mode NEAREST:
-     *      Any width and height upscale-factors are supported
-     *    mode BILINEAR:
-     *      if IFM W*H == 1*1:
-     *        Any width and height upscale-factors are supported
-     *      else:
-     *        The upscale-factors need to be powers-of-two.
-     */
-    if ( query.ifmShape.Width() == 1 && query.ifmShape.Height() == 1 )
-    {
-        return true;
-    }
-
-    int n_w = query.scaleX.n;
-    int d_w = query.scaleX.d;
-    int n_h = query.scaleY.n;
-    int d_h = query.scaleY.d;
-
-    if ( n_h > 2048 )
-    {
-        LOG_WARN("Resize height scale numerator ({}) exceeds maximum size (2048).\n", n_h);
-        return false;
-    }
-    if ( n_w > 2048 )
-    {
-        LOG_WARN("Resize width scale numerator ({}) exceeds maximum size (2048).\n", n_w);
-        return false;
-    }
-    if ( query.offsetY >= n_h || query.offsetY < -n_h )
-    {
-        LOG_WARN("Resize height offset: {} is outside the valid range [-height_numerator, height_numerator) = [{}, {})\n",
-            query.offsetY, -n_h, n_h);
-        return false;
-    }
-    if ( query.offsetX >= n_w || query.offsetX < -n_w )
-    {
-        LOG_WARN("Resize width offset: {} is outside the valid range [-with_numerator, width_numerator) = [{}, {})\n",
-            query.offsetX, -n_w, n_w);
-        return false;
-    }
-
-    if ( query.mode == ArchResizeMode::Bilinear )
-    {
-        if ( d_w == 0 || d_h == 0 )
-        {
-            LOG_WARN("ResizeBilinear w/h divisors can't be zero\n");
-            return false;
-        }
-
-        // Get scale fractions and verify that scale-factor is a power of two.
-        if ( n_w % d_w != 0 )
-        {
-            LOG_WARN("ResizeBilinear width scale-factor is not an integer: {}/{}\n", n_w, d_w);
-            return false;
-        }
-        if ( n_h % d_h != 0 )
-        {
-            LOG_WARN("ResizeBilinear height scale-factor is not an integer: {}/{}\n", n_h, d_h);
-            return false;
-        }
-        int scale_w = n_w / d_w;
-        int scale_h = n_h / d_h;
-        if ( !IsPowerOfTwo(scale_w) )
-        {
-            LOG_WARN("ResizeBilinear width scale-factor is not a power of two: {}\n", double(n_w) / d_w);
-            return false;
-        }
-        if ( !IsPowerOfTwo(scale_h) )
-        {
-            LOG_WARN("ResizeBilinear height scale-factor is not a power of two: {}\n", double(n_h) / d_h);
-            return false;
-        }
-    }
-
-    return true;
-}
-
-bool EthosU85Constraints::SupportsCast(OpType opType, DataType ifmType, DataType ofmType)
-{
-    return !IsFloat(ifmType | ofmType);
-}
-
-bool EthosU85Constraints::SupportsNonMatchingShapes(const Shape &ifmShape, const Shape &ifm2Shape, const Shape &ofmShape)
-{
-    return true;
-}
-
-
 Flags<QueryResult> EthosU85Constraints::OperatorQuery(OpType opType, const ArchOperatorQuery *query, ArchRequirements *req)
 {
     // Check unsupported operator list first
@@ -337,22 +190,17 @@ Flags<QueryResult> EthosU85Constraints::OperatorQuery(OpType opType, const ArchO
 
     if ( query->transposeMask != TransposeType::None )
     {
-        TransposeSupport tmp = SupportsTranspose(opType, query->transposeMask);
+        TransposeSupport tmp = SupportsFusedTranspose(opType, query->transposeMask);
         if ( tmp == TransposeSupport::None ) return QueryResult::Unsupported;
     }
 
     if ( query->reverseMask != ReverseType::None )
     {
-        if ( !SupportsReverse(opType, query->reverseMask) ) return QueryResult::Unsupported;
+        if ( !SupportsFusedReverse(opType, query->reverseMask) ) return QueryResult::Unsupported;
     }
 
     // Operator specific
-    if ( opType == OpType::Resize )
-    {
-        if ( !query->specific.resize.ifmShape ) return QueryResult::Unsupported;  // TODO: remove from ResizeQuery
-        if ( !SupportsResize(query->specific.resize) ) return QueryResult::Unsupported;
-    }
-    else if ( (opType == OpType::Sigmoid) || (opType == OpType::Tanh) )
+    if ( (opType == OpType::Sigmoid) || (opType == OpType::Tanh) )
     {
         if ( req )
         {

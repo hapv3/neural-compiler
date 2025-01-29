@@ -35,6 +35,7 @@ std::string TestConfig(int macs)
 {
     std::string config = "[architecture]\n";
     config += fmt::format("macs={}\n", macs);
+    config += "cores=1\n";
     // flash
     config += "[memory.flash]\n";
     config += "name=flash\n";
@@ -159,8 +160,8 @@ std::shared_ptr<Operation> CreateOperation(OpType opType, TensorUsage ifmUsage, 
 {
     auto op = std::make_shared<Operation>(opType);
     op->SetKernel(std::make_unique<Kernel>(Kernel::UnitKernel()));
-    op->ConnectInput(ifmUsage, ifm);
-    op->ConnectOutput(ofmUsage, ofm);
+    op->ConnectInput(ifmUsage, ifm).Set(Quantization::Unit());
+    op->ConnectOutput(ofmUsage, ofm).Set(Quantization::Unit());
     return op;
 }
 
@@ -169,7 +170,7 @@ std::shared_ptr<Operation> CreateOperation(OpType opType, TensorUsage ifmUsage, 
     TensorUsage ifm2Usage, std::shared_ptr<Tensor> &ifm2, TensorUsage ofmUsage, std::shared_ptr<Tensor> &ofm)
 {
     auto op = CreateOperation(opType, ifmUsage, ifm, ofmUsage, ofm);
-    op->ConnectInput(ifm2Usage, ifm2);
+    op->ConnectInput(ifm2Usage, ifm2).Set(Quantization::Unit());
     return op;
 }
 

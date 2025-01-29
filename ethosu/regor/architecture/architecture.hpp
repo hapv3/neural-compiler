@@ -34,9 +34,11 @@
 #include "compiler/tensor_properties.hpp"
 #include "mlw_encode.hpp"
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
+
 namespace regor
 {
 
@@ -357,6 +359,8 @@ public:
     virtual AxisMask CanSubdivide(OpType opType, TransposeType transpose, ReverseType reverse) = 0;
     virtual bool SupportsScalar(OpType opType, DataType dataType, TensorUsage usage) = 0;
     virtual Flags<WeightFormat> SupportedWeightFormat(OpType op) = 0;
+    // helper for arch-dependent callbacks outside of arch
+    virtual void Call(std::function<void(const std::string &)> callBack) = 0;
 
     MemArea ReadonlyMemory();
     MemArea FeatureMapMemory();

@@ -27,6 +27,7 @@ namespace regor
 static constexpr OpType s_unsupportedU55[] = {
     OpType::None,
     OpType::ArgMax,
+    OpType::Not,
     OpType::Gather,
     OpType::Scatter,
     OpType::Resize,
@@ -47,18 +48,12 @@ EthosU55Constraints::EthosU55Constraints(ArchEthosU55 *arch) : _arch(arch)
 {
 }
 
-bool EthosU55Constraints::SupportsLeakyRelu(bool quantized, DataType type)
+bool EthosU55Constraints::SupportsElementwiseLeakyRelu(bool quantized, DataType type)
 {
     return quantized == false && type == DataType::Int16;
 }
 
-bool EthosU55Constraints::SupportsMatMul(OpType opType)
-{
-    UNUSED(opType);
-    return false;
-}
-
-TransposeSupport EthosU55Constraints::SupportsTranspose(OpType opType, TransposeType transposeType)
+TransposeSupport EthosU55Constraints::SupportsFusedTranspose(OpType opType, TransposeType transposeType)
 {
     if ( IsNone(transposeType) ) return TransposeSupport::Any;
 
@@ -72,7 +67,7 @@ TransposeSupport EthosU55Constraints::SupportsTranspose(OpType opType, Transpose
     return TransposeSupport::None;
 }
 
-bool EthosU55Constraints::SupportsReverse(OpType opType, ReverseType reverseTypeMask)
+bool EthosU55Constraints::SupportsFusedReverse(OpType opType, ReverseType reverseTypeMask)
 {
     UNUSED(opType);
     return reverseTypeMask == ReverseType::None;
@@ -161,43 +156,6 @@ bool EthosU55Constraints::SupportsRescale(DataType fromType, DataType toType)
     }
     return true;
 }
-
-bool EthosU55Constraints::SupportsGather(OpType opType)
-{
-    UNUSED(opType);
-    return false;
-}
-
-bool EthosU55Constraints::SupportsScatter(OpType opType)
-{
-    UNUSED(opType);
-    return false;
-}
-bool EthosU55Constraints::SupportsResize(const ResizeSupportQuery &query)
-{
-    UNUSED(query);
-    return false;
-}
-
-bool EthosU55Constraints::SupportsArgMax(OpType opType)
-{
-    UNUSED(opType);
-    return false;
-}
-
-bool EthosU55Constraints::SupportsCast(OpType opType, DataType ifmType, DataType ofmType)
-{
-    UNUSED(opType);
-    UNUSED(ifmType);
-    UNUSED(ofmType);
-    return false;
-}
-
-bool EthosU55Constraints::SupportsNonMatchingShapes(const Shape &ifmShape, const Shape &ifm2Shape, const Shape &ofmShape)
-{
-    return (ifmShape == ofmShape) || (ifm2Shape && (ifm2Shape == ofmShape));
-}
-
 
 Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchOperatorQuery *query, ArchRequirements *req)
 {

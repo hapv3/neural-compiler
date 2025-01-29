@@ -1,0 +1,180 @@
+//
+// SPDX-FileCopyrightText: Copyright 2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the License); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an AS IS BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+#include "tflite_supported_operators.hpp"
+
+#include "common/common.hpp"
+#include "common/logging.hpp"
+
+#include "compiler/op_type.hpp"
+
+namespace regor
+{
+
+bool TfLiteSupportedOperators::ConstraintOpType(const Operation *op)
+{
+    OpType opType = op->Type();
+    if ( _supportedOpTypes.count(opType) == 0 )
+    {
+        Failure(op, "OpType is not supported", "");
+        return false;
+    }
+    return true;
+}
+
+bool TfLiteSupportedOperators::ConstraintTensDtypes(const Operation *op)
+{
+    for ( const auto *list : {&op->Inputs(), &op->Outputs()} )
+    {
+        for ( const auto &item : list->pairs() )
+        {
+            auto usage = item.first;
+            const auto &conn = item.second;
+            auto type = conn.tensor->Type();
+            if ( (IsIFM(usage) || IsOFM(usage)) && _supportedDataTypes.count(type) == 0 )
+            {
+                Failure(op, fmt::format("Operation has tensor with unsupported DataType {}", DataTypeToString(type)), "");
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool TfLiteSupportedOperators::ConstraintTensQuantized(const Operation *op)
+{
+    const char *constraint = "Input(s), Output and Weight tensors must have quantization parameters";
+    // Exceptions for this check
+    switch ( op->Type() )
+    {
+        case OpType::ArgMax:
+        case OpType::MirrorPad:
+        case OpType::Quantize:
+        case OpType::Shape:
+        case OpType::Transpose:
+        case OpType::GatherNd:
+        case OpType::GatherV2:
+            return true;
+        default:
+            break;
+    }
+    for ( const auto *list : {&op->Inputs(), &op->Outputs()} )
+    {
+        for ( const auto &item : list->pairs() )
+        {
+            auto usage = item.first;
+            const auto &conn = item.second;
+            if ( IsIFM(usage) || IsOFM(usage) || usage == TensorUsage::Weights )
+            {
+                const Quantization &quant = conn.quantization;
+                if ( quant.scales.empty() || quant.zeroPoints.empty() )
+                {
+                    Failure(op, fmt::format("Operation has tensor {} with missing quantization parameters", conn.tensor->Name()), constraint);
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
+
+void TfLiteSupportedOperators::Failure(const Operation *op, const std::string &message, const std::string &constraint)
+{
+    assert(op);
+    auto ofmConn = op->Output(TensorUsage::OFM);
+    const char *name = "N/A";
+    if ( ofmConn && ofmConn->tensor )
+    {
+        name = ofmConn->tensor->Name().c_str();
+    }
+    auto tfLiteType = TfLiteMapping::OpTypeToBuiltinOperator(op->Type());
+    assert(message.size() || constraint.size());
+    LOG_WARN("\nWarning (supported operators) operator:{} ofm:{}\n", TfLiteMapping::BuiltinOperatorToString(tfLiteType), name);
+    if ( message.size() )
+    {
+        LOG_WARN("Reason: {}\n", message);
+    }
+    if ( constraint.size() )
+    {
+        LOG_WARN("Constraint: {}\n", constraint);
+    }
+}
+
+TfLiteSupportedOperators::TfLiteSupportedOperators(IArchitectureConstraints *constraints) :
+        _archConstraints(constraints)
+{
+    _genericChecks = {
+        &TfLiteSupportedOperators::ConstraintOpType,
+        &TfLiteSupportedOperators::ConstraintTensDtypes,
+        &TfLiteSupportedOperators::ConstraintTensQuantized,
+    };
+}
+
+namespace
+{
+void DisconnectActivation(std::shared_ptr<Operation> op)
+{
+    assert(TfLiteMapping::CanFuseActivationFunction(op.get()));
+    // Op originally had a fused activation
+    assert(op->Outputs().size() == 1);
+    assert(op->OFM()->Readers().size() == 1);
+    auto activation = op->OFM()->Readers().front();
+    auto actOfm = activation->Output(TensorUsage::OFM);
+    assert(actOfm);
+    // bypass and disconnect the activation
+    op->CopyOutput(TensorUsage::OFM, *actOfm);
+    activation->SetPassthroughOp();
+    activation->Disconnect();
+}
+}  // namespace
+
+void TfLiteSupportedOperators::Process(Graph *graph)
+{
+    std::vector<std::shared_ptr<Operation>> operatorList;
+    graph->GetAllOperations(operatorList);
+    for ( auto &op : operatorList )
+    {
+        if ( op->Type() == OpType::Passthrough )
+        {
+            // don't check passthrough ops
+            continue;
+        }
+        if ( !Check(op.get()) )
+        {
+            if ( TfLiteMapping::CanFuseActivationFunction(op.get()) )
+            {
+                // op originally had a fused activation
+                // disconnect it from the graph as it will be handled by CPU
+                DisconnectActivation(op);
+            }
+            else if ( op->IFM(0)->Writers().size() == 1 )
+            {
+                auto pred = op->IFM(0)->Writers().front();
+                if ( TfLiteMapping::CanFuseActivationFunction(pred.get()) )
+                {
+                    // op is an activation function, disconnect op and set pred to passthrough
+                    DisconnectActivation(pred);
+                    pred->SetPassthroughOp();
+                }
+            }
+            op->SetPassthroughOp();
+        }
+    }
+}
+
+}  // namespace regor

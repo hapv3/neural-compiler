@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -27,6 +27,8 @@
 #include <algorithm>
 #include <iterator>
 #include <limits>
+
+#include "include/regor.h"
 
 namespace regor
 {
@@ -86,6 +88,11 @@ bool ArchEthosU65::ParseConfig(IniReader *reader)
 std::vector<uint32_t> ArchEthosU65::ConfigRegisters()
 {
     return std::vector<uint32_t>(1, ConfigRegister(1));
+}
+
+void ArchEthosU65::Call(std::function<void(const std::string &)> callBack)
+{
+    callBack(REGOR_ARCH_ETHOSU65);
 }
 
 }  // namespace regor

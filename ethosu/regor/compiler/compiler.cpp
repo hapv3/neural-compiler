@@ -33,8 +33,13 @@
 #include "tensor_allocator.hpp"
 #include "tflite/custom_operator_ethosu.hpp"
 #include "tflite/tflite_reader.hpp"
+#include "tflite/tflite_supported_operators.hpp"
+#include "tflite/tflite_supported_operators_u55.hpp"
+#include "tflite/tflite_supported_operators_u85.hpp"
 #include "tflite/tflite_writer.hpp"
 #include "tosa/tosa_reader.hpp"
+
+#include "include/regor.h"
 
 BEGIN_ENUM_TABLE(regor::OutputFormat)
     ADD_ENUM_NAME(None)
@@ -49,6 +54,24 @@ END_ENUM_TABLE()
 
 namespace regor
 {
+
+namespace
+{
+
+std::unique_ptr<TfLiteSupportedOperators> InitSupportedOpsChecker(const std::string &target, IArchitectureConstraints *constraints)
+{
+    if ( target == REGOR_ARCH_ETHOSU85 )
+    {
+        return std::make_unique<TfLiteSupportedOperatorsU85>(constraints);
+    }
+    else
+    {
+        assert(target == REGOR_ARCH_ETHOSU55 || target == REGOR_ARCH_ETHOSU65);
+        return std::make_unique<TfLiteSupportedOperatorsU55>(constraints);
+    }
+}
+
+}  // namespace
 
 Compiler::Compiler(std::unique_ptr<Architecture> &arch)
 {
@@ -179,7 +202,6 @@ bool Compiler::LoadTosa(const void *input, size_t size)
     return !_builders.empty();
 }
 
-
 bool Compiler::LoadTflite(const void *input, size_t size)
 {
     assert(input && size > 0);
@@ -188,7 +210,7 @@ bool Compiler::LoadTflite(const void *input, size_t size)
     if ( _compilerOptions.debugDatabase != !!_optDb )
         _optDb = _compilerOptions.debugDatabase ? std::make_unique<class OptimiserDatabase>(&_Db) : nullptr;
 
-    TfLiteReader::LoadGraphs(input, size, _graphs, _optDb.get(), _architecture->Constraints());
+    TfLiteReader::LoadGraphs(input, size, _graphs, _optDb.get());
     return !_graphs.empty();
 }
 
@@ -419,6 +441,15 @@ std::unique_ptr<Graph> Compiler::CompileGraph(std::unique_ptr<Graph> &graph,
     {
         if ( graph->Notation() == GraphNotation::TFLite )
         {
+            // Run TFLite supported-operator checks
+            std::unique_ptr<TfLiteSupportedOperators> supportedOps;
+            _architecture->Call([&](const std::string &target)
+                { supportedOps = InitSupportedOpsChecker(target, _architecture->Constraints()); });
+
+            if ( supportedOps )
+            {
+                supportedOps->Process(graph.get());
+            }
             // Run GraphNotation::TFLite Preprocess/optimise step
             std::unique_ptr<GraphOptimiser> optimiser = GraphOptimiser::MakeGraphOptimiser(
                 GraphNotation::TFLite, _architecture->Constraints(), _graphOptimiserOptions, _optDb.get());

@@ -20,6 +20,7 @@
 
 #include "architecture/ethosu85/ethos_u85.hpp"
 #include "tflite/tflite_reader.hpp"
+#include "tflite/tflite_supported_operators_u85.hpp"
 #include "tflite/tflite_writer.hpp"
 #include "util.hpp"
 
@@ -114,7 +115,7 @@ TEST_CASE("test_tflite_fb - load/store")
             TfLiteReader reader;
             std::vector<std::unique_ptr<Graph>> readerGraphs;
 
-            reader.LoadGraphs(&fb[output_buffer_offset], output_buffer_size, readerGraphs, nullptr, arch->Constraints());
+            reader.LoadGraphs(&fb[output_buffer_offset], output_buffer_size, readerGraphs, nullptr);
 
             REQUIRE(readerGraphs.size() == 1);
             std::vector<Operation *> operations;

@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -147,6 +147,7 @@ TEST_CASE("test_graphir_optimiser - ReduceSum")
             auto ifm = CreateTensor("IFM", Shape(1, 4, 4, 25), DataType::Int8);
             auto ofm = CreateTensor("OFM", ifm->StorageShape().WithDepth(1), DataType::Int8);
             auto op = CreateOperation(OpType::ReduceSum, TensorUsage::IFM, ifm, TensorUsage::OFM, ofm);
+            op->Input(TensorUsage::IFM)->quantization.zeroPoints.clear();
             op->Input(TensorUsage::IFM)->quantization.zeroPoints.push_back(ZP);
             op->Attribute<axis_attr_t>()->axis = ifm->StorageShape().Size() - 1;
             ops.push_back(std::move(op));

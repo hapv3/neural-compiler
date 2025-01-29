@@ -33,6 +33,9 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "include/regor.h"
+
+
 BEGIN_ENUM_TABLE(regor::EthosU85Accumulator)
     ADD_ENUM_NAME(Acc32)
     ADD_ENUM_NAME(Acc48)
@@ -1358,6 +1361,11 @@ EthosU85NpuOp ArchEthosU85::GetHWOp(OpType type)
         return EthosU85NpuOp::Pooling;
     }
     return EthosU85NpuOp::None;
+}
+
+void ArchEthosU85::Call(std::function<void(const std::string &)> callBack)
+{
+    callBack(REGOR_ARCH_ETHOSU85);
 }
 
 int EthosU85OpGroup::KeyToOpIndex(int key)

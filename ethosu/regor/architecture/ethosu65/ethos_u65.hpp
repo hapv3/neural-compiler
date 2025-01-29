@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2023, 2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -37,6 +37,7 @@ public:
     bool ParseConfig(IniReader *reader) override;
     Address MaxAddress() override { return 1LL << 40; }
     std::vector<uint32_t> ConfigRegisters() override;
+    void Call(std::function<void(const std::string &)> callBack) override;
 
 private:
     int MaxOutstandingDMAOps() override { return 2; }

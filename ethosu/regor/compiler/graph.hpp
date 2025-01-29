@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -132,6 +132,16 @@ public:
             [&](Operation *op) -> bool
             {
                 operations.push_back(op);
+                return true;
+            });
+    }
+
+    void GetAllOperations(std::vector<std::shared_ptr<Operation>> &operations) const
+    {
+        TraverseGraphFromEnd(Outputs(),
+            [&](Operation *op) -> bool
+            {
+                operations.push_back(op->shared_from_this());
                 return true;
             });
     }

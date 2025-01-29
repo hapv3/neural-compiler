@@ -44,35 +44,6 @@
 
 namespace regor
 {
-
-
-static int64_t Quantize(float value, const Quantization &quant)
-{
-    float scale = quant.scales.empty() ? 1.0f : float(quant.scales[0].Dequantize());
-    int64_t zp = quant.zeroPoints.empty() ? 0 : quant.zeroPoints[0];
-    return zp + int64_t(std::round(double(value / scale)));
-}
-
-static void ClampActivation(const std::shared_ptr<Operation> &operation)
-{
-    OpType opType = operation->Type();
-    Quantization &quant = operation->Output(TensorUsage::OFM)->quantization;
-    if ( opType == OpType::Relu )
-    {
-        quant.quantMin = {Quantize(0, quant)};
-    }
-    else if ( opType == OpType::Relu6 )
-    {
-        quant.quantMin = {Quantize(0, quant)};
-        quant.quantMax = {Quantize(6, quant)};
-    }
-    else if ( opType == OpType::ReluN1To1 )
-    {
-        quant.quantMin = {Quantize(-1, quant)};
-        quant.quantMax = {Quantize(1, quant)};
-    }
-}
-
 static void SetKernel(const std::shared_ptr<Operation> &operation, const Point2i &size, const Point2i &stride,
     const Point2i &dilation, tflite::Padding padding, int depthMultiplier = 1)
 {
@@ -133,7 +104,7 @@ const tflite::Model *TfLiteReader::LoadModel(const void *input, size_t size)
 }
 
 void TfLiteReader::LoadGraphs(const uint8_t *input, const tflite::Model *model,
-    std::vector<std::unique_ptr<Graph>> &graphs, OptimiserDatabase *optDb, IArchitectureConstraints *constraints)
+    std::vector<std::unique_ptr<Graph>> &graphs, OptimiserDatabase *optDb)
 {
     assert(model);
 
@@ -323,7 +294,7 @@ void TfLiteReader::LoadGraphs(const uint8_t *input, const tflite::Model *model,
 
             // Interpretation of operator options may depend on input/output tensor information,
             // so the operation must be connected to its tensors before parsing operator options.
-            ParseOperatorOptions(operation, tflite_operator, optDb, constraints);
+            ParseOperatorOptions(operation, tflite_operator, optDb);
 
             // Set rounding according to reference
             SetOFMRounding(operation);
@@ -382,10 +353,9 @@ void TfLiteReader::LoadGraphs(const uint8_t *input, const tflite::Model *model,
     }
 }
 
-void TfLiteReader::LoadGraphs(const void *input, size_t size, std::vector<std::unique_ptr<Graph>> &graphs,
-    OptimiserDatabase *optDb, IArchitectureConstraints *constraints)
+void TfLiteReader::LoadGraphs(const void *input, size_t size, std::vector<std::unique_ptr<Graph>> &graphs, OptimiserDatabase *optDb)
 {
-    LoadGraphs(reinterpret_cast<const uint8_t *>(input), LoadModel(input, size), graphs, optDb, constraints);
+    LoadGraphs(reinterpret_cast<const uint8_t *>(input), LoadModel(input, size), graphs, optDb);
 }
 
 std::shared_ptr<Tensor> TfLiteReader::ParseTensor(const tflite::Tensor *tflite_tensor, std::shared_ptr<Buffer> &buffer,
@@ -480,8 +450,8 @@ static const T *GetBuiltinOptions(const tflite::Operator *tflite_operator)
     return options;
 }
 
-void TfLiteReader::ParseOperatorOptions(const std::shared_ptr<Operation> &operation,
-    const tflite::Operator *tflite_operator, OptimiserDatabase *optDb, IArchitectureConstraints *constraints)
+void TfLiteReader::ParseOperatorOptions(
+    const std::shared_ptr<Operation> &operation, const tflite::Operator *tflite_operator, OptimiserDatabase *optDb)
 {
     const auto type = tflite_operator->builtin_options_type();
     auto activation_function = tflite::ActivationFunctionType::NONE;
@@ -853,33 +823,7 @@ void TfLiteReader::ParseOperatorOptions(const std::shared_ptr<Operation> &operat
             break;
     }
     operation->SetPassthrough(tflite_operator);
-
-    ExecutionQuery query{};
-    bool isValidQuery = true;
-    try
-    {
-        query = OperationToExecQuery(*operation);
-    }
-    catch ( std::invalid_argument &e )
-    {
-        LOG_WARN("ExecutionQuery not buildable for operation {}: {}\n", EnumToString(operation->Type()), e.what())
-        isValidQuery = false;
-    }
-    if ( operation->Type() == OpType::None )
-    {
-        operation->SetPassthroughOp();
-    }
-    else if ( operation->Type() != OpType::Passthrough )
-    {
-        if ( !isValidQuery || !(constraints->CanExecute(query)) )
-        {
-            operation->SetPassthroughOp();
-        }
-        else
-        {
-            UnFuseActivation(operation, activation_function, optDb);
-        }
-    }
+    UnFuseActivation(operation, activation_function, optDb);
 }
 
 void TfLiteReader::SetOFMRounding(const std::shared_ptr<Operation> &operation)
@@ -922,160 +866,10 @@ void TfLiteReader::UnFuseActivation(const std::shared_ptr<Operation> &operation,
     output_tensor->RemoveWriter(operation);
     operation->ConnectOutput(TensorUsage::OFM, intermediate_tensor).Set(quantization);
     activation->ConnectInput(TensorUsage::IFM, intermediate_tensor).Set(quantization);
-    ClampActivation(activation);
     if ( optDb )
     {
         optDb->AddOptimised(operation.get(), activation.get());
     }
-}
-
-namespace
-{
-
-ResizeSupportQuery CalculateResizeSupportQuery(const Operation &operation)
-{
-    auto ifmConn = operation.Input(TensorUsage::IFM);
-    auto ofmConn = operation.Output(TensorUsage::OFM);
-    assert(ifmConn);
-    assert(ofmConn);
-
-    // Get numerators(n) and denominators(d) for the scale fractions
-    int width_n = ofmConn->shape.Width();
-    int width_d = ifmConn->shape.Width();
-    int height_n = ofmConn->shape.Height();
-    int height_d = ifmConn->shape.Height();
-    int heightOffset = 0;
-    int widthOffset = 0;
-
-    const tflite::Operator *tflite_operator = static_cast<const tflite::Operator *>(operation.Passthrough());
-    assert(tflite_operator);
-    bool halfPixelCenters = false;
-    bool alignCorners = false;
-    if ( operation.Type() == OpType::ResizeBilinear )
-    {
-        const auto *opt = tflite_operator->builtin_options_as_ResizeBilinearOptions();
-        assert(opt);
-        alignCorners = opt->align_corners();
-        halfPixelCenters = opt->half_pixel_centers();
-    }
-    else
-    {
-        const auto *opt = tflite_operator->builtin_options_as_ResizeNearestNeighborOptions();
-        assert(opt);
-        alignCorners = opt->align_corners();
-        // Use half-pixel-centers if align-corners is false.
-        // This aligns with reference kernels
-        halfPixelCenters = !alignCorners || opt->half_pixel_centers();
-    }
-
-    // Compute scaling fractions
-    // align-corners use a scale-factor of (n-1)/(d-1)
-    if ( alignCorners )
-    {
-        if ( width_d > 1 )
-        {
-            width_n -= 1;
-            width_d -= 1;
-        }
-        if ( height_d > 1 )
-        {
-            height_n -= 1;
-            height_d -= 1;
-        }
-    }
-
-    // reduce scaling fractions with gcd
-    int gcd_w = std::gcd(width_n, width_d);
-    width_n = (width_n / gcd_w);
-    width_d = (width_d / gcd_w);
-
-    int gcd_h = std::gcd(height_n, height_d);
-    height_n = (height_n / gcd_h);
-    height_d = (height_d / gcd_h);
-
-    if ( halfPixelCenters )
-    {
-        // make sure fractions are evenly divisible by 2
-        width_n = width_n * 2;
-        width_d = width_d * 2;
-        height_n = height_n * 2;
-        height_d = height_d * 2;
-        // adjust offset for half-pixel-centers
-        widthOffset = (width_d / 2) - (width_n / 2);
-        heightOffset = (height_d / 2) - (height_n / 2);
-    }
-
-    // set up op-support query
-    ResizeSupportQuery resizeQuery;
-    resizeQuery.scaleX = {int16_t(width_n), int16_t(width_d)};
-    resizeQuery.scaleY = {int16_t(height_n), int16_t(height_d)};
-    resizeQuery.offsetX = widthOffset;
-    resizeQuery.offsetY = heightOffset;
-    resizeQuery.ifmShape = ifmConn->shape;
-    resizeQuery.mode = (operation.Type() == OpType::ResizeBilinear) ? ArchResizeMode::Bilinear : ArchResizeMode::Nearest;
-    return resizeQuery;
-}
-
-}  // namespace
-
-ExecutionQuery TfLiteReader::OperationToExecQuery(const Operation &operation)
-{
-    ExecutionQuery query{};
-    query.opType = operation.Type();
-    query.ifmType = operation.IFM(0)->Type();
-    query.ofmType = operation.OFM()->Type();
-    query.ifmShape = operation.Input(TensorUsage::IFM0)->shape;
-    if ( operation.Input(TensorUsage::IFM1) )
-    {
-        query.ifm2Type = operation.Input(TensorUsage::IFM1)->tensor->Type();
-        query.ifm2Shape = operation.Input(TensorUsage::IFM1)->shape;
-    }
-    query.ofmShape = operation.Output(TensorUsage::OFM)->shape;
-
-    switch ( query.opType )
-    {
-        case OpType::LeakyRelu:
-        {
-            auto *ifmConn = operation.Input(TensorUsage::IFM0);
-            auto *ofmConn = operation.Output(TensorUsage::OFM);
-            query.quantScalingInvalidOrUnequal = !IsScalingValidAndEqual(*ifmConn, *ofmConn);
-            break;
-        }
-        case OpType::Transpose:
-        {
-            query.ifmShape = operation.Input(TensorUsage::IFM0)->shape;
-            query.targetType = OpType::MemoryCopy;
-            query.transposeType = CalculateTransposeType(operation);
-            break;
-        }
-        case OpType::ReverseV2:
-        {
-            query.targetType = OpType::MemoryCopy;
-            auto paramsConn = operation.Input(TensorUsage::Params);
-            assert(paramsConn);
-            assert(paramsConn->tensor->Type() == DataType::Int32);
-            if ( !paramsConn->tensor->IsConstant() )
-            {
-                query.reverseTypeMask = ReverseType::Dynamic;
-            }
-            else
-            {
-                // non-dynamic reverseType, we convert it to bitmask
-                auto view = paramsConn->tensor->View();
-                Shape axes = Shape(view.Buffer()->Data<int32_t>(), view.ViewShape().Elements());
-                query.reverseTypeMask = ToReverseMask(axes, query.ofmShape.Size());
-            }
-            break;
-        }
-        case OpType::ResizeBilinear:
-        case OpType::ResizeNearestNeighbor:
-            query.opType = OpType::Resize;
-            query.resizeQuery = CalculateResizeSupportQuery(operation);
-            break;
-        default:
-            break;
-    }
-    return query;
 }
 
 }  // namespace regor

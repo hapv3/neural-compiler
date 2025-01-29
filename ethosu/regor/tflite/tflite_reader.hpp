@@ -39,20 +39,19 @@ public:
     TfLiteReader() {}
 
     static void LoadGraphs(const void *input, size_t size, std::vector<std::unique_ptr<Graph>> &graphs,
-        OptimiserDatabase *optDb, IArchitectureConstraints *constraints);  // From buffer
+        OptimiserDatabase *optDb);  // From buffer
 
 private:
     static void LoadGraphs(const uint8_t *input, const tflite::Model *model, std::vector<std::unique_ptr<Graph>> &graphs,
-        OptimiserDatabase *optDb, IArchitectureConstraints *constraints);  // From model
+        OptimiserDatabase *optDb);  // From model
     static const tflite::Model *LoadModel(const void *input, size_t size);
     static std::shared_ptr<Tensor> ParseTensor(const tflite::Tensor *tflite_tensor, std::shared_ptr<Buffer> &buffer,
         std::unordered_map<UniqueId, Quantization> &tensorQuantization);
-    static void ParseOperatorOptions(const std::shared_ptr<Operation> &operation,
-        const tflite::Operator *tflite_operator, OptimiserDatabase *optDb, IArchitectureConstraints *constraints);
+    static void ParseOperatorOptions(
+        const std::shared_ptr<Operation> &operation, const tflite::Operator *tflite_operator, OptimiserDatabase *optDb);
     static void SetOFMRounding(const std::shared_ptr<Operation> &operation);
     static void UnFuseActivation(const std::shared_ptr<Operation> &operation, tflite::ActivationFunctionType type, OptimiserDatabase *optDb);
     static void DefaultOperatorOptions(const std::shared_ptr<Operation> &operation);
-    static ExecutionQuery OperationToExecQuery(const Operation &operation);
 };
 
 }  // namespace regor

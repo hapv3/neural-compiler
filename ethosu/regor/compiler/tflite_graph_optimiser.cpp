@@ -939,10 +939,7 @@ Operation *TFLiteGraphOptimiser::ConvertGather(Graph *const graph, Operation *co
 
     OpType opType = operation->Type();
 
-    ExecutionQuery query{};
-    query.opType = OpType::Gather;
-
-    if ( opType == OpType::GatherV2 && _constraints->CanExecute(query) )
+    if ( opType == OpType::GatherV2 )
     {
         auto *paramsConn = operation->Input(TensorUsage::IFM0);
         auto *idxConn = operation->Input(TensorUsage::IFM1);
@@ -1057,10 +1054,7 @@ Operation *TFLiteGraphOptimiser::ConvertScatter(Graph *const graph, Operation *c
 
     OpType opType = operation->Type();
 
-    ExecutionQuery query{};
-    query.opType = OpType::Scatter;
-
-    if ( opType == OpType::ScatterNd && _constraints->CanExecute(query) )
+    if ( opType == OpType::ScatterNd )
     {
         auto *idxConn = operation->Input(TensorUsage::IFM0);
         auto *updatesConn = operation->Input(TensorUsage::IFM1);
@@ -1156,6 +1150,11 @@ Operation *TFLiteGraphOptimiser::ConvertResize(Graph *const graph, Operation *co
     Operation *returnOp = operation;
     OpType opType = operation->Type();
 
+    if ( _constraints->OperatorQuery(OpType::Resize).Any(QueryResult::Unsupported) )
+    {
+        // Only run if HW has native Resize support
+        return returnOp;
+    }
     if ( opType == OpType::ResizeBilinear || opType == OpType::ResizeNearestNeighbor )
     {
         auto ifmConn = operation->Input(TensorUsage::IFM);
@@ -1230,65 +1229,41 @@ Operation *TFLiteGraphOptimiser::ConvertResize(Graph *const graph, Operation *co
             heightOffset = (height_d / 2) - (height_n / 2);
         }
 
-        // set up op-support query
-        ResizeSupportQuery resizeQuery;
-        resizeQuery.scaleX = {int16_t(width_n), int16_t(width_d)};
-        resizeQuery.scaleY = {int16_t(height_n), int16_t(height_d)};
-        resizeQuery.offsetX = widthOffset;
-        resizeQuery.offsetY = heightOffset;
-        resizeQuery.ifmShape = ifmConn->shape;
+        // Replace ResizeBilinear or ResizeNearestNeighbor with a Resize op
+        auto resizeOp = std::make_shared<Operation>(OpType::Resize);
+        resizeOp->CopyInput(TensorUsage::IFM, *ifmConn);
+        resizeOp->CopyOutput(TensorUsage::OFM, *ofmConn);
+        resizeOp->Output(TensorUsage::OFM)->Set(RoundMode::SYMMETRIC);
 
-        if ( opType == OpType::ResizeBilinear )
+        // write operator attributes
+        auto *attr = resizeOp->Attribute<resize_attr_t>();
+        attr->scaleX = {width_n, width_d};
+        attr->scaleY = {height_n, height_d};
+        attr->offset = {widthOffset, heightOffset};
+        attr->border = {0, 0};
+        attr->mode = (opType == OpType::ResizeBilinear) ? tosa::ResizeMode::BILINEAR : tosa::ResizeMode::NEAREST;
+
+        int shift = 0;
+        if ( opType == OpType::ResizeBilinear && (ifmConn->shape.Width() > 1 || ifmConn->shape.Height() > 1) )
         {
-            resizeQuery.mode = ArchResizeMode::Bilinear;
+            // ResizeBilinear is post-scaled with
+            // 1 / (height_n * width_n)
+            // as the scale-factor is a power of two, we can use shift
+            shift = IntLog2(width_n * height_n);
         }
-        else
-        {
-            resizeQuery.mode = ArchResizeMode::Nearest;
-        }
 
-        ExecutionQuery query{};
-        query.opType = opType;
-        query.resizeQuery = resizeQuery;
+        // Set explicit scaling
+        Quantization ofmQuant = ofmConn->quantization;
+        ofmQuant.scales.clear();
+        ofmQuant.zeroPoints.clear();
+        ofmQuant.scales.emplace_back(QuantizedScale(1, shift));
+        ofmQuant.zeroPoints.emplace_back(0);
+        ofmQuant.type = QuantizationType::EXPLICIT;
+        resizeOp->Output(TensorUsage::OFM)->Set(ofmQuant);
 
-        if ( _constraints->CanExecute(query) )
-        {
-            // Replace ResizeBilinear or ResizeNearestNeighbor with a Resize op
-            auto resizeOp = std::make_shared<Operation>(OpType::Resize);
-            resizeOp->CopyInput(TensorUsage::IFM, *ifmConn);
-            resizeOp->CopyOutput(TensorUsage::OFM, *ofmConn);
-            resizeOp->Output(TensorUsage::OFM)->Set(RoundMode::SYMMETRIC);
-
-            // write operator attributes
-            auto *attr = resizeOp->Attribute<resize_attr_t>();
-            attr->scaleX = {width_n, width_d};
-            attr->scaleY = {height_n, height_d};
-            attr->offset = {widthOffset, heightOffset};
-            attr->border = {0, 0};
-            attr->mode = (opType == OpType::ResizeBilinear) ? tosa::ResizeMode::BILINEAR : tosa::ResizeMode::NEAREST;
-
-            int shift = 0;
-            if ( opType == OpType::ResizeBilinear && (ifmConn->shape.Width() > 1 || ifmConn->shape.Height() > 1) )
-            {
-                // ResizeBilinear is post-scaled with
-                // 1 / (height_n * width_n)
-                // as the scale-factor is a power of two, we can use shift
-                shift = IntLog2(width_n * height_n);
-            }
-
-            // Set explicit scaling
-            Quantization ofmQuant = ofmConn->quantization;
-            ofmQuant.scales.clear();
-            ofmQuant.zeroPoints.clear();
-            ofmQuant.scales.emplace_back(QuantizedScale(1, shift));
-            ofmQuant.zeroPoints.emplace_back(0);
-            ofmQuant.type = QuantizationType::EXPLICIT;
-            resizeOp->Output(TensorUsage::OFM)->Set(ofmQuant);
-
-            RecordOptimisation(operation, resizeOp.get());
-            returnOp = resizeOp.get();
-            operation->Disconnect();
-        }
+        RecordOptimisation(operation, resizeOp.get());
+        returnOp = resizeOp.get();
+        operation->Disconnect();
     }
     return returnOp;
 }
@@ -1407,9 +1382,7 @@ Operation *TFLiteGraphOptimiser::CreateTransposeForMatMul(const std::shared_ptr<
 Operation *TFLiteGraphOptimiser::RewriteBatchMatMul(Graph *const, Operation *const operation)
 {
     Operation *returnOp = operation;
-    ExecutionQuery query{};
-    query.opType = OpType::MatMul;
-    if ( operation->Type() == OpType::BatchMatMul && _constraints->CanExecute(query) )
+    if ( operation->Type() == OpType::BatchMatMul )
     {
         const auto ifm = operation->Input(TensorUsage::IFM0);
         const auto ifm2 = operation->Input(TensorUsage::IFM1);
@@ -1480,9 +1453,7 @@ Operation *TFLiteGraphOptimiser::RewriteFullyConnectDynamic(Graph *const, Operat
 {
     Operation *returnOp = operation;
     auto ifm2 = operation->Input(TensorUsage::Weights);
-    ExecutionQuery query{};
-    query.opType = OpType::MatMul;
-    if ( operation->Type() == OpType::FullyConnected && !ifm2->tensor->IsConstant() && _constraints->CanExecute(query) )
+    if ( operation->Type() == OpType::FullyConnected && !ifm2->tensor->IsConstant() )
     {
         const auto ifm = operation->Input(TensorUsage::IFM0);
         const auto ofm = operation->Output(TensorUsage::OFM);
@@ -2350,7 +2321,8 @@ Operation *TFLiteGraphOptimiser::ConvertLeakyRelu(Graph *const graph, Operation 
             returnOp = Convert8bitLeakyReluToLUT(graph, operation, alpha);
             RecordOptimisation(operation, returnOp);
         }
-        else if ( alpha < 0 || isConvertedPrelu || !_constraints->SupportsLeakyRelu(!IsScalingValidAndEqual(*ifmConn, *ofmConn), ifm->Type()) )
+        else if ( alpha < 0 || isConvertedPrelu ||
+                  !_constraints->SupportsElementwiseLeakyRelu(!IsScalingValidAndEqual(*ifmConn, *ofmConn), ifm->Type()) )
         {
             // Use 16-bit lowering to Mul + Max or Min + Mul + Relu + Add
             returnOp = ConvertLeakyRelu16bit(*ifmConn, *ofmConn, operation);
@@ -2808,6 +2780,41 @@ SliceConstTensor(const TensorConnection *conn, const Shape &sliceShape, const Sh
     }
 
     return std::make_shared<Tensor>(Name, conn->tensor->Type(), sliceShape, std::move(newBuffer));
+}
+
+Operation *TFLiteGraphOptimiser::ClampActivations(Graph *const graph, Operation *const operation)
+{
+    OpType opType = operation->Type();
+    auto Quantize = [](float value, const Quantization &quant)
+    {
+        float scale = quant.scales.empty() ? 1.0f : float(quant.scales[0].Dequantize());
+        int64_t zp = quant.zeroPoints.empty() ? 0 : quant.zeroPoints[0];
+        return zp + int64_t(std::round(double(value / scale)));
+    };
+    if ( !IsActivation(opType) )
+    {
+        return operation;
+    }
+    Quantization &quant = operation->Output(TensorUsage::OFM)->quantization;
+    if ( quant.quantMin.size() || quant.quantMax.size() )
+    {
+        return operation;
+    }
+    if ( opType == OpType::Relu )
+    {
+        quant.quantMin = {Quantize(0, quant)};
+    }
+    else if ( opType == OpType::Relu6 )
+    {
+        quant.quantMin = {Quantize(0, quant)};
+        quant.quantMax = {Quantize(6, quant)};
+    }
+    else if ( opType == OpType::ReluN1To1 )
+    {
+        quant.quantMin = {Quantize(-1, quant)};
+        quant.quantMax = {Quantize(1, quant)};
+    }
+    return operation;
 }
 
 // Converts a convolution group with N groups into N * Conv2D ops each operating on a 1/N part of

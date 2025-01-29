@@ -95,6 +95,7 @@ private:
     Operation *ConvertTanhSigmoidToLUT16(Operation *const op);
 
     // Rewrite functions
+    Operation *ClampActivations(Graph *const graph, Operation *const operation);
     Operation *ConvertConvolutionGroup(Graph *const graph, Operation *const operation);
     Operation *ConvertExpToLUT(Graph *const graph, Operation *const operation);
     Operation *RewritePack(Graph *const graph, Operation *const operation);
@@ -196,6 +197,7 @@ public:
         {
             {},
             {
+                &TFLiteGraphOptimiser::ClampActivations,
                 &TFLiteGraphOptimiser::ConvertConvolutionGroup,
             }
         },
