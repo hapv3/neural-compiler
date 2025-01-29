@@ -215,6 +215,7 @@ include(regor_dependencies)
 find_package(Threads REQUIRED)
 
 if (REGOR_PYTHON_BINDINGS_DESTINATION AND NOT TARGET pybind11::module)
+    set(PYBIND11_FINDPYTHON ON)
     regor_add_dependency(dependencies/thirdparty/pybind11)
 endif()
 
