@@ -65,21 +65,22 @@ struct HLCPadding
 /// </summary>
 struct HLCFeatureMap
 {
+    TensorUsage usage = TensorUsage::None;
+    DataType dataType = DataType::None;
     TensorFormat format = TensorFormat::Unknown;
-    MemArea memArea;
-    Shape shape;
-    TensorSlice slice;
-    Shape strides;
-    Point2i stepXY = {1, 1};
-    DataType dataType;
-    Address address = -1;
-    BufferView bufferView;
-    Quantization quantization;
-    ArchResampling resamplingMode = ArchResampling::None;
     TransposeType transpose = TransposeType::None;
     ReverseType reverse = ReverseType::None;
-    HLCRoundMode rounding;
+    TensorSlice slice;
+    Shape shape;
+    Shape strides;
+    MemArea memArea;
+    BufferView bufferView;
+    Quantization quantization;
+    Point2i stepXY = {1, 1};
+    Address address = -1;
     UniqueId uid = ~0u;
+    HLCRoundMode rounding = HLCRoundMode::AUTO;
+    ArchResampling resamplingMode = ArchResampling::None;
 
     int AllocationSizeBytes() const { return TensorAllocationBytes(shape, format, dataType); }
 

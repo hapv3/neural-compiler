@@ -63,8 +63,6 @@ enum class TensorUsage : uint32_t
 
 DECLARE_ENUM_AS_FLAGS(TensorUsage)
 
-constexpr int MAX_NUM_IFM = 3;
-
 constexpr inline bool IsOFM(TensorUsage usage)
 {
     return (usage & TensorUsage::TypeMask) == TensorUsage::OFM;

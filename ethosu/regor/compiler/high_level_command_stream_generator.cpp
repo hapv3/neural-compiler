@@ -233,7 +233,7 @@ static Shape GetStrides(const HLCFeatureMap &fm)
     }
 }
 
-static void MakeFeatureMap(const SchedulerConnection *schedConn, HLCFeatureMap &fm)
+static void MakeFeatureMap(TensorUsage usage, const SchedulerConnection *schedConn, HLCFeatureMap &fm)
 {
     auto schedTens = schedConn->tensor.get();
     fm.shape = schedConn->shape;
@@ -241,6 +241,7 @@ static void MakeFeatureMap(const SchedulerConnection *schedConn, HLCFeatureMap &
     fm.dataType = schedTens->dataType;
     fm.memArea = schedTens->memArea;
     fm.format = schedTens->format;
+    fm.usage = usage;
     fm.address = schedTens->AllocatedAddress();
     fm.quantization = schedConn->quantization;
     fm.bufferView = schedTens->bufferView;
@@ -281,16 +282,16 @@ static HLCSubOperation MakeSubOperation(const std::unique_ptr<SchedulerOperation
     hlcSubOp.type = schedOp->Type();
     auto lutConn = schedOp->TryInput(TensorUsage::LUT);
 
-    for ( int i = 0; i < MAX_NUM_IFM; ++i )
+    for ( const auto &input : schedOp->inputs.pairs() )
     {
-        auto ifm = schedOp->TryIFM(i);
-        if ( ifm != nullptr )
+        if ( IsIFM(input.first) )
         {
+            assert(((input.first == TensorUsage::IFM0) && hlcSubOp.ifm.empty()) || !hlcSubOp.ifm.empty());
             hlcSubOp.ifm.emplace_back();
-            MakeFeatureMap(ifm, hlcSubOp.ifm.back());
+            MakeFeatureMap(input.first, &input.second, hlcSubOp.ifm.back());
         }
     }
-    MakeFeatureMap(schedOp->OFM(), hlcSubOp.ofm);
+    MakeFeatureMap(TensorUsage::OFM, schedOp->OFM(), hlcSubOp.ofm);
     hlcSubOp._srcId = schedOp->Uid();
 
     if ( schedOp->Type() == OpType::LeakyRelu )
@@ -319,17 +320,16 @@ static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, 
     op->config = opInfo->Config();
     op->_srcId = schedOp->Uid();
 
-    for ( int i = 0; i < MAX_NUM_IFM; ++i )
+    for ( const auto &input : schedOp->inputs.pairs() )
     {
-        auto ifm = schedOp->TryIFM(i);
-        if ( ifm != nullptr )
+        if ( IsIFM(input.first) )
         {
-            HLCFeatureMap fm;
-            MakeFeatureMap(ifm, fm);
-            op->ifm.push_back(fm);
+            assert(((input.first == TensorUsage::IFM0) && op->ifm.empty()) || !op->ifm.empty());  // map not in order
+            op->ifm.emplace_back();
+            MakeFeatureMap(input.first, &input.second, op->ifm.back());
         }
     }
-    MakeFeatureMap(schedOp->OFM(), op->ofm);
+    MakeFeatureMap(TensorUsage::OFM, schedOp->OFM(), op->ofm);
 #ifndef NDEBUG
     op->name = schedOp->OFM()->tensor->Name();
 #endif
@@ -633,7 +633,6 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
     }
     assert(ofmStart.Size() >= 4);
     assert(ofmEnd.Size() >= 4);
-    assert(hlcOp->ifm.size() <= 2);
 
     // Binary elementwise using broadcast to repeat smaller IFMs over larger IFM volumes need their
     // coordinates to wrap at the limits of the smaller IFM volume.
@@ -660,9 +659,10 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
                 hlcStripe->padding = padding;
                 hlcStripe->ofmArea = outputArea;
                 hlcStripe->opGroup = opGroup;
-                for ( unsigned ifmIndex = 0; ifmIndex < hlcOp->ifm.size(); ++ifmIndex )
+                for ( const auto &fm : hlcOp->ifm )
                 {
-                    auto ifmConn = op->IFM(ifmIndex);
+                    if ( !IsIFM(fm.usage) ) continue;
+                    auto ifmConn = op->Input(fm.usage);
                     // Calculate input area based on the output area
                     auto inputArea = TransformWithStridesAndSkirt(outputArea, &strides, ifmConn->stepXY, &skirt, ifmConn->shape,
                         opType, ofmConn->slice.offset, ifmConn->slice.offset, ifmConn->slice.shape, dilatedKernelHeight,
@@ -880,14 +880,14 @@ void HLCStreamGenerator::PrintCommandStream(const NPUOperation *npuOp, std::vect
         auto op = schedOp.get();
         const auto hlcOp = hlcOps[opIndex].get();
         LOG_PRINT("{} {}\n", opIndex, hlcOp->ToString());
-        LOG_PRINT("  IFM: {}, {}\n", op->IFM(0)->tensor->Name(), hlcOp->ifm[0].ToString());
+        LOG_PRINT("  IFM: {}, {}\n", op->Input(hlcOp->ifm[0].usage)->tensor->Name(), hlcOp->ifm[0].ToString());
         if ( hlcOp->ifm.size() > 1 )
         {
-            LOG_PRINT("  IFM2: {}, {}\n", op->IFM(1)->tensor->Name(), hlcOp->ifm[1].ToString());
+            LOG_PRINT("  IFM2: {}, {}\n", op->Input(hlcOp->ifm[1].usage)->tensor->Name(), hlcOp->ifm[1].ToString());
         }
         if ( hlcOp->ifm.size() > 2 )
         {
-            LOG_PRINT("  IFM3: {}, {}\n", op->IFM(2)->tensor->Name(), hlcOp->ifm[2].ToString());
+            LOG_PRINT("  IFM3: {}, {}\n", op->Input(hlcOp->ifm[2].usage)->tensor->Name(), hlcOp->ifm[2].ToString());
         }
         LOG_PRINT("  OFM: {}, {}\n", op->OFM()->tensor->Name(), hlcOp->ofm.ToString());
         if ( hlcOp->weights != nullptr )
