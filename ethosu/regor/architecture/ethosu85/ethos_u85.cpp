@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -853,6 +853,11 @@ Shape ArchEthosU85::FindDepthwiseConfig(const ArchitectureConfigQuery &query, co
                 else if ( forceReduce != 7 )
                 {
                     forceReduce = (forceReduce << 1) | 1;
+                }
+                else if ( depth > common.granule.Depth() )
+                {
+                    // Last resort, reducing depth
+                    depth = std::max(depth / 2, common.granule.Depth());
                 }
                 else
                 {
