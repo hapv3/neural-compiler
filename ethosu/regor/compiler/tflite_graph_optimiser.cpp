@@ -2797,9 +2797,13 @@ Operation *TFLiteGraphOptimiser::ConvertZeroPoint(Graph *const graph, Operation 
 {
     UNUSED(graph);
     auto opType = operation->Type();
+    if ( opType == OpType::Passthrough )
+    {
+        return operation;
+    }
+
     bool zeroPoint0ForType =
         opType == OpType::AvgPool || opType == OpType::Resize || opType == OpType::CLZ || opType == OpType::SHL || opType == OpType::Div;
-
     for ( auto [usage, ifmConn] : operation->Inputs().pairs() )
     {
         if ( IsIFM(usage) )
