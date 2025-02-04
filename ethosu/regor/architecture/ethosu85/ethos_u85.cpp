@@ -706,7 +706,7 @@ Shape ArchEthosU85::AreaFit(const FindConfigCommon &common, const Shape &ofmShap
         int ifmVolume = Shape::RoundAway(ifmShape, ifmAllocUnit).Elements();
         bool fitted = false;
         int prevAccReq = -1;
-        int retry = 8;
+        int retry = 25;
         while ( true )
         {
             FitAreaByAspect(aspect, width, height, fitAcc / depth, granule);
@@ -754,11 +754,14 @@ Shape ArchEthosU85::AreaFit(const FindConfigCommon &common, const Shape &ofmShap
                 break;
             }
 
-            // Stop searching if no subdivision progress was made for this depth
-            // after a few iterations.
+            // If no subdivision progress was made for this depth
+            // after a few iterations, force the scaling ratio to change
             if ( accRequired == prevAccReq )
             {
-                if ( --retry == 0 ) break;
+                if ( --retry <= 0 )
+                {
+                    ibRatio = 0.9;
+                }
             }
             prevAccReq = accRequired;
 
