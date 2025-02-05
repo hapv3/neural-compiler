@@ -377,6 +377,7 @@ Please check the supported operator list for your chosen runtime for further inf
 | MAX_POOL_2D | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-max_pool_2d-constraints) |
 | MEAN | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-mean-constraints) |
 | MINIMUM | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-minimum-constraints) |
+| MIRROR_PAD | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-mirror_pad-constraints) |
 | MUL | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-mul-constraints) |
 | PACK | [Generic](#tflite-generic-constraints) |
 | PAD | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-pad-constraints) |
@@ -391,6 +392,8 @@ Please check the supported operator list for your chosen runtime for further inf
 [Specific](#ethos-u85-tflite-resize_nearest_neighbor-constraints) |
 | RSQRT | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-rsqrt-constraints) |
 | SCATTER | [Generic](#tflite-generic-constraints) | [Specific](#ethos-u85-tflite-scatter-constraints) |
+| SELECT | [Generic](#tflite-generic-constraints) |
+| SELECT_V2 | [Generic](#tflite-generic-constraints) |
 | SHAPE | [Generic](#tflite-generic-constraints) |
 | SLICE | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-slice-constraints) |
 | SOFTMAX | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-softmax-constraints) |
