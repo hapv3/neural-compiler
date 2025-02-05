@@ -564,6 +564,14 @@ uint32_t EthosU85RCSGenerator::ToRegion(const MemArea &memArea)
     {
         region = BasePointerIndex::ScratchTensor;
     }
+    else if ( memArea == _arch->InputFeatureMapMemory() )
+    {
+        region = BasePointerIndex::InputTensor;
+    }
+    else if ( memArea == _arch->OutputFeatureMapMemory() )
+    {
+        region = BasePointerIndex::OutputTensor;
+    }
     else if ( memArea == _arch->StagingMemory() )
     {
         region = BasePointerIndex::ScratchFastTensor;

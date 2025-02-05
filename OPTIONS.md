@@ -338,6 +338,34 @@ solution.
 vela network.tflite --hillclimb-max-iterations 1000
 ```
 
+### COP format
+
+Set the COP (custom operator payload) format version to use. This is metadata
+that is prepended to the command stream. It contains information that describes
+the target a command stream has been compiled for. The option
+`--separate-io-region` requires `--cop-format COP2`.  
+**Type: String**  
+**Default: COP1**  
+**Choices: [COP1, COP2]**
+
+```bash
+vela network.tflite --cop-format COP2
+```
+
+### Separate IO regions
+
+Control where to allocate the Ethos-U Custom operator inputs and outputs.
+Default behaviour is to allocate inputs and outputs in the scratch region. This
+flag changes that so that inputs are allocated linearly in the input region and
+outputs are allocated linearly in the output region. Each Ethos-U Custom
+operator has a local address space for inputs and outputs, which means that the
+first input and output to a Ethos-U Custom operator will always be allocated at
+offset 0.
+
+```bash
+vela network.tflite --separate-io-regions --cop-format COP2
+```
+
 ## Verbose Print Options
 
 All of the options below are disabled by default and enabling them will add

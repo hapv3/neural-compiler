@@ -47,6 +47,11 @@ enum class OutputFormat : uint16_t
     Raw,
 };
 
+enum class COPFormat : uint16_t
+{
+    COP1,
+    COP2,
+};
 
 /// <summary>
 /// Compilation options
@@ -58,6 +63,7 @@ struct CompilerOptions
     bool debugDatabase = false;
     bool perfReport = true;
     OutputFormat outputFormat = OutputFormat::TFLite;
+    COPFormat copFormat = COPFormat::COP1;
 };
 
 /// <summary>

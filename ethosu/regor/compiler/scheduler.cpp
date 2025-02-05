@@ -194,7 +194,7 @@ static bool CheckLinearFormatForConcatSplit(SchedulerTensor *tensor)
 }
 
 
-static int UpdateSchedulerTensor(Architecture *arch, TensorUsage usage, SchedulerConnection *conn)
+int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *conn)
 {
     auto tensor = conn->tensor.get();
 
@@ -211,7 +211,7 @@ static int UpdateSchedulerTensor(Architecture *arch, TensorUsage usage, Schedule
         tensor->needsLinearFormat = true;
     }
     // Force linear format for any reversal using negative striding
-    if ( arch->Constraints()->SupportsNegativeStrides() && conn->reverse != ReverseType::None )
+    if ( _arch->Constraints()->SupportsNegativeStrides() && conn->reverse != ReverseType::None )
     {
         tensor->needsLinearFormat = true;
     }
@@ -233,7 +233,7 @@ static int UpdateSchedulerTensor(Architecture *arch, TensorUsage usage, Schedule
             ArchRequirements req;
             ArchOperatorQuery query;
             query.transposeMask = producer->OFM()->transpose;
-            if ( arch->Constraints()->OperatorQuery(OpType::Transpose, &query, &req).Any(QueryResult::Native) )
+            if ( _arch->Constraints()->OperatorQuery(OpType::Transpose, &query, &req).Any(QueryResult::Native) )
             {
                 if ( req.ofmFormat == TensorFormat::NHWC )
                 {
@@ -242,7 +242,11 @@ static int UpdateSchedulerTensor(Architecture *arch, TensorUsage usage, Schedule
             }
         }
 
-        if ( !producer->IsNpuOp() )
+        if ( producer->IsNpuOp() )
+        {
+            tensor->hasNPUWriters = true;
+        }
+        else
         {
             tensor->hasCPUWriters = true;
         }
@@ -250,35 +254,27 @@ static int UpdateSchedulerTensor(Architecture *arch, TensorUsage usage, Schedule
 
     for ( auto consumer : tensor->consumers )
     {
-        if ( !consumer->IsNpuOp() )
-        {
-            tensor->hasCPUReaders = true;
-        }
-        if ( tensor->needsLinearFormat ) continue;
         // TODO: Gather doesn't support brick format yet (MLBEDSW-8410)
         if ( consumer->Type() == OpType::Scatter || consumer->Type() == OpType::Gather )
         {
             tensor->needsLinearFormat = true;
-            continue;
         }
         // TODO: Tile doesn't support brick format yet (MLBEDSW-9485)
         else if ( consumer->Type() == OpType::Tile )
         {
             tensor->needsLinearFormat = true;
-            continue;
         }
         // Int32 ReduceSum requires linear format
         else if ( consumer->Type() == OpType::ReduceSum && tensor->dataType == DataType::Int32 )
         {
             tensor->needsLinearFormat = true;
-            continue;
         }
         else if ( consumer->Type() == OpType::Transpose )
         {
             ArchRequirements req;
             ArchOperatorQuery query;
             query.transposeMask = consumer->OFM()->transpose;
-            if ( arch->Constraints()->OperatorQuery(OpType::Transpose, &query, &req).Any(QueryResult::Native) )
+            if ( _arch->Constraints()->OperatorQuery(OpType::Transpose, &query, &req).Any(QueryResult::Native) )
             {
                 if ( req.ofmFormat == TensorFormat::NHWC )
                 {
@@ -302,12 +298,30 @@ static int UpdateSchedulerTensor(Architecture *arch, TensorUsage usage, Schedule
         {
             tensor->needsLinearFormat = true;
         }
+
+        if ( consumer->IsNpuOp() )
+        {
+            tensor->hasNPUReaders = true;
+        }
+        else
+        {
+            tensor->hasCPUReaders = true;
+        }
     }
 
     // Initial criteria (may change)
     bool cpuTensor = tensor->hasCPUWriters || tensor->hasCPUReaders || tensor->isGraphInput || tensor->isGraphOutput;
     conn->requireFullTensor = conn->requireFullTensor || cpuTensor;
     tensor->needsLinearFormat = tensor->needsLinearFormat || cpuTensor || CheckLinearFormatForConcatSplit(tensor);
+
+    if ( _options.separateIORegions && !tensor->IsConstant() && cpuTensor && tensor->hasNPUReaders )
+    {
+        tensor->memArea = _arch->InputFeatureMapMemory();
+    }
+    else if ( _options.separateIORegions && !tensor->IsConstant() && cpuTensor && tensor->hasNPUWriters )
+    {
+        tensor->memArea = _arch->OutputFeatureMapMemory();
+    }
 
     // Set tensor format to NHCWB16 for output FeatureMaps, if possible
     if ( IsOFM(usage) )
@@ -330,25 +344,25 @@ Address Scheduler::CreateSchedulerRepresentation()
         for ( auto pos : schedOp->outputs.pairs() )
         {
             assert(!pos.second.tensor->producers.empty());
-            opMemoryRequired += UpdateSchedulerTensor(_arch, pos.first, &pos.second);
+            opMemoryRequired += UpdateSchedulerTensor(pos.first, &pos.second);
         }
 
         for ( auto pos : schedOp->inputs.pairs() )
         {
             assert(!pos.second.tensor->consumers.empty());
-            opMemoryRequired += UpdateSchedulerTensor(_arch, pos.first, &pos.second);
+            opMemoryRequired += UpdateSchedulerTensor(pos.first, &pos.second);
         }
 
         for ( auto const &subOp : schedOp->SubOps() )
         {
             for ( auto pos : subOp->outputs.pairs() )
             {
-                opMemoryRequired += UpdateSchedulerTensor(_arch, pos.first, &pos.second);
+                opMemoryRequired += UpdateSchedulerTensor(pos.first, &pos.second);
             }
 
             for ( auto pos : subOp->inputs.pairs() )
             {
-                opMemoryRequired += UpdateSchedulerTensor(_arch, pos.first, &pos.second);
+                opMemoryRequired += UpdateSchedulerTensor(pos.first, &pos.second);
             }
         }
         minMemoryRequired = std::max(minMemoryRequired, opMemoryRequired);
@@ -790,7 +804,13 @@ void Scheduler::MoveConstantData(Schedule *refSchedule)
 bool Scheduler::AllocateAddresses(Schedule *schedule)
 {
     const auto verbose = _options.verboseAllocation;
+    const auto separateIORegions = _options.separateIORegions;
     AllocateTensors(_ops, schedule, _arch->FeatureMapMemory(), TensorAllocator::HillClimb, AlignmentQuantum, verbose);
+    if ( separateIORegions )
+    {
+        AllocateTensors(_ops, schedule, _arch->InputFeatureMapMemory(), TensorAllocator::LinearAlloc, AlignmentQuantum, verbose);
+        AllocateTensors(_ops, schedule, _arch->OutputFeatureMapMemory(), TensorAllocator::LinearAlloc, AlignmentQuantum, verbose);
+    }
     if ( _spilling )
     {
         const auto limit = _options.optimizationStagingLimit;
@@ -1824,6 +1844,10 @@ void ParseSchedulerOptions(SchedulerOptions &opt, IniReader &reader)
             {
                 LOG_WARN("Unrecognised disable_feature not in [{}]\n", AllFlagsToString<SchedulerFeature>());
             }
+        }
+        else if ( key == "separate_io_regions" )
+        {
+            opt.separateIORegions = reader.Get<bool>();
         }
 
         reader.End();

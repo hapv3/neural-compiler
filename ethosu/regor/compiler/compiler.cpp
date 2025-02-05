@@ -42,6 +42,11 @@ BEGIN_ENUM_TABLE(regor::OutputFormat)
     ADD_ENUM_NAME(Raw)
 END_ENUM_TABLE()
 
+BEGIN_ENUM_TABLE(regor::COPFormat)
+    ADD_ENUM_NAME(COP1)
+    ADD_ENUM_NAME(COP2)
+END_ENUM_TABLE()
+
 namespace regor
 {
 
@@ -134,6 +139,12 @@ bool Compiler::ParseOptions(const char *text, size_t size)
                     Flags<OutputFormat> flags;
                     flags.Parse(reader.Get<std::string>());
                     _compilerOptions.outputFormat = flags;
+                }
+                else if ( key == "cop_format" )
+                {
+                    Flags<COPFormat> flags;
+                    flags.Parse(reader.Get<std::string>());
+                    _compilerOptions.copFormat = flags;
                 }
                 else
                 {
@@ -470,6 +481,23 @@ std::unique_ptr<Graph> Compiler::CompileGraph(std::unique_ptr<Graph> &graph,
         return nullptr;
     }
 
+    // At most 1 CustomNpuOp is supported when compiling with separate IO regions
+    if ( _schedulerOptions.separateIORegions )
+    {
+        std::vector<Operation *> ops;
+        newGraph->GetAllOperations(ops);
+        int customNpuOps = 0;
+        for ( auto op : ops )
+        {
+            if ( op->Type() == OpType::CustomNpuOp ) customNpuOps++;
+        }
+        if ( customNpuOps > 1 )
+        {
+            SetLastError("More than 1 CustomNpuOp is not supported with separate IO regions");
+            return nullptr;
+        }
+    }
+
     auto customOperatorBuilder = CustomOperatorBuilder(_architecture.get(), schedule.get());
     customOperatorBuilder.AllocateScratchTensors(tensorAddressMap);
 
@@ -501,7 +529,7 @@ std::unique_ptr<Graph> Compiler::CompileGraph(std::unique_ptr<Graph> &graph,
 
         try
         {
-            customOperatorBuilder.Serialise(graphOp, npuOp, registerCommandStream);
+            customOperatorBuilder.Serialise(graphOp, npuOp, _compilerOptions.copFormat, _schedulerOptions.separateIORegions, registerCommandStream);
         }
         catch ( const std::runtime_error &e )
         {

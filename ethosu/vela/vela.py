@@ -813,6 +813,8 @@ def get_compiler_config(
     disable_fwd: bool,
     disable_cascading: bool,
     disable_buffering: bool,
+    cop_format: str,
+    separate_io_regions: bool,
 ) -> str:
     """Build compiler config file."""
     config = "\n[compiler]\n"
@@ -826,6 +828,7 @@ def get_compiler_config(
         config += "output_format=Raw\n"
     else:
         config += "output_format=TFLite\n"
+    config += f"cop_format={cop_format}\n"
 
     config += "\n[scheduler]\n"
     config += f"optimize={optimize}\n"
@@ -844,6 +847,8 @@ def get_compiler_config(
     if disable_buffering:
         config += "WeightBuffering|"
     config = config.rstrip("|") + "\n"
+    if separate_io_regions:
+        config += "separate_io_regions=true\n"
 
     config += "\n[graph]\n"
     if verbose_graph:
@@ -1042,6 +1047,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         default=HillClimbAllocator.MAX_ITERATIONS,
         help="Set the maximum number of iterations the Hill Climb tensor allocator will run (default: %(default)s)",
     )
+    parser.add_argument(
+        "--cop-format",
+        choices=["COP1", "COP2"],
+        default="COP1",
+    )
+    parser.add_argument(
+        "--separate-io-regions",
+        action="store_true",
+        help="Use separate regions for input and output tensors (implies COP2 driver actions format)",
+    )
 
     # debug options
     parser.add_argument("--debug-force-regor", action="store_true", help="Debug: Force the use of the regor")
@@ -1063,6 +1078,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.network is None:
         parser.error("the following argument is required: NETWORK")
+
+    if args.cop_format == "COP1" and args.separate_io_regions:
+        parser.error("Driver actions format 'COP2' is required for --separate-io-regions")
 
     def _parse_config(config):
         # Make sure the correct separator is used depending on OS
@@ -1171,6 +1189,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             args.disable_fwd,
             args.disable_cascading,
             args.disable_buffering,
+            args.cop_format,
+            args.separate_io_regions,
         )
 
         process_regor(

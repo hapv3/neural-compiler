@@ -71,6 +71,8 @@ enum BasePointerIndex
     ScratchTensor = 1,      // base address index for the Scratch_tensor in the TensorArena
     ScratchFastTensor = 2,  // base address for the Scratch_fast_tensor
     Mem2Mem = 3,            // base address slot for memory to memory transfer
+    InputTensor = 3,        // base address index for the input tensors
+    OutputTensor = 4,       // base address index for the output tensors
 };
 
 enum class AccessDirection

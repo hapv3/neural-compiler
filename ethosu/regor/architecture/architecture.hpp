@@ -103,6 +103,8 @@ enum class MemUsage : uint16_t
     FeatureMap = 0x2,
     LUT = 0x4,
     Staging = 0x8,
+    Input = 0x10,
+    Output = 0x20,
 };
 
 struct MemArea
@@ -356,36 +358,12 @@ public:
     virtual bool SupportsScalar(OpType opType, DataType dataType, TensorUsage usage) = 0;
     virtual Flags<WeightFormat> SupportedWeightFormat(OpType op) = 0;
 
-    MemArea ReadonlyMemory()
-    {
-        assert(_readonlyMemory);
-        return MemArea(_readonlyMemory, MemUsage::ReadOnly);
-    }
-    MemArea FeatureMapMemory()
-    {
-        assert(_featuremapMemory);
-        Flags<MemUsage> usage = MemUsage::FeatureMap;
-        if ( _featuremapMemory == _stagingMemory )
-        {
-            usage |= MemUsage::Staging;
-        }
-        return MemArea(_featuremapMemory, usage);
-    }
-    MemArea LUTMemory()
-    {
-        assert(_lutMemory);
-        return MemArea(_lutMemory, MemUsage::LUT);
-    }
-    MemArea StagingMemory()
-    {
-        assert(_stagingMemory);
-        Flags<MemUsage> usage = MemUsage::Staging;
-        if ( _featuremapMemory == _stagingMemory )
-        {
-            usage |= MemUsage::FeatureMap;
-        }
-        return MemArea(_stagingMemory, usage);
-    }
+    MemArea ReadonlyMemory();
+    MemArea FeatureMapMemory();
+    MemArea LUTMemory();
+    MemArea StagingMemory();
+    MemArea InputFeatureMapMemory();
+    MemArea OutputFeatureMapMemory();
 
     IniParseResult ParseSection(const std::string &section, IniReader *reader);
     // Select named memories

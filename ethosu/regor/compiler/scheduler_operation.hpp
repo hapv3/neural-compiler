@@ -53,6 +53,8 @@ public:
     DataType dataType = DataType::None;
     bool hasCPUReaders = false;
     bool hasCPUWriters = false;
+    bool hasNPUReaders = false;
+    bool hasNPUWriters = false;
     bool isGraphInput = false;
     bool isGraphOutput = false;
     bool isPersistent = false;

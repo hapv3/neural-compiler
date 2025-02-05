@@ -61,6 +61,7 @@ add_catch_test(
         test_graphir_optimiser.cpp
         test_fast_storage_allocator.cpp
         test_tflite_fb.cpp
+        test_custom_operator_ethosu.cpp
     DEPS
         test_common
 )

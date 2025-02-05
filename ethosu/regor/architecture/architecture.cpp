@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -28,6 +28,8 @@ BEGIN_ENUM_TABLE(regor::MemUsage)
     ADD_ENUM_NAME(FeatureMap)
     ADD_ENUM_NAME(LUT)
     ADD_ENUM_NAME(Staging)
+    ADD_ENUM_NAME(Input)
+    ADD_ENUM_NAME(Output)
 END_ENUM_TABLE()
 
 BEGIN_ENUM_TABLE(regor::TensorFormat)
@@ -39,6 +41,54 @@ END_ENUM_TABLE()
 
 namespace regor
 {
+
+MemArea Architecture::ReadonlyMemory()
+{
+    assert(_readonlyMemory);
+    return MemArea(_readonlyMemory, MemUsage::ReadOnly);
+}
+
+MemArea Architecture::FeatureMapMemory()
+{
+    assert(_featuremapMemory);
+    Flags<MemUsage> usage = MemUsage::FeatureMap;
+    if ( _featuremapMemory == _stagingMemory )
+    {
+        usage |= MemUsage::Staging;
+    }
+    return MemArea(_featuremapMemory, usage);
+}
+
+MemArea Architecture::LUTMemory()
+{
+    assert(_lutMemory);
+    return MemArea(_lutMemory, MemUsage::LUT);
+}
+
+MemArea Architecture::StagingMemory()
+{
+    assert(_stagingMemory);
+    Flags<MemUsage> usage = MemUsage::Staging;
+    if ( _featuremapMemory == _stagingMemory )
+    {
+        usage |= MemUsage::FeatureMap;
+    }
+    return MemArea(_stagingMemory, usage);
+}
+
+MemArea Architecture::InputFeatureMapMemory()
+{
+    assert(_featuremapMemory);
+    Flags<MemUsage> usage(MemUsage::Input, MemUsage::FeatureMap);
+    return MemArea(_featuremapMemory, usage);
+}
+
+MemArea Architecture::OutputFeatureMapMemory()
+{
+    assert(_featuremapMemory);
+    Flags<MemUsage> usage(MemUsage::Output, MemUsage::FeatureMap);
+    return MemArea(_featuremapMemory, usage);
+}
 
 IniParseResult Architecture::ParseSection(const std::string &section, IniReader *reader)
 {

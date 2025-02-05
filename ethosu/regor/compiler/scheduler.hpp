@@ -65,6 +65,7 @@ struct SchedulerOptions
     bool verboseSchedule = false;
     bool verboseAllocation = false;
     Flags<SchedulerFeature> disabled;
+    bool separateIORegions = false;
 };
 
 struct WeightScaleEncoding
@@ -306,6 +307,8 @@ public:
     static std::vector<FusionQuery> InitFusionQuery(SchedulerOperation *op);
 
 private:
+    int UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *conn);
+
     Address CreateSchedulerRepresentation();
 
     Point2i GetStripeInputRequirement(const Shape &ofmShape, Kernel *kernel, const Point2i &ifmStep, ArchResampling resampling);
