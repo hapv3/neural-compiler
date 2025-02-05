@@ -111,10 +111,10 @@ vela --list-config-files
 
 Command to list all configurations in a configuration file:
 ```bash
-vela --list-config Arm/vela.ini
+vela --list-configs Arm/vela.ini
 ```
 
-### Output 
+### Output
 
 The result of the compilation is an optimised network in either TFLite or Raw
 format depending upon the input network.  This can be overridden using the
@@ -156,7 +156,7 @@ Virtual Platform (FVP) Model.
 * [Debug Database](DEBUG_DB.md)
 * [Performance Estimations](PERFORMANCE.md)
 * [Operator Support](SUPPORTED_OPS.md)
-* [Releases](RELEASES.md)
+* [Changelog](CHANGELOG.md)
 * [Security Vulnerabilities](SECURITY.md)
 * [Testing](TESTING.md)
 

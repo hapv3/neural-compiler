@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright 2020-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+SPDX-FileCopyrightText: Copyright 2020-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 
 SPDX-License-Identifier: Apache-2.0
 
@@ -22,6 +22,42 @@ main feature changes, interface changes and reported defects that have been
 fixed.  The version numbering adheres to the
 [semantic versioning](https://semver.org/) scheme.
 
+## Release 4.2.0 - 27/02/2025
+
+The Vela compiler has moved from
+[ML Platform](https://review.mlplatform.org/plugins/gitiles/ml/ethos-u/ethos-u-vela)
+to [Arm's GitLab instance](https://gitlab.arm.com/artificial-intelligence/ethos-u/ethos-u-vela).
+With this move, the process of filing bugs and submitting contributions has been updated. See
+[BUGS.md](BUGS.md) and [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+
+**Main feature changes:**
+
+* Extended operator support:
+  * Ethos-U85:
+    * TOSA: CONV3D
+    * TFLite: MIRROR_PAD and SELECT
+  * Ethos-U55/Ethos-U65:
+    * TFLite: RESIZE when height or width is 1
+
+**Interface changes:**
+
+* Addition of CLI options:
+  * `--cop-format`
+  * `--separate-io-regions`
+  * `--list-configs`
+
+**Reported defect fixes:**
+
+* Ethos-U55/Ethos-U65
+  * Fixed issue with feature map box calculations for Slice operator (MLCE-1433)
+  * Fixed incorrect shape usage in PReLU optimization (MLCE-1437)
+  * Fixed issue with execution order optimization of Split operator (MLCE-1415)
+* General
+  * Fix integer overflow errors due to NumPy 2.0 no longer promoting mixed
+    type operations to a 64-bit data type (MLCE-1418)
+  * Add documentation of the output format option (MLCE-1446)
+
+
 ## Release 4.1.0 - 26/11/2024
 
 **Main feature changes:**
@@ -43,7 +79,7 @@ for option to display the estimates.
 **Interface changes:**
 
 * Addition of CLI option to display internal Vela performance estimates in the summary:
-  * `--verbose-cycle-estimate
+  * `--verbose-cycle-estimate`
 
 **Reported defect fixes:**
 
