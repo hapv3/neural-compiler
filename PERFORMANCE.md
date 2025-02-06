@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 
 SPDX-License-Identifier: Apache-2.0
 
@@ -202,7 +202,6 @@ type per batch and per inference.
 This section is only visible if the CLI option `--verbose-weights` is provided.
 ```
 Original Weights Size                           84.91 KiB
-NPU Weights Size                                94.00 KiB
 NPU Encoded Weights Size                        89.30 KiB
 ```
 
