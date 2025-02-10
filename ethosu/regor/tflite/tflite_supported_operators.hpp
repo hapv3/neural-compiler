@@ -43,11 +43,16 @@ public:
     virtual bool Check(const Operation *) = 0;
 
 protected:
-    static void Failure(const Operation *op, const std::string &message, const std::string &constraint);
+    static void Failure(const Operation *op, const std::string &message = "", const std::string &constraint = "");
 
 private:
     bool ConstraintOpType(const Operation *op);
     bool ConstraintTensDtypes(const Operation *op);
+    bool ConstraintNumSplits(const Operation *op);
+    bool ConstraintMustHaveIFM(const Operation *op);
+    bool ConstraintMustHaveOFM(const Operation *op);
+    bool ConstraintTensMustHaveShape(const Operation *op);
     bool ConstraintTensQuantized(const Operation *op);
+    bool ConstraintFCWeightShape(const Operation *op);
 };
 }  // namespace regor

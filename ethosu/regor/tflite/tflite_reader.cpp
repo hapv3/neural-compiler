@@ -191,7 +191,6 @@ void TfLiteReader::LoadGraphs(const uint8_t *input, const tflite::Model *model,
             const auto &input_tensors = *tflite_inputs;  // A vector of indices into the `tensors` vector
             int indirect_index = 0;                      // An index into `input_tensors`
             int ifm_count = 0;
-            bool shapelessTensors = false;
             for ( const auto &map_entry : TfLiteMapping::InputTensorIndices(op_type) )
             {
                 const TensorUsage usage = map_entry.second;
@@ -201,7 +200,6 @@ void TfLiteReader::LoadGraphs(const uint8_t *input, const tflite::Model *model,
                     if ( direct_index >= 0 )  // -1 indicates an optional tensor is not present
                     {
                         auto &tensor = tensors.at(direct_index);
-                        shapelessTensors = shapelessTensors || !tensor->StorageShape();
                         assert(tensorQuantization.count(tensor->Uid()) > 0);
                         operation->ConnectInput(usage, tensor).Set(tensorQuantization[tensor->Uid()]);
                     }
@@ -217,7 +215,6 @@ void TfLiteReader::LoadGraphs(const uint8_t *input, const tflite::Model *model,
                 if ( direct_index >= 0 )
                 {
                     auto &tensor = tensors.at(direct_index);
-                    shapelessTensors = shapelessTensors || !tensor->StorageShape();
                     if ( IsVariadic(op_type) )
                     {
                         // Treat all input tensors beyond those specified in the indices map as IFMs.
@@ -263,7 +260,6 @@ void TfLiteReader::LoadGraphs(const uint8_t *input, const tflite::Model *model,
                         ofm->SetStorageShape(Shape::Max(ifm0->StorageShape(), ifm1->StorageShape()));
                     }
                 }
-                shapelessTensors = shapelessTensors || !ofm->StorageShape();
                 assert(tensorQuantization.count(ofm->Uid()) > 0);
                 operation->ConnectOutput(MakeTensorUsage(TensorUsage::OFM, ofm_count++), ofm).Set(tensorQuantization[ofm->Uid()]);
             }
@@ -274,17 +270,6 @@ void TfLiteReader::LoadGraphs(const uint8_t *input, const tflite::Model *model,
                 auto tensor = std::make_shared<Tensor>(fmt::format("placeholder-for-{}-OFM", ext_key), DataType::None);
                 operation->ConnectOutput(TensorUsage::OFM, tensor);
                 placeholder.push_back(std::move(tensor));
-            }
-
-            if ( ifm_count == 0 || ofm_count == 0 )
-            {
-                // NPU operations must have IFM and OFM
-                operation->SetPassthroughOp();
-            }
-
-            if ( shapelessTensors )
-            {
-                operation->SetPassthroughOp();
             }
 
             if ( optDb )
@@ -516,20 +501,18 @@ void TfLiteReader::ParseOperatorOptions(
         {
             const auto options = GetBuiltinOptions<tflite::FullyConnectedOptions>(tflite_operator);
             activation_function = options->fused_activation_function();
-
             // TODO: Are `weights_format`, `keep_num_dims` or `asymmetric_quantize_inputs` used?
-
             auto weight_tensor = operation->Input(TensorUsage::Weights)->tensor;
             if ( weight_tensor->AxisOrder() == AxisOrder::Unknown )
             {
-                // Reshape weight tensor from (num_outputs, ..., num_inputs) to (num_outputs, 1, 1, num_inputs)
-                weight_tensor->SetAxisOrder(AxisOrder::OHWI);
                 const auto &shape = weight_tensor->StorageShape();
-                for ( int i = 1; i < shape.Size() - 1; i++ )
+                // Reshape weight tensor from (num_outputs, ..., num_inputs) to (num_outputs, 1, 1, num_inputs)
+                if ( shape.Size() >= 2 && shape.Elements() == (shape[0] * shape[-1]) )
                 {
-                    if ( shape[i] != 1 ) operation->SetPassthroughOp();
+                    weight_tensor->Reshape(Shape(shape[0], 1, 1, shape[-1]));
+                    weight_tensor->SetAxisOrder(AxisOrder::OHWI);
+                    operation->Input(TensorUsage::Weights)->shape = weight_tensor->StorageShape();
                 }
-                weight_tensor->Reshape(Shape(shape[0], 1, 1, shape[-1]));
             }
             else
             {
@@ -657,18 +640,10 @@ void TfLiteReader::ParseOperatorOptions(
             break;
 
         case tflite::BuiltinOptions::SplitOptions:
-        {
-            int num_splits = GetBuiltinOptions<tflite::SplitOptions>(tflite_operator)->num_splits();
-            if ( size_t(num_splits) != operation->Outputs().size() ) operation->SetPassthroughOp();
-        }
-        break;
+            break;
 
         case tflite::BuiltinOptions::SplitVOptions:
-        {
-            int num_splits = GetBuiltinOptions<tflite::SplitVOptions>(tflite_operator)->num_splits();
-            if ( size_t(num_splits) != operation->Outputs().size() ) operation->SetPassthroughOp();
-        }
-        break;
+            break;
 
         case tflite::BuiltinOptions::SVDFOptions:
         {

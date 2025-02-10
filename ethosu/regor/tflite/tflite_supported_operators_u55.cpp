@@ -103,7 +103,6 @@ bool TfLiteSupportedOperatorsU55::Check(const Operation *op)
     return true;
 }
 
-
 bool TfLiteSupportedOperatorsU55::ConstraintBroadcastShapes(const Operation *op)
 {
     const char *constraint = "One input-tensor must match the shape of the output-tensor.";
@@ -152,4 +151,5 @@ bool TfLiteSupportedOperatorsU55::ConstraintReverse(const Operation *op)
     }
     return true;
 }
+
 }  // namespace regor

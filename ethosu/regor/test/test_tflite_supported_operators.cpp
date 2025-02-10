@@ -80,9 +80,13 @@ TEST_CASE("Supported operators Common")
     arch->CheckConfiguration(err);
     REQUIRE(err == "noerror");
     auto supportedOps = MakeSupportedOpsChecker(REGOR_ARCH_ETHOSU55, arch);
+
     SECTION("ConstraintTensQuantized")
     {
         auto op = CreateOperation(OpType::Conv2D, Shape(1, 8, 8, 1), DataType::Int8, Shape(1, 8, 8, 1), DataType::Int8);
+        std::vector<int8_t> values = {1};
+        auto weights = CreateTensor("weights", Shape(1, 1, 1, 1), DataType::Int8, std::move(values));
+        op->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
         // Regular op should pass
         REQUIRE(supportedOps->Check(op.get()) == true);
         auto &quant = op->Output(TensorUsage::OFM)->quantization;
@@ -91,6 +95,41 @@ TEST_CASE("Supported operators Common")
         REQUIRE(supportedOps->Check(op.get()) == false);
         quant = Quantization::Unit();
         quant.zeroPoints.clear();
+        REQUIRE(supportedOps->Check(op.get()) == false);
+        op->Disconnect();
+    }
+    SECTION("ConstraintMustHaveIFM")
+    {
+        auto op = CreateOperation(OpType::Exp, Shape(1, 8, 8, 1), DataType::Int8, Shape(1, 8, 8, 1), DataType::Int8);
+        op->DisconnectInputInvalidatingInputs(TensorUsage::IFM);
+        REQUIRE(supportedOps->Check(op.get()) == false);
+        op->Disconnect();
+    }
+    SECTION("ConstraintMustHaveOFM")
+    {
+        auto op = CreateOperation(OpType::Exp, Shape(1, 8, 8, 1), DataType::Int8, Shape(1, 8, 8, 1), DataType::Int8);
+        auto ifm = op->Input(TensorUsage::IFM0)->tensor;
+        op->Disconnect();
+        op->ConnectInput(TensorUsage::IFM0, ifm);
+        REQUIRE(supportedOps->Check(op.get()) == false);
+        op->Disconnect();
+    }
+    SECTION("ConstraintMustHaveShape")
+    {
+        auto op = CreateOperation(OpType::Add, Shape(1, 8, 8, 1), DataType::Int8, Shape(1, 8, 8, 1), DataType::Int8,
+            Shape(1, 8, 8, 1), DataType::Int8);
+        op->Output(TensorUsage::OFM)->shape = Shape();
+        REQUIRE(supportedOps->Check(op.get()) == false);
+        op->Disconnect();
+    }
+    SECTION("ConstraintFCWeightShape")
+    {
+        auto op = CreateOperation(OpType::FullyConnected, Shape(1, 2, 2, 1), DataType::Int8, Shape(1, 2, 1, 1), DataType::Int8);
+        std::vector<int8_t> values = {1, 1, 1, 1, 1, 1, 1, 1};
+        auto weights = CreateTensor("weights", Shape(4, 1, 1, 2), DataType::Int8, std::move(values));
+        op->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
+        REQUIRE(supportedOps->Check(op.get()) == true);
+        op->Input(TensorUsage::Weights)->tensor->Reshape(Shape(2, 2, 1, 2));
         REQUIRE(supportedOps->Check(op.get()) == false);
         op->Disconnect();
     }

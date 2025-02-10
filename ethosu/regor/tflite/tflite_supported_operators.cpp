@@ -56,6 +56,88 @@ bool TfLiteSupportedOperators::ConstraintTensDtypes(const Operation *op)
     return true;
 }
 
+bool TfLiteSupportedOperators::ConstraintNumSplits(const Operation *op)
+{
+    const char *constraint = "num_splits must match the number of outputs";
+    const tflite::Operator *passthrough = static_cast<const tflite::Operator *>(op->Passthrough());
+    OpType opType = op->Type();
+    int numSplits = 0;
+    if ( opType == OpType::Split )
+    {
+        assert(passthrough);
+        const auto *opt = passthrough->builtin_options_as_SplitOptions();
+        assert(opt);
+        numSplits = opt->num_splits();
+    }
+    else if ( opType == OpType::SplitV )
+    {
+        assert(passthrough);
+        const auto *opt = passthrough->builtin_options_as_SplitVOptions();
+        assert(opt);
+        numSplits = opt->num_splits();
+    }
+    else
+    {
+        return true;
+    }
+    int numOutputs = op->Outputs().size();
+    if ( numSplits != numOutputs )
+    {
+        Failure(op, fmt::format("num_splits: {} does not match the number of outputs: {}", numSplits, numOutputs), constraint);
+        return false;
+    }
+    return true;
+}
+
+bool TfLiteSupportedOperators::ConstraintMustHaveIFM(const Operation *op)
+{
+    const char *constraint = "Operations must have at least one IFM.";
+    for ( const auto item : op->Inputs().pairs() )
+    {
+        auto usage = item.first;
+        if ( IsIFM(usage) )
+        {
+            return true;
+        }
+    }
+    Failure(op, "Operation without IFM", constraint);
+    return false;
+}
+
+bool TfLiteSupportedOperators::ConstraintMustHaveOFM(const Operation *op)
+{
+    const char *constraint = "Operations must have at least one OFM.";
+    for ( const auto item : op->Outputs().pairs() )
+    {
+        auto usage = item.first;
+        if ( IsOFM(usage) )
+        {
+            return true;
+        }
+    }
+    Failure(op, "Operation without OFM", constraint);
+    return false;
+}
+
+bool TfLiteSupportedOperators::ConstraintTensMustHaveShape(const Operation *op)
+{
+    const char *constraint = "Tensors must have constant shape.";
+    for ( const auto *list : {&op->Inputs(), &op->Outputs()} )
+    {
+        for ( const auto &item : list->pairs() )
+        {
+            auto usage = item.first;
+            const auto &conn = item.second;
+            if ( !conn.shape )
+            {
+                Failure(op, "Operation has shapeless tensor", constraint);
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 bool TfLiteSupportedOperators::ConstraintTensQuantized(const Operation *op)
 {
     const char *constraint = "Input(s), Output and Weight tensors must have quantization parameters";
@@ -93,6 +175,26 @@ bool TfLiteSupportedOperators::ConstraintTensQuantized(const Operation *op)
     return true;
 }
 
+bool TfLiteSupportedOperators::ConstraintFCWeightShape(const Operation *op)
+{
+    const char *constraint = "FullyConnected weights must be on the form I,1,1,..,1,O";
+    if ( op->Type() != OpType::FullyConnected )
+    {
+        return true;
+    }
+    auto weights = op->Input(TensorUsage::Weights);
+    assert(weights);
+    assert(weights->tensor);
+    const auto &shape = weights->tensor->StorageShape();
+    // Total elements must be equal to first-dim * last-dim
+    if ( shape.Size() < 2 || (shape.Elements() != (shape[0] * shape[-1])) )
+    {
+        Failure(op, fmt::format("Unsupported weights shape: {}", shape.ToString()), constraint);
+        return false;
+    }
+    return true;
+}
+
 void TfLiteSupportedOperators::Failure(const Operation *op, const std::string &message, const std::string &constraint)
 {
     assert(op);
@@ -121,6 +223,11 @@ TfLiteSupportedOperators::TfLiteSupportedOperators(IArchitectureConstraints *con
     _genericChecks = {
         &TfLiteSupportedOperators::ConstraintOpType,
         &TfLiteSupportedOperators::ConstraintTensDtypes,
+        &TfLiteSupportedOperators::ConstraintNumSplits,
+        &TfLiteSupportedOperators::ConstraintMustHaveIFM,
+        &TfLiteSupportedOperators::ConstraintMustHaveOFM,
+        &TfLiteSupportedOperators::ConstraintTensMustHaveShape,
+        &TfLiteSupportedOperators::ConstraintFCWeightShape,
         &TfLiteSupportedOperators::ConstraintTensQuantized,
     };
 }
@@ -151,7 +258,11 @@ void TfLiteSupportedOperators::Process(Graph *graph)
     {
         if ( op->Type() == OpType::Passthrough )
         {
-            // don't check passthrough ops
+            // Op is already passthrough
+            // Only valid scenario is that op is a previously disconnected activation
+            assert(op->Passthrough() == nullptr && "source-operation set to passthrough before supported-ops checks");
+            assert(op->CountInputs(TensorUsage::IFM) == 0);
+            assert(op->CountOutputs(TensorUsage::OFM) == 0);
             continue;
         }
         if ( !Check(op.get()) )
