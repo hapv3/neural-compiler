@@ -107,6 +107,49 @@ Specifies the output directory of the optimised network model as well as the
 vela network.tflite --output-dir ./custom_directory
 ```
 
+### Output format
+
+Selects output format. The available options are `tflite` and `raw`.
+
+The `tflite` format produces a `.tflite` file containing Ethos-U custom
+operators for each group of NPU operators​ with command streams and driver
+action commands attached as well as the required tensor, buffer and operator
+lists. If any operators fall back to the CPU, they are included in this file
+as well.
+
+The `raw` format is currently only available for Ethos-U85 and produces an
+'.npz' file containing the same information as the `tflite` format, but more
+easily accessible. When loaded with NumPy, the arrays can be accessed by name
+with the keys listed below.  
+**Raw format keys:**  
+- **cmd_data** - The command stream.
+- **weight_data** - The model weights.
+- **weight_region** - Memory region identifier for the weights.
+- **scratch_shape / scratch_fast_shape** - The shape of the scratch and fast
+scratch buffers.
+- **scratch_region / scratch_fast_region** - Memory region identifiers for the
+scratch and fast scratch buffers.
+- **scratch_size / scratch_fast_size** - The total size of each scratch buffer
+(in bytes).
+- **input_shape / output_shape / variable_shape** - Per-tensor shapes for inputs,
+outputs and variable tensors.
+- **input_elem_size / output_elem_size / variable_elem_size** - Element sizes (in
+bytes) for each input, output and variable tensor.
+- **input_region / output_region / variable_region** - Memory region identifiers
+for inputs, outputs and variables.
+- **input_offset / output_offset / variable_offset** - Memory offsets for each
+input, output and variable tensor.  
+
+For this format, it is not supported to have any operators fall back to the CPU.
+
+**Type: String**  
+**Default: tflite**  
+**Choices: [tflite, raw]**  
+
+```bash
+vela network.tflite --accelerator-config ethos-u85-512 --output-format raw
+```
+
 ### Enable Debug Database
 
 The neural network debug database allows tracking of optimisations from the
