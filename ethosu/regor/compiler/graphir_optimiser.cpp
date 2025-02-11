@@ -1123,8 +1123,8 @@ Operation *GraphIrOptimiser::RewriteCast(Graph *const, Operation *const operatio
         {
             // Replace CAST with ADD
             auto copyOp = std::make_shared<Operation>(OpType::Add);
-            copyOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_zero", ifmConn->tensor->Type(), 0));
             ReplaceOperation(operation, copyOp.get());
+            copyOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_zero", ifmConn->tensor->Type(), 0));
             RecordOptimisation(operation, copyOp.get());
             returnOp = copyOp.get();
 
