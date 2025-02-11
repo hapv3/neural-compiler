@@ -1779,12 +1779,12 @@ bool EthosU85OpGroup::CanRunOnNPU(const ArchitectureOpGroupQuery &op)
             return true;
         }
 
-        ArchOperatorQuery query;
-        query.transposeMask = op.ofm.transpose;
-        query.reverseMask = op.ofm.reverse;
-        if ( !_arch->_constraints->OperatorQuery(OpType::MemoryCopy, &query, nullptr).Any(QueryResult::Native) )
+        if ( op.type == OpType::Transpose || op.type == OpType::Reverse )
         {
-            return false;
+            ArchOperatorQuery query;
+            query.transposeMask = op.ofm.transpose;
+            query.reverseMask = op.ofm.reverse;
+            return _arch->_constraints->OperatorQuery(OpType::MemoryCopy, &query, nullptr).Any(QueryResult::Native);
         }
 
         auto map = s_opDataTypeSupport.find(npuOp);
