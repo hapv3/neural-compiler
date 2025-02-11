@@ -132,7 +132,7 @@ bool EthosU85Constraints::SupportsFusedRescale(OpType opType, TensorUsage tensor
         }
         else if ( npuOp == EthosU85NpuOp::ReduceSum )
         {
-            return globalScale;
+            return globalScale && isUnitScale;
         }
     }
     else if ( tensorUsage == TensorUsage::OFM )

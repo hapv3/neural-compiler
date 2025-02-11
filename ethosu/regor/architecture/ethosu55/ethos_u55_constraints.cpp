@@ -114,7 +114,7 @@ bool EthosU55Constraints::SupportsFusedRescale(OpType opType, TensorUsage tensor
         }
         else if ( npuOp == EthosU55NpuOp::ReduceSum )
         {
-            return globalScale;
+            return globalScale && isUnitScale;
         }
     }
     else if ( tensorUsage == TensorUsage::OFM )
