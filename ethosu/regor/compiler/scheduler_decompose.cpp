@@ -448,6 +448,14 @@ HandleDilation(Architecture *arch, std::unique_ptr<SchedulerOperation> op, const
                 auto *subOfmConn = subOp->Output(TensorUsage::OFM);
                 subOfmConn->slice = std::move(newOfmSlice);
                 subOfmConn->stepXY = ofmStrides;
+                if ( subOp->AccumulatorMode().source == AccumulatorSource::Ifm2 )
+                {
+                    auto *subIfm2Conn = subOp->Input(TensorUsage::IFM1);
+                    subIfm2Conn->slice.shape = subOfmConn->slice.shape;
+                    subIfm2Conn->slice.offset = subIfm2Conn->slice.shape.WithZeros().WithHW(
+                        subOfmConn->slice.offset.Height(), subOfmConn->slice.offset.Width());
+                    subIfm2Conn->stepXY = subOfmConn->stepXY;
+                }
                 auto subOps = doDecompose(arch, std::move(subOp));
                 result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
             }
