@@ -219,7 +219,7 @@ bool CanRunOnHardware(Architecture *arch, const SchedulerOperation *schedOp)
             return false;
         }
     }
-    if ( IsConvolution(schedOp->Type()) )
+    if ( IsConvolution(schedOp->Type()) || IsPooling(schedOp->Type()) )
     {
         auto &ofmShape = schedOp->OFM()->SliceShape();
         if ( ofmShape.Size() > 3 && ofmShape.Batch() > 1 ) return false;
@@ -279,6 +279,7 @@ bool CanDecompose(Architecture *, const SchedulerOperation *schedOp)
     if ( schedOp->Type() == OpType::ArgMax ) return true;
     if ( schedOp->Type() == OpType::Reverse ) return true;
     if ( schedOp->Type() == OpType::Transpose ) return true;
+    if ( schedOp->Type() == OpType::MaxPool ) return true;
     return false;
 }
 
@@ -1695,5 +1696,37 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTranspose(Architecture
 
     return result;
 }
+
+std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMaxPool(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
+{
+    std::vector<std::unique_ptr<SchedulerOperation>> result;
+    auto ofmConn = op->Output(TensorUsage::OFM);
+    auto &ofmShape = ofmConn->SliceShape();
+    auto &ofmSlice = ofmConn->slice;
+    auto ifmConn = op->Input(TensorUsage::IFM);
+    auto &ifmShape = ifmConn->SliceShape();
+    auto &ifmSlice = ifmConn->slice;
+
+    ofmSlice.Initialize(ofmShape.WithZeros(), ofmShape);
+    ifmSlice.Initialize(ifmShape.WithZeros(), ifmShape);
+
+    if ( auto ifm2Conn = op->TryInput(TensorUsage::IFM1) )
+    {
+        auto &ifm2Shape = ifm2Conn->shape;
+        auto &ifm2Slice = ifm2Conn->slice;
+
+        ifm2Slice.Initialize(ifm2Shape.WithZeros(), ifm2Shape);
+    }
+
+    auto ofmRank = ofmShape.Size();
+    if ( ofmRank > 3 && (ofmShape.Elements() > ofmShape.Height() * ofmShape.Width() * ofmShape.Depth()) )
+    {
+        return DecomposeLeadingDimensions(ofmRank - 3, arch, std::move(op), DecomposeMaxPool);
+    }
+
+    result.emplace_back(std::move(op));
+    return result;
+}
+
 
 }  // namespace regor

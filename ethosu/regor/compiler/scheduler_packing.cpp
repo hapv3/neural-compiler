@@ -589,6 +589,9 @@ std::vector<std::unique_ptr<SchedulerOperation>> SchedulerPacking::DecomposeSche
         case OpType::Transpose:
             result = DecomposeTranspose(_arch, std::move(op));
             break;
+        case OpType::MaxPool:
+            result = DecomposeMaxPool(_arch, std::move(op));
+            break;
         default:
             if ( DecomposeAsElementwise(op->Type()) || op->Type() == OpType::MemoryCopy )
             {
