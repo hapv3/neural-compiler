@@ -287,11 +287,12 @@ static HLCSubOperation MakeSubOperation(const std::unique_ptr<SchedulerOperation
 
     for ( const auto &input : schedOp->inputs.pairs() )
     {
+        std::vector<HLCFeatureMap>::iterator at;
         if ( IsIFM(input.first) )
         {
-            assert(((input.first == TensorUsage::IFM0) && hlcSubOp.ifm.empty()) || !hlcSubOp.ifm.empty());
-            hlcSubOp.ifm.emplace_back();
-            MakeFeatureMap(input.first, &input.second, hlcSubOp.ifm.back());
+            at = hlcSubOp.ifm.emplace(std::upper_bound(hlcSubOp.ifm.begin(), hlcSubOp.ifm.end(), input.first,
+                [](TensorUsage usage, const HLCFeatureMap &fm) { return usage < fm.usage; }));
+            MakeFeatureMap(input.first, &input.second, *at);
         }
     }
     MakeFeatureMap(TensorUsage::OFM, schedOp->OFM(), hlcSubOp.ofm);
@@ -325,11 +326,12 @@ static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, 
 
     for ( const auto &input : schedOp->inputs.pairs() )
     {
+        std::vector<HLCFeatureMap>::iterator at;
         if ( IsIFM(input.first) )
         {
-            assert(((input.first == TensorUsage::IFM0) && op->ifm.empty()) || !op->ifm.empty());  // map not in order
-            op->ifm.emplace_back();
-            MakeFeatureMap(input.first, &input.second, op->ifm.back());
+            at = op->ifm.emplace(std::upper_bound(op->ifm.begin(), op->ifm.end(), input.first,
+                [](TensorUsage usage, const HLCFeatureMap &fm) { return usage < fm.usage; }));
+            MakeFeatureMap(input.first, &input.second, *at);
         }
     }
     MakeFeatureMap(TensorUsage::OFM, schedOp->OFM(), op->ofm);
