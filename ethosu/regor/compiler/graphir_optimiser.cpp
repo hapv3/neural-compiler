@@ -1406,27 +1406,75 @@ Operation *GraphIrOptimiser::RewriteReduceSum(Graph *const graph, Operation *con
             const int64_t zp = ifmConn->quantization.zeroPoints.empty() ? 0 : ifmConn->quantization.zeroPoints[0];
             if ( zp != 0 )
             {
-                // Replace ReduceSum (zp != 0) with ReduceSum->Sub(zp):
+                if ( _constraints->SupportsFusedRescale(OpType::Sub, TensorUsage::OFM, DataType::Int32, DataType::Int32,
+                         DataType::Int32, DataType::Int32, ofmConn->quantization) )
+                {
+                    // Replace ReduceSum (zp != 0) with ReduceSum->Sub(zp):
 
-                // Temporary tensor between ReduceSum and Sub
-                std::shared_ptr<Tensor> reduceSumTens = ofmConn->tensor->Clone();
-                reduceSumTens->SetName(ofmConn->tensor->Name() + "_reducesum");
-                reduceSumTens->ChangeType(DataType::Int32);
-                reduceSumTens->SetStorageShape(ofmConn->shape);
+                    // Temporary tensor between ReduceSum and Sub
+                    std::shared_ptr<Tensor> reduceSumTens = ofmConn->tensor->Clone();
+                    reduceSumTens->SetName(ofmConn->tensor->Name() + "_reducesum");
+                    reduceSumTens->ChangeType(DataType::Int32);
+                    reduceSumTens->SetStorageShape(ofmConn->shape);
 
-                // Sub op with zero point
-                auto zpTens = CreateConstTensor("zero_point", DataType::Int32, int(ifmConn->shape.Depth() * zp));
-                auto subOp = std::make_shared<Operation>(OpType::Sub);
-                subOp->ConnectInput(TensorUsage::IFM, reduceSumTens);
-                subOp->ConnectInput(TensorUsage::IFM1, zpTens);
-                subOp->CopyOutput(TensorUsage::OFM, *ofmConn);
-                subOp->Output(TensorUsage::OFM)->Set(ofmConn->rounding);
-                RecordOptimisation(operation, subOp.get());
-                returnOp = subOp.get();
+                    // Sub op with zero point
+                    auto zpTens = CreateConstTensor("zero_point", DataType::Int32, int(ifmConn->shape.Depth() * zp));
+                    auto subOp = std::make_shared<Operation>(OpType::Sub);
+                    subOp->ConnectInput(TensorUsage::IFM, reduceSumTens);
+                    subOp->ConnectInput(TensorUsage::IFM1, zpTens);
+                    subOp->CopyOutput(TensorUsage::OFM, *ofmConn);
+                    subOp->Output(TensorUsage::OFM)->Set(ofmConn->rounding);
+                    RecordOptimisation(operation, subOp.get());
+                    returnOp = subOp.get();
 
-                // Connect temporary tensor to reduceSum and remove the zero point
-                operation->ConnectOutput(TensorUsage::OFM, reduceSumTens).Set(Quantization::Unit());
-                ifmConn->quantization.zeroPoints[0] = 0;
+                    // Connect temporary tensor to reduceSum and remove the zero point
+                    operation->ConnectOutput(TensorUsage::OFM, reduceSumTens).Set(Quantization::Unit());
+                    ifmConn->quantization.zeroPoints[0] = 0;
+                }
+                else
+                {
+                    // Replace ReduceSum (zp != 0) with 1x1 Conv2D:
+                    //
+                    // 1. Reshape to 3D shape (HWC) where C dimension is the dimension to reduce.
+                    // 2. 1x1 Conv2D (1x1x1xC weights): HxWxC -> HxWx1.
+
+                    // Reshape to 4D shape (NHWC) where C dimension is the dimension to reduce
+                    const Shape ifmShape3D = ReshapeTo3D(Shape::PadAxes(ifmConn->shape, 3, 1), {ifmConn->shape.Size() - 2, 1, 1});
+                    const Shape ifmShape4D = Shape::PadAxes(ifmShape3D, 4, 1);
+
+                    // Create an identity 1x1x1xC weights tensor
+                    auto weightsBuffer = std::make_shared<Buffer>(std::vector<int8_t>(ifmShape4D.Depth(), 1));
+                    auto weightsTens = CreateConstTensor("weights", DataType::Int8, weightsBuffer);
+                    weightsTens->SetStorageShape({1, 1, 1, ifmShape4D.Depth()});
+                    weightsTens->SetAxisOrder(AxisOrder::OHWI);
+                    auto weightsQuant = ifmConn->quantization;
+                    weightsQuant.quantMin = {IntegerMin(DataType::Int8)};
+                    weightsQuant.quantMax = {IntegerMax(DataType::Int8)};
+                    weightsQuant.zeroPoints = {0};
+                    weightsQuant.scales = {{1, 0}};  // Identity
+
+                    // Create an identity bias tensor
+                    auto biasTens = CreateConstTensor("bias", DataType::Int32, 0);
+                    auto biasQuant = ifmConn->quantization;
+                    biasQuant.zeroPoints = {0};
+
+                    // Replace ReduceSum with a 1x1 Conv2D
+                    Kernel kernel({1, 1}, {1, 1}, {1, 1});
+                    auto convOp = std::make_shared<Operation>(OpType::Conv2D);
+                    convOp->SetKernel(std::make_unique<Kernel>(kernel));
+                    convOp->CopyInput(TensorUsage::IFM, *ifmConn);
+                    convOp->Input(TensorUsage::IFM)->Set(ifmShape4D).Set(ifmConn->rounding);
+
+                    convOp->ConnectInput(TensorUsage::Weights, weightsTens).Set(weightsQuant);
+                    convOp->ConnectInput(TensorUsage::Scales, biasTens).Set(biasQuant);
+                    convOp->CopyOutput(TensorUsage::OFM, *ofmConn);
+                    convOp->Output(TensorUsage::OFM)->Set(ifmShape4D.WithDepth(1)).Set(ofmConn->rounding);
+                    RecordOptimisation(operation, convOp.get());
+                    returnOp = convOp.get();
+
+                    // Remove old ReduceSum op
+                    operation->Disconnect();
+                }
             }
             else if ( ifmConn->shape.Size() > 3 )
             {
