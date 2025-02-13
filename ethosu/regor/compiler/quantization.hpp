@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -57,7 +57,7 @@ public:
     {
         return other.scales == scales && other.zeroPoints == zeroPoints;
     }
-    bool IsUnitScale() const { return Quantization::Unit().scales == scales; }
+    bool IsUnitScale() const { return Quantization::Unit().scales == scales || scales.empty(); }
     explicit operator bool() const { return IsValid(); }
 
     Quantization &operator=(const Quantization &other)

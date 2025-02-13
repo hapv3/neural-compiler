@@ -102,8 +102,9 @@ bool EthosU85Constraints::SupportsFusedRescale(OpType opType, TensorUsage tensor
     DataType rescaleToType, DataType opFromType, DataType opToType, const Quantization &quantization)
 {
     auto npuOp = ArchEthosU85::GetHWOp(opType);
-    bool globalScale = quantization.scales.size() == 1;
+    bool globalScale = quantization.scales.size() <= 1;
     bool isUnitScale = quantization.IsUnitScale();
+    int64_t zp = quantization.zeroPoints.size() ? quantization.zeroPoints.front() : 0;
 
     if ( tensorUsage == TensorUsage::IFM )
     {
@@ -118,7 +119,6 @@ bool EthosU85Constraints::SupportsFusedRescale(OpType opType, TensorUsage tensor
             // Make sure shift is valid
             if ( qs.shift < 0 || qs.shift > 63 ) return false;
             // Make sure the rescale can be done without clipping
-            int64_t zp = quantization.zeroPoints.front();
             int64_t value = (zp < 0 ? int64_t(IntegerMax(rescaleFromType)) : IntegerMin(rescaleFromType));
             value = value - zp;
             value = (value * qs.scale) >> qs.shift;
