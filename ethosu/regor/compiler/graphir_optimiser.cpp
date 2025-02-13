@@ -2079,7 +2079,6 @@ Operation *GraphIrOptimiser::MoveSplitSliceToConsumer(Graph *const, Operation *c
     {
         auto *ofm = ofmConn->tensor.get();
 
-        // TODO: MLBEDSW-9072: Add check that moving split to consumer is valid
         if ( ofm->Readers().size() == 1 )
         {
             auto cons = ofm->Readers().front();
@@ -2087,6 +2086,14 @@ Operation *GraphIrOptimiser::MoveSplitSliceToConsumer(Graph *const, Operation *c
             auto *consIfm1 = cons->IFM(1);
 
             bool ifmShapeEqual = false;
+
+            // Don't move to CPU, Reshape or Tile operations
+            // low-level implementation of TILE requires unsliced inputs
+            if ( cons->Type() == OpType::Passthrough || IsReshape(cons->Type()) || cons->Type() == OpType::Tile )
+            {
+                return operation;
+            }
+
             if ( consIfm0 == ofm )
             {
                 // Check if ifm0 consumer has correct shape
@@ -2109,7 +2116,7 @@ Operation *GraphIrOptimiser::MoveSplitSliceToConsumer(Graph *const, Operation *c
 
             // We can only move to consumer if there is no transpose on the op that we move to,
             // otherwise the IFM shape may change and transposition will be wrong.
-            if ( !IsReshape(cons->Type()) && Shape::IsReducedEqual(ofmConn->shape, ofm->StorageShape()) && IsNone(consumerTranspose) && ifmShapeEqual )
+            if ( Shape::IsReducedEqual(ofmConn->shape, ofm->StorageShape()) && IsNone(consumerTranspose) && ifmShapeEqual )
             {
                 // Split/Slice can be performed by tensor consumer
                 MoveToConsumer(operation, cons.get());
