@@ -1426,7 +1426,8 @@ Operation *GraphIrOptimiser::RewriteReduceSum(Graph *const graph, Operation *con
                     // 2. 1x1 Conv2D (1x1x1xC weights): HxWxC -> HxWx1.
 
                     // Reshape to 4D shape (NHWC) where C dimension is the dimension to reduce
-                    const Shape ifmShape3D = ReshapeTo3D(Shape::PadAxes(ifmConn->shape, 3, 1), {ifmConn->shape.Size() - 2, 1, 1});
+                    Shape paddedIfmShape = Shape::PadAxes(ifmConn->shape, 3, 1);
+                    const Shape ifmShape3D = ReshapeTo3D(paddedIfmShape, {paddedIfmShape.Size() - 2, 1, 1});
                     const Shape ifmShape4D = Shape::PadAxes(ifmShape3D, 4, 1);
 
                     // Create an identity 1x1x1xC weights tensor
