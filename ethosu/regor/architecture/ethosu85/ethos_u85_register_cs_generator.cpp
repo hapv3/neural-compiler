@@ -1732,7 +1732,7 @@ void EthosU85RCSGenerator::GenerateCommon(const HLCStripe *stripe, bool useGloba
 {
     auto op = stripe->operation.get();
     int32_t scalarValue = 0;
-    bool isScalar = IsScalar(op->ifm[0], scalarValue) && IsElementwise(op->type);
+    bool isScalar = IsElementwise(op->type) && IsScalar(op->ifm[0], scalarValue);
     assert(stripe->opGroup != nullptr);
     EthosU85OpGroup *opGroup = static_cast<EthosU85OpGroup *>(stripe->opGroup);
     int ofmCb = opGroup->ChainingBuffer(op->ofm.uid);

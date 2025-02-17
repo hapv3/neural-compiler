@@ -676,14 +676,10 @@ Operation *GraphIrOptimiser::RewriteRescale(Graph *const, Operation *const opera
 }
 
 Operation *GraphIrOptimiser::MakeFillOperation(TensorConnection *const ofmConn, const Shape &ofmShape,
-    const TensorSlice &ofmSlice, std::shared_ptr<Tensor> padTensor, OpType opType)
+    const TensorSlice &ofmSlice, std::shared_ptr<Tensor> padTensor)
 {
-    auto fillOp = std::make_shared<Operation>(opType);
-    auto &ifmConn = fillOp->ConnectInput(TensorUsage::IFM, padTensor);
-    if ( opType == OpType::MemoryCopy )
-    {
-        ifmConn.Set(ofmSlice.shape);
-    }
+    auto fillOp = std::make_shared<Operation>(OpType::MemoryCopy);
+    fillOp->ConnectInput(TensorUsage::IFM, padTensor).Set(ofmSlice.shape);
     fillOp->CopyOutput(TensorUsage::OFM, *ofmConn);
     fillOp->Output(TensorUsage::OFM)->Set(ofmShape).Set(ofmSlice).Set(RoundMode::NATURAL);
     return fillOp.get();
@@ -706,69 +702,60 @@ Operation *GraphIrOptimiser::RewritePad(Graph *const, Operation *const operation
         Shape paddingBefore = TensorToShape(paramsConn->tensor.get(), paramsConn->shape.Width(), 2, 0);
         Shape paddingAfter = TensorToShape(paramsConn->tensor.get(), paramsConn->shape.Width(), 2, 1);
 
-        OpType fillOpType;
         std::shared_ptr<Tensor> padTensor;
         DataType dataType = ofmConn->tensor->Type();
-        if ( _constraints->SupportsNot() )
-        {
-            // Native support for elementwise Not can be utilized to broadcast a single scalar value
-            // to the whole area to be filled.
-            fillOpType = OpType::Not;
-            padTensor = CreateConstTensor("pad_const", dataType, ~padConst);
-        }
-        else
-        {
-            // Fallback case - find the largest required pad area and create a constant of that size
-            // filled with the padding value. Then memcopy slices of this tensor to the different
-            // axes to be padded.
-            int maxElements = 0;
-            for ( int axis = 0; axis < ofmShape.Size(); axis++ )
-            {
-                int padElements = (ofmShape.Elements() / ofmShape[axis]) * std::max(paddingBefore[axis], paddingAfter[axis]);
-                maxElements = std::max(maxElements, padElements);
-            }
 
-            fillOpType = OpType::MemoryCopy;
-            int bits = DataTypeSizeBits(dataType);
-            // Mask out the bits from the original constant to force a zero extension regardless
-            // of signedness.
-            uint32_t fillPattern = uint32_t(padConst) & (~0u >> std::max(32 - bits, 0));
-            // Then replicate the bits from the original constant to the rest of the 32-bit value if needed.
-            // So for example the 8-bit value -2 (0xfe) is replicated to 0xfefefefe, while the 16-bit value
-            // -2 (0xfffe) becomes 0xfffefffe.
-            if ( bits < 16 )
-            {
-                fillPattern |= fillPattern << 8;
-            }
-            if ( bits < 32 )
-            {
-                fillPattern |= fillPattern << 16;
-            }
-            std::vector<uint32_t> buffer(DivRoundUp(DataTypeStorageSizeBytes(dataType, maxElements), 4), fillPattern);
-            const Shape padShape = Shape(maxElements);
-            padTensor = CreateConstTensor("pad_const", dataType, std::make_shared<Buffer>(std::move(buffer)), &padShape);
+        // Find the largest required pad area and create a constant of that size filled
+        // with the padding value. Then memcopy slices of this tensor to the different
+        // axes to be padded.
+        int maxElements = 0;
+        for ( int axis = 0; axis < ofmShape.Size(); axis++ )
+        {
+            int padElements = (ofmShape.Elements() / ofmShape[axis]) * std::max(paddingBefore[axis], paddingAfter[axis]);
+            maxElements = std::max(maxElements, padElements);
         }
 
-        for ( int axis = 0; axis < ifmConn->shape.Size(); axis++ )
+        int bits = DataTypeSizeBits(dataType);
+        // Mask out the bits from the original constant to force a zero extension regardless
+        // of signedness.
+        uint32_t fillPattern = uint32_t(padConst) & (~0u >> std::max(32 - bits, 0));
+        // Then replicate the bits from the original constant to the rest of the 32-bit value if needed.
+        // So for example the 8-bit value -2 (0xfe) is replicated to 0xfefefefe, while the 16-bit value
+        // -2 (0xfffe) becomes 0xfffefffe.
+        if ( bits < 16 )
         {
-            // Reshape the IFM/OFM/padding to a 3D shape (HWC) where W dimension is the dimension to pad
-            Shape newIfmShape = ReshapeTo3DAroundAxis(ifmConn->shape, axis);
-            Shape newOfmShape = ReshapeTo3DAroundAxis(ofmShape, axis);
-            Shape newPaddingBefore = ReshapeTo3DAroundAxis(paddingBefore, axis, 0);
+            fillPattern |= fillPattern << 8;
+        }
+        if ( bits < 32 )
+        {
+            fillPattern |= fillPattern << 16;
+        }
+        std::vector<uint32_t> buffer(DivRoundUp(DataTypeStorageSizeBytes(dataType, maxElements), 4), fillPattern);
+        const Shape padShape = Shape(maxElements);
+        padTensor = CreateConstTensor("pad_const", dataType, std::make_shared<Buffer>(std::move(buffer)), &padShape);
+
+        // Padding tensors of higher than rank 4 or rank 4 with a batch larger than 1 requires reshaping to a 3D shape
+        // (HWC) where W is the dimension to pad. Only use this strategy when necessary since it is often slower.
+        const Shape ifmShape = ifmConn->shape;
+        bool reshapeAndPadW = ifmShape.Size() > 4 || (ifmShape.Size() == 4 && ifmShape.Batch() > 1);
+        for ( int axis = 0; axis < ifmShape.Size(); axis++ )
+        {
+            Shape newOfmShape = reshapeAndPadW ? ReshapeTo3DAroundAxis(ofmShape, axis) : ofmShape;
+            int padAxis = reshapeAndPadW ? 1 : axis;
 
             const int padBefore = paddingBefore[axis];
             if ( padBefore )
             {
-                TensorSlice newOfmSlice = {newPaddingBefore.WithWidth(0), newOfmShape.WithWidth(padBefore)};
-                auto fillOp = MakeFillOperation(ofmConn, newOfmShape, newOfmSlice, padTensor, fillOpType);
+                TensorSlice newOfmSlice = {newOfmShape.WithZeros(), newOfmShape.With(padAxis, padBefore)};
+                auto fillOp = MakeFillOperation(ofmConn, newOfmShape, newOfmSlice, padTensor);
                 RecordOptimisation(operation, fillOp);
             }
 
             const int padAfter = paddingAfter[axis];
             if ( padAfter )
             {
-                TensorSlice newOfmSlice = {newPaddingBefore.WithWidth(padBefore + newIfmShape.Width()), newOfmShape.WithWidth(padAfter)};
-                auto fillOp = MakeFillOperation(ofmConn, newOfmShape, newOfmSlice, padTensor, fillOpType);
+                TensorSlice newOfmSlice = {newOfmShape.With(padAxis, newOfmShape[padAxis] - padAfter), newOfmShape.With(padAxis, padAfter)};
+                auto fillOp = MakeFillOperation(ofmConn, newOfmShape, newOfmSlice, padTensor);
                 RecordOptimisation(operation, fillOp);
             }
         }
@@ -777,7 +764,7 @@ Operation *GraphIrOptimiser::RewritePad(Graph *const, Operation *const operation
         auto copyOp = std::make_shared<Operation>(OpType::MemoryCopy);
         copyOp->CopyInput(TensorUsage::IFM, *ifmConn);
         copyOp->CopyOutput(TensorUsage::OFM, *ofmConn);
-        copyOp->Output(TensorUsage::OFM)->Set({paddingBefore, ifmConn->shape}).Set(RoundMode::NATURAL);
+        copyOp->Output(TensorUsage::OFM)->Set({paddingBefore, ifmShape}).Set(RoundMode::NATURAL);
         RecordOptimisation(operation, copyOp.get());
         returnOp = copyOp.get();
 

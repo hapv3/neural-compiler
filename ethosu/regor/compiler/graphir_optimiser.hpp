@@ -75,7 +75,7 @@ private:
     Operation *UnrollConv(Graph *const, Operation *const operation);
     // Utility/Helper methods
     Operation *MakeFillOperation(TensorConnection *const ofmConn, const Shape &ofmShape, const TensorSlice &ofmSlice,
-        std::shared_ptr<Tensor> padTensor, OpType opType);
+        std::shared_ptr<Tensor> padTensor);
 
     // The graph optimisation steps.
     // Order matters, array of rewrites processed in order.
