@@ -2649,11 +2649,14 @@ Operation *TFLiteGraphOptimiser::ConvertPadV2(Graph *const graph, Operation *con
         auto padOp = std::make_shared<Operation>(OpType::Pad);
         padOp->CopyInput(TensorUsage::IFM, *operation->Input(TensorUsage::IFM));
         padOp->CopyInput(TensorUsage::Params, *operation->Input(TensorUsage::Params0));
-        padOp->CopyOutput(TensorUsage::OFM, *operation->Output(TensorUsage::OFM));
-
+        const auto &ofmConn = operation->Output(TensorUsage::OFM);
+        padOp->CopyOutput(TensorUsage::OFM, *ofmConn);
         const auto &attr = padOp->Attribute<pad_attr_t>();
         const auto padConstTens = operation->Input(TensorUsage::Params1)->tensor;
-        attr->pad_const = padConstTens->View().Values<int>(padConstTens->Type())[0];
+        // This is undoing the existing zero point adjustment to counteract the zero point adjustment
+        // which is done in GraphIR lowering of Pad.
+        uint8_t zeroPoint = ofmConn->quantization.IsValid() ? uint8_t(ofmConn->quantization.zeroPoints[0]) : 0;
+        attr->pad_const = padConstTens->View().Values<int>(padConstTens->Type())[0] - zeroPoint;
 
         RecordOptimisation(operation, padOp.get());
         operation->Disconnect();

@@ -679,7 +679,7 @@ Operation *GraphIrOptimiser::MakeFillOperation(TensorConnection *const ofmConn, 
     const TensorSlice &ofmSlice, std::shared_ptr<Tensor> padTensor)
 {
     auto fillOp = std::make_shared<Operation>(OpType::MemoryCopy);
-    fillOp->ConnectInput(TensorUsage::IFM, padTensor).Set(ofmSlice.shape);
+    fillOp->ConnectInput(TensorUsage::IFM, padTensor).Set(ofmSlice.shape).Set(ofmConn->quantization);
     fillOp->CopyOutput(TensorUsage::OFM, *ofmConn);
     fillOp->Output(TensorUsage::OFM)->Set(ofmShape).Set(ofmSlice).Set(RoundMode::NATURAL);
     return fillOp.get();
@@ -696,7 +696,8 @@ Operation *GraphIrOptimiser::RewritePad(Graph *const, Operation *const operation
         const Shape ofmShape = ofmConn->shape;
         const auto &paramsConn = operation->Input(TensorUsage::Params);
         const auto &attr = operation->Attribute<pad_attr_t>();
-        const int padConst = int(attr->pad_const);
+        uint8_t zeroPoint = ofmConn->quantization.IsValid() ? uint8_t(ofmConn->quantization.zeroPoints[0]) : 0;
+        const int padConst = int(attr->pad_const) + zeroPoint;
 
         // Decode the padding before and after each dimension as two shapes
         Shape paddingBefore = TensorToShape(paramsConn->tensor.get(), paramsConn->shape.Width(), 2, 0);
@@ -738,6 +739,7 @@ Operation *GraphIrOptimiser::RewritePad(Graph *const, Operation *const operation
         // (HWC) where W is the dimension to pad. Only use this strategy when necessary since it is often slower.
         const Shape ifmShape = ifmConn->shape;
         bool reshapeAndPadW = ifmShape.Size() > 4 || (ifmShape.Size() == 4 && ifmShape.Batch() > 1);
+        const Shape zeroShape = reshapeAndPadW ? Shape(0, 0, 0) : ofmShape.WithZeros();
         for ( int axis = 0; axis < ifmShape.Size(); axis++ )
         {
             Shape newOfmShape = reshapeAndPadW ? ReshapeTo3DAroundAxis(ofmShape, axis) : ofmShape;
@@ -746,7 +748,7 @@ Operation *GraphIrOptimiser::RewritePad(Graph *const, Operation *const operation
             const int padBefore = paddingBefore[axis];
             if ( padBefore )
             {
-                TensorSlice newOfmSlice = {newOfmShape.WithZeros(), newOfmShape.With(padAxis, padBefore)};
+                TensorSlice newOfmSlice = {zeroShape, newOfmShape.With(padAxis, padBefore)};
                 auto fillOp = MakeFillOperation(ofmConn, newOfmShape, newOfmSlice, padTensor);
                 RecordOptimisation(operation, fillOp);
             }
@@ -754,7 +756,7 @@ Operation *GraphIrOptimiser::RewritePad(Graph *const, Operation *const operation
             const int padAfter = paddingAfter[axis];
             if ( padAfter )
             {
-                TensorSlice newOfmSlice = {newOfmShape.With(padAxis, newOfmShape[padAxis] - padAfter), newOfmShape.With(padAxis, padAfter)};
+                TensorSlice newOfmSlice = {zeroShape.With(padAxis, newOfmShape[padAxis] - padAfter), newOfmShape.With(padAxis, padAfter)};
                 auto fillOp = MakeFillOperation(ofmConn, newOfmShape, newOfmSlice, padTensor);
                 RecordOptimisation(operation, fillOp);
             }
