@@ -21,39 +21,48 @@ Contributions to Vela are very much welcomed!
 
 ## Coding Standard
 
-Vela is written using Python 3.7 language constructs in order to aid
-compatibility with other tools.  All code must also be run through the
-formatting and linting tools described in [Vela Testing](TESTING.md)
+All code must run through the developer pre-commit checks described in [Testing](TESTING.md)
 
 ## Submitting
 
-In order to submit a contribution to the
-[Vela GitLab project](https://gitlab.arm.com/artificial-intelligence/ethos-u/ethos-u-vela), 
-please read and follow the 
-[Arm GitLab contributions guide](https://gitlab.arm.com/documentation/contributions)
-on how to create a fork of the project.
-To do this you will need to sign-in to the platform using a GitHub account and
-add your SSH key under your settings.  If there is a problem adding the SSH key
-make sure there is a valid email address in the Email Addresses field.  
-In the commit message please include a Signed-off-by (described below).  
-When the merge request is created, make sure the target project is
-`artificial-intelligence/ethos-u/ethos-u-vela` and the target branch is `main`.
+### One-time Registration
+In order to submit a contribution to the project you must first complete the
+following one-time process:
+* Sign in
+   * Requires a GitHub ID
+* Add SSH key
+   * This is added under the user settings page
+   * If there is a problem then make sure there is a valid email address in the
+   Email Addresses field
+* Request permission to create project forks
+   * See [Requesting Access](https://gitlab.arm.com/documentation/contributions#requesting-access)
+* Create a fork of the [Vela project](https://gitlab.arm.com/artificial-intelligence/ethos-u/ethos-u-vela)
+   * Click the fork button in the top-right corner on the project's main page
 
+### Process
 
-## Contribution Guidelines
+Contributions are made by creating a merge request from your fork to the branch
+ `main` of the target project `artificial-intelligence/ethos-u/ethos-u-vela`.
+ Every commit in the merge request must include a Signed-off-by in the commit
+ message to indicate that you agree to the guidelines below.
+
+## Guidelines
 
 Contributions are only accepted under the following conditions:
 
+* All code passes the developer pre-commit checks
+* All code passes a review process conducted on the platform
 * You certify that the origin of the submission conforms to the
 [Developer Certificate of Origin (DCO) V1.1](https://developercertificate.org/)
-* You give permission according to the [Apache License 2.0](LICENSE.txt).
+* You give permission according to the [Apache License 2.0](LICENSE.txt)
 
-To indicate that you agree to these contribution guidelines you must add an
-appropriate 'Signed-off-by: Real Name \<username@example.org\>' line with your
-real name and e-mail address to every commit message.  This can be done
-automatically by adding the `-s` option to your `git commit` command.
+To indicate that you agree to the above you need to add a Signed-off-by to your
+commit using your real name and e-mail address.
+e.g. 'Signed-off-by: Real Name \<username@example.org\>' to every commit
+message.  This can be done automatically by adding the `-s` option to your
+`git commit` command.
 
-No contributions will be accepted from pseudonyms or anonymous sources.
+Contributions are not accepted from pseudonyms or anonymous sources.
 
 ## Code Reviews
 
@@ -71,11 +80,5 @@ for more details).
 ## Bug Resolution
 
 In the case that your submission aims to resolve a bug, please follow the
-[Vela Community Bug Reporting Process](BUGS.md). The document guides
-you through the process of adding a bug ticket to the bug tracker for the
-[Vela project](https://gitlab.arm.com/artificial-intelligence/ethos-u/ethos-u-vela/-/issues).
-
-The ticket will be visible to the public and will thus help the Vela community
-track and find solutions to any bugs that are found during the use of Vela.
-
-Please include a link to your patch in the issue description.
+[Bug Reporting Process](BUGS.md) and include a link to your patch in the issue
+description.

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -23,6 +23,8 @@ from tempfile import TemporaryDirectory
 import build  # noreorder
 import pytest
 
+SAMPLE_VELA_VERSION = "1.2.3"  # Vela version used in link substitution and comparisons
+
 
 @pytest.fixture(scope="module", name="vela_path")
 def fixture_vela_path():
@@ -36,8 +38,7 @@ def fixture_vela_path():
 @pytest.fixture(scope="module", name="built_sdist")
 def fixture_built_sdist(vela_path: Path) -> TarFile:
     """Fixture that returns the TarFile with the project sdist."""
-    # Set pretend version
-    os.environ["SETUPTOOLS_SCM_PRETEND_VERSION"] = "3.7.0"
+    os.environ["SETUPTOOLS_SCM_PRETEND_VERSION"] = SAMPLE_VELA_VERSION
     # Build vela
     with TemporaryDirectory() as tmp_dir:
         p_builder = build.ProjectBuilder(vela_path)
@@ -59,7 +60,7 @@ def fixture_source_readme(vela_path: Path) -> str:
 def test_build_correct_readme_links(built_sdist: TarFile, source_readme: str):
     """Test that PKG-INFO file contains README.md metadata with correct links."""
     md_link_pattern = r"(!?\[.+?\]\((.+?)\))"
-    url = "https://gitlab.arm.com/artificial-intelligence/ethos-u/ethos-u-vela/-/blob/3.7.0/"
+    url = "https://gitlab.arm.com/artificial-intelligence/ethos-u/ethos-u-vela/-/blob/" + SAMPLE_VELA_VERSION + "/"
     # Extract the name of the package
     dist_tar_name = str(built_sdist.name).replace(".gz", "")
     package_name = Path(dist_tar_name).stem
@@ -67,6 +68,6 @@ def test_build_correct_readme_links(built_sdist: TarFile, source_readme: str):
     pkg_info = file.read().decode("utf-8")
     # Ensure that all links were replaced correctly
     for match, link in re.findall(md_link_pattern, source_readme):
-        if "http" not in link and "https" not in link:
+        if "http" not in link and "https" not in link and "mailto:" not in link:
             assert match not in pkg_info
             assert url + link in pkg_info

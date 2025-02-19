@@ -15,21 +15,18 @@ WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 -->
-# Vela Community Bug Reporting
+# Vela Bug Reporting
 
-If the Vela community encounters a bug, then we highly encourage the community
-to report it. When issuing a report, use the
-[Vela issue tracker](https://gitlab.arm.com/artificial-intelligence/ethos-u/ethos-u-vela/-/issues)
-that is part of the Vela project on Arm's GitLab Instance. This site enables any
-Vela user to discuss and share any Vela related issue with the community.
+If you believe you have identified an issue or bug then we encourage you to
+create an issue on the project's [GitLab issue tracker](https://gitlab.arm.com/artificial-intelligence/ethos-u/ethos-u-vela/-/issues).
+However, if it is a security related issue or vulnerability then please use
+the process described in [Security Vulnerabilities](SECURITY.md) instead.
 
-The only prerequisite for this process is a GitHub account, which will be used
-when creating an account on Arm's GitLab Instance.
+The GitLab issue tracker can also be used to ask questions and engage in
+discussions with the Vela community.
 
-If you also have a fix for the bug you have identified, then we encourage
-you to follow the [contributions guide](CONTRIBUTING.md).
-
-The bug reporting process in its entirety is detailed below.
+The bug reporting process is detailed below.  If you also plan to contribute a
+fix for a bug then we encourage you to follow the [contributions guide](CONTRIBUTING.md).
 
 ## Vela issue tracker
 

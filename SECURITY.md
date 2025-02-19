@@ -15,10 +15,11 @@ WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 -->
-# Vela Security
+# Vela Security Vulnerabilities
 
 If you believe you have identified a security related issue or vulnerability,
 then we encourage you to responsibly disclose it to us as soon as possible.
+For non-security related issues please see [Bug Reporting](BUGS.md).
 
 ## Reporting vulnerabilities
 
@@ -34,16 +35,14 @@ disclosure when notifications and patches/mitigations are available.
 
 ### Report
 
-For all security issues, contact Arm by email at
-[arm-security@arm.com](mailto:arm-security@arm.com).  In the body of the email
-include as much information as possible about the issue or vulnerability and any
-additional contact details.
+For all security issues, contact Arm by email at [arm-security@arm.com](mailto:arm-security@arm.com).
+In the body of the email include as much information as possible about the issue
+or vulnerability and any additional contact details.
 
 ### Secure submission using PGP
 
 We support and encourage secure submission of vulnerability reports using PGP
-with the key found at
-[Report Security Vulnerability](https://developer.arm.com/support/arm-security-updates/report-security-vulnerabilities).
+with the key found at [Report Security Vulnerability](https://developer.arm.com/support/arm-security-updates/report-security-vulnerabilities).
 If you would like replies to be encrypted, please provide your own public key
 through a secure mechanism.
 

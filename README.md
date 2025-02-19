@@ -17,382 +17,154 @@ limitations under the License.
 -->
 # Vela
 
-This tool is used to compile a
-[TensorFlow Lite for Microcontrollers](https://www.tensorflow.org/lite/microcontrollers)
-neural network model into an optimised version that can run on an embedded
-system containing an
-[Arm Ethos-U NPU](https://www.arm.com/products/silicon-ip-cpu).
+Vela is a compiler for [Arm Ethos-U NPU](https://www.arm.com/products/silicon-ip-cpu)
+edge AI devices.  It is used to convert neural networks defined in [TOSA](https://www.mlplatform.org/tosa/)
+or [TensorFlow Lite/LiteRT](https://ai.google.dev/edge/litert) format into
+Ethos-U command streams.
 
-In order to be accelerated by the Ethos-U NPU the network operators must be
-quantised to either 8-bit (unsigned or signed) or 16-bit (signed).
+The input network must have quantised activations and quantised weights in order
+to be accelerated by the Ethos-U.
 
-The optimised model will contain TensorFlow Lite Custom operators for those
-parts of the model that can be accelerated by the Ethos-U NPU.  Parts of the
-model that cannot be accelerated are left unchanged and will instead run on the
-Cortex-M series CPU using an appropriate kernel (such as the
-[Arm](https://www.arm.com) optimised
-[CMSIS-NN](https://github.com/ARM-software/CMSIS_5/tree/develop/CMSIS/NN)
-kernels).
-
-After compilation the optimised model can only be run on an Ethos-U NPU
-embedded system.
-
-The tool will also generate performance estimates (EXPERIMENTAL) for the
-compiled model.
-
-The tool has limited functionality for compiling a
-[TOSA](https://git.mlplatform.org/tosa/specification.git/) neural network
-(EXPERIMENTAL).
-
-## TensorFlow Support
-
-Vela is tested by comparing the bit exact numerical behaviour of the Ethos-U
-optimised operators against that of the corresponding TensorFlow Lite reference
-kernels (or TensorFlow Lite for Microcontrollers reference kernels in the case
-of the UNIDIRECTIONAL_SEQUENCE_LSTM operator).  The following list indicates
-which version is used for comparison:
-
-* Vela 4.0.0 to current supports TensorFlow 2.17
-* Vela 3.12.0 supports TensorFlow 2.16
-* Vela 3.11.0 supports TensorFlow 2.15
-* Vela 3.10.0 supports TensorFlow 2.14
-* Vela 3.9.0 supports TensorFlow 2.12
-* Vela 3.8.0 supports TensorFlow 2.11
-* Vela 3.6.0 to 3.7.0 supports TensorFlow 2.10
-* Vela 3.5.0 supports TensorFlow 2.9
-* Vela 3.4.0 supports TensorFlow 2.8
-* Vela 3.3.0 supports TensorFlow 2.7
-* Vela 3.1.0 to 3.2.0 supports TensorFlow 2.5
-* Vela 2.1.0 to 3.0.0 supports TensorFlow 2.4
-* Vela 2.0.0 to 2.0.1 supports TensorFlow 2.3
-* Vela 0.1.0 to 1.2.0 supports TensorFlow 2.1
-
-## Python Version Support
-
-The majority of Vela's testing is done using a single version of Python, as
-indicated by the first version in the list below.  However, some additional
-testing is also performed across a range of newer versions starting at the
-minimum version (pyproject.toml:project.requires-python) indicated in the
-brackets:
-
-* Vela 3.10.0 to current supports Python 3.10 (3.9)
-* Vela 3.9.0 supports Python 3.10 (3.8)
-* Vela 3.8.0 supports Python 3.9 (3.8)
-* Vela 3.4.0 to 3.7.0 supports Python 3.7 (3.8)
-* Vela 3.3.0 supports Python 3.8 (3.7)
-* Vela 0.1.0 to 3.2.0 supports Python 3.6 (3.7)
-
-## Environment
-
-Vela runs on Linux and Microsoft Windows 10 operating systems.
-
-## Prerequisites
-
-The following should be installed prior to the installation of Vela:
-
-* Python 3.10 or compatible
-   - Development version containing the Python/C API header files
-   - e.g. `apt install python3.10-dev` or `yum install python310-devel`
-* Pip3
-* If building from source then C99 and C++17 capable compilers and associated
-toolchains are also required
-    - For Linux operating systems, a GNU toolchain is recommended.
-    - For Microsoft Windows 10, the Microsoft Visual C++ 14.2 Build Tools are recommended.
-      See <https://wiki.python.org/moin/WindowsCompilers>
+More details about Ethos-U devices:
+* Ethos-U55, [product](https://www.arm.com/products/silicon-ip-cpu/ethos/ethos-u55) and [developer](https://developer.arm.com/Processors/Ethos-U55) information
+* Ethos-U65, [product](https://www.arm.com/products/silicon-ip-cpu/ethos/ethos-u65) and [developer](https://developer.arm.com/Processors/Ethos-U65) information
+* Ethos-U85, [product](https://www.arm.com/products/silicon-ip-cpu/ethos/ethos-u85) and [developer](https://developer.arm.com/Processors/Ethos-U85) information
 
 ## Installation
 
-Vela is available to install as binary wheels or a source distribution from
-[PyPi](https://pypi.org/project/ethos-u-vela/), or as
-source code from
-[Arm's GitLab Instance](https://gitlab.arm.com/artificial-intelligence/ethos-u/ethos-u-vela).
-Both methods will automatically install all the required dependencies.
+Vela runs on:
+* Apple macOS
+* Linux
+* Microsoft Windows
 
-### PyPi
-
-Install Vela from PyPi using the following command:
+The simplest way to obtain Vela is to install it directly from [PyPi](https://pypi.org/project/ethos-u-vela/).
+The following will install the latest released version:
 
 ```bash
 pip3 install ethos-u-vela
 ```
 
-### Arm's GitLab Instance
+### Requirements
 
-First obtain the source code by either downloading the desired TGZ file from:  
-<https://gitlab.arm.com/artificial-intelligence/ethos-u/ethos-u-vela>
+If your system does not match one of the pre-built binary wheels on PyPi then
+the installation process will attempt to build Vela from its source code.  To do
+this it requires the following:
+* Development version of Python 3 containing the Python/C API header files
+   - e.g. `apt install python3.10-dev`
+* C99 and C++17 capable compiler and toolchain
+    - For Apple macOS; XCode or Command Line Tools are recommended,
+      see <https://developer.apple.com/xcode/resources/> or `xcode-select --install`
+    - For Linux operating systems; a GNU or Clang toolchain is recommended,
+      e.g. `apt install build-essential`
+    - For Microsoft Windows 10; the Microsoft Visual C++ 14.2 Build Tools are recommended,
+      see <https://wiki.python.org/moin/WindowsCompilers>
+* CMake
+    - See <https://cmake.org/download/>
 
-Or by cloning the git repository:
+### Manually Building
 
-```bash
-git clone https://git.gitlab.arm.com/artificial-intelligence/ethos-u/ethos-u-vela.git
-```
+The source code is available from [Arm's GitLab Instance](https://gitlab.arm.com/artificial-intelligence/ethos-u/ethos-u-vela),
+see [Building From Source](BUILD.md) for more details.
 
-Once you have the source code, Vela can be installed using the following
-command from the root directory of the repository:
+## Getting Started
 
-```bash
-pip3 install .
-```
-
-#### Advanced Installation for Developers
-
-If you plan to modify the Vela codebase then it is recommended to install Vela
-as an editable package to avoid the need to re-install after every modification.
-This is done by adding the `-e` option to the install command like so:
-
-```bash
-pip3 install -e .[dev]
-```
-
-If you plan to contribute to the Vela project (highly encouraged!) then it is
-recommended to install Vela with the development dependencies (see
-[Vela Testing](TESTING.md) for more details).
-
-##### Build options for C++ files (ethosu/regor) #####
-
-The C++ part of the the Vela compiler can be configured through the following environment variables:
-
-| Variable                   | Description                                             |
-| :------------------------- | :------------------------------------------------------ |
-| CMAKE_BUILD_TYPE           | Control cmake-build-type (Release or Debug)             |
-| CMAKE_BUILD_PARALLEL_LEVEL | Control parallel build level                            |
-| CMAKE_GENERATOR            | Override the default CMAKE generator                    |
-| CMAKE_ARGS                 | Provide additional build-time options (see table below) |
-
-The following build-time options can be provided through CMAKE_ARGS  
-```bash
-# Example (Linux Bash)
-CMAKE_ARGS="-DREGOR_ENABLE_LTO=OFF -DREGOR_ENABLE_WERROR=ON" pip3 install -e .[dev]
-```
-| Option                             | Description                               | Arguments                           |
-| :--------------------------------- | :---------------------------------------- | :---------------------------------- |
-| REGOR_ENABLE_LTO                   | Enable Link Time Optimization             | ON/OFF                              |
-| REGOR_ENABLE_LDGOLD                | Enable Gold linker if available           | ON/OFF                              |
-| REGOR_ENABLE_CCACHE                | Enable ccache if available                | ON/OFF                              |
-| REGOR_ENABLE_WERROR                | Enable warnings as errors                 | ON/OFF                              |
-| REGOR_ENABLE_STD_STATIC            | Link libstdc and libgcc statically        | ON/OFF                              |
-| REGOR_ENABLE_COVERAGE              | Enable Coverage build                     | ON/OFF                              |
-| REGOR_ENABLE_PROFILING             | Enable timer based runtime profiling      | ON/OFF                              |
-| REGOR_ENABLE_ASSERT                | Enable asserts                            | ON/OFF                              |
-| REGOR_ENABLE_EXPENSIVE_CHECKS      | Enable expensive STL GLICXX asserts       | ON/OFF                              |
-| REGOR_ENABLE_RTTI                  | Enable RTTI (run-time type information)   | ON/OFF                              |
-| REGOR_ENABLE_VALGRIND              | Enable Valgrind during check target       | ON/OFF                              |
-| REGOR_ENABLE_TESTING               | Enable unit testing                       | ON/OFF                              |
-| REGOR_ENABLE_CPPCHECK              | Enable CPPCHECK                           | ON/OFF                              |
-| REGOR_SANITIZE                     | Sanitizer setting (forwards to fsanitize) | String                              |
-| REGOR_LOG_TRACE_MASK               | Log trace enable mask                     | int (0->7) (See common/logging.hpp) |
-| REGOR_PACKAGE_NAME                 | CPack package name                        | String                              |
-| REGOR_DEBUG_COMPRESSION            | Debug symbol compression                  | none, zlib, zlib-gnu                |
-| REGOR_PYTHON_BINDINGS_DESTINATION  | Python bindings install destination       | String                              |
-| REGOR_PYEXT_VERSION                | Python extension version                  | String                              |
-
-## Running
-
-Vela is run with an input `.tflite` or `.tosa` (EXPERIMENTAL) file passed on the
-command line. This file contains the neural network to be compiled. The tool then
-outputs an optimised `.tflite` file with a `_vela` suffix in the file name, along
-with performance estimate (EXPERIMENTAL) CSV files, all to the output directory.
-It also prints a performance estimation summary back to the console, see
-[Vela Performance Estimation Summary](PERFORMANCE.md).
-
-Example usage:
-
-1) Compile the network `my_model.tflite`.  The optimised version will be output
-to `./output/my_network_vela.tflite`.
+Once installed, Vela can be run from the command line by specifying just two
+settings:
+* Target Ethos-U device; `--accelerator-config`
+* Neural network file; `.tflite` or `.tosa`
 
 ```bash
-vela my_model.tflite
+vela --accelerator-config ethos-u55-128  my_network.tflite
 ```
 
-2) Compile the network `/path/to/my_model.tflite` and specify the output to go
-in the directory `./results_dir/`.
+However, it is highly recommended that you specify some additional settings that
+describe the Ethos-U system and what optimisation strategy the compiler should
+use.  The three additional settings are:
+* System configuration; `--system-config`
+* Memory mode; `--memory-mode`
+* Optimisation strategy; `--optimise`
 
+The system configuration and memory mode refer to definitions in a configuration
+file.  These are specific to the target system.  However an example
+configuration (`Arm/vela.ini`) containing some generic reference systems is
+provided as part of the installation.
+
+The optimisation strategy indicates whether the compiler should minimise
+inference time or runtime memory usage.
+
+See [CLI Options](OPTIONS.md) for more information.
+
+Example of how to set the system configuration and memory mode:
 ```bash
-vela --output-dir ./results_dir /path/to/my_model.tflite
+vela --config Arm/vela.ini --system-config Ethos_U85_SYS_DRAM_High --memory-mode Dedicated_Sram_384KB --accelerator-config ethos-u85-256  my_network.tosa
 ```
 
-3) Compile a network targeting a particular Ethos-U NPU.  The following command
-selects an Ethos-U65 NPU accelerator configured with 512 MAC units.
-
+Example of how to set the optimisation strategy:
 ```bash
-vela --accelerator-config ethos-u65-512 my_model.tflite
-```
-4) Compile a network while minimizing peak SRAM usage, prioritising lower SRAM
-usage over runtime performance.
-
-```bash
-vela --optimise Size my_model.tflite
+vela --optimise Size --accelerator-config ethos-u55-64  my_network.tflite
 ```
 
-5) Compile a network to have maximum performance, i.e. the fastest inference time.
-This prioritises a higher runtime performance over a lower peak SRAM usage.
-
-```bash
-vela --optimise Performance my_model.tflite
-```
-
-6) Compile a network while optimising for the fastest inference time possible,
-with an upper bound for the SRAM usage. The memory limit is set in bytes, i.e.
-run the following example if one requires a limit of 300KB.
-
-```bash
-vela --optimise Performance --arena-cache-size 300000 my_model.tflite
-```
-
-7) Compile a network using a particular embedded system configuration defined in
-Vela's configuration file.  The following command selects the `My_Sys_Config`
-system configuration along with the `My_Mem_Mode` memory mode from the `vela.ini`
-configuration file located in the config_files directory.
-
-```bash
-vela --config Arm/vela.ini --system-config My_Sys_Config --memory-mode My_Mem_Mode my_model.tflite
-```
-
-8) To get a list of all available configuration files in the config_files directory:
-
+Command to list all known configuration files:
 ```bash
 vela --list-config-files
 ```
 
-9) To get a list of all available options (see CLI Options section below):
-
+Command to list all configurations in a configuration file:
 ```bash
-vela --help
+vela --list-config Arm/vela.ini
 ```
 
-## Warnings
+### Output 
 
-When running the Vela compiler it may report a number of warning messages to the
-console. These should all be thoroughly reviewed as they will indicate decisions
-that the compiler has made in order to create the optimised network.
+The result of the compilation is an optimised network in either TFLite or Raw
+format depending upon the input network.  This can be overridden using the
+`--output-format option`.
 
-## Example Networks
+TFLite output contains TensorFlow Lite Custom operators for those parts of
+the network that can be accelerated by the Ethos-U NPU.  Parts of the network
+that cannot be accelerated are left unchanged.
 
-Some example networks that contain quantised operators which can be compiled by
-Vela to run on the Ethos-U NPU can be found at:
-<https://tfhub.dev/s?deployment-format=lite&q=quantized>
+Raw output contains the command stream and weight data required to run Ethos-U
+parts of the optimised network.  This is stored in [`.npz`](https://numpy.org/doc/stable/reference/generated/numpy.lib.format.html#module-numpy.lib.format)
+format.  See the Output format [CLI Option](OPTIONS.md) for more information.
+This does not contain CPU parts of the network and so cannot be used for
+converting TFLite to TOSA.
 
-## Known Issues
+#### Warnings
 
-### 1. NumPy C API version change
+It is important to thoroughly review and understand all warning messages
+generated by the compiler as they could indicate that not all operators were
+optimally converted to run on the Ethos-U.
 
-Once ethos-u-vela is installed, the user might want to install a different NumPy
-version that is still within the dependency constraints defined in pyproject.toml.
+#### Performance information
 
-In some scenarios, doing so might prevent ethos-u-vela from functioning as
-expected due to incompatibilities between the installed NumPy C headers used in
-the mlw_codec and the current version of NumPy.
+A performance estimation summary is reported after compilation.  The cycle and
+bandwidth numbers should not be taken as accurate representations of real
+performance numbers and they should not be compared against those from other
+compilations that use different settings or configurations.  The numbers
+reported allow the compiler to make its optimisation decisions only.  For
+accurate performance numbers the network should be run and profiled on an FPGA.
+For approximate performance numbers the network can be run on a Fixed
+Virtual Platform (FVP) Model.
 
-**Example scenario:**
-
-In the ethos-u-vela source directory, run:
-
-```bash
-virtualenv -p 3.10 venv
-. venv/bin/activate
-pip install ethos-u-vela
-```
-
-Next, install a different NumPy version (e.g. 1.21.3)
-
-```bash
-pip install numpy==1.21.3 --force
-```
-
-Finally, run ethos-u-vela. You might get an error similar to this:
-
-```
-ImportError: NumPy C API version mismatch
-(Build-time version: 0x10, Run-time version: 0xe)
-This is a known issue most likely caused by a change in the API version in
-NumPy after installing ethos-u-vela.
-```
-
-#### Solution
-
-In order for ethos-u-vela to work with an older version of NumPy that uses
-different C APIs, you will need to install the desired NumPy version first, and
-then build ethos-u-vela with that specific NumPy version:
-
-1) Uninstall ethos-u-vela and install the desired version of NumPy
-   ```
-   pip uninstall ethos-u-vela
-   pip install numpy==1.21.3 --force
-   ```
-
-2) Install required build dependencies
-   ```
-   pip install "setuptools_scm[toml]<6" wheel
-   ```
-
-3) Install ethos-u-vela without build isolation. Not using build isolation
-   ensures that the correct version of NumPy is used when copying the C headers
-   in mlw_codec during the build process.
-   ```
-   pip install ethos-u-vela --no-build-isolation --no-cache-dir
-   ```
-
-## APIs
-
-Please see [Vela External APIs](API.md).
-
-## Bug Reporting
-
-Please see [Vela Community Bug Reporting](BUGS.md) for a description of how to
-report bugs.
-
-## Contributions
-
-Please see [Vela Contributions](CONTRIBUTING.md).
-
-## Debug Database
-
-Please see [Vela Debug Database](DEBUG_DB.md).
+## Additional Vela Information
+* [External APIs](API.md)
+* [Bug Reporting](BUGS.md)
+* [Building From Source](BUILD.md)
+* [Contributing](CONTRIBUTING.md)
+* [CLI Options](OPTIONS.md)
+* [Debug Database](DEBUG_DB.md)
+* [Performance Estimations](PERFORMANCE.md)
+* [Operator Support](SUPPORTED_OPS.md)
+* [Releases](RELEASES.md)
+* [Security Vulnerabilities](SECURITY.md)
+* [Testing](TESTING.md)
 
 ## Inclusive language commitment
 
-This product conforms to Arm’s inclusive language policy and, to the best of
-our knowledge, does not contain any non-inclusive language. If you find
-something that concerns you, email terms@arm.com.
-
-## Options
-
-Please see [Vela CLI Options](OPTIONS.md).  This includes a description of the
-system configuration file format.
-
-## Performance
-
-Please see [Vela Performance Estimation Summary](PERFORMANCE.md).
-__NOTE: This is only an estimate. For performance numbers we recommend running
-the compiled network on an FVP Model or FPGA.__
-
-## Releases
-
-Please see [Vela Releases](RELEASES.md).
-
-## Resources
-
-Additional useful information:
-
-* [Arm Products: Ethos-U55 NPU](https://www.arm.com/products/silicon-ip-cpu/ethos/ethos-u55)
-* [Arm Products: Ethos-U65 NPU](https://www.arm.com/products/silicon-ip-cpu/ethos/ethos-u65)
-* [Arm Products: Ethos-U85 NPU](https://www.arm.com/products/silicon-ip-cpu/ethos/ethos-u85)
-* [Arm Developer: Ethos-U55 NPU](https://developer.arm.com/Processors/Ethos-U55)
-* [Arm Developer: Ethos-U65 NPU](https://developer.arm.com/Processors/Ethos-U65)
-* [Arm Developer: Ethos-U85 NPU](https://developer.arm.com/Processors/Ethos-U85)
-
-## Security
-
-Please see [Vela Security](SECURITY.md).
-
-## Supported Operators
-
-Please see [Vela Supported Operators](SUPPORTED_OPS.md) for the list of
-operators supported in this release.
-
-## Testing
-
-Please see [Vela Testing](TESTING.md).
+This product conforms to Arm’s inclusive language policy and, to the best of our
+knowledge, does not contain any non-inclusive language.  If you find something
+that concerns you then email [terms@arm.com](mailto:terms@arm.com).
 
 ## License
 

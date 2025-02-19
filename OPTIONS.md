@@ -15,17 +15,17 @@ WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 -->
-# Vela Options
+# Vela CLI Options
 
-This file contains a more verbose and detailed description of the Vela
-Compiler's CLI options than the built-in help strings.  It also defines and
-describes Vela's configuration file format.
+This file contains a detailed description of the CLI options and the
+configuration file format.
 
 ## Command Line Interface
 
 ### Network (required)
 
-Filename of the network model to compile.  The file has to be a `.tflite` file.  
+Filename of the network model to compile.  The file has to be a `.tosa` or
+`.tflite` file.  
 **Type: POSIX path**  
 **Default: N/A**  
 
@@ -35,8 +35,8 @@ vela path/to/network.tflite
 
 ### Help
 
-Displays the help strings of all CLI options.  Can be used without the required
-Network argument.  
+Displays the help strings of all CLI options.  
+This option can be used without the required Network argument.  
 **Type: N/A**  
 **Default: N/A**  
 
@@ -46,7 +46,8 @@ vela --help
 
 ### Version
 
-Displays the version of the installed Vela Compiler.  Can be used without the
+Displays the version of the installed Vela Compiler.  
+This option can be used without the required Network argument.  
 required Network argument.  
 **Type: N/A**  
 **Default: N/A**  
@@ -57,8 +58,8 @@ vela --version
 
 ### API version
 
-Displays the version of the external API.  Can be used without the
-required Network argument.  
+Displays the version of the external API.  
+This option can be used without the required Network argument.  
 **Type: N/A**  
 **Default: N/A**  
 
@@ -69,13 +70,11 @@ vela --api-version
 ### Supported Operator Report
 
 Generate the SUPPORTED_OPS.md file in the current working directory. Contains
-a summary table for each supported network model format (TFLite/TOSA). The
-tables shows all the operators that can be placed on the NPU, and what the
-constraints are for that operator to be scheduled on the NPU. If the constraints
-are not met for a TFLite operator, then it will be scheduled on the CPU instead.
-For TOSA operators there are no fallback to the CPU. Note: There is limited
-support for compiling a TOSA neural network (EXPERIMENTAL). Can be used without
-the required Network argument.  
+a summary for TFLite operators which shows all the operators that can be placed
+on the NPU, and what the constraints are for that operator to be scheduled on
+the NPU. If the constraints are not met, then it will be scheduled on the CPU
+instead. For TOSA operators fallback to the CPU is not allowed.  
+This option can be used without the required Network argument.  
 **Type: N/A**  
 **Default: N/A**  
 
@@ -89,8 +88,8 @@ Displays the configuration files in the `ethosu/config_files` directory. All
 configuration files must have the .ini extension and be placed in an
 appropriately named directory under `ethosu/config_files`. Note that the file
 depth from `ethosu/config_files` must be exactly 2 for the file to be
-discovered (e.g. `config_files/directory_name/my_config_file.ini`). Can be
-used without the required Network argument.
+discovered (e.g. `config_files/directory_name/my_config_file.ini`).  
+This option can be used without the required Network argument.  
 
 ```bash
 vela --list-config-files

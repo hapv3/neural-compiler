@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright 2020, 2022-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+SPDX-FileCopyrightText: Copyright 2020, 2022-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 
 SPDX-License-Identifier: Apache-2.0
 
@@ -17,7 +17,83 @@ limitations under the License.
 -->
 # Vela Testing
 
-## Tools
+Vela is tested in-house by comparing the bit exact numerical behaviour of the
+optimised network against that of the corresponding behaviour of the reference
+code.  In addition, a developer [pre-commit](https://pre-commit.com/) performs
+pytest unit tests, along with linting and formatting checks.  However, the
+Catch2 unit tests need to be run manually.
+
+## TOSA
+
+TOSA networks are compared against the [TOSA Reference Model](https://review.mlplatform.org/admin/repos/tosa/reference_model,general).
+
+## TensorFlow Lite/LiteRT
+
+TensorFlow Lite/LiteRT networks are compared against the TensorFlow Lite/LiteRT
+reference kernels (except for the UNIDIRECTIONAL_SEQUENCE_LSTM operator which
+is compared against the TensorFlow Lite/LiteRT for Microcontrollers reference
+kernel).  The following list indicates which TensorFlow version a particular
+Vela version was tested against.  It also indicates which version of the
+TensorFlow Lite/LiteRT flatbuffer schema was supported.
+
+* Vela 4.0.0 to current supports TensorFlow 2.17
+* Vela 3.12.0 supports TensorFlow 2.16
+* Vela 3.11.0 supports TensorFlow 2.15
+* Vela 3.10.0 supports TensorFlow 2.14
+* Vela 3.9.0 supports TensorFlow 2.12
+* Vela 3.8.0 supports TensorFlow 2.11
+* Vela 3.6.0 to 3.7.0 supports TensorFlow 2.10
+* Vela 3.5.0 supports TensorFlow 2.9
+* Vela 3.4.0 supports TensorFlow 2.8
+* Vela 3.3.0 supports TensorFlow 2.7
+* Vela 3.1.0 to 3.2.0 supports TensorFlow 2.5
+* Vela 2.1.0 to 3.0.0 supports TensorFlow 2.4
+* Vela 2.0.0 to 2.0.1 supports TensorFlow 2.3
+* Vela 0.1.0 to 1.2.0 supports TensorFlow 2.1
+
+## Python Version Support
+
+The majority of Vela's testing is done using a single version of Python, as
+indicated by the non-bracketed version in the list below.  However, some
+additional testing is also performed across a range of other versions starting
+from a minimum version, indicated in the brackets, and going to the latest
+released version at the time of testing.
+
+* Vela 3.10.0 to current supports Python 3.10 (3.9)
+* Vela 3.9.0 supports Python 3.10 (3.8)
+* Vela 3.8.0 supports Python 3.9 (3.8)
+* Vela 3.4.0 to 3.7.0 supports Python 3.7 (3.8)
+* Vela 3.3.0 supports Python 3.8 (3.7)
+* Vela 0.1.0 to 3.2.0 supports Python 3.6 (3.7)
+
+## Developer Pre-Commit
+
+### Installation
+
+To install the developer pre-commit:
+``` bash
+pip install -e ".[dev]"
+pre-commit install
+```
+
+### Running
+
+After installation, all pre-commit stages described below will be automatically
+run upon a `git commit` command.
+
+However, the various stages can also be run manually.
+
+To run all of the commit stages on all files:
+```bash
+$ pre-commit run --all-files
+```
+
+Example of how to run a specific check on a specific file:
+```bash
+$ pre-commit run pylint --files ethosu/vela/vela.py
+```
+
+### Linting/Formatting
 
 Vela's Python code is PEP8 compliant with the exception of a 120 character
 line length.  The following code formatting and linting tools are run on all the
@@ -35,81 +111,24 @@ auto-generated and third-party code see `.pre-commit-config.yaml` for details):
 
 * clang-format (code formatter)
 
-All of the above tools can be installed and run using the
-[pre-commit](https://pre-commit.com/) framework (see below).
+### Unit Tests
 
-In addition, there are both Python and C/C++ unit tests. These use the following
-frameworks:
+There are both Python and C/C++ unit tests. These use the following frameworks:
 
 * pytest (Python)
 * Catch2 (C/C++)
 
-### Installation
-
-To install the development dependencies, first install Vela with the development
-option:
-
-``` bash
-pip install -e ".[dev]"
-```
-
-This will install the following tools:
-
-* pytest
-* pytest-cov
-* pre-commit
-* build
-* setuptools_scm
-
-Then, the remaining tools will be installed automatically upon the first use of
-pre-commit.
-
-### Add pre-commit hook (Automatically running the tools)
-
-To support code development all the above tools can be configured to run
-automatically upon any modified file. This happens when performing a
-`git commit` command and is setup using:
-
-```bash
-$ pre-commit install
-pre-commit installed at .git/hooks/pre-commit
-```
-
-When committing a patch, if any of the tools result in a failure (meaning an
-issue was found) then the issue will need to be resolved before re-issuing the
-commit.
-
-### Manually running the tools
-
-All of the tools can be run individually by invoking them using the following
-pre-commit framework commands:
-
-1) Run all of the commit stages on all files in the repository:
-
-```bash
-$ pre-commit run --all-files
-```
-
-2) Run a specific check on a specific file
-```bash
-$ pre-commit run pylint --files ethosu/vela/vela.py
-```
-
-### Manually run the pytest unit tests
-
-To run all of the pytest unit tests use the following command:
+To run all pytest unit tests:
 ```bash
 $ pytest
 ```
 
-2) Run a specific pytest unit test
+Example of how to run a specific pytest unit test:
 ```bash
-$ pytest pytest ethosu/vela/test/test_architecture_allocator.py
+$ pytest ethosu/vela/test/test_architecture_allocator.py
 ```
 
-### Manually run the Catch2 unit tests
-
-To run all of the Catch2 unit tests use the following command:
+To run all of the Catch2 unit tests:
 ```bash
 $ cmake -S ethosu/regor -B build-unit-tests -DCMAKE_BUILD_TYPE=Debug -DREGOR_SANITIZE=address
 $ cmake --build build-unit-tests -t check

@@ -15,10 +15,19 @@ WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 -->
-# Vela Performance Estimation Summary
+# Vela Performance Estimations
 
-This is a description of the performance estimation summary that Vela prints
-after each compilation.  This summary is also printed to a csv in the output
+A performance estimation summary is reported after compilation.  The cycle and
+bandwidth numbers should not be taken as accurate representations of real
+performance numbers and they should not be compared against those from other
+compilations that use different settings or configurations.  The numbers
+reported allow the compiler to make its optimisation decisions only.  For
+accurate performance numbers the network should be run and profiled on an FPGA.
+For approximate performance numbers the network can be run on a Fixed
+Virtual Platform (FVP) Model.
+
+The following is a description of the fields reported in the performance
+estimation summary.  This summary is also printed to a csv in the output
 directory.
 
 The following is an example of the output.
