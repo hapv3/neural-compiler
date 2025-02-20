@@ -31,9 +31,9 @@ class DecompositionFailure : public std::runtime_error
 public:
     DecompositionFailure(const std::string &what = "") : std::runtime_error(what) {}
 };
-
+Flags<QueryResult> OperatorQuery(Architecture *arch, const SchedulerOperation *schedOp, ArchRequirements *req);
+bool ShouldDecompose(Architecture *arch, const SchedulerOperation *schedOp);
 bool NeedsDecompose(Architecture *arch, const SchedulerOperation *schedOp);
-bool CanRunOnHardware(Architecture *arch, const SchedulerOperation *schedOp);
 bool CanDecompose(Architecture *arch, const SchedulerOperation *schedOp);
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv2D(Architecture *arch, std::unique_ptr<SchedulerOperation> op);
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv3D(Architecture *arch, std::unique_ptr<SchedulerOperation> op);
@@ -53,7 +53,7 @@ inline ArchFM &Set(ArchFM &fm, const SchedulerConnection *conn)
     if ( conn )
     {
         fm.type = conn->tensor->dataType;
-        fm.shape = conn->slice.shape ? conn->slice.shape : conn->shape;
+        fm.shape = conn->SliceShape();
         fm.format = conn->tensor->format;
     }
     return fm;

@@ -98,9 +98,6 @@ static const int s_SHRAMElementBits[] = {
 
 static_assert(std::size(s_SHRAMElementBits) == int(SHRAM_Last) + 1, "Bad element mapping");
 
-// max size for tensor axes
-const static Shape MAX_SHAPE(nullptr, 8, 65536);
-
 ArchEthosU55::ArchEthosU55() : _subkernelMax(8, 8, 65536), _ofmBlockMax(32, 64, 128)
 {
     _weightEncoder = std::make_unique<EthosU55WeightEncoder>(this);
@@ -742,12 +739,6 @@ int EthosU55OpGroup::Add(const ArchitectureOpGroupQuery &op, const std::vector<i
         }
     }
 
-    if ( !CanRunOnNPU(op) )
-    {
-        // Can only fuse NPU ops
-        return 0;
-    }
-
     if ( _opsCount > 0 && !IsActivation(op.type) )
     {
         // Can only fuse with activation
@@ -798,180 +789,6 @@ int EthosU55OpGroup::Add(const ArchitectureOpGroupQuery &op, const std::vector<i
 bool EthosU55OpGroup::NeedsAllocation(UniqueId tensorUID)
 {
     return _fusedTensors.count(tensorUID) == 0;
-}
-
-// Table of allowed ifm/ofm data type combinations for each HWOp
-static const std::unordered_map<EthosU55NpuOp, std::unordered_map<DataType, std::vector<DataType>>> s_opDataTypeSupport = {
-    {EthosU55NpuOp::Convolution,  // HWOp
-        {
-            // IFM data type  | OFM data type(s)
-            {DataType::UInt8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int16, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-        }},
-    {EthosU55NpuOp::Depthwise,
-        {
-            {DataType::UInt8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int16, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-        }},
-    {EthosU55NpuOp::VectorProduct,
-        {
-            {DataType::UInt8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int16, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-        }},
-    {EthosU55NpuOp::Pooling,
-        {
-            {DataType::UInt8, {DataType::UInt8}},
-            {DataType::Int8, {DataType::Int8}},
-            {DataType::Int16, {DataType::Int16}},
-        }},
-    {EthosU55NpuOp::ReduceSum,
-        {
-            {DataType::UInt8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int16, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int32, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-        }},
-};
-
-bool EthosU55OpGroup::CanRunOnNPU(const ArchitectureOpGroupQuery &op)
-{
-    EthosU55NpuOp npuOp = ArchEthosU55::GetHWOp(op.type);
-
-    if ( IsFloat(op.ifm[0].type | op.ifm[1].type | op.ofm.type) )
-    {
-        return false;
-    }
-
-    if ( npuOp == EthosU55NpuOp::None || npuOp > EthosU55NpuOp::Compound )
-    {
-        return false;
-    }
-
-    auto k = op.kernel;
-    if ( k->Stride().x > 3 || k->Stride().y > 3 )
-    {
-        return false;
-    }
-
-    if ( k->Dilation().x > 2 || k->Dilation().y > 2 )
-    {
-        return false;
-    }
-
-    if ( k->DepthMultiplier() > 1 )
-    {
-        return false;
-    }
-
-    // Validate that input/outputs shapes don't overflow
-    if ( npuOp != EthosU55NpuOp::Dma )
-    {
-        const auto &ifmShape = op.ifm[0].shape;
-        const auto &ofmShape = op.ofm.shape;
-        if ( ifmShape.GreaterMask(MAX_SHAPE) != 0 )
-        {
-            return false;
-        }
-        if ( ofmShape.GreaterMask(MAX_SHAPE) != 0 )
-        {
-            return false;
-        }
-        if ( op.inputs > 1 )
-        {
-            const auto &ifm2Shape = op.ifm[1].shape;
-            if ( ifm2Shape.GreaterMask(MAX_SHAPE) != 0 )
-            {
-                return false;
-            }
-        }
-    }
-
-    // Check allowed ifm/ofm type mapping
-    if ( npuOp != EthosU55NpuOp::Elementwise )
-    {
-        if ( op.type == OpType::LUT || op.type == OpType::MemoryCopy || op.type == OpType::Rescale ||
-             op.type == OpType::Tile || op.type == OpType::Transpose || npuOp == EthosU55NpuOp::Compound )
-        {  // TODO: LUT operations end up here due to UseAvgPoolNop although the rules are not the same as
-           // for a Pooling operation, so skip checks for now.
-            return true;
-        }
-
-        auto map = s_opDataTypeSupport.find(npuOp);
-        if ( map == s_opDataTypeSupport.end() )
-        {
-            assert(false && "Data type mapping for HWOp missing");
-            return false;
-        }
-        auto &typeMap = map->second;
-        auto ifmEntry = typeMap.find(op.ifm[0].type);
-        if ( ifmEntry == typeMap.end() )
-        {  // Unsupported ifm data type
-            return false;
-        }
-        auto &ofmTypes = ifmEntry->second;
-        if ( 0 == std::count(ofmTypes.begin(), ofmTypes.end(), op.ofm.type) )
-        {  // Unsupported ofm data type
-            return false;
-        }
-    }
-    else
-    {
-        std::vector<DataType> validIfmTypes;
-        std::vector<DataType> validOfmTypes;
-        switch ( op.type )
-        {
-            case OpType::Add:
-            case OpType::Sub:
-            case OpType::Mul:
-            {
-                validIfmTypes = {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32};
-                validOfmTypes = validIfmTypes;
-            }
-            break;
-            case OpType::Minimum:
-            case OpType::Maximum:
-            case OpType::LeakyRelu:
-            case OpType::Abs:
-            {
-                validIfmTypes = {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32};
-                validOfmTypes = {op.ifm[0].type};
-            }
-            break;
-            case OpType::CLZ:
-            case OpType::SHL:
-            case OpType::Asr:
-            {
-                validIfmTypes = {DataType::Int32};
-                validOfmTypes = {DataType::Int32};
-                if ( op.type == OpType::Asr )
-                {
-                    validOfmTypes.insert(validOfmTypes.begin(), {DataType::UInt8, DataType::Int8, DataType::Int16});
-                }
-            }
-            break;
-            default:
-                assert(false && "Unkown elementwise type");
-                break;
-        }
-
-        if ( 0 == std::count(validIfmTypes.begin(), validIfmTypes.end(), op.ifm[0].type) )
-        {  // Unsupported ifm data type
-            return false;
-        }
-        if ( IsBinaryElementwise(op.type) && op.ifm[1].type != op.ifm[0].type )
-        {  // ifm2 data type must match ifm data type
-            return false;
-        }
-        if ( 0 == std::count(validOfmTypes.begin(), validOfmTypes.end(), op.ofm.type) )
-        {  // Unsupported ofm data type
-            return false;
-        }
-    }
-
-    return true;
 }
 
 }  // namespace regor

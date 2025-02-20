@@ -30,9 +30,22 @@ namespace regor
 
 static constexpr int MAX_DIM = 65536;
 
-bool NeedsDecompose(Architecture *arch, const SchedulerOperation *schedOp)
+Flags<QueryResult> OperatorQuery(Architecture *arch, const SchedulerOperation *schedOp, ArchRequirements *req)
 {
-    return CanDecompose(arch, schedOp) && !CanRunOnHardware(arch, schedOp);
+    ArchOperatorQuery query{};
+    const SchedulerConnection *ofmConn = schedOp->OFM();
+    Set(query.ifm[0], schedOp->IFM(0));
+    Set(query.ifm[1], schedOp->TryIFM(1));
+    Set(query.ofm, ofmConn);
+    query.transposeMask = ofmConn->transpose;
+    query.reverseMask = ofmConn->reverse;
+    query.kernel = schedOp->Kernel();
+    return arch->Constraints()->OperatorQuery(schedOp->Type(), &query, req);
+}
+
+bool ShouldDecompose(Architecture *arch, const SchedulerOperation *schedOp)
+{
+    return CanDecompose(arch, schedOp) && NeedsDecompose(arch, schedOp);
 }
 
 static std::unique_ptr<SchedulerOperation> MakeMemCopy(const std::shared_ptr<SchedulerTensor> &source,
@@ -193,70 +206,27 @@ static std::unique_ptr<ArchitectureOpConfig> GetOpConfig(Architecture *arch, con
     return arch->GetOpConfig(schedOp->Type(), qConfig);
 }
 
-bool CanRunOnHardware(Architecture *arch, const SchedulerOperation *schedOp)
+bool NeedsDecompose(Architecture *arch, const SchedulerOperation *schedOp)
 {
-    regor::ArchitectureOpGroupQuery qOpGroup{};
-    if ( DecomposeAsElementwise(schedOp->Type()) || schedOp->Type() == OpType::MemoryCopy )
+    ArchRequirements req{};
+    Flags<QueryResult> result = OperatorQuery(arch, schedOp, &req);
+    // Assert complete query
+    assert(result.Any(QueryResult::Constrained) == false && "Constrained result from complete OperatorQuery");
+    if ( result.Any(QueryResult::Unsupported) )
     {
-        auto &ofmShape = schedOp->OFM()->SliceShape();
-        if ( ofmShape.Size() > 3 && ofmShape.Elements() > ofmShape.Width() * ofmShape.Height() * ofmShape.Depth() )
-            return false;
+        // Operations completely unsupported by HW should not be decomposed
+        return false;
     }
-    if ( schedOp->Type() == OpType::MatMul )
+    if ( result.Any(QueryResult::HasRequirements) )
     {
-        const auto ofmConn = schedOp->OFM();
-        ArchOperatorQuery query;
-        Set(query.ifm[0], schedOp->IFM(0));
-        Set(query.ifm[1], schedOp->IFM(1));
-        Set(query.ofm, ofmConn);
-        query.transposeMask = ofmConn->transpose;
-        if ( (arch->Constraints()->OperatorQuery(OpType::MatMul, &query, nullptr) & QueryResult::NativeDecompose) != QueryResult::Native )
+        if ( req.req.Any(ArchRequirement::Decompose) )
         {
-            return false;
+            return true;
         }
+        // Has requirements but not decomposition-related
     }
-    if ( IsConvolution(schedOp->Type()) || IsPooling(schedOp->Type()) )
-    {
-        auto &ofmShape = schedOp->OFM()->SliceShape();
-        if ( ofmShape.Size() > 3 && ofmShape.Batch() > 1 ) return false;
-    }
-    if ( schedOp->Type() == OpType::Transpose )
-    {
-        auto &ifmShape = schedOp->IFM(0)->SliceShape();
-        if ( ifmShape.Size() > 3 && ifmShape.Elements() > ifmShape.Width() * ifmShape.Height() * ifmShape.Depth() )
-            return false;
-        auto &ofmShape = schedOp->OFM()->SliceShape();
-        if ( ofmShape.Size() > 3 && ofmShape.Elements() > ofmShape.Width() * ofmShape.Height() * ofmShape.Depth() )
-            return false;
-
-        ArchOperatorQuery query;
-        query.transposeMask = schedOp->OFM()->transpose;
-        if ( !arch->Constraints()->OperatorQuery(OpType::Transpose, &query, nullptr).Any(QueryResult::Native) )
-        {
-            return false;
-        }
-    }
-    auto *ifm = schedOp->TryIFM(0);
-    auto *ifm2 = schedOp->TryIFM(1);
-    auto *ofm = schedOp->TryOFM();
-    if ( !ifm || !ofm ) return false;
-    qOpGroup.type = schedOp->Type();
-    qOpGroup.kernel = schedOp->Kernel();
-    qOpGroup.ifm[0].key = ifm->tensor->uid;
-    qOpGroup.ifm[0].type = ifm->tensor->dataType;
-    qOpGroup.ifm[0].shape = ifm->SliceShape();
-    if ( ifm2 )
-    {
-        qOpGroup.ifm[1].key = ifm2->tensor->uid;
-        qOpGroup.ifm[1].type = ifm2->tensor->dataType;
-        qOpGroup.ifm[1].shape = ifm2->SliceShape();
-    }
-    qOpGroup.ofm.key = ofm->tensor->uid;
-    qOpGroup.ofm.type = ofm->tensor->dataType;
-    qOpGroup.ofm.shape = ofm->SliceShape();
-    qOpGroup.ofm.transpose = ofm->transpose;
-    if ( arch->CreateOpGroup(qOpGroup) == nullptr ) return false;
-    return GetOpConfig(arch, schedOp) != nullptr;
+    // no opconfig requires decomposition
+    return !GetOpConfig(arch, schedOp);
 }
 
 bool CanDecompose(Architecture *, const SchedulerOperation *schedOp)
@@ -810,7 +780,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv2D(Architecture *a
     {
         return DecomposeLeadingDimensions(1, arch, std::move(op), DecomposeConv2D);
     }
-    if ( CanRunOnHardware(arch, op.get()) )
+    if ( !NeedsDecompose(arch, op.get()) )
     {
         UpdatePaddingAndIfmOffset(op.get());
         result.emplace_back(std::move(op));
@@ -1128,7 +1098,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
         return result;
     }
 
-    if ( CanRunOnHardware(arch, op.get()) )
+    if ( !NeedsDecompose(arch, op.get()) )
     {
         UpdatePaddingAndIfmOffset(op.get());
         result.emplace_back(std::move(op));
@@ -1621,12 +1591,106 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTranspose(Architecture
     const auto &ifmShape = ifmConn->SliceShape();
     const auto axes = ifmShape.Size();
 
-    ArchOperatorQuery query;
-    query.transposeMask = ofmConn->transpose;
-    bool supported = arch->Constraints()->OperatorQuery(OpType::Transpose, &query, nullptr).Any(QueryResult::Native);
+    auto req = ArchRequirements();
+    auto qResult = OperatorQuery(arch, op.get(), &req);
+    bool decomposeMask = false;
+    bool decomposeAxes = false;
+    bool decomposeLeadingDims = false;
+
+    if ( qResult.Any(QueryResult::HasRequirements) && req.req.Any(ArchRequirement::Decompose) )
+    {
+        decomposeMask = req.decomposeProps.Any(ArchProperty::TransposeMask);
+        decomposeAxes = req.decomposeProps.Any(ArchProperty::TensorAxis);
+        decomposeLeadingDims = req.decomposeProps.Any(ArchProperty::TensorDims);
+    }
+
+    if ( decomposeMask || decomposeLeadingDims )
+    {
+        // Decompose unsupported transpose-masks or large IFM-dimensions
+        // by unrolling the transpose-mask into many 3D-transpose operations.
+
+        // We can handle TransposeType::None as an elementwise, because it's basically a memory copy
+        if ( ofmConn->transpose == TransposeType::None )
+        {
+            LOG_TRACE1("DecomposeTranspose: Decomposing as elementwise\n");
+            return DecomposeElementwise(arch, std::move(op));
+        }
+
+        assert(ifmConn->slice.offset.IsEmpty() && ifmConn->slice.shape.IsEmpty());
+        assert(ofmConn->slice.offset.IsEmpty() && ofmConn->slice.shape.IsEmpty());
+
+        // Decompose a transpose by peforming a selection sort of the axes. Each swap in the selection sort algorithm
+        // expands to one or more transpose ops.
+        //
+        // Example:
+        //
+        // Input shape:        [ 3,  7, 11, 13]
+        // Permutation vector: [ 1,  3,  0,  2]
+        // Sort order:         [ 2,  0,  3,  1]
+        // Output shape:       [ 7, 13,  3, 11]
+        //
+        // Selection sort swaps:
+        //
+        // Swap 1: Pos 0 <-> Pos 1: [7, 3,  11, 13]
+        // Swap 2: Pos 1 <-> Pos 3: [7, 13, 11,  3]
+        // Swap 3: Pos 2 <-> Pos 3: [7, 13,  3, 11]
+
+        // Calculate sort order
+        Shape order(nullptr, axes);
+        uint32_t mask = uint32_t(ofmConn->transpose);
+        for ( int i = axes - 1; i >= 0; i-- )
+        {
+            const int pos = axes - 1 - (mask & 0xF);
+            order[pos] = i;
+            mask = mask >> 4;
+        }
+
+        auto shape = ifmConn->shape;
+
+        LOG_TRACE1("DecomposeTranspose: Sort order ({})\n", order.ToString());
+        LOG_TRACE1("DecomposeTranspose: Initial shape ({})\n", shape.ToString());
+
+        for ( int axis = 0; axis < axes; axis++ )
+        {
+            // Check if axis is already in the right place
+            if ( order[axis] == axis ) continue;
+
+            // Find where the axis is
+            int i;
+            for ( i = axis + 1; i < axes; i++ )
+                if ( order[i] == axis ) break;
+            assert(i < axes);
+
+            // Move axis to right place
+            LOG_TRACE1("DecomposeTranspose: Swap {} <-> {}\n", axis, i);
+            auto tail = !result.empty() ? result.back()->OFM() : ifmConn;
+            auto subOps = SwapAxes(arch, shape, tail, axis, i);
+            result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
+            std::swap(order[axis], order[i]);
+            LOG_TRACE1("DecomposeTranspose: Shape is now ({})\n", shape.ToString());
+        }
+
+        LOG_TRACE1("DecomposeTranspose: Final shape ({})\n", shape.ToString());
+
+        assert(!result.empty());
+
+        const auto &lastTensor = result.back()->OFM()->tensor;
+        for ( auto &subOp : result )
+        {
+            auto ofm = subOp->OFM();
+            if ( ofm->tensor == lastTensor )
+            {
+                // Adjust to that last output is written to the original OFM
+                ofm->tensor = ofmConn->tensor;
+                ofm->tensor->producers.push_back(subOp.get());
+                ofm->quantization = ofmConn->quantization;
+            }
+        }
+        return result;
+    }
 
     // We can handle all transpositions in a 3D shape
-    if ( (axes < 4 || ifmShape.Elements() == ifmShape.Height() * ifmShape.Width() * ifmShape.Depth()) && supported )
+    if ( decomposeAxes )
     {
         for ( int axis = 0; axis < axes; axis++ )
         {
@@ -1641,90 +1705,11 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTranspose(Architecture
                 return DecomposeLargeAxis(axis, MAX_DIM, arch, std::move(op), DecomposeTranspose);
             }
         }
-
-        // No decomposition required
-        result.push_back(std::move(op));
-        return result;
     }
 
-    // We can handle TransposeType::None as an elementwise, because it's basically a memory copy
-    if ( ofmConn->transpose == TransposeType::None )
-    {
-        LOG_TRACE1("DecomposeTranspose: Decomposing as elementwise\n");
-        return DecomposeElementwise(arch, std::move(op));
-    }
 
-    assert(ifmConn->slice.offset.IsEmpty() && ifmConn->slice.shape.IsEmpty());
-    assert(ofmConn->slice.offset.IsEmpty() && ofmConn->slice.shape.IsEmpty());
-
-    // Decompose a transpose by peforming a selection sort of the axes. Each swap in the selection sort algorithm
-    // expands to one or more transpose ops.
-    //
-    // Example:
-    //
-    // Input shape:        [ 3,  7, 11, 13]
-    // Permutation vector: [ 1,  3,  0,  2]
-    // Sort order:         [ 2,  0,  3,  1]
-    // Output shape:       [ 7, 13,  3, 11]
-    //
-    // Selection sort swaps:
-    //
-    // Swap 1: Pos 0 <-> Pos 1: [7, 3,  11, 13]
-    // Swap 2: Pos 1 <-> Pos 3: [7, 13, 11,  3]
-    // Swap 3: Pos 2 <-> Pos 3: [7, 13,  3, 11]
-
-    // Calculate sort order
-    Shape order(nullptr, axes);
-    uint32_t mask = uint32_t(ofmConn->transpose);
-    for ( int i = axes - 1; i >= 0; i-- )
-    {
-        const int pos = axes - 1 - (mask & 0xF);
-        order[pos] = i;
-        mask = mask >> 4;
-    }
-
-    auto shape = ifmConn->shape;
-
-    LOG_TRACE1("DecomposeTranspose: Sort order ({})\n", order.ToString());
-    LOG_TRACE1("DecomposeTranspose: Initial shape ({})\n", shape.ToString());
-
-    for ( int axis = 0; axis < axes; axis++ )
-    {
-        // Check if axis is already in the right place
-        if ( order[axis] == axis ) continue;
-
-        // Find where the axis is
-        int i;
-        for ( i = axis + 1; i < axes; i++ )
-            if ( order[i] == axis ) break;
-        assert(i < axes);
-
-        // Move axis to right place
-        LOG_TRACE1("DecomposeTranspose: Swap {} <-> {}\n", axis, i);
-        auto tail = !result.empty() ? result.back()->OFM() : ifmConn;
-        auto subOps = SwapAxes(arch, shape, tail, axis, i);
-        result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
-        std::swap(order[axis], order[i]);
-        LOG_TRACE1("DecomposeTranspose: Shape is now ({})\n", shape.ToString());
-    }
-
-    LOG_TRACE1("DecomposeTranspose: Final shape ({})\n", shape.ToString());
-
-    assert(!result.empty());
-
-    const auto &lastTensor = result.back()->OFM()->tensor;
-    for ( auto &subOp : result )
-    {
-        auto ofm = subOp->OFM();
-        if ( ofm->tensor == lastTensor )
-        {
-            // Adjust to that last output is written to the original OFM
-            ofm->tensor = ofmConn->tensor;
-            ofm->tensor->producers.push_back(subOp.get());
-            ofm->quantization = ofmConn->quantization;
-        }
-    }
-
+    // No decomposition required
+    result.push_back(std::move(op));
     return result;
 }
 

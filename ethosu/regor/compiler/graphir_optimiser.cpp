@@ -1627,6 +1627,7 @@ Operation *GraphIrOptimiser::MergeTransposes(Graph *const graph, Operation *cons
 
             // Can't merge if both apply quantization
             bool prevHasQuant = prevConn->quantization.IsValid() && !prevConn->quantization.IsUnitScale();
+
             if ( opHasQuant && prevHasQuant ) return returnOp;
 
             // Examine previous op's transpose
@@ -1643,16 +1644,22 @@ Operation *GraphIrOptimiser::MergeTransposes(Graph *const graph, Operation *cons
             TransposeType mergedTranspose = TransposeTypeFromShape(finalMapping);
 
             ArchOperatorQuery query;
+            ArchRequirements req;
             query.transposeMask = mergedTranspose;
-            if ( _constraints->OperatorQuery(OpType::Transpose, &query, nullptr).Any(QueryResult::Native) )
+            if ( _constraints->OperatorQuery(OpType::Transpose, &query, &req).Any(QueryResult::Native) )
             {
-                // Change the transpose attribute on the preceding transpose and remove this one
-                prevAttr->perm = finalMapping;
-                TensorConnection &newConn = prevOp->ConnectOutput(TensorUsage::OFM, ofm);
-                newConn.Set(ofmConn->slice).Set(ofmConn->reverse).Set(ofmConn->shape);
-                if ( !prevHasQuant && opHasQuant ) newConn.Set(ofmConn->quantization);
-                operation->Disconnect();
-                return prevOp;
+                // only merge the transpose if the new mask is natively supported
+                // without mask-decomp
+                if ( !req.decomposeProps.Any(ArchProperty::TransposeMask) )
+                {
+                    // Change the transpose attribute on the preceding transpose and remove this one
+                    prevAttr->perm = finalMapping;
+                    TensorConnection &newConn = prevOp->ConnectOutput(TensorUsage::OFM, ofm);
+                    newConn.Set(ofmConn->slice).Set(ofmConn->reverse).Set(ofmConn->shape);
+                    if ( !prevHasQuant && opHasQuant ) newConn.Set(ofmConn->quantization);
+                    operation->Disconnect();
+                    return prevOp;
+                }
             }
         }
     }

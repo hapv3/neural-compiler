@@ -136,9 +136,6 @@ private:
 public:
     int Add(const ArchitectureOpGroupQuery &op, const std::vector<int> &dependsOn = {}) override;
     bool NeedsAllocation(UniqueId TensorUID) override;
-
-protected:
-    bool CanRunOnNPU(const ArchitectureOpGroupQuery &op) override;
 };
 
 /// <summary>

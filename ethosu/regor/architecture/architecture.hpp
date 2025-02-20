@@ -186,9 +186,6 @@ public:
     virtual ~ArchitectureOpGroup() = default;
     virtual int Add(const ArchitectureOpGroupQuery &op, const std::vector<int> &dependsOn = {}) = 0;
     virtual bool NeedsAllocation(UniqueId tensorUID) = 0;
-
-protected:
-    virtual bool CanRunOnNPU(const ArchitectureOpGroupQuery &op) = 0;
 };
 
 enum class ArchAccumulatorSource : uint8_t

@@ -51,16 +51,29 @@ struct ArchOperatorQuery
     ArchFM ofm;
     ReverseType reverseMask = ReverseType::None;
     TransposeType transposeMask = TransposeType::None;
+    Kernel *kernel = nullptr;
     ~ArchOperatorQuery(){};
 };
 
 enum class ArchRequirement
 {
     None = 0,
-    ScratchTensor = 1,
-    OpSubstitution = 2,
-    OutputFormat = 4,
-    InputFormat = 8,
+    ScratchTensor = 1 << 0,
+    OutputFormat = 1 << 1,
+    InputFormat = 1 << 2,
+    OpSubstitution = 1 << 3,
+    Decompose = 1 << 4,
+};
+
+enum class ArchProperty
+{
+    None = 0,
+    TensorAxis = 1 << 0,
+    TensorDims = 1 << 1,
+    KernelStride = 1 << 2,
+    KernelDilation = 1 << 3,
+    DepthMultiplier = 1 << 4,
+    TransposeMask = 1 << 5,
 };
 
 struct ArchRequirements
@@ -76,6 +89,7 @@ struct ArchRequirements
     TensorFormat ifm1Format = TensorFormat::Unknown;
     TensorFormat ofmFormat = TensorFormat::Unknown;
     OpType substitution = OpType::None;
+    Flags<ArchProperty> decomposeProps;
 };
 
 enum class TransposeSupport
@@ -98,10 +112,8 @@ enum class QueryResult
     Native = 2,
     Constrained = 4,
     HasRequirements = 8,
-    Decompose = 16,
     NativeHasReq = Native | HasRequirements,
     NativeConstrained = Native | Constrained,
-    NativeDecompose = Native | Decompose,
     NativeConstrainedHasReq = Native | Constrained | HasRequirements,
 };
 
@@ -112,15 +124,18 @@ class IArchitectureConstraints
 {
 public:
     virtual ~IArchitectureConstraints() = default;
-    virtual bool SupportsFusedReverse(OpType opType, ReverseType reverseTypeMask) = 0;
     virtual bool SupportsFusedRescale(OpType opType, TensorUsage tensorUsage, DataType rescaleFromType,
         DataType rescaleToType, DataType opFromType, DataType opToType, const Quantization &quantization) = 0;
-    virtual TransposeSupport SupportsFusedTranspose(OpType opType, TransposeType transposeType) = 0;
     virtual bool SupportsAccumulatorSaveRestore() = 0;
     virtual bool SupportsNegativeStrides() = 0;
     virtual bool SupportsElementwiseLeakyRelu(bool quantized, DataType type) = 0;
     virtual bool SupportsRescale(DataType fromType, DataType toType) = 0;
     virtual Flags<QueryResult> OperatorQuery(OpType opType, const ArchOperatorQuery *query = nullptr, ArchRequirements *req = nullptr) = 0;
+
+private:
+    virtual bool SupportedDtypes(OpType opType, DataType ifmType, DataType ifm2Type, DataType ofmType) = 0;
+    virtual bool SupportsFusedReverse(OpType opType, ReverseType reverseTypeMask) = 0;
+    virtual TransposeSupport SupportsFusedTranspose(OpType opType, TransposeType transposeType) = 0;
 };
 
 }  // namespace regor

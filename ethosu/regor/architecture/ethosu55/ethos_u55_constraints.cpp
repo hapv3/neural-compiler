@@ -23,26 +23,41 @@
 namespace regor
 {
 
-// Unsupported operators - must be sorted ascending
-static constexpr OpType s_unsupportedU55[] = {
-    OpType::None,
-    OpType::ArgMax,
-    OpType::Not,
-    OpType::Gather,
-    OpType::Scatter,
-    OpType::Resize,
-    OpType::Cast,
+// Table of allowed ifm/ofm data type combinations for each HWOp
+static const std::unordered_map<EthosU55NpuOp, std::unordered_map<DataType, std::vector<DataType>>> s_opDataTypeSupport = {
+    {EthosU55NpuOp::Convolution,  // HWOp
+        {
+            // IFM data type  | OFM data type(s)
+            {DataType::UInt8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
+            {DataType::Int8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
+            {DataType::Int16, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
+        }},
+    {EthosU55NpuOp::Depthwise,
+        {
+            {DataType::UInt8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
+            {DataType::Int8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
+            {DataType::Int16, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
+        }},
+    {EthosU55NpuOp::VectorProduct,
+        {
+            {DataType::UInt8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
+            {DataType::Int8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
+            {DataType::Int16, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
+        }},
+    {EthosU55NpuOp::Pooling,
+        {
+            {DataType::UInt8, {DataType::UInt8}},
+            {DataType::Int8, {DataType::Int8}},
+            {DataType::Int16, {DataType::Int16}},
+        }},
+    {EthosU55NpuOp::ReduceSum,
+        {
+            {DataType::UInt8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
+            {DataType::Int8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
+            {DataType::Int16, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
+            {DataType::Int32, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
+        }},
 };
-
-static_assert(is_sorted(s_unsupportedU55), "list must be sorted");
-
-// Short query
-static constexpr std::pair<OpType, QueryResult> s_shortU55[] = {
-    {OpType::Transpose, QueryResult::NativeConstrained},
-};
-
-static_assert(is_sorted(s_shortU55, [](const auto &a, const auto &b) { return a.first < b.first; }), "list must be sorted");
-
 
 EthosU55Constraints::EthosU55Constraints(ArchEthosU55 *arch) : _arch(arch)
 {
@@ -157,38 +172,190 @@ bool EthosU55Constraints::SupportsRescale(DataType fromType, DataType toType)
     return true;
 }
 
+bool EthosU55Constraints::SupportedDtypes(OpType opType, DataType ifmType, DataType ifm2Type, DataType ofmType)
+{
+    auto npuOp = _arch->GetHWOp(opType);
+    if ( IsFloat(ifmType | ifm2Type | ofmType) )
+    {
+        return false;
+    }
+
+    if ( _arch->UseAvgPoolNop(opType) )
+    {
+        // The rules for UseAvgPoolNop are not the same as for a Pooling operation, so skip checks for now
+        return true;
+    }
+
+    if ( npuOp == EthosU55NpuOp::Compound || npuOp == EthosU55NpuOp::Dma )
+    {
+        return true;
+    }
+
+    // Check allowed ifm/ofm type mapping
+    if ( npuOp != EthosU55NpuOp::Elementwise )
+    {
+        auto map = s_opDataTypeSupport.find(npuOp);
+        if ( map == s_opDataTypeSupport.end() )
+        {
+            assert(false && "Data type mapping for HWOp missing");
+            return false;
+        }
+        auto &typeMap = map->second;
+        auto ifmEntry = typeMap.find(ifmType);
+        if ( ifmEntry == typeMap.end() )
+        {  // Unsupported ifm data type
+            return false;
+        }
+        auto &ofmTypes = ifmEntry->second;
+        if ( 0 == std::count(ofmTypes.begin(), ofmTypes.end(), ofmType) )
+        {  // Unsupported ofm data type
+            return false;
+        }
+    }
+    else
+    {
+        std::vector<DataType> validIfmTypes;
+        std::vector<DataType> validOfmTypes;
+        switch ( opType )
+        {
+            case OpType::Add:
+            case OpType::Sub:
+            case OpType::Mul:
+            {
+                validIfmTypes = {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32};
+                validOfmTypes = validIfmTypes;
+            }
+            break;
+            case OpType::Minimum:
+            case OpType::Maximum:
+            case OpType::LeakyRelu:
+            case OpType::Abs:
+            {
+                validIfmTypes = {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32};
+                validOfmTypes = {ifmType};
+            }
+            break;
+            case OpType::CLZ:
+            case OpType::SHL:
+            case OpType::Asr:
+            {
+                validIfmTypes = {DataType::Int32};
+                validOfmTypes = {DataType::Int32};
+                if ( opType == OpType::Asr )
+                {
+                    validOfmTypes.insert(validOfmTypes.begin(), {DataType::UInt8, DataType::Int8, DataType::Int16});
+                }
+            }
+            break;
+            default:
+                assert(false && "Unkown elementwise type");
+                break;
+        }
+        if ( 0 == std::count(validIfmTypes.begin(), validIfmTypes.end(), ifmType) )
+        {  // Unsupported ifm data type
+            return false;
+        }
+        if ( IsBinaryElementwise(opType) && ifm2Type != ifmType )
+        {  // ifm2 data type must match ifm data type
+            return false;
+        }
+        if ( 0 == std::count(validOfmTypes.begin(), validOfmTypes.end(), ofmType) )
+        {  // Unsupported ofm data type
+            return false;
+        }
+    }
+    return true;
+}
+
 Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchOperatorQuery *query, ArchRequirements *req)
 {
-    // Check unsupported operator list before further checks
-    auto posUnsupported = std::equal_range(std::begin(s_unsupportedU55), std::end(s_unsupportedU55), opType);
-    if ( posUnsupported.first != posUnsupported.second )
+    Flags<QueryResult> result = QueryResult::Native;
+    static constexpr int32_t MAX_AXIS = (1 << 16);
+
+    // Check hardware-required substitutions first
+    if ( (opType == OpType::Sigmoid) || (opType == OpType::Tanh) )
+    {
+        if ( query->ifm[0].type != DataType::Int16 )
+        {
+            if ( req )
+            {
+                req->req = ArchRequirement::OpSubstitution;
+                req->substitution = OpType::LUT;
+            }
+            result.Set(QueryResult::HasRequirements);
+        }
+    }
+
+    // Check direct native support of the opType
+    auto npuOp = _arch->GetHWOp(opType);
+    if ( npuOp == EthosU55NpuOp::None )
     {
         return QueryResult::Unsupported;
+    }
+    else if ( npuOp == EthosU55NpuOp::Dma )
+    {
+        return result;
     }
 
     // Short query (no additional detail)
     if ( !query )
     {
-        auto posShort = std::equal_range(std::begin(s_shortU55), std::end(s_shortU55),
-            std::pair<OpType, QueryResult>{opType, {}}, [](const auto &a, const auto &b) { return a.first < b.first; });
-        if ( posShort.first != posShort.second )
+        // more detailed query might fail
+        return QueryResult::NativeConstrained;
+    }
+
+    const auto &ifmShape = query->ifm[0].shape;
+    const auto &ifm2Shape = query->ifm[1].shape;
+    const auto &ofmShape = query->ofm.shape;
+    bool typeInfo = (query->ifm[0].type != DataType::None && query->ofm.type != DataType::None);
+    bool shapeInfo = (ifmShape && ofmShape);
+
+    if ( !typeInfo || !shapeInfo || !query->kernel )
+    {
+        // missing detail, more detailed queries might fail
+        result.Set(QueryResult::Constrained);
+    }
+
+    // Validate DataTypes
+    if ( typeInfo && !SupportedDtypes(opType, query->ifm[0].type, query->ifm[1].type, query->ofm.type) )
+    {
+        return QueryResult::Unsupported;
+    }
+
+    // Validate tensor-shapes
+    if ( shapeInfo )
+    {
+        for ( const auto &s : {ifmShape, ifm2Shape, ofmShape} )
         {
-            return posShort.first->second;
+            if ( !s ) continue;
+            auto shape = Shape::PadAxes(s, 4, 1);
+            // validate that leading dimensions are unit
+            for ( int i = 0; i < shape.Size() - 3; i++ )
+            {
+                if ( shape[i] > 1 )
+                {
+                    if ( req )
+                    {
+                        req->req.Set(ArchRequirement::Decompose);
+                        req->decomposeProps.Set(ArchProperty::TensorDims);
+                    }
+                    result.Set(QueryResult::HasRequirements);
+                }
+            }
+            // validate that HWC are within valid range
+            for ( int i = shape.Size() - 3; i < shape.Size(); i++ )
+            {
+                if ( shape[i] > MAX_AXIS )
+                {
+                    if ( req )
+                    {
+                        req->req.Set(ArchRequirement::Decompose);
+                        req->decomposeProps.Set(ArchProperty::TensorAxis);
+                    }
+                    result.Set(QueryResult::HasRequirements);
+                }
+            }
         }
-        return QueryResult::Native;
-    }
-
-    // Float types always unsupported
-    if ( (query->ifm[0].shape && IsFloat(query->ifm[0].type)) || (query->ifm[1].shape && IsFloat(query->ifm[1].type)) ||
-         (query->ofm.shape && IsFloat(query->ofm.type)) )
-    {
-        return QueryResult::Unsupported;
-    }
-
-    // Reverse never supported
-    if ( query->reverseMask != ReverseType::None )
-    {
-        return QueryResult::Unsupported;
     }
 
     // Detailed operator queries
@@ -205,9 +372,27 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
                     req->ifmFormat = TensorFormat::NHWC;
                     req->ofmFormat = TensorFormat::NHWC;
                 }
-                return QueryResult::NativeConstrainedHasReq;
+                result.Set(QueryResult::HasRequirements);
+            }
+            else
+            {
+                // supported with decomposition requirements
+                if ( req )
+                {
+                    req->req.Set(ArchRequirement::Decompose);
+                    req->decomposeProps.Set(ArchProperty::TransposeMask);
+                }
+                result.Set(QueryResult::HasRequirements);
             }
         }
+        else
+        {
+            return QueryResult::Unsupported;
+        }
+    }
+
+    if ( query->reverseMask != ReverseType::None )
+    {
         return QueryResult::Unsupported;
     }
 
@@ -226,22 +411,50 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
             req->ifm1Format = TensorFormat::NHWC;  // IFM1 and OFM are depth-sliced
             req->ofmFormat = TensorFormat::NHWC;   // and cannot be addressed if B16
         }
-        return QueryResult::NativeHasReq;
+        result.Set(QueryResult::HasRequirements);
     }
-    else if ( (opType == OpType::Sigmoid) || (opType == OpType::Tanh) )
+
+    // kernel constraint-checks
+    if ( query->kernel )
     {
-        if ( query->ifm[0].type != DataType::Int16 )
+        auto k = query->kernel;
+        if ( k->Stride().x > 3 || k->Stride().y > 3 )
         {
             if ( req )
             {
-                req->req = ArchRequirement::OpSubstitution;
-                req->substitution = OpType::LUT;
+                req->req.Set(ArchRequirement::Decompose);
+                req->decomposeProps.Set(ArchProperty::KernelStride);
             }
-            return QueryResult::NativeHasReq;
+            result.Set(QueryResult::HasRequirements);
+        }
+
+        if ( k->Dilation().x > 2 || k->Dilation().y > 2 )
+        {
+            if ( req )
+            {
+                req->req.Set(ArchRequirement::Decompose);
+                req->decomposeProps.Set(ArchProperty::KernelDilation);
+            }
+            result.Set(QueryResult::HasRequirements);
+        }
+
+        if ( k->DepthMultiplier() > 1 )
+        {
+            if ( req )
+            {
+                req->req.Set(ArchRequirement::Decompose);
+                req->decomposeProps.Set(ArchProperty::DepthMultiplier);
+            }
+            result.Set(QueryResult::HasRequirements);
         }
     }
-    return QueryResult::Native;
-}
+    else
+    {
+        // no kernel provided, more detailed queries might fail
+        result.Set(QueryResult::Constrained);
+    }
 
+    return result;
+}
 
 }  // namespace regor

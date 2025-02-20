@@ -136,7 +136,6 @@ public:
     bool NeedsAllocation(UniqueId tensorUID) override;
 
 protected:
-    bool CanRunOnNPU(const ArchitectureOpGroupQuery &op) override;
     int ChainingBuffer(UniqueId tensorUID);
     bool IsChained(UniqueId tensorUID);
     bool IsFused(UniqueId tensorUID);

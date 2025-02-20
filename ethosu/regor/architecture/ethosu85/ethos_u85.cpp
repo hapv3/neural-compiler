@@ -83,8 +83,6 @@ static const ArchEthosU85::AcceleratorConfig s_EthosU85Configs[] = {
 
 constexpr int CB_SLOTS = 6;
 constexpr int BRICK_ELEMENTS = 16;
-// max size for tensors
-const static Shape MAX_SHAPE(nullptr, 8, 65536);
 constexpr int ACC_DEPTH_GRANULE = 16;  // Accumulator depth granularity
 
 enum class ElementwiseUsage
@@ -243,7 +241,8 @@ Flags<WeightFormat> ArchEthosU85::SupportedWeightFormat(OpType op)
 
 bool ArchEthosU85::UseAvgPoolNop(OpType type)
 {
-    return IsActivation(type) || type == OpType::Quantize || type == OpType::MemoryCopy || type == OpType::Transpose || type == OpType::Reverse;
+    return IsActivation(type) || type == OpType::Quantize || type == OpType::MemoryCopy || type == OpType::Transpose ||
+           type == OpType::Reverse || type == OpType::Rescale;
 }
 
 bool ArchEthosU85::UseNullPool(OpType opType, int bits)
@@ -1339,12 +1338,10 @@ EthosU85NpuOp ArchEthosU85::GetHWOp(OpType type)
         {OpType::ReduceMax, EthosU85NpuOp::ReduceMinMax},
         {OpType::ReduceAny, EthosU85NpuOp::ReduceMinMax},
         {OpType::ReduceAll, EthosU85NpuOp::ReduceMinMax},
-        // TODO MLBEDSW-7986 add none pooling
         {OpType::Resize, EthosU85NpuOp::Resize},
         {OpType::Gather, EthosU85NpuOp::Dma},
         {OpType::Scatter, EthosU85NpuOp::Dma},
         {OpType::Tile, EthosU85NpuOp::Dma},
-        {OpType::Rescale, EthosU85NpuOp::Pooling},
     };
 
     auto pos = toNpuOp.find(type);
@@ -1580,12 +1577,6 @@ int EthosU85OpGroup::Add(const ArchitectureOpGroupQuery &op, const std::vector<i
 {
     int externalInputs = ExternalIfms(op);
 
-    if ( !CanRunOnNPU(op) )
-    {
-        // Can only fuse NPU ops
-        return 0;
-    }
-
     if ( _opsCount == 0 )
     {
         _supportsChaining = CanStartChain(op);
@@ -1644,187 +1635,6 @@ bool EthosU85OpGroup::IsFused(UniqueId tensorUID)
 bool EthosU85OpGroup::NeedsAllocation(UniqueId tensorUID)
 {
     return !IsChained(tensorUID) && !IsFused(tensorUID);
-}
-
-// TODO: This table is from the EthosU55/U65 Embedded NPU Interface Specification, it's not completely valid for
-// Ethos U85 since the allowed data types depend on ifm/ofm as well as selected acc and scaling.
-static const std::unordered_map<EthosU85NpuOp, std::unordered_map<DataType, std::vector<DataType>>> s_opDataTypeSupport = {
-    {EthosU85NpuOp::Convolution,
-        {
-            {DataType::UInt8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64}},
-            {DataType::Int8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64}},
-            {DataType::Int16, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64}},
-        }},
-    {EthosU85NpuOp::Depthwise,
-        {
-            {DataType::UInt8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64}},
-            {DataType::Int8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64}},
-            {DataType::Int16, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64}},
-        }},
-    {EthosU85NpuOp::VectorProduct,
-        {
-            {DataType::UInt8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64}},
-            {DataType::Int8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64}},
-            {DataType::Int16, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64}},
-        }},
-    {EthosU85NpuOp::Pooling,
-        {
-            {DataType::Bool8, {DataType::Bool8, DataType::Int32, DataType::Int64}},
-            {DataType::UInt8, {DataType::UInt8, DataType::Int32, DataType::Int64}},
-            {DataType::Int8, {DataType::Int8, DataType::Int32, DataType::Int64}},
-            {DataType::Int16, {DataType::Int16}},
-        }},
-    {EthosU85NpuOp::ReduceMinMax,
-        {
-            {DataType::Bool8, {DataType::Bool8, DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::UInt8, {DataType::Bool8, DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int8, {DataType::Bool8, DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int16, {DataType::Bool8, DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int32, {DataType::Bool8, DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-        }},
-    {EthosU85NpuOp::ReduceSum,
-        {
-            {DataType::UInt8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int16, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int32, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-        }},
-    {EthosU85NpuOp::ArgMax,
-        {
-            {DataType::Bool8, {DataType::Int32, DataType::Int64}},
-            {DataType::UInt8, {DataType::Int32, DataType::Int64}},
-            {DataType::Int8, {DataType::Int32, DataType::Int64}},
-            {DataType::Int16, {DataType::Int32, DataType::Int64}},
-        }},
-    {EthosU85NpuOp::Dma,
-        {
-            {DataType::Bool8, {DataType::Bool8}},
-            {DataType::UInt8, {DataType::UInt8}},
-            {DataType::Int8, {DataType::Int8}},
-            {DataType::Int16, {DataType::Int16}},
-            {DataType::Int32, {DataType::Int32}},
-        }},
-    {EthosU85NpuOp::Resize,
-        {
-            {DataType::UInt8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64}},
-            {DataType::Int8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64}},
-            {DataType::Int16, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64}},
-        }},
-};
-
-bool EthosU85OpGroup::CanRunOnNPU(const ArchitectureOpGroupQuery &op)
-{
-    EthosU85NpuOp npuOp = ArchEthosU85::GetHWOp(op.type);
-
-    if ( IsFloat(op.ifm[0].type | op.ifm[1].type | op.ofm.type) )
-    {
-        return false;
-    }
-
-    if ( npuOp == EthosU85NpuOp::None )
-    {
-        return false;
-    }
-
-    auto k = op.kernel;
-    if ( k->Stride().x > 3 || k->Stride().y > 3 )
-    {
-        return false;
-    }
-
-    if ( k->Dilation().x > 2 || k->Dilation().y > 2 )
-    {
-        return false;
-    }
-
-    if ( k->DepthMultiplier() > 1 )
-    {
-        return false;
-    }
-
-    switch ( npuOp )
-    {
-        case EthosU85NpuOp::Convolution:
-        case EthosU85NpuOp::Depthwise:
-        case EthosU85NpuOp::VectorProduct:
-        case EthosU85NpuOp::Pooling:
-        case EthosU85NpuOp::ReduceMinMax:
-        case EthosU85NpuOp::ReduceSum:
-        case EthosU85NpuOp::ArgMax:
-        case EthosU85NpuOp::Elementwise:
-        case EthosU85NpuOp::Resize:
-        case EthosU85NpuOp::Dma:
-            break;
-        default:
-            assert(false && "Unrecognized HWOp");
-            return false;
-    }
-
-    // Validate that input/outputs shapes don't overflow
-    if ( npuOp != EthosU85NpuOp::Dma )
-    {
-        const auto &ifmShape = op.ifm[0].shape;
-        const auto &ofmShape = op.ofm.shape;
-
-        if ( ifmShape.GreaterMask(MAX_SHAPE) != 0 )
-        {
-            return false;
-        }
-        if ( ofmShape.GreaterMask(MAX_SHAPE) != 0 )
-        {
-            return false;
-        }
-        if ( op.inputs > 1 )
-        {
-            const auto &ifm2Shape = op.ifm[1].shape;
-            if ( ifm2Shape.GreaterMask(MAX_SHAPE) != 0 )
-            {
-                return false;
-            }
-        }
-    }
-
-    // Check allowed ifm/ofm data type mapping
-    if ( npuOp != EthosU85NpuOp::Elementwise )
-    {
-        if ( op.type == OpType::LUT || op.type == OpType::MemoryCopy || op.type == OpType::Rescale || op.type == OpType::Tile )
-        {  // TODO: LUT operations end up here due to UseAvgPoolNop although the rules are not the same as
-           // for a Pooling operation, so skip checks for now.
-            return true;
-        }
-
-        if ( op.type == OpType::Transpose || op.type == OpType::Reverse )
-        {
-            ArchOperatorQuery query;
-            query.transposeMask = op.ofm.transpose;
-            query.reverseMask = op.ofm.reverse;
-            return _arch->_constraints->OperatorQuery(OpType::MemoryCopy, &query, nullptr).Any(QueryResult::Native);
-        }
-
-        auto map = s_opDataTypeSupport.find(npuOp);
-        if ( map == s_opDataTypeSupport.end() )
-        {
-            assert(false && "Data type mapping for HWOp missing");
-            return false;
-        }
-        auto &typeMap = map->second;
-        auto ifmEntry = typeMap.find(op.ifm[0].type);
-        if ( ifmEntry == typeMap.end() )
-        {  // Unsupported ifm data type
-            return false;
-        }
-        auto &ofmTypes = ifmEntry->second;
-        if ( 0 == std::count(ofmTypes.begin(), ofmTypes.end(), op.ofm.type) )
-        {  // Unsupported ofm data type
-            return false;
-        }
-    }
-    else
-    {
-        // TODO: Elementwise
-    }
-
-    return true;
 }
 
 }  // namespace regor

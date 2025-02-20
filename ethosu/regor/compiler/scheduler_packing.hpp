@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -21,6 +21,7 @@
 #include "common/common.hpp"
 #include "common/logging.hpp"
 
+#include "architecture/architecture_constraints.hpp"
 #include "common/shape.hpp"
 #include "graph.hpp"
 #include "operation.hpp"
@@ -45,6 +46,7 @@ class SchedulerPacking
 {
 protected:
     Architecture *_arch = nullptr;
+    IArchitectureConstraints *_constraints = nullptr;
     bool _disableChaining = false;
     std::vector<std::unique_ptr<SchedulerOperation>> _schedList;
     std::unordered_map<Tensor *, std::shared_ptr<SchedulerTensor>> _tensorMap;
@@ -56,8 +58,13 @@ public:
     std::vector<std::unique_ptr<SchedulerOperation>> Process(const Graph *graph);
 
 private:
+    // Decomposes operations
     void FilterOperations(const std::vector<Operation *> &executionList, const Graph *graph);
+    // Determines NPU/CPU-target
+    void PrePackOperations();
+    // Performs fusing/chaining
     void PackOperations();
+    // Reorders CPU-operations
     void ReorderOperations();
 
     int CanPack(const SchedulerOperation *schedOp, const SchedulerOperation *prevOp, const SchedulerOperation *op, const int prevOpKey) const;
@@ -67,6 +74,7 @@ private:
     std::vector<std::unique_ptr<SchedulerOperation>> DecomposeSchedulerOperation(std::unique_ptr<SchedulerOperation> op);
     ArchResampling ResamplingMode(TensorUsage usage, OpType opType) const;
     ArchitectureOpGroupQuery CreateOpGroupQuery(const SchedulerOperation *schedOp) const;
+    ArchOperatorQuery CreateOperatorQuery(const SchedulerOperation *schedOp) const;
 };
 
 }  // namespace regor

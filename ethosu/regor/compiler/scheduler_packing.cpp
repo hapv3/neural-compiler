@@ -105,7 +105,7 @@ bool IsConnected(const SchedulerOperation &first, const SchedulerOperation &seco
 }  // namespace
 
 SchedulerPacking::SchedulerPacking(Architecture *arch, bool disableChaining) :
-        _arch(arch), _disableChaining(disableChaining)
+        _arch(arch), _constraints(arch->Constraints()), _disableChaining(disableChaining)
 {
 }
 
@@ -122,6 +122,8 @@ std::vector<std::unique_ptr<SchedulerOperation>> SchedulerPacking::Process(const
 
     FilterOperations(executionList, graph);
 
+    PrePackOperations();
+
     PackOperations();
 
     ReorderOperations();
@@ -136,7 +138,7 @@ void SchedulerPacking::FilterOperations(const std::vector<Operation *> &executio
     {
         auto schedOp = MakeSchedulerOperation(op, graph);
 
-        if ( NeedsDecompose(_arch, schedOp.get()) )
+        if ( ShouldDecompose(_arch, schedOp.get()) )
         {
             auto schedOps = DecomposeSchedulerOperation(std::move(schedOp));
             _schedList.insert(
@@ -183,6 +185,35 @@ ArchitectureOpGroupQuery SchedulerPacking::CreateOpGroupQuery(const SchedulerOpe
     return query;
 }
 
+void SchedulerPacking::SchedulerPacking::PrePackOperations()
+{
+    // Determine if each operation can run on NPU
+    for ( auto &schedOp : _schedList )
+    {
+        ArchRequirements oReq{};
+        Flags<QueryResult> result = OperatorQuery(_arch, schedOp.get(), &oReq);
+        // Assert complete query
+        assert(result.Any(QueryResult::Constrained) == false && "Constrained result from complete OperatorQuery");
+        if ( result.Any(QueryResult::Native) )
+        {
+            // TODO MLBEDSW-10643: This should be a direct-check against QueryResult::Native
+            // HasRequirements at this point should result in CPU-fallback
+            if ( result.Any(QueryResult::HasRequirements) && oReq.req.Any(ArchRequirement::Decompose) )
+            {
+                schedOp->SetNpuOp(false);
+            }
+            else
+            {
+                schedOp->SetNpuOp(true);
+            }
+        }
+        else
+        {
+            schedOp->SetNpuOp(false);
+        }
+    }
+}
+
 void SchedulerPacking::SchedulerPacking::PackOperations()
 {
     LOG_TRACE1("Scheduler Packing (of {0} Ops)\n", _schedList.size());
@@ -203,17 +234,14 @@ void SchedulerPacking::SchedulerPacking::PackOperations()
 
         cur++;
 
-        LOG_TRACE1("Creating new group with {}\n", OpTypeToString(primaryOp->Type()));
-
-        auto op0 = CreateOpGroupQuery(primaryOp);
-
-        // Try to create OpGroup
-        auto group = _arch->CreateOpGroup(op0);
-
         // OpGroup is nullptr if op can't run on NPU
-        if ( group )
+        if ( primaryOp->IsNpuOp() )
         {
-            primaryOp->SetNpuOp(true);
+            LOG_TRACE1("Creating new group with {}\n", OpTypeToString(primaryOp->Type()));
+            auto op0 = CreateOpGroupQuery(primaryOp);
+            // Try to create OpGroup
+            auto group = _arch->CreateOpGroup(op0);
+            assert(group);
 
             // First op in group has key 0
             int prevOpKey = 0;
@@ -238,7 +266,6 @@ void SchedulerPacking::SchedulerPacking::PackOperations()
                     LOG_TRACE1("Can't add next op\n");
                     break;
                 }
-                nextOp->SetNpuOp(true);
                 nextOp->SetParent(primaryOp);
                 nextOp->SetOpGroupKey(key);
 
@@ -383,6 +410,12 @@ int SchedulerPacking::CanPack(const SchedulerOperation *schedOp, const Scheduler
     SchedulerTensor *ifm2Tensor = nextConnIfm2 ? nextConnIfm2->tensor.get() : nullptr;
     assert(prevOFM && "primary/prev op must have OFM");
     assert(ifmTensor && "next op must have IFM");
+
+    // can't pack CPU operations
+    if ( !schedOp->IsNpuOp() )
+    {
+        return 0;
+    }
 
     // Previous op in execution order doesn't connect to this one
     if ( prevOFM != ifmTensor && prevOFM != ifm2Tensor )
@@ -548,6 +581,7 @@ std::unique_ptr<SchedulerOperation> SchedulerPacking::MakeSchedulerOperation(Ope
     Set(query.ofm, ofmConn);
     query.reverseMask = ofmConn->reverse;
     query.transposeMask = ofmConn->transpose;
+    query.kernel = schedOp->Kernel();
 
     ArchRequirements req;
     if ( _arch->Constraints()->OperatorQuery(op->Type(), &query, &req).Any(QueryResult::Native) )

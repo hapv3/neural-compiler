@@ -30,15 +30,18 @@ private:
 public:
     EthosU55Constraints(ArchEthosU55 *arch);
 
-    bool SupportsFusedReverse(OpType opType, ReverseType reverseTypeMask) override;
     bool SupportsFusedRescale(OpType opType, TensorUsage tensorUsage, DataType rescaleFromType, DataType rescaleToType,
         DataType opFromType, DataType opToType, const Quantization &quantization) override;
-    TransposeSupport SupportsFusedTranspose(OpType opType, TransposeType transposeType) override;
     bool SupportsAccumulatorSaveRestore() override { return false; }
     bool SupportsNegativeStrides() override { return true; };
     bool SupportsElementwiseLeakyRelu(bool quantized, DataType type) override;
     bool SupportsRescale(DataType fromType, DataType toType) override;
     Flags<QueryResult> OperatorQuery(OpType opType, const ArchOperatorQuery *query, ArchRequirements *req) override;
+
+protected:
+    bool SupportedDtypes(OpType opType, DataType ifmType, DataType ifm2Type, DataType ofmType) override;
+    bool SupportsFusedReverse(OpType opType, ReverseType reverseTypeMask) override;
+    TransposeSupport SupportsFusedTranspose(OpType opType, TransposeType transposeType) override;
 };
 
 }  // namespace regor
