@@ -90,6 +90,7 @@ TfLiteSupportedOperatorsU55::TfLiteSupportedOperatorsU55(IArchitectureConstraint
     _checks = {
         &TfLiteSupportedOperatorsU55::ConstraintBroadcastShapes,
         &TfLiteSupportedOperatorsU55::ConstraintReverse,
+        &TfLiteSupportedOperatorsU55::Constraint32bitOps,
     };
 }
 
@@ -155,4 +156,40 @@ bool TfLiteSupportedOperatorsU55::ConstraintReverse(const Operation *op)
     return true;
 }
 
+bool TfLiteSupportedOperatorsU55::Constraint32bitOps(const Operation *op)
+{
+    static const std::unordered_set<OpType> supported = {
+        OpType::ReduceSum,
+        OpType::Shape,
+        OpType::ArgMax,
+        OpType::Transpose,
+        OpType::MirrorPad,
+        OpType::Add,
+        OpType::Mul,
+        OpType::Sub,
+        OpType::BatchMatMul,
+        OpType::FullyConnected,
+    };
+
+    OpType opType = op->Type();
+
+    if ( supported.count(opType) > 0 )
+    {
+        return true;
+    }
+
+    for ( const auto *list : {&op->Inputs(), &op->Outputs()} )
+    {
+        for ( const auto &[usage, conn] : list->pairs() )
+        {
+            auto type = conn.tensor->Type();
+            if ( type == DataType::Int32 && (IsIFM(usage) || IsOFM(usage)) )
+            {
+                Failure(op, "Operation does not support Int32 inputs/outputs", "");
+                return false;
+            }
+        }
+    }
+    return true;
+}
 }  // namespace regor

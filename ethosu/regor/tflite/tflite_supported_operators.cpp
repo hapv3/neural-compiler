@@ -203,6 +203,56 @@ bool TfLiteSupportedOperators::ConstraintFCWeightShape(const Operation *op)
     return true;
 }
 
+bool TfLiteSupportedOperators::ConstraintPerAxisQuant(const Operation *op)
+{
+    OpType opType = op->Type();
+    if ( IsConvolution(opType) || opType == OpType::FullyConnected )
+    {
+        return true;
+    }
+
+    for ( const auto *list : {&op->Inputs(), &op->Outputs()} )
+    {
+        for ( const auto &[usage, conn] : list->pairs() )
+        {
+            if ( conn.quantization.scales.size() > 1 || conn.quantization.zeroPoints.size() > 1 )
+            {
+                Failure(op, "Operation does not support per-axis quantization", "");
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool TfLiteSupportedOperators::ConstraintMatchingQuantization(const Operation *op)
+{
+    const char *constraint = "Both Input quantization parameters must match OFM quantization parameters";
+
+    OpType opType = op->Type();
+
+    if ( opType != OpType::Minimum && opType != OpType::Maximum )
+    {
+        return true;
+    }
+
+    const auto ofmConn = op->Output(TensorUsage::OFM);
+    const auto ifmConn = op->Input(TensorUsage::IFM);
+    const auto ifm2Conn = op->Input(TensorUsage::IFM1);
+    assert(ofmConn);
+    assert(ifmConn);
+    assert(ifm2Conn);
+    const auto &ofmQuant = ofmConn->quantization;
+    const auto &ifmQuant = ifmConn->quantization;
+    const auto &ifm2Quant = ifm2Conn->quantization;
+    if ( ifmQuant != ofmQuant || ifm2Quant != ofmQuant )
+    {
+        Failure(op, "Operation has mismatching quantization parameters.", constraint);
+        return false;
+    }
+    return true;
+}
+
 void TfLiteSupportedOperators::Failure(const Operation *op, const std::string &message, const std::string &constraint)
 {
     assert(op);
@@ -237,6 +287,8 @@ TfLiteSupportedOperators::TfLiteSupportedOperators(IArchitectureConstraints *con
         &TfLiteSupportedOperators::ConstraintTensMustHaveShape,
         &TfLiteSupportedOperators::ConstraintFCWeightShape,
         &TfLiteSupportedOperators::ConstraintTensQuantized,
+        &TfLiteSupportedOperators::ConstraintPerAxisQuant,
+        &TfLiteSupportedOperators::ConstraintMatchingQuantization,
     };
 }
 

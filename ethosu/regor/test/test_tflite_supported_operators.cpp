@@ -133,6 +133,32 @@ TEST_CASE("Supported operators Common")
         REQUIRE(supportedOps->Check(op.get()) == false);
         op->Disconnect();
     }
+
+    SECTION("ConstraintPerAxisQuant")
+    {
+        auto op = CreateOperation(OpType::Add, Shape(1, 1, 1, 3), DataType::Int8, Shape(1, 1, 1, 3), DataType::Int8,
+            Shape(1, 1, 1, 3), DataType::Int8);
+        REQUIRE(supportedOps->Check(op.get()) == true);
+        Quantization q = Quantization::Unit();
+        q.scales.push_back({8, 2});
+        q.zeroPoints.push_back(2);
+        op->Input(TensorUsage::IFM)->Set(q);
+        REQUIRE(supportedOps->Check(op.get()) == false);
+        op->Disconnect();
+    }
+
+    SECTION("ConstraintMatchingQuantization")
+    {
+        auto op = CreateOperation(OpType::Minimum, Shape(1, 1, 1, 1), DataType::Int8, Shape(1, 1, 1, 1), DataType::Int8,
+            Shape(1, 1, 1, 1), DataType::Int8);
+        REQUIRE(supportedOps->Check(op.get()) == true);
+        Quantization q;
+        q.scales.push_back(8);
+        q.zeroPoints.push_back(2);
+        op->Input(TensorUsage::IFM)->Set(q);
+        REQUIRE(supportedOps->Check(op.get()) == false);
+        op->Disconnect();
+    }
 }
 
 TEST_CASE("Supported operators EthosU55")
@@ -234,6 +260,18 @@ TEST_CASE("Supported operators EthosU55")
         op->ConnectInput(TensorUsage::Params, params);
         REQUIRE(supportedOps->Check(op.get()) == false);
         op->Disconnect();
+    }
+
+
+    SECTION("Constraint32BitOps")
+    {
+        auto op = CreateOperation(OpType::Add, Shape(1, 1, 1, 1), DataType::Int32, Shape(1, 1, 1, 1), DataType::Int32,
+            Shape(1, 1, 1, 1), DataType::Int32);
+        REQUIRE(supportedOps->Check(op.get()) == true);
+        auto op2 = CreateOperation(OpType::MaxPool, Shape(1, 1, 1, 1), DataType::Int32, Shape(1, 1, 1, 1), DataType::Int32);
+        REQUIRE(supportedOps->Check(op2.get()) == false);
+        op->Disconnect();
+        op2->Disconnect();
     }
 }
 

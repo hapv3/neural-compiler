@@ -54,5 +54,8 @@ private:
     bool ConstraintTensMustHaveShape(const Operation *op);
     bool ConstraintTensQuantized(const Operation *op);
     bool ConstraintFCWeightShape(const Operation *op);
+    bool ConstraintPerAxisQuant(const Operation *op);
+    bool ConstraintMatchingQuantization(const Operation *op);
+    bool ConstraintDepthMultiplier(const Operation *op);
 };
 }  // namespace regor

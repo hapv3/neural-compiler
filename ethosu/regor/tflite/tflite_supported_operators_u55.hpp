@@ -42,5 +42,6 @@ public:
 private:
     bool ConstraintBroadcastShapes(const Operation *op);
     bool ConstraintReverse(const Operation *op);
+    bool Constraint32bitOps(const Operation *op);
 };
 }  // namespace regor
