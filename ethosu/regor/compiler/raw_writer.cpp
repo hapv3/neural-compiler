@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -156,7 +156,7 @@ void RawWriter::SerialiseCommandStreamTensor(const Tensor *tensor)
 
 void RawWriter::SerialiseReadOnlyTensor(const Tensor *tensor)
 {
-    assert(tensor->IsConstant());
+    assert(tensor->View().HasBuffer());
 
     // read_only buffer and buffer size
     auto blob = tensor->View().Buffer()->Data<uint8_t>();
