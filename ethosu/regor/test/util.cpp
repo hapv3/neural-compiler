@@ -132,7 +132,7 @@ std::shared_ptr<Tensor> CreateTensor(const std::string &name, const Shape &stora
 }
 
 // Create a Const Tensor
-std::shared_ptr<Tensor> CreateTensor(const std::string &name, const Shape &storageShape, DataType dtype, unsigned value)
+std::shared_ptr<Tensor> CreateTensor(const std::string &name, const Shape &storageShape, DataType dtype, int64_t value)
 {
     switch ( dtype )
     {
@@ -147,6 +147,9 @@ std::shared_ptr<Tensor> CreateTensor(const std::string &name, const Shape &stora
             break;
         case DataType::Int32:
             return CreateTensor(name, storageShape, dtype, std::vector<int32_t>(storageShape.Elements(), int32_t(value)));
+            break;
+        case DataType::Int64:
+            return CreateTensor(name, storageShape, dtype, std::vector<int64_t>(storageShape.Elements(), int64_t(value)));
             break;
         default:
             assert(false);

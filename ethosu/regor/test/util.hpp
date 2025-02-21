@@ -61,7 +61,7 @@ std::shared_ptr<Tensor> CreateTensor(const std::string &name, const Shape &stora
 // Create a Const Tensor
 template<typename T>
 std::shared_ptr<Tensor> CreateTensor(const std::string &name, const Shape &storageShape, DataType dtype, std::vector<T> &&values);
-std::shared_ptr<Tensor> CreateTensor(const std::string &name, const Shape &storageShape, DataType dtype, unsigned value);
+std::shared_ptr<Tensor> CreateTensor(const std::string &name, const Shape &storageShape, DataType dtype, int64_t value);
 // Create a Operation with unary input
 std::shared_ptr<Operation> CreateOperation(OpType opType, TensorUsage ifmUsage, std::shared_ptr<Tensor> &ifm,
     TensorUsage ofmUsage, std::shared_ptr<Tensor> &ofm);

@@ -61,6 +61,7 @@ std::shared_ptr<Operation> CreateOperation(OpType opType, Shape ifmShape, DataTy
     if ( opType == OpType::Conv2D )
     {
         auto weights = CreateTensor("weights", Shape(1, 1, 1, 1), DataType::Int8);
+        weights->SetAxisOrder(AxisOrder::OHWI);
         op->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
     }
     return op;
@@ -86,6 +87,7 @@ TEST_CASE("Supported operators Common")
         auto op = CreateOperation(OpType::Conv2D, Shape(1, 8, 8, 1), DataType::Int8, Shape(1, 8, 8, 1), DataType::Int8);
         std::vector<int8_t> values = {1};
         auto weights = CreateTensor("weights", Shape(1, 1, 1, 1), DataType::Int8, std::move(values));
+        weights->SetAxisOrder(AxisOrder::OHWI);
         op->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
         // Regular op should pass
         REQUIRE(supportedOps->Check(op.get()) == true);
@@ -127,6 +129,7 @@ TEST_CASE("Supported operators Common")
         auto op = CreateOperation(OpType::FullyConnected, Shape(1, 2, 2, 1), DataType::Int8, Shape(1, 2, 1, 1), DataType::Int8);
         std::vector<int8_t> values = {1, 1, 1, 1, 1, 1, 1, 1};
         auto weights = CreateTensor("weights", Shape(4, 1, 1, 2), DataType::Int8, std::move(values));
+        weights->SetAxisOrder(AxisOrder::OHWI);
         op->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
         REQUIRE(supportedOps->Check(op.get()) == true);
         op->Input(TensorUsage::Weights)->tensor->Reshape(Shape(2, 2, 1, 2));
@@ -157,6 +160,122 @@ TEST_CASE("Supported operators Common")
         q.zeroPoints.push_back(2);
         op->Input(TensorUsage::IFM)->Set(q);
         REQUIRE(supportedOps->Check(op.get()) == false);
+        op->Disconnect();
+    }
+
+    SECTION("ConstraintWeightsPrecision")
+    {
+        auto op = CreateOperation(OpType::DepthwiseConv2D, Shape(1, 5, 5, 1), DataType::Int8, Shape(1, 5, 5, 1), DataType::Int8);
+        {
+            std::vector<int8_t> values(1, 1);
+            auto weights = CreateTensor("weights", Shape(1, 1, 1, 1), DataType::Int8, std::move(values));
+            weights->SetAxisOrder(AxisOrder::IHWO);
+            op->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
+            REQUIRE(supportedOps->Check(op.get()) == true);
+        }
+        {
+            std::vector<uint8_t> values(1, 1);
+            auto weights = CreateTensor("weights", Shape(1, 1, 1, 1), DataType::UInt8, std::move(values));
+            weights->SetAxisOrder(AxisOrder::IHWO);
+            op->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
+            REQUIRE(supportedOps->Check(op.get()) == true);
+        }
+        {
+            std::vector<int16_t> values(1, 1);
+            auto weights = CreateTensor("weights", Shape(1, 1, 1, 1), DataType::Int16, std::move(values));
+            weights->SetAxisOrder(AxisOrder::IHWO);
+            op->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
+            REQUIRE(supportedOps->Check(op.get()) == false);
+        }
+        {
+            std::vector<int32_t> values(1, 1);
+            auto weights = CreateTensor("weights", Shape(1, 1, 1, 1), DataType::Int32, std::move(values));
+            weights->SetAxisOrder(AxisOrder::IHWO);
+            op->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
+            REQUIRE(supportedOps->Check(op.get()) == false);
+        }
+        op->Disconnect();
+    }
+
+    SECTION("ConstraintWeightSum")
+    {
+        auto op = CreateOperation(OpType::DepthwiseConv2D, Shape(1, 1, 32768, 2), DataType::Int8, Shape(1, 1, 1, 2), DataType::Int8);
+        static const int64_t MAX_SUM = (1 << 16) * 127;
+        {
+            // Verify supported sum of weights
+            std::vector<int8_t> values((1 << 16) * 2, 127);
+            auto weights = CreateTensor("weights", Shape(1, 1, (1 << 16), 2), DataType::Int8, std::move(values));
+            weights->SetAxisOrder(AxisOrder::IHWO);
+            op->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
+            REQUIRE(supportedOps->Check(op.get()) == true);
+        }
+        {
+            // Verify unsupported sum of weights
+            std::vector<uint8_t> values((1 << 16) * 2, 127);
+            auto weights = CreateTensor("weights", Shape(1, 1, (1 << 16), 2), DataType::Int8, std::move(values));
+            weights->SetAxisOrder(AxisOrder::OHWI);
+            op->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
+            REQUIRE(supportedOps->Check(op.get()) == false);
+        }
+        op->Disconnect();
+    }
+
+    SECTION("ConstraintBias")
+    {
+        auto op = CreateOperation(OpType::DepthwiseConv2D, Shape(1, 5, 5, 1), DataType::Int8, Shape(1, 5, 5, 1), DataType::Int8);
+        std::vector<int8_t> wValues(1, 1);
+        auto weights = CreateTensor("weights", Shape(1, 1, 1, 1), DataType::Int8, std::move(wValues));
+        weights->SetAxisOrder(AxisOrder::IHWO);
+        op->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
+        REQUIRE(supportedOps->Check(op.get()) == true);
+        {
+            // Bias must be const
+            auto bias = CreateTensor("bias", Shape(1), DataType::Int32);
+            op->ConnectInput(TensorUsage::Scales, bias).Set(Quantization::Unit());
+            REQUIRE(supportedOps->Check(op.get()) == false);
+        }
+        {
+            // Bias must be 1D
+            std::vector<int32_t> values(1, 1);
+            auto bias = CreateTensor("bias", Shape(1, 1, 1, 1), DataType::Int32, std::move(values));
+            op->ConnectInput(TensorUsage::Scales, bias).Set(Quantization::Unit());
+            REQUIRE(supportedOps->Check(op.get()) == false);
+        }
+        {
+            // Bias can't be 8bit
+            std::vector<int8_t> values(1, 1);
+            auto bias = CreateTensor("bias", Shape(1), DataType::Int8, std::move(values));
+            op->ConnectInput(TensorUsage::Scales, bias).Set(Quantization::Unit());
+            REQUIRE(supportedOps->Check(op.get()) == false);
+        }
+        {
+            // Bias can't be 16bit
+            std::vector<int16_t> values(1, 1);
+            auto bias = CreateTensor("bias", Shape(1), DataType::Int16, std::move(values));
+            op->ConnectInput(TensorUsage::Scales, bias).Set(Quantization::Unit());
+            REQUIRE(supportedOps->Check(op.get()) == false);
+        }
+        {
+            // Bias can be 32 bit
+            std::vector<int32_t> values(1, std::numeric_limits<int32_t>::max());
+            auto bias = CreateTensor("bias", Shape(1), DataType::Int32, std::move(values));
+            op->ConnectInput(TensorUsage::Scales, bias).Set(Quantization::Unit());
+            REQUIRE(supportedOps->Check(op.get()) == true);
+        }
+        {
+            // Bias can be 40 bit
+            std::vector<int64_t> values(1, (1LL << 40) - 1);
+            auto bias = CreateTensor<int64_t>("bias", Shape(1), DataType::Int64, std::move(values));
+            op->ConnectInput(TensorUsage::Scales, bias).Set(Quantization::Unit());
+            REQUIRE(supportedOps->Check(op.get()) == true);
+        }
+        {
+            // Bias can't be >40 bit
+            std::vector<int64_t> values(1, std::numeric_limits<int64_t>::max());
+            auto bias = CreateTensor("bias", Shape(1), DataType::Int64, std::move(values));
+            op->ConnectInput(TensorUsage::Scales, bias).Set(Quantization::Unit());
+            REQUIRE(supportedOps->Check(op.get()) == false);
+        }
         op->Disconnect();
     }
 }

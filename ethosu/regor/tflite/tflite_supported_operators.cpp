@@ -253,6 +253,145 @@ bool TfLiteSupportedOperators::ConstraintMatchingQuantization(const Operation *o
     return true;
 }
 
+bool TfLiteSupportedOperators::ConstraintWeightsPrecision(const Operation *op)
+{
+    const char *constraint = "Weight tensors must be 8-bit precision";
+    const auto wconn = op->Input(TensorUsage::Weights);
+    if ( !wconn )
+    {
+        return true;
+    }
+    const auto type = wconn->tensor->Type();
+    if ( DataTypeSizeBits(type) != 8 )
+    {
+        Failure(op, fmt::format("Weights tensor with precision: {}", DataTypeToString(type)), constraint);
+        return false;
+    }
+    return true;
+}
+
+bool TfLiteSupportedOperators::ConstraintWeightSum(const Operation *op)
+{
+    std::string constraint = fmt::format(
+        "The sum of absolute weights cannot exceed:\n"
+        "\t{} for 8-bit IFM\n"
+        "\t{} for 16-bit IFM",
+        _maxWeightSum8Bit, _maxWeightSum16Bit);
+
+    auto wConn = op->Input(TensorUsage::Weights);
+    auto ifmConn = op->Input(TensorUsage::IFM);
+    if ( !wConn || !ifmConn )
+    {
+        return true;
+    }
+    if ( !wConn->tensor->IsConstant() )
+    {
+        return true;
+    }
+
+    auto view = wConn->tensor->View();
+    auto zeroPoints = wConn->quantization.zeroPoints;
+    auto ifmType = ifmConn->tensor->Type();
+    int ifmBits = DataTypeSizeBits(ifmType);
+    int64_t maxWeightSum = ifmBits == 8 ? _maxWeightSum8Bit : _maxWeightSum16Bit;
+    auto reader = view.Values<int>(wConn->tensor->Type());
+    AxisOrder order = wConn->tensor->AxisOrder();
+    Shape readShape = wConn->tensor->StorageShape();
+    assert(readShape.Size() == 4);
+    assert(order == AxisOrder::OHWI || order == AxisOrder::IHWO);
+
+    int outChannels = readShape.Depth();
+    int inChannels = readShape.Batch();
+    if ( order == AxisOrder::OHWI )
+    {
+        std::swap(outChannels, inChannels);
+    }
+    // abort early if the readShape of the weights tensor guarantees no overflow.
+    if ( (255 * readShape.Elements64() / outChannels) < maxWeightSum )
+    {
+        return true;
+    }
+    // Accumulate the weights in slices of output-channels
+    // Fail if any slice overflows maxWeightSum
+    for ( int out = 0; out < outChannels; out++ )
+    {
+        int64_t zeroPoint = 0;
+        if ( !zeroPoints.empty() )
+        {
+            zeroPoint = zeroPoints.size() > 1 ? zeroPoints[out] : zeroPoints[0];
+        }
+        int64_t sum = 0;
+        for ( int in = 0; in < inChannels; in++ )
+        {
+            for ( int h = 0; h < readShape.Height(); h++ )
+            {
+                for ( int w = 0; w < readShape.Width(); w++ )
+                {
+                    int64_t v;
+                    if ( order == AxisOrder::OHWI )
+                    {
+                        v = reader[{out, h, w, in}];
+                    }
+                    else
+                    {
+                        v = reader[{in, h, w, out}];
+                    }
+                    sum += std::abs(v - zeroPoint);
+                }
+            }
+        }
+        if ( sum > maxWeightSum )
+        {
+            Failure(op, fmt::format("The absolute sum of weight-tensor elements: {} exceeds {}", sum, maxWeightSum), constraint);
+            return false;
+        }
+    }
+    return true;
+}
+
+bool TfLiteSupportedOperators::ConstraintBias(const Operation *op)
+{
+    auto bConn = op->Input(TensorUsage::Scales);
+    if ( !bConn )
+    {
+        return true;
+    }
+    int biasDim = bConn->shape.Size();
+
+    if ( biasDim > 1 )
+    {
+        Failure(op, fmt::format("Operation has {}D bias shape.", biasDim), "The bias tensor shape must be 1D");
+        return false;
+    }
+    if ( !bConn->tensor->IsConstant() )
+    {
+        Failure(op, "Operation has non-constant bias tensor.", "The bias tensor must be constant");
+        return false;
+    }
+    auto type = bConn->tensor->Type();
+    if ( type != DataType::Int32 && type != DataType::Int64 )
+    {
+        Failure(op, fmt::format("Operation has bias with type:{}", DataTypeToString(type)), "The bias tensor precision must be Int32 or Int64");
+        return false;
+    }
+    if ( type == DataType::Int64 )
+    {
+        // read bias values
+        auto view = bConn->tensor->View();
+        auto values = view.Values<int64_t>();
+        for ( int64_t bias : values )
+        {
+            if ( bias > _maxBias )
+            {
+                std::string constraint = fmt::format("Int64 bias must be smaller than {}", _maxBias);
+                Failure(op, fmt::format("Bias is out of range: {} > {}", bias, _maxBias), constraint);
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 void TfLiteSupportedOperators::Failure(const Operation *op, const std::string &message, const std::string &constraint)
 {
     assert(op);
@@ -278,6 +417,9 @@ void TfLiteSupportedOperators::Failure(const Operation *op, const std::string &m
 TfLiteSupportedOperators::TfLiteSupportedOperators(IArchitectureConstraints *constraints) :
         _archConstraints(constraints)
 {
+    _maxWeightSum8Bit = 0;
+    _maxWeightSum16Bit = 0;
+    _maxBias = 0;
     _genericChecks = {
         &TfLiteSupportedOperators::ConstraintOpType,
         &TfLiteSupportedOperators::ConstraintTensDtypes,
@@ -289,6 +431,9 @@ TfLiteSupportedOperators::TfLiteSupportedOperators(IArchitectureConstraints *con
         &TfLiteSupportedOperators::ConstraintTensQuantized,
         &TfLiteSupportedOperators::ConstraintPerAxisQuant,
         &TfLiteSupportedOperators::ConstraintMatchingQuantization,
+        &TfLiteSupportedOperators::ConstraintWeightsPrecision,
+        &TfLiteSupportedOperators::ConstraintWeightSum,
+        &TfLiteSupportedOperators::ConstraintBias,
     };
 }
 

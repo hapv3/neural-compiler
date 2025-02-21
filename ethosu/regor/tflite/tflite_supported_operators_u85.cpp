@@ -115,6 +115,9 @@ TfLiteSupportedOperatorsU85::TfLiteSupportedOperatorsU85(IArchitectureConstraint
         DataType::Bool8
         // clang-format on
     };
+    _maxWeightSum8Bit = 127 * (1 << 16);
+    _maxWeightSum16Bit = 127 * (1 << 24);
+    _maxBias = (1LL << 48) - 1;
     _checks = {
         &TfLiteSupportedOperatorsU85::ConstraintResizeCommon,
         &TfLiteSupportedOperatorsU85::ConstraintResizeBilinear,

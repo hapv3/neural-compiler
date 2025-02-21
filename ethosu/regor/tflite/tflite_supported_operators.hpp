@@ -34,6 +34,9 @@ protected:
     IArchitectureConstraints *_archConstraints;
     std::unordered_set<OpType> _supportedOpTypes;
     std::unordered_set<DataType> _supportedDataTypes;
+    int64_t _maxWeightSum8Bit;
+    int64_t _maxWeightSum16Bit;
+    int64_t _maxBias;
 
 public:
     TfLiteSupportedOperators(IArchitectureConstraints *constraints);
@@ -57,5 +60,8 @@ private:
     bool ConstraintPerAxisQuant(const Operation *op);
     bool ConstraintMatchingQuantization(const Operation *op);
     bool ConstraintDepthMultiplier(const Operation *op);
+    bool ConstraintWeightsPrecision(const Operation *op);
+    bool ConstraintWeightSum(const Operation *op);
+    bool ConstraintBias(const Operation *op);
 };
 }  // namespace regor

@@ -87,6 +87,9 @@ TfLiteSupportedOperatorsU55::TfLiteSupportedOperatorsU55(IArchitectureConstraint
         DataType::Int32
         // clang-format on
     };
+    _maxWeightSum8Bit = 127 * (1 << 16);
+    _maxWeightSum16Bit = 127 * (1 << 16);
+    _maxBias = (1LL << 40) - 1;
     _checks = {
         &TfLiteSupportedOperatorsU55::ConstraintBroadcastShapes,
         &TfLiteSupportedOperatorsU55::ConstraintReverse,
