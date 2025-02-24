@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2020-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2020-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 
 # SPDX-License-Identifier: Apache-2.0
 
@@ -101,7 +101,7 @@ repos:
     hooks:
     -   id: pytest
         name: pytest
-        stages: [commit]
+        stages: [pre-commit]
         language: system
         entry: pytest -s -v
         types: [python]
@@ -110,7 +110,7 @@ repos:
 
     -   id: pytest-cov
         name: pytest-cov
-        stages: [push]
+        stages: [pre-push]
         language: system
         entry: pytest -v --cov=ethosu --cov-fail-under=0
         types: [python]
