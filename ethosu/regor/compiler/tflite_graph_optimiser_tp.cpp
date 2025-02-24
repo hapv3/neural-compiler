@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 // SPDX-FileCopyrightText: Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -107,6 +107,13 @@ Operation *TFLiteGraphOptimiser::ConvertHardSwishToLUT(Graph *const graph, Opera
             if ( reluShift > 0 )
             {
                 reluValue = SaturatingLeftShift(reluValue, 1);
+            }
+
+            // Try to get reluShift into the [-31, 0] range
+            if ( reluShift < -31 )
+            {
+                reluValue = reluValue >> (-31 - reluShift);
+                reluShift = -31;
             }
 
             if ( reluShift < 0 )
