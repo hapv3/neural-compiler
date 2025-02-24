@@ -329,7 +329,8 @@ int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *con
     }
 
     // Initial criteria (may change)
-    bool cpuTensor = tensor->hasCPUWriters || tensor->hasCPUReaders || tensor->isGraphInput || tensor->isGraphOutput;
+    bool cpuTensor =
+        tensor->hasCPUWriters || tensor->hasCPUReaders || tensor->isGraphInput || tensor->isGraphOutput || tensor->isPersistent;
     conn->requireFullTensor = conn->requireFullTensor || cpuTensor;
     tensor->needsLinearFormat = tensor->needsLinearFormat || cpuTensor || CheckLinearFormatForConcatSplit(tensor);
 
@@ -337,13 +338,9 @@ int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *con
     {
         tensor->memArea = _arch->CPUMemory();
     }
-    else if ( _options.separateIORegions && !tensor->IsConstant() && cpuTensor && tensor->hasNPUReaders )
+    else if ( _options.separateIORegions && !tensor->IsConstant() && cpuTensor )
     {
-        tensor->memArea = _arch->InputFeatureMapMemory();
-    }
-    else if ( _options.separateIORegions && !tensor->IsConstant() && cpuTensor && tensor->hasNPUWriters )
-    {
-        tensor->memArea = _arch->OutputFeatureMapMemory();
+        tensor->memArea = tensor->hasNPUWriters ? _arch->OutputFeatureMapMemory() : _arch->InputFeatureMapMemory();
     }
 
     // Set tensor format to NHCWB16 for FeatureMaps, if possible
@@ -831,13 +828,7 @@ void Scheduler::MoveConstantData(Schedule *refSchedule)
 bool Scheduler::AllocateAddresses(Schedule *schedule)
 {
     const auto verbose = _options.verboseAllocation;
-    const auto separateIORegions = _options.separateIORegions;
     AllocateTensors(_ops, schedule, _arch->FeatureMapMemory(), TensorAllocator::HillClimb, AlignmentQuantum, verbose);
-    if ( separateIORegions )
-    {
-        AllocateTensors(_ops, schedule, _arch->InputFeatureMapMemory(), TensorAllocator::LinearAlloc, AlignmentQuantum, verbose);
-        AllocateTensors(_ops, schedule, _arch->OutputFeatureMapMemory(), TensorAllocator::LinearAlloc, AlignmentQuantum, verbose);
-    }
     if ( _spilling )
     {
         const auto limit = _options.optimizationStagingLimit;
@@ -902,6 +893,20 @@ void Scheduler::AllocateReadOnlyAddresses(Schedule *schedule, IncrementalLinearA
     lrGraph.ExtractLiveRangesFromCascades(_ops, schedule, _arch->ReadonlyMemory(), false);
     auto totalSize = readOnlyAllocator.Allocate(&lrGraph, AlignmentQuantum, _options.verboseAllocation);
     schedule->memoryUsage[_arch->ReadonlyMemory()] = int(totalSize);
+}
+
+
+void Scheduler::AllocateIOAddresses(Schedule *schedule, const std::vector<std::unique_ptr<SchedulerOperation>> &ops)
+{
+    const auto verbose = _options.verboseAllocation;
+    const auto separateIORegions = _options.separateIORegions;
+    if ( separateIORegions )
+    {
+        assert(_arch->InputFeatureMapMemory() != _arch->OutputFeatureMapMemory());
+
+        AllocateTensors(ops, schedule, _arch->InputFeatureMapMemory(), TensorAllocator::LinearAlloc, AlignmentQuantum, verbose);
+        AllocateTensors(ops, schedule, _arch->OutputFeatureMapMemory(), TensorAllocator::LinearAlloc, AlignmentQuantum, verbose);
+    }
 }
 
 

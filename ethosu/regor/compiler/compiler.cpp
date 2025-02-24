@@ -512,23 +512,6 @@ std::unique_ptr<Graph> Compiler::CompileGraph(std::unique_ptr<Graph> &graph,
         return nullptr;
     }
 
-    // At most 1 CustomNpuOp is supported when compiling with separate IO regions
-    if ( _schedulerOptions.separateIORegions )
-    {
-        std::vector<Operation *> ops;
-        newGraph->GetAllOperations(ops);
-        int customNpuOps = 0;
-        for ( auto op : ops )
-        {
-            if ( op->Type() == OpType::CustomNpuOp ) customNpuOps++;
-        }
-        if ( customNpuOps > 1 )
-        {
-            SetLastError("More than 1 CustomNpuOp is not supported with separate IO regions");
-            return nullptr;
-        }
-    }
-
     auto customOperatorBuilder = CustomOperatorBuilder(_architecture.get(), schedule.get());
     customOperatorBuilder.AllocateScratchTensors(tensorAddressMap);
 
@@ -537,6 +520,9 @@ std::unique_ptr<Graph> Compiler::CompileGraph(std::unique_ptr<Graph> &graph,
     {
         auto *graphOp = pair.first;
         const auto *npuOp = pair.second.get();
+
+        // Allocate addresses for IO tensors with an address space that is local for this sequence of NPU ops
+        scheduler.AllocateIOAddresses(schedule.get(), npuOp->Operations());
 
         // Generate HLCS
         auto hlcsGenerator = HLCStreamGenerator();

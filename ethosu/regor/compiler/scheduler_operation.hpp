@@ -92,7 +92,7 @@ public:
 
     void SetAddress(Address address)
     {
-        assert(allocatedAddress == -1 && address >= 0);
+        assert(address >= 0);
         allocatedAddress = address;
     }
 

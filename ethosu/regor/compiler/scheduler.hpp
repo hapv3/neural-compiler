@@ -302,6 +302,8 @@ public:
 
     void AllocateReadOnlyAddresses(Schedule *schedule, IncrementalLinearAllocator &readOnlyAllocator);
 
+    void AllocateIOAddresses(Schedule *schedule, const std::vector<std::unique_ptr<SchedulerOperation>> &ops);
+
     static PerformanceQuery InitPerfQuery(SchedulerOperation *op, ArchitectureOpConfig *config, int ofm_depth = -1,
         WeightFormat wgtFormat = WeightFormat::Default, SchedulerOpInfo *cost = nullptr);
     static std::vector<FusionQuery> InitFusionQuery(SchedulerOperation *op);
