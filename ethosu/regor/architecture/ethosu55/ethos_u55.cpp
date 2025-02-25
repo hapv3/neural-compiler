@@ -727,11 +727,19 @@ void ArchEthosU55::Call(std::function<void(const std::string &)> callBack)
 int EthosU55OpGroup::Add(const ArchitectureOpGroupQuery &op, const std::vector<int> &dependsOn)
 {
     LOG_TRACE1("Trying to add op {}\n", OpTypeToString(op.type));
-
     if ( _opsCount >= 2 )
     {
         // Can only fuse 2 ops
         return 0;
+    }
+    else if ( _opsCount == 1 )
+    {
+        // Can not fuse to DMA or Compound operators
+        auto hwOp = ArchEthosU55::GetHWOp(_ops[0].type);
+        if ( hwOp == EthosU55NpuOp::Dma || hwOp == EthosU55NpuOp::Compound )
+        {
+            return 0;
+        }
     }
 
     if ( !CanRunOnNPU(op) )

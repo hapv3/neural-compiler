@@ -1419,6 +1419,11 @@ int EthosU85OpGroup::ExternalIfms(const ArchitectureOpGroupQuery &op)
 bool EthosU85OpGroup::Fuse(const ArchitectureOpGroupQuery &op, const std::vector<int> &dependsOn)
 {
     assert(_opsCount > 0);
+    if ( !_supportsFusing )
+    {
+        return false;
+    }
+
     if ( _chainLength > 1 )
     {
         // TODO MLBEDSW-9142: support fusing on chained ops
@@ -1584,6 +1589,7 @@ int EthosU85OpGroup::Add(const ArchitectureOpGroupQuery &op, const std::vector<i
     if ( _opsCount == 0 )
     {
         _supportsChaining = CanStartChain(op);
+        _supportsFusing = ArchEthosU85::GetHWOp(op.type) != EthosU85NpuOp::Dma;
         _externalIfms = externalInputs;
         _chainLength = 1;
         _hasFusedActivation = IsActivation(op.type);
