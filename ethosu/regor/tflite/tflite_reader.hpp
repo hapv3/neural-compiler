@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -45,8 +45,8 @@ private:
     static void LoadGraphs(const uint8_t *input, const tflite::Model *model, std::vector<std::unique_ptr<Graph>> &graphs,
         OptimiserDatabase *optDb, IArchitectureConstraints *constraints);  // From model
     static const tflite::Model *LoadModel(const void *input, size_t size);
-    static std::shared_ptr<Tensor> ParseTensor(const tflite::Tensor *tflite_tensor,
-        const std::shared_ptr<Buffer> &buffer, std::unordered_map<UniqueId, Quantization> &tensorQuantization);
+    static std::shared_ptr<Tensor> ParseTensor(const tflite::Tensor *tflite_tensor, std::shared_ptr<Buffer> &buffer,
+        std::unordered_map<UniqueId, Quantization> &tensorQuantization);
     static void ParseOperatorOptions(const std::shared_ptr<Operation> &operation,
         const tflite::Operator *tflite_operator, OptimiserDatabase *optDb, IArchitectureConstraints *constraints);
     static void SetOFMRounding(const std::shared_ptr<Operation> &operation);

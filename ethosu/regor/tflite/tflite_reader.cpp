@@ -388,14 +388,26 @@ void TfLiteReader::LoadGraphs(const void *input, size_t size, std::vector<std::u
     LoadGraphs(reinterpret_cast<const uint8_t *>(input), LoadModel(input, size), graphs, optDb, constraints);
 }
 
-std::shared_ptr<Tensor> TfLiteReader::ParseTensor(const tflite::Tensor *tflite_tensor,
-    const std::shared_ptr<Buffer> &buffer, std::unordered_map<UniqueId, Quantization> &tensorQuantization)
+std::shared_ptr<Tensor> TfLiteReader::ParseTensor(const tflite::Tensor *tflite_tensor, std::shared_ptr<Buffer> &buffer,
+    std::unordered_map<UniqueId, Quantization> &tensorQuantization)
 {
     const std::string name = tflite_tensor->name() ? tflite_tensor->name()->str() : "<unnamed>";
     const DataType type = TfLiteMapping::TensorTypeToDataType(tflite_tensor->type());
 
     auto tensor = std::make_shared<Tensor>(name, type);
 
+    // Regor requires buffers to be aligned based on tensor-datatype
+    if ( buffer )
+    {
+        const Buffer *constBuf = buffer.get();
+        const uint8_t *data = constBuf->Data<uint8_t>();
+        // Realign tensor if needed
+        if ( uintptr_t(data) % (DataTypeSizeBits(type) / 8) != 0 )
+        {
+            buffer = std::make_shared<Buffer>(buffer->Size(), data, false);
+            assert(uintptr_t(buffer->Data<uint8_t>()) % (DataTypeSizeBits(type) / 8) == 0);
+        }
+    }
     Shape shape;  // Defaults to shapeless
     auto signature = tflite_tensor->shape_signature();
     if ( tflite_tensor->shape() && tflite_tensor->shape()->size() )

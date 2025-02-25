@@ -223,7 +223,8 @@ public:
         }
         else
         {
-            assert(_deleter);
+            assert(_deleter && "reading const buffer as non-const");
+            assert(uintptr_t(_refData.data) % alignof(T) == 0);
             return reinterpret_cast<T *>(_refData.data);
         }
     }
