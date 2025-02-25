@@ -23,6 +23,7 @@ import mmap
 import os
 import sys
 import time
+from configparser import ConfigParser
 from typing import List
 from typing import Optional
 
@@ -879,6 +880,23 @@ def list_config_files():
         print(config[path_length:])
 
 
+def list_configs(config_filename):
+    vela_config_filename = config_filename
+    if not os.path.isfile(vela_config_filename):
+        vela_config_filename = os.path.join(architecture_features.CONFIG_FILES_PATH, config_filename)
+        if not os.path.isfile(vela_config_filename):
+            assert False, f"Cannot find config file {config_filename}"
+
+    if os.path.splitext(vela_config_filename)[1] != ".ini":
+        assert False, f"Specified file {config_filename} is not a Vela config file"
+
+    print(f"Configurations defined in {vela_config_filename}:")
+    vela_config = ConfigParser()
+    vela_config.read(vela_config_filename)
+    for section in vela_config.sections():
+        print(f"   {section}")
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     """Run the main entry point."""
     if argv is None:
@@ -902,6 +920,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             "Display all available configurations in the `config_files` folder and exit. To select config file, "
             "use the --config argument with one of the listed config files (For example: --config Arm/vela.ini )"
         ),
+    )
+    parser.add_argument(
+        "--list-configs",
+        type=str,
+        help=("Display all configurations defined in the specified config file"),
     )
 
     # set network nargs to be optional to allow the support-ops-report CLI option to be used standalone
@@ -1076,6 +1099,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         list_config_files()
         return 0
 
+    if args.list_configs:
+        list_configs(args.list_configs)
+        return 0
+
     if args.network is None:
         parser.error("the following argument is required: NETWORK")
 
@@ -1086,7 +1113,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         # Make sure the correct separator is used depending on OS
         config = os.path.normpath(config)
 
-        if not config.endswith(".ini"):
+        if os.path.splitext(config)[1] != ".ini":
             raise InputFileError(config, "Configuration files must use the .ini extension")
 
         if (

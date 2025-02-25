@@ -95,6 +95,18 @@ This option can be used without the required Network argument.
 vela --list-config-files
 ```
 
+### List Configurations
+
+Displays a list of configurations (System Configurations and Memory Modes) that
+are defined in the specified Vela configuration file. Can be used without the
+required Network argument.  
+**Type: String**  
+**Default: None**  
+
+```bash
+vela --list-configs Arm/vela.ini
+```
+
 ### Output Directory
 
 Specifies the output directory of the optimised network model as well as the
