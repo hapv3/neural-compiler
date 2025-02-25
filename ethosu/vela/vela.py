@@ -1173,9 +1173,10 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     model_reader_options = model_reader.ModelReaderOptions()
 
-    # The default behaviour is to use Vela for Ethos-U55/U65 and Regor for Ethos-U85. However, developers can override
-    # this by using the --debug-force-regor option
-    if arch.is_ethos_u85_system or args.debug_force_regor:
+    # The default behaviour to compile TFLite networks on Ethos-U55/U65 is to use Vela's Python compiler core (no name).
+    # However, this can be overridden to use Vela's C++ compiler core (Regor) by using the --debug-force-regor option.
+    # All Ethos-U85 or all TOSA network compilations use Vela's C++ compiler core (Regor).
+    if arch.is_ethos_u85_system or args.network.lower().endswith(".tosa") or args.debug_force_regor:
         system_config = "[architecture]\n"
         system_config += f"macs={arch.num_macs_per_cycle}\n"
         system_config += f"cores={arch.ncores}\n"
