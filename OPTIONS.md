@@ -128,13 +128,13 @@ action commands attached as well as the required tensor, buffer and operator
 lists. If any operators fall back to the CPU, they are included in this file
 as well.
 
-The `raw` format is currently only available for Ethos-U85 and produces an
-'.npz' file containing the same information as the `tflite` format, but more
-easily accessible. When loaded with NumPy, the arrays can be accessed by name
-with the keys listed below.  
+The `raw` format produces an [`.npz`](https://numpy.org/doc/stable/reference/generated/numpy.lib.format.html#module-numpy.lib.format)
+file containing the same information as the `tflite` format, but more easily
+accessible. When loaded with NumPy, the arrays can be accessed by name with the
+keys listed below.  
 **Raw format keys:**  
-- **cmd_data** - The command stream.
-- **weight_data** - The model weights.
+- **cmd_data** - The command stream data and metadata for the driver.
+- **weight_data** - The encoded weight, scale & bias, and constant data.
 - **weight_region** - Memory region identifier for the weights.
 - **scratch_shape / scratch_fast_shape** - The shape of the scratch and fast
 scratch buffers.

@@ -60,7 +60,9 @@ TFLITE_MAGIC = 0x334C4654
 TOSA_MAGIC = 0x41534F54
 
 
-def process(input_name, enable_debug_db, arch, model_reader_options, compiler_options, scheduler_options):
+def process(
+    input_name, enable_debug_db, arch, model_reader_options, compiler_options, scheduler_options, output_format
+):
     if compiler_options.timing:
         start = time.time()
 
@@ -95,10 +97,12 @@ def process(input_name, enable_debug_db, arch, model_reader_options, compiler_op
     )
 
     output_tfl_filename = output_basename + "_vela.tflite"
-    if input_name.endswith(".tflite"):
+    if output_format == "tflite":
         tflite_writer.write_tflite(nng, output_tfl_filename)
-    if input_name.endswith(".tosa"):
+    elif output_format == "raw":
         rawdata_writer.write_rawdata_output(nng, arch, output_basename)
+    else:
+        assert False, f"Unsupported output_format = {output_format}"
 
     if enable_debug_db:
         file_offsets = calculate_operator_file_offsets(output_tfl_filename)
@@ -124,6 +128,7 @@ def process_regor(
     options,
     enable_debug_db,
     output_dir,
+    output_format,
     verbose_weights=False,
     verbose_cycle_estimate=False,
     show_cpu_operations=False,
@@ -140,12 +145,16 @@ def process_regor(
 
     output_basename = os.path.join(output_dir, model_name)
 
-    if isinstance(compiled_model, regor.CompiledTFLiteModel):
+    if output_format == "tflite":
+        assert isinstance(compiled_model, regor.CompiledTFLiteModel)
         output_name = output_basename + "_vela.tflite"
         with open(output_name, "wb") as f:
             f.write(compiled_model.model)
-    elif isinstance(compiled_model, regor.CompiledRawModel):
-        rawdata_writer.write_rawdata_output_from_model(output_basename + "_vela.npz", compiled_model)
+    elif output_format == "raw":
+        assert isinstance(compiled_model, regor.CompiledRawModel)
+        rawdata_writer.write_rawdata_output_from_model(output_basename, compiled_model)
+    else:
+        assert False, f"Unsupported output_format = {output_format}"
 
     summary_csv_file = "{0}_summary_{1}.csv".format(output_basename, arch.system_config)
 
@@ -1229,6 +1238,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             options,
             args.enable_debug_db,
             args.output_dir,
+            args.output_format,
             args.verbose_weights,
             args.verbose_cycle_estimate,
             args.show_cpu_operations,
@@ -1268,7 +1278,13 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         try:
             nng = process(
-                args.network, args.enable_debug_db, arch, model_reader_options, compiler_options, scheduler_options
+                args.network,
+                args.enable_debug_db,
+                arch,
+                model_reader_options,
+                compiler_options,
+                scheduler_options,
+                args.output_format,
             )
 
         except VelaError as e:
