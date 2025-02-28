@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -146,7 +146,7 @@ public:
     virtual ~WeightEncoder() = default;
 
     virtual std::unique_ptr<IWeightEncodingConfig> GetEncodingConfig(ArchitectureOpConfig *opCfg, const WeightsRef &weights,
-        const Kernel *kernel, DataType ifmType, const std::vector<int> &depthOffsets, Flags<WeightFormat> format) = 0;
+        const Kernel *kernel, DataType ifmType, int depthBase, const std::vector<int> &depthOffsets, Flags<WeightFormat> format) = 0;
 
     virtual int StreamsRequired(IWeightEncodingConfig *config, const Shape &ofmShape, int &scaleStreamsRequired) = 0;
 

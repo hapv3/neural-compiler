@@ -44,13 +44,9 @@ EthosU85WeightEncoder::EthosUEncodingConfig::EthosUEncodingConfig(int cores, Fla
 
 void EthosU85WeightEncoder::EthosUEncodingConfig::Rehash()
 {
-    _depthOffsetHash = 0;
-    for ( int offset : this->depthOffsets )
-    {
-        _depthOffsetHash = _depthOffsetHash * 31 ^ offset;
-    }
-
-    _hash = SimpleHash32(_depthOffsetHash, ifmType, ofmBlockDepth, ifmBlockDepth, traversal, acc, dilation, stride, ohwiStrides, ofmUBlock);
+    _depthOffsetHash = HashVector32(depthOffsets);
+    _hash = SimpleHash32(_depthOffsetHash, ifmType, ofmBlockDepth, ifmBlockDepth, traversal, acc, dilation, stride,
+        ohwiStrides, ofmUBlock, _weightFormat);
 }
 
 uint32_t EthosU85WeightEncoder::EthosUEncodingConfig::Hash()
@@ -77,7 +73,7 @@ Flags<WeightFormat> EthosU85WeightEncoder::EthosUEncodingConfig::Format()
 
 
 std::unique_ptr<IWeightEncodingConfig> EthosU85WeightEncoder::GetEncodingConfig(ArchitectureOpConfig *opCfg, const WeightsRef &weights,
-    const Kernel *kernel, DataType ifmType, const std::vector<int> &depthOffsets, Flags<WeightFormat> format)
+    const Kernel *kernel, DataType ifmType, int depthBase, const std::vector<int> &depthOffsets, Flags<WeightFormat> format)
 {
     assert(opCfg);
     assert(kernel);
@@ -89,10 +85,11 @@ std::unique_ptr<IWeightEncodingConfig> EthosU85WeightEncoder::GetEncodingConfig(
     params->ifmBlockDepth = opConfig->IfmBlock().Depth();
     params->traversal = opConfig->Traversal();
     params->acc = opConfig->Acc();
-    params->depthOffsets = depthOffsets;
     params->ifmType = ifmType;
     params->dilation = kernel->Dilation();
     params->stride = kernel->Stride();
+
+    std::for_each(depthOffsets.begin(), depthOffsets.end(), [&](int d) { params->depthOffsets.push_back(d + depthBase); });
 
     if ( !weights.isScales )
     {

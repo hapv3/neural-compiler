@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -41,12 +41,7 @@ EthosU55WeightEncoder::EthosUEncodingConfig::EthosUEncodingConfig(int cores) : _
 
 void EthosU55WeightEncoder::EthosUEncodingConfig::Rehash()
 {
-    _depthOffsetHash = 0;
-    for ( int offset : this->depthOffsets )
-    {
-        _depthOffsetHash = _depthOffsetHash * 31 ^ offset;
-    }
-
+    _depthOffsetHash = HashVector32(depthOffsets);
     _hash = SimpleHash32(ofmBlockDepth, traversal, _depthOffsetHash, ifmType, dilation, ohwiStrides);
 }
 
@@ -73,8 +68,8 @@ Flags<WeightFormat> EthosU55WeightEncoder::EthosUEncodingConfig::Format()
 }
 
 
-std::unique_ptr<IWeightEncodingConfig> EthosU55WeightEncoder::GetEncodingConfig(ArchitectureOpConfig *opCfg,
-    const WeightsRef &weights, const Kernel *kernel, DataType ifmType, const std::vector<int> &depthOffsets, Flags<WeightFormat>)
+std::unique_ptr<IWeightEncodingConfig> EthosU55WeightEncoder::GetEncodingConfig(ArchitectureOpConfig *opCfg, const WeightsRef &weights,
+    const Kernel *kernel, DataType ifmType, int depthBase, const std::vector<int> &depthOffsets, Flags<WeightFormat>)
 {
     assert(opCfg);
     assert(kernel);
@@ -83,9 +78,10 @@ std::unique_ptr<IWeightEncodingConfig> EthosU55WeightEncoder::GetEncodingConfig(
     EthosU55OpConfig *opConfig = static_cast<EthosU55OpConfig *>(opCfg);
     params->ofmBlockDepth = opConfig->OfmBlock().Depth();
     params->traversal = opConfig->Traversal();
-    params->depthOffsets = depthOffsets;
     params->ifmType = ifmType;
     params->dilation = kernel->Dilation();
+
+    std::for_each(depthOffsets.begin(), depthOffsets.end(), [&](int d) { params->depthOffsets.push_back(d + depthBase); });
 
     if ( !weights.isScales )
     {

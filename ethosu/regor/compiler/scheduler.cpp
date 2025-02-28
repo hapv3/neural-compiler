@@ -578,8 +578,10 @@ WeightScaleEncoding Scheduler::EncodeBestWeightFormat(
         {
             throw std::runtime_error("Failed to find block configuration\n");
         }
+        // The operation might have been decomposed in depth dimension and have an offset
+        const int depthBase = op->OFM()->slice.offset ? op->OFM()->slice.offset.Depth() : 0;
         auto encodingParams = _arch->WeightEncoder()->GetEncodingConfig(
-            blockConfig, weightsRef, op->Kernel(), ifmType, depthOffsets, weightFormat);
+            blockConfig, weightsRef, op->Kernel(), ifmType, depthBase, depthOffsets, weightFormat);
 
         try
         {
@@ -703,8 +705,10 @@ std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(
 
         std::vector<int> depthOffsets{0, ofmShape.Unpermute(uint32_t(op->OFM()->transpose)).Depth()};
 
+        // The operation might have been decomposed in depth dimension and have an offset
+        const int depthBase = op->OFM()->slice.offset ? op->OFM()->slice.offset.Depth() : 0;
         auto encodingParams = _arch->WeightEncoder()->GetEncodingConfig(
-            blockConfig.get(), weightsRef, op->Kernel(), ifm->tensor->dataType, depthOffsets, weightFormat);
+            blockConfig.get(), weightsRef, op->Kernel(), ifm->tensor->dataType, depthBase, depthOffsets, weightFormat);
 
         const SchedulerTensor *scaleTensor = scales ? scales->tensor.get() : nullptr;
         weightScales = EncodeQuantizationScaleTensor(std::move(encodingParams), op->OFM()->quantization, scaleTensor);
@@ -1022,9 +1026,11 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
             std::find_if(subOps.begin(), subOps.end(), [](const auto &subOp) { return IsElementwise(subOp->Type()); });
 
     assert(ofm->transpose == TransposeType::None || (ofm->transpose & TransposeType::MaskC) == TransposeType::C || refCost->stripe == ofm->shape);
-    auto fullDepthBeforeTransposition =
+    const int fullDepthBeforeTransposition =
         (refCost->stripe == ofm->shape) ? refCost->stripe.Unpermute(uint32_t(ofm->transpose)).Depth() : refCost->stripe.Depth();
-    auto fullDepthAfterTransposition = refCost->stripe.Depth();
+    const int fullDepthAfterTransposition = refCost->stripe.Depth();
+    // The operation might have been decomposed in depth dimension and have an offset
+    const int depthBase = ofm->slice.offset ? schedOp->OFM()->slice.offset.Depth() : 0;
     std::vector<int> ofmFullDepthSlicesBeforeTransposition = {0, fullDepthBeforeTransposition};
     std::vector<int> ofmFullDepthSlicesAfterTransposition = {0, fullDepthAfterTransposition};
 
@@ -1033,7 +1039,7 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
     auto weightFormat = cost->npuWeightsTensor->config->Format();
 
     auto encodingParams = _arch->WeightEncoder()->GetEncodingConfig(cost->Config(), weightsRef, schedOp->Kernel(),
-        ifm->tensor->dataType, ofmFullDepthSlicesBeforeTransposition, weightFormat);
+        ifm->tensor->dataType, depthBase, ofmFullDepthSlicesBeforeTransposition, weightFormat);
 
     auto fullWeightScales = EncodeWeightAndScaleTensor(
         std::move(encodingParams), weightTens, scaleTens, weights->quantization, ofm->quantization);
@@ -1158,7 +1164,7 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
                 weightsRef = {&weightTens->bufferView, weightTens->srcTensor->AxisOrder(), weightTens->dataType, false};
 
                 encodingParams = _arch->WeightEncoder()->GetEncodingConfig(cost->Config(), weightsRef,
-                    schedOp->Kernel(), ifm->tensor->dataType, cost->ofmDepthSlices, weightFormat);
+                    schedOp->Kernel(), ifm->tensor->dataType, depthBase, cost->ofmDepthSlices, weightFormat);
 
                 encodedWeightScales = EncodeWeightAndScaleTensor(
                     std::move(encodingParams), weightTens, scaleTens, weights->quantization, ofm->quantization);

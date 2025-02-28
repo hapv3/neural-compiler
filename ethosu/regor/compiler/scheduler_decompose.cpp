@@ -638,7 +638,7 @@ DecomposeBlocks(Architecture *arch, std::unique_ptr<SchedulerOperation> op, Shap
             for ( auto bc = 0; bc < NC; bc++ )
             {
                 auto newIfmSlice = ifmConn->slice;
-                newIfmSlice.offset = Shape::Min(ifmOffset.WithDepth(ifmOffset.Depth() + bc * BC), ifmConn->shape);
+                newIfmSlice.offset = Shape::Min(ifmOffset, ifmConn->shape);
                 auto newOfmSlice = ofmConn->slice;
                 newOfmSlice.offset = ofmOffset.WithDepth(ofmOffset.Depth() + bc * BC);
                 auto &newOfmShape = ofmConn->SliceShape();
