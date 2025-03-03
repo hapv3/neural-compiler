@@ -139,7 +139,7 @@ bool TfLiteSupportedOperatorsU85::Check(const Operation *op)
 
 bool TfLiteSupportedOperatorsU85::ConstraintResizeCommon(const Operation *op)
 {
-    const char *constraint =
+    static const char *constraint =
         "ALIGN_CORNERS and HALF_PIXEL_CENTERS are mutually exclusive.\n"
         "if ALIGN_CORNERS:\n"
         "\tScale-factor can be maximum 2048\n"
@@ -230,7 +230,7 @@ bool TfLiteSupportedOperatorsU85::ConstraintResizeCommon(const Operation *op)
 
 bool TfLiteSupportedOperatorsU85::ConstraintResizeBilinear(const Operation *op)
 {
-    const char *constraint =
+    static const char *constraint =
         "if IFM HxW > 1x1\n"
         "\tand ALIGN_CORNERS:\n"
         "\t\tOFM W-1 and H-1 must be a power-of-two integer-multiple of IFM W-1 and H-1\n"

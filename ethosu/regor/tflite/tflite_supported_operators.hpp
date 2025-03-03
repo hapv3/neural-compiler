@@ -65,5 +65,7 @@ private:
     bool ConstraintBias(const Operation *op);
     bool ConstraintAvgPool(const Operation *op);
     bool ConstraintMaxPool(const Operation *op);
+    bool ConstraintTCStrides(const Operation *op);
+    bool ConstraintTCShapes(const Operation *op);
 };
 }  // namespace regor

@@ -272,7 +272,7 @@ bool TfLiteSupportedOperators::ConstraintWeightsPrecision(const Operation *op)
 
 bool TfLiteSupportedOperators::ConstraintWeightSum(const Operation *op)
 {
-    std::string constraint = fmt::format(
+    static const std::string constraint = fmt::format(
         "The sum of absolute weights cannot exceed:\n"
         "\t{} for 8-bit IFM\n"
         "\t{} for 16-bit IFM",
@@ -382,7 +382,7 @@ bool TfLiteSupportedOperators::ConstraintBias(const Operation *op)
         {
             if ( bias > _maxBias )
             {
-                std::string constraint = fmt::format("Int64 bias must be smaller than {}", _maxBias);
+                static const std::string constraint = fmt::format("Int64 bias must be smaller than {}", _maxBias);
                 Failure(op, fmt::format("Bias is out of range: {} > {}", bias, _maxBias), constraint);
                 return false;
             }
@@ -460,6 +460,97 @@ bool TfLiteSupportedOperators::ConstraintMaxPool(const Operation *op)
     return true;
 }
 
+bool TfLiteSupportedOperators::ConstraintTCStrides(const Operation *op)
+{
+    static const std::string constraint =
+        "Stride values WxH must be:\n"
+        "\t1x1 OR 2x2\n"
+        "\tOR 2x1 if ifm height and kernel height = 1\n"
+        "\tOR 1x2 if ifm width and kernel width = 1";
+    OpType opType = op->Type();
+    if ( opType != OpType::TransposeConv2D )
+    {
+        return true;
+    }
+    auto ifmConn = op->Input(TensorUsage::IFM);
+    auto kernel = op->Kernel();
+    assert(ifmConn);
+    assert(kernel);
+    const auto &ifmShape = ifmConn->shape;
+    auto [kw, kh] = kernel->Size();
+    auto stride = kernel->Stride();
+
+    if ( stride.x < 1 || stride.x > 2 || stride.y < 1 || stride.y > 2 )
+    {
+        Failure(op, fmt::format("stride out of range: ({},{})", stride.x, stride.y), constraint);
+        return false;
+    }
+    if ( stride == Point2i(1, 2) && !(ifmShape.Height() == 1 && kh == 1) )
+    {
+        Failure(op, fmt::format("unsupported stride combination: ({},{})", stride.x, stride.y), constraint);
+        return false;
+    }
+    if ( stride == Point2i(2, 1) && !(ifmShape.Width() == 1 && kw == 1) )
+    {
+        Failure(op, fmt::format("unsupported stride combination: ({},{})", stride.x, stride.y), constraint);
+        return false;
+    }
+    return true;
+}
+
+bool TfLiteSupportedOperators::ConstraintTCShapes(const Operation *op)
+{
+    static const std::string constraint =
+        "if PADDING=SAME\n"
+        "\tOFM must equal IFM * stride\n"
+        "if PADDING=VALID\n"
+        "\tOFM must equal IFM * stride + (kernel - stride)";
+    OpType opType = op->Type();
+    if ( opType != OpType::TransposeConv2D )
+    {
+        return true;
+    }
+    auto ifmConn = op->Input(TensorUsage::IFM);
+    auto ofmConn = op->Output(TensorUsage::OFM);
+    auto kernel = op->Kernel();
+    assert(ifmConn);
+    assert(ofmConn);
+    assert(kernel);
+    const auto &ifmShape = ifmConn->shape;
+    const auto &ofmShape = ofmConn->shape;
+    auto stride = kernel->Stride();
+    assert(op->Passthrough());
+    const tflite::Operator *passthrough = static_cast<const tflite::Operator *>(op->Passthrough());
+    const auto *opt = passthrough->builtin_options_as<tflite::TransposeConvOptions>();
+    assert(opt);
+    Point2i ifmWH(ifmShape.Width(), ifmShape.Height());
+    Point2i ofmWH(ofmShape.Width(), ofmShape.Height());
+    if ( opt->padding() == tflite::Padding::SAME )
+    {
+        if ( ifmWH * stride != ofmWH )
+        {
+            Failure(op,
+                fmt::format("(Padding::SAME) Unsupported IFM/OFM shapes. ifm:({},{}), ofm:({},{}), stride:({},{})",
+                    ifmWH.x, ifmWH.y, ofmWH.x, ofmWH.y, stride.x, stride.y),
+                constraint);
+            return false;
+        }
+    }
+    else
+    {
+        Point2i diff = (kernel->Size() - stride);
+        if ( (ifmWH * stride + diff) != ofmWH )
+        {
+            Failure(op,
+                fmt::format("(Padding::VALID) Unsupported IFM/OFM shapes. ifm:({},{}) ofm:({},{}), stride:({},{}), kernel:({},{})",
+                    ifmWH.x, ifmWH.y, ofmWH.x, ofmWH.y, stride.x, stride.y, kernel->Size().x, kernel->Size().y),
+                constraint);
+            return false;
+        }
+    }
+    return true;
+}
+
 void TfLiteSupportedOperators::Failure(const Operation *op, const std::string &message, const std::string &constraint)
 {
     assert(op);
@@ -504,6 +595,8 @@ TfLiteSupportedOperators::TfLiteSupportedOperators(IArchitectureConstraints *con
         &TfLiteSupportedOperators::ConstraintBias,
         &TfLiteSupportedOperators::ConstraintAvgPool,
         &TfLiteSupportedOperators::ConstraintMaxPool,
+        &TfLiteSupportedOperators::ConstraintTCStrides,
+        &TfLiteSupportedOperators::ConstraintTCShapes,
     };
 }
 

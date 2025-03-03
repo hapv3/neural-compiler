@@ -112,7 +112,7 @@ bool TfLiteSupportedOperatorsU55::Check(const Operation *op)
 
 bool TfLiteSupportedOperatorsU55::ConstraintBroadcastShapes(const Operation *op)
 {
-    const char *constraint = "One input-tensor must match the shape of the output-tensor.";
+    static const char *constraint = "One input-tensor must match the shape of the output-tensor.";
     if ( !IsElementwise(op->Type()) )
     {
         // only applied to elementwise ops
