@@ -392,6 +392,75 @@ bool TfLiteSupportedOperators::ConstraintBias(const Operation *op)
     return true;
 }
 
+bool TfLiteSupportedOperators::ConstraintAvgPool(const Operation *op)
+{
+    OpType opType = op->Type();
+    if ( opType != OpType::AvgPool )
+    {
+        return true;
+    }
+    auto kernel = op->Kernel();
+    assert(kernel);
+    auto [w, h] = kernel->Size();
+    auto [sw, sh] = kernel->Stride();
+    if ( kernel->Padding().IsZero() )
+    {
+        // VALID padding
+        if ( h > 256 || h < 1 )
+        {
+            Failure(op, fmt::format("kernel height: {} out of range", h), "When padding=VALID, kernel-height must be in the range (1,256)");
+            return false;
+        }
+        if ( h * w > 256 * 256 )
+        {
+            Failure(op, fmt::format("kernel product: {} out of range", h * w),
+                "When padding=VALID, kernel product (H*W) must be in the range (1, 256*256)");
+            return false;
+        }
+    }
+    else
+    {
+        // SAME padding
+        if ( w != sw && (w > 8 || w < 1) )
+        {
+            // kernel width out of range
+            Failure(op, fmt::format("kernel width: {} out of range", w),
+                "When padding=SAME, kernel width must be in the range (1,8) OR equal to the stride(width)");
+            return false;
+        }
+        if ( h > 8 || h < 1 )
+        {
+            Failure(op, fmt::format("kernel height: {} out of range", h), "When padding=SAME, kernel height must be in the range (1,8)");
+            return false;
+        }
+    }
+    return true;
+}
+
+bool TfLiteSupportedOperators::ConstraintMaxPool(const Operation *op)
+{
+    OpType opType = op->Type();
+    if ( opType != OpType::MaxPool )
+    {
+        return true;
+    }
+    auto kernel = op->Kernel();
+    assert(kernel);
+    auto [w, h] = kernel->Size();
+    auto [sw, sh] = kernel->Stride();
+    if ( h > 256 || h < 1 )
+    {
+        Failure(op, fmt::format("kernel height: {} out of range", h), "Kernel height must be in the range (1, 256)");
+        return false;
+    }
+    if ( h * w > 256 * 256 )
+    {
+        Failure(op, fmt::format("kernel product: {} out of range", h * w), "Kernel product must be in the range (1, 256 * 256)");
+        return false;
+    }
+    return true;
+}
+
 void TfLiteSupportedOperators::Failure(const Operation *op, const std::string &message, const std::string &constraint)
 {
     assert(op);
@@ -434,6 +503,8 @@ TfLiteSupportedOperators::TfLiteSupportedOperators(IArchitectureConstraints *con
         &TfLiteSupportedOperators::ConstraintWeightsPrecision,
         &TfLiteSupportedOperators::ConstraintWeightSum,
         &TfLiteSupportedOperators::ConstraintBias,
+        &TfLiteSupportedOperators::ConstraintAvgPool,
+        &TfLiteSupportedOperators::ConstraintMaxPool,
     };
 }
 

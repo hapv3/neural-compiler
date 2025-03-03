@@ -63,5 +63,7 @@ private:
     bool ConstraintWeightsPrecision(const Operation *op);
     bool ConstraintWeightSum(const Operation *op);
     bool ConstraintBias(const Operation *op);
+    bool ConstraintAvgPool(const Operation *op);
+    bool ConstraintMaxPool(const Operation *op);
 };
 }  // namespace regor

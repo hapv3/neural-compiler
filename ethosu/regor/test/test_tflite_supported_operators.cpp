@@ -278,6 +278,71 @@ TEST_CASE("Supported operators Common")
         }
         op->Disconnect();
     }
+
+    SECTION("ConstrainMaxPoolKernel")
+    {
+        auto op = CreateOperation(OpType::MaxPool, Shape(1, 1000, 1000, 1), DataType::Int8, Shape(1, 1000, 1000, 1), DataType::Int8);
+
+        auto SetKernel = [&op](int h, int w)
+        {
+            auto kernel = std::make_unique<Kernel>(Point2i{w, h}, Point2i{1, 1}, Point2i{1, 1}, 1, Margin{0, 0, 0, 0});
+            op->SetKernel(std::move(kernel));
+            auto ofmConn = op->Output(TensorUsage::OFM);
+            auto ifmConn = op->Input(TensorUsage::IFM);
+            auto &ofmShape = ofmConn->shape;
+            auto &ifmShape = ofmConn->shape;
+            ofmShape = ifmShape.WithWidth(ifmShape.Width() - w).WithHeight(ifmShape.Height() - h);
+        };
+        SetKernel(8, 8);
+        REQUIRE(supportedOps->Check(op.get()) == true);
+        SetKernel(256, 256);
+        REQUIRE(supportedOps->Check(op.get()) == true);
+        SetKernel(256, 257);
+        REQUIRE(supportedOps->Check(op.get()) == false);
+        SetKernel(257, 256);
+        REQUIRE(supportedOps->Check(op.get()) == false);
+        op->Disconnect();
+    }
+
+    SECTION("ConstrainAvgPoolKernel")
+    {
+        auto op = CreateOperation(OpType::AvgPool, Shape(1, 100, 100, 1), DataType::Int8, Shape(1, 100, 100, 1), DataType::Int8);
+
+        auto SetKernel = [&op](int h, int w, int sh = 1, int sw = 1, int ph = 0, int pw = 0)
+        {
+            int t = ph / 2;
+            int b = ph - t;
+            int l = pw / 2;
+            int r = pw - l;
+            auto kernel = std::make_unique<Kernel>(Point2i{w, h}, Point2i{sw, sh}, Point2i{1, 1}, 1, Margin{t, b, l, r});
+            op->SetKernel(std::move(kernel));
+            auto ofmConn = op->Output(TensorUsage::OFM);
+            auto ifmConn = op->Input(TensorUsage::IFM);
+            auto &ofmShape = ofmConn->shape;
+            auto &ifmShape = ofmConn->shape;
+            ofmShape = ifmShape.WithWidth((ifmShape.Width() - w + pw) / sw).WithHeight((ifmShape.Height() - h + ph) / sh);
+        };
+        // max size (VALID padding)
+        SetKernel(256, 256, 1, 1, 0, 0);
+        REQUIRE(supportedOps->Check(op.get()) == true);
+        // too large prod (VALID padding)
+        SetKernel(256, 257, 1, 1, 0, 0);
+        REQUIRE(supportedOps->Check(op.get()) == false);
+        // too large height (VALID padding)
+        SetKernel(257, 8, 1, 1, 0, 0);
+        REQUIRE(supportedOps->Check(op.get()) == false);
+
+        // max size (SAME padding)
+        SetKernel(8, 8, 1, 1, 1, 1);
+        REQUIRE(supportedOps->Check(op.get()) == true);
+        // too large width (SAME padding)
+        SetKernel(8, 9, 1, 1, 1, 1);
+        REQUIRE(supportedOps->Check(op.get()) == false);
+        // OK if width matches stride
+        SetKernel(8, 9, 1, 9, 1, 1);
+        REQUIRE(supportedOps->Check(op.get()) == true);
+        op->Disconnect();
+    }
 }
 
 TEST_CASE("Supported operators EthosU55")
