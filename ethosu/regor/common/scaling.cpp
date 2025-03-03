@@ -81,6 +81,18 @@ const QuantizedScale &QuantizedScale::Unit()
     return unitScale;
 }
 
+QuantizedScale QuantizedScale::ReduceScale(const QuantizedScale &qs)
+{
+    auto scale = qs.scale;
+    auto shift = qs.shift;
+    while ( scale > 1 && (scale & 0x1) == 0 && shift > 0 )
+    {
+        scale >>= 1;
+        shift--;
+    }
+    return {scale, shift};
+}
+
 // Convert int32_t multiplier to int16_t with rounding.
 int16_t DownScaleInt32ToInt16Multiplier(int32_t multiplier)
 {

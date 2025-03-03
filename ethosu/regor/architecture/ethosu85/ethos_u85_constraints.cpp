@@ -130,7 +130,9 @@ bool EthosU85Constraints::SupportsFusedRescale(OpType opType, TensorUsage tensor
         else if ( npuOp == EthosU85NpuOp::Resize && globalScale )
         {
             auto &qs = quantization.scales.front();
-            return qs.scale == 1 && qs.shift >= 16;  // Only shift of 16 or more supported
+            // Only shift < 48 supported
+            const auto normalized = QuantizedScale::ReduceScale(qs);
+            return normalized.scale == 1 && normalized.shift < 48;
         }
         else if ( npuOp == EthosU85NpuOp::Elementwise && globalScale )
         {

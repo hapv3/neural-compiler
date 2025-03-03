@@ -901,7 +901,7 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const graph, Operation *const op
             {
                 if ( qs.shift > 0 && qs.shift < 31 && (qs.scale % (1 << qs.shift)) == 0 )
                 {
-                    qs = {(qs.scale >> qs.shift), 0};
+                    qs = QuantizedScale::ReduceScale(qs);
                 }
             }
             return scales;

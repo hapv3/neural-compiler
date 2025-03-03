@@ -1906,8 +1906,9 @@ void EthosU85RCSGenerator::GenerateResizeOp(HLCStripe *stripe, MemoryAccesses &m
     // calculate ifm width read
     int ifmWidthRead = ((ofmShape.Width() - 1) * scale_w.d + offset_w) / scale_w.n + 2;
 
-    // scaling is shift only and + 16
-    QuantizedScale ofmScale = op->ofm.quantization.scales[0];
+    // scaling is shift only and + 16, so convert to scale 1 and add 16
+    const QuantizedScale ofmScale = QuantizedScale::ReduceScale(op->ofm.quantization.scales.front());
+    assert(ofmScale.scale == 1);
     int shift = 16 + ofmScale.shift;
 
     // X - width
