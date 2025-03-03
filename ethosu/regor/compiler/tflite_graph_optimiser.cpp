@@ -1241,15 +1241,19 @@ Operation *TFLiteGraphOptimiser::ConvertResize(Graph *const graph, Operation *co
         attr->scaleY = {height_n, height_d};
         attr->offset = {widthOffset, heightOffset};
         attr->border = {0, 0};
-        attr->mode = (opType == OpType::ResizeBilinear) ? tosa::ResizeMode::BILINEAR : tosa::ResizeMode::NEAREST;
 
         int shift = 0;
         if ( opType == OpType::ResizeBilinear && (ifmConn->shape.Width() > 1 || ifmConn->shape.Height() > 1) )
         {
+            attr->mode = tosa::ResizeMode::BILINEAR;
             // ResizeBilinear is post-scaled with
             // 1 / (height_n * width_n)
             // as the scale-factor is a power of two, we can use shift
             shift = IntLog2(width_n * height_n);
+        }
+        else
+        {
+            attr->mode = tosa::ResizeMode::NEAREST;
         }
 
         // Set explicit scaling

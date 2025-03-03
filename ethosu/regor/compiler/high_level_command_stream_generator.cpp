@@ -419,17 +419,13 @@ static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, 
             op->parameters.resize.scaleX = resize->scaleX;
             op->parameters.resize.offsetY = resize->offset.y;
             op->parameters.resize.offsetX = resize->offset.x;
-            if ( ifmShape.Width() == 1 && ifmShape.Height() == 1 )
-            {
-                // 1x1 IFMs can be handled with replicate
-                op->parameters.resize.mode = ArchResizeMode::Replicate;
-            }
-            else if ( resize->mode == tosa::ResizeMode::NEAREST )
+            if ( resize->mode == tosa::ResizeMode::NEAREST )
             {
                 op->parameters.resize.mode = ArchResizeMode::Nearest;
             }
             else
             {
+                assert(resize->mode == tosa::ResizeMode::BILINEAR);
                 op->parameters.resize.mode = ArchResizeMode::Bilinear;
             }
         }
