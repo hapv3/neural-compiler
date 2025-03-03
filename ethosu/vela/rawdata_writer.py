@@ -50,12 +50,12 @@ def write_rawdata_output(nng, arch, filename):
             scratch_region = get_region(scratch_tensor.mem_type, arch)
             scratch_fast_region = get_region(scratch_fast_tensor.mem_type, arch)
             for ifm in custom_op.inputs[4:]:
-                ifm_shapes.append(ifm.shape)
+                ifm_shapes.append(ifm.get_full_shape())
                 ifm_regions.append(get_region(ifm.mem_type, arch))
                 ifm_offsets.append(ifm.address)
                 ifm_elem_sizes.append(ifm.element_size())
             for ofm in custom_op.outputs:
-                ofm_shapes.append(ofm.shape)
+                ofm_shapes.append(ofm.get_full_shape())
                 ofm_regions.append(get_region(ofm.mem_type, arch))
                 ofm_offsets.append(ofm.address)
                 ofm_elem_sizes.append(ofm.element_size())
