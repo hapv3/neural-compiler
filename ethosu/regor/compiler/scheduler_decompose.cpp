@@ -63,15 +63,14 @@ static std::unique_ptr<SchedulerOperation> MakeMemCopy(const std::shared_ptr<Sch
     ofmConn->shape = Shape::PadAxes(ofmConn->tensor->storageShape, 4, 1);
     ofmConn->tensor->producers.push_back(op.get());
 
-    auto ifmConn = op->AddInput(TensorUsage::IFM);
-    ifmConn->tensor = source;
+    auto ifmConn = op->AddInput(TensorUsage::IFM, source);
     if ( ifmConn->tensor->dataType == DataType::Int64 )
     {  // Copy int64 data as int32 data with 2 x C by cloning source tensor
         ifmConn->tensor = std::make_shared<SchedulerTensor>(*source);
         ifmConn->tensor->dataType = DataType::Int32;
         ifmConn->tensor->storageShape = source->storageShape.WithDepth(2 * source->storageShape.Depth());
+        source->RemoveReader(op.get());
     }
-    ifmConn->tensor->consumers.push_back(op.get());
     ifmConn->shape = ofmConn->shape;
 
     return op;
@@ -534,11 +533,9 @@ SliceT(SchedulerTensor *tensor, const Shape &offset, const Shape &shape, const S
     }
 
     // Clone tensor with new buffer with new unique ID because now the tensor is different
-    auto clonedTensor = std::make_shared<SchedulerTensor>(*tensor);
+    auto clonedTensor = tensor->Clone();
     clonedTensor->bufferView = std::move(outBufferView);
     clonedTensor->storageShape = shape;
-    clonedTensor->equivalenceId = GenerateUniqueId();
-    clonedTensor->consumers.clear();
 
     return clonedTensor;
 }
@@ -884,11 +881,13 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv3D(Architecture *a
         };
         // Create SchedulerTensor for ACC
         auto acc = std::make_shared<SchedulerTensor>();
+        acc->uid = GenerateUniqueId();
         acc->memArea = ofmConn->tensor->memArea;
         acc->dataType = ifmConn->tensor->dataType == DataType::Int16 ? DataType::Int64 : DataType::Int32;
         acc->storageShape = Shape(ofmShape, 4).WithBatch(1);
-        acc->uid = acc->equivalenceId = GenerateUniqueId();
-        const auto ifm0uid = GenerateUniqueId();
+        // Create ifm zero point SchedulerTensor, only needed for broadcast
+        // Setup is done below if needed
+        auto ifm0 = std::make_shared<SchedulerTensor>();
         for ( int od = 0; od < OD; od++ )
         {
             std::vector<std::unique_ptr<SchedulerOperation>> conv2dSubOps;
@@ -928,33 +927,36 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv3D(Architecture *a
                 subOp->RemoveInput(TensorUsage::Weights);
                 InitConnection(subOp->Output(TensorUsage::OFM), ofmConn, od, OD);
 
-                // Create SchedulerTensor for 0 input
                 auto subOpIfm = subOp->Input(TensorUsage::IFM);
-                auto ifm0 = std::make_shared<SchedulerTensor>();
-                ifm0->dataType = subOpIfm->tensor->dataType;
-                ifm0->memArea = subOp->Input(TensorUsage::Scales)->tensor->memArea;
-                ifm0->format = TensorFormat::NHWC;
                 const auto &ifm0shape = subOp->Output(TensorUsage::OFM)->slice.shape;
-                const auto bufSize = ifm0shape.Elements();
-                const int64_t ifmZp = subOpIfm->quantization.zeroPoints.empty() ? 0 : subOpIfm->quantization.zeroPoints.front();
-                std::shared_ptr<Buffer> ifm0buf;
-                switch ( ifm0->dataType )
-                {
-                    case DataType::Int8:
-                        ifm0buf = std::make_shared<Buffer>(std::vector<int8_t>(bufSize, int8_t(ifmZp)));
-                        break;
-                    case DataType::Int16:
-                        ifm0buf = std::make_shared<Buffer>(std::vector<int16_t>(bufSize, int16_t(ifmZp)));
-                        break;
-                    default:
-                        assert(false && "Unsupported ifm data type");
-                        break;
-                }
-                ifm0->bufferView = BufferView(ifm0buf, 0, DataTypeStorageSizeBits(ifm0->dataType), ifm0shape, {});
-                ifm0->storageShape = ifm0->bufferView.ViewShape();
-                ifm0->uid = ifm0->equivalenceId = ifm0uid;
 
-                subOpIfm->tensor = std::move(ifm0);
+                if ( ifm0->uid == INVALID_UID )
+                {
+                    // Setup SchedulerTensor for 0 input
+                    ifm0->uid = GenerateUniqueId();
+                    ifm0->dataType = subOpIfm->tensor->dataType;
+                    ifm0->memArea = subOp->Input(TensorUsage::Scales)->tensor->memArea;
+                    ifm0->format = TensorFormat::NHWC;
+                    const auto bufSize = ifm0shape.Elements();
+                    const auto &zeroPoints = subOpIfm->quantization.zeroPoints;
+                    const int64_t ifmZp = zeroPoints.empty() ? 0 : zeroPoints.front();
+                    std::shared_ptr<Buffer> ifm0buf;
+                    switch ( ifm0->dataType )
+                    {
+                        case DataType::Int8:
+                            ifm0buf = std::make_shared<Buffer>(std::vector<int8_t>(bufSize, int8_t(ifmZp)));
+                            break;
+                        case DataType::Int16:
+                            ifm0buf = std::make_shared<Buffer>(std::vector<int16_t>(bufSize, int16_t(ifmZp)));
+                            break;
+                        default:
+                            assert(false && "Unsupported ifm data type");
+                            break;
+                    }
+                    ifm0->bufferView = BufferView(ifm0buf, 0, DataTypeStorageSizeBits(ifm0->dataType), ifm0shape, {});
+                    ifm0->storageShape = ifm0->bufferView.ViewShape();
+                }
+                subOpIfm->tensor = ifm0;
                 subOpIfm->tensor->consumers.push_back(subOp.get());
                 subOpIfm->shape = ifm0shape;
                 subOpIfm->slice.offset = ifm0shape.WithZeros();
@@ -969,13 +971,11 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv3D(Architecture *a
                 auto bias = tail->Input(TensorUsage::Scales);
 
                 // Create SchedulerTensor for 0 (no) bias
-                auto bias0 = std::make_shared<SchedulerTensor>(*bias->tensor);
+                auto bias0 = bias->tensor->Clone();
                 auto bias0buf = std::make_shared<Buffer>(std::make_unique<int64_t>(0));
                 assert(DataTypeStorageSizeBits(bias0->dataType) <= int(8 * sizeof(int64_t)));
                 bias0->bufferView = BufferView(bias0buf, 0, DataTypeStorageSizeBits(bias0->dataType), {1}, {});
                 bias0->storageShape = bias0->bufferView.ViewShape();
-                bias0->uid = bias0->equivalenceId = GenerateUniqueId();
-                bias0->consumers.clear();
 
                 for ( auto subOp = conv2dSubOps.begin(); subOp != conv2dSubOps.end(); ++subOp )
                 {
@@ -1048,11 +1048,8 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
     {
         int subOfmDepth = ofmConn->shape.Depth() / depthMultiplier;
         // Clone ofm tensor with new unique ID for intermediate transposed result
-        auto transposedOfm = std::make_shared<SchedulerTensor>(*ofmConn->tensor);
+        auto transposedOfm = ofmConn->tensor->Clone();
         transposedOfm->storageShape = ofmShape.WithBatch(depthMultiplier).WithDepth(subOfmDepth);
-        transposedOfm->equivalenceId = GenerateUniqueId();
-        transposedOfm->consumers.clear();
-        transposedOfm->producers.clear();
 
         // Copies quantization information and slices channels
         auto constexpr SliceQ = [](const Quantization &quantization, int offset, int step) -> Quantization
@@ -1118,10 +1115,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
         if ( ofmSlice.offset.Batch() )
         {  // Need to insert intermediate tensor for memory copy, since DecomposeTranspose
            // does not handle ofm slice offset
-            transposeOpOfm = std::make_shared<SchedulerTensor>(*transposedOfm);
-            transposedOfm->equivalenceId = GenerateUniqueId();
-            transposedOfm->consumers.clear();
-            transposedOfm->producers.clear();
+            transposeOpOfm = transposedOfm->Clone();
         }
         auto transposeOp = MakeTransposeOp(transposedOfm, transposeOpOfm, Shape(1, 2, 3, 0));
         auto subOps = DecomposeTranspose(arch, std::move(transposeOp));
@@ -1183,9 +1177,8 @@ static std::shared_ptr<SchedulerTensor> ReverseHW2(SchedulerTensor *tensor)
     }
 
     // Clone tensor with new buffer with new unique ID because now the tensor is different
-    auto clonedTensor = std::make_shared<SchedulerTensor>(*tensor);
+    auto clonedTensor = tensor->Clone();
     clonedTensor->bufferView = std::move(outBufferView);
-    clonedTensor->equivalenceId = GenerateUniqueId();
 
     return clonedTensor;
 }
@@ -1253,6 +1246,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTransposeConv2D(Archit
         }
         // Map to Conv2D by reversing the weights in y and x
         weightsConn->tensor = ReverseHW(weightsConn->tensor.get());
+        weightsConn->tensor->consumers.push_back(op.get());
         Kernel newKernel = kernel->WithStride({1, 1});
         op->_type = OpType::Conv2D;
         op->SetKernel(&newKernel);

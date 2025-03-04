@@ -26,6 +26,7 @@
 #include "operation.hpp"
 #include "tensor.hpp"
 
+#include <memory>
 #include <vector>
 
 namespace regor
@@ -61,7 +62,7 @@ public:
     bool needsLinearFormat = false;
     // If two tensors have same equivalence id and same memory area, they can be stored on the same address
     UniqueId equivalenceId = GenerateUniqueId();
-    UniqueId uid = ~0u;  // Packing must initialise
+    UniqueId uid = INVALID_UID;  // Packing must initialise
     std::vector<SchedulerOperation *> producers;
     std::vector<SchedulerOperation *> consumers;
 
@@ -71,6 +72,16 @@ public:
             format(fmt), storageShape(shape), dataType(type)
     {
         this->uid = GenerateUniqueId();
+    }
+
+    std::shared_ptr<SchedulerTensor> Clone() const
+    {
+        auto clone = std::make_shared<SchedulerTensor>(*this);
+        clone->uid = GenerateUniqueId();
+        clone->equivalenceId = GenerateUniqueId();
+        clone->consumers.clear();
+        clone->producers.clear();
+        return clone;
     }
 
     void RemoveReader(const SchedulerOperation *op)

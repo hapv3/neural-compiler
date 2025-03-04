@@ -73,6 +73,7 @@ using fmt::enums::format_as;
     }
 
 using UniqueId = uint32_t;
+constexpr UniqueId INVALID_UID = std::numeric_limits<UniqueId>::max();
 
 UniqueId GenerateUniqueId();
 
