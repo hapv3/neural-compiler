@@ -1644,7 +1644,8 @@ void Scheduler::CoalesceWeightBufferTensors(Schedule *schedule)
 }
 
 
-PerformanceQuery Scheduler::InitPerfQuery(SchedulerOperation *op, ArchitectureOpConfig *config, int ofmDepth, WeightFormat wgtFormat)
+PerformanceQuery Scheduler::InitPerfQuery(
+    SchedulerOperation *op, ArchitectureOpConfig *config, int ofmDepth, WeightFormat wgtFormat, SchedulerOpInfo *cost)
 {
     PerformanceQuery query = {};
     query.type = op->Type();
@@ -1667,16 +1668,36 @@ PerformanceQuery Scheduler::InitPerfQuery(SchedulerOperation *op, ArchitectureOp
     }
 
     SchedulerConnection *ofm = op->OFM();
-    query.ofmShape = (ofmDepth >= 0) ? ofm->SliceShape().WithDepth(ofmDepth) : ofm->SliceShape();
+    ofmDepth = (ofmDepth >= 0) ? ofmDepth : ofm->SliceShape().Depth();
+    query.ofmShape = ofm->SliceShape().WithDepth(ofmDepth);
     query.ofmMemory = ofm->tensor->memArea.memory;
     query.ofmType = ofm->tensor->dataType;
     query.ofmFormat = ofm->tensor->format;
+
+    SchedulerConnection *scratch = op->TryInput(TensorUsage::Scratch);
+    if ( scratch )
+    {
+        query.tmpMemory = scratch->tensor->memArea.memory;
+    }
 
     SchedulerConnection *scales = op->TryInput(TensorUsage::Scales);
     if ( scales )
     {
         query.constShape = Shape(1, 1, 1, query.ofmShape.Depth());
         query.constMemory = scales->tensor->memArea.memory;
+    }
+
+    // If post-schedule cost is available, update with encoded sizes
+    if ( cost && cost->npuWeightsTensor )
+    {
+        float ratio = float(ofmDepth) / ofm->SliceShape().Depth();
+        unsigned weightBytes = cost->npuWeightsTensor->totalWeightBytes;
+        unsigned scaleBytes = cost->npuWeightsTensor->AllocationSizeBytes() - weightBytes;
+
+        // Encoded weight and scale sizes, estimated as a proportion if sliced.
+        query.encodedWeightSize = unsigned(weightBytes * ratio);
+        query.encodedScaleSize = unsigned(scaleBytes * ratio);
+        query.constMemory = cost->npuWeightsTensor->memArea.memory;
     }
 
     query.weightFormat = wgtFormat;

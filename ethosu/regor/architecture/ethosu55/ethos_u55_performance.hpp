@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -39,6 +39,7 @@ struct EthosU55Cycles
     int64_t macCycles;
     int64_t aoCycles;
     int64_t cmdCycles;
+    int64_t macs;
 };
 
 struct EthosU55ElementCycles
@@ -78,6 +79,8 @@ public:
 
 private:
     EthosU55Cycles EstimateConvCycles(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);
+    EthosU55Cycles EstimateElementwiseCycles(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);
+    EthosU55Cycles EstimateMatMulCycles(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);
     EthosU55ElementCycles EstimateOutputCyclesPerElement(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);
     int64_t EstimateMinimumMemoryCycles(const PerformanceQuery &query);
 };

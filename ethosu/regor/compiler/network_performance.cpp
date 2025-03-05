@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -402,7 +402,7 @@ PerformanceResult NetworkPerformance::EstimateFullOpPerformance(
 {
     UNUSED(prevOp);
     auto wgtFormat = cost->npuWeightsTensor ? cost->npuWeightsTensor->config->Format() : Flags<WeightFormat>(WeightFormat::Default);
-    PerformanceQuery query = Scheduler::InitPerfQuery(schedOp, cost->Config(), -1, wgtFormat);
+    PerformanceQuery query = Scheduler::InitPerfQuery(schedOp, cost->Config(), -1, wgtFormat, cost);
     std::vector<FusionQuery> fused = Scheduler::InitFusionQuery(schedOp);
 
     // Memory that NPU will source weights from for operations
@@ -503,35 +503,41 @@ PerformanceResult NetworkPerformance::EstimateFullOpPerformance(
     auto ofm = schedOp->OFM();
     result.memory[ofm->tensor->memArea.memory].access[AccessType::FeatureMap].bytesWritten += byteAccess.ofmWrite;
     result.memory[ofm->tensor->memArea.memory]
-        .writeTransferOverhead += byteAccess.ofmWrite - DataTypeSizeBits(ofm->tensor->dataType) / 8 * access.ofmWrite;
+        .writeTransferOverhead += byteAccess.ofmWrite - DataTypeStorageSizeBytes(ofm->tensor->dataType, access.ofmWrite);
 
     // IFM1 read
     auto ifm = schedOp->IFM(0);
     result.memory[ifm->tensor->memArea.memory].access[AccessType::FeatureMap].bytesRead += byteAccess.ifmRead[0];
     result.memory[ifm->tensor->memArea.memory]
-        .readTransferOverhead += byteAccess.ifmRead[0] - DataTypeSizeBits(ifm->tensor->dataType) / 8 * access.ifmRead[0];
+        .readTransferOverhead += byteAccess.ifmRead[0] - DataTypeStorageSizeBytes(ifm->tensor->dataType, access.ifmRead[0]);
 
     // IFM2 read
     auto ifm2 = schedOp->TryIFM(1);
     if ( ifm2 )
     {
         result.memory[ifm2->tensor->memArea.memory].access[AccessType::FeatureMap].bytesRead += byteAccess.ifmRead[1];
-        result.memory[ifm2->tensor->memArea.memory]
-            .readTransferOverhead += byteAccess.ifmRead[1] - DataTypeSizeBits(ifm2->tensor->dataType) / 8 * access.ifmRead[1];
+        result.memory[ifm2->tensor->memArea.memory].readTransferOverhead +=
+            byteAccess.ifmRead[1] - DataTypeStorageSizeBytes(ifm2->tensor->dataType, access.ifmRead[1]);
     }
 
-    // Weight read
-    if ( cost->npuWeightsTensor && access.constRead[0] > 0 )
+    // Reads/writes to temporary or intermediate memories
+    auto scratch = schedOp->TryInput(TensorUsage::Scratch);
+    if ( scratch )
     {
-        int encodedWeightsSize = cost->npuWeightsTensor->totalWeightBytes;
-        result.memory[weightsMemory].access[AccessType::Weights].bytesRead += int64_t(encodedWeightsSize) * access.weightsRefetch;
+        result.memory[scratch->tensor->memArea.memory].access[AccessType::FeatureMap].bytesRead += byteAccess.tmpRead;
+        result.memory[scratch->tensor->memArea.memory]
+            .readTransferOverhead += byteAccess.tmpRead - DataTypeStorageSizeBytes(scratch->tensor->dataType, access.tmpRead);
+
+        result.memory[scratch->tensor->memArea.memory].access[AccessType::FeatureMap].bytesWritten += byteAccess.tmpWrite;
+        result.memory[scratch->tensor->memArea.memory].readTransferOverhead +=
+            byteAccess.tmpWrite - DataTypeStorageSizeBytes(scratch->tensor->dataType, access.tmpWrite);
     }
 
-    // Scale read
-    if ( cost->npuWeightsTensor && access.constRead[1] > 0 )
+    // Weight/scale reads
+    if ( cost->npuWeightsTensor )
     {
-        int encodedScaleSize = cost->npuWeightsTensor->AllocationSizeBytes() - cost->npuWeightsTensor->totalWeightBytes;
-        result.memory[weightsMemory].access[AccessType::Scales].bytesRead += int64_t(encodedScaleSize) * access.weightsRefetch;
+        result.memory[weightsMemory].access[AccessType::Weights].bytesRead += byteAccess.constRead[0];
+        result.memory[weightsMemory].access[AccessType::Scales].bytesRead += byteAccess.constRead[1];
     }
 
     // Update memory-access cycles and find the maximum memory read cycle time

@@ -243,6 +243,9 @@ struct PerformanceQuery
     Shape constShape;
     ArchitectureMemory *constMemory;
     WeightFormat weightFormat;
+    ArchitectureMemory *tmpMemory;
+    unsigned encodedWeightSize;
+    unsigned encodedScaleSize;
 };
 
 struct WeightStats

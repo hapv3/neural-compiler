@@ -558,7 +558,7 @@ std::unique_ptr<SchedulerOperation> SchedulerPacking::MakeSchedulerOperation(Ope
             auto scratchTensor = std::make_shared<SchedulerTensor>(req.scratch.type, req.scratch.size, req.scratch.format);
             SchedulerConnection *scratchConn = schedOp->AddInput(TensorUsage::Scratch0, scratchTensor);
             scratchConn->shape = req.scratch.size;
-            scratchTensor->memArea = _arch->StagingMemory();
+            scratchTensor->memArea = _arch->FeatureMapMemory();
         }
     }
 

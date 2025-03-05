@@ -1465,7 +1465,7 @@ void EthosU55RCSGenerator::InsertTransposeCommand(const HLCStripe *stripe, Tempo
                     query.ofmShape = outFM.shape;
                     query.ofmFormat = TensorFormat::NHWC;
                     query.transpose = ofm.transpose;
-                    temps.configs.push_back(_arch->FindBlockConfig(cmd->operation->type, query));
+                    temps.configs.push_back(_arch->GetOpConfig(cmd->operation->type, query));
                 }
                 cmd->operation->config = temps.configs.back().get();
                 // Add to CMD list

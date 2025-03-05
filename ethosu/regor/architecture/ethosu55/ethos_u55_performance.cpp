@@ -61,34 +61,19 @@ CycleCost EthosU55Performance::MeasureCycleCost(const PerformanceQuery &query, c
     auto npuOp = _arch->GetHWOp(query.type);
     const bool recordToDb = _db && _nextId != -1;
 
-
     // Convolution/Vector product cycle calculation
     if ( OpUsesMacs(npuOp) )
     {
-        if ( (npuOp == EthosU55NpuOp::Depthwise) || (npuOp == EthosU55NpuOp::Pooling) )
-        {
-            cycles.macs = int64_t(query.kernel->ElementsWH()) * query.ofmShape.Elements() * 1;
-        }
-        else
-        {
-            cycles.macs = int64_t(query.kernel->ElementsWH()) * query.ofmShape.Elements() * query.ifmShape[0].Depth();
-        }
-
         cycleComponents = EstimateConvCycles(query, fused);
+        cycles.macs = cycleComponents.macs;
         cycles.opCycles = cycleComponents.cycles;
     }
     // Elementwise cycle calculation
     else if ( npuOp == EthosU55NpuOp::Elementwise )
     {
-        auto [totCCPerElem, aoCCPerElem, cmdCCPerElem] = EstimateOutputCyclesPerElement(query, fused);
-        auto ofmShape =
-            (query.ofmFormat == TensorFormat::NHCWB16) ? Shape::RoundAway(query.ofmShape, Shape(1, 1, 1, 16)) : query.ofmShape;
-        cycles.opCycles = int64_t(totCCPerElem * float(ofmShape.Elements()));
-        if ( recordToDb )
-        {
-            cycleComponents.aoCycles = int64_t(aoCCPerElem * float(ofmShape.Elements()));
-            cycleComponents.cmdCycles = int64_t(cmdCCPerElem * float(ofmShape.Elements()));
-        }
+        cycleComponents = EstimateElementwiseCycles(query, fused);
+        cycles.macs = cycleComponents.macs;
+        cycles.opCycles = cycleComponents.cycles;
     }
     else if ( npuOp == EthosU55NpuOp::Dma )
     {
@@ -97,9 +82,25 @@ CycleCost EthosU55Performance::MeasureCycleCost(const PerformanceQuery &query, c
     }
     else if ( npuOp == EthosU55NpuOp::Compound )
     {
-        // TODO: Measure variable-implementation ops
         assert(query.type == OpType::Transpose || query.type == OpType::MatMul);
-        cycles.opCycles = EstimateMinimumMemoryCycles(query);
+        if ( query.type == OpType::MatMul )
+        {
+            cycleComponents = EstimateMatMulCycles(query, fused);
+            cycles.macs = cycleComponents.macs;
+            cycles.opCycles = cycleComponents.cycles;
+        }
+        else
+        {
+            // TODO: Measure variable-implementation ops
+            // (default estimation based on memory access)
+            ElementAccess estimate = MeasureElementAccess(query);
+            estimate = ElementTransferToBytes(query, estimate);
+            assert(query.ifmMemory[0] && query.ofmMemory);
+            int64_t fromCycles =
+                int64_t(float(estimate.ifmRead[0]) / query.ifmMemory[0]->Bandwidth()) + query.ifmMemory[0]->ReadLatency();
+            int64_t toCycles = int64_t(float(estimate.ofmWrite) / query.ofmMemory->Bandwidth()) + query.ofmMemory->WriteLatency();
+            cycles.opCycles = std::max(fromCycles, toCycles);
+        }
     }
     else
     {
@@ -130,7 +131,6 @@ CycleCost EthosU55Performance::MeasureCycleCost(const PerformanceQuery &query, c
         _db->AddRow(_mainTable, _nextId, std::move(row));
         _nextId = -1;
     }
-
 
     return cycles;
 }
@@ -308,7 +308,63 @@ EthosU55Cycles EthosU55Performance::EstimateConvCycles(const PerformanceQuery &q
         cmdCycles = cmdCycles * numOfmBlks + cyclesDpuBlk;
     }
 
-    return {totalCycles, cyclesDpu, cyclesAO, cmdCycles};
+    int64_t totalMacs = int64_t(query.kernel->ElementsWH()) * query.ofmShape.Elements();
+    if ( (npuOp != EthosU55NpuOp::Depthwise) && (npuOp != EthosU55NpuOp::Pooling) )
+    {
+        totalMacs *= query.ifmShape[0].Depth();
+    }
+
+    return {totalCycles, cyclesDpu, cyclesAO, cmdCycles, totalMacs};
+}
+
+EthosU55Cycles EthosU55Performance::EstimateElementwiseCycles(const PerformanceQuery &query, const std::vector<FusionQuery> &fused)
+{
+    auto [totCCPerElem, aoCCPerElem, cmdCCPerElem] = EstimateOutputCyclesPerElement(query, fused);
+    auto ofmShape =
+        (query.ofmFormat == TensorFormat::NHCWB16) ? Shape::RoundAway(query.ofmShape, Shape(1, 1, 1, 16)) : query.ofmShape;
+    float elements = float(ofmShape.Elements64());
+    EthosU55Cycles cycleComponents{};
+    cycleComponents.cycles = int64_t(totCCPerElem * elements);
+    cycleComponents.aoCycles = int64_t(aoCCPerElem * elements);
+    cycleComponents.cmdCycles = int64_t(cmdCCPerElem * elements);
+    return cycleComponents;
+}
+
+EthosU55Cycles EthosU55Performance::EstimateMatMulCycles(const PerformanceQuery &query, const std::vector<FusionQuery> &fused)
+{
+    // Query the cost of individual parts of the matmul implementation
+    EthosU55OpConfig *config = static_cast<EthosU55OpConfig *>(query.config);
+    PerformanceQuery subQuery = query;
+
+    // Mul cost
+    subQuery.type = OpType::Mul;
+    subQuery.config = config->PrevConfig();
+    subQuery.ofmShape = query.ifmShape[0];
+    subQuery.ifmShape[1] = query.ifmShape[0];
+    subQuery.ofmType = DataType::Int32;
+    subQuery.ofmMemory = query.tmpMemory;
+    EthosU55Cycles mulCost = EstimateElementwiseCycles(subQuery, fused);
+
+    // ReduceSum cost
+    subQuery.type = OpType::ReduceSum;
+    subQuery.config = config;
+    subQuery.ifmShape[1] = Shape();
+    subQuery.ifmMemory[0] = query.tmpMemory;
+    subQuery.ofmShape = subQuery.ofmShape.WithDepth(1);
+    subQuery.ofmType = query.ofmType;
+    subQuery.ofmMemory = query.ofmMemory;
+    EthosU55Cycles sumCost = EstimateConvCycles(subQuery, fused);
+
+    // Repeat for every column of the ofm
+    int cols = query.ifmShape[1].Width();
+    EthosU55Cycles cycles{};
+    cycles.macs = (mulCost.macs + sumCost.macs) * cols;
+    cycles.cycles = (mulCost.cycles + sumCost.cycles) * cols;
+    cycles.aoCycles = (mulCost.aoCycles + sumCost.aoCycles) * cols;
+    cycles.cmdCycles = (mulCost.cmdCycles + sumCost.cmdCycles) * cols;
+    cycles.macCycles = (mulCost.macCycles + sumCost.macCycles) * cols;
+
+    return cycles;
 }
 
 static int EstimateMemoryTransfer(int cores, bool isRead, ArchitectureMemory *memory, TensorFormat format,
@@ -603,9 +659,14 @@ ElementAccess EthosU55Performance::ElementTransferToBytes(const PerformanceQuery
     result.ofmWrite = EstimateMemoryTransfer(_arch->_cores, false, query.ofmMemory, query.ofmFormat,
         DataTypeSizeBits(query.ofmType), opConfig->OfmBlock(), query.ofmShape, access.ofmWrite);
 
-    // These requires compression ratio information
-    result.constRead[0] = 0;
-    result.constRead[1] = 0;
+    // Use encoded information from query to estimate weight reads if present
+    result.constRead[0] = result.constRead[1] = 0;
+    if ( query.encodedWeightSize )
+    {
+        result.constRead[0] = access.weightsRefetch * query.encodedWeightSize;
+        result.constRead[1] = access.weightsRefetch * query.encodedScaleSize;
+        result.weightsRefetch = 1;
+    }
 
     return result;
 }
