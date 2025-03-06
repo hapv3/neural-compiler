@@ -37,7 +37,7 @@ keywords = ["ethos-u", "vela compiler", "tflite", "npu"]
 # Third-party dependency versions are restricted based upon compatibility and security concerns.
 dependencies = [
     "flatbuffers==24.3.25",
-    "numpy>=1.17.0",
+    "numpy>=1.23.0",
     "lxml>=4.5.2"
 ]
 dynamic = ["readme", "version"]
@@ -61,7 +61,7 @@ vela = "ethosu.vela.vela:main"
 requires = [
     "setuptools >= 42",
     "wheel",
-    "numpy>=1.17.0",
+    "numpy>=1.23.0",
     "setuptools_scm[toml]~=7.1.0",
     "cmake >= 3.16.3"
 ]

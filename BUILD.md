@@ -113,10 +113,10 @@ virtualenv -p 3.10 venv
 pip install ethos-u-vela
 ```
 
-Next, install a different NumPy version (e.g. 1.21.3)
+Next, install a different NumPy version (e.g. 1.23.0)
 
 ```bash
-pip install numpy==1.21.3 --force
+pip install numpy==1.23.0 --force
 ```
 
 Finally, run ethos-u-vela. You might get an error similar to this:
@@ -137,7 +137,7 @@ then build ethos-u-vela with that specific NumPy version:
 1) Uninstall ethos-u-vela and install the desired version of NumPy
    ```
    pip uninstall ethos-u-vela
-   pip install numpy==1.21.3 --force
+   pip install numpy==1.23.0 --force
    ```
 
 2) Install required build dependencies
