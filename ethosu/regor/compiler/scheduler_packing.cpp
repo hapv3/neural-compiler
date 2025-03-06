@@ -82,6 +82,10 @@ bool AllOutputsAreGraphOutputs(const SchedulerOperation &op)
 // Returns true if any of first's OFMs are same as second's IFMs
 bool IsConnected(const SchedulerOperation &first, const SchedulerOperation &second)
 {
+    // This function assumes that first is a CPU op and second is an NPU op
+    assert(!first.IsNpuOp());
+    assert(second.IsNpuOp());
+
     for ( const auto &firstOutputSchedConn : first.outputs )
     {
         for ( const auto &secondInputSchedConn : second.inputs )
@@ -89,6 +93,12 @@ bool IsConnected(const SchedulerOperation &first, const SchedulerOperation &seco
             if ( firstOutputSchedConn.tensor == secondInputSchedConn.tensor ) return true;
         }
     }
+
+    for ( const auto &secondSubOp : second.SubOps() )
+    {
+        if ( IsConnected(first, *secondSubOp) ) return true;
+    }
+
     return false;
 }
 
