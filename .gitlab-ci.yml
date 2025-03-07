@@ -23,7 +23,7 @@ stages:
 default:
     image: registry.gitlab.arm.com/artificial-intelligence/ethos-u/ethos-u-vela/image:latest
     tags:
-    -   arm64
+    -   arm64-shared
     interruptible: true
     # Cache the virtual Python environment and the cache content to speed up builds
     cache:
