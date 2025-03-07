@@ -205,6 +205,12 @@ int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *con
         conn->requireFullTensor = true;
     }
 
+    // Force linear format for read only tensors
+    if ( tensor->IsConstant() )
+    {
+        tensor->needsLinearFormat = true;
+    }
+
     // Force linear output from Reverse for C dimension because brick output from Reverse has special requirements
     if ( IsOFM(usage) && conn->reverse == ReverseType::C )
     {
@@ -212,6 +218,12 @@ int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *con
     }
     // Force linear format for any reversal using negative striding
     if ( _arch->Constraints()->SupportsNegativeStrides() && conn->reverse != ReverseType::None )
+    {
+        tensor->needsLinearFormat = true;
+    }
+
+    // Force linear format for strided access in the width dimension
+    if ( conn->stepXY.x != 1 )
     {
         tensor->needsLinearFormat = true;
     }
@@ -323,8 +335,8 @@ int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *con
         tensor->memArea = _arch->OutputFeatureMapMemory();
     }
 
-    // Set tensor format to NHCWB16 for output FeatureMaps, if possible
-    if ( IsOFM(usage) )
+    // Set tensor format to NHCWB16 for FeatureMaps, if possible
+    if ( IsIFM(usage) || IsOFM(usage) )
     {
         tensor->format = tensor->needsLinearFormat ? TensorFormat::NHWC : TensorFormat::NHCWB16;
     }

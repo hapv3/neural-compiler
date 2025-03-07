@@ -2122,6 +2122,7 @@ Operation *GraphIrOptimiser::MoveSplitSliceToConsumer(Graph *const, Operation *c
             auto *consIfm1 = cons->IFM(1);
 
             bool ifmShapeEqual = false;
+            bool bothHaveIfmStride = false;
 
             // Don't move to CPU, Reshape or Tile operations
             // low-level implementation of TILE requires unsliced inputs
@@ -2135,12 +2136,24 @@ Operation *GraphIrOptimiser::MoveSplitSliceToConsumer(Graph *const, Operation *c
                 // Check if ifm0 consumer has correct shape
                 auto *consIfm0Conn = cons->Input(TensorUsage::IFM0);
                 ifmShapeEqual = Shape::IsReducedEqual(consIfm0Conn->shape, ofmConn->shape);
+
+                // Check if both ifm and ifm0 consumer have stride
+                const auto &ifmStride = ifmConn->slice.stride;
+                const auto &conIfmStride = consIfm0Conn->slice.stride;
+                bothHaveIfmStride =
+                    ifmStride && ifmStride != ifmStride.WithOnes() && conIfmStride && conIfmStride != conIfmStride.WithOnes();
             }
             else if ( consIfm1 != nullptr && consIfm1 == ofm )
             {
                 // Check if ifm1 consumer has correct shape
                 auto *consIfm1Conn = cons->Input(TensorUsage::IFM1);
                 ifmShapeEqual = Shape::IsReducedEqual(consIfm1Conn->shape, ofmConn->shape);
+
+                // Check if both ifm and ifm1 consumer have stride
+                const auto &ifmStride = ifmConn->slice.stride;
+                const auto &conIfmStride = consIfm1Conn->slice.stride;
+                bothHaveIfmStride =
+                    ifmStride && ifmStride != ifmStride.WithOnes() && conIfmStride && conIfmStride != conIfmStride.WithOnes();
             }
 
             // Calculate the consumer transpose type
@@ -2152,7 +2165,7 @@ Operation *GraphIrOptimiser::MoveSplitSliceToConsumer(Graph *const, Operation *c
 
             // We can only move to consumer if there is no transpose on the op that we move to,
             // otherwise the IFM shape may change and transposition will be wrong.
-            if ( Shape::IsReducedEqual(ofmConn->shape, ofm->StorageShape()) && IsNone(consumerTranspose) && ifmShapeEqual )
+            if ( Shape::IsReducedEqual(ofmConn->shape, ofm->StorageShape()) && IsNone(consumerTranspose) && ifmShapeEqual && !bothHaveIfmStride )
             {
                 // Split/Slice can be performed by tensor consumer
                 MoveToConsumer(operation, cons.get());

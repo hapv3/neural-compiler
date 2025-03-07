@@ -49,17 +49,37 @@ enum class RoundMode : uint8_t
 struct TensorSlice
 {
     Shape offset;
-    Shape shape;
+    Shape shape;  // Shape before striding
+    Shape stride;
+
+    TensorSlice() {}
+    TensorSlice(const Shape &offset_, const Shape &shape_) : offset(offset_), shape(shape_) {}
+    TensorSlice(const Shape &offset_, const Shape &shape_, const Shape &stride_) :
+            offset(offset_), shape(shape_), stride(stride_)
+    {
+    }
+
     // Initialize a TensorSlice if current offset/shape are invalid
-    void Initialize(const Shape &_offset, const Shape &_shape)
+    void Initialize(const Shape &offset_, const Shape &shape_)
     {
         if ( !shape )
         {
-            shape = _shape;
+            shape = shape_;
         }
         if ( !offset )
         {
-            offset = _offset;
+            offset = offset_;
+        }
+    }
+
+    // Initialize a TensorSlice if current offset/shape/stride are invalid
+    void Initialize(const Shape &offset_, const Shape &shape_, const Shape &stride_)
+    {
+        Initialize(offset_, shape_);
+
+        if ( !stride )
+        {
+            stride = stride_;
         }
     }
 };

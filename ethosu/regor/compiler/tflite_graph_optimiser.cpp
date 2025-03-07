@@ -733,28 +733,24 @@ Operation *TFLiteGraphOptimiser::RewriteStridedSlice(Graph *const graph, Operati
             }
         }
 
-        // TODO MLBEDSW-10165: Handle stride != 1
-        if ( sliceStride != sliceStride.WithOnes() )
+        // TODO MLBEDSW-10165: Handle stride < 0 and other dimensions than H and W
+        if ( sliceStride.LessMask(sliceStride.WithZeros()) ||
+             sliceStride.WithHeight(1).WithWidth(1) != Shape::PadAxes(sliceShape.WithOnes(), 3, 1) )
         {
             returnOp->SetPassthroughOp();
             return returnOp;
         }
 
-        // Adjust resulting shape for stride
-        sliceShape = Shape::DivRoundUp(sliceShape, sliceStride);
-
-        // Create a new SLICE op
-        auto sliceOp = std::make_shared<Operation>(OpType::Slice);
-        sliceOp->CopyInput(TensorUsage::IFM, *ifmConn);
-        sliceOp->CopyOutput(TensorUsage::OFM, *ofmConn);
-        sliceOp->Output(TensorUsage::OFM)->Set(sliceShape);
-        auto *attr = sliceOp->Attribute<slice_attr_t>();
+        // Create a new memory copy op
         assert(sliceOffset + sliceShape <= ifmConn->shape);
         assert(sliceOffset >= ifmConn->shape.WithZeros());
-        attr->size = sliceShape;
-        attr->begin = sliceOffset;
-        RecordOptimisation(operation, sliceOp.get());
-        returnOp = sliceOp.get();
+        auto copyOp = std::make_shared<Operation>(OpType::MemoryCopy);
+        copyOp->CopyInput(TensorUsage::IFM, *ifmConn);
+        copyOp->Input(TensorUsage::IFM)->Set({sliceOffset, sliceShape, sliceStride});
+        copyOp->CopyOutput(TensorUsage::OFM, *ofmConn);
+        copyOp->Output(TensorUsage::OFM)->Set(Shape::DivRoundUp(sliceShape, sliceStride));
+        RecordOptimisation(operation, copyOp.get());
+        returnOp = copyOp.get();
 
         // Remove original op
         operation->Disconnect();
