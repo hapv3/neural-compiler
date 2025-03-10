@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -124,16 +124,19 @@ std::unique_ptr<Graph> GraphPacking::Process(std::vector<std::pair<Operation *, 
     currentNpuOp = nullptr;
     currentOp = nullptr;
 
+    // List of tensors in the new graph that are NPU only
+    std::unordered_set<Tensor *> npuOnly;
+
     // Connect Input/Output tensors
     for ( auto &item : npuOps )
     {
         Operation *op = item.first;
         for ( const auto &schedOp : item.second->Operations() )
         {
-            ConnectTensors(op, schedOp, tensorAddressMap);
+            ConnectTensors(op, schedOp, tensorAddressMap, npuOnly);
             for ( const auto &subOp : schedOp->SubOps() )
             {
-                ConnectTensors(op, subOp, tensorAddressMap);
+                ConnectTensors(op, subOp, tensorAddressMap, npuOnly);
             }
         }
     }
@@ -170,6 +173,12 @@ std::unique_ptr<Graph> GraphPacking::Process(std::vector<std::pair<Operation *, 
         graph->AddPlaceholder(LookupNewTensor(tensor.get()));
     }
 
+    // Mark NPU only tensors as placeholder
+    for ( auto &tensor : npuOnly )
+    {
+        graph->AddPlaceholder(LookupNewTensor(tensor));
+    }
+
     _oldTensorToNewTensor.clear();
 
     // Save the execution order of all ops in the new graph
@@ -179,9 +188,11 @@ std::unique_ptr<Graph> GraphPacking::Process(std::vector<std::pair<Operation *, 
 }
 
 void GraphPacking::ConnectTensors(Operation *op, const std::unique_ptr<SchedulerOperation> &schedOp,
-    std::unordered_map<const Tensor *, Address> &tensorAddressMap)
+    std::unordered_map<const Tensor *, Address> &tensorAddressMap, std::unordered_set<Tensor *> &npuOnly)
 {
     auto isCurrentOp = [&map = _oldOpToNewOp, op](SchedulerOperation *sop) { return map[sop].get() == op; };
+    auto isNpuOp = [](SchedulerOperation *sop) { return sop->IsNpuOp(); };
+
     for ( const auto &schedConn : schedOp->inputs )
     {
         const auto &schedTensor = schedConn.tensor;
@@ -203,6 +214,14 @@ void GraphPacking::ConnectTensors(Operation *op, const std::unique_ptr<Scheduler
         const auto &oldTensor = schedTensor->srcTensor;
         if ( oldTensor )
         {
+            const bool isConsumedByNPU = std::any_of(schedTensor->consumers.begin(), schedTensor->consumers.end(), isNpuOp);
+            const bool isProducedByNPUOnly = std::all_of(schedTensor->producers.begin(), schedTensor->producers.end(), isNpuOp);
+            if ( isConsumedByNPU && isProducedByNPUOnly && !schedTensor->isGraphInput && !schedTensor->isPersistent )
+            {
+                // Remember NPU only tensors so we can add them as placeholder later
+                npuOnly.insert(oldTensor.get());
+            }
+
             const auto newTensor = LookupNewTensor(oldTensor.get(), tensorAddressMap, schedTensor->AllocatedAddress());
             if ( op->UsageOfTensor(newTensor.get()) == TensorUsage::None )
             {
@@ -228,6 +247,14 @@ void GraphPacking::ConnectTensors(Operation *op, const std::unique_ptr<Scheduler
         const auto &oldTensor = schedTensor->srcTensor;
         if ( oldTensor )
         {
+            const bool isProducedByNPU = std::any_of(schedTensor->producers.begin(), schedTensor->producers.end(), isNpuOp);
+            const bool isConsumedByNPUOnly = std::all_of(schedTensor->consumers.begin(), schedTensor->consumers.end(), isNpuOp);
+            if ( isProducedByNPU && isConsumedByNPUOnly && !schedTensor->isGraphOutput && !schedTensor->isPersistent )
+            {
+                // Remember NPU only tensors so we can add them as placeholder later
+                npuOnly.insert(oldTensor.get());
+            }
+
             const auto newTensor = LookupNewTensor(oldTensor.get(), tensorAddressMap, schedTensor->AllocatedAddress());
             if ( op->UsageOfTensor(newTensor.get()) == TensorUsage::None )
             {

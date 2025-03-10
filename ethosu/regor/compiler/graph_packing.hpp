@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -48,7 +48,7 @@ private:
     std::unordered_map<Tensor *, std::shared_ptr<Tensor>> _oldTensorToNewTensor;
 
     void ConnectTensors(Operation *op, const std::unique_ptr<SchedulerOperation> &schedOp,
-        std::unordered_map<const Tensor *, Address> &tensorAddressMap);
+        std::unordered_map<const Tensor *, Address> &tensorAddressMap, std::unordered_set<Tensor *> &npuOnly);
 
     std::shared_ptr<Tensor> LookupNewTensor(Tensor *oldTensor);
     std::shared_ptr<Tensor> LookupNewTensor(
