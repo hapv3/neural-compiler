@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2020-2022, 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2020-2022, 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 # SPDX-FileCopyrightText: (c) Meta Platforms, Inc. and affiliates. (http://www.meta.com)
 #
 # SPDX-License-Identifier: Apache-2.0
@@ -668,7 +668,7 @@ def postprocess_regor_performance_database(arch, opt_database, performance_repor
         source_table = opt_database.tables["source"]
         source_header = source_table.header
         source_rows = source_table.data
-        op_name_idx = find_in_header("name", source_header)
+        op_name_idx = find_in_header("operator", source_header)
         op_id_idx = find_in_header("id", source_header)
         if op_name_idx != -1 and op_id_idx != -1:
             for row in source_rows:
@@ -724,15 +724,15 @@ def postprocess_regor_performance_database(arch, opt_database, performance_repor
             # post-processing for things not contained in regors performance-database
             else:
                 if col == "Target":
-                    opt_id_idx = col_map["OptId"]
-                    if opt_id_idx != -1 and len(npu_operators):
-                        opt_id = row[opt_id_idx]
-                        if int(opt_id) in npu_operators:
+                    nng_op_idx = col_map["NNG Operator"]
+                    if nng_op_idx != -1:
+                        nng_op = row[nng_op_idx]
+                        if nng_op != "Passthrough":
                             new_row.append("NPU")
                         else:
                             new_row.append("CPU")
                     else:
-                        new_row.append("N/A")
+                        new_row.append("CPU")
                 elif col == "Original Operator":
                     source_id_idx = col_map["SourceId"]
                     if source_id_idx != -1:
@@ -743,7 +743,7 @@ def postprocess_regor_performance_database(arch, opt_database, performance_repor
                         new_row.append("N/A")
                 elif col == "Peak% (Staging)":
                     staging_idx = col_map["Staging Usage"]
-                    if staging_idx != -1:
+                    if staging_idx != -1 and performance_report.stagingMemoryArea in performance_report.memories:
                         staging_usage = int(row[staging_idx])
                         staging_network = int(
                             performance_report.memories[performance_report.stagingMemoryArea].peakUsage
@@ -751,7 +751,7 @@ def postprocess_regor_performance_database(arch, opt_database, performance_repor
                         staging_percent = _percentage(staging_usage, staging_network)
                         new_row.append(str(staging_percent))
                     else:
-                        new_row.append("N/A")
+                        new_row.append("NaN")
                 elif col == "Network% (cycles)":
                     cycles_idx = col_map["Op Cycles"]
                     if cycles_idx != -1:
@@ -760,7 +760,7 @@ def postprocess_regor_performance_database(arch, opt_database, performance_repor
                         cycles_percent = _percentage(cycles, cycles_network)
                         new_row.append(str(cycles_percent))
                     else:
-                        new_row.append("N/A")
+                        new_row.append("NaN")
                 elif col == "Network% (MAC)":
                     mac_idx = col_map["MAC Count"]
                     if mac_idx != -1:
@@ -780,9 +780,9 @@ def postprocess_regor_performance_database(arch, opt_database, performance_repor
                         util = _percentage(macs, max_macs)
                         new_row.append(str(util))
                     else:
-                        new_row.append("N/A")
+                        new_row.append("NaN")
                 else:
-                    new_row.append("N/A")
+                    new_row.append("NaN")
 
         new_data.append(new_row)
     return new_header, new_data
