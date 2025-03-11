@@ -45,5 +45,6 @@ private:
     bool Constraint32bitOps(const Operation *op);
     bool ConstraintKernelStride(const Operation *op);
     bool ConstraintUnrolledKernelStride(const Operation *op);
+    bool ConstraintMatmul(const Operation *op);
 };
 }  // namespace regor

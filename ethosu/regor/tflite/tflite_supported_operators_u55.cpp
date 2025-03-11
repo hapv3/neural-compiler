@@ -96,6 +96,7 @@ TfLiteSupportedOperatorsU55::TfLiteSupportedOperatorsU55(IArchitectureConstraint
         &TfLiteSupportedOperatorsU55::Constraint32bitOps,
         &TfLiteSupportedOperatorsU55::ConstraintKernelStride,
         &TfLiteSupportedOperatorsU55::ConstraintUnrolledKernelStride,
+        &TfLiteSupportedOperatorsU55::ConstraintMatmul,
     };
 }
 
@@ -252,6 +253,68 @@ bool TfLiteSupportedOperatorsU55::ConstraintUnrolledKernelStride(const Operation
     if ( !canUnroll )
     {
         Failure(op, fmt::format("Unsupported kernel stride: {}, {}", stride_w, stride_h), constraint);
+    }
+    return true;
+}
+
+bool TfLiteSupportedOperatorsU55::ConstraintMatmul(const Operation *op)
+{
+    OpType opType = op->Type();
+    if ( opType != OpType::BatchMatMul && opType != OpType::FullyConnected )
+    {
+        return true;
+    }
+    auto ifmConn = op->Input(TensorUsage::IFM0);
+    auto ofmConn = op->Output(TensorUsage::OFM);
+    assert(ifmConn);
+    assert(ofmConn);
+    auto ifmShape = ifmConn->shape;
+    auto ofmShape = ofmConn->shape;
+
+    bool adj_x = false;
+    if ( opType == OpType::FullyConnected )
+    {
+        auto wConn = op->Input(TensorUsage::Weights);
+        assert(wConn);
+        if ( wConn->tensor->IsConstant() )
+        {
+            // Non-dynamic weights, not a matmul
+            return true;
+        }
+    }
+    else
+    {
+        const tflite::Operator *const passthrough = static_cast<const tflite::Operator *>(op->Passthrough());
+        const auto options = passthrough->builtin_options_as_BatchMatMulOptions();
+        if ( options )
+        {
+            adj_x = options->adj_x();
+        }
+    }
+
+    if ( adj_x )
+    {
+        // NHWC-transpose ifm-shape
+        ifmShape = ifmShape.Permute(0x3201);
+    }
+    // OFM-depth and the reduced axis (ifmShape.Depth()) is constrained to 16-bits
+    const static int maxAxis = 1 << 16;
+    if ( ifmShape.Depth() > maxAxis )
+    {
+        static const std::string constraint = fmt::format("The reduced axis must be less than or equal to {}", maxAxis);
+        Failure(op, fmt::format("The reduced Axis is: {}", ifmShape.Depth()), constraint);
+        return false;
+    }
+    if ( ofmShape.Depth() > maxAxis )
+    {
+        static const std::string constraint = fmt::format("The OFM depth must be less than or equal to {}", maxAxis);
+        Failure(op, fmt::format("OFM channel: {}", ofmShape.Depth()), constraint);
+        return false;
+    }
+    if ( ifmConn->tensor->Type() != DataType::Int8 )
+    {
+        Failure(op, fmt::format("IFM has datatype: {}", DataTypeToString(ifmConn->tensor->Type())), "IFM must be Int8");
+        return false;
     }
     return true;
 }
