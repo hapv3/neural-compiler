@@ -1082,6 +1082,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
             auto subWeightOffset = weightsShape.WithZeros().WithDepth(multiplier);
             auto subWeightsConn = subOp->Input(TensorUsage::Weights);
             subWeightsConn->tensor = Slice(weightsConn->tensor.get(), subWeightOffset, subWeightsShape, subWeightsReadShape);
+            // Tensor is now in AxisOrder::HWCM with M=1
             subWeightsConn->tensor->srcTensor->SetAxisOrder(AxisOrder::HWCM);
             subWeightsConn->tensor->consumers.push_back(subOp.get());
             subWeightsConn->shape = subWeightsShape;
@@ -1124,19 +1125,52 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
         }
         return result;
     }
+
     if ( CanRunOnHardware(arch, op.get()) )
     {
         UpdatePaddingAndIfmOffset(op.get());
         result.emplace_back(std::move(op));
         return result;
     }
+
+    // If weight tensor is in AxisOrder::HWCM (with M=1, since depthMultiplier=1 at this point),
+    // reshape and set AxisOrder::IHWO with I=1, since the rest of the decomposition code
+    // only handles weight tensors with AxisOrder::OHWI or AxisOrder::IHWO
+    if ( weightsConn->tensor->srcTensor->AxisOrder() == AxisOrder::HWCM )
+    {
+        auto weightShapeIHWO = weightsConn->SliceShape().Permute(0x0321);
+        weightsConn->tensor->srcTensor->SetAxisOrder(AxisOrder::IHWO);
+        weightsConn->tensor->bufferView = weightsConn->tensor->bufferView.Reshape(weightShapeIHWO);
+        weightsConn->tensor->storageShape = weightShapeIHWO;
+        weightsConn->shape = weightShapeIHWO;
+    }
+
     auto &dilation = kernel->Dilation();
     if ( dilation.x > 1 || dilation.y > 1 )
     {
         return HandleDilation(arch, std::move(op), DecomposeDepthwiseConv2D);
     }
-    // TODO: MLBEDSW-8783 Decompose convolutions with large stride
+    try
+    {
+        if ( auto newBlockShape = NewOfmBlockShape(arch, op.get()) )
+        {
+            return DecomposeBlocks(arch, std::move(op), newBlockShape, DecomposeDepthwiseConv2D);
+        }
+    }
+    catch ( const DecompositionFailure & )
+    {
+        UpdatePaddingAndIfmOffset(op.get());
+        result.emplace_back(std::move(op));
+        return result;
+    }
+
+    if ( arch->Constraints()->SupportsAccumulatorSaveRestore() &&
+         op->Input(TensorUsage::Weights)->tensor->IsConstant() && op->Kernel()->Stride().AreaXY() > 1 )
+    {
+        return DecomposeForStrides(arch, std::move(op), DecomposeDepthwiseConv2D);
+    }
     // If we get here, decomposition has failed, the resulting operations will be executed on CPU
+    UpdatePaddingAndIfmOffset(op.get());
     result.emplace_back(std::move(op));
     return result;
 }
