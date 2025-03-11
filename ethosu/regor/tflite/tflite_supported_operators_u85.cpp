@@ -55,6 +55,7 @@ TfLiteSupportedOperatorsU85::TfLiteSupportedOperatorsU85(IArchitectureConstraint
         OpType::Mean,
         OpType::Sub,
         OpType::Div,
+        OpType::Squeeze,
         OpType::StridedSlice,
         OpType::Exp,
         OpType::Split,
@@ -71,6 +72,7 @@ TfLiteSupportedOperatorsU85::TfLiteSupportedOperatorsU85(IArchitectureConstraint
         OpType::Slice,
         OpType::TransposeConv2D,
         OpType::Tile,
+        OpType::ExpandDims,
         OpType::Equal,
         OpType::NotEqual,
         OpType::ReduceSum,
@@ -85,6 +87,7 @@ TfLiteSupportedOperatorsU85::TfLiteSupportedOperatorsU85(IArchitectureConstraint
         OpType::LogicalNot,
         OpType::ResizeNearestNeighbor,
         OpType::LeakyRelu,
+        OpType::SquaredDifference,
         OpType::MirrorPad,
         OpType::Abs,
         OpType::SplitV,
@@ -108,7 +111,8 @@ TfLiteSupportedOperatorsU85::TfLiteSupportedOperatorsU85(IArchitectureConstraint
         DataType::Int16,
         DataType::Int32,
         DataType::Int64,
-        DataType::Bool
+        DataType::Bool,
+        DataType::Bool8
         // clang-format on
     };
     _checks = {

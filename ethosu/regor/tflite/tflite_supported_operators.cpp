@@ -151,6 +151,14 @@ bool TfLiteSupportedOperators::ConstraintTensQuantized(const Operation *op)
         case OpType::Transpose:
         case OpType::GatherNd:
         case OpType::GatherV2:
+        case OpType::Select:
+        case OpType::SelectV2:
+        case OpType::ScatterNd:
+        case OpType::Pad:
+        case OpType::PadV2:
+        case OpType::ReduceAll:
+        case OpType::ReduceAny:
+        case OpType::ExpandDims:
             return true;
         default:
             break;
