@@ -1453,8 +1453,8 @@ static std::vector<std::unique_ptr<SchedulerOperation>> SwapAxes(Architecture *a
 
     assert(shape.IsValid());
     assert(tail);
-    assert(a < shape.Size());
-    assert(b < shape.Size());
+    assert(a >= 0 && a < shape.Size());
+    assert(b >= 0 && b < shape.Size());
     assert(a < b);
 
     LOG_TRACE2("SwapAxes: Swap ({}), {} <-> {}\n", shape.ToString(), a, b);
@@ -1470,8 +1470,12 @@ static std::vector<std::unique_ptr<SchedulerOperation>> SwapAxes(Architecture *a
     // 4. Swap back axis N-1 to position B, like in step 2.
     // 5. Swap back axis 0 to position A, like in step 1.
 
-    // We can handle all swaps in a 3D shape
-    if ( shape.Size() < 4 )
+    // We can swap any two axes of the three innermost axes (H/W/C) of a shape if any of the following is true:
+    //
+    // A) The shape is 3D or less. I.e. the shape is (H, W, C) or (W, C).
+    // B) The shape is 4D or more and all axes other than the three innermost axes (H/W/C) are ones. I.e. the shape
+    //    is (1, H, W, C), (1, 1, H, W, C) or (1, 1, 1, H, W, C).
+    if ( shape.Size() <= 3 || (a >= shape.Size() - 3 && b >= shape.Size() - 3 && shape.AxisProduct(0, -3) == 1) )
     {
         // Build transpose type for this swap
         Shape perm(nullptr, shape.Size());
