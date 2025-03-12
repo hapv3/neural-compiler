@@ -433,7 +433,7 @@ HandleDilation(Architecture *arch, std::unique_ptr<SchedulerOperation> op, const
                 newOfmSlice.offset.WithHeight(newOfmSlice.offset.Height() + dy).WithWidth(newOfmSlice.offset.Width() + dx);
             newOfmSlice.shape =
                 newOfmSlice.shape.WithHeight(newOfmSlice.shape.Height() - dy).WithWidth(newOfmSlice.shape.Width() - dx);
-            if ( newOfmSlice.shape.Elements() > 0 )
+            if ( newOfmSlice.shape.Width() > 0 && newOfmSlice.shape.Height() > 0 )
             {
                 ofmStrides.y *= DY;
                 ofmStrides.x *= DX;
