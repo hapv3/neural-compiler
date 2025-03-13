@@ -33,6 +33,18 @@ struct EthosU85PerfInfo
     float activationCycles[3];
 };
 
+enum class MemChannel
+{
+    None = 0,
+    Mem2Mem,
+    IFMStream,
+    Weight,
+    FastWeight,
+    IFM,
+    Scale,
+    Write,
+};
+
 struct EthosU85Cycles
 {
     int64_t cycles = 0;
@@ -72,15 +84,20 @@ public:
     ElementAccess ElementTransferToBytes(const PerformanceQuery &query, const ElementAccess &access) override;
     int64_t WeightDecodeCycles(const PerformanceQuery &query, const WeightStats &weights, Flags<WeightFormat> format,
         ArchitectureMemory *weightsMemory) override;
-    float ChannelBW(const ArchitectureMemory *mem, MemChannel channel) override;
     void InitDatabase(Database *optDB) override;
     void RecordToDB(int opId) override;
+    int64_t MinReadCycles(ArchitectureMemory *mem, int size, TensorUsage usage, OpType type, bool fastWeights) override;
+    int64_t MinWriteCycles(ArchitectureMemory *mem, int size) override;
+    std::unordered_map<const ArchitectureMemory *, AccessCycles>
+    MeasureAccessCycles(const PerformanceQuery &query, const ElementAccess &byteAccess) override;
 
 private:
     EthosU85Cycles EstimateConvCycles(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);
     EthosU85ElementCycles EstimateOutputCyclesPerElement(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);
     EthosU85Cycles EstimateElementwiseCycles(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);
     int64_t EstimateMinimumMemoryCycles(const PerformanceQuery &query);
+    float ChannelBW(const ArchitectureMemory *mem, MemChannel channel);
+    static MemChannel LookupChannel(OpType type, TensorUsage usage, bool fastWeights);
 };
 
 }  // namespace regor

@@ -129,8 +129,8 @@ int64_t EthosU85Performance::MemToMemCycles(const ArchitectureMemory *dest, cons
     int64_t fromCycles = int64_t(float(sizeBytes) / ChannelBW(source, MemChannel::Mem2Mem));
     fromCycles += source->ReadLatency();
     // TODO: Below shouldn't use the OFM channel. See MLBEDSW-9384.
-    int64_t toCycles = int64_t(float(sizeBytes) / ChannelBW(dest, MemChannel::OFM));
-    toCycles += source->WriteLatency();
+    int64_t toCycles = int64_t(float(sizeBytes) / ChannelBW(dest, MemChannel::Write));
+    toCycles += dest->WriteLatency();
     return std::max(fromCycles, toCycles);
 }
 
@@ -629,8 +629,13 @@ float EthosU85Performance::ChannelBW(const ArchitectureMemory *mem, const MemCha
     float read_rb_lim;
     int maxOutstanding;
     int latency;
-
-    if ( channel == MemChannel::OFM )
+    if ( channel == MemChannel::None )
+    {
+        latency = mem->ReadLatency();
+        maxOutstanding = mem->MaxReads();
+        read_rb_lim = std::numeric_limits<float>::max();
+    }
+    else if ( channel == MemChannel::Write )
     {
         maxOutstanding = mem->MaxWrites();
         latency = mem->WriteLatency();
@@ -640,7 +645,8 @@ float EthosU85Performance::ChannelBW(const ArchitectureMemory *mem, const MemCha
     {
         maxOutstanding = mem->MaxReads();
         latency = mem->ReadLatency();
-        int channelRB = _arch->_channelRBs->at(static_cast<int>(channel));
+        auto channelIdx = std::max(static_cast<int>(channel) - 1, 0);
+        int channelRB = _arch->_channelRBs->at(channelIdx);
         read_rb_lim = static_cast<float>(channelRB) / burstLenWords;
     }
 
@@ -682,6 +688,164 @@ void EthosU85Performance::RecordToDB(int opId)
     {
         _nextId = opId;
     }
+}
+
+MemChannel EthosU85Performance::LookupChannel(OpType type, TensorUsage usage, bool fastWeights)
+{
+    if ( usage == TensorUsage::Weights )
+    {
+        if ( fastWeights )
+        {
+            return MemChannel::FastWeight;
+        }
+        else
+        {
+            return MemChannel::Weight;
+        }
+    }
+    else if ( usage == TensorUsage::Scales )
+    {
+        return MemChannel::Scale;
+    }
+    else if ( IsIFM(usage) )
+    {
+        if ( (usage == TensorUsage::IFM1 && type == OpType::MatMul) || type == OpType::Resize || IsElementwise(type) )
+        {
+            return MemChannel::IFMStream;
+        }
+        else
+        {
+            return MemChannel::IFM;
+        }
+    }
+    else if ( IsOFM(usage) )
+    {
+        return MemChannel::Write;
+    }
+    else if ( usage == TensorUsage::Scratch )
+    {
+        return MemChannel::IFMStream;
+    }
+    else
+    {
+        return MemChannel::None;
+    }
+}
+
+int64_t EthosU85Performance::MinReadCycles(ArchitectureMemory *mem, int size, TensorUsage usage, OpType type, bool fastWeights)
+{
+    auto channel = LookupChannel(type, usage, fastWeights);
+    auto transferCycles = size / double(ChannelBW(mem, channel));
+    // Add on latency since this function returns the cycle count for the transfer itself which is not necessarily the
+    // same as the cycle count that the operation attributes to this transfer.
+    return transferCycles + mem->ReadLatency();
+}
+
+int64_t EthosU85Performance::MinWriteCycles(ArchitectureMemory *mem, int size)
+{
+    auto channel = MemChannel::Write;
+    auto transferCycles = size / double(ChannelBW(mem, channel));
+    // Add on latency since this function returns the cycle count for the transfer itself which is not necessarily the
+    // same as the cycle count that the operation attributes to this transfer.
+    return transferCycles + mem->WriteLatency();
+}
+
+std::unordered_map<const ArchitectureMemory *, AccessCycles>
+EthosU85Performance::MeasureAccessCycles(const PerformanceQuery &query, const ElementAccess &byteAccess)
+{
+    enum class TransferGroup
+    {
+        FeatureMaps,
+        Weights,
+        Scales,
+    };
+    std::unordered_map<const ArchitectureMemory *, AccessCycles> memoryAccessCycles;
+    std::unordered_map<const ArchitectureMemory *, std::unordered_map<MemChannel, std::unordered_map<TransferGroup, int64_t>>> channelTransferBytes;
+    // IFM
+    auto channel = LookupChannel(query.type, TensorUsage::IFM, false);
+    channelTransferBytes[query.ifmMemory[0]][channel][TransferGroup::FeatureMaps] += byteAccess.ifmRead[0];
+    // IFM2
+    if ( !query.ifmShape[1].IsEmpty() )
+    {
+        channel = LookupChannel(query.type, TensorUsage::IFM1, false);
+        channelTransferBytes[query.ifmMemory[1]][channel][TransferGroup::FeatureMaps] += byteAccess.ifmRead[1];
+    }
+    // OFM
+    channelTransferBytes[query.ofmMemory][MemChannel::Write][TransferGroup::FeatureMaps] += byteAccess.ofmWrite;
+
+    if ( query.constMemory )
+    {
+        // Weights
+        channel = LookupChannel(query.type, TensorUsage::Weights, query.weightFormat & WeightFormat::Fast);
+        if ( query.weightStagingMemory )
+        {
+            // Concurrent DMA Weights
+            auto nonPreBufferedWeightsSize = std::max(int64_t(query.encodedWeightSize) - int64_t(query.firstWeightDMASize), int64_t(0));
+            channelTransferBytes[query.constMemory][MemChannel::Mem2Mem][TransferGroup::Weights] += nonPreBufferedWeightsSize;
+            channelTransferBytes[query.weightStagingMemory][MemChannel::Write][TransferGroup::Weights] += nonPreBufferedWeightsSize;
+            channelTransferBytes[query.weightStagingMemory][channel][TransferGroup::Weights] += byteAccess.constRead[0];
+        }
+        else
+        {
+            channelTransferBytes[query.constMemory][MemChannel::Weight][TransferGroup::Weights] += byteAccess.constRead[0];
+        }
+        // Scales
+        channel = LookupChannel(query.type, TensorUsage::Scales, false);
+        channelTransferBytes[query.constMemory][channel][TransferGroup::Scales] += byteAccess.constRead[1];
+    }
+    // DMA
+    if ( query.tmpMemory )
+    {
+        channel = LookupChannel(query.type, TensorUsage::Scratch, false);
+        channelTransferBytes[query.tmpMemory][channel][TransferGroup::FeatureMaps] += byteAccess.tmpRead;
+        channelTransferBytes[query.tmpMemory][MemChannel::Write][TransferGroup::FeatureMaps] += byteAccess.tmpWrite;
+    }
+
+    // Total access cycles for any grouping:
+    // Group access cycles = max(group read + group write/mem bw, max group channel cycles)
+    // Where group channel cycles is the channel transfer cycles attributable to that group.
+    for ( auto &[mem, channels] : channelTransferBytes )
+    {
+        AccessCycles accessCycles;
+
+        int64_t maxChannelCycles = 0;
+        std::unordered_map<TransferGroup, int64_t> maxGroupChannelCycles;
+        int64_t totalBytes = 0;
+        std::unordered_map<TransferGroup, int64_t> totalGroupBytes;
+
+        for ( auto &[memChannel, groups] : channels )
+        {
+            int64_t channelCycles = 0;
+            for ( auto &[group, bytes] : groups )
+            {
+                int64_t cycles = bytes / ChannelBW(mem, memChannel);
+                if ( cycles > maxGroupChannelCycles[group] )
+                {
+                    maxGroupChannelCycles[group] = cycles;
+                }
+                totalGroupBytes[group] += bytes;
+                totalBytes += bytes;
+                channelCycles += cycles;
+            }
+            maxChannelCycles = std::max(maxChannelCycles, channelCycles);
+        }
+
+        accessCycles.fmAccessCycles =
+            totalGroupBytes.count(TransferGroup::FeatureMaps) ?
+                std::max(int64_t(totalGroupBytes[TransferGroup::FeatureMaps] / mem->Bandwidth()), maxGroupChannelCycles[TransferGroup::FeatureMaps]) :
+                0;
+        accessCycles.weightsAccessCycles =
+            totalGroupBytes.count(TransferGroup::Weights) ?
+                std::max(int64_t(totalGroupBytes[TransferGroup::Weights] / mem->Bandwidth()), maxGroupChannelCycles[TransferGroup::Weights]) :
+                0;
+        accessCycles.scalesAccessCycles =
+            totalGroupBytes.count(TransferGroup::Scales) ?
+                std::max(int64_t(totalGroupBytes[TransferGroup::Scales] / mem->Bandwidth()), maxGroupChannelCycles[TransferGroup::Scales]) :
+                0;
+        accessCycles.totalAccessCycles = std::max(int64_t(totalBytes / mem->Bandwidth()), maxChannelCycles);
+        memoryAccessCycles[mem] = accessCycles;
+    }
+    return memoryAccessCycles;
 }
 
 }  // namespace regor

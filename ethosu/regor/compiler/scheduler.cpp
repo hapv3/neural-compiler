@@ -1089,12 +1089,17 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
         forceFullDepthSlice = FulldepthWeightBuffering(_ops, weightTens, schedOp, cost, prevOp, prevCost, refSchedule);
     }
 
+    // Estimate the buffering cycle time for the full set of weights
+    int64_t fullTransferCycles = _arch->Performance()->MemToMemCycles(_arch->StagingMemory().memory, weightTens->memArea.memory, fullWeightsBytes);
+
+
     if ( _spilling && !forceFullDepthSlice )
     {
         // To be refined and architecture specific depending on mem2mem characteristics and prebuffering
         float bwRatio = std::round(
-            _arch->Performance()->ChannelBW(weightTens->memArea.memory, MemChannel::Weight) /
-            _arch->Performance()->ChannelBW(weightTens->memArea.memory, MemChannel::Mem2Mem));
+            fullTransferCycles /
+            _arch->Performance()->MinReadCycles(weightTens->memArea.memory, fullWeightsBytes, TensorUsage::Weights,
+                schedOp->Type(), weightFormat % WeightFormat::Fast));
         needsDMA = (cost->elementAccess.weightsRefetch > 2) || (cost->elementAccess.weightsRefetch == 2 && bwRatio < 2);
     }
 
@@ -1132,9 +1137,6 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
     }
     else
     {
-        // Estimate the buffering cycle time for the full set of weights
-        int64_t fullTransferCycles = _arch->Performance()->MemToMemCycles(
-            _arch->StagingMemory().memory, weightTens->memArea.memory, fullWeightsBytes);
         cost->fullWeightTransferCycles = fullTransferCycles;
 
         // Calculate the amount of pre-buffering necessary (or what is possible with limited
@@ -1716,6 +1718,15 @@ PerformanceQuery Scheduler::InitPerfQuery(
         query.encodedWeightSize = unsigned(weightBytes * ratio);
         query.encodedScaleSize = unsigned(scaleBytes * ratio);
         query.constMemory = cost->npuWeightsTensor->memArea.memory;
+        if ( cost->bufferedWeightTensor.tensor )
+        {
+            query.weightStagingMemory = cost->bufferedWeightTensor.tensor->memArea.memory;
+            if ( cost->bufferedWeightTensor.preBuffer )
+            {
+                auto preBufferRatio = float(cost->ofmDepthSlices[1]) / cost->ofmDepthSlices.back();
+                query.firstWeightDMASize = query.encodedWeightSize * preBufferRatio;
+            }
+        }
     }
 
     query.weightFormat = wgtFormat;

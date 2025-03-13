@@ -67,18 +67,19 @@ static const EthosU85PerfInfo s_EthosU85PerfInfo[] = {
 
 static const ArchEthosU85::AcceleratorConfig s_EthosU85Configs[] = {
     // Accelerator.Ethos_U85_128
-    {128, 1, {Shape(1, 2, 8), Shape(1, 1, 16)}, Shape(1, 2, 8), 2, 8192, 8192, 2048, 768, 1, 0, {64, 64, 128, 128, 104}, &s_EthosU85PerfInfo[0]},
+    {128, 1, {Shape(1, 2, 8), Shape(1, 1, 16)}, Shape(1, 2, 8), 2, 8192, 8192, 2048, 768, 1, 0, {64, 64, 128, 128, 104, 16}, &s_EthosU85PerfInfo[0]},
     // Accelerator.Ethos_U85_256
     {256, 1, {Shape(1, 2, 16), Shape(1, 4, 8), Shape(2, 2, 8)}, Shape(2, 2, 8), 3, 16384, 16384, 2048, 1536, 1, 0,
-        {104, 104, 128, 128, 128}, &s_EthosU85PerfInfo[1]},
+        {104, 104, 128, 128, 128, 16}, &s_EthosU85PerfInfo[1]},
     // Accelerator.Ethos_U85_512
-    {512, 2, {Shape(2, 2, 16), Shape(1, 4, 16)}, Shape(2, 2, 16), 2, 16384, 32768, 4096, 3072, 1, 0, {128, 128, 256, 256, 128}, &s_EthosU85PerfInfo[2]},
+    {512, 2, {Shape(2, 2, 16), Shape(1, 4, 16)}, Shape(2, 2, 16), 2, 16384, 32768, 4096, 3072, 1, 0,
+        {128, 128, 256, 256, 128, 16}, &s_EthosU85PerfInfo[2]},
     // Accelerator.Ethos_U85_1024
     {1024, 4, {Shape(2, 2, 32), Shape(1, 4, 32), Shape(2, 4, 16)}, Shape(4, 2, 16), 3, 16384, 65536, 4096, 6144, 1, 1,
-        {256, 256, 416, 208, 256}, &s_EthosU85PerfInfo[3]},
+        {256, 256, 416, 208, 256, 16}, &s_EthosU85PerfInfo[3]},
     // Accelerator.Ethos_U85_2048
     {2048, 4, {Shape(2, 2, 64), Shape(1, 4, 64), Shape(4, 4, 16)}, Shape(4, 4, 16), 3, 32768, 131072, 8192, 12288, 2, 1,
-        {256, 256, 512, 256, 256}, &s_EthosU85PerfInfo[4]},
+        {256, 256, 512, 256, 256, 16}, &s_EthosU85PerfInfo[4]},
 };
 
 constexpr int CB_SLOTS = 6;

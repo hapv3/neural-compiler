@@ -287,7 +287,7 @@ void NetworkPerformance::AddToDatabase(const PerformanceResult &perf, SchedulerO
 
     for ( const auto mem : memories )
     {
-        row.push_back(std::to_string(perf.memory.at(mem).AccessCycles()));
+        row.push_back(std::to_string(perf.memory.at(mem).accessCycles));
     }
 
     db->AddRow(opTable, schedOp->Uid(), std::move(row));
@@ -436,7 +436,7 @@ PerformanceResult NetworkPerformance::EstimateFullOpPerformance(
 
     ElementAccess access = _arch->Performance()->MeasureElementAccess(query);
     ElementAccess byteAccess = _arch->Performance()->ElementTransferToBytes(query, access);
-
+    auto memoryAccessCycles = _arch->Performance()->MeasureAccessCycles(query, byteAccess);
     // How many NPU cycles are available under the previously executing
     // operator for performing buffered DMA transfers
     int64_t slackCycles = (prevCost != nullptr) ? prevCost->slackBufferingCycles : 0;
@@ -458,6 +458,9 @@ PerformanceResult NetworkPerformance::EstimateFullOpPerformance(
 
             result.memory[srcMemory].access[AccessType::Lut].bytesRead += copySize;
             result.memory[dstMemory].access[AccessType::Lut].bytesWritten += copySize;
+            // TODO: Add lut transfers through MeasureAccessCycles() instead
+            result.memory[srcMemory].access[AccessType::Lut].accessCycles += copySize / srcMemory->Bandwidth();
+            result.memory[dstMemory].access[AccessType::Lut].accessCycles += copySize / dstMemory->Bandwidth();
         }
     }
 
@@ -543,28 +546,26 @@ PerformanceResult NetworkPerformance::EstimateFullOpPerformance(
         result.memory[weightsMemory].access[AccessType::Scales].bytesRead += byteAccess.constRead[1];
     }
 
+    for ( auto &[mem, accessCycles] : memoryAccessCycles )
+    {
+        assert(result.memory.count(mem) > 0);
+        result.memory[mem].accessCycles = accessCycles.totalAccessCycles;
+        result.memory[mem].access[AccessType::FeatureMap].accessCycles = accessCycles.fmAccessCycles;
+        result.memory[mem].access[AccessType::Weights].accessCycles = accessCycles.weightsAccessCycles;
+        result.memory[mem].access[AccessType::Scales].accessCycles = accessCycles.scalesAccessCycles;
+    }
+
     // Update memory-access cycles and find the maximum memory read cycle time
     int64_t maxMemCycles = 0;
     for ( auto &[mem, stats] : result.memory )
     {
         int64_t totalReadBytes = 0;
         int64_t totalWriteBytes = 0;
-        float bandwidth = mem->Bandwidth();
-        int64_t memBytes = 0;
         for ( auto &[accType, acc] : stats.access )
         {
-            // compute cycles per accessType
-            int64_t bytes = acc.bytesRead + acc.bytesWritten;
-            memBytes += bytes;
-            int64_t accCycles = int64_t(float(bytes) / bandwidth);
-            acc.accessCycles = accCycles;
             totalReadBytes += acc.bytesRead;
             totalWriteBytes += acc.bytesWritten;
         }
-        // get maximum cycles per memory
-        int64_t memCycles = int64_t(float(memBytes) / bandwidth);
-        maxMemCycles = std::max(maxMemCycles, memCycles);
-
         if ( totalReadBytes > 0 )
         {
             stats.readTransferEff = float(totalReadBytes - stats.readTransferOverhead) / totalReadBytes;
@@ -573,6 +574,7 @@ PerformanceResult NetworkPerformance::EstimateFullOpPerformance(
         {
             stats.writeTransferEff = float(totalWriteBytes - stats.writeTransferOverhead) / totalWriteBytes;
         }
+        maxMemCycles = std::max(maxMemCycles, stats.accessCycles);
     }
 
     result.totalCycles = std::max(result.npuCycles, maxMemCycles);

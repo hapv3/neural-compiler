@@ -244,6 +244,8 @@ struct PerformanceQuery
     ArchitectureMemory *tmpMemory;
     unsigned encodedWeightSize;
     unsigned encodedScaleSize;
+    ArchitectureMemory *weightStagingMemory;
+    unsigned firstWeightDMASize;
 };
 
 struct WeightStats
@@ -288,14 +290,12 @@ struct ElementAccess
     int tmpRead = 0, tmpWrite = 0;
 };
 
-enum class MemChannel
+struct AccessCycles
 {
-    Mem2Mem = 0,
-    IFMStream = 1,
-    Weight = 2,
-    FastWeight = 3,
-    IFM = 4,
-    OFM = 5,
+    int64_t fmAccessCycles = 0;
+    int64_t weightsAccessCycles = 0;
+    int64_t scalesAccessCycles = 0;
+    int64_t totalAccessCycles = 0;
 };
 
 /// <summary>
@@ -311,9 +311,12 @@ public:
     virtual ElementAccess ElementTransferToBytes(const PerformanceQuery &query, const ElementAccess &access) = 0;
     virtual int64_t WeightDecodeCycles(const PerformanceQuery &query, const WeightStats &weights,
         Flags<WeightFormat> format, ArchitectureMemory *weightsMemory) = 0;
-    virtual float ChannelBW(const ArchitectureMemory *mem, MemChannel channel) = 0;
     virtual void InitDatabase(Database *db) = 0;
     virtual void RecordToDB(int opId) = 0;
+    virtual int64_t MinReadCycles(ArchitectureMemory *mem, int size, TensorUsage usage, OpType type, bool fastWeights) = 0;
+    virtual int64_t MinWriteCycles(ArchitectureMemory *mem, int size) = 0;
+    virtual std::unordered_map<const ArchitectureMemory *, AccessCycles>
+    MeasureAccessCycles(const PerformanceQuery &query, const ElementAccess &byteAccess) = 0;
 };
 
 enum class IniParseResult

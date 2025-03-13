@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -67,15 +67,7 @@ struct PerformanceResult
         int64_t writeTransferOverhead = 0;
         float readTransferEff = 1;
         float writeTransferEff = 1;
-        int64_t AccessCycles() const
-        {
-            int64_t cycles = 0;
-            for ( const auto &[type, acc] : access )
-            {
-                cycles += acc.accessCycles;
-            }
-            return cycles;
-        }
+        int64_t accessCycles = 0;
 
         MemoryAccesses &operator+=(const MemoryAccesses &other)
         {
@@ -88,7 +80,7 @@ struct PerformanceResult
         }
     };
 
-    std::unordered_map<ArchitectureMemory *, MemoryAccesses> memory;
+    std::unordered_map<const ArchitectureMemory *, MemoryAccesses> memory;
     int64_t npuCycles = 0;
     int64_t cpuCycles = 0;
     int64_t totalCycles = 0;

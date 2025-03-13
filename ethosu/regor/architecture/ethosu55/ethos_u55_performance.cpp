@@ -680,12 +680,6 @@ int64_t EthosU55Performance::WeightDecodeCycles(
     return dmaCycles;
 }
 
-float EthosU55Performance::ChannelBW(const ArchitectureMemory *mem, const MemChannel channel)
-{
-    UNUSED(channel);
-    return mem->Bandwidth();
-}
-
 void EthosU55Performance::InitDatabase(Database *optDB)
 {
     _db = optDB;
@@ -718,6 +712,86 @@ void EthosU55Performance::RecordToDB(int opId)
     {
         _nextId = opId;
     }
+}
+
+int64_t EthosU55Performance::MinReadCycles(ArchitectureMemory *mem, int size, TensorUsage usage, OpType type, bool fastWeights)
+{
+    auto transferCycles = size / double(mem->Bandwidth());
+    // Add on latency since this function returns the cycle count for the transfer itself which is not necessarily the
+    // same as the cycle count that the operation attributes to this transfer.
+    return transferCycles + mem->ReadLatency();
+}
+
+int64_t EthosU55Performance::MinWriteCycles(ArchitectureMemory *mem, int size)
+{
+    auto transferCycles = size / double(mem->Bandwidth());
+    return transferCycles + mem->WriteLatency();
+}
+
+enum class TransferGroup
+{
+    FeatureMaps,
+    Weights,
+    Scales,
+};
+
+std::unordered_map<const ArchitectureMemory *, AccessCycles>
+EthosU55Performance::MeasureAccessCycles(const PerformanceQuery &query, const ElementAccess &byteAccess)
+{
+    std::unordered_map<const ArchitectureMemory *, AccessCycles> memoryAccessCycles;
+    std::unordered_map<const ArchitectureMemory *, std::unordered_map<TransferGroup, int64_t>> transferBytes;
+    // IFM
+    transferBytes[query.ifmMemory[0]][TransferGroup::FeatureMaps] += byteAccess.ifmRead[0];
+    // IFM2
+    if ( !query.ifmShape[1].IsEmpty() )
+    {
+        transferBytes[query.ifmMemory[1]][TransferGroup::FeatureMaps] += byteAccess.ifmRead[1];
+    }
+    // OFM
+    transferBytes[query.ofmMemory][TransferGroup::FeatureMaps] += byteAccess.ofmWrite;
+
+    if ( query.constMemory )
+    {
+        // Weights
+        if ( query.weightStagingMemory )
+        {
+            // Concurrent DMA Weights
+            auto nonPreBufferedWeightsSize = std::max(int64_t(query.encodedWeightSize) - int64_t(query.firstWeightDMASize), int64_t(0));
+            transferBytes[query.constMemory][TransferGroup::Weights] += nonPreBufferedWeightsSize;
+            transferBytes[query.weightStagingMemory][TransferGroup::Weights] += nonPreBufferedWeightsSize;
+            transferBytes[query.weightStagingMemory][TransferGroup::Weights] += byteAccess.constRead[0];
+        }
+        else
+        {
+            transferBytes[query.constMemory][TransferGroup::Weights] += byteAccess.constRead[0];
+        }
+        // Scales
+        transferBytes[query.constMemory][TransferGroup::Scales] += byteAccess.constRead[1];
+    }
+    // DMA
+    if ( query.tmpMemory )
+    {
+        transferBytes[query.tmpMemory][TransferGroup::FeatureMaps] += byteAccess.tmpRead;
+        transferBytes[query.tmpMemory][TransferGroup::FeatureMaps] += byteAccess.tmpWrite;
+    }
+
+    for ( auto &[mem, groups] : transferBytes )
+    {
+        AccessCycles accessCycles;
+        int64_t totalBytes = 0;
+        for ( auto &[group, bytes] : groups )
+        {
+            totalBytes += bytes;
+        }
+
+        accessCycles.fmAccessCycles = groups.count(TransferGroup::FeatureMaps) ? groups[TransferGroup::FeatureMaps] / mem->Bandwidth() : 0;
+        accessCycles.weightsAccessCycles = groups.count(TransferGroup::Weights) ? groups[TransferGroup::Weights] / mem->Bandwidth() : 0;
+        accessCycles.scalesAccessCycles = groups.count(TransferGroup::Scales) ? groups[TransferGroup::Scales] / mem->Bandwidth() : 0;
+        accessCycles.totalAccessCycles = totalBytes / mem->Bandwidth();
+        memoryAccessCycles[mem] = accessCycles;
+    }
+
+    return memoryAccessCycles;
 }
 
 }  // namespace regor
