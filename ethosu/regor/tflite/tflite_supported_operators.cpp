@@ -551,6 +551,47 @@ bool TfLiteSupportedOperators::ConstraintTCShapes(const Operation *op)
     return true;
 }
 
+bool TfLiteSupportedOperators::ConstraintRsqrt(const Operation *op)
+{
+    OpType opType = op->Type();
+    if ( opType != OpType::Rsqrt )
+    {
+        return true;
+    }
+    auto ifmConn = op->Input(TensorUsage::IFM);
+    assert(ifmConn);
+    auto ifmType = ifmConn->tensor->Type();
+    if ( ifmType != DataType::Int8 )
+    {
+        Failure(op, fmt::format("{} IFM", DataTypeToString(ifmType)), "IFM must be Int8");
+        return false;
+    }
+    return true;
+}
+
+bool TfLiteSupportedOperators::ConstraintConstParams(const Operation *op)
+{
+    OpType opType = op->Type();
+    if ( opType != OpType::Slice )
+    {
+        return true;
+    }
+
+    for ( const auto item : op->Inputs().pairs() )
+    {
+        auto usage = item.first;
+        auto &conn = item.second;
+        if ( IsParams(usage) && !conn.tensor->IsConstant() )
+        {
+            assert(conn.tensor);
+            Failure(op, fmt::format("non-constant tensor {}", conn.tensor->Name()), "Parameter tensors must be constant");
+            return false;
+        }
+    }
+
+    return true;
+}
+
 void TfLiteSupportedOperators::Failure(const Operation *op, const std::string &message, const std::string &constraint)
 {
     assert(op);
@@ -597,6 +638,8 @@ TfLiteSupportedOperators::TfLiteSupportedOperators(IArchitectureConstraints *con
         &TfLiteSupportedOperators::ConstraintMaxPool,
         &TfLiteSupportedOperators::ConstraintTCStrides,
         &TfLiteSupportedOperators::ConstraintTCShapes,
+        &TfLiteSupportedOperators::ConstraintRsqrt,
+        &TfLiteSupportedOperators::ConstraintConstParams,
     };
 }
 

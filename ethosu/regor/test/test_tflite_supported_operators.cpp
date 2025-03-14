@@ -343,6 +343,39 @@ TEST_CASE("Supported operators Common")
         REQUIRE(supportedOps->Check(op.get()) == true);
         op->Disconnect();
     }
+
+    SECTION("ConstraintRsqrt")
+    {
+        // Rsqrt is only supported with int8 input
+        auto op = CreateOperation(OpType::Rsqrt, Shape(1, 10, 10, 1), DataType::Int8, Shape(1, 10, 10, 1), DataType::Int8);
+        REQUIRE(supportedOps->Check(op.get()) == true);
+        op->Disconnect();
+        for ( auto dtype : {DataType::UInt8, DataType::Int16, DataType::Int32} )
+        {
+            auto op2 = CreateOperation(OpType::Rsqrt, Shape(1, 10, 10, 1), dtype, Shape(1, 10, 10, 1), dtype);
+            REQUIRE(supportedOps->Check(op2.get()) == false);
+            op2->Disconnect();
+        }
+    }
+
+    SECTION("ConstraintConstParams")
+    {
+        auto op = CreateOperation(OpType::Slice, Shape(1, 10, 10, 1), DataType::Int8, Shape(1, 10, 10, 1), DataType::Int8);
+        auto begin = CreateTensor("begin", Shape(4), DataType::Int32);
+        auto slice = CreateTensor("slice", Shape(4), DataType::Int32);
+        // validate parameter-tensors can't be dynamic
+        op->ConnectInput(TensorUsage::Params0, begin);
+        op->ConnectInput(TensorUsage::Params1, slice);
+        REQUIRE(supportedOps->Check(op.get()) == false);
+
+        // validate parameter-tensors can be const
+        begin = CreateTensor("begin", Shape(4), DataType::Int32, std::vector<int>(4, 1));
+        slice = CreateTensor("slice", Shape(4), DataType::Int32, std::vector<int>(4, 1));
+        op->ConnectInput(TensorUsage::Params0, begin);
+        op->ConnectInput(TensorUsage::Params1, slice);
+        REQUIRE(supportedOps->Check(op.get()) == true);
+        op->Disconnect();
+    }
 }
 
 TEST_CASE("Supported operators EthosU55")

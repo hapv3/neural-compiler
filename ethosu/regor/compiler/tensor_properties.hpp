@@ -75,6 +75,11 @@ constexpr inline bool IsIFM(TensorUsage usage)
     return (usage & TensorUsage::TypeMask) == TensorUsage::IFM;
 }
 
+constexpr inline bool IsParams(TensorUsage usage)
+{
+    return (usage & TensorUsage::TypeMask) == TensorUsage::Params;
+}
+
 template<typename NUMERIC>
 constexpr inline TensorUsage MakeTensorUsage(TensorUsage type, NUMERIC index)
 {

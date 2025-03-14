@@ -67,5 +67,7 @@ private:
     bool ConstraintMaxPool(const Operation *op);
     bool ConstraintTCStrides(const Operation *op);
     bool ConstraintTCShapes(const Operation *op);
+    bool ConstraintRsqrt(const Operation *op);
+    bool ConstraintConstParams(const Operation *op);
 };
 }  // namespace regor
