@@ -376,6 +376,76 @@ TEST_CASE("Supported operators Common")
         REQUIRE(supportedOps->Check(op.get()) == true);
         op->Disconnect();
     }
+
+    SECTION("ConstraintMean")
+    {
+        {
+            // Supported mean
+            auto op = CreateOperation(OpType::Mean, Shape(1, 10, 10, 1), DataType::Int8, Shape(1, 1, 10, 1), DataType::Int8);
+            auto params = CreateTensor("axis", Shape(1), DataType::Int32, std::vector<int>{1});
+            op->ConnectInput(TensorUsage::Params, params);
+            REQUIRE(supportedOps->Check(op.get()) == true);
+            op->Disconnect();
+        }
+        {
+            // Batch > 1 is unsupported
+            auto op = CreateOperation(OpType::Mean, Shape(2, 10, 10, 1), DataType::Int8, Shape(2, 1, 10, 1), DataType::Int8);
+            auto params = CreateTensor("axis", Shape(1), DataType::Int32, std::vector<int>{1});
+            op->ConnectInput(TensorUsage::Params, params);
+            REQUIRE(supportedOps->Check(op.get()) == false);
+            op->Disconnect();
+        }
+        {
+            // Reduced depth only supported if any of H,W,C is 1
+            auto op = CreateOperation(OpType::Mean, Shape(1, 2, 10, 5), DataType::Int8, Shape(1, 2, 10, 1), DataType::Int8);
+            auto params = CreateTensor("axis", Shape(1), DataType::Int32, std::vector<int>{3});
+            op->ConnectInput(TensorUsage::Params, params);
+            REQUIRE(supportedOps->Check(op.get()) == false);
+            // change height to 1 and validate pass
+            auto ifmConn = op->Input(TensorUsage::IFM);
+            auto ofmConn = op->Output(TensorUsage::OFM);
+            ifmConn->shape = ifmConn->shape.WithHeight(1);
+            ofmConn->shape = ofmConn->shape.WithHeight(1);
+            REQUIRE(supportedOps->Check(op.get()) == true);
+            op->Disconnect();
+        }
+        {
+            // Kernel_size must not be greater than 64 * 64
+            auto op = CreateOperation(OpType::Mean, Shape(1, 64 * 64 + 1, 10, 5), DataType::Int8, Shape(1, 1, 10, 5), DataType::Int8);
+            auto params = CreateTensor("axis", Shape(1), DataType::Int32, std::vector<int>{1});
+            op->ConnectInput(TensorUsage::Params, params);
+            REQUIRE(supportedOps->Check(op.get()) == false);
+            // change ifm height to 64*64 and validate pass
+            auto ifmConn = op->Input(TensorUsage::IFM);
+            ifmConn->shape = ifmConn->shape.WithHeight(64 * 64);
+            REQUIRE(supportedOps->Check(op.get()) == true);
+            op->Disconnect();
+        }
+        {
+            // max reduced elements uint8 (2²³)
+            auto op = CreateOperation(OpType::Mean, Shape(1, 1 << 12, 1 << 11, 1), DataType::UInt8, Shape(1, 1, 1, 1), DataType::UInt8);
+            auto params = CreateTensor("axis", Shape(2), DataType::Int32, std::vector<int>{1, 2});
+            op->ConnectInput(TensorUsage::Params, params);
+            REQUIRE(supportedOps->Check(op.get()) == true);
+            auto ifmConn = op->Input(TensorUsage::IFM);
+            // increase height and validate failure
+            ifmConn->shape = ifmConn->shape.WithHeight(ifmConn->shape.Height() + 1);
+            REQUIRE(supportedOps->Check(op.get()) == false);
+            op->Disconnect();
+        }
+        {
+            // max reduced elements int16 (2¹⁶)
+            auto op = CreateOperation(OpType::Mean, Shape(1, 1 << 11, 1 << 5, 1), DataType::Int16, Shape(1, 1, 1, 1), DataType::Int16);
+            auto params = CreateTensor("axis", Shape(2), DataType::Int32, std::vector<int>{1, 2});
+            op->ConnectInput(TensorUsage::Params, params);
+            REQUIRE(supportedOps->Check(op.get()) == true);
+            auto ifmConn = op->Input(TensorUsage::IFM);
+            // increase height and validate failure
+            ifmConn->shape = ifmConn->shape.WithHeight(ifmConn->shape.Height() + 1);
+            REQUIRE(supportedOps->Check(op.get()) == false);
+            op->Disconnect();
+        }
+    }
 }
 
 TEST_CASE("Supported operators EthosU55")

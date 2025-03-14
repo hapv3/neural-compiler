@@ -572,9 +572,13 @@ bool TfLiteSupportedOperators::ConstraintRsqrt(const Operation *op)
 bool TfLiteSupportedOperators::ConstraintConstParams(const Operation *op)
 {
     OpType opType = op->Type();
-    if ( opType != OpType::Slice )
+    switch ( opType )
     {
-        return true;
+        case OpType::Slice:
+        case OpType::Mean:
+            break;
+        default:
+            return true;
     }
 
     for ( const auto item : op->Inputs().pairs() )
@@ -591,6 +595,115 @@ bool TfLiteSupportedOperators::ConstraintConstParams(const Operation *op)
 
     return true;
 }
+
+bool TfLiteSupportedOperators::ConstraintMean(const Operation *op)
+{
+    OpType opType = op->Type();
+    if ( opType != OpType::Mean )
+    {
+        return true;
+    }
+    static constexpr int MAX_MEAN_KERNEL_SIZE = 64 * 64;
+    static constexpr int MAX_MEAN_ELEMENTS_INT8 = 1 << 24;   // 2²⁴ x 2⁷  = 2³¹
+    static constexpr int MAX_MEAN_ELEMENTS_UINT8 = 1 << 23;  // 2²³ x 2⁸  = 2³¹
+    static constexpr int MAX_MEAN_ELEMENTS_INT16 = 1 << 16;  // 2¹⁶ x 2¹⁵ = 2³¹
+    auto ifmConn = op->Input(TensorUsage::IFM);
+    auto params = op->Input(TensorUsage::Params);
+    assert(ifmConn);
+    assert(params);
+    auto ifmShape = ifmConn->shape;
+    auto axisTens = params->tensor;
+    auto axisCount = axisTens->StorageShape().IsEmpty() ? 1 : axisTens->StorageShape().Depth();
+    auto axisValues = axisTens->View().Values<int32_t>();
+
+    auto axisMask = ifmShape.WithZeros();
+    for ( int i = 0; i < axisCount; i++ )
+    {
+        axisMask[axisValues[i]] = 1;
+    }
+
+    axisMask = Shape::PadAxes(axisMask, 4, 0);
+    Shape ifmShape4D = Shape::PadAxes(ifmShape, 4, 1);
+
+    auto ifmType = ifmConn->tensor->Type();
+
+    // Constrain IFM-Batch to 1
+    if ( ifmShape4D.Batch() > 1 )
+    {
+        Failure(op, fmt::format("Batch > 1: {}", ifmShape4D.ToString()), "Batch > 1 is not supported");
+        return false;
+    }
+
+    // Reduced depth is only supported if any of IFM H,W,C is 1
+    if ( axisMask.Depth() )
+    {
+        bool supported = false;
+        for ( int i = 1; i < 4; i++ )
+        {
+            if ( ifmShape4D[i] == 1 )
+            {
+                supported = true;
+                break;
+            }
+        }
+        if ( !supported )
+        {
+            Failure(op, fmt::format("Unsupported depth-reduction.  IFM: {}", ifmShape4D.ToString()), "Depth is only supported if any of h,w,c == 1");
+            return false;
+        }
+    }
+
+    // Reduced axes are represented with their IFM-value
+    // Non reduced axes are represented by 0
+    // e.g. IFM (5,8,7,9) with axis=H,C -> (0,8,0,9)
+    Shape reducedAxes = ifmShape4D * axisMask;
+    // Constrain kernel-size
+    if ( reducedAxes.GreaterMask(Shape(nullptr, 4, MAX_MEAN_KERNEL_SIZE)) != 0 )
+    {
+        static const std::string constraint = fmt::format("Reduced axis must be less than {}", MAX_MEAN_KERNEL_SIZE);
+        Failure(op, "Reduced axis is too large", constraint);
+        return false;
+    }
+
+    // Constrain reduced elements
+    int elements = 1;
+    for ( int i = 0; i < axisMask.Size(); i++ )
+    {
+        elements *= axisMask[i] ? ifmShape4D[i] : 1;
+    }
+    switch ( ifmConn->tensor->Type() )
+    {
+        case DataType::Int8:
+            if ( elements > MAX_MEAN_ELEMENTS_INT8 )
+            {
+                static const std::string constraint = fmt::format("max elements (int8) = {}", MAX_MEAN_ELEMENTS_INT8);
+                Failure(op, fmt::format("Too many reduced elements: {}", elements), constraint);
+                return false;
+            }
+            break;
+        case DataType::UInt8:
+            if ( elements > MAX_MEAN_ELEMENTS_UINT8 )
+            {
+                static const std::string constraint = fmt::format("max elements (uint8) = {}", MAX_MEAN_ELEMENTS_UINT8);
+                Failure(op, fmt::format("Too many reduced elements: {}", elements), constraint);
+                return false;
+            }
+            break;
+        case DataType::Int16:
+            if ( elements > MAX_MEAN_ELEMENTS_INT16 )
+            {
+                static const std::string constraint = fmt::format("max elements (int16) = {}", MAX_MEAN_ELEMENTS_INT16);
+                Failure(op, fmt::format("Too many reduced elements: {}", elements), constraint);
+                return false;
+            }
+            break;
+        default:
+            Failure(op, fmt::format("Unsupported Mean IFM type {}", DataTypeToString(ifmType)));
+            return false;
+    }
+    return true;
+}
+
 
 void TfLiteSupportedOperators::Failure(const Operation *op, const std::string &message, const std::string &constraint)
 {
@@ -640,6 +753,7 @@ TfLiteSupportedOperators::TfLiteSupportedOperators(IArchitectureConstraints *con
         &TfLiteSupportedOperators::ConstraintTCShapes,
         &TfLiteSupportedOperators::ConstraintRsqrt,
         &TfLiteSupportedOperators::ConstraintConstParams,
+        &TfLiteSupportedOperators::ConstraintMean,
     };
 }
 

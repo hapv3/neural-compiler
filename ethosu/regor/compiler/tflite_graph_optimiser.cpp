@@ -1743,75 +1743,6 @@ Operation *TFLiteGraphOptimiser::ConvertSoftmaxOps(Graph *const graph, Operation
     return _softmax->ConvertOp(operation);
 }
 
-static bool MeanOpSupported(Operation *const operation, Shape &reduceAxis, Shape &ifmShape4D)
-{
-    auto ifmConn = operation->Input(TensorUsage::IFM0);
-    auto ifm = ifmConn->tensor;
-    auto axis = operation->Input(TensorUsage::Params)->tensor;
-    auto axisValues = axis->View().Values<int32_t>();
-    auto axisCount = axis->StorageShape().IsEmpty() ? 1 : axis->StorageShape().Depth();
-    auto ifmDims = ifmShape4D.Size();
-
-    // Max kernel size
-    static constexpr int MAX_MEAN_KERNEL_SIZE = 64 * 64;
-    // Max size to avoid overflow INT32
-    static constexpr int MAX_MEAN_ELEMENTS_INT8 = 2 << 23;   // 2²⁴ x 2⁷  = 2³¹
-    static constexpr int MAX_MEAN_ELEMENTS_UINT8 = 2 << 22;  // 2²³ x 2⁸  = 2³¹
-    static constexpr int MAX_MEAN_ELEMENTS_INT16 = 2 << 15;  // 2¹⁶ x 2¹⁵ = 2³¹
-
-    bool supported = false;
-
-    // Compute total number of elements
-    int elements = 1;
-    for ( int i = 0; i < ifmDims; ++i )
-    {
-        elements *= reduceAxis[i] ? ifmShape4D[i] : 1;
-    }
-
-    // Make sure overflow can not occur
-    switch ( ifm->Type() )
-    {
-        case DataType::Int8:
-            supported = elements <= MAX_MEAN_ELEMENTS_INT8;
-            break;
-
-        case DataType::UInt8:
-            supported = elements <= MAX_MEAN_ELEMENTS_UINT8;
-            break;
-
-        case DataType::Int16:
-            supported = elements <= MAX_MEAN_ELEMENTS_INT16;
-            break;
-
-        default:
-            supported = false;
-            break;
-    }
-
-    // Only support batch 1
-    supported = supported && (ifmShape4D.Batch() == 1);
-
-    // Reduced axis must be no greater than MAX_MEAN_KERNEL_SIZE
-    supported = supported && (reduceAxis.Depth() * ifmShape4D.Depth() <= MAX_MEAN_KERNEL_SIZE);
-    supported = supported && (reduceAxis.Width() * ifmShape4D.Width() <= MAX_MEAN_KERNEL_SIZE);
-    supported = supported && (reduceAxis.Height() * ifmShape4D.Height() <= MAX_MEAN_KERNEL_SIZE);
-
-    // Depth is supported if any of h,w,c == 1
-    if ( supported && reduceAxis.Depth() )
-    {
-        supported = false;
-        for ( int i = 1; i < 4; i++ )
-        {
-            if ( ifmShape4D[i] == 1 )
-            {
-                supported = true;
-                break;
-            }
-        }
-    }
-    return supported;
-}
-
 Operation *TFLiteGraphOptimiser::ConvertMeanOps(Graph *const, Operation *const operation)
 {
     auto returnOp = operation;
@@ -1838,14 +1769,7 @@ Operation *TFLiteGraphOptimiser::ConvertMeanOps(Graph *const, Operation *const o
         }
         // Create a 4D shape to indicate which axis that will be reduced
         Shape reduceAxis4D = Shape::PadAxes(reduceAxis, 4, 0);
-
         Shape ifmShape4D = Shape::PadAxes(ifmShape, 4, 1);
-
-        // Check if it is possible to convert the MEAN
-        if ( !MeanOpSupported(operation, reduceAxis4D, ifmShape4D) )
-        {
-            return operation;
-        }
 
         // Fix intermediateShape when keep_dims is false
         // e.g. IFM=1xHxWxC axis=2 OFM=1xHxC, the intermediateShape should be 1xHx1xC

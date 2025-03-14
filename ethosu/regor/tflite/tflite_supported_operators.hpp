@@ -69,5 +69,6 @@ private:
     bool ConstraintTCShapes(const Operation *op);
     bool ConstraintRsqrt(const Operation *op);
     bool ConstraintConstParams(const Operation *op);
+    bool ConstraintMean(const Operation *op);
 };
 }  // namespace regor
