@@ -356,11 +356,10 @@ bool TfLiteSupportedOperators::ConstraintBias(const Operation *op)
     {
         return true;
     }
-    int biasDim = bConn->shape.Size();
-
-    if ( biasDim > 1 )
+    auto bShape = bConn->shape;
+    if ( bShape.Elements() > bShape.Depth() )
     {
-        Failure(op, fmt::format("Operation has {}D bias shape.", biasDim), "The bias tensor shape must be 1D");
+        Failure(op, fmt::format("Bias shape: {}", bShape.ToString()), "bias-values must be stored in channel axis");
         return false;
     }
     if ( !bConn->tensor->IsConstant() )

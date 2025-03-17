@@ -222,57 +222,57 @@ TEST_CASE("Supported operators Common")
 
     SECTION("ConstraintBias")
     {
-        auto op = CreateOperation(OpType::DepthwiseConv2D, Shape(1, 5, 5, 1), DataType::Int8, Shape(1, 5, 5, 1), DataType::Int8);
-        std::vector<int8_t> wValues(1, 1);
-        auto weights = CreateTensor("weights", Shape(1, 1, 1, 1), DataType::Int8, std::move(wValues));
+        auto op = CreateOperation(OpType::DepthwiseConv2D, Shape(1, 5, 5, 2), DataType::Int8, Shape(1, 5, 5, 2), DataType::Int8);
+        std::vector<int8_t> wValues(2, 1);
+        auto weights = CreateTensor("weights", Shape(1, 1, 1, 2), DataType::Int8, std::move(wValues));
         weights->SetAxisOrder(AxisOrder::IHWO);
         op->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
         REQUIRE(supportedOps->Check(op.get()) == true);
         {
             // Bias must be const
-            auto bias = CreateTensor("bias", Shape(1), DataType::Int32);
+            auto bias = CreateTensor("bias", Shape(1, 1, 1, 2), DataType::Int32);
             op->ConnectInput(TensorUsage::Scales, bias).Set(Quantization::Unit());
             REQUIRE(supportedOps->Check(op.get()) == false);
         }
         {
-            // Bias must be 1D
-            std::vector<int32_t> values(1, 1);
-            auto bias = CreateTensor("bias", Shape(1, 1, 1, 1), DataType::Int32, std::move(values));
+            // Bias values must be stored in channel-axis
+            std::vector<int32_t> values(2, 1);
+            auto bias = CreateTensor("bias", Shape(1, 1, 2, 1), DataType::Int32, std::move(values));
             op->ConnectInput(TensorUsage::Scales, bias).Set(Quantization::Unit());
             REQUIRE(supportedOps->Check(op.get()) == false);
         }
         {
             // Bias can't be 8bit
-            std::vector<int8_t> values(1, 1);
-            auto bias = CreateTensor("bias", Shape(1), DataType::Int8, std::move(values));
+            std::vector<int8_t> values(2, 1);
+            auto bias = CreateTensor("bias", Shape(1, 1, 1, 2), DataType::Int8, std::move(values));
             op->ConnectInput(TensorUsage::Scales, bias).Set(Quantization::Unit());
             REQUIRE(supportedOps->Check(op.get()) == false);
         }
         {
             // Bias can't be 16bit
-            std::vector<int16_t> values(1, 1);
-            auto bias = CreateTensor("bias", Shape(1), DataType::Int16, std::move(values));
+            std::vector<int16_t> values(2, 1);
+            auto bias = CreateTensor("bias", Shape(1, 1, 1, 2), DataType::Int16, std::move(values));
             op->ConnectInput(TensorUsage::Scales, bias).Set(Quantization::Unit());
             REQUIRE(supportedOps->Check(op.get()) == false);
         }
         {
             // Bias can be 32 bit
-            std::vector<int32_t> values(1, std::numeric_limits<int32_t>::max());
-            auto bias = CreateTensor("bias", Shape(1), DataType::Int32, std::move(values));
+            std::vector<int32_t> values(2, std::numeric_limits<int32_t>::max());
+            auto bias = CreateTensor("bias", Shape(1, 1, 1, 2), DataType::Int32, std::move(values));
             op->ConnectInput(TensorUsage::Scales, bias).Set(Quantization::Unit());
             REQUIRE(supportedOps->Check(op.get()) == true);
         }
         {
             // Bias can be 40 bit
-            std::vector<int64_t> values(1, (1LL << 40) - 1);
-            auto bias = CreateTensor<int64_t>("bias", Shape(1), DataType::Int64, std::move(values));
+            std::vector<int64_t> values(2, (1LL << 40) - 1);
+            auto bias = CreateTensor<int64_t>("bias", Shape(1, 1, 1, 2), DataType::Int64, std::move(values));
             op->ConnectInput(TensorUsage::Scales, bias).Set(Quantization::Unit());
             REQUIRE(supportedOps->Check(op.get()) == true);
         }
         {
             // Bias can't be >40 bit
-            std::vector<int64_t> values(1, std::numeric_limits<int64_t>::max());
-            auto bias = CreateTensor("bias", Shape(1), DataType::Int64, std::move(values));
+            std::vector<int64_t> values(2, std::numeric_limits<int64_t>::max());
+            auto bias = CreateTensor("bias", Shape(1, 1, 1, 2), DataType::Int64, std::move(values));
             op->ConnectInput(TensorUsage::Scales, bias).Set(Quantization::Unit());
             REQUIRE(supportedOps->Check(op.get()) == false);
         }
