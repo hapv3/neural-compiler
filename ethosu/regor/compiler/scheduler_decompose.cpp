@@ -236,6 +236,7 @@ bool CanDecompose(Architecture *, const SchedulerOperation *schedOp)
     if ( schedOp->Type() == OpType::TransposeConv2D ) return true;
     if ( DecomposeAsElementwise(schedOp->Type()) || schedOp->Type() == OpType::MemoryCopy ) return true;
     if ( schedOp->Type() == OpType::MatMul ) return true;
+    if ( schedOp->Type() == OpType::Resize ) return true;
     if ( schedOp->Type() == OpType::ReduceSum ) return true;
     if ( schedOp->Type() == OpType::ReduceMin ) return true;
     if ( schedOp->Type() == OpType::ReduceMax ) return true;
@@ -1280,6 +1281,88 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTransposeConv2D(Archit
     return result;
 }
 
+// TODO: Move this to run prior to decomposition.
+std::vector<std::unique_ptr<SchedulerOperation>> LegaliseResize(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
+{
+    // Convert ResizeBilinear/NearestNeighbor to a number of kernel 1x1 average pools with nearest neighbor x2 upScaling
+    // and a final average pool with a kernel size that depends upon the resize ops upScaling factor (x2, x4 or x8). The
+    // maximum upscale factor is limited to x8 because of the limit 8x8 kernel size limit for average pool with padding.
+
+    std::vector<std::unique_ptr<SchedulerOperation>> result;
+
+    auto ifmConn = op->Input(TensorUsage::IFM);
+    auto ofmConn = op->Output(TensorUsage::OFM);
+    assert(ifmConn);
+    assert(ofmConn);
+
+    auto *attr = op->Attribute<resize_attr_t>();
+    auto upscaleH = attr->scaleY.n;
+    auto upscaleW = attr->scaleX.n;
+    auto remainingUpscale = std::max(upscaleW, upscaleH);
+    bool canLegalise = true;
+
+    ArchRequirements req{};
+    OperatorQuery(arch, op.get(), &req);
+    auto reqScale = QuantizedScale(1, IntLog2(attr->scaleX.n * attr->scaleY.n));
+
+
+    if ( !IsPowerOfTwo(remainingUpscale) || remainingUpscale > 8 || remainingUpscale < 2 )
+    {
+        canLegalise = false;
+    }
+    else if ( (upscaleH == 1 && ifmConn->shape.Height() != 1) || (upscaleW == 1 && ifmConn->shape.Width() != 1) )
+    {
+        canLegalise = false;
+    }
+    else if ( ofmConn->quantization.scales[0] != reqScale )
+    {
+        canLegalise = false;
+    }
+
+    if ( !canLegalise )
+    {
+        result.emplace_back(std::move(op));
+        return result;
+    }
+
+    auto ofmShape = ofmConn->shape;
+    auto ifmShape = ifmConn->shape;
+
+    ofmConn->tensor->dataType = ifmConn->tensor->dataType;
+    ifmConn->resamplingMode = ArchResampling::Nearest;
+    // Perform 2x upScaling up to the last required
+    while ( remainingUpscale > 2 )
+    {
+        auto newOp = std::make_unique<SchedulerOperation>(OpType::AvgPool);
+        *newOp->ConnectInput(TensorUsage::IFM, ifmConn->tensor) = *ifmConn;
+        std::shared_ptr<SchedulerTensor> tens = ofmConn->tensor->Clone();
+        auto shape = ofmShape.WithHW(ifmConn->shape.Height() * std::min(2, upscaleH), ifmConn->shape.Width() * std::min(2, upscaleW));
+        tens->storageShape = shape;
+        ifmConn = newOp->ConnectOutput(TensorUsage::OFM, tens);
+        ifmConn->quantization = Quantization::Unit();
+        ifmConn->shape = shape;
+        ifmConn->resamplingMode = ArchResampling::Nearest;
+        auto kernel = Kernel::UnitKernel();
+        newOp->SetKernel(&kernel);
+        result.emplace_back(std::move(newOp));
+
+        remainingUpscale /= 2;
+    }
+
+    // Perform last 2x upScaling and post-processing.
+    ifmConn->resamplingMode = ArchResampling::Nearest;
+    auto newOp = std::make_unique<SchedulerOperation>(OpType::AvgPool);
+    *newOp->ConnectInput(TensorUsage::IFM, ifmConn->tensor) = *ifmConn;
+
+    Kernel kernel = Kernel::UnitKernel().WithPadding({0, 0, upscaleH - 1, upscaleW - 1, 0, 0}).WithSize({upscaleW, upscaleH});
+    newOp->SetKernel(&kernel);
+    ofmConn->quantization = Quantization::Unit();
+    ofmConn->rounding = RoundMode::AUTO;
+    *newOp->ConnectOutput(TensorUsage::OFM, ofmConn->tensor) = *ofmConn;
+    result.emplace_back(std::move(newOp));
+    return result;
+}
+
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeElementwise(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
 {
     std::vector<std::unique_ptr<SchedulerOperation>> result;
@@ -1603,7 +1686,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTranspose(Architecture
     const auto &ifmShape = ifmConn->SliceShape();
     const auto axes = ifmShape.Size();
 
-    auto req = ArchRequirements();
+    ArchRequirements req{};
     auto qResult = OperatorQuery(arch, op.get(), &req);
     bool decomposeMask = false;
     bool decomposeAxes = false;
@@ -1773,7 +1856,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeResize(Architecture *a
     ofmSlice.Initialize(ofmShape.WithZeros(), ofmShape);
     ifmSlice.Initialize(ifmShape.WithZeros(), ifmShape);
 
-    auto req = ArchRequirements();
+    ArchRequirements req{};
     auto qResult = OperatorQuery(arch, op.get(), &req);
     bool decomposeLeadingDims = false;
     if ( qResult.Any(QueryResult::HasRequirements) && req.req.Any(ArchRequirement::Decompose) )

@@ -1090,11 +1090,6 @@ Operation *TFLiteGraphOptimiser::ConvertResize(Graph *const graph, Operation *co
     Operation *returnOp = operation;
     OpType opType = operation->Type();
 
-    if ( _constraints->OperatorQuery(OpType::Resize).Any(QueryResult::Unsupported) )
-    {
-        // Only run if HW has native Resize support
-        return returnOp;
-    }
     if ( opType == OpType::ResizeBilinear || opType == OpType::ResizeNearestNeighbor )
     {
         auto ifmConn = operation->Input(TensorUsage::IFM);

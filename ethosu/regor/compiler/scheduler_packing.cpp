@@ -615,6 +615,8 @@ std::unique_ptr<SchedulerOperation> SchedulerPacking::MakeSchedulerOperation(Ope
 std::vector<std::unique_ptr<SchedulerOperation>> SchedulerPacking::DecomposeSchedulerOperation(std::unique_ptr<SchedulerOperation> op)
 {
     std::vector<std::unique_ptr<SchedulerOperation>> result;
+    ArchRequirements req{};
+
     switch ( op->Type() )
     {
         case OpType::Conv2D:
@@ -648,14 +650,22 @@ std::vector<std::unique_ptr<SchedulerOperation>> SchedulerPacking::DecomposeSche
         case OpType::Reverse:
             result = DecomposeReverse(_arch, std::move(op));
             break;
+        case OpType::Resize:
+            OperatorQuery(_arch, op.get(), &req);
+            if ( req.substitution == OpType::AvgPool )
+            {
+                result = LegaliseResize(_arch, std::move(op));
+            }
+            else
+            {
+                result = DecomposeResize(_arch, std::move(op));
+            }
+            break;
         case OpType::Transpose:
             result = DecomposeTranspose(_arch, std::move(op));
             break;
         case OpType::MaxPool:
             result = DecomposeMaxPool(_arch, std::move(op));
-            break;
-        case OpType::Resize:
-            result = DecomposeResize(_arch, std::move(op));
             break;
         default:
             if ( DecomposeAsElementwise(op->Type()) || op->Type() == OpType::MemoryCopy )

@@ -235,7 +235,7 @@ bool TfLiteSupportedOperatorsU85::ConstraintResizeBilinear(const Operation *op)
         "if IFM HxW > 1x1\n"
         "\tand ALIGN_CORNERS:\n"
         "\t\tOFM W-1 and H-1 must be a power-of-two integer-multiple of IFM W-1 and H-1\n"
-        "\tor HALF_PIXEL_CENTERS:\n"
+        "\telse:\n"
         "\t\tOFM W and H must be a power-of-two integer-multiple of IFM W and H\n";
     OpType opType = op->Type();
     if ( opType != OpType::ResizeBilinear )
@@ -250,7 +250,6 @@ bool TfLiteSupportedOperatorsU85::ConstraintResizeBilinear(const Operation *op)
     int width_d = ifmConn->shape.Width();
     int height_n = ofmConn->shape.Height();
     int height_d = ifmConn->shape.Height();
-    bool halfPixelCenters = false;
     bool alignCorners = false;
     const tflite::Operator *passthrough = static_cast<const tflite::Operator *>(op->Passthrough());
     assert(passthrough);
@@ -263,7 +262,6 @@ bool TfLiteSupportedOperatorsU85::ConstraintResizeBilinear(const Operation *op)
     const auto *opt = passthrough->builtin_options_as_ResizeBilinearOptions();
     assert(opt);
     alignCorners = opt->align_corners();
-    halfPixelCenters = opt->half_pixel_centers();
 
     if ( alignCorners )
     {

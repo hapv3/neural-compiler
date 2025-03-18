@@ -323,6 +323,16 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
             result.Set(QueryResult::HasRequirements);
         }
     }
+    if ( opType == OpType::Resize )
+    {
+        if ( req )
+        {
+            req->req = ArchRequirement::Decompose;
+            req->substitution = OpType::AvgPool;
+        }
+        result.Set(QueryResult::HasRequirements);
+        return result;
+    }
 
     // TransposeConv2D and Conv3D are legalized during decomposition
     if ( opType == OpType::TransposeConv2D || opType == OpType::Conv3D )

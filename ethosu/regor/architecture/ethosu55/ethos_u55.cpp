@@ -693,7 +693,6 @@ EthosU55NpuOp ArchEthosU55::GetHWOp(OpType type)
         {OpType::AvgPool, EthosU55NpuOp::Pooling},
         {OpType::QuantizedAvgPool, EthosU55NpuOp::Pooling},
         {OpType::QuantizedMaxPool, EthosU55NpuOp::Pooling},
-        {OpType::ResizeBilinear, EthosU55NpuOp::Pooling},
         {OpType::ReduceSum, EthosU55NpuOp::ReduceSum},
         {OpType::Rescale, EthosU55NpuOp::Pooling},
         {OpType::Tile, EthosU55NpuOp::Dma},

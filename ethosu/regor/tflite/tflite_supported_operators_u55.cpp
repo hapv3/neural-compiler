@@ -67,6 +67,7 @@ TfLiteSupportedOperatorsU55::TfLiteSupportedOperatorsU55(IArchitectureConstraint
         OpType::Tile,
         OpType::ExpandDims,
         OpType::ReduceSum,
+        OpType::ResizeBilinear,
         OpType::Rsqrt,
         OpType::Pack,
         OpType::Unpack,
@@ -103,6 +104,7 @@ TfLiteSupportedOperatorsU55::TfLiteSupportedOperatorsU55(IArchitectureConstraint
         &TfLiteSupportedOperatorsU55::ConstraintUnrolledKernelStride,
         &TfLiteSupportedOperatorsU55::ConstraintMatmul,
         &TfLiteSupportedOperatorsU55::ConstraintTranspose,
+        &TfLiteSupportedOperatorsU55::ConstraintResize,
     };
 }
 
@@ -142,6 +144,73 @@ bool TfLiteSupportedOperatorsU55::ConstraintBroadcastShapes(const Operation *op)
     }
     return true;
 }
+
+bool TfLiteSupportedOperatorsU55::ConstraintResize(const Operation *op)
+{
+    if ( op->Type() != OpType::ResizeBilinear )
+    {
+        return true;
+    }
+    auto ifmConn = op->Input(TensorUsage::IFM);
+    auto ofmConn = op->Output(TensorUsage::OFM);
+    assert(ifmConn);
+    assert(ofmConn);
+    Shape ifmShape = Shape::PadAxes(ifmConn->shape, 4, 1);
+    Shape ofmShape = Shape::PadAxes(ofmConn->shape, 4, 1);
+
+    if ( ifmShape.Height() == ofmShape.Height() && ifmShape.Height() == ofmShape.Height() )
+    {
+        return true;
+    }
+    if ( ifmShape.Height() == 1 && ifmShape.Width() == 1 )
+    {
+        return true;
+    }
+
+    const auto *passthrough = static_cast<const tflite::Operator *>(op->Passthrough());
+    assert(passthrough);
+    const auto *opt = passthrough->builtin_options_as_ResizeBilinearOptions();
+    assert(opt);
+    if ( opt->align_corners() )
+    {
+        Failure(op, "Align Corners attribute is true", "Align Corners must be false");
+        return false;
+    }
+    if ( opt->half_pixel_centers() )
+    {
+        Failure(op, "Half Pixel Centers attribute is true", "Half Pixel Centers must be false");
+        return false;
+    }
+    std::string constraint =
+        "If not (IFM H == IFM W == 1) and not IFM Shape == OFM Shape\n"
+        "\tIf W upScale != H upScale:\n"
+        "\t\tOFM W or H must be 1, and scaling in the dim that is must also be 1\n"
+        "\tIF W upScale == H upScale \n"
+        "\t\tupScale needs to be one of: 2x/4x/8x";
+
+    int hUpscale = ofmShape.Height() / ifmShape.Height();
+    int wUpscale = ofmShape.Width() / ifmShape.Width();
+
+    if ( hUpscale != wUpscale )
+    {
+        if ( !((ofmShape.Height() == 1 && hUpscale == 1) || (ofmShape.Width() == 1 && wUpscale == 1)) )
+        {
+            Failure(op,
+                fmt::format("HW upScaling is not equal and operation has unsupported parameter combination ofm h={}, h up-scale={}, ofm w={}, w up-scale={}.",
+                    ofmShape.Height(), hUpscale, ofmShape.Width(), wUpscale),
+                constraint);
+            return false;
+        }
+    }
+    else if ( !((ifmShape.Height() == 1 && ifmShape.Width() == 1) || (ofmShape.Height() % (2 * ifmShape.Height()) == 0 && hUpscale > 1 && hUpscale <= 8)) )
+    {
+        Failure(op,
+            fmt::format("Scaling matches and operation has unsupported scaling={}", float(ofmShape.Height()) / ifmShape.Height()), constraint);
+        return false;
+    }
+    return true;
+}
+
 
 bool TfLiteSupportedOperatorsU55::ConstraintReverse(const Operation *op)
 {
