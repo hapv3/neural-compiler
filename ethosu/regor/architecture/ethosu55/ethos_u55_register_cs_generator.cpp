@@ -1302,8 +1302,7 @@ void EthosU55RCSGenerator::InsertTransposeCommand(const HLCStripe *stripe, Tempo
     auto &ofm = op->ofm;
 
     assert(op->subOps.empty());
-    assert(ifm.format == TensorFormat::NHWC);
-    assert(ofm.format == TensorFormat::NHWC);
+    assert(ifm.dataType == ofm.dataType);
     assert(((ofm.transpose == TransposeType::NWHC) || !ifm.slice.shape || (ifm.shape == ifm.slice.shape)) && "Implementation cannot be sliced");
     ifm.shape = Shape::PadAxes(ifm.shape, 4, 1);
     assert((ifm.shape.AxisProduct(0, ifm.shape.Size() - 3) <= 1) && "Batch transposes unsupported");
@@ -1316,10 +1315,16 @@ void EthosU55RCSGenerator::InsertTransposeCommand(const HLCStripe *stripe, Tempo
     if ( identity )
     {
         LOG_WARN("RCS: Emitting no-op transpose as a memory copy\n");
+        assert(ifm.format == ofm.format);
         auto dma = std::make_unique<HLCDMA>();
         dma->srcMemArea = ifm.memArea;
         dma->srcAddress = ifm.address;
-        dma->length = DataTypeStorageSizeBytes(ifm.dataType, ifm.shape.Elements());
+        int elements = ofm.shape.Elements();
+        if ( ifm.format == TensorFormat::NHCWB16 )
+        {
+            elements = (elements / ofm.shape.Depth()) * RoundAway(ofm.shape.Depth(), 16);
+        }
+        dma->length = DataTypeStorageSizeBytes(ofm.dataType, elements);
         dma->destMemArea = ofm.memArea;
         dma->destAddress = ofm.address;
         emitted.push_back(dma.get());
@@ -1327,6 +1332,9 @@ void EthosU55RCSGenerator::InsertTransposeCommand(const HLCStripe *stripe, Tempo
     }
     else
     {
+        assert(ifm.format == TensorFormat::NHWC);
+        assert(ofm.format == TensorFormat::NHWC);
+
         // Strided output on AveragePool can swap Height/Width over any channel depth by
         // adjusting the output strides to place the channel arrays in the required layout.
         //

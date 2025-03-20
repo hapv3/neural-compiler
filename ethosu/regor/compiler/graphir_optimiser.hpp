@@ -149,7 +149,6 @@ private:
                 &GraphIrOptimiser::RewriteDepthwise,
                 &GraphIrOptimiser::RewriteTransposeConvOFMPadding,
                 &GraphIrOptimiser::OptimiseElementwise,
-                &GraphIrOptimiser::MergeTransposes,
                 &GraphIrOptimiser::RearrangeTranspose,
                 &GraphIrOptimiser::ReshapeReverse,
                 &GraphIrOptimiser::UnrollConv
@@ -160,6 +159,7 @@ private:
         {
             {},
             {
+                &GraphIrOptimiser::MergeTransposes,
                 &GraphIrOptimiser::MoveSplitSliceToConsumer
             }
         },
