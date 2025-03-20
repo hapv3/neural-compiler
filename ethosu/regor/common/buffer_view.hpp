@@ -72,6 +72,15 @@ class Buffer : public std::enable_shared_from_this<Buffer>
 #undef TYPE_FUNC
     };
 
+    // Data storage method
+    enum Placement : uint8_t
+    {
+        Remote,
+        LocalConst,
+        LocalAlloc,
+        LocalVector
+    };
+
     template<typename TYPE>
     struct IsSupportedIntegral
     {
@@ -98,6 +107,7 @@ class Buffer : public std::enable_shared_from_this<Buffer>
     {
         void *data;
         const void *cdata;
+        uint64_t constValue;
     };
 
 private:
@@ -105,7 +115,7 @@ private:
     size_t _sizeBytes = 0;
     const uint32_t _typeHash;
     const uint32_t _utypeHash;
-    bool _isLocal = false;
+    Placement _placement = Placement::Remote;
     LocalStorage _localStorage;
     DeleteFunc _deleter = nullptr;
     Hash128 _dataHash;
@@ -113,6 +123,23 @@ private:
 public:
     Buffer(const Buffer &) = delete;
     Buffer &operator=(const Buffer &) = delete;
+
+    template<typename TYPE>
+    struct ConstValue
+    {
+        TYPE _value;
+        ConstValue(TYPE value) : _value(value) {}
+    };
+
+    template<typename TYPE, std::enable_if_t<IsSupportedIntegral<TYPE>::value, int> = 0>
+    Buffer(const ConstValue<TYPE> &value) :
+            _typeHash(TypeHash<TYPE>::value), _utypeHash(TypeHash<std::make_unsigned_t<TYPE>>::value)
+    {
+        _refData.constValue = uint64_t(value._value);
+        _sizeBytes = sizeof(TYPE);
+        _placement = Placement::LocalConst;
+        _dataHash.v32[0] = uint32_t(value._value);
+    }
 
     template<typename TYPE, std::enable_if_t<IsSupportedIntegral<TYPE>::value, int> = 0>
     Buffer(size_t sizeElements, const TYPE *buffer = nullptr, bool alias = false) :
@@ -129,23 +156,14 @@ public:
             }
             _refData.data = ref;
             _deleter = &Buffer::DeleteArray<TYPE>;
+            _placement = Placement::LocalAlloc;
         }
         else
         {
             assert(alias && buffer);
             _refData.cdata = buffer;
+            _placement = Placement::Remote;
         }
-
-        Rehash();
-    }
-
-    template<typename TYPE, std::enable_if_t<IsSupportedIntegral<TYPE>::value, int> = 0>
-    Buffer(std::unique_ptr<TYPE> ptr) :
-            _typeHash(TypeHash<TYPE>::value), _utypeHash(TypeHash<std::make_unsigned_t<TYPE>>::value)
-    {
-        _refData.data = ptr.release();
-        _sizeBytes = sizeof(TYPE);
-        _deleter = &Buffer::Delete<TYPE>;
 
         Rehash();
     }
@@ -159,6 +177,7 @@ public:
         assert(INT_MAX / int(sizeof(TYPE)) >= sizeElements);
         _sizeBytes = sizeof(TYPE) * sizeElements;
         _deleter = &Buffer::DeleteArray<TYPE>;
+        _placement = Placement::LocalAlloc;
 
         Rehash();
     }
@@ -170,7 +189,7 @@ public:
         new (&GetLocalVector<TYPE>()) std::vector<TYPE>(std::move(buffer));
         _deleter = &Buffer::DeleteVector<TYPE>;
         _refData.data = &GetLocalVector<TYPE>();
-        _isLocal = true;
+        _placement = Placement::LocalVector;
 
         Rehash();
     }
@@ -189,7 +208,7 @@ public:
     {
         // Follow strict reinterpret_cast type aliasing rules
         assert(IsByte<T>::value || (TypeHash<std::make_unsigned_t<T>>::value == _utypeHash));
-        if ( _isLocal )
+        if ( _placement == Placement::LocalVector )
         {
             if constexpr ( IsByte<T>::value )
             {
@@ -221,6 +240,11 @@ public:
                 }
             }
         }
+        else if ( _placement == Placement::LocalConst )
+        {
+            assert(false && "Writing to const value");
+            return reinterpret_cast<T *>(&_refData.constValue);
+        }
         else
         {
             assert(_deleter && "reading const buffer as non-const");
@@ -232,7 +256,7 @@ public:
     template<typename T>
     const T *Data() const
     {
-        if ( _isLocal )
+        if ( _placement == Placement::LocalVector )
         {
             // Follow strict reinterpret_cast type aliasing rules
             assert(IsByte<T>::value || (TypeHash<extended_make_unsigned_t<T>>::value == _utypeHash));
@@ -270,6 +294,10 @@ public:
                 }
             }
         }
+        else if ( _placement == Placement::LocalConst )
+        {
+            return reinterpret_cast<const T *>(&_refData.constValue);
+        }
         else
         {
             assert(uintptr_t(_deleter ? _refData.data : _refData.cdata) % alignof(T) == 0);
@@ -279,7 +307,7 @@ public:
 
     int Size() const
     {
-        if ( _isLocal )
+        if ( _placement == Placement::LocalVector )
         {
             switch ( _typeHash )
             {

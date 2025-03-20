@@ -74,7 +74,7 @@ struct HLCFeatureMap
     Shape shape;
     Shape strides;
     MemArea memArea;
-    BufferView bufferView;
+    std::shared_ptr<const Buffer> constBuffer;
     Quantization quantization;
     Point2i stepXY = {1, 1};
     Address address = -1;

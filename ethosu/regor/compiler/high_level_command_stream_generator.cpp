@@ -247,7 +247,10 @@ static void MakeFeatureMap(TensorUsage usage, const SchedulerConnection *schedCo
     fm.usage = usage;
     fm.address = schedTens->AllocatedAddress();
     fm.quantization = schedConn->quantization;
-    fm.bufferView = schedTens->bufferView;
+    if ( schedTens->bufferView.HasBuffer() )
+    {
+        fm.constBuffer = schedTens->bufferView.Buffer()->shared_from_this();
+    }
     fm.strides = GetStrides(fm);
     fm.stepXY = schedConn->stepXY;
     fm.transpose = schedConn->transpose;

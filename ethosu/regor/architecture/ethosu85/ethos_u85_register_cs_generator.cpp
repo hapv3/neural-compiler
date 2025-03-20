@@ -591,30 +591,30 @@ uint32_t EthosU85RCSGenerator::ToRegion(const MemArea &memArea)
 // quantized value in scalarValue.
 bool EthosU85RCSGenerator::IsScalar(const HLCFeatureMap &fm, int32_t &scalarValue)
 {
-    const auto &view = fm.bufferView;
+    const auto &buffer = fm.constBuffer;
     // A 1-sized feature map in constant memory is a scalar
-    bool isScalar = fm.shape.Elements() == 1 && view.HasBuffer();
+    bool isScalar = fm.shape.Elements() == 1 && buffer;
     if ( isScalar )
     {
         if ( fm.dataType == DataType::Int8 )
         {
-            scalarValue = view.Values<int8_t>()[0];
+            scalarValue = buffer->Data<int8_t>()[0];
         }
         else if ( fm.dataType == DataType::UInt8 )
         {
-            scalarValue = view.Values<uint8_t>()[0];
+            scalarValue = buffer->Data<uint8_t>()[0];
         }
         else if ( fm.dataType == DataType::Int16 )
         {
-            scalarValue = view.Values<int16_t>()[0];
+            scalarValue = buffer->Data<int16_t>()[0];
         }
         else if ( fm.dataType == DataType::UInt16 )
         {
-            scalarValue = view.Values<uint16_t>()[0];
+            scalarValue = buffer->Data<uint16_t>()[0];
         }
         else if ( fm.dataType == DataType::Int32 )
         {
-            scalarValue = view.Values<int32_t>()[0];
+            scalarValue = buffer->Data<int32_t>()[0];
         }
         else
         {  // Unsupported scalar value

@@ -969,7 +969,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv3D(Architecture *a
 
                 // Create SchedulerTensor for 0 (no) bias
                 auto bias0 = bias->tensor->Clone();
-                auto bias0buf = std::make_shared<Buffer>(std::make_unique<int64_t>(0));
+                auto bias0buf = std::make_shared<Buffer>(Buffer::ConstValue<int64_t>(0));
                 assert(DataTypeStorageSizeBits(bias0->dataType) <= int(8 * sizeof(int64_t)));
                 bias0->bufferView = BufferView(bias0buf, 0, DataTypeStorageSizeBits(bias0->dataType), {1}, {});
                 bias0->storageShape = bias0->bufferView.ViewShape();
