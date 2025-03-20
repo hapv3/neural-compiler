@@ -681,9 +681,18 @@ int EthosU55RCSGenerator::CalcBlockDep(const HLCStripe *prevStripe, const HLCStr
     {
         return 0;
     }
+
     const auto &op = stripe->operation;
     const auto &prevOp = prevStripe->operation;
-    const auto &prevOfm = prevOp->ofm;
+    const auto &prevOfm = !prevOp->subOps.empty() ? prevOp->subOps.back().ofm : prevOp->ofm;
+
+    // Multi-pass transposes may overlap because the implementation adjusts
+    // the input/output strides independently of the OFM area.
+    if ( !IsNone(prevOfm.transpose) && (prevOfm.transpose != TransposeType::NWHC) )
+    {
+        return 0;
+    }
+
     if ( _arch->_shram.reservedEndBanks == 0 )
     {
         // SHRAM has no reserved LUT banks
