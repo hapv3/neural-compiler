@@ -70,5 +70,6 @@ private:
     bool ConstraintRsqrt(const Operation *op);
     bool ConstraintConstParams(const Operation *op);
     bool ConstraintMean(const Operation *op);
+    bool ConstraintSoftmax(const Operation *op);
 };
 }  // namespace regor

@@ -702,6 +702,25 @@ bool TfLiteSupportedOperators::ConstraintMean(const Operation *op)
     return true;
 }
 
+bool TfLiteSupportedOperators::ConstraintSoftmax(const Operation *op)
+{
+    OpType opType = op->Type();
+    if ( opType != OpType::Softmax )
+    {
+        return true;
+    }
+    auto ifmConn = op->Input(TensorUsage::IFM);
+    assert(ifmConn);
+    static constexpr int maxProd = 1 << 16;
+    const auto &ifmShape = ifmConn->shape;
+    if ( ifmShape.ElementsWH() > maxProd )
+    {
+        Failure(op, fmt::format("ifmShape: ({}), W * H = {}", ifmShape.ToString(), ifmShape.ElementsWH()),
+            "The product of IFM width and height must be less than 65536");
+        return false;
+    }
+    return true;
+}
 
 void TfLiteSupportedOperators::Failure(const Operation *op, const std::string &message, const std::string &constraint)
 {
@@ -752,6 +771,7 @@ TfLiteSupportedOperators::TfLiteSupportedOperators(IArchitectureConstraints *con
         &TfLiteSupportedOperators::ConstraintRsqrt,
         &TfLiteSupportedOperators::ConstraintConstParams,
         &TfLiteSupportedOperators::ConstraintMean,
+        &TfLiteSupportedOperators::ConstraintSoftmax,
     };
 }
 
