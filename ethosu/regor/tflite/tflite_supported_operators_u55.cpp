@@ -94,6 +94,8 @@ TfLiteSupportedOperatorsU55::TfLiteSupportedOperatorsU55(IArchitectureConstraint
         &TfLiteSupportedOperatorsU55::ConstraintBroadcastShapes,
         &TfLiteSupportedOperatorsU55::ConstraintReverse,
         &TfLiteSupportedOperatorsU55::Constraint32bitOps,
+        &TfLiteSupportedOperatorsU55::ConstraintKernelStride,
+        &TfLiteSupportedOperatorsU55::ConstraintUnrolledKernelStride,
     };
 }
 
@@ -195,4 +197,63 @@ bool TfLiteSupportedOperatorsU55::Constraint32bitOps(const Operation *op)
     }
     return true;
 }
+
+bool TfLiteSupportedOperatorsU55::ConstraintKernelStride(const Operation *op)
+{
+    const auto kernel = op->Kernel();
+    assert(kernel);
+    const int32_t stride_w = kernel->Stride().x;
+    const int32_t stride_h = kernel->Stride().y;
+    if ( op->Type() == OpType::Conv2D )
+    {
+        // Conv2D is handled by ConstraintUnrolledKernelStride
+        return true;
+    }
+    if ( stride_w > 3 || stride_h > 3 )
+    {
+        Failure(op, fmt::format("Unsupported kernel stride: {}, {}", stride_w, stride_h), "kernel stride must be in the range (1,3)");
+        return false;
+    }
+    return true;
+}
+
+bool TfLiteSupportedOperatorsU55::ConstraintUnrolledKernelStride(const Operation *op)
+{
+    // Constraints for UnrollConv
+    const static char *constraint =
+        "Stride >3 is only supported when:\n"
+        "\t * kernel dilation = 1\n"
+        "\t * IFM and OFM are not sliced\n"
+        "\t * padding = VALID\n";
+    const auto ifmConn = op->Input(TensorUsage::IFM);
+    const auto ofmConn = op->Output(TensorUsage::OFM);
+    const auto kernel = op->Kernel();
+    assert(ifmConn);
+    assert(ofmConn);
+    assert(kernel);
+    if ( op->Type() != OpType::Conv2D )
+    {
+        return true;
+    }
+    const int32_t stride_w = kernel->Stride().x;
+    const int32_t stride_h = kernel->Stride().y;
+    if ( stride_w <= 3 && stride_h <= 3 )
+    {
+        // always supported
+        return true;
+    }
+    // stride > 3 requires unrolling, check unroll conditions
+    const bool hasPadding = !kernel->Padding().IsZero();
+    const bool hasIfmSlice = ifmConn->slice.shape.IsValid() || ifmConn->slice.offset.IsValid();
+    const bool hasOfmSlice = ofmConn->slice.shape.IsValid() || ofmConn->slice.offset.IsValid();
+    const int32_t dilation_h = kernel->Dilation().y;
+    const int32_t dilation_w = kernel->Dilation().x;
+    const bool canUnroll = !hasPadding && !hasIfmSlice && !hasOfmSlice && (dilation_h == 1) && (dilation_w == 1);
+    if ( !canUnroll )
+    {
+        Failure(op, fmt::format("Unsupported kernel stride: {}, {}", stride_w, stride_h), constraint);
+    }
+    return true;
+}
+
 }  // namespace regor

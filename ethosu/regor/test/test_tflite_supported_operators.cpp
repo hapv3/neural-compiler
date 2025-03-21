@@ -341,9 +341,6 @@ TEST_CASE("Supported operators Common")
         // too large width (SAME padding)
         SetKernel(8, 9, 1, 1, 1, 1);
         REQUIRE(supportedOps->Check(op.get()) == false);
-        // OK if width matches stride
-        SetKernel(8, 9, 1, 9, 1, 1);
-        REQUIRE(supportedOps->Check(op.get()) == true);
         op->Disconnect();
     }
 
@@ -554,7 +551,6 @@ TEST_CASE("Supported operators EthosU55")
         op->Disconnect();
     }
 
-
     SECTION("Constraint32BitOps")
     {
         auto op = CreateOperation(OpType::Add, Shape(1, 1, 1, 1), DataType::Int32, Shape(1, 1, 1, 1), DataType::Int32,
@@ -564,6 +560,33 @@ TEST_CASE("Supported operators EthosU55")
         REQUIRE(supportedOps->Check(op2.get()) == false);
         op->Disconnect();
         op2->Disconnect();
+    }
+
+    SECTION("ConstraintStride")
+    {
+        {
+            auto op = CreateOperation(OpType::MaxPool, Shape(1, 10, 10, 1), DataType::Int8, Shape(1, 10, 10, 1), DataType::Int8);
+            auto kernel = std::make_unique<Kernel>(Point2i{1, 1}, Point2i{1, 1}, Point2i{1, 1}, 1, Margin{0, 0, 0, 0});
+            op->SetKernel(std::move(kernel));
+            REQUIRE(supportedOps->Check(op.get()) == true);
+            op->Disconnect();
+        }
+        {
+            // stride > 3 is not supported for MaxPool
+            auto op = CreateOperation(OpType::MaxPool, Shape(1, 10, 10, 1), DataType::Int8, Shape(1, 2, 2, 1), DataType::Int8);
+            auto kernel = std::make_unique<Kernel>(Point2i{1, 1}, Point2i{5, 5}, Point2i{1, 1}, 1, Margin{0, 0, 0, 0});
+            op->SetKernel(std::move(kernel));
+            REQUIRE(supportedOps->Check(op.get()) == false);
+            op->Disconnect();
+        }
+        {
+            // stride > 3 is supported for Conv2D (it's unrolled)
+            auto op = CreateOperation(OpType::Conv2D, Shape(1, 10, 10, 1), DataType::Int8, Shape(1, 2, 2, 1), DataType::Int8);
+            auto kernel = std::make_unique<Kernel>(Point2i{1, 1}, Point2i{5, 5}, Point2i{1, 1}, 1, Margin{0, 0, 0, 0});
+            op->SetKernel(std::move(kernel));
+            REQUIRE(supportedOps->Check(op.get()) == true);
+            op->Disconnect();
+        }
     }
 }
 

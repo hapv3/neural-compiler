@@ -401,7 +401,6 @@ bool TfLiteSupportedOperators::ConstraintAvgPool(const Operation *op)
     auto kernel = op->Kernel();
     assert(kernel);
     auto [w, h] = kernel->Size();
-    auto [sw, sh] = kernel->Stride();
     if ( kernel->Padding().IsZero() )
     {
         // VALID padding
@@ -420,11 +419,10 @@ bool TfLiteSupportedOperators::ConstraintAvgPool(const Operation *op)
     else
     {
         // SAME padding
-        if ( w != sw && (w > 8 || w < 1) )
+        if ( w > 8 || w < 1 )
         {
             // kernel width out of range
-            Failure(op, fmt::format("kernel width: {} out of range", w),
-                "When padding=SAME, kernel width must be in the range (1,8) OR equal to the stride(width)");
+            Failure(op, fmt::format("kernel width: {} out of range", w), "When padding=SAME, kernel width must be in the range (1,8)");
             return false;
         }
         if ( h > 8 || h < 1 )
