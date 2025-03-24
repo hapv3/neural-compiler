@@ -86,7 +86,7 @@ struct HLCFeatureMap
 
     std::string ToString() const
     {
-        return fmt::format("[{}], format: {}, {}:{}, address: {}", shape.ToString(), format, memArea.memory->Name(),
+        return fmt::format("[{}], format: {}, {}:{}, address: 0x{:x}", shape.ToString(), format, memArea.memory->Name(),
             memArea.usage.ToString(), address);
     }
 };
@@ -106,7 +106,7 @@ struct HLCWeights
 
     std::string ToString() const
     {
-        return fmt::format("{} ranges, buffering: {}, {}:{}, address: {}, format: {}", encodedRanges.size(),
+        return fmt::format("{} ranges, buffering: {}, {}:{}, address: 0x{:x}, format: {}", encodedRanges.size(),
             int(buffering), memArea.memory->Name(), memArea.usage, address, format.ToString());
     }
 };
@@ -272,7 +272,7 @@ public:
 
     std::string ToString() const override
     {
-        return fmt::format("DMA src: {}:{}, address: {}, dest: {}:{}, address: {}, sizes: ({}), length: {}",
+        return fmt::format("DMA src: {}:{}, address: 0x{:x}, dest: {}:{}, address: 0x{:x}, sizes: ({}), length: {}",
             srcMemArea.memory->Name(), srcMemArea.usage, srcAddress, destMemArea.memory->Name(), destMemArea.usage,
             destAddress, sizes ? sizes.ToString() : "N/A", std::to_string(length));
     }

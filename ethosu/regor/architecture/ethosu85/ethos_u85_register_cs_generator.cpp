@@ -404,19 +404,23 @@ void EthosU85RCSGenerator::Emit(uint64_t instr)
 }
 
 
-int EthosU85RCSGenerator::GetDoubleBufferOffset(HLCWeights *weights, int rangeIndex)
+int EthosU85RCSGenerator::GetBufferOffset(HLCWeights *weights, const WeightRange &range)
 {
-    int doubleBufferOffset = 0;
+    int bufferOffset = 0;
     if ( weights->buffering == Buffering::Double )
     {
         assert(weights->subStreams > 0);
-        int depthIndex = rangeIndex / weights->subStreams;
+        int depthIndex = range.index / weights->subStreams;
         if ( depthIndex % 2 == 1 )
         {
-            doubleBufferOffset = weights->doubleBufferOffset;
+            bufferOffset = weights->doubleBufferOffset;
         }
     }
-    return doubleBufferOffset;
+    else if ( weights->buffering == Buffering::None )
+    {
+        bufferOffset = range.offset;
+    }
+    return bufferOffset;
 }
 
 
@@ -1359,8 +1363,8 @@ void EthosU85RCSGenerator::GenerateWeights(const HLCStripe *stripe, MemoryAccess
         if ( item != weights->encodedRanges.end() )
         {
             const auto &range = item->second;
-            int doubleBufferOffset = GetDoubleBufferOffset(weights, range.index);
-            address = weights->address + offset + range.weightOffset + doubleBufferOffset;
+            int bufferOffset = GetBufferOffset(weights, range);
+            address = weights->address + offset + range.weightOffset + bufferOffset;
             length = RoundAway(range.weightBytes, 16);
             CheckAddressRange(weights->memArea.memory, address, length);
             memoryAccesses.emplace_back(AccessDirection::Read, weights->memArea, address, address + length);
@@ -1405,8 +1409,8 @@ void EthosU85RCSGenerator::GenerateScales(const HLCStripe *stripe, MemoryAccesse
     auto item0 = scales->encodedRanges.find(WeightKey(0, depth));
     assert(item0 != scales->encodedRanges.end());
     auto &range0 = item0->second;
-    int doubleBufferOffset = GetDoubleBufferOffset(scales, range0.index);
-    Address address = scales->address + doubleBufferOffset;
+    int bufferOffset = GetBufferOffset(scales, range0);
+    Address address = scales->address + bufferOffset;
     int length = RoundAway(range0.scaleBytes, 16);
 
     CheckAddressRange(scales->memArea.memory, address, length);
