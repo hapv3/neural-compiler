@@ -214,9 +214,9 @@ void GraphPacking::ConnectTensors(Operation *op, const std::unique_ptr<Scheduler
         const auto &oldTensor = schedTensor->srcTensor;
         if ( oldTensor )
         {
-            const bool isConsumedByNPU = std::any_of(schedTensor->consumers.begin(), schedTensor->consumers.end(), isNpuOp);
+            const bool isConsumedByNPUOnly = std::all_of(schedTensor->consumers.begin(), schedTensor->consumers.end(), isNpuOp);
             const bool isProducedByNPUOnly = std::all_of(schedTensor->producers.begin(), schedTensor->producers.end(), isNpuOp);
-            if ( isConsumedByNPU && isProducedByNPUOnly && !schedTensor->isGraphInput && !schedTensor->isPersistent )
+            if ( isConsumedByNPUOnly && isProducedByNPUOnly && !schedTensor->isGraphInput && !schedTensor->isPersistent )
             {
                 // Remember NPU only tensors so we can add them as placeholder later
                 npuOnly.insert(oldTensor.get());
@@ -247,9 +247,9 @@ void GraphPacking::ConnectTensors(Operation *op, const std::unique_ptr<Scheduler
         const auto &oldTensor = schedTensor->srcTensor;
         if ( oldTensor )
         {
-            const bool isProducedByNPU = std::any_of(schedTensor->producers.begin(), schedTensor->producers.end(), isNpuOp);
+            const bool isProducedByNPUOnly = std::all_of(schedTensor->producers.begin(), schedTensor->producers.end(), isNpuOp);
             const bool isConsumedByNPUOnly = std::all_of(schedTensor->consumers.begin(), schedTensor->consumers.end(), isNpuOp);
-            if ( isProducedByNPU && isConsumedByNPUOnly && !schedTensor->isGraphOutput && !schedTensor->isPersistent )
+            if ( isProducedByNPUOnly && isConsumedByNPUOnly && !schedTensor->isGraphOutput && !schedTensor->isPersistent )
             {
                 // Remember NPU only tensors so we can add them as placeholder later
                 npuOnly.insert(oldTensor.get());

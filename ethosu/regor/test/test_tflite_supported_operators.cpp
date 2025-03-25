@@ -17,6 +17,7 @@
 //
 
 #include "common/common.hpp"
+#include "common/logging.hpp"
 
 #include "architecture/ethosu55/ethos_u55.hpp"
 #include "architecture/ethosu65/ethos_u65.hpp"
@@ -76,6 +77,8 @@ std::shared_ptr<Operation> CreateOperation(OpType opType, Shape ifmShape, DataTy
 
 TEST_CASE("Supported operators Common")
 {
+    DisableLogging disableLogging;
+
     std::shared_ptr<Architecture> arch = CreateArchDefault<ArchEthosU55>(256);
     std::string err = "noerror";
     arch->CheckConfiguration(err);
@@ -450,6 +453,8 @@ TEST_CASE("Supported operators Common")
 
 TEST_CASE("Supported operators EthosU55")
 {
+    DisableLogging disableLogging;
+
     std::shared_ptr<Architecture> arch = CreateArchDefault<ArchEthosU55>(256);
     std::string err = "noerror";
     arch->CheckConfiguration(err);
@@ -564,6 +569,8 @@ TEST_CASE("Supported operators EthosU55")
 
 TEST_CASE("Supported operators EthosU85")
 {
+    DisableLogging disableLogging;
+
     std::shared_ptr<Architecture> arch = CreateArchDefault<ArchEthosU85>(256);
     std::string err = "noerror";
     arch->CheckConfiguration(err);

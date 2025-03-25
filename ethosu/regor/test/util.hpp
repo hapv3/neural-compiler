@@ -18,12 +18,25 @@
 
 #pragma once
 
+#include "common/logging.hpp"
+
 #include "architecture/architecture.hpp"
 #include "compiler/graph.hpp"
 #include "compiler/scheduler.hpp"
 #include "compiler/scheduler_operation.hpp"
 
 using namespace regor;
+
+// Helpers for common
+// -----------------------------
+
+// Disable logging until scope exit
+struct DisableLogging
+{
+    unsigned filterMask;
+    DisableLogging() : filterMask(Logging::Out.FilterMask()) { Logging::Out.SetFilterMask(0u); }
+    ~DisableLogging() { Logging::Out.SetFilterMask(filterMask); }
+};
 
 // Helpers for Architecture
 // -----------------------------

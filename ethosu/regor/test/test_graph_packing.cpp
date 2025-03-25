@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -85,6 +85,8 @@ TEST_CASE("test_graph_packing")
         REQUIRE(newGraph->ScheduledOrder().size() == 1);
         REQUIRE(newGraph->Inputs().size() == 1);
         REQUIRE(newGraph->Outputs().size() == 1);
+        REQUIRE(newGraph->Persistent().size() == 0);
+        REQUIRE(newGraph->Placeholder().size() == 0);
 
         // Check packing
         REQUIRE(npuOps[0].second->Operations().size() == 3);
@@ -129,6 +131,7 @@ TEST_CASE("test_graph_packing")
         REQUIRE(newGraph->Inputs().size() == 1);
         REQUIRE(newGraph->Outputs().size() == 1);
         REQUIRE(newGraph->Persistent().size() == 1);
+        REQUIRE(newGraph->Placeholder().size() == 0);
 
         // Check packing
         REQUIRE(npuOps[0].second->Operations().size() == 3);
@@ -175,6 +178,8 @@ TEST_CASE("test_graph_packing")
         REQUIRE(newGraph->ScheduledOrder().size() == 3);
         REQUIRE(newGraph->Inputs().size() == 2);
         REQUIRE(newGraph->Outputs().size() == 1);
+        REQUIRE(newGraph->Persistent().size() == 0);
+        REQUIRE(newGraph->Placeholder().size() == 0);
 
         // Check new graph operations
         REQUIRE(newGraph->ScheduledOrder()[0]->Type() == OpType::AvgPool);
@@ -231,6 +236,7 @@ TEST_CASE("test_graph_packing")
         REQUIRE(newGraph->Inputs().size() == 2);
         REQUIRE(newGraph->Outputs().size() == 1);
         REQUIRE(newGraph->Persistent().size() == 1);
+        REQUIRE(newGraph->Placeholder().size() == 0);
 
         // Check new graph operations
         REQUIRE(newGraph->ScheduledOrder()[0]->Type() == OpType::AvgPool);
@@ -259,7 +265,7 @@ TEST_CASE("test_graph_packing")
 
         // Check new graph I/O
         REQUIRE(newGraph->IsInput(newGraph->ScheduledOrder()[0]->IFM(0)));
-        REQUIRE(newGraph->IsPersistent(newGraph->ScheduledOrder()[1]->Input(TensorUsage::Params)->tensor.get()));
+        REQUIRE(newGraph->IsPersistent(newGraph->ScheduledOrder()[1]->Input(TensorUsage::Params)->tensor.get()));  // var1
         REQUIRE(newGraph->IsOutput(newGraph->ScheduledOrder()[2]->OFM()));
     }
 
@@ -284,6 +290,8 @@ TEST_CASE("test_graph_packing")
         REQUIRE(newGraph->ScheduledOrder().size() == 2);
         REQUIRE(newGraph->Inputs().size() == 1);
         REQUIRE(newGraph->Outputs().size() == 1);
+        REQUIRE(newGraph->Persistent().size() == 0);
+        REQUIRE(newGraph->Placeholder().size() == 0);
 
         // Check new graph I/O
         REQUIRE(newGraph->IsInput(newGraph->ScheduledOrder()[0]->IFM(0)));
@@ -331,12 +339,12 @@ TEST_CASE("test_graph_packing")
         REQUIRE(newGraph->Inputs().size() == 1);
         REQUIRE(newGraph->Outputs().size() == 1);
         REQUIRE(newGraph->Persistent().size() == 1);
-
+        REQUIRE(newGraph->Placeholder().size() == 0);
 
         // Check new graph I/O
         REQUIRE(newGraph->IsInput(newGraph->ScheduledOrder()[0]->IFM(0)));
         REQUIRE(newGraph->IsOutput(newGraph->ScheduledOrder()[1]->OFM()));
-        REQUIRE(newGraph->IsPersistent(newGraph->ScheduledOrder()[1]->IFM(1)));
+        REQUIRE(newGraph->IsPersistent(newGraph->ScheduledOrder()[1]->IFM(1)));  // var1
 
         // Check new graph operations
         REQUIRE(newGraph->ScheduledOrder()[0]->Type() == OpType::CustomNpuOp);
@@ -380,11 +388,14 @@ TEST_CASE("test_graph_packing")
         REQUIRE(newGraph->ScheduledOrder().size() == 3);
         REQUIRE(newGraph->Inputs().size() == 2);
         REQUIRE(newGraph->Outputs().size() == 1);
+        REQUIRE(newGraph->Persistent().size() == 0);
+        REQUIRE(newGraph->Placeholder().size() == 1);
 
         // Check new graph I/O
         REQUIRE(newGraph->IsInput(newGraph->ScheduledOrder()[0]->IFM(0)));
         REQUIRE(newGraph->IsInput(newGraph->ScheduledOrder()[1]->IFM(0)));
         REQUIRE(newGraph->IsOutput(newGraph->ScheduledOrder()[2]->OFM()));
+        REQUIRE(newGraph->IsPlaceholder(newGraph->ScheduledOrder()[0]->OFM()));  // tens2
 
         // Check new graph operations
         REQUIRE(newGraph->ScheduledOrder()[0]->Type() == OpType::CustomNpuOp);
@@ -438,12 +449,14 @@ TEST_CASE("test_graph_packing")
         REQUIRE(newGraph->Inputs().size() == 2);
         REQUIRE(newGraph->Outputs().size() == 1);
         REQUIRE(newGraph->Persistent().size() == 1);
+        REQUIRE(newGraph->Placeholder().size() == 1);
 
         // Check new graph I/O
         REQUIRE(newGraph->IsInput(newGraph->ScheduledOrder()[0]->IFM(0)));
         REQUIRE(newGraph->IsInput(newGraph->ScheduledOrder()[1]->IFM(0)));
         REQUIRE(newGraph->IsOutput(newGraph->ScheduledOrder()[2]->OFM()));
-        REQUIRE(newGraph->IsPersistent(newGraph->ScheduledOrder()[0]->Input(TensorUsage::IFM1)->tensor.get()));
+        REQUIRE(newGraph->IsPersistent(newGraph->ScheduledOrder()[0]->IFM(1)));  // var1
+        REQUIRE(newGraph->IsPlaceholder(newGraph->ScheduledOrder()[0]->OFM()));  // tens2
 
         // Check new graph operations
         REQUIRE(newGraph->ScheduledOrder()[0]->Type() == OpType::CustomNpuOp);
@@ -470,6 +483,62 @@ TEST_CASE("test_graph_packing")
         REQUIRE(newGraph->ScheduledOrder()[0]->OFM() == newGraph->ScheduledOrder()[2]->IFM(0));
         REQUIRE(newGraph->ScheduledOrder()[1]->IFM(0) == newGraph->Inputs()[1].get());
         REQUIRE(newGraph->ScheduledOrder()[1]->OFM() == newGraph->ScheduledOrder()[2]->IFM(1));
+        REQUIRE(newGraph->ScheduledOrder()[2]->OFM() == newGraph->Outputs()[0].get());
+    }
+
+    SECTION("Mixed NPU/CPU consumers")
+    {
+        std::vector<std::unique_ptr<SchedulerOperation>> ops;
+        ops.push_back(CreateSchedulerOperation(true, TensorUsage::IFM, tens1, TensorUsage::OFM, tens2));
+        ops.push_back(CreateSchedulerOperation(false, TensorUsage::IFM, tens2, TensorUsage::OFM, tens4));
+        ops.push_back(CreateSchedulerOperation(true, TensorUsage::IFM, tens2, TensorUsage::OFM, tens3));
+
+        auto oldGraph = std::make_unique<Graph>(GraphNotation::TFLite);
+        oldGraph->AddInput(tens1->srcTensor);
+        tens1->isGraphInput = true;
+        oldGraph->AddOutput(tens3->srcTensor);
+        tens3->isGraphOutput = true;
+        oldGraph->AddOutput(tens4->srcTensor);
+        tens4->isGraphOutput = true;
+
+        std::vector<std::pair<Operation *, std::unique_ptr<NPUOperation>>> npuOps;
+        auto newGraph = PackScheduleToGraph(npuOps, ops, tensorAddressMap, oldGraph.get());
+
+        REQUIRE(npuOps.size() == 2);
+        REQUIRE(ops.size() == 0);
+        REQUIRE(newGraph->ScheduledOrder().size() == 3);
+        REQUIRE(newGraph->Inputs().size() == 1);
+        REQUIRE(newGraph->Outputs().size() == 2);
+        REQUIRE(newGraph->Persistent().size() == 0);
+        REQUIRE(newGraph->Placeholder().size() == 0);
+
+        // Check new graph I/O
+        REQUIRE(newGraph->IsInput(newGraph->ScheduledOrder()[0]->IFM(0)));
+        REQUIRE(newGraph->IsOutput(newGraph->ScheduledOrder()[1]->OFM()));
+        REQUIRE(newGraph->IsOutput(newGraph->ScheduledOrder()[2]->OFM()));
+
+        // Check new graph operations
+        REQUIRE(newGraph->ScheduledOrder()[0]->Type() == OpType::CustomNpuOp);
+        REQUIRE(newGraph->ScheduledOrder()[0]->Inputs().size() == 1);
+        REQUIRE(newGraph->ScheduledOrder()[0]->Inputs().contains(TensorUsage::IFM));
+        REQUIRE(newGraph->ScheduledOrder()[0]->Outputs().size() == 1);
+        REQUIRE(newGraph->ScheduledOrder()[0]->Outputs().contains(TensorUsage::OFM));
+        REQUIRE(newGraph->ScheduledOrder()[1]->Type() == OpType::AvgPool);
+        REQUIRE(newGraph->ScheduledOrder()[1]->Inputs().size() == 1);
+        REQUIRE(newGraph->ScheduledOrder()[1]->Inputs().contains(TensorUsage::IFM));
+        REQUIRE(newGraph->ScheduledOrder()[1]->Outputs().size() == 1);
+        REQUIRE(newGraph->ScheduledOrder()[1]->Outputs().contains(TensorUsage::OFM));
+        REQUIRE(newGraph->ScheduledOrder()[2]->Type() == OpType::CustomNpuOp);
+        REQUIRE(newGraph->ScheduledOrder()[2]->Inputs().size() == 1);
+        REQUIRE(newGraph->ScheduledOrder()[2]->Inputs().contains(TensorUsage::IFM));
+        REQUIRE(newGraph->ScheduledOrder()[2]->Outputs().size() == 1);
+        REQUIRE(newGraph->ScheduledOrder()[2]->Outputs().contains(TensorUsage::OFM));
+
+        // Check new graph connections
+        REQUIRE(newGraph->ScheduledOrder()[0]->IFM(0) == newGraph->Inputs()[0].get());
+        REQUIRE(newGraph->ScheduledOrder()[0]->OFM() == newGraph->ScheduledOrder()[1]->IFM(0));
+        REQUIRE(newGraph->ScheduledOrder()[0]->OFM() == newGraph->ScheduledOrder()[2]->IFM(0));
+        REQUIRE(newGraph->ScheduledOrder()[1]->OFM() == newGraph->Outputs()[1].get());
         REQUIRE(newGraph->ScheduledOrder()[2]->OFM() == newGraph->Outputs()[0].get());
     }
 }
