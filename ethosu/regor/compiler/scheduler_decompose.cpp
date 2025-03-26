@@ -555,6 +555,8 @@ Slice(SchedulerTensor *tensor, const Shape &offset, const Shape &shape, Shape re
             return SliceT<uint8_t>(tensor, offset, shape, readShape, stepXY);
         case DataType::Int32:
             return SliceT<int32_t>(tensor, offset, shape, readShape, stepXY);
+        case DataType::Int64:
+            return SliceT<int64_t>(tensor, offset, shape, readShape, stepXY);
         case DataType::Int48:
         {
             auto slice = SliceT<int48_t, int64_t>(tensor, offset, shape, readShape, stepXY);
