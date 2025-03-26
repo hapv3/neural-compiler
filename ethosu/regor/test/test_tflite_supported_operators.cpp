@@ -346,16 +346,19 @@ TEST_CASE("Supported operators Common")
 
     SECTION("ConstraintRsqrt")
     {
-        // Rsqrt is only supported with int8 input
+        // Rsqrt is only supported with int8 or int16 input
         auto op = CreateOperation(OpType::Rsqrt, Shape(1, 10, 10, 1), DataType::Int8, Shape(1, 10, 10, 1), DataType::Int8);
         REQUIRE(supportedOps->Check(op.get()) == true);
-        op->Disconnect();
-        for ( auto dtype : {DataType::UInt8, DataType::Int16, DataType::Int32} )
+        op->Input(TensorUsage::IFM)->tensor->ChangeType(DataType::Int16);
+        op->Output(TensorUsage::OFM)->tensor->ChangeType(DataType::Int16);
+        REQUIRE(supportedOps->Check(op.get()) == true);
+        for ( auto dtype : {DataType::UInt8, DataType::Int32} )
         {
-            auto op2 = CreateOperation(OpType::Rsqrt, Shape(1, 10, 10, 1), dtype, Shape(1, 10, 10, 1), dtype);
-            REQUIRE(supportedOps->Check(op2.get()) == false);
-            op2->Disconnect();
+            op->Input(TensorUsage::IFM)->tensor->ChangeType(dtype);
+            op->Output(TensorUsage::OFM)->tensor->ChangeType(dtype);
+            REQUIRE(supportedOps->Check(op.get()) == false);
         }
+        op->Disconnect();
     }
 
     SECTION("ConstraintConstParams")

@@ -483,12 +483,12 @@ bool TfLiteSupportedOperators::ConstraintTCStrides(const Operation *op)
         Failure(op, fmt::format("stride out of range: ({},{})", stride.x, stride.y), constraint);
         return false;
     }
-    if ( stride == Point2i(1, 2) && !(ifmShape.Height() == 1 && kh == 1) )
+    if ( stride == Point2i(1, 2) && !(ifmShape.Width() == 1 && kw == 1) )
     {
         Failure(op, fmt::format("unsupported stride combination: ({},{})", stride.x, stride.y), constraint);
         return false;
     }
-    if ( stride == Point2i(2, 1) && !(ifmShape.Width() == 1 && kw == 1) )
+    if ( stride == Point2i(2, 1) && !(ifmShape.Height() == 1 && kh == 1) )
     {
         Failure(op, fmt::format("unsupported stride combination: ({},{})", stride.x, stride.y), constraint);
         return false;
@@ -536,7 +536,7 @@ bool TfLiteSupportedOperators::ConstraintTCShapes(const Operation *op)
     }
     else
     {
-        Point2i diff = (kernel->Size() - stride);
+        Point2i diff = Point2i::Max((kernel->Size() - stride), Point2i(0, 0));
         if ( (ifmWH * stride + diff) != ofmWH )
         {
             Failure(op,
@@ -559,9 +559,9 @@ bool TfLiteSupportedOperators::ConstraintRsqrt(const Operation *op)
     auto ifmConn = op->Input(TensorUsage::IFM);
     assert(ifmConn);
     auto ifmType = ifmConn->tensor->Type();
-    if ( ifmType != DataType::Int8 )
+    if ( ifmType != DataType::Int8 && ifmType != DataType::Int16 )
     {
-        Failure(op, fmt::format("{} IFM", DataTypeToString(ifmType)), "IFM must be Int8");
+        Failure(op, fmt::format("{} IFM", DataTypeToString(ifmType)), "IFM must be Int8 or Int16");
         return false;
     }
     return true;
