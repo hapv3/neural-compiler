@@ -178,7 +178,11 @@ bool Compiler::ParseOptions(const char *text, size_t size)
         }
         else if ( section == "scheduler" )
         {
-            ParseSchedulerOptions(_schedulerOptions, reader);
+            if ( !ParseSchedulerOptions(_schedulerOptions, reader) )
+            {
+                SetLastError(fmt::format("Error parsing [{}]", section));
+                return false;
+            }
         }
         else if ( section == "graph" )
         {

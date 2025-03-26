@@ -825,6 +825,7 @@ def get_compiler_config(
     disable_buffering: bool,
     cop_format: str,
     separate_io_regions: bool,
+    cpu_tensor_alignment: int,
 ) -> str:
     """Build compiler config file."""
     config = "\n[compiler]\n"
@@ -859,6 +860,7 @@ def get_compiler_config(
     config = config.rstrip("|") + "\n"
     if separate_io_regions:
         config += "separate_io_regions=true\n"
+    config += f"cpu_tensor_alignment={cpu_tensor_alignment}\n"
 
     config += "\n[graph]\n"
     if verbose_graph:
@@ -1063,7 +1065,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         type=int,
         default=Tensor.AllocationQuantum,
         help=(
-            "Controls the allocation byte alignment of cpu tensors including Ethos-U Custom"
+            "Controls the allocation byte alignment of CPU tensors including Ethos-U Custom"
             " operator inputs and outputs (default: %(default)s Bytes)"
         ),
     )
@@ -1228,6 +1230,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             args.disable_buffering,
             args.cop_format,
             args.separate_io_regions,
+            args.cpu_tensor_alignment,
         )
 
         process_regor(

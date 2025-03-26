@@ -66,6 +66,7 @@ struct SchedulerOptions
     bool verboseAllocation = false;
     Flags<SchedulerFeature> disabled;
     bool separateIORegions = false;
+    int cpuTensorAlignment = 16;
 };
 
 struct WeightScaleEncoding
@@ -370,6 +371,6 @@ private:
         Shape &ofmShape, Flags<WeightFormat> supportedFormats);
 };
 
-void ParseSchedulerOptions(SchedulerOptions &opt, IniReader &reader);
+bool ParseSchedulerOptions(SchedulerOptions &opt, IniReader &reader);
 
 }  // namespace regor

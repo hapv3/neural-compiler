@@ -50,7 +50,7 @@ namespace regor
 {
 
 constexpr int AllocationQuantum = 16;
-constexpr int AlignmentQuantum = 16;
+constexpr int NPUTensorAlignment = 16;
 
 static Shape GetShapeForFormat(const Shape &shape, TensorFormat format)
 {
@@ -828,11 +828,13 @@ void Scheduler::MoveConstantData(Schedule *refSchedule)
 bool Scheduler::AllocateAddresses(Schedule *schedule)
 {
     const auto verbose = _options.verboseAllocation;
-    AllocateTensors(_ops, schedule, _arch->FeatureMapMemory(), TensorAllocator::HillClimb, AlignmentQuantum, verbose);
+    // If graph input/outputs tensors are in FeatureMap memory, allocate with user-specified tensor alignment
+    AllocateTensors(_ops, schedule, _arch->FeatureMapMemory(), TensorAllocator::HillClimb,
+        _options.separateIORegions ? NPUTensorAlignment : _options.cpuTensorAlignment, verbose);
     if ( _spilling )
     {
         const auto limit = _options.optimizationStagingLimit;
-        AllocateTensors(_ops, schedule, _arch->StagingMemory(), TensorAllocator::HillClimb, AlignmentQuantum, verbose, limit);
+        AllocateTensors(_ops, schedule, _arch->StagingMemory(), TensorAllocator::HillClimb, NPUTensorAlignment, verbose, limit);
 
         return schedule->memoryUsage[_arch->StagingMemory()] <= limit;
     }
@@ -891,7 +893,7 @@ void Scheduler::AllocateReadOnlyAddresses(Schedule *schedule, IncrementalLinearA
 {
     auto lrGraph = ReadOnlyLiveRangeGraph(_arch);
     lrGraph.ExtractLiveRangesFromCascades(_ops, schedule, _arch->ReadonlyMemory(), false);
-    auto totalSize = readOnlyAllocator.Allocate(&lrGraph, AlignmentQuantum, _options.verboseAllocation);
+    auto totalSize = readOnlyAllocator.Allocate(&lrGraph, NPUTensorAlignment, _options.verboseAllocation);
     schedule->memoryUsage[_arch->ReadonlyMemory()] = int(totalSize);
 }
 
@@ -904,8 +906,8 @@ void Scheduler::AllocateIOAddresses(Schedule *schedule, const std::vector<std::u
     {
         assert(_arch->InputFeatureMapMemory() != _arch->OutputFeatureMapMemory());
 
-        AllocateTensors(ops, schedule, _arch->InputFeatureMapMemory(), TensorAllocator::LinearAlloc, AlignmentQuantum, verbose);
-        AllocateTensors(ops, schedule, _arch->OutputFeatureMapMemory(), TensorAllocator::LinearAlloc, AlignmentQuantum, verbose);
+        AllocateTensors(ops, schedule, _arch->InputFeatureMapMemory(), TensorAllocator::LinearAlloc, NPUTensorAlignment, verbose);
+        AllocateTensors(ops, schedule, _arch->OutputFeatureMapMemory(), TensorAllocator::LinearAlloc, NPUTensorAlignment, verbose);
     }
 }
 
@@ -1847,7 +1849,7 @@ void Scheduler::PrintSchedule(Schedule *schedule)
 }
 
 
-void ParseSchedulerOptions(SchedulerOptions &opt, IniReader &reader)
+bool ParseSchedulerOptions(SchedulerOptions &opt, IniReader &reader)
 {
     // Parse debug settings
     std::string key;
@@ -1904,9 +1906,21 @@ void ParseSchedulerOptions(SchedulerOptions &opt, IniReader &reader)
         {
             opt.separateIORegions = reader.Get<bool>();
         }
+        else if ( key == "cpu_tensor_alignment" )
+        {
+            opt.cpuTensorAlignment = reader.Get<int>();
+        }
 
         reader.End();
     }
+
+    if ( opt.cpuTensorAlignment <= 0 || opt.cpuTensorAlignment % NPUTensorAlignment != 0 )
+    {
+        LOG_ERROR("CPU tensor alignment ({}) must be a multiple of {}\n", opt.cpuTensorAlignment, NPUTensorAlignment);
+        return false;
+    }
+
+    return true;
 }
 
 
