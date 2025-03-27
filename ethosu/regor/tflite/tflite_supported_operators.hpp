@@ -72,6 +72,7 @@ private:
     bool ConstraintMean(const Operation *op);
     bool ConstraintSoftmax(const Operation *op);
     bool ConstraintPad(const Operation *op);
+    bool ConstraintTransposeDims(const Operation *op);
 };
 
 // Factory for supported-ops checkers

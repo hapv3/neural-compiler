@@ -49,5 +49,6 @@ private:
     bool ConstraintArgMaxDepth(const Operation *op);
     bool ConstraintArgMaxAxis(const Operation *op);
     bool ConstraintArgMaxOverflow(const Operation *op);  // TODO: Remove after MLBEDSW-9758: TOSA MaxPool decomp
+    bool ConstraintTranspose(const Operation *op);
 };
 }  // namespace regor

@@ -22,6 +22,8 @@
 #include "common/logging.hpp"
 
 #include "compiler/op_type.hpp"
+#include "compiler/operation_util.hpp"
+#include "compiler/shape_util.hpp"
 
 namespace regor
 {
@@ -100,6 +102,7 @@ TfLiteSupportedOperatorsU55::TfLiteSupportedOperatorsU55(IArchitectureConstraint
         &TfLiteSupportedOperatorsU55::ConstraintKernelStride,
         &TfLiteSupportedOperatorsU55::ConstraintUnrolledKernelStride,
         &TfLiteSupportedOperatorsU55::ConstraintMatmul,
+        &TfLiteSupportedOperatorsU55::ConstraintTranspose,
     };
 }
 
@@ -161,6 +164,120 @@ bool TfLiteSupportedOperatorsU55::ConstraintReverse(const Operation *op)
     {
         Failure(op, fmt::format("Reverse is not supported"), "");
         return false;
+    }
+    return true;
+}
+
+bool TfLiteSupportedOperatorsU55::ConstraintTranspose(const Operation *op)
+{
+    OpType opType = op->Type();
+    if ( opType != OpType::Transpose )
+    {
+        return true;
+    }
+    auto ifmConn = op->Input(TensorUsage::IFM);
+    auto ofmConn = op->Output(TensorUsage::OFM);
+    auto ifmShape = Shape::PadAxes(ifmConn->shape, 4, 1);
+    auto ifmType = ifmConn->tensor->Type();
+    auto *params = op->Input(TensorUsage::Params);
+    assert(params);
+    Shape perm = TensorToShape(params->tensor.get(), params->shape.Depth());
+    auto transposeMask = TransposeTypeFromShape(perm);
+    if ( ifmType == DataType::Int32 )
+    {
+        static const char *constraint =
+            "IFM Shape constraints for 32-bit Transpose:\n"
+            "  * Rank must be less than or equal to 4\n"
+            "  * Max shape based on permutation:\n"
+            "     NHWC: C <= 2^16\n"
+            "     NWHC: N ==1, H <= 2^16, W <= 2^16, C <= 2^14\n"
+            "     NHCW: N*H <= 2^16, W <= 2^16, C <= 2^16\n"
+            "     Any other permutation vector is unsupported";
+        if ( ifmShape.Size() > 4 )
+        {
+            Failure(op, fmt::format("32-bit transpose with rank > 4: {}", ifmShape.ToString()), constraint);
+            return false;
+        }
+        switch ( transposeMask )
+        {
+            case TransposeType::None:
+                // 32-bit NHWC: C-axis must be 0->32768
+                if ( ifmShape.Depth() > (1 << 15) )
+                {
+                    Failure(op, fmt::format("32-bit NHWC transpose with depth > 32768: {}", ifmShape.ToString()), constraint);
+                    return false;
+                }
+                break;
+            case TransposeType::NWHC:
+            {
+                // 32-bit NWHC: max-shape (1,65536,65536,16384)
+                const static Shape maxShape = Shape(1, (1 << 16), (1 << 16), (1 << 14));
+                if ( ifmShape.GreaterMask(maxShape) > 0 )
+                {
+                    Failure(op, fmt::format("32-bit NWHC transpose with shape out of range: {}", ifmShape.ToString()), constraint);
+                    return false;
+                }
+            }
+            break;
+            case TransposeType::NHCW:
+            {
+                // 32-bit NHCW: (N*H: 65536, W: 65536, C: 65536)
+                const static Shape maxShape = Shape((1 << 16), (1 << 16), (1 << 16));
+                Shape ifmSquashed = ifmShape.WithHeight(ifmShape.Height() * ifmShape.Batch()).WithBatch(1);
+                if ( ifmSquashed.GreaterMask(maxShape) > 0 )
+                {
+                    Failure(op, fmt::format("32-bit NHCW transpose with shape out of range: {}", ifmSquashed.ToString()), constraint);
+                    return false;
+                }
+            }
+            break;
+            default:
+                Failure(op, "Unsupported transpose-type", constraint);
+                return false;
+        }
+    }
+    else
+    {
+        static const char *constraint =
+            "IFM shape constraints for 8 or 16-bit Transpose:\n"
+            "  * Max shape based on permutation:\n"
+            "    NHWC: no shape constraints\n"
+            "    ELSE IF Rank <= 4D and permutation is: NWHC/NHCW/NCWH:\n"
+            "      (N*H, W, C) <= (2^16, 2^16, 2^16)\n"
+            "    ELSE:\n"
+            "      Product of elements must be less than or equal to 2^16.";
+        if ( transposeMask == TransposeType::None )
+        {
+            // NHWC: any size is supported
+            return true;
+        }
+        if ( (ifmShape.Size() <= 4) &&
+             (transposeMask == TransposeType::NWHC || transposeMask == TransposeType::NHCW || transposeMask == TransposeType::NCWH) )
+        {
+            // Directly HW-supported transpose-masks
+            // NWHC/NHCW/NCWH: (N*H: 65536, 65536, 65536)
+            const static Shape maxShape = Shape((1 << 16), (1 << 16), (1 << 16));
+            Shape ifmSquashed = ifmShape.WithHeight(ifmShape.Height() * ifmShape.Batch()).WithBatch(1);
+            if ( ifmSquashed.GreaterMask(maxShape) > 0 )
+            {
+                Failure(op,
+                    fmt::format("Transpose with permutation {} has shape out of range: {}", EnumToString(transposeMask),
+                        ifmSquashed.ToString()),
+                    constraint);
+                return false;
+            }
+        }
+        else
+        {
+            // Decomposed transpose-masks
+            // Axis product must be less or equal to 65536
+            if ( ifmShape.Elements64() > (1 << 16) )
+            {
+                Failure(op,
+                    fmt::format("Transpose with permutation {} has shape out of range: {}", perm.ToString(), ifmShape.ToString()), constraint);
+                return false;
+            }
+        }
     }
     return true;
 }

@@ -581,6 +581,7 @@ bool TfLiteSupportedOperators::ConstraintConstParams(const Operation *op)
         case OpType::Pad:
         case OpType::PadV2:
         case OpType::MirrorPad:
+        case OpType::Transpose:
             break;
         default:
             return true;
@@ -747,6 +748,23 @@ bool TfLiteSupportedOperators::ConstraintPad(const Operation *op)
     return true;
 }
 
+bool TfLiteSupportedOperators::ConstraintTransposeDims(const Operation *op)
+{
+    OpType opType = op->Type();
+    if ( opType != OpType::Transpose )
+    {
+        return true;
+    }
+    auto params = op->Input(TensorUsage::Params);
+    assert(params);
+    if ( params->shape.Depth() > 8 )
+    {
+        Failure(op, "Unsupported transpose-shape", "tensor dimension must be <= 8");
+        return false;
+    }
+    return true;
+}
+
 void TfLiteSupportedOperators::Failure(const Operation *op, const std::string &message, const std::string &constraint)
 {
     assert(op);
@@ -804,6 +822,7 @@ TfLiteSupportedOperators::TfLiteSupportedOperators(IArchitectureConstraints *con
         &TfLiteSupportedOperators::ConstraintMean,
         &TfLiteSupportedOperators::ConstraintSoftmax,
         &TfLiteSupportedOperators::ConstraintPad,
+        &TfLiteSupportedOperators::ConstraintTransposeDims,
     };
 }
 
