@@ -36,11 +36,11 @@ namespace regor
 /// </summary>
 struct WeightRange
 {
-    int offset = 0;
-    int scaleBytes = 0;
-    int weightOffset = 0;
-    int weightBytes = 0;
-    int index = 0;
+    int offset = 0;        // Offset to this slice in the encoded weights
+    int scaleBytes = 0;    // Size of the scales in this slice
+    int weightOffset = 0;  // Offset to the weights in the encoded weights for this slice
+    int weightBytes = 0;   // Size of the weights in this slice
+    int index = 0;         // The slice number in this op
 
     int TotalBytes() const { return scaleBytes + weightBytes; }
 };

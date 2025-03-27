@@ -404,23 +404,19 @@ void EthosU85RCSGenerator::Emit(uint64_t instr)
 }
 
 
-int EthosU85RCSGenerator::GetBufferOffset(HLCWeights *weights, const WeightRange &range)
+int EthosU85RCSGenerator::GetDoubleBufferOffset(HLCWeights *weights, int rangeIndex)
 {
-    int bufferOffset = 0;
+    int doubleBufferOffset = 0;
     if ( weights->buffering == Buffering::Double )
     {
         assert(weights->subStreams > 0);
-        int depthIndex = range.index / weights->subStreams;
+        int depthIndex = rangeIndex / weights->subStreams;
         if ( depthIndex % 2 == 1 )
         {
-            bufferOffset = weights->doubleBufferOffset;
+            doubleBufferOffset = weights->doubleBufferOffset;
         }
     }
-    else if ( weights->buffering == Buffering::None )
-    {
-        bufferOffset = range.offset;
-    }
-    return bufferOffset;
+    return doubleBufferOffset;
 }
 
 
@@ -1363,8 +1359,8 @@ void EthosU85RCSGenerator::GenerateWeights(const HLCStripe *stripe, MemoryAccess
         if ( item != weights->encodedRanges.end() )
         {
             const auto &range = item->second;
-            int bufferOffset = GetBufferOffset(weights, range);
-            address = weights->address + offset + range.weightOffset + bufferOffset;
+            int doubleBufferOffset = GetDoubleBufferOffset(weights, range.index);
+            address = weights->address + offset + range.weightOffset + doubleBufferOffset;
             length = RoundAway(range.weightBytes, 16);
             CheckAddressRange(weights->memArea.memory, address, length);
             memoryAccesses.emplace_back(AccessDirection::Read, weights->memArea, address, address + length);
@@ -1409,8 +1405,18 @@ void EthosU85RCSGenerator::GenerateScales(const HLCStripe *stripe, MemoryAccesse
     auto item0 = scales->encodedRanges.find(WeightKey(0, depth));
     assert(item0 != scales->encodedRanges.end());
     auto &range0 = item0->second;
-    int bufferOffset = GetBufferOffset(scales, range0);
-    Address address = scales->address + bufferOffset;
+    Address address = scales->address;
+    if ( scales->buffering == Buffering::None )
+    {
+        // For unbuffered scales, address points to the buffer that contains the encoded weights for all slices
+        address += range0.offset;
+    }
+    else
+    {
+        // For buffered scales, address points to the buffer in fast storage that contains the encoded weights of one
+        // (if single buffered) or two (if double buffered) slices
+        address += GetDoubleBufferOffset(scales, range0.index);
+    }
     int length = RoundAway(range0.scaleBytes, 16);
 
     CheckAddressRange(scales->memArea.memory, address, length);
