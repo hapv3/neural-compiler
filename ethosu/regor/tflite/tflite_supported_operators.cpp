@@ -712,7 +712,7 @@ bool TfLiteSupportedOperators::ConstraintSoftmax(const Operation *op)
     auto ifmConn = op->Input(TensorUsage::IFM);
     assert(ifmConn);
     static constexpr int maxProd = 1 << 16;
-    const auto &ifmShape = ifmConn->shape;
+    const auto ifmShape = Shape::PadAxes(ifmConn->shape, 4, 1);
     if ( ifmShape.ElementsWH() > maxProd )
     {
         Failure(op, fmt::format("ifmShape: ({}), W * H = {}", ifmShape.ToString(), ifmShape.ElementsWH()),
