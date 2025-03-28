@@ -73,6 +73,7 @@ CycleCost EthosU85Performance::MeasureCycleCost(const PerformanceQuery &query, c
     if ( OpUsesMacs(npuOp) )
     {
         cycleComponents = EstimateConvCycles(query, fused);
+        cycles.macs = cycleComponents.macs;
         cycles.macs /= sparse ? 2 : 1;
         cycles.opCycles = cycleComponents.cycles;
     }
@@ -283,7 +284,7 @@ EthosU85Cycles EthosU85Performance::EstimateConvCycles(const PerformanceQuery &q
     }
 
     int64_t totalMacs = int64_t(query.kernel->ElementsWH()) * query.ofmShape.Elements();
-    if ( npuOp == EthosU85NpuOp::Depthwise || npuOp == EthosU85NpuOp::Pooling || npuOp == EthosU85NpuOp::ReduceMinMax || npuOp == EthosU85NpuOp::ArgMax )
+    if ( !(npuOp == EthosU85NpuOp::Depthwise || npuOp == EthosU85NpuOp::Pooling || npuOp == EthosU85NpuOp::ReduceMinMax || npuOp == EthosU85NpuOp::ArgMax) )
     {
         totalMacs *= query.ifmShape[0].Depth();
     }
