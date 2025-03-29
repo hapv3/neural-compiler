@@ -574,6 +574,9 @@ bool TfLiteSupportedOperators::ConstraintConstParams(const Operation *op)
     {
         case OpType::Slice:
         case OpType::Mean:
+        case OpType::Pad:
+        case OpType::PadV2:
+        case OpType::MirrorPad:
             break;
         default:
             return true;
@@ -722,6 +725,24 @@ bool TfLiteSupportedOperators::ConstraintSoftmax(const Operation *op)
     return true;
 }
 
+bool TfLiteSupportedOperators::ConstraintPad(const Operation *op)
+{
+    OpType opType = op->Type();
+    if ( opType != OpType::Pad && opType != OpType::PadV2 && opType != OpType::MirrorPad )
+    {
+        return true;
+    }
+    auto params = op->Input(TensorUsage::Params);
+    assert(params);
+    const auto &pType = params->tensor->Type();
+    if ( pType != DataType::Int32 && pType != DataType::Int64 )
+    {
+        Failure(op, fmt::format("Params tensor with datatype: {}", DataTypeToString(pType)), "Params tensor must be Int32 or Int64.");
+        return false;
+    }
+    return true;
+}
+
 void TfLiteSupportedOperators::Failure(const Operation *op, const std::string &message, const std::string &constraint)
 {
     assert(op);
@@ -778,6 +799,7 @@ TfLiteSupportedOperators::TfLiteSupportedOperators(IArchitectureConstraints *con
         &TfLiteSupportedOperators::ConstraintConstParams,
         &TfLiteSupportedOperators::ConstraintMean,
         &TfLiteSupportedOperators::ConstraintSoftmax,
+        &TfLiteSupportedOperators::ConstraintPad,
     };
 }
 
