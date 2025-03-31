@@ -727,13 +727,19 @@ void TfLiteSupportedOperators::Failure(const Operation *op, const std::string &m
     assert(op);
     auto ofmConn = op->Output(TensorUsage::OFM);
     const char *name = "N/A";
+    OpType opType = op->Type();
     if ( ofmConn && ofmConn->tensor )
     {
         name = ofmConn->tensor->Name().c_str();
     }
-    auto tfLiteType = TfLiteMapping::OpTypeToBuiltinOperator(op->Type());
+    std::string type = OpTypeToString(op->Type());
+    if ( opType != OpType::None )
+    {
+        auto tfLiteType = TfLiteMapping::OpTypeToBuiltinOperator(opType);
+        type = TfLiteMapping::BuiltinOperatorToString(tfLiteType);
+    }
     assert(message.size() || constraint.size());
-    LOG_WARN("\nWarning (supported operators) operator:{} ofm:{}\n", TfLiteMapping::BuiltinOperatorToString(tfLiteType), name);
+    LOG_WARN("\nWarning (supported operators) operator:{} ofm:{}\n", std::move(type), name);
     if ( message.size() )
     {
         LOG_WARN("Reason: {}\n", message);
