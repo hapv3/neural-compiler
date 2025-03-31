@@ -166,7 +166,6 @@ bool TfLiteSupportedOperatorsU55::Constraint32bitOps(const Operation *op)
 {
     static const std::unordered_set<OpType> supported = {
         OpType::ReduceSum,
-        OpType::Shape,
         OpType::ArgMax,
         OpType::Transpose,
         OpType::MirrorPad,
@@ -175,6 +174,11 @@ bool TfLiteSupportedOperatorsU55::Constraint32bitOps(const Operation *op)
         OpType::Sub,
         OpType::BatchMatMul,
         OpType::FullyConnected,
+        OpType::Reshape,
+        OpType::QuantizedReshape,
+        OpType::Squeeze,
+        OpType::ExpandDims,
+        OpType::Identity,
     };
 
     OpType opType = op->Type();
