@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -47,7 +47,9 @@ const std::map<tflite::TensorType, DataType> TfLiteMapping::_tensorTypeToDataTyp
     {tflite::TensorType::RESOURCE,      DataType::Resource},
     {tflite::TensorType::VARIANT,       DataType::Variant},
     {tflite::TensorType::UINT32,        DataType::UInt32},
-    {tflite::TensorType::UINT16,        DataType::UInt16}
+    {tflite::TensorType::UINT16,        DataType::UInt16},
+    {tflite::TensorType::INT4,          DataType::Int4Packed8},
+    {tflite::TensorType::BFLOAT16,      DataType::BFloat16},
     // clang-format on
 };
 
