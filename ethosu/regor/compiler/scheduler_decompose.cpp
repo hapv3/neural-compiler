@@ -1180,7 +1180,6 @@ static std::shared_ptr<SchedulerTensor> ReverseHW(SchedulerTensor *tensor)
 {
     assert(tensor->IsConstant());
     assert(tensor->producers.size() == 0);
-    assert(tensor->consumers.size() == 1);
 
     switch ( tensor->dataType )
     {
@@ -1218,7 +1217,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTransposeConv2D(Archit
 
     if ( ofmShape.Batch() > 1 )
     {
-        return DecomposeLeadingDimensions(1, arch, std::move(op), DecomposeConv2D);
+        return DecomposeLeadingDimensions(1, arch, std::move(op), DecomposeTransposeConv2D);
     }
 
     // Convert TransposeConv2D to Conv2D by
