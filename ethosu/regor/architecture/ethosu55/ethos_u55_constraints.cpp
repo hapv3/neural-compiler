@@ -130,10 +130,20 @@ bool EthosU55Constraints::SupportsFusedRescale(OpType opType, TensorUsage tensor
     else if ( tensorUsage == TensorUsage::OFM )
     {
         int fromBits = DataTypeSizeBits(opFromType);
-        if ( npuOp == EthosU55NpuOp::Convolution || npuOp == EthosU55NpuOp::Depthwise ||
-             npuOp == EthosU55NpuOp::Pooling || npuOp == EthosU55NpuOp::VectorProduct )
+        if ( npuOp == EthosU55NpuOp::Convolution || npuOp == EthosU55NpuOp::Depthwise || npuOp == EthosU55NpuOp::VectorProduct )
         {
-            return opType != OpType::Rescale && !IsActivation(opType);
+            return true;
+        }
+        else if ( npuOp == EthosU55NpuOp::Pooling )
+        {
+            if ( opType == OpType::AvgPool )
+            {
+                return globalScale && isUnitScale;
+            }
+            else
+            {
+                return opType != OpType::Rescale && !IsActivation(opType);
+            }
         }
         else if ( npuOp == EthosU55NpuOp::Elementwise && globalScale )
         {
