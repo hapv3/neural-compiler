@@ -76,7 +76,7 @@ static std::unique_ptr<SchedulerOperation> MakeMemCopy(const std::shared_ptr<Sch
     ofmConn->shape = Shape::PadAxes(ofmConn->tensor->storageShape, 4, 1);
     ofmConn->tensor->producers.push_back(op.get());
 
-    auto ifmConn = op->AddInput(TensorUsage::IFM, source);
+    auto ifmConn = op->ConnectInput(TensorUsage::IFM, source);
     if ( ifmConn->tensor->dataType == DataType::Int64 )
     {  // Copy int64 data as int32 data with 2 x C by cloning source tensor
         ifmConn->tensor = std::make_shared<SchedulerTensor>(*source);
@@ -875,8 +875,8 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv3D(Architecture *a
                     if ( KD > 1 )
                     {
                         auto offset = subOpWeights->shape.WithZeros().With(1, kd);
-                        subOpWeights->tensor = Slice(subOpWeights->tensor.get(), offset, subOpWeights->shape.With(1, 1));
-                        subOpWeights->tensor->consumers.push_back(subOp.get());
+                        auto subOpWeightsSlice = Slice(subOpWeights->tensor.get(), offset, subOpWeights->shape.With(1, 1));
+                        subOp->ConnectInput(TensorUsage::Weights, subOpWeightsSlice);
                     }
                     // New weight shape
                     auto subOpWeightShape = subOpWeights->shape.Erase(1);
@@ -903,7 +903,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv3D(Architecture *a
                     // Setup SchedulerTensor for 0 input
                     ifm0->uid = GenerateUniqueId();
                     ifm0->dataType = subOpIfm->tensor->dataType;
-                    ifm0->memArea = subOp->Input(TensorUsage::Scales)->tensor->memArea;
+                    ifm0->memArea = arch->ReadonlyMemory();
                     ifm0->format = TensorFormat::NHWC;
                     const auto bufSize = ifm0shape.Elements();
                     const auto &zeroPoints = subOpIfm->quantization.zeroPoints;
@@ -924,8 +924,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv3D(Architecture *a
                     ifm0->bufferView = BufferView(ifm0buf, 0, DataTypeStorageSizeBits(ifm0->dataType), ifm0shape, {});
                     ifm0->storageShape = ifm0->bufferView.ViewShape();
                 }
-                subOpIfm->tensor = ifm0;
-                subOpIfm->tensor->consumers.push_back(subOp.get());
+                subOp->ConnectInput(TensorUsage::IFM, ifm0);
                 subOpIfm->shape = ifm0shape;
                 subOpIfm->slice.offset = ifm0shape.WithZeros();
                 subOpIfm->slice.shape = ifm0shape;
@@ -950,27 +949,22 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv3D(Architecture *a
                     if ( subOp != conv2dSubOps.begin() )
                     {
                         // Acc source ifm2 for all but first subop
-                        (*subOp)->AddInput(TensorUsage::IFM1, acc)->shape = acc->storageShape;
+                        (*subOp)->ConnectInput(TensorUsage::IFM1, acc)->shape = acc->storageShape;
                         (*subOp)->SetAccumulatorMode({AccumulatorSource::Ifm2, true});
                     }
                     if ( *subOp != tail )
                     {
                         // Remove scaling and bias and set ofm = acc tensor
                         // (used as acc input for next op) for all but last subop
-                        auto subOpOfm = (*subOp)->OFM();
+                        auto subOpOfm = (*subOp)->ConnectOutput(TensorUsage::OFM, acc);
                         auto subOpIfm = (*subOp)->IFM(0);
                         auto subOpWeights = (*subOp)->Input(TensorUsage::Weights);
-                        auto subOpBias = (*subOp)->Input(TensorUsage::Scales);
-                        subOpOfm->tensor = acc;
-                        subOpOfm->tensor->producers.push_back((*subOp).get());
+                        auto subOpBias = (*subOp)->ConnectInput(TensorUsage::Scales, bias0);
                         subOpOfm->shape = acc->storageShape;
                         subOpOfm->slice.offset = subOpOfm->shape.WithZeros();
                         subOpOfm->quantization.scales = {QuantizedScale::Unit()};
                         subOpIfm->quantization.scales = {QuantizedScale::Unit()};
                         subOpWeights->quantization.scales = {QuantizedScale::Unit()};
-                        subOpBias->tensor->RemoveReader((*subOp).get());
-                        subOpBias->tensor = bias0;
-                        subOpBias->tensor->consumers.push_back((*subOp).get());
                         subOpBias->shape = bias0->storageShape;
                     }
                 }
@@ -1051,11 +1045,10 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
             auto subWeightsReadShape = Shape(kernel->Size().y, kernel->Size().x, subOfmDepth, depthMultiplier);
             auto subWeightsShape = subWeightsReadShape.WithDepth(1);
             auto subWeightOffset = weightsShape.WithZeros().WithDepth(multiplier);
-            auto subWeightsConn = subOp->Input(TensorUsage::Weights);
-            subWeightsConn->tensor = Slice(weightsConn->tensor.get(), subWeightOffset, subWeightsShape, subWeightsReadShape);
+            auto subWeights = Slice(weightsConn->tensor.get(), subWeightOffset, subWeightsShape, subWeightsReadShape);
+            auto subWeightsConn = subOp->ConnectInput(TensorUsage::Weights, subWeights);
             // Tensor is now in AxisOrder::HWCM with M=1
             subWeightsConn->tensor->srcTensor->SetAxisOrder(AxisOrder::HWCM);
-            subWeightsConn->tensor->consumers.push_back(subOp.get());
             subWeightsConn->shape = subWeightsShape;
             subWeightsConn->quantization = SliceQ(subWeightsConn->quantization, multiplier, depthMultiplier);
             if ( biasShape.Depth() > 1 )
@@ -1063,16 +1056,13 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
                 auto subBiasReadShape = Shape(subOfmDepth, depthMultiplier);
                 auto subBiasShape = Shape(subBiasReadShape.WithDepth(1), biasShape.Size(), 1);
                 auto subBiasOffset = biasShape.WithZeros().WithDepth(multiplier);
-                auto subBiasConn = subOp->Input(TensorUsage::Scales);
-                subBiasConn->tensor = Slice(biasConn->tensor.get(), subBiasOffset, subBiasShape, subBiasReadShape);
+                auto subBias = Slice(biasConn->tensor.get(), subBiasOffset, subBiasShape, subBiasReadShape);
+                auto subBiasConn = subOp->ConnectInput(TensorUsage::Scales, subBias);
                 subBiasConn->tensor->bufferView = subBiasConn->tensor->bufferView.Reshape({subOfmDepth});
-                subBiasConn->tensor->consumers.push_back(subOp.get());
                 subBiasConn->shape = biasShape.WithDepth(subOfmDepth);
                 subBiasConn->quantization = SliceQ(subBiasConn->quantization, multiplier, depthMultiplier);
             }
-            auto subOfmConn = subOp->Output(TensorUsage::OFM);
-            subOfmConn->tensor = transposedOfm;
-            subOfmConn->tensor->producers.push_back(subOp.get());
+            auto subOfmConn = subOp->ConnectOutput(TensorUsage::OFM, transposedOfm);
             subOfmConn->shape = transposedOfm->storageShape;
             subOfmConn->slice.offset = ofmShape.WithZeros().WithBatch(multiplier);
             subOfmConn->slice.shape = ofmShape.WithDepth(subOfmDepth);

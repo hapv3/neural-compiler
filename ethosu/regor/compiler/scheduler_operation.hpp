@@ -90,6 +90,12 @@ public:
         consumers.erase(end, consumers.end());
     }
 
+    void RemoveWriter(const SchedulerOperation *op)
+    {
+        auto end = std::remove(producers.begin(), producers.end(), op);
+        producers.erase(end, producers.end());
+    }
+
     void SetAddress(Address address)
     {
         assert(address >= 0);
@@ -220,15 +226,14 @@ public:
     void SetAttributes(const Attributes &attr) { _attr = attr; }
 
     // Input connections
-    SchedulerConnection *AddInput(TensorUsage usage, const std::shared_ptr<SchedulerTensor> &tensor = {})
+    SchedulerConnection *AddInput(TensorUsage usage) { return &inputs[usage]; }
+    SchedulerConnection *ConnectInput(TensorUsage usage, const std::shared_ptr<SchedulerTensor> &tensor)
     {
-        auto &conn = inputs[usage];
-        if ( tensor )
-        {
-            conn.tensor = tensor;
-            tensor->consumers.push_back(this);
-        }
-        return &conn;
+        auto conn = &inputs[usage];
+        if ( conn->tensor && conn->tensor != tensor ) conn->tensor->RemoveReader(this);
+        conn->tensor = tensor;
+        tensor->consumers.push_back(this);
+        return conn;
     }
 
     const SchedulerConnection *TryInput(TensorUsage usage) const { return inputs.try_ref(usage); }
@@ -270,6 +275,14 @@ public:
 
     // Output connections
     SchedulerConnection *AddOutput(TensorUsage usage) { return &outputs[usage]; }
+    SchedulerConnection *ConnectOutput(TensorUsage usage, const std::shared_ptr<SchedulerTensor> &tensor)
+    {
+        auto conn = &outputs[usage];
+        if ( conn->tensor && conn->tensor != tensor ) conn->tensor->RemoveWriter(this);
+        conn->tensor = tensor;
+        tensor->producers.push_back(this);
+        return conn;
+    }
 
     SchedulerConnection *TryOutput(TensorUsage usage) { return outputs.try_ref(usage); }
     SchedulerConnection *Output(TensorUsage usage) { return &outputs.at(usage); }
