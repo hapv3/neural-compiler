@@ -382,34 +382,41 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
     // Detailed operator queries
     if ( !IsNone(query->transposeMask) )
     {
-        if ( opType == OpType::Transpose )
-        {
-            if ( query->transposeMask == TransposeType::NWHC || query->transposeMask == TransposeType::NHCW ||
-                 query->transposeMask == TransposeType::NCWH )
-            {
-                if ( req )
-                {
-                    req->req.Set(ArchRequirement::OutputFormat, ArchRequirement::InputFormat);
-                    req->ifmFormat = TensorFormat::NHWC;
-                    req->ofmFormat = TensorFormat::NHWC;
-                }
-                result.Set(QueryResult::HasRequirements);
-            }
-            else
-            {
-                // supported with decomposition requirements
-                if ( req )
-                {
-                    req->req.Set(ArchRequirement::Decompose);
-                    req->decomposeProps.Set(ArchProperty::TransposeMask);
-                }
-                result.Set(QueryResult::HasRequirements);
-            }
-        }
-        else
+        if ( opType != OpType::Transpose )
         {
             return QueryResult::Unsupported;
         }
+        // TODO MLBEDSW-10668: Transpose-implementation does not support large-axis decomposition
+        if ( req && req->decomposeProps.Any(ArchProperty::TensorAxis) )
+        {
+            return QueryResult::Unsupported;
+        }
+        // TODO MLBEDSW-10668: channel-axis for 32-bit NWHC-transpose is constrained to 14-bits
+        static constexpr int TRANSPOSE_32_MAX_CHANNEL = (1 << 14);
+        if ( (shapeInfo && typeInfo) && (query->ifm[0].type == DataType::Int32) &&
+             (query->transposeMask == TransposeType::NWHC) && (query->ifm[0].shape.Depth() > TRANSPOSE_32_MAX_CHANNEL) )
+        {
+            return QueryResult::Unsupported;
+        }
+        // Validate supported transpose-masks
+        if ( query->transposeMask != TransposeType::NWHC && query->transposeMask != TransposeType::NHCW && query->transposeMask != TransposeType::NCWH )
+        {
+            // supported with mask-decomposition requirements
+            if ( req )
+            {
+                req->req.Set(ArchRequirement::Decompose);
+                req->decomposeProps.Set(ArchProperty::TransposeMask);
+            }
+            result.Set(QueryResult::HasRequirements);
+        }
+        // Always set Input/Output format requirements
+        if ( req )
+        {
+            req->req.Set(ArchRequirement::OutputFormat, ArchRequirement::InputFormat);
+            req->ifmFormat = TensorFormat::NHWC;
+            req->ofmFormat = TensorFormat::NHWC;
+        }
+        result.Set(QueryResult::HasRequirements);
     }
 
     // reverseType::W and reverseType::H are supported
