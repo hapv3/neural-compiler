@@ -93,8 +93,6 @@ TfLiteSupportedOperatorsU85::TfLiteSupportedOperatorsU85(IArchitectureConstraint
         OpType::SplitV,
         OpType::ReverseV2,
         OpType::GatherNd,
-        OpType::SpaceToBatchND,
-        OpType::BatchToSpaceND,
         OpType::Quantize,
         OpType::HardSwish,
         OpType::SelectV2,

@@ -50,8 +50,6 @@ TfLiteSupportedOperatorsU55::TfLiteSupportedOperatorsU55(IArchitectureConstraint
         OpType::Softmax,
         OpType::Tanh,
         OpType::Pad,
-        OpType::BatchToSpaceND,
-        OpType::SpaceToBatchND,
         OpType::Transpose,
         OpType::Mean,
         OpType::Sub,

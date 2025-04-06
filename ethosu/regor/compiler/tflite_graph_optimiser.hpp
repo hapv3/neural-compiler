@@ -200,6 +200,19 @@ public:
         {
             {},
             {
+                // prerequisite to pattern-matching
+                &TFLiteGraphOptimiser::RemoveReshape,
+                // pattern-matching functions
+                // (must run before supported-operator checks)
+                // Every pattern-matching function is responsible of calling
+                // _supportedOperators->Check(newOp)
+                // before replacing a pattern with newOp
+                &TFLiteGraphOptimiser::RewriteSpaceToBatchConvBatchToSpace,
+            }
+        },
+        {
+            {},
+            {
                 &TFLiteGraphOptimiser::SupportedOperatorChecks,
             }
         },
@@ -229,13 +242,6 @@ public:
         {
             {},
             {
-                &TFLiteGraphOptimiser::RemoveReshape,
-            }
-        },
-        {
-            {},
-            {
-                &TFLiteGraphOptimiser::RewriteSpaceToBatchConvBatchToSpace,
                 &TFLiteGraphOptimiser::FixupDilationGT2,
                 &TFLiteGraphOptimiser::FixupBias,
                 &TFLiteGraphOptimiser::ConvertReduceMinMaxAnyAll,

@@ -1598,6 +1598,7 @@ Operation *TFLiteGraphOptimiser::RewriteSquaredDifference(Graph *const, Operatio
 Operation *TFLiteGraphOptimiser::RewriteSpaceToBatchConvBatchToSpace(Graph *const, Operation *const operation)
 {
     auto opType = operation->Type();
+    auto returnOp = operation;
     if ( opType == OpType::DepthwiseConv2D || opType == OpType::Conv2D )
     {
         auto prevOp = operation->IFM(0)->Writers().empty() ? nullptr : operation->IFM(0)->Writers().front().get();
@@ -1608,9 +1609,18 @@ Operation *TFLiteGraphOptimiser::RewriteSpaceToBatchConvBatchToSpace(Graph *cons
              operation->OFM()->Readers().size() == 1                // No other consumers of BatchToSpaceND input
         )
         {
+            auto newOp = std::make_shared<Operation>(*operation);
+            for ( const auto &[usage, conn] : operation->Inputs().pairs() )
+            {
+                newOp->CopyInput(usage, conn);
+            }
+            for ( const auto &[usage, conn] : operation->Outputs().pairs() )
+            {
+                newOp->CopyOutput(usage, conn);
+            }
             // Go ahead and short-circuit the SpaceToBatchND and BatchToSpaceND ops
-            operation->ConnectInput(TensorUsage::IFM0, prevOp->Input(TensorUsage::IFM0)->tensor);
-            operation->ConnectOutput(TensorUsage::OFM, nextOp->Output(TensorUsage::OFM)->tensor);
+            newOp->ConnectInput(TensorUsage::IFM0, prevOp->Input(TensorUsage::IFM0)->tensor);
+            newOp->ConnectOutput(TensorUsage::OFM, nextOp->Output(TensorUsage::OFM)->tensor);
             // Set new kernel dilation
             auto blockShape = prevOp->Input(TensorUsage::Params);
             int count = blockShape->shape[0];
@@ -1627,13 +1637,24 @@ Operation *TFLiteGraphOptimiser::RewriteSpaceToBatchConvBatchToSpace(Graph *cons
             int ypad = NeededTotalPadding(inputShape.Height(), stride.y, dilatedWH.y);
             Margin pad = Margin(ypad / 2, xpad / 2, (ypad + 1) / 2, (xpad + 1) / 2);
             // Set the new kernel with updated dilation and padding
-            operation->SetKernel(std::make_unique<Kernel>(dilatedKernel.WithPadding(pad)));
-            // Disconnect the SpaceToBatchND and BatchToSpaceND ops
-            prevOp->Disconnect();
-            nextOp->Disconnect();
+            newOp->SetKernel(std::make_unique<Kernel>(dilatedKernel.WithPadding(pad)));
+
+            // Validate that the pattern-matching is supported
+            if ( _supportedOps->Check(newOp.get()) )
+            {
+                returnOp = newOp.get();
+                // Disconnect matched pattern
+                prevOp->Disconnect();
+                nextOp->Disconnect();
+                operation->Disconnect();
+            }
+            else
+            {
+                newOp->Disconnect();
+            }
         }
     }
-    return operation;
+    return returnOp;
 }
 
 // Fixup Conv2D and DepthwiseConv2D to allow dilation greater than 2.
