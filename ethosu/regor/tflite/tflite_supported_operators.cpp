@@ -22,6 +22,10 @@
 #include "common/logging.hpp"
 
 #include "compiler/op_type.hpp"
+#include "tflite_supported_operators_u55.hpp"
+#include "tflite_supported_operators_u85.hpp"
+
+#include "include/regor.h"
 
 namespace regor
 {
@@ -754,7 +758,7 @@ void TfLiteSupportedOperators::Failure(const Operation *op, const std::string &m
         name = ofmConn->tensor->Name().c_str();
     }
     std::string type = OpTypeToString(op->Type());
-    if ( opType != OpType::None )
+    if ( opType != OpType::None && opType != OpType::Passthrough )
     {
         auto tfLiteType = TfLiteMapping::OpTypeToBuiltinOperator(opType);
         type = TfLiteMapping::BuiltinOperatorToString(tfLiteType);
@@ -803,59 +807,16 @@ TfLiteSupportedOperators::TfLiteSupportedOperators(IArchitectureConstraints *con
     };
 }
 
-namespace
+std::unique_ptr<TfLiteSupportedOperators> MakeSupportedOpsChecker(const std::string &target, IArchitectureConstraints *constraints)
 {
-void DisconnectActivation(std::shared_ptr<Operation> op)
-{
-    assert(TfLiteMapping::CanFuseActivationFunction(op.get()));
-    // Op originally had a fused activation
-    assert(op->Outputs().size() == 1);
-    assert(op->OFM()->Readers().size() == 1);
-    auto activation = op->OFM()->Readers().front();
-    auto actOfm = activation->Output(TensorUsage::OFM);
-    assert(actOfm);
-    // bypass and disconnect the activation
-    op->CopyOutput(TensorUsage::OFM, *actOfm);
-    activation->SetPassthroughOp();
-    activation->Disconnect();
-}
-}  // namespace
-
-void TfLiteSupportedOperators::Process(Graph *graph)
-{
-    std::vector<std::shared_ptr<Operation>> operatorList;
-    graph->GetAllOperations(operatorList);
-    for ( auto &op : operatorList )
+    if ( target == REGOR_ARCH_ETHOSU85 )
     {
-        if ( op->Type() == OpType::Passthrough )
-        {
-            // Op is already passthrough
-            // Only valid scenario is that op is a previously disconnected activation
-            assert(op->Passthrough() == nullptr && "source-operation set to passthrough before supported-ops checks");
-            assert(op->CountInputs(TensorUsage::IFM) == 0);
-            assert(op->CountOutputs(TensorUsage::OFM) == 0);
-            continue;
-        }
-        if ( !Check(op.get()) )
-        {
-            if ( TfLiteMapping::CanFuseActivationFunction(op.get()) )
-            {
-                // op originally had a fused activation
-                // disconnect it from the graph as it will be handled by CPU
-                DisconnectActivation(op);
-            }
-            else if ( op->IFM(0)->Writers().size() == 1 )
-            {
-                auto pred = op->IFM(0)->Writers().front();
-                if ( TfLiteMapping::CanFuseActivationFunction(pred.get()) )
-                {
-                    // op is an activation function, disconnect op and set pred to passthrough
-                    DisconnectActivation(pred);
-                    pred->SetPassthroughOp();
-                }
-            }
-            op->SetPassthroughOp();
-        }
+        return std::make_unique<TfLiteSupportedOperatorsU85>(constraints);
+    }
+    else
+    {
+        assert(target == REGOR_ARCH_ETHOSU55 || target == REGOR_ARCH_ETHOSU65);
+        return std::make_unique<TfLiteSupportedOperatorsU55>(constraints);
     }
 }
 

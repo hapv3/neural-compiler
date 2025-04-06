@@ -29,23 +29,12 @@
 
 #include <catch_all.hpp>
 
-#include "regor.h"
+#include "include/regor.h"
 
 using namespace regor;
 
 namespace
 {
-std::unique_ptr<TfLiteSupportedOperators> MakeSupportedOpsChecker(std::string target, std::shared_ptr<Architecture> &arch)
-{
-    if ( target == REGOR_ARCH_ETHOSU85 )
-    {
-        return std::make_unique<TfLiteSupportedOperatorsU85>(arch->Constraints());
-    }
-    else
-    {
-        return std::make_unique<TfLiteSupportedOperatorsU55>(arch->Constraints());
-    }
-}
 
 std::shared_ptr<Operation> CreateOperation(OpType opType, Shape ifmShape, DataType ifmType, Shape ifm2Shape,
     DataType ifm2Type, Shape ofmShape, DataType ofmType)
@@ -83,7 +72,7 @@ TEST_CASE("Supported operators Common")
     std::string err = "noerror";
     arch->CheckConfiguration(err);
     REQUIRE(err == "noerror");
-    auto supportedOps = MakeSupportedOpsChecker(REGOR_ARCH_ETHOSU55, arch);
+    auto supportedOps = MakeSupportedOpsChecker(REGOR_ARCH_ETHOSU55, arch->Constraints());
 
     SECTION("ConstraintTensQuantized")
     {
@@ -460,7 +449,7 @@ TEST_CASE("Supported operators EthosU55")
     arch->CheckConfiguration(err);
     REQUIRE(err == "noerror");
 
-    auto supportedOps = MakeSupportedOpsChecker(REGOR_ARCH_ETHOSU55, arch);
+    auto supportedOps = MakeSupportedOpsChecker(REGOR_ARCH_ETHOSU55, arch->Constraints());
 
     SECTION("Test positive")
     {
@@ -602,7 +591,7 @@ TEST_CASE("Supported operators EthosU85")
     arch->CheckConfiguration(err);
     REQUIRE(err == "noerror");
 
-    auto supportedOps = MakeSupportedOpsChecker(REGOR_ARCH_ETHOSU85, arch);
+    auto supportedOps = MakeSupportedOpsChecker(REGOR_ARCH_ETHOSU85, arch->Constraints());
 
     SECTION("Test positive")
     {

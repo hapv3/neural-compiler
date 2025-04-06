@@ -33,9 +33,6 @@
 #include "tensor_allocator.hpp"
 #include "tflite/custom_operator_ethosu.hpp"
 #include "tflite/tflite_reader.hpp"
-#include "tflite/tflite_supported_operators.hpp"
-#include "tflite/tflite_supported_operators_u55.hpp"
-#include "tflite/tflite_supported_operators_u85.hpp"
 #include "tflite/tflite_writer.hpp"
 #include "tosa/tosa_reader.hpp"
 
@@ -54,24 +51,6 @@ END_ENUM_TABLE()
 
 namespace regor
 {
-
-namespace
-{
-
-std::unique_ptr<TfLiteSupportedOperators> InitSupportedOpsChecker(const std::string &target, IArchitectureConstraints *constraints)
-{
-    if ( target == REGOR_ARCH_ETHOSU85 )
-    {
-        return std::make_unique<TfLiteSupportedOperatorsU85>(constraints);
-    }
-    else
-    {
-        assert(target == REGOR_ARCH_ETHOSU55 || target == REGOR_ARCH_ETHOSU65);
-        return std::make_unique<TfLiteSupportedOperatorsU55>(constraints);
-    }
-}
-
-}  // namespace
 
 Compiler::Compiler(std::unique_ptr<Architecture> &arch)
 {
@@ -445,18 +424,9 @@ std::unique_ptr<Graph> Compiler::CompileGraph(std::unique_ptr<Graph> &graph,
     {
         if ( graph->Notation() == GraphNotation::TFLite )
         {
-            // Run TFLite supported-operator checks
-            std::unique_ptr<TfLiteSupportedOperators> supportedOps;
-            _architecture->Call([&](const std::string &target)
-                { supportedOps = InitSupportedOpsChecker(target, _architecture->Constraints()); });
-
-            if ( supportedOps )
-            {
-                supportedOps->Process(graph.get());
-            }
             // Run GraphNotation::TFLite Preprocess/optimise step
             std::unique_ptr<GraphOptimiser> optimiser = GraphOptimiser::MakeGraphOptimiser(
-                GraphNotation::TFLite, _architecture->Constraints(), _graphOptimiserOptions, _optDb.get());
+                GraphNotation::TFLite, _architecture.get(), _graphOptimiserOptions, _optDb.get());
             if ( optimiser )
             {
                 optimiser->Process(graph.get());
@@ -465,7 +435,7 @@ std::unique_ptr<Graph> Compiler::CompileGraph(std::unique_ptr<Graph> &graph,
 
         // Run GraphNotation::GraphAPI Preprocess/optimise step
         std::unique_ptr<GraphOptimiser> optimiser = GraphOptimiser::MakeGraphOptimiser(
-            GraphNotation::GraphAPI, _architecture->Constraints(), _graphOptimiserOptions, _optDb.get());
+            GraphNotation::GraphAPI, _architecture.get(), _graphOptimiserOptions, _optDb.get());
         if ( optimiser )
         {
             optimiser->Process(graph.get());

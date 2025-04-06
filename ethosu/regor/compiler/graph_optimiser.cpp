@@ -26,6 +26,7 @@
 #include "op_type.hpp"
 #include "operation.hpp"
 #include "tensor.hpp"
+#include "tflite/tflite_supported_operators.hpp"
 #include "tflite_graph_optimiser.hpp"
 
 #include <cassert>
@@ -41,16 +42,22 @@
 namespace regor
 {
 
-std::unique_ptr<GraphOptimiser> GraphOptimiser::MakeGraphOptimiser(GraphNotation notation,
-    IArchitectureConstraints *constraints, const GraphOptimiserOptions &options, OptimiserDatabase *db)
+std::unique_ptr<GraphOptimiser> GraphOptimiser::MakeGraphOptimiser(
+    GraphNotation notation, Architecture *arch, const GraphOptimiserOptions &options, OptimiserDatabase *db)
 {
     switch ( notation )
     {
         case GraphNotation::TFLite:
-            return std::unique_ptr<GraphOptimiser>(std::make_unique<TFLiteGraphOptimiser>(constraints, options, db));
+        {
+            std::unique_ptr<TfLiteSupportedOperators> supportedOps;
+            arch->Call([&supportedOps, &arch](const std::string &target)
+                { supportedOps = MakeSupportedOpsChecker(target, arch->Constraints()); });
+            return std::unique_ptr<GraphOptimiser>(
+                std::make_unique<TFLiteGraphOptimiser>(arch->Constraints(), std::move(supportedOps), options, db));
+        }
 
         case GraphNotation::GraphAPI:
-            return std::unique_ptr<GraphOptimiser>(std::make_unique<GraphIrOptimiser>(constraints, options, db));
+            return std::unique_ptr<GraphOptimiser>(std::make_unique<GraphIrOptimiser>(arch->Constraints(), options, db));
 
         default:
             LOG_ERROR("Invalid graph notation");

@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include "architecture/architecture.hpp"
 #include "architecture/architecture_constraints.hpp"
 #include "compiler/graph.hpp"
 #include "compiler/operation.hpp"
@@ -25,6 +26,7 @@
 
 namespace regor
 {
+
 class TfLiteSupportedOperators
 {
     using OperatorCheck = bool (TfLiteSupportedOperators::*)(const Operation *);
@@ -41,8 +43,6 @@ protected:
 public:
     TfLiteSupportedOperators(IArchitectureConstraints *constraints);
     virtual ~TfLiteSupportedOperators() = default;
-    // process graph and set passthrough for unsupported operators
-    void Process(Graph *graph);
     virtual bool Check(const Operation *) = 0;
 
 protected:
@@ -73,4 +73,8 @@ private:
     bool ConstraintSoftmax(const Operation *op);
     bool ConstraintPad(const Operation *op);
 };
+
+// Factory for supported-ops checkers
+std::unique_ptr<TfLiteSupportedOperators> MakeSupportedOpsChecker(const std::string &target, IArchitectureConstraints *constraints);
+
 }  // namespace regor

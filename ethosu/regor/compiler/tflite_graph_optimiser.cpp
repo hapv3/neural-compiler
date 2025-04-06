@@ -2713,6 +2713,49 @@ SliceConstTensor(const TensorConnection *conn, const Shape &sliceShape, const Sh
     return std::make_shared<Tensor>(Name, conn->tensor->Type(), sliceShape, std::move(newBuffer));
 }
 
+namespace
+{
+void DisconnectActivation(Operation *const op)
+{
+    assert(TfLiteMapping::CanFuseActivationFunction(op));
+    // Op originally had a fused activation
+    assert(op->Outputs().size() == 1);
+    assert(op->OFM()->Readers().size() == 1);
+    auto activation = op->OFM()->Readers().front();
+    auto actOfm = activation->Output(TensorUsage::OFM);
+    assert(actOfm);
+    // bypass and disconnect the activation
+    op->CopyOutput(TensorUsage::OFM, *actOfm);
+    activation->SetPassthroughOp();
+    activation->Disconnect();
+}
+}  // namespace
+
+Operation *TFLiteGraphOptimiser::SupportedOperatorChecks(Graph *const graph, Operation *const operation)
+{
+    if ( !_supportedOps->Check(operation) )
+    {
+        if ( TfLiteMapping::CanFuseActivationFunction(operation) )
+        {
+            // op originally had a fused activation
+            // disconnect it from the graph as it will be handled by CPU
+            DisconnectActivation(operation);
+        }
+        else if ( operation->IFM(0)->Writers().size() == 1 )
+        {
+            auto pred = operation->IFM(0)->Writers().front();
+            if ( TfLiteMapping::CanFuseActivationFunction(pred.get()) )
+            {
+                // op is an activation function, disconnect op and set pred to passthrough
+                DisconnectActivation(pred.get());
+                pred->SetPassthroughOp();
+            }
+        }
+        operation->SetPassthroughOp();
+    }
+    return operation;
+}
+
 Operation *TFLiteGraphOptimiser::ClampActivations(Graph *const graph, Operation *const operation)
 {
     OpType opType = operation->Type();
@@ -2854,9 +2897,11 @@ Operation *TFLiteGraphOptimiser::ConvertConvolutionGroup(Graph *const graph, Ope
     return concatOp.get();
 }
 
-TFLiteGraphOptimiser::TFLiteGraphOptimiser(IArchitectureConstraints *constraints, const GraphOptimiserOptions &options, OptimiserDatabase *db) :
+TFLiteGraphOptimiser::TFLiteGraphOptimiser(IArchitectureConstraints *constraints,
+    std::unique_ptr<TfLiteSupportedOperators> supportedOps, const GraphOptimiserOptions &options, OptimiserDatabase *db) :
         GraphOptimiser(constraints, options, db)
 {
+    _supportedOps = std::move(supportedOps);
     _softmax = std::make_unique<Softmax>(db);
 }
 

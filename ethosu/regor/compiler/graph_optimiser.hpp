@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -76,8 +76,8 @@ public:
 
 
 
-    static std::unique_ptr<GraphOptimiser> MakeGraphOptimiser(GraphNotation notation,
-        IArchitectureConstraints *constraints, const GraphOptimiserOptions &options, OptimiserDatabase *db);
+    static std::unique_ptr<GraphOptimiser> MakeGraphOptimiser(
+        GraphNotation notation, Architecture *arch, const GraphOptimiserOptions &options, OptimiserDatabase *db);
     static void ParseGraphOptimiserOptions(GraphOptimiserOptions &opt, IniReader &reader);
 
     void Process(Graph *graph);

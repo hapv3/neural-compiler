@@ -60,7 +60,7 @@ TEST_CASE("test_graphir_optimiser - constant propagation")
         }();
 
         GraphOptimiserOptions options;
-        auto optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch->Constraints(), options, nullptr);
+        auto optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
 
         std::vector<Operation *> allOps;
 
@@ -106,7 +106,7 @@ TEST_CASE("test_graphir_optimiser - constant propagation")
         }();
 
         GraphOptimiserOptions options;
-        auto optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch->Constraints(), options, nullptr);
+        auto optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
 
         std::vector<Operation *> allOps;
 
@@ -157,7 +157,7 @@ TEST_CASE("test_graphir_optimiser - ReduceSum")
         }();
 
         GraphOptimiserOptions options;
-        auto optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch->Constraints(), options, nullptr);
+        auto optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
 
         REQUIRE(bool(optimiser));
         optimiser->Process(graph.get());
@@ -204,7 +204,7 @@ TEST_CASE("test_graphir_optimiser - transpose removal")
     auto graph = CreateGraph(ops);
 
     GraphOptimiserOptions options;
-    auto optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch->Constraints(), options, nullptr);
+    auto optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
 
     optimiser->Process(graph.get());
 
@@ -248,7 +248,7 @@ TEST_CASE("test_graphir_optimiser - transpose merge")
     auto graph = CreateGraph(ops);
 
     GraphOptimiserOptions options;
-    auto optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch->Constraints(), options, nullptr);
+    auto optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
 
     optimiser->Process(graph.get());
 

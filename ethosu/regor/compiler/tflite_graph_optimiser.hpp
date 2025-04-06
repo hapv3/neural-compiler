@@ -28,6 +28,7 @@
 #include "operation.hpp"
 #include "softmax.hpp"
 #include "tensor.hpp"
+#include "tflite/tflite_supported_operators.hpp"
 
 #include <fixedpoint/fixedpoint.h>
 #include <algorithm>
@@ -66,6 +67,7 @@ class TFLiteGraphOptimiser : public GraphOptimiser
 
 private:
     std::unique_ptr<Softmax> _softmax;
+    std::unique_ptr<TfLiteSupportedOperators> _supportedOps;
 
     // utility functions
 
@@ -95,6 +97,7 @@ private:
     Operation *ConvertTanhSigmoidToLUT16(Operation *const op);
 
     // Rewrite functions
+    Operation *SupportedOperatorChecks(Graph *const graph, Operation *const operation);
     Operation *ClampActivations(Graph *const graph, Operation *const operation);
     Operation *ConvertConvolutionGroup(Graph *const graph, Operation *const operation);
     Operation *ConvertExpToLUT(Graph *const graph, Operation *const operation);
@@ -197,6 +200,12 @@ public:
         {
             {},
             {
+                &TFLiteGraphOptimiser::SupportedOperatorChecks,
+            }
+        },
+        {
+            {},
+            {
                 &TFLiteGraphOptimiser::ClampActivations,
                 &TFLiteGraphOptimiser::ConvertConvolutionGroup,
             }
@@ -272,7 +281,8 @@ public:
     }};
     // clang-format on
 
-    explicit TFLiteGraphOptimiser(IArchitectureConstraints *constraints, const GraphOptimiserOptions &options, OptimiserDatabase *db);
+    explicit TFLiteGraphOptimiser(IArchitectureConstraints *constraints,
+        std::unique_ptr<TfLiteSupportedOperators> supportedOps, const GraphOptimiserOptions &options, OptimiserDatabase *db);
 
     const GraphOptStepArray &GraphOptimisationSteps() const { return _graphOptimisationSteps; }
 
