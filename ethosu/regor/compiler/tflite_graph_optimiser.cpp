@@ -733,14 +733,6 @@ Operation *TFLiteGraphOptimiser::RewriteStridedSlice(Graph *const graph, Operati
             }
         }
 
-        // TODO MLBEDSW-10165: Handle stride < 0 and other dimensions than H and W
-        if ( sliceStride.LessMask(sliceStride.WithZeros()) ||
-             sliceStride.WithHeight(1).WithWidth(1) != Shape::PadAxes(sliceShape.WithOnes(), 3, 1) )
-        {
-            returnOp->SetPassthroughOp();
-            return returnOp;
-        }
-
         // Create a new memory copy op
         assert(sliceOffset + sliceShape <= ifmConn->shape);
         assert(sliceOffset >= ifmConn->shape.WithZeros());

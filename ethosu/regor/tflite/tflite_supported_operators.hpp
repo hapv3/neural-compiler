@@ -73,6 +73,7 @@ private:
     bool ConstraintSoftmax(const Operation *op);
     bool ConstraintPad(const Operation *op);
     bool ConstraintTransposeDims(const Operation *op);
+    bool ConstraintStridedSlice(const Operation *op);
 };
 
 // Factory for supported-ops checkers
