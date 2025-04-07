@@ -953,6 +953,8 @@ void EthosU85RCSGenerator::GenerateActivation(const HLCStripe *stripe, MemoryAcc
     const HLCParameters *parameters = nullptr;
     assert(stripe->opGroup != nullptr);
     EthosU85OpGroup *opGroup = static_cast<EthosU85OpGroup *>(stripe->opGroup);
+    auto &ofm = op->ofm;
+    DataType clipDataType = ofm.dataType;
     if ( IsActivation(op->type) )
     {
         // Non-fused activation
@@ -968,18 +970,18 @@ void EthosU85RCSGenerator::GenerateActivation(const HLCStripe *stripe, MemoryAcc
                 // Fused activation
                 opType = subOp.type;
                 parameters = &subOp.parameters;
-
+                // Use subOp ifm datatype to calculate clip range
+                clipDataType = subOp.ifm[0].dataType;
                 // We know there can be only one fused activation
                 break;
             }
         }
     }
 
-    auto &ofm = op->ofm;
     // Clamp quantMin/quantMax to valid range, but completely disable clipping if any are at the edge of the range
-    int64_t quantizedMin = std::max(IntegerMin(ofm.dataType), IntegerMin(DataType::Int16));
-    int64_t quantizedMax = std::min(IntegerMax(ofm.dataType), IntegerMax(DataType::UInt16));
-    auto clipRange = DataTypeSizeBits(ofm.dataType) > 16 ? activation_clip_range::NONE : activation_clip_range::B16;
+    int64_t quantizedMin = std::max(IntegerMin(clipDataType), IntegerMin(DataType::Int16));
+    int64_t quantizedMax = std::min(IntegerMax(clipDataType), IntegerMax(DataType::UInt16));
+    auto clipRange = DataTypeSizeBits(clipDataType) > 16 ? activation_clip_range::NONE : activation_clip_range::B16;
     if ( ofm.quantization.quantMin.size() )
     {
         if ( ofm.quantization.quantMin[0] > std::numeric_limits<int64_t>::min() )
