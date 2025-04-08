@@ -262,10 +262,20 @@ Flags<QueryResult> EthosU85Constraints::OperatorQuery(OpType opType, const ArchO
     {
         if ( req )
         {
-            req->req = ArchRequirement::OpSubstitution;
+            req->req.Set(ArchRequirement::OpSubstitution);
             req->substitution = OpType::LUT;
         }
         result.Set(QueryResult::HasRequirements);
+    }
+
+    // TransposeConv2D and Conv3D are legalized during decomposition
+    if ( opType == OpType::TransposeConv2D || opType == OpType::Conv3D )
+    {
+        if ( req )
+        {
+            req->req.Set(ArchRequirement::Decompose);
+        }
+        return QueryResult::NativeConstrainedHasReq;
     }
 
     // Check direct native support of the opType

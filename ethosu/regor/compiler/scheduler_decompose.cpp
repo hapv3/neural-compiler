@@ -211,7 +211,6 @@ bool NeedsDecompose(Architecture *arch, const SchedulerOperation *schedOp)
     ArchRequirements req{};
     Flags<QueryResult> result = OperatorQuery(arch, schedOp, &req);
     // Assert complete query
-    assert(result.Any(QueryResult::Constrained) == false && "Constrained result from complete OperatorQuery");
     if ( result.Any(QueryResult::Unsupported) )
     {
         // Operations completely unsupported by HW should not be decomposed
