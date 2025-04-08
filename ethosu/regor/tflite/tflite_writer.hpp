@@ -39,8 +39,8 @@ namespace regor
 class TfLiteWriter
 {
 public:
-    TfLiteWriter(size_t fbSizeCap = size_t{1U << 31}) :
-            _flatbuffer(flatbuffers::FlatBufferBuilder()), _fbSizeCap(fbSizeCap)
+    TfLiteWriter(size_t fbSizeCap = size_t{1U << 31}, bool skipOfflineMemoryAllocation = false) :
+            _flatbuffer(flatbuffers::FlatBufferBuilder()), _fbSizeCap(fbSizeCap), _skipOfflineMemoryAllocation(skipOfflineMemoryAllocation)
     {
     }
 
@@ -233,6 +233,8 @@ private:
     std::vector<OffsetBufferDesc> _offset_buffers;
     bool _useBufferOffset = false;
     const size_t _fbSizeCap;
+    const bool _skipOfflineMemoryAllocation;  // Skip writing the OfflineMemoryAllocation TFLite metadata. The purpose
+                                              // of this is primarily for unit testing.
 
     static constexpr size_t BUFFER_ALIGNMENT = 16ULL;
 

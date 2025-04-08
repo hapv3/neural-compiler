@@ -256,7 +256,10 @@ std::unique_ptr<const uint8_t[]> TfLiteWriter::SerialiseImpl(const std::vector<s
         _serialised_tensors.clear();
     }
 
-    serialised_metadata.push_back(SerialiseTensorAddresses(int(_serialised_subgraphs.size())));
+    if ( !_skipOfflineMemoryAllocation )
+    {
+        serialised_metadata.push_back(SerialiseTensorAddresses(int(_serialised_subgraphs.size())));
+    }
 
     _tensors.clear();
     _tensor_addresses.clear();
