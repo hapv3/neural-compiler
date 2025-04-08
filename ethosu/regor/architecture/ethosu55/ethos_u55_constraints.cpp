@@ -402,7 +402,8 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
         }
     }
 
-    if ( query->reverseMask != ReverseType::None )
+    // reverseType::W and reverseType::H are supported
+    if ( Flags<ReverseType>(query->reverseMask).Unset(ReverseType::H, ReverseType::W) != ReverseType::None )
     {
         return QueryResult::Unsupported;
     }
