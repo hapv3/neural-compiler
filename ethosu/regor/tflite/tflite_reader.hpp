@@ -39,11 +39,11 @@ public:
     TfLiteReader() {}
 
     static void LoadGraphs(const void *input, size_t size, std::vector<std::unique_ptr<Graph>> &graphs,
-        OptimiserDatabase *optDb);  // From buffer
+        OptimiserDatabase *optDb, bool skipSemanticsCheck = false);  // From buffer
 
 private:
     static void LoadGraphs(const uint8_t *input, const tflite::Model *model, std::vector<std::unique_ptr<Graph>> &graphs,
-        OptimiserDatabase *optDb);  // From model
+        OptimiserDatabase *optDb, bool skipSemanticsCheck = false);  // From model
     static const tflite::Model *LoadModel(const void *input, size_t size);
     static std::shared_ptr<Tensor> ParseTensor(const tflite::Tensor *tflite_tensor, std::shared_ptr<Buffer> &buffer,
         std::unordered_map<UniqueId, Quantization> &tensorQuantization);

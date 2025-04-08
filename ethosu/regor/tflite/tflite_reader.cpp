@@ -105,12 +105,15 @@ const tflite::Model *TfLiteReader::LoadModel(const void *input, size_t size)
 }
 
 void TfLiteReader::LoadGraphs(const uint8_t *input, const tflite::Model *model,
-    std::vector<std::unique_ptr<Graph>> &graphs, OptimiserDatabase *optDb)
+    std::vector<std::unique_ptr<Graph>> &graphs, OptimiserDatabase *optDb, bool skipSemanticsCheck)
 {
     assert(model);
 
-    auto semanticsChecker = tflite::TFLiteModelSemantics(model);
-    semanticsChecker.Check();
+    if ( !skipSemanticsCheck )
+    {
+        auto semanticsChecker = tflite::TFLiteModelSemantics(model);
+        semanticsChecker.Check();
+    }
 
     std::unordered_map<UniqueId, Quantization> tensorQuantization{};
     std::vector<tflite::BuiltinOperator> opcodes;
@@ -342,9 +345,10 @@ void TfLiteReader::LoadGraphs(const uint8_t *input, const tflite::Model *model,
     }
 }
 
-void TfLiteReader::LoadGraphs(const void *input, size_t size, std::vector<std::unique_ptr<Graph>> &graphs, OptimiserDatabase *optDb)
+void TfLiteReader::LoadGraphs(const void *input, size_t size, std::vector<std::unique_ptr<Graph>> &graphs,
+    OptimiserDatabase *optDb, bool skipSemanticsCheck)
 {
-    LoadGraphs(reinterpret_cast<const uint8_t *>(input), LoadModel(input, size), graphs, optDb);
+    LoadGraphs(reinterpret_cast<const uint8_t *>(input), LoadModel(input, size), graphs, optDb, skipSemanticsCheck);
 }
 
 std::shared_ptr<Tensor> TfLiteReader::ParseTensor(const tflite::Tensor *tflite_tensor, std::shared_ptr<Buffer> &buffer,
