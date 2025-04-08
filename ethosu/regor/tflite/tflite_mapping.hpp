@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -54,6 +54,26 @@ public:
 
     static std::string BuiltinOperatorToString(tflite::BuiltinOperator &type) { return EnumNameBuiltinOperator(type); }
 
+    static tflite::BuiltinOptions BuiltinOperatorToBuiltinOptions(tflite::BuiltinOperator op)
+    {
+        auto it1 = _builtinOperatorToBuiltinOptions.find(op);
+        if ( it1 == _builtinOperatorToBuiltinOptions.end() )
+        {
+            return tflite::BuiltinOptions::NONE;
+        }
+        return it1->second;
+    }
+
+    static tflite::BuiltinOptions2 BuiltinOperatorToBuiltinOptions2(tflite::BuiltinOperator op)
+    {
+        auto it1 = _builtinOperatorToBuiltinOptions2.find(op);
+        if ( it1 == _builtinOperatorToBuiltinOptions2.end() )
+        {
+            return tflite::BuiltinOptions2::NONE;
+        }
+        return it1->second;
+    }
+
     //
     // Conversions from Regor types to TensorFlow Lite types
     //
@@ -77,20 +97,6 @@ public:
         assert((type == OpType::CustomNpuOp || _opTypeToBuiltinOperator.count(type) == 1) && "Missing op type");
 
         return type == OpType::CustomNpuOp ? tflite::BuiltinOperator::CUSTOM : _opTypeToBuiltinOperator.at(type);
-    }
-    static tflite::BuiltinOptions OpTypeToBuiltinOptions(OpType type)
-    {
-        auto it1 = _opTypeToBuiltinOperator.find(type);
-        if ( it1 == _opTypeToBuiltinOperator.end() )
-        {
-            return tflite::BuiltinOptions::NONE;
-        }
-        auto it2 = _builtinOperatorToBuiltinOptions.find(it1->second);
-        if ( it2 == _builtinOperatorToBuiltinOptions.end() )
-        {
-            return tflite::BuiltinOptions::NONE;
-        }
-        return it2->second;
     }
 
     class InputTensorIndices;  // Usage: for (const auto& map_entry : InputTensorIndices(op_type)) {}
@@ -117,6 +123,7 @@ private:
 
     // Mapping from TensorFlow Lite operator type to TensorFlow Lite options type is N:1
     static const std::map<tflite::BuiltinOperator, tflite::BuiltinOptions> _builtinOperatorToBuiltinOptions;
+    static const std::map<tflite::BuiltinOperator, tflite::BuiltinOptions2> _builtinOperatorToBuiltinOptions2;
 
     // The number of input tensors to a TensorFlow Lite operator depends on the operator type,
     // as does the order in which the different kinds of input tensor are listed.

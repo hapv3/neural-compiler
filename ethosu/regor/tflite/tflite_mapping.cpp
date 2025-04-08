@@ -373,6 +373,33 @@ const std::map<tflite::BuiltinOperator, tflite::BuiltinOptions> TfLiteMapping::_
     // clang-format on
 };
 
+const std::map<tflite::BuiltinOperator, tflite::BuiltinOptions2> TfLiteMapping::_builtinOperatorToBuiltinOptions2 = {
+    // clang-format off
+    {tflite::BuiltinOperator::STABLEHLO_CONCATENATE,       tflite::BuiltinOptions2::StablehloConcatenateOptions},
+    {tflite::BuiltinOperator::STABLEHLO_BROADCAST_IN_DIM,  tflite::BuiltinOptions2::StablehloBroadcastInDimOptions},
+    {tflite::BuiltinOperator::STABLEHLO_CONVOLUTION,       tflite::BuiltinOptions2::StablehloConvolutionOptions},
+    {tflite::BuiltinOperator::STABLEHLO_SLICE,             tflite::BuiltinOptions2::StablehloSliceOptions},
+    {tflite::BuiltinOperator::STABLEHLO_CUSTOM_CALL,       tflite::BuiltinOptions2::StablehloCustomCallOptions},
+    {tflite::BuiltinOperator::STABLEHLO_REDUCE,            tflite::BuiltinOptions2::StablehloReduceOptions},
+    {tflite::BuiltinOperator::STABLEHLO_SCATTER,           tflite::BuiltinOptions2::StablehloScatterOptions},
+    {tflite::BuiltinOperator::STABLEHLO_COMPARE,           tflite::BuiltinOptions2::StablehloCompareOptions},
+    {tflite::BuiltinOperator::STABLEHLO_DYNAMIC_SLICE,     tflite::BuiltinOptions2::StablehloDynamicSliceOptions},
+    {tflite::BuiltinOperator::STABLEHLO_PAD,               tflite::BuiltinOptions2::StablehloPadOptions},
+    {tflite::BuiltinOperator::STABLEHLO_IOTA,              tflite::BuiltinOptions2::StablehloIotaOptions},
+    {tflite::BuiltinOperator::STABLEHLO_DOT_GENERAL,       tflite::BuiltinOptions2::StablehloDotGeneralOptions},
+    {tflite::BuiltinOperator::STABLEHLO_REDUCE_WINDOW,     tflite::BuiltinOptions2::StablehloReduceWindowOptions},
+    {tflite::BuiltinOperator::STABLEHLO_SORT,              tflite::BuiltinOptions2::StablehloSortOptions},
+    {tflite::BuiltinOperator::STABLEHLO_WHILE,             tflite::BuiltinOptions2::StablehloWhileOptions},
+    {tflite::BuiltinOperator::STABLEHLO_GATHER,            tflite::BuiltinOptions2::StablehloGatherOptions},
+    {tflite::BuiltinOperator::STABLEHLO_TRANSPOSE,         tflite::BuiltinOptions2::StablehloTransposeOptions},
+    {tflite::BuiltinOperator::DILATE,                      tflite::BuiltinOptions2::DilateOptions},
+    {tflite::BuiltinOperator::STABLEHLO_RNG_BIT_GENERATOR, tflite::BuiltinOptions2::StablehloRngBitGeneratorOptions},
+    {tflite::BuiltinOperator::REDUCE_WINDOW,               tflite::BuiltinOptions2::ReduceWindowOptions},
+    {tflite::BuiltinOperator::STABLEHLO_COMPOSITE,         tflite::BuiltinOptions2::StableHLOCompositeOptions},
+    {tflite::BuiltinOperator::STABLEHLO_SHIFT_LEFT,        tflite::BuiltinOptions2::StablehloShiftLeftOptions},
+    // clang-format on
+};
+
 const std::multimap<OpType, TensorUsage> TfLiteMapping::_inputTensorIndices = {
     // clang-format off
     {OpType::Abs,                               TensorUsage::IFM0},
@@ -629,8 +656,8 @@ bool TfLiteMapping::CanFuseActivationFunction(const Operation *operation)
         return false;  // Only fuse operators which came in fused
     }
 
-    const auto type = TfLiteMapping::OpTypeToBuiltinOptions(operation->Type());
     const tflite::Operator *const passthrough = static_cast<const tflite::Operator *>(operation->Passthrough());
+    const tflite::BuiltinOptions type = passthrough->builtin_options_type();
     tflite::ActivationFunctionType activation;
 
     if ( type == tflite::BuiltinOptions::Conv2DOptions )

@@ -124,6 +124,7 @@ std::unique_ptr<const uint8_t[]> TfLiteWriter::SerialiseImpl(const std::vector<s
             OpType type = operation->Type();
             tflite::BuiltinOperator builtin_code;
             tflite::BuiltinOptions builtin_options_type;
+            tflite::BuiltinOptions2 builtin_options_2_type;
             if ( type == OpType::Passthrough )
             {
                 assert(tflite_model);
@@ -137,11 +138,13 @@ std::unique_ptr<const uint8_t[]> TfLiteWriter::SerialiseImpl(const std::vector<s
                     builtin_code = static_cast<tflite::BuiltinOperator>(deprecated_builtin_code);
                 }
                 builtin_options_type = tflite_operator->builtin_options_type();
+                builtin_options_2_type = tflite_operator->builtin_options_2_type();
             }
             else
             {
                 builtin_code = TfLiteMapping::OpTypeToBuiltinOperator(type);
-                builtin_options_type = TfLiteMapping::OpTypeToBuiltinOptions(type);
+                builtin_options_type = TfLiteMapping::BuiltinOperatorToBuiltinOptions(builtin_code);
+                builtin_options_2_type = TfLiteMapping::BuiltinOperatorToBuiltinOptions2(builtin_code);
             }
 
             // Set deprecated_builtin_code for backwards compatibility
@@ -203,6 +206,8 @@ std::unique_ptr<const uint8_t[]> TfLiteWriter::SerialiseImpl(const std::vector<s
             flatbuffers::Offset<flatbuffers::Vector<uint8_t>> custom_options = 0;
             flatbuffers::Offset<flatbuffers::Vector<uint8_t>> mvi = 0;  // mutating_variable_inputs
             flatbuffers::Offset<flatbuffers::Vector<int32_t>> intermediates = 0;
+            uint64_t large_custom_options_offset = 0;
+            uint64_t large_custom_options_size = 0;
 
             if ( type == OpType::CustomNpuOp )
             {
@@ -230,9 +235,11 @@ std::unique_ptr<const uint8_t[]> TfLiteWriter::SerialiseImpl(const std::vector<s
             auto serialised_inputs = _flatbuffer.CreateVector<int32_t>(inputs);
             auto serialised_outputs = _flatbuffer.CreateVector<int32_t>(outputs);
             auto serialised_options = SerialiseOptions(operation, type);
+            auto serialised_options2 = SerialiseOptions2(operation, type);
 
             _serialised_operations.push_back(tflite::CreateOperator(_flatbuffer, opcode_index, serialised_inputs, serialised_outputs,
-                builtin_options_type, serialised_options, custom_options, custom_options_format, mvi, intermediates));
+                builtin_options_type, serialised_options, custom_options, custom_options_format, mvi, intermediates,
+                large_custom_options_offset, large_custom_options_size, builtin_options_2_type, serialised_options2));
         }
 
         std::vector<int> inputs, outputs;
@@ -889,6 +896,29 @@ flatbuffers::Offset<void> TfLiteWriter::SerialiseOptions(const Operation *operat
             LOG_ERROR("TfLiteWriter: Unrecognised built-in options type '{}'\n", int(type));
             break;
     }
+    return offset;
+}
+
+flatbuffers::Offset<void> TfLiteWriter::SerialiseOptions2(const Operation *operation, OpType opType)
+{
+    if ( opType == OpType::CustomNpuOp )
+    {
+        return 0;
+    }
+
+    flatbuffers::Offset<void> offset = 0;
+    const tflite::Operator *const passthrough = static_cast<const tflite::Operator *>(operation->Passthrough());
+    assert(passthrough);
+    const auto type = passthrough->builtin_options_2_type();
+
+    switch ( type )
+    {
+        case tflite::BuiltinOptions2::NONE:
+            break;
+        default:
+            break;
+    }
+
     return offset;
 }
 
