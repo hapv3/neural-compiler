@@ -349,11 +349,27 @@ const std::map<tflite::BuiltinOperator, tflite::BuiltinOptions> TfLiteMapping::_
     {tflite::BuiltinOperator::HASHTABLE_IMPORT,                 tflite::BuiltinOptions::HashtableImportOptions},
     {tflite::BuiltinOperator::HASHTABLE_SIZE,                   tflite::BuiltinOptions::HashtableSizeOptions},
     {tflite::BuiltinOperator::REDUCE_ALL,                       tflite::BuiltinOptions::ReducerOptions},
-    // TODO: {tflite::BuiltinOperator::CONV_3D_TRANSPOSE,       tflite::BuiltinOptions::???},
+    {tflite::BuiltinOperator::CONV_3D_TRANSPOSE,                tflite::BuiltinOptions::Conv3DOptions},
     {tflite::BuiltinOperator::VAR_HANDLE,                       tflite::BuiltinOptions::VarHandleOptions},
     {tflite::BuiltinOperator::READ_VARIABLE,                    tflite::BuiltinOptions::ReadVariableOptions},
     {tflite::BuiltinOperator::ASSIGN_VARIABLE,                  tflite::BuiltinOptions::AssignVariableOptions},
     {tflite::BuiltinOperator::BROADCAST_ARGS,                   tflite::BuiltinOptions::NONE},
+    {tflite::BuiltinOperator::RANDOM_STANDARD_NORMAL,           tflite::BuiltinOptions::RandomOptions},
+    {tflite::BuiltinOperator::BUCKETIZE,                        tflite::BuiltinOptions::BucketizeOptions},
+    {tflite::BuiltinOperator::RANDOM_UNIFORM,                   tflite::BuiltinOptions::RandomOptions},
+    {tflite::BuiltinOperator::MULTINOMIAL,                      tflite::BuiltinOptions::NONE},
+    {tflite::BuiltinOperator::GELU,                             tflite::BuiltinOptions::GeluOptions},
+    {tflite::BuiltinOperator::DYNAMIC_UPDATE_SLICE,             tflite::BuiltinOptions::DynamicUpdateSliceOptions},
+    {tflite::BuiltinOperator::RELU_0_TO_1,                      tflite::BuiltinOptions::NONE},
+    {tflite::BuiltinOperator::UNSORTED_SEGMENT_PROD,            tflite::BuiltinOptions::UnsortedSegmentProdOptions},
+    {tflite::BuiltinOperator::UNSORTED_SEGMENT_MAX,             tflite::BuiltinOptions::UnsortedSegmentMaxOptions},
+    {tflite::BuiltinOperator::UNSORTED_SEGMENT_SUM,             tflite::BuiltinOptions::UnsortedSegmentSumOptions},
+    {tflite::BuiltinOperator::ATAN2,                            tflite::BuiltinOptions::ATan2Options},
+    {tflite::BuiltinOperator::UNSORTED_SEGMENT_MIN,             tflite::BuiltinOptions::UnsortedSegmentMinOptions},
+    {tflite::BuiltinOperator::SIGN,                             tflite::BuiltinOptions::SignOptions},
+    {tflite::BuiltinOperator::BITCAST,                          tflite::BuiltinOptions::BitcastOptions},
+    {tflite::BuiltinOperator::BITWISE_XOR,                      tflite::BuiltinOptions::BitwiseXorOptions},
+    {tflite::BuiltinOperator::RIGHT_SHIFT,                      tflite::BuiltinOptions::RightShiftOptions},
     // clang-format on
 };
 
@@ -688,6 +704,10 @@ bool TfLiteMapping::CanFuseActivationFunction(const Operation *operation)
     else if ( type == tflite::BuiltinOptions::DivOptions )
     {
         activation = GetBuiltinFaf<tflite::DivOptions>(passthrough);
+    }
+    else if ( type == tflite::BuiltinOptions::TransposeConvOptions )
+    {
+        activation = GetBuiltinFaf<tflite::TransposeConvOptions>(passthrough);
     }
     else
     {
