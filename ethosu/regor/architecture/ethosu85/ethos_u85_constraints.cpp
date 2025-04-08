@@ -219,7 +219,8 @@ bool EthosU85Constraints::SupportedDtypes(OpType opType, DataType ifmType, DataT
 
     if ( _arch->UseAvgPoolNop(opType) )
     {
-        // The rules for UseAvgPoolNop are not the same as for a Pooling operation, skip checks for now
+        // TODO MLBEDSW-10667: The rules for UseAvgPoolNop are not the same as for a Pooling operation, skip checks for
+        // now
         return true;
     }
 
