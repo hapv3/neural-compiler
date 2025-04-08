@@ -68,6 +68,14 @@ void randomize(T &value, T min_value = std::numeric_limits<T>::min(), T max_valu
     }
 }
 
+// Randomize a real number (with an optional min/max value)
+template<typename T, std::enable_if_t<std::is_floating_point_v<T>, int> = 0>
+void randomize(T &value, T min_value = std::numeric_limits<T>::min(), T max_value = std::numeric_limits<T>::max())
+{
+    std::uniform_real_distribution<T> dist(min_value, max_value);
+    value = dist(default_rnd_generator);
+}
+
 // Usage:
 // std::vector<int> my_vec;
 // my_vec.resize(250);
@@ -107,7 +115,7 @@ void randomize(std::vector<T> &values)
 
 // Create entire randomised vector with bounds
 template<typename TYPE>
-std::vector<TYPE> random_vector(int length, TYPE min, TYPE max)
+std::vector<TYPE> random_vector(int length, TYPE min = std::numeric_limits<TYPE>::min(), TYPE max = std::numeric_limits<TYPE>::max())
 {
     std::uniform_int_distribution<int> distribution(min, max);
     std::vector<TYPE> temp(length);
@@ -143,6 +151,7 @@ T random_of(T first, Ts... rest)
     T arr[] = {first, rest...};
     unsigned index;
     randomize(index, 0U, unsigned(sizeof...(rest)));
+    assert(index < 1 + sizeof...(rest));
     return arr[index];
 }
 

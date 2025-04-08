@@ -63,6 +63,7 @@ add_catch_test(
         test_tflite_fb.cpp
         test_custom_operator_ethosu.cpp
         test_tflite_supported_operators.cpp
+        test_passthrough.cpp
     DEPS
         test_common
 )
