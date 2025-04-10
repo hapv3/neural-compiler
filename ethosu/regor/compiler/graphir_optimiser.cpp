@@ -1054,7 +1054,7 @@ Operation *GraphIrOptimiser::RewriteTable(Graph *const graph, Operation *const o
     return returnOp;
 }
 
-// Rewrite TOSA Cast to other ops
+// Rewrite TOSA Cast and int64 cast to other ops
 Operation *GraphIrOptimiser::RewriteCast(Graph *const, Operation *const operation)
 {
     Operation *returnOp = operation;
@@ -1063,6 +1063,67 @@ Operation *GraphIrOptimiser::RewriteCast(Graph *const, Operation *const operatio
     {
         const auto ifmConn = operation->Input(TensorUsage::IFM);
         const auto ofmConn = operation->Output(TensorUsage::OFM);
+
+        auto ofmType = ofmConn->tensor->Type();
+        /* Casting to int32 is hardware supported, but casting to int64 is not. We solve this by converting
+         * the int64 cast to a series of operations in the following if statement. This does not work for int32 input.
+         * 1. Cast the input to an int32 tensor.
+         * The tensor size is kept the same (WxHxC -> WxHxC) but the memory size is doubled.
+         * 2. Reinterpret the tensor as an int16 tensor.
+         * The tensor size is doubled (WxHxC -> WxHx2C), where every second element is 0xFFFF / 0x0000 for
+         * negative / positive numbers. Memory size is unchanged.
+         * 3. Cast the reinterpreted input to an int32 tensor again.
+         * The tensor size is again the same (WxHx2C -> WxHx2C) but the size in memory is double.
+         * 4. Finally, reinterpret the result as an int64 tensor.
+         * The 0x0000FFFF / 0x00000000 elements becomes most significant bits of the int64 values.
+         * Tensor size (WxHx2C -> WxHxC) */
+        if ( (ofmType == DataType::Int64) || (ofmType == DataType::UInt64) )
+        {
+            bool allowedDataType = ifmConn->tensor->Type() != DataType::Int32 && ifmConn->tensor->Type() != DataType::UInt32;
+            assert(allowedDataType && "Casting from int32 to int64 is not supported.");
+
+            const int c = ifmConn->shape.Depth();
+
+            // Create intermediate tensor for the casting
+            const auto intermediate32Bit = std::make_shared<Tensor>("intermediate_32bit", DataType::Int32, ifmConn->shape);
+
+            // Create double size intermediate tensor for the casting
+            const auto intermediate16Bit2xSize = std::make_shared<Tensor>(
+                "intermediate16Bit2xSize", DataType::Int16, ifmConn->shape.WithDepth(2 * c));
+
+            // Create double size intermediate tensor for the casting
+            const auto intermediate32Bit2xSize = std::make_shared<Tensor>(
+                "intermediate32Bit2xSize", DataType::Int32, ifmConn->shape.WithDepth(2 * c));
+
+            // Connect the cast output to the newly created tensor
+            const auto castOp1 = std::make_shared<Operation>(OpType::Cast);
+            castOp1->CopyInput(TensorUsage::IFM, *ifmConn);
+            castOp1->ConnectOutput(TensorUsage::OFM, intermediate32Bit);
+            RecordOptimisation(operation, castOp1.get());
+
+            // Create reinterpret cast op to reinterpret to 16 bit, double size
+            const auto reinterpretOp1 = std::make_shared<Operation>(OpType::ReinterpretCast);
+            reinterpretOp1->ConnectInput(TensorUsage::IFM, intermediate32Bit);
+            reinterpretOp1->ConnectOutput(TensorUsage::OFM, intermediate16Bit2xSize);
+            RecordOptimisation(operation, reinterpretOp1.get());
+
+            // Create additional cast op
+            const auto castOp2 = std::make_shared<Operation>(OpType::Cast);
+            castOp2->ConnectInput(TensorUsage::IFM, intermediate16Bit2xSize).Set(ifmConn->shape.WithDepth(2 * c));
+            castOp2->ConnectOutput(TensorUsage::OFM, intermediate32Bit2xSize).Set(ifmConn->shape.WithDepth(2 * c));
+            RecordOptimisation(operation, castOp2.get());
+
+            // Create the final reinterpret cast to reinterpret the result as an int64 tensor
+            const auto reinterpretOp2 = std::make_shared<Operation>(OpType::ReinterpretCast);
+            reinterpretOp2->ConnectInput(TensorUsage::IFM, intermediate32Bit2xSize).Set(ifmConn->shape.WithDepth(2 * c));
+            reinterpretOp2->CopyOutput(TensorUsage::OFM, *ofmConn);
+            RecordOptimisation(operation, reinterpretOp2.get());
+
+            ofmConn->quantization = Quantization::Unit();
+            operation->Disconnect();
+            returnOp = reinterpretOp2.get();
+            return returnOp;
+        }
 
         if ( IsBool(ifmConn->tensor->Type()) && IsInteger(ofmConn->tensor->Type()) )
         {

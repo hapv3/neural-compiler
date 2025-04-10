@@ -89,6 +89,7 @@ TfLiteSupportedOperatorsU55::TfLiteSupportedOperatorsU55(IArchitectureConstraint
         DataType::Int8,
         DataType::Int16,
         DataType::Int32,
+        DataType::Int64,
         // clang-format on
     };
     _maxWeightSum8Bit = 127 * (1 << 16);

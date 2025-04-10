@@ -137,6 +137,10 @@ void SchedulerPacking::FilterOperations(const std::vector<Operation *> &executio
     for ( Operation *op : executionList )
     {
         auto schedOp = MakeSchedulerOperation(op, graph);
+        if ( !schedOp )
+        {
+            continue;
+        }
 
         if ( ShouldDecompose(_arch, schedOp.get()) )
         {
@@ -195,6 +199,43 @@ ArchitectureOpGroupQuery SchedulerPacking::CreateOpGroupQuery(const SchedulerOpe
     query.ofm.isConst = false;
     query.ofm.isSliced = !Shape::IsReducedEqual(ofm->SliceShape(), ofm->shape);
     return query;
+}
+
+// We handle reinterpret by catching it before we create a SchedulerOperation.
+// Mapping is modified so that the OFM GraphIR tensor of the preceding OP and
+// the GraphIR IFM tensor of the succeeding OP map to the same SchedulerTensor.
+void SchedulerPacking::HandleReinterpretCast(Operation *op, const Graph *graph)
+{
+    assert(op->Type() == OpType::ReinterpretCast && "Op Type is not ReinterpretCast.");
+
+    const auto ifmConn = op->Input(TensorUsage::IFM);
+    const auto ofmConn = op->Output(TensorUsage::OFM);
+
+    // Try finding the SchedulerTensor mapped to the ReinterpretCast OP's IFM tensor.
+    // If no preceding OP has created it, and it can't be found, create it.
+    auto pos = _tensorMap.find(ifmConn->tensor.get());
+    std::shared_ptr<SchedulerTensor> schedTensor;
+    if ( pos == _tensorMap.end() )
+    {
+        schedTensor = std::make_shared<SchedulerTensor>();
+        schedTensor->srcTensor = ifmConn->tensor;
+        InitSchedulerTensor(schedTensor.get(), ifmConn->tensor.get(), graph);
+        _tensorMap.emplace(ifmConn->tensor.get(), schedTensor);
+    }
+    else
+    {
+        schedTensor = pos->second;
+    }
+    // Ensure that both the ReinterpretCast IFM and OFM tensor maps to the same SchedulerTensor.
+    _tensorMap.emplace(ofmConn->tensor.get(), schedTensor);
+
+    // If reinterpret cast is the last OP, that means that it's output tensor is the output tensor of the network.
+    // We therefore set isGraphOutput to true and make sure the srcTensor maps to the graph output tensor.
+    if ( graph->IsOutput(ofmConn->tensor.get()) )
+    {
+        InitSchedulerTensor(schedTensor.get(), ofmConn->tensor.get(), graph);
+        schedTensor->srcTensor = ofmConn->tensor;
+    }
 }
 
 void SchedulerPacking::SchedulerPacking::PrePackOperations()
@@ -540,6 +581,12 @@ std::unique_ptr<SchedulerOperation> SchedulerPacking::MakeSchedulerOperation(Ope
 {
     assert(op->Type() != OpType::None);
 
+    if ( op->Type() == OpType::ReinterpretCast )
+    {
+        HandleReinterpretCast(op, graph);
+        return nullptr;
+    }
+
     std::unique_ptr<SchedulerOperation> schedOp = std::make_unique<SchedulerOperation>(op->Type());
 
     schedOp->SetKernel(*op->Kernel());
@@ -578,6 +625,10 @@ std::unique_ptr<SchedulerOperation> SchedulerPacking::MakeSchedulerOperation(Ope
             }
             SchedulerConnection *schedConn = IsOFM(item.first) ? schedOp->AddOutput(item.first) : schedOp->AddInput(item.first);
             InitSchedulerConnection(schedConn, schedTensor, item.second);
+            if ( IsIFM(item.first) && tensor->Type() != schedTensor->dataType )
+            {
+                schedConn->SetType(tensor->Type());
+            }
             schedConn->transpose = TransposeType::None;
         }
     }

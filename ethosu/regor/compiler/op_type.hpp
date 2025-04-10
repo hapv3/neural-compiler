@@ -97,6 +97,7 @@ enum class OpType : uint16_t
 
     // Regor Internal Operators
     MemoryCopy,
+    ReinterpretCast,
     Passthrough,
     LUT,
     AndNot,

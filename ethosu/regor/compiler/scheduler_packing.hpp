@@ -71,6 +71,7 @@ private:
     int CanPack(const SchedulerOperation *schedOp, const SchedulerOperation *prevOp, const SchedulerOperation *op, const int prevOpKey) const;
     void InitSchedulerConnection(SchedulerConnection *schedConn, const std::shared_ptr<SchedulerTensor> &tensor, const TensorConnection &conn);
     void InitSchedulerTensor(SchedulerTensor *schedTensor, Tensor *tensor, const Graph *graph);
+    void HandleReinterpretCast(Operation *op, const Graph *graph);
     std::unique_ptr<SchedulerOperation> MakeSchedulerOperation(Operation *op, const Graph *graph);
     std::vector<std::unique_ptr<SchedulerOperation>> DecomposeSchedulerOperation(std::unique_ptr<SchedulerOperation> op);
     ArchResampling ResamplingMode(TensorUsage usage, OpType opType) const;

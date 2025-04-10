@@ -501,7 +501,6 @@ TEST_CASE("Supported operators EthosU55")
     {
         std::set<DataType> unsupported = {
             DataType::Int48,
-            DataType::Int64,
             DataType::UInt48,
             DataType::UInt64,
             DataType::QInt,
@@ -537,6 +536,7 @@ TEST_CASE("Supported operators EthosU55")
             DataType::Int8,
             DataType::Int16,
             DataType::Int32,
+            DataType::Int64,
         };
         for ( auto dtype : unsupported )
         {
