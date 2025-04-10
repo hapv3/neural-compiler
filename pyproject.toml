@@ -38,7 +38,8 @@ keywords = ["ethos-u", "vela compiler", "tflite", "npu"]
 dependencies = [
     "flatbuffers==24.12.23",
     "numpy>=1.23.0",
-    "lxml>=4.5.2"
+    "lxml>=4.5.2",
+    "lxml>=4.5.2, <5.3.2; sys_platform == 'win32'"
 ]
 dynamic = ["readme", "version"]
 
