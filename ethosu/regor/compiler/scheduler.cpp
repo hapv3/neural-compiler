@@ -334,7 +334,7 @@ int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *con
     conn->requireFullTensor = conn->requireFullTensor || cpuTensor;
     tensor->needsLinearFormat = tensor->needsLinearFormat || cpuTensor || CheckLinearFormatForConcatSplit(tensor);
 
-    if ( cpuTensor && !tensor->hasNPUWriters && !tensor->hasNPUReaders )
+    if ( _options.separateIORegions && cpuTensor && !tensor->hasNPUWriters && !tensor->hasNPUReaders )
     {
         tensor->memArea = _arch->CPUMemory();
     }
