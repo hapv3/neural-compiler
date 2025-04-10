@@ -2216,6 +2216,37 @@ Operation *GraphIrOptimiser::RewriteArgmax(Graph *const graph, Operation *const 
     return returnOp;
 }
 
+// Rewrite 1x1 Resize to Add op with input broadcasted to OFM
+Operation *GraphIrOptimiser::RewriteResize(Graph *const, Operation *const operation)
+{
+    if ( operation->Type() != OpType::Resize )
+    {
+        return operation;
+    }
+    auto *ifmConn = operation->Input(TensorUsage::IFM);
+
+    ArchOperatorQuery query;
+    query.ifm[0].shape = ifmConn->shape;
+    if ( !_constraints->OperatorQuery(OpType::Resize, &query).Any(QueryResult::Unsupported) || ifmConn->shape.ElementsWH() != 1 )
+    {
+        return operation;
+    }
+
+    auto *ofmConn = operation->Output(TensorUsage::OFM);
+    auto dtype = ofmConn->tensor->Type();
+    int zp = ifmConn->quantization.zeroPoints.empty() ? 0 : ifmConn->quantization.zeroPoints[0];
+
+    std::vector<int8_t> zeroVector(DataTypeStorageSizeBytes(dtype, ofmConn->shape.Elements()), zp);
+    auto zeroBuffer = std::make_shared<Buffer>(std::move(zeroVector));
+    auto zeroTensor = CreateConstTensor("const_zeros", dtype, zeroBuffer, &ofmConn->shape);
+
+    auto copyOp = std::make_shared<Operation>(OpType::Add);
+    ReplaceOperation(operation, copyOp.get());
+    copyOp->ConnectInput(TensorUsage::IFM1, zeroTensor).Set(copyOp->Input(TensorUsage::IFM)->quantization);
+    RecordOptimisation(operation, copyOp.get());
+    return copyOp.get();
+}
+
 // Move Split/slice op to consumer
 void GraphIrOptimiser::MoveToConsumer(const Operation *const operation, Operation *const cons)
 {

@@ -1193,13 +1193,16 @@ Operation *TFLiteGraphOptimiser::ConvertResize(Graph *const graph, Operation *co
         }
 
         // Set explicit scaling
-        Quantization ofmQuant = ofmConn->quantization;
-        ofmQuant.scales.clear();
-        ofmQuant.zeroPoints.clear();
-        ofmQuant.scales.emplace_back(QuantizedScale(1, shift));
-        ofmQuant.zeroPoints.emplace_back(0);
-        ofmQuant.type = QuantizationType::EXPLICIT;
-        resizeOp->Output(TensorUsage::OFM)->Set(ofmQuant);
+        Quantization quant = ofmConn->quantization;
+        quant.scales.clear();
+        quant.zeroPoints.clear();
+        quant.scales.emplace_back(QuantizedScale(1, shift));
+        quant.zeroPoints.emplace_back(0);
+        quant.type = QuantizationType::EXPLICIT;
+        resizeOp->Output(TensorUsage::OFM)->Set(quant);
+        // IFM and OFM must have same quantization for Resize ops, except for down-shift required for TOSA legalisation
+        quant.scales[0] = QuantizedScale(1, 0);
+        resizeOp->Input(TensorUsage::IFM)->Set(quant);
 
         RecordOptimisation(operation, resizeOp.get());
         returnOp = resizeOp.get();

@@ -331,6 +331,10 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
     }
     if ( opType == OpType::Resize )
     {
+        if ( query->ifm[0].shape.ElementsWH() == 1 )
+        {
+            return QueryResult::Unsupported;
+        }
         if ( req )
         {
             req->req = ArchRequirement::Decompose;

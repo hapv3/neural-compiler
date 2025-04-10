@@ -629,7 +629,7 @@ std::unique_ptr<SchedulerOperation> SchedulerPacking::MakeSchedulerOperation(Ope
     }
 
     // Adjust axis attribute if tensors have been reshaped
-    if ( schedOp->HasAttribute<axis_attr_t>() )
+    if ( schedOp->Type() != OpType::Passthrough && schedOp->HasAttribute<axis_attr_t>() )
     {
         auto attr = schedOp->Attribute<axis_attr_t>();
         int paddedAxes = schedOp->Output(TensorUsage::OFM)->shape.Size() - op->Output(TensorUsage::OFM)->shape.Size();
