@@ -29,23 +29,6 @@
 #include <unordered_map>
 #include <vector>
 
-// Specialization for sparsity dimension metadata
-template<>
-flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<tflite::DimensionMetadata>>> FlatbufferUtils::CopyVector(
-    flatbuffers::FlatBufferBuilder &dst, const flatbuffers::Vector<flatbuffers::Offset<tflite::DimensionMetadata>> *src)
-{
-    if ( src )
-    {
-        std::vector<flatbuffers::Offset<tflite::DimensionMetadata>> offsets;
-        for ( const auto &dimension_metadata : *src )
-        {
-            // TODO: offsets.push_back(tflite::CreateDimensionMetadata(...))
-        }
-        return dst.CreateVector<flatbuffers::Offset<tflite::DimensionMetadata>>(offsets);
-    }
-    return 0;
-}
-
 namespace regor
 {
 
@@ -408,59 +391,39 @@ int TfLiteWriter::SerialisedTensorIndex(const Tensor *tensor, const std::unorder
 flatbuffers::Offset<tflite::Tensor> TfLiteWriter::SerialiseTensor(const Tensor *tensor, const Graph &graph)
 {
     auto tflite_shape = tensor->StorageShape().ToList<int>();
-    std::vector<float> quant_min;
-    std::vector<float> quant_max;
-    std::vector<float> scale_f32;
-    std::vector<int64_t> zeroPoints;
-    int dimension = 0;
 
     // Unused parameters are set to default or, if present in the input model, passed through unmodified
-    tflite::QuantizationDetails custom_quantization = tflite::QuantizationDetails::NONE;
-    flatbuffers::Offset<void> custom_quantization_details = 0;
     bool is_variable = graph.IsPersistent(tensor);
     flatbuffers::Offset<tflite::SparsityParameters> sparsity = 0;
     std::vector<int> shape_signature;
+    bool has_rank = false;
+    std::vector<flatbuffers::Offset<tflite::VariantSubType>> variant_tensors;
+    flatbuffers::Offset<tflite::QuantizationParameters> quantization = 0;
 
     if ( tensor->Passthrough() )
     {
         const auto tflite_tensor = static_cast<const tflite::Tensor *>(tensor->Passthrough());
-        const DataType type = TfLiteMapping::TensorTypeToDataType(tflite_tensor->type());
 
         if ( tflite_tensor->quantization() )
         {
-            if ( tflite_tensor->quantization()->scale() && tflite_tensor->quantization()->zero_point() )
-            {
-                quant_min = FlatbufferUtils::LoadVector<float>(tflite_tensor->quantization()->min());
-                quant_max = FlatbufferUtils::LoadVector<float>(tflite_tensor->quantization()->max());
-                scale_f32 = FlatbufferUtils::LoadVector<float>(tflite_tensor->quantization()->scale());
-                zeroPoints = FlatbufferUtils::LoadVector<int64_t>(tflite_tensor->quantization()->zero_point());
-                dimension = tflite_tensor->quantization()->quantized_dimension();
-            }
-
-            custom_quantization = tflite_tensor->quantization()->details_type();
-            if ( custom_quantization == tflite::QuantizationDetails::CustomQuantization )
-            {
-                if ( tflite_tensor->quantization()->details() )
-                {
-                    // TODO: custom_quantization_details
-                }
-            }
+            quantization = FlatbufferUtils::CopyTable(_flatbuffer, tflite_tensor->quantization());
         }
 
         is_variable = tflite_tensor->is_variable();
 
         if ( tflite_tensor->sparsity() )
         {
-            auto traversal_order = FlatbufferUtils::CopyVector<int32_t>(_flatbuffer, tflite_tensor->sparsity()->traversal_order());
-            auto block_map = FlatbufferUtils::CopyVector<int32_t>(_flatbuffer, tflite_tensor->sparsity()->block_map());
-            auto dim_metadata = FlatbufferUtils::CopyVector<flatbuffers::Offset<tflite::DimensionMetadata>>(
-                _flatbuffer, tflite_tensor->sparsity()->dim_metadata());
+            sparsity = FlatbufferUtils::CopyTable(_flatbuffer, tflite_tensor->sparsity());
+        }
 
-            sparsity = tflite::CreateSparsityParameters(_flatbuffer, traversal_order, block_map, dim_metadata);
+        if ( tflite_tensor->variant_tensors() )
+        {
+            variant_tensors = FlatbufferUtils::CopyVectorOfTables(_flatbuffer, tflite_tensor->variant_tensors());
         }
 
         shape_signature = FlatbufferUtils::LoadVector<int>(tflite_tensor->shape_signature());
         tflite_shape = FlatbufferUtils::LoadVector<int>(tflite_tensor->shape());
+        has_rank = tflite_tensor->has_rank();
     }
 
     int buffer_index = 0;  // Default to the empty buffer at index 0
@@ -481,16 +444,9 @@ flatbuffers::Offset<tflite::Tensor> TfLiteWriter::SerialiseTensor(const Tensor *
         }
     }
 
-    flatbuffers::Offset<tflite::QuantizationParameters> quantization = 0;
-    if ( !scale_f32.empty() && !zeroPoints.empty() )
-    {
-        quantization = tflite::CreateQuantizationParametersDirect(_flatbuffer, &quant_min, &quant_max, &scale_f32,
-            &zeroPoints, custom_quantization, custom_quantization_details, dimension);
-    }
-
     return tflite::CreateTensorDirect(_flatbuffer, tflite_shape.size() ? &tflite_shape : nullptr,
         TfLiteMapping::DataTypeToTensorType(tensor->Type()), buffer_index, tensor->Name().c_str(), quantization,
-        is_variable, sparsity, shape_signature.size() ? &shape_signature : nullptr);
+        is_variable, sparsity, shape_signature.size() ? &shape_signature : nullptr, has_rank, &variant_tensors);
 }
 
 template<typename T>
@@ -501,6 +457,7 @@ static const T *GetBuiltinOptions(const tflite::Operator *tflite_operator)
     return options;
 }
 
+// Serialize builtin_options and return offset to it
 flatbuffers::Offset<void> TfLiteWriter::SerialiseOptions(const Operation *operation, OpType opType)
 {
     if ( opType == OpType::CustomNpuOp )
@@ -508,395 +465,25 @@ flatbuffers::Offset<void> TfLiteWriter::SerialiseOptions(const Operation *operat
         return 0;
     }
 
-    flatbuffers::Offset<void> offset = 0;
-    const tflite::Operator *const passthrough = static_cast<const tflite::Operator *>(operation->Passthrough());
-    assert(passthrough);
-    const auto type = passthrough->builtin_options_type();
-
-    switch ( type )
+    const auto tfliteOperator = static_cast<const tflite::Operator *>(operation->Passthrough());
+    assert(tfliteOperator);
+    const tflite::BuiltinOptions unionMemberType = tfliteOperator->builtin_options_type();
+    if ( unionMemberType == tflite::BuiltinOptions::NONE )
     {
-        case tflite::BuiltinOptions::NONE:
-            break;
-
-        case tflite::BuiltinOptions::Conv2DOptions:
-        {
-            assert(passthrough->builtin_options_as_Conv2DOptions());
-            tflite::ActivationFunctionType fused_activation_function = passthrough->builtin_options_as_Conv2DOptions()->fused_activation_function();
-            const auto kernel = TfLiteKernel(*operation->Kernel());
-            const auto typed_offset = tflite::CreateConv2DOptions(_flatbuffer, kernel.padding, kernel.stride_w,
-                kernel.stride_h, fused_activation_function, kernel.dilation_w_factor, kernel.dilation_h_factor);
-            offset = typed_offset.Union();
-        }
-        break;
-
-        case tflite::BuiltinOptions::DepthwiseConv2DOptions:
-        {
-            assert(passthrough->builtin_options_as_DepthwiseConv2DOptions());
-            tflite::ActivationFunctionType fused_activation_function =
-                passthrough->builtin_options_as_DepthwiseConv2DOptions()->fused_activation_function();
-            const auto kernel = TfLiteKernel(*operation->Kernel());
-            const auto typed_offset = tflite::CreateDepthwiseConv2DOptions(_flatbuffer, kernel.padding, kernel.stride_w,
-                kernel.stride_h, kernel.depth_multiplier, fused_activation_function, kernel.dilation_w_factor, kernel.dilation_h_factor);
-            offset = typed_offset.Union();
-        }
-        break;
-
-        case tflite::BuiltinOptions::TransposeConvOptions:
-        {
-            assert(passthrough->builtin_options_as_TransposeConvOptions());
-            tflite::ActivationFunctionType fused_activation_function =
-                passthrough->builtin_options_as_TransposeConvOptions()->fused_activation_function();
-
-            const auto kernel = TfLiteKernel(*operation->Kernel());
-            const auto typed_offset = tflite::CreateTransposeConvOptions(
-                _flatbuffer, kernel.padding, kernel.stride_w, kernel.stride_h, fused_activation_function);
-            offset = typed_offset.Union();
-        }
-        break;
-
-        case tflite::BuiltinOptions::Pool2DOptions:
-        {
-            assert(passthrough->builtin_options_as_Pool2DOptions());
-            tflite::ActivationFunctionType fused_activation_function = passthrough->builtin_options_as_Pool2DOptions()->fused_activation_function();
-            const auto kernel = TfLiteKernel(*operation->Kernel());
-            const auto typed_offset = tflite::CreatePool2DOptions(_flatbuffer, kernel.padding, kernel.stride_w,
-                kernel.stride_h, kernel.filter_w, kernel.filter_h, fused_activation_function);
-            offset = typed_offset.Union();
-        }
-        break;
-
-        case tflite::BuiltinOptions::FullyConnectedOptions:
-        {
-            assert(passthrough->builtin_options_as_FullyConnectedOptions());
-            tflite::ActivationFunctionType fused_activation_function =
-                passthrough->builtin_options_as_FullyConnectedOptions()->fused_activation_function();
-            const auto typed_offset = tflite::CreateFullyConnectedOptions(_flatbuffer, fused_activation_function
-                // TODO: weights_format,
-                // TODO: keep_num_dims,
-                // TODO: asymmetric_quantize_inputs
-            );
-            offset = typed_offset.Union();
-        }
-        break;
-
-        case tflite::BuiltinOptions::SoftmaxOptions:
-        {
-            const auto options = GetBuiltinOptions<tflite::SoftmaxOptions>(passthrough);
-            offset = tflite::CreateSoftmaxOptions(_flatbuffer, options->beta()).Union();
-        }
-        break;
-
-        case tflite::BuiltinOptions::ConcatenationOptions:
-        {
-            assert(passthrough->builtin_options_as_ConcatenationOptions());
-            tflite::ActivationFunctionType fused_activation_function =
-                passthrough->builtin_options_as_ConcatenationOptions()->fused_activation_function();
-            const auto options = GetBuiltinOptions<tflite::ConcatenationOptions>(passthrough);
-            const auto typed_offset = tflite::CreateConcatenationOptions(_flatbuffer, options->axis(), fused_activation_function);
-            offset = typed_offset.Union();
-        }
-        break;
-
-        case tflite::BuiltinOptions::AddOptions:
-        {
-            assert(passthrough->builtin_options_as_AddOptions());
-            tflite::ActivationFunctionType fused_activation_function = passthrough->builtin_options_as_AddOptions()->fused_activation_function();
-            const auto typed_offset = tflite::CreateAddOptions(_flatbuffer, fused_activation_function,
-                GetBuiltinOptions<tflite::AddOptions>(passthrough)->pot_scale_int16());
-            offset = typed_offset.Union();
-        }
-        break;
-
-        case tflite::BuiltinOptions::SubOptions:
-        {
-            assert(passthrough->builtin_options_as_SubOptions());
-            tflite::ActivationFunctionType fused_activation_function = passthrough->builtin_options_as_SubOptions()->fused_activation_function();
-            const auto typed_offset = tflite::CreateSubOptions(_flatbuffer, fused_activation_function,
-                GetBuiltinOptions<tflite::SubOptions>(passthrough)->pot_scale_int16());
-            offset = typed_offset.Union();
-        }
-        break;
-
-        case tflite::BuiltinOptions::MulOptions:
-        {
-            assert(passthrough->builtin_options_as_MulOptions());
-            tflite::ActivationFunctionType fused_activation_function = passthrough->builtin_options_as_MulOptions()->fused_activation_function();
-            offset = tflite::CreateMulOptions(_flatbuffer, fused_activation_function).Union();
-        }
-        break;
-
-        case tflite::BuiltinOptions::DivOptions:
-        {
-            assert(passthrough->builtin_options_as_DivOptions());
-            tflite::ActivationFunctionType fused_activation_function = passthrough->builtin_options_as_DivOptions()->fused_activation_function();
-            offset = tflite::CreateDivOptions(_flatbuffer, fused_activation_function).Union();
-        }
-        break;
-
-        case tflite::BuiltinOptions::L2NormOptions:
-        {
-            assert(passthrough->builtin_options_as_L2NormOptions());
-            tflite::ActivationFunctionType fused_activation_function = passthrough->builtin_options_as_L2NormOptions()->fused_activation_function();
-            offset = tflite::CreateL2NormOptions(_flatbuffer, fused_activation_function).Union();
-        }
-        break;
-
-        case tflite::BuiltinOptions::ReshapeOptions:
-        {
-            // Replicate parameter tensor as ReshapeOptions
-            const auto tensor = operation->Input(TensorUsage::Params)->tensor;
-            if ( tensor->Type() != DataType::Int32 ) throw std::runtime_error("unexpected tensor type");
-
-            BufferReader<int> reader = tensor->View().Values<int32_t, int>();
-            std::vector<int> temp;
-            std::copy(reader.begin(), reader.end(), std::back_inserter(temp));
-            const auto new_shape = _flatbuffer.CreateVector<int>(temp);
-            offset = tflite::CreateReshapeOptions(_flatbuffer, new_shape).Union();
-        }
-        break;
-
-        case tflite::BuiltinOptions::SqueezeOptions:
-        {
-            const auto options = GetBuiltinOptions<tflite::SqueezeOptions>(passthrough);
-            const auto typed_offset = tflite::CreateSqueezeOptions(
-                _flatbuffer, FlatbufferUtils::CopyVector<int32_t>(_flatbuffer, options->squeeze_dims()));
-            offset = typed_offset.Union();
-        }
-        break;
-
-        case tflite::BuiltinOptions::PackOptions:
-        {
-            const auto options = GetBuiltinOptions<tflite::PackOptions>(passthrough);
-            const auto typed_offset = tflite::CreatePackOptions(_flatbuffer, options->values_count(), options->axis());
-            offset = typed_offset.Union();
-        }
-        break;
-
-        case tflite::BuiltinOptions::UnpackOptions:
-        {
-            const auto options = GetBuiltinOptions<tflite::UnpackOptions>(passthrough);
-            const auto typed_offset = tflite::CreateUnpackOptions(_flatbuffer, options->num(), options->axis());
-            offset = typed_offset.Union();
-        }
-        break;
-
-        case tflite::BuiltinOptions::LeakyReluOptions:
-        {
-            const auto options = GetBuiltinOptions<tflite::LeakyReluOptions>(passthrough);
-            offset = tflite::CreateLeakyReluOptions(_flatbuffer, options->alpha()).Union();
-        }
-        break;
-
-        case tflite::BuiltinOptions::ShapeOptions:
-        {
-            const auto out_type = GetBuiltinOptions<tflite::ShapeOptions>(passthrough)->out_type();
-            offset = tflite::CreateShapeOptions(_flatbuffer, out_type).Union();
-        }
-        break;
-
-        case tflite::BuiltinOptions::StridedSliceOptions:
-        {
-            const auto options = GetBuiltinOptions<tflite::StridedSliceOptions>(passthrough);
-            const auto typed_offset = tflite::CreateStridedSliceOptions(_flatbuffer, options->begin_mask(),
-                options->end_mask(), options->ellipsis_mask(), options->new_axis_mask(), options->shrink_axis_mask());
-            offset = typed_offset.Union();
-        }
-        break;
-
-        case tflite::BuiltinOptions::SplitOptions:
-        {
-            offset = tflite::CreateSplitOptions(_flatbuffer, int(operation->Outputs().size())).Union();
-        }
-        break;
-
-        case tflite::BuiltinOptions::SplitVOptions:
-        {
-            offset = tflite::CreateSplitVOptions(_flatbuffer, int(operation->Outputs().size())).Union();
-        }
-        break;
-
-        case tflite::BuiltinOptions::ReducerOptions:
-        {
-            const auto options = GetBuiltinOptions<tflite::ReducerOptions>(passthrough);
-            const auto typed_offset = tflite::CreateReducerOptions(_flatbuffer, options->keep_dims());
-            offset = typed_offset.Union();
-        }
-        break;
-
-        case tflite::BuiltinOptions::SVDFOptions:
-        {
-            assert(passthrough->builtin_options_as_SVDFOptions());
-            tflite::ActivationFunctionType fused_activation_function = passthrough->builtin_options_as_SVDFOptions()->fused_activation_function();
-            const auto options = GetBuiltinOptions<tflite::SVDFOptions>(passthrough);
-            const auto typed_offset = tflite::CreateSVDFOptions(
-                _flatbuffer, options->rank(), fused_activation_function, options->asymmetric_quantize_inputs());
-            offset = typed_offset.Union();
-        }
-        break;
-
-        case tflite::BuiltinOptions::BatchMatMulOptions:
-        {
-            const auto options = GetBuiltinOptions<tflite::BatchMatMulOptions>(passthrough);
-            if ( options )
-            {
-                const auto typed_offset = tflite::CreateBatchMatMulOptions(
-                    _flatbuffer, options->adj_x(), options->adj_y(), options->asymmetric_quantize_inputs());
-                offset = typed_offset.Union();
-            }
-        }
-        break;
-        case tflite::BuiltinOptions::GatherOptions:
-        {
-            const auto options = GetBuiltinOptions<tflite::GatherOptions>(passthrough);
-            const auto typed_offset = tflite::CreateGatherOptions(_flatbuffer, options->axis(), options->batch_dims());
-            offset = typed_offset.Union();
-        }
-        break;
-
-        case tflite::BuiltinOptions::ResizeBilinearOptions:
-        {
-            const auto options = GetBuiltinOptions<tflite::ResizeBilinearOptions>(passthrough);
-            if ( options )
-            {
-                const auto typed_offset = tflite::CreateResizeBilinearOptions(
-                    _flatbuffer, options->align_corners(), options->half_pixel_centers());
-                offset = typed_offset.Union();
-            }
-            else
-            {
-                offset = tflite::CreateResizeBilinearOptions(_flatbuffer).Union();
-            }
-        }
-        break;
-
-        case tflite::BuiltinOptions::CallOnceOptions:
-        {
-            const auto options = GetBuiltinOptions<tflite::CallOnceOptions>(passthrough);
-            const auto typed_offset = tflite::CreateCallOnceOptions(_flatbuffer, options->init_subgraph_index());
-            offset = typed_offset.Union();
-        }
-        break;
-
-        case tflite::BuiltinOptions::VarHandleOptions:
-        {
-            const auto options = GetBuiltinOptions<tflite::VarHandleOptions>(passthrough);
-            const auto container = _flatbuffer.CreateString(options->container());
-            const auto shared_name = _flatbuffer.CreateString(options->shared_name());
-            const auto typed_offset = tflite::CreateVarHandleOptions(_flatbuffer, container, shared_name);
-            offset = typed_offset.Union();
-        }
-        break;
-
-        case tflite::BuiltinOptions::WhileOptions:
-        {
-            const auto options = GetBuiltinOptions<tflite::WhileOptions>(passthrough);
-            if ( options )
-            {
-                const auto typed_offset = tflite::CreateWhileOptions(
-                    _flatbuffer, options->cond_subgraph_index(), options->body_subgraph_index());
-                offset = typed_offset.Union();
-            }
-        }
-        break;
-
-        // Empty option sets can all be written as if they were QuantizeOptions
-        case tflite::BuiltinOptions::HardSwishOptions:
-        case tflite::BuiltinOptions::MaximumMinimumOptions:
-        case tflite::BuiltinOptions::PadOptions:
-        case tflite::BuiltinOptions::DequantizeOptions:
-        case tflite::BuiltinOptions::QuantizeOptions:
-        case tflite::BuiltinOptions::TransposeOptions:
-        case tflite::BuiltinOptions::GatherNdOptions:
-        case tflite::BuiltinOptions::ScatterNdOptions:
-        case tflite::BuiltinOptions::ArgMaxOptions:
-        case tflite::BuiltinOptions::AssignVariableOptions:
-        case tflite::BuiltinOptions::ReadVariableOptions:
-        case tflite::BuiltinOptions::SelectOptions:
-        case tflite::BuiltinOptions::SelectV2Options:
-        {
-            offset = tflite::CreateQuantizeOptions(_flatbuffer).Union();
-        }
-        break;
-
-        case tflite::BuiltinOptions::ConcatEmbeddingsOptions:
-        case tflite::BuiltinOptions::LSHProjectionOptions:
-        case tflite::BuiltinOptions::RNNOptions:
-        case tflite::BuiltinOptions::LocalResponseNormalizationOptions:
-        case tflite::BuiltinOptions::LSTMOptions:
-        case tflite::BuiltinOptions::CallOptions:
-        case tflite::BuiltinOptions::SkipGramOptions:
-        case tflite::BuiltinOptions::SpaceToDepthOptions:
-        case tflite::BuiltinOptions::EmbeddingLookupSparseOptions:
-        case tflite::BuiltinOptions::BatchToSpaceNDOptions:
-        case tflite::BuiltinOptions::SpaceToBatchNDOptions:
-        case tflite::BuiltinOptions::SequenceRNNOptions:
-        case tflite::BuiltinOptions::ExpOptions:
-        case tflite::BuiltinOptions::TopKV2Options:
-        case tflite::BuiltinOptions::LogSoftmaxOptions:
-        case tflite::BuiltinOptions::CastOptions:
-        case tflite::BuiltinOptions::LessOptions:
-        case tflite::BuiltinOptions::NegOptions:
-        case tflite::BuiltinOptions::PadV2Options:
-        case tflite::BuiltinOptions::GreaterOptions:
-        case tflite::BuiltinOptions::GreaterEqualOptions:
-        case tflite::BuiltinOptions::LessEqualOptions:
-        case tflite::BuiltinOptions::SliceOptions:
-        case tflite::BuiltinOptions::SparseToDenseOptions:
-        case tflite::BuiltinOptions::TileOptions:
-        case tflite::BuiltinOptions::ExpandDimsOptions:
-        case tflite::BuiltinOptions::EqualOptions:
-        case tflite::BuiltinOptions::NotEqualOptions:
-        case tflite::BuiltinOptions::PowOptions:
-        case tflite::BuiltinOptions::ArgMinOptions:
-        case tflite::BuiltinOptions::FakeQuantOptions:
-        case tflite::BuiltinOptions::LogicalOrOptions:
-        case tflite::BuiltinOptions::OneHotOptions:
-        case tflite::BuiltinOptions::LogicalAndOptions:
-        case tflite::BuiltinOptions::LogicalNotOptions:
-        case tflite::BuiltinOptions::FloorDivOptions:
-        case tflite::BuiltinOptions::SquareOptions:
-        case tflite::BuiltinOptions::ZerosLikeOptions:
-        case tflite::BuiltinOptions::FillOptions:
-        case tflite::BuiltinOptions::BidirectionalSequenceLSTMOptions:
-        case tflite::BuiltinOptions::BidirectionalSequenceRNNOptions:
-        case tflite::BuiltinOptions::UnidirectionalSequenceLSTMOptions:
-        case tflite::BuiltinOptions::FloorModOptions:
-        case tflite::BuiltinOptions::RangeOptions:
-        case tflite::BuiltinOptions::ResizeNearestNeighborOptions:
-        case tflite::BuiltinOptions::SquaredDifferenceOptions:
-        case tflite::BuiltinOptions::MirrorPadOptions:
-        case tflite::BuiltinOptions::AbsOptions:
-        case tflite::BuiltinOptions::UniqueOptions:
-        case tflite::BuiltinOptions::ReverseV2Options:
-        case tflite::BuiltinOptions::AddNOptions:
-        case tflite::BuiltinOptions::CosOptions:
-        case tflite::BuiltinOptions::WhereOptions:
-        case tflite::BuiltinOptions::RankOptions:
-        case tflite::BuiltinOptions::ReverseSequenceOptions:
-        case tflite::BuiltinOptions::MatrixDiagOptions:
-        case tflite::BuiltinOptions::MatrixSetDiagOptions:
-        case tflite::BuiltinOptions::IfOptions:
-        case tflite::BuiltinOptions::DepthToSpaceOptions:
-        case tflite::BuiltinOptions::NonMaxSuppressionV4Options:
-        case tflite::BuiltinOptions::NonMaxSuppressionV5Options:
-        case tflite::BuiltinOptions::DensifyOptions:
-        case tflite::BuiltinOptions::SegmentSumOptions:
-        case tflite::BuiltinOptions::CumsumOptions:
-        case tflite::BuiltinOptions::BroadcastToOptions:
-        case tflite::BuiltinOptions::Rfft2dOptions:
-        case tflite::BuiltinOptions::Conv3DOptions:
-        case tflite::BuiltinOptions::HashtableOptions:
-        case tflite::BuiltinOptions::HashtableFindOptions:
-        case tflite::BuiltinOptions::HashtableImportOptions:
-        case tflite::BuiltinOptions::HashtableSizeOptions:
-            LOG_WARN("TfLiteWriter: Built-in options type '{}' is not yet implemented and will be set to default.\n",
-                tflite::EnumNameBuiltinOptions(type));
-            break;
-        default:
-            LOG_ERROR("TfLiteWriter: Unrecognised built-in options type '{}'\n", int(type));
-            break;
+        return 0;
     }
-    return offset;
+
+    const auto *unionTypeTable = tflite::BuiltinOptionsTypeTable();
+    assert(unionTypeTable->st == flatbuffers::SequenceType::ST_UNION);
+    const size_t unionMemberIndex = size_t(unionMemberType) - 1;  // 0 is reserved for NONE
+    assert(unionMemberIndex < unionTypeTable->num_elems);
+    const auto *unionMemberTypeTable = unionTypeTable->type_refs[unionMemberIndex]();
+
+    // The builtin options union member
+    const auto *unionMember = static_cast<const flatbuffers::Table *>(tfliteOperator->builtin_options());
+    assert(unionMember);
+
+    return FlatbufferUtils::CopyTable(_flatbuffer, unionMember, unionMemberTypeTable).Union();
 }
 
 flatbuffers::Offset<void> TfLiteWriter::SerialiseOptions2(const Operation *operation, OpType opType)
@@ -906,20 +493,25 @@ flatbuffers::Offset<void> TfLiteWriter::SerialiseOptions2(const Operation *opera
         return 0;
     }
 
-    flatbuffers::Offset<void> offset = 0;
-    const tflite::Operator *const passthrough = static_cast<const tflite::Operator *>(operation->Passthrough());
-    assert(passthrough);
-    const auto type = passthrough->builtin_options_2_type();
-
-    switch ( type )
+    const auto tfliteOperator = static_cast<const tflite::Operator *>(operation->Passthrough());
+    assert(tfliteOperator);
+    const tflite::BuiltinOptions2 unionMemberType = tfliteOperator->builtin_options_2_type();
+    if ( unionMemberType == tflite::BuiltinOptions2::NONE )
     {
-        case tflite::BuiltinOptions2::NONE:
-            break;
-        default:
-            break;
+        return 0;
     }
 
-    return offset;
+    const auto *unionTypeTable = tflite::BuiltinOptions2TypeTable();
+    assert(unionTypeTable->st == flatbuffers::SequenceType::ST_UNION);
+    const size_t unionMemberIndex = size_t(unionMemberType) - 1;  // 0 is reserved for NONE
+    assert(unionMemberIndex < unionTypeTable->num_elems);
+    const auto *unionMemberTypeTable = unionTypeTable->type_refs[unionMemberIndex]();
+
+    // The builtin options union member
+    const auto *unionMember = static_cast<const flatbuffers::Table *>(tfliteOperator->builtin_options_2());
+    assert(unionMember);
+
+    return FlatbufferUtils::CopyTable(_flatbuffer, unionMember, unionMemberTypeTable).Union();
 }
 
 flatbuffers::Offset<tflite::Metadata> TfLiteWriter::SerialiseTensorAddresses(int subgraphs)
