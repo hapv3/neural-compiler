@@ -55,6 +55,7 @@ inline ArchFM &Set(ArchFM &fm, const SchedulerConnection *conn)
         fm.type = conn->tensor->dataType;
         fm.shape = conn->SliceShape();
         fm.format = conn->tensor->format;
+        fm.quantization = conn->quantization;
     }
     return fm;
 }

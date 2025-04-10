@@ -1646,8 +1646,8 @@ Operation *GraphIrOptimiser::MergeTransposes(Graph *const graph, Operation *cons
             ArchOperatorQuery query;
             ArchRequirements req;
             query.transposeMask = mergedTranspose;
-            Set(query.ifm[0], ifmConn->tensor.get());
-            Set(query.ofm, ofmConn->tensor.get());
+            Set(query.ifm[0], ifmConn);
+            Set(query.ofm, ofmConn);
             if ( _constraints->OperatorQuery(OpType::Transpose, &query, &req).Any(QueryResult::Native) )
             {
                 // only merge the transpose if the new mask is natively supported

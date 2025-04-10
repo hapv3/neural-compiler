@@ -1969,8 +1969,8 @@ Operation *TFLiteGraphOptimiser::ConvertTanhSigmoidToLUT(Graph *const, Operation
     }
 
     ArchOperatorQuery query;
-    Set(query.ifm[0], ifm);
-    Set(query.ofm, operation->OFM());
+    Set(query.ifm[0], ifmConn);
+    Set(query.ofm, operation->Output(TensorUsage::OFM));
     ArchRequirements req;
     auto qresult = _constraints->OperatorQuery(opType, &query, &req);
     assert(qresult.Any(QueryResult::Native));

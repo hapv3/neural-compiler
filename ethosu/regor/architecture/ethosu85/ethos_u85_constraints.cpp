@@ -262,6 +262,40 @@ bool EthosU85Constraints::SupportedDtypes(OpType opType, DataType ifmType, DataT
     }
     return true;
 }
+namespace
+{
+// Validate that IFM zero-points are supported based on ifmType
+bool SupportedIfmZeroPoint(int64_t zp, DataType ifmType)
+{
+    switch ( ifmType )
+    {
+        case DataType::Int8:
+            return (zp >= -128) && (zp <= 127);
+            break;
+        case DataType::UInt8:
+            return (zp >= 0) && (zp <= 255);
+            break;
+        case DataType::UInt16:
+            return (zp == 0) || (zp == 32768);
+            break;
+        default:
+            return zp == 0;
+    }
+    return false;
+}
+// Validate that OFM zero-points are supported based on ofmType
+bool SupportedOfmZeroPoint(int64_t zp, DataType ofmType)
+{
+    if ( IsSignedInteger(ofmType) )
+    {
+        return zp >= -128 && zp <= 127;
+    }
+    else
+    {
+        return (zp == 32768) || (zp >= 0 && zp <= 255);
+    }
+}
+}  // namespace
 
 Flags<QueryResult> EthosU85Constraints::OperatorQuery(OpType opType, const ArchOperatorQuery *query, ArchRequirements *req)
 {
@@ -342,13 +376,42 @@ Flags<QueryResult> EthosU85Constraints::OperatorQuery(OpType opType, const ArchO
     const auto &ifmShape = query->ifm[0].shape;
     const auto &ifm2Shape = query->ifm[1].shape;
     const auto &ofmShape = query->ofm.shape;
-    bool typeInfo = (query->ifm[0].type != DataType::None && query->ofm.type != DataType::None);
+    const auto ifmType = query->ifm[0].type;
+    const auto ifm2Type = query->ifm[1].type;
+    const auto ofmType = query->ofm.type;
+    bool typeInfo = (ifmType != DataType::None && ofmType != DataType::None);
     bool shapeInfo = (ifmShape && ofmShape);
 
     if ( !typeInfo || !shapeInfo || !query->kernel )
     {
         // missing detail, more detailed queries might fail
         result.Set(QueryResult::Constrained);
+    }
+
+    // Validate zeroPoints
+    if ( typeInfo )
+    {
+        for ( auto zp : query->ifm[0].quantization.zeroPoints )
+        {
+            if ( !SupportedIfmZeroPoint(zp, ifmType) )
+            {
+                return QueryResult::Unsupported;
+            }
+        }
+        for ( auto zp : query->ifm[1].quantization.zeroPoints )
+        {
+            if ( !SupportedIfmZeroPoint(zp, ifm2Type) )
+            {
+                return QueryResult::Unsupported;
+            }
+        }
+        for ( auto zp : query->ofm.quantization.zeroPoints )
+        {
+            if ( !SupportedOfmZeroPoint(zp, ofmType) )
+            {
+                return QueryResult::Unsupported;
+            }
+        }
     }
 
     // Validate dataTypes

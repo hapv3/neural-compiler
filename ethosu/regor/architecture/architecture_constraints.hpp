@@ -43,6 +43,7 @@ struct ArchFM
     Shape shape;
     DataType type = {};
     TensorFormat format = {};
+    Quantization quantization = {};
 };
 
 struct ArchOperatorQuery

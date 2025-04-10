@@ -282,12 +282,13 @@ inline bool IsScalingValidAndEqual(const TensorConnection &a, const TensorConnec
 
 #undef FOR_ALL_INT_TYPES
 
-inline ArchFM &Set(ArchFM &fm, const Tensor *src)
+inline ArchFM &Set(ArchFM &fm, const TensorConnection *conn)
 {
-    if ( src )
+    if ( conn )
     {
-        fm.type = src->Type();
-        fm.shape = src->StorageShape();
+        fm.type = conn->tensor->Type();
+        fm.shape = conn->shape;
+        fm.quantization = conn->quantization;
     }
     return fm;
 }
