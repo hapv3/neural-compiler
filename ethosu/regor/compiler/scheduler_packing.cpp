@@ -140,7 +140,16 @@ void SchedulerPacking::FilterOperations(const std::vector<Operation *> &executio
 
         if ( ShouldDecompose(_arch, schedOp.get()) )
         {
+            auto srcKey = schedOp->_srcKey;
             auto schedOps = DecomposeSchedulerOperation(std::move(schedOp));
+            // Track source keys
+            for ( auto &newOp : schedOps )
+            {
+                if ( !newOp->_srcKey )
+                {
+                    newOp->_srcKey = srcKey;
+                }
+            }
             _schedList.insert(
                 _schedList.end(), std::make_move_iterator(schedOps.begin()), std::make_move_iterator(schedOps.end()));
         }
