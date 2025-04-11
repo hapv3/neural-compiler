@@ -77,6 +77,7 @@ TfLiteSupportedOperatorsU55::TfLiteSupportedOperatorsU55(IArchitectureConstraint
         OpType::SplitV,
         OpType::Quantize,
         OpType::HardSwish,
+        OpType::MemoryCopy,
         // clang-format on
     };
     _supportedDataTypes = {
@@ -297,6 +298,7 @@ bool TfLiteSupportedOperatorsU55::Constraint32bitOps(const Operation *op)
         OpType::Squeeze,
         OpType::ExpandDims,
         OpType::Identity,
+        OpType::MemoryCopy,
     };
 
     OpType opType = op->Type();

@@ -100,6 +100,7 @@ TfLiteSupportedOperatorsU85::TfLiteSupportedOperatorsU85(IArchitectureConstraint
         OpType::SelectV2,
         OpType::BatchMatMul,
         OpType::ReduceAll,
+        OpType::MemoryCopy,
         // clang-format on
     };
     _supportedDataTypes = {

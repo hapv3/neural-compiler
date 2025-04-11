@@ -164,6 +164,7 @@ bool TfLiteSupportedOperators::ConstraintTensQuantized(const Operation *op)
         case OpType::ReduceAll:
         case OpType::ReduceAny:
         case OpType::ExpandDims:
+        case OpType::MemoryCopy:
             return true;
         default:
             break;
