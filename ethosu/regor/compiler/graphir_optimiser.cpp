@@ -30,13 +30,22 @@ using namespace GraphOptimisation;
 
 Tensor *GraphIrOptimiser::ConvertInt48Tensors(Graph *, Tensor *tensor)
 {
-    if ( tensor->Type() == DataType::Int48 && !tensor->IsConstant() )
+    if ( DataTypeSizeBits(tensor->Type()) == 48 )
     {
-        tensor->ChangeType(DataType::Int64);
-    }
-    else if ( tensor->Type() == DataType::UInt48 && !tensor->IsConstant() )
-    {
-        tensor->ChangeType(DataType::UInt64);
+        if ( tensor->IsConstant() )
+        {
+            // Unpack 48-bit to 64-bit values
+            const auto values = tensor->View().Values<int48_t, int64_t>();
+            std::vector<int64_t> unpackedValues(values.begin(), values.end());
+            // Replace the tensor's buffer with the new buffer containing the 64-bit values
+            tensor->SetBuffer(nullptr);
+            tensor->ChangeType(DataType::Int64);
+            tensor->SetBuffer(std::make_shared<Buffer>(std::move(unpackedValues)));
+        }
+        else
+        {
+            tensor->ChangeType(IsSignedInteger(tensor->Type()) ? DataType::Int64 : DataType::UInt64);
+        }
     }
     return tensor;
 }
@@ -369,6 +378,34 @@ Operation *GraphIrOptimiser::ConstPropagation(Graph *const graph, Operation *con
     }
 
     return operation;
+}
+
+/*
+ * This pass replaces the Const operator with an Identity operator (to be removed in RemoveReshape) and moves the
+ * "values" attribute tensor to an input tensor instead to enable us to treat it as a normal reshape-like operator.
+ */
+Operation *GraphIrOptimiser::RewriteConst(Graph *const graph, Operation *const operation)
+{
+    Operation *returnOp = operation;
+    OpType opType = operation->Type();
+    if ( opType == OpType::Const )
+    {
+        const auto *ofmConn = operation->Output(TensorUsage::OFM);
+        // Clone tensor to create input tensor with the constant values and remove constant values from output
+        std::shared_ptr<Tensor> constIfm = ofmConn->tensor->Clone();
+        constIfm->SetName("const_values");
+        ofmConn->tensor->SetBuffer(nullptr);
+
+        // Create new identity operator (to be removed in RemoveReshape) and set constant values as input
+        auto identityOp = std::make_shared<Operation>(OpType::Identity);
+        identityOp->ConnectInput(TensorUsage::IFM0, constIfm);
+        identityOp->CopyOutput(TensorUsage::OFM, *ofmConn);
+
+        returnOp = identityOp.get();
+        RecordOptimisation(operation, returnOp);
+        operation->Disconnect();
+    }
+    return returnOp;
 }
 
 Operation *GraphIrOptimiser::RewriteFullyConnected(Graph *const graph, Operation *const operation)

@@ -535,25 +535,11 @@ flatbuffers::Offset<tflite::Metadata> TfLiteWriter::SerialiseTensorAddresses(int
 
 void TfLiteWriter::SerialiseTensorBuffer(const Tensor *tensor)
 {
-    if ( tensor->Type() == DataType::Int48 )
-    {  // Translate values
-        const auto values = tensor->View().Values<int48_t, int64_t>();
-        auto v = std::make_unique<std::vector<int64_t>>(values.begin(), values.end());
-        const auto size = v->size() * sizeof(int64_t);
-        _serialised_buffers.emplace_back(SerialiseBuffer(reinterpret_cast<const uint8_t *>(v->data()), size));
-        if ( _useBufferOffset )
-        {
-            _offset_buffers.emplace_back(std::move(v));
-        }
-    }
-    else
+    const auto buffer = tensor->View().Buffer();
+    _serialised_buffers.emplace_back(SerialiseBuffer(buffer));
+    if ( _useBufferOffset )
     {
-        const auto buffer = tensor->View().Buffer();
-        _serialised_buffers.emplace_back(SerialiseBuffer(buffer));
-        if ( _useBufferOffset )
-        {
-            _offset_buffers.emplace_back(buffer);
-        }
+        _offset_buffers.emplace_back(buffer);
     }
 }
 

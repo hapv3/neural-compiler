@@ -1520,9 +1520,10 @@ void ErrorIfCheck_3oet4aggtv528(const regor::Operation *op, [[maybe_unused]] con
 {
     // Operators: CONST,
     static constexpr char constraint[] = "ERROR_IF(rankCheck(output, values))";
-    const auto &outputShape = op->Output(TensorUsage::OFM)->shape;
-    const auto &inputShape = op->Input(TensorUsage::IFM)->shape;
-    if ( outputShape != inputShape ) throw std::invalid_argument(constraint);
+    const auto &ofmConn = op->Output(TensorUsage::OFM);
+    const auto bufferSize = ofmConn->tensor->View().Buffer()->Size();
+    const auto storageSize = DataTypeStorageSizeBytes(ofmConn->tensor->Type(), ofmConn->shape.Elements());
+    if ( bufferSize != storageSize ) throw std::invalid_argument(constraint);
 }
 
 }  // namespace checks

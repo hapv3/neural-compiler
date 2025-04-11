@@ -1,6 +1,6 @@
 #!/usr/bin/env ruby
 #
-# SPDX-FileCopyrightText: Copyright 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -23,6 +23,7 @@ require 'rexml'
 REGOR_OP_NAMES = {
   'ARGMAX':   'OpType::ArgMax',
   'AVG_POOL2D': 'OpType::AvgPool',
+  'CONST':   'OpType::Const',
   'CONV2D':   'OpType::Conv2D',
   'CONV3D':   'OpType::Conv3D',
   'DEPTHWISE_CONV2D': 'OpType::DepthwiseConv2D',

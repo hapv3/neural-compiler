@@ -892,7 +892,7 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU85::FindBlockConfig(OpType opTyp
     LOG_INDENT(Logging::Out);
 
     constexpr int OFMSplitDepth = 16;  // Specific to this architecture
-    assert(query.ifmBits > 0 && (query.ifmBits <= 32 || (query.ifmBits == 64 && opType == OpType::Rescale)));
+    assert(query.ifmBits > 0 && (query.ifmBits <= 32 || (query.ifmBits == 64 && (opType == OpType::Rescale || opType == OpType::MemoryCopy))));
     assert(query.ofmShape.Size() > 2 && "Insufficient dimensions to search for block config");
     assert(query.kernel != nullptr);
 
