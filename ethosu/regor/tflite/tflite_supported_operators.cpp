@@ -199,7 +199,7 @@ bool TfLiteSupportedOperators::ConstraintFCWeightShape(const Operation *op)
     auto weights = op->Input(TensorUsage::Weights);
     assert(weights);
     assert(weights->tensor);
-    const auto &shape = weights->tensor->StorageShape();
+    const auto &shape = weights->shape;
     // Total elements must be equal to first-dim * last-dim
     if ( shape.Size() < 2 || (shape.Elements() != (shape[0] * shape[-1])) )
     {

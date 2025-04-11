@@ -124,7 +124,9 @@ TEST_CASE("Supported operators Common")
         weights->SetAxisOrder(AxisOrder::OHWI);
         op->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
         REQUIRE(supportedOps->Check(op.get()) == true);
-        op->Input(TensorUsage::Weights)->tensor->Reshape(Shape(2, 2, 1, 2));
+        // reshape and reconnect tensor
+        weights->Reshape(Shape(2, 2, 1, 2));
+        op->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
         REQUIRE(supportedOps->Check(op.get()) == false);
         op->Disconnect();
     }

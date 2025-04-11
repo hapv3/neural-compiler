@@ -1456,7 +1456,6 @@ Operation *TFLiteGraphOptimiser::RewriteFullyConnectDynamic(Graph *const, Operat
 
         auto ofmShape = Shape::PadAxes(ofm->shape, 4, 1);
         auto ifmShape = Shape::PadAxes(ifm->shape, 4, 1);
-        assert(ifm2->tensor->AxisOrder() == AxisOrder::OHWI);
         assert(ifm2->shape.Size() == 4 && "FullyConnected with non-4D weights");
         assert(ifm2->shape.ElementsWH() == 1 && "FullyConnected with non-unit W*H weight-shape");
 
