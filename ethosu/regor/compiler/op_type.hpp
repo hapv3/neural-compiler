@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -208,6 +208,12 @@ inline std::string OpTypeToString(const OpType type)
     return EnumToString<OpType>(type);
 }
 
+constexpr inline bool IsActivation(OpType opType)
+{
+    return opType == OpType::Relu || opType == OpType::Relu6 || opType == OpType::ReluN || opType == OpType::ReluN1To1 ||
+           opType == OpType::Prelu || opType == OpType::Clamp || opType == OpType::Sigmoid || opType == OpType::Tanh || opType == OpType::LUT;
+}
+
 constexpr inline bool IsUnaryElementwise(OpType opType)
 {
     return opType == OpType::Abs || opType == OpType::LeakyRelu || opType == OpType::CLZ ||
@@ -230,8 +236,8 @@ constexpr inline bool IsElementwise(OpType opType)
 
 constexpr inline bool DecomposeAsElementwise(OpType opType)
 {
-    return IsElementwise(opType) || opType == OpType::Rescale || opType == OpType::LUT || opType == OpType::Table ||
-           opType == OpType::Clamp || opType == OpType::Cast;
+    return IsElementwise(opType) || IsActivation(opType) || opType == OpType::Rescale || opType == OpType::LUT ||
+           opType == OpType::Table || opType == OpType::Clamp || opType == OpType::Cast;
 }
 
 constexpr inline bool IsDepthwise(OpType opType)
@@ -256,12 +262,6 @@ constexpr inline bool IsVectorProduct(OpType opType)
     return opType == OpType::FullyConnected || opType == OpType::BidirectionalSequenceLstm || opType == OpType::BidirectionalSequenceRnn ||
            opType == OpType::BlockLSTM || opType == OpType::Lstm || opType == OpType::MatMul || opType == OpType::Rnn ||
            opType == OpType::UnidirectionalSequenceLstm || opType == OpType::UnidirectionalSequenceRnn;
-}
-
-constexpr inline bool IsActivation(OpType opType)
-{
-    return opType == OpType::Relu || opType == OpType::Relu6 || opType == OpType::ReluN || opType == OpType::ReluN1To1 ||
-           opType == OpType::Prelu || opType == OpType::Clamp || opType == OpType::Sigmoid || opType == OpType::Tanh || opType == OpType::LUT;
 }
 
 constexpr inline bool IsConcatenation(OpType opType)
