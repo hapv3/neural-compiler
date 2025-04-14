@@ -412,7 +412,7 @@ int SchedulerPacking::CanPack(const SchedulerOperation *schedOp, const Scheduler
     assert(ifmTensor && "next op must have IFM");
 
     // can't pack CPU operations
-    if ( !schedOp->IsNpuOp() )
+    if ( !nextOp->IsNpuOp() )
     {
         return 0;
     }
