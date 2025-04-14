@@ -295,14 +295,17 @@ void SchedulerPacking::PrePackOperations()
         ArchRequirements oReq{};
         Flags<QueryResult> result = OperatorQuery(_arch, schedOp.get(), &oReq);
         assert(result.Any(QueryResult::Constrained) == false && "Constrained result from complete OperatorQuery");
-        // Determine if each operation can run on NPU
-        if ( result.Any(QueryResult::Native) )
+        if ( schedOp->Type() == OpType::Passthrough )
+        {
+            schedOp->SetNpuOp(false);
+        }
+        else if ( result.Any(QueryResult::Native) )
         {
             // TODO MLBEDSW-10643: This should be a direct-check against QueryResult::Native
-            // HasRequirements at this point should result in CPU-fallback
+            // HasRequirements at this point should result in failure
             if ( result.Any(QueryResult::HasRequirements) && oReq.req.Any(ArchRequirement::Decompose) )
             {
-                schedOp->SetNpuOp(false);
+                throw std::runtime_error("Non-passthrough operation could not run on NPU.");
             }
             else
             {
@@ -311,7 +314,7 @@ void SchedulerPacking::PrePackOperations()
         }
         else
         {
-            schedOp->SetNpuOp(false);
+            throw std::runtime_error("Non-passthrough operation could not run on NPU.");
         }
 
         // Examine elementwise and set a primary path for cascading.

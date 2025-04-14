@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -46,7 +46,7 @@ TEST_CASE("test_scheduler_packing")
         // Validate that attr_axis still represents the reduced axis.
         std::vector<std::shared_ptr<Operation>> ops;
         auto ifm = CreateTensor("IFM", Shape(10, 10), DataType::Int8);
-        auto ofm = CreateTensor("OFM", Shape(1, 10), DataType::Int8);
+        auto ofm = CreateTensor("OFM", Shape(1, 10), DataType::Int32);
         auto op = CreateOperation(OpType::ArgMax, TensorUsage::IFM, ifm, TensorUsage::OFM, ofm);
         auto attr = op->Attribute<axis_attr_t>();
         attr->axis = 0;
@@ -79,7 +79,7 @@ TEST_CASE("test_scheduler_packing")
         // Validate that attr_axis still represent the reduced axes.
         std::vector<std::shared_ptr<Operation>> ops;
         auto ifm = CreateTensor("IFM", Shape(10, 10, 10), DataType::Int8);
-        auto ofm = CreateTensor("OFM", Shape(10, 2, 10), DataType::Int8);
+        auto ofm = CreateTensor("OFM", Shape(10, 2, 10), DataType::Int32);
 
         // first op
         //  reads  0,0,0 - shape 10,5,10
