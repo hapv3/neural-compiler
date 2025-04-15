@@ -50,6 +50,7 @@ private:
     Operation *RewriteFullyConnected(Graph *const graph, Operation *const operation);
     Operation *FixupPoolStrides(Graph *const, Operation *const operation);
     Operation *RewriteRescaleInputs(Graph *const graph, Operation *const operation);
+    Operation *RemoveRescaleUnsignedAttribute(Graph *const graph, Operation *const operation);
     Operation *RewriteRescale(Graph *const graph, Operation *const operation);
     Operation *RewritePad(Graph *const graph, Operation *const operation);
     Operation *FuseRescale(Graph *const graph, Operation *const operation);
@@ -124,13 +125,14 @@ private:
             {
                 &GraphIrOptimiser::ConvertAttributes,
                 &GraphIrOptimiser::RewriteRescaleInputs,
+                &GraphIrOptimiser::RemoveRescaleUnsignedAttribute,
                 &GraphIrOptimiser::FuseRescale,  // First pass fuse all possible ifm and ofm rescales
             }
         },
         {
             {},
             {
-                &GraphIrOptimiser::FuseRescale,  // Second pass, fuse any remaining ofm rescales after ifm fusing in first pass
+                &GraphIrOptimiser::FuseRescale, // Second pass, fuse any remaining ofm rescales after ifm fusing in first pass
             }
         },
         {
