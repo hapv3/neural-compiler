@@ -305,7 +305,6 @@ class ArchitecturePerformance
 public:
     virtual ~ArchitecturePerformance() = default;
     virtual CycleCost MeasureCycleCost(const PerformanceQuery &query, const std::vector<FusionQuery> &fused) = 0;
-    virtual CycleCost MeasureCycleCostForSparsity(const PerformanceQuery &query, const std::vector<FusionQuery> &fused) = 0;
     virtual int64_t MemToMemCycles(const ArchitectureMemory *dest, const ArchitectureMemory *source, int sizeBytes) = 0;
     virtual ElementAccess MeasureElementAccess(const PerformanceQuery &query) = 0;
     virtual ElementAccess ElementTransferToBytes(const PerformanceQuery &query, const ElementAccess &access) = 0;

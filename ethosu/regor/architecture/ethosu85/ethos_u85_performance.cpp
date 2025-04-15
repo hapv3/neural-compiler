@@ -52,15 +52,6 @@ EthosU85Performance::EthosU85Performance(ArchEthosU85 *arch, const EthosU85PerfI
     _perfInfo = perfInfo;
 }
 
-CycleCost EthosU85Performance::MeasureCycleCostForSparsity(const PerformanceQuery &query, const std::vector<FusionQuery> &)
-{
-    // Temporary until we have a better performance estimate for U85
-    CycleCost cycles;
-    EthosU85OpConfig *opConfig = static_cast<EthosU85OpConfig *>(query.config);
-    cycles.opCycles = opConfig->OptimalDepthGranule();  // Maybe can find a better metric? MLBEDSW-9227
-    return cycles;
-}
-
 CycleCost EthosU85Performance::MeasureCycleCost(const PerformanceQuery &query, const std::vector<FusionQuery> &fused)
 {
     CycleCost cycles;
@@ -211,6 +202,7 @@ EthosU85Cycles EthosU85Performance::EstimateConvCycles(const PerformanceQuery &q
                 numKernelSteps = DivRoundUp(subKernelElements, divider);
                 cycles = std::max(cyclesWb, 4 * numUBlocks.ElementsWH()) * numKernelSteps * numUBlocks.Depth() *
                          DivRoundUp(ifmBlock.Depth(), 8);
+                cycles /= query.weightFormat & WeightFormat::Sparse2_4 ? 2 : 1;
             }
 
             // Calculate delay

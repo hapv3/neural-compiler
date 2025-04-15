@@ -502,12 +502,14 @@ WeightScaleEncoding ChooseBestWeightFormat(Architecture *arch, SchedulerOperatio
             weightStats.zeroCount = weightTensor->zeroCount;
             weightStats.distinctWeights = weightTensor->distinctWeights;
             auto query = Scheduler::InitPerfQuery(op, nullptr);
-            auto cycles = arch->Performance()->WeightDecodeCycles(
-                query, weightStats, weightTensor->config->Format(), weightTensor->memArea.memory);
-            if ( cycles < minCycles )
+            auto totalCycles =
+                arch->Performance()->WeightDecodeCycles(
+                    query, weightStats, weightTensor->config->Format(), weightTensor->memArea.memory) +
+                encodingResult.cycleCost.opCycles;
+            if ( totalCycles < minCycles )
             {
                 bestResult = &encodingResult;
-                minCycles = cycles;
+                minCycles = totalCycles;
             }
         }
     }
@@ -563,11 +565,13 @@ WeightScaleEncoding Scheduler::EncodeBestWeightFormat(
         _arch, op, ifmShape, ifm2Shape, ofmShape, WF(WeightFormat::Default));
     std::unique_ptr<ArchitectureOpConfig> blockConfigSparse = MaybeGetSparsityConfig(_arch, op, ifmShape, ifm2Shape, ofmShape, supportedFormats);
 
+    CycleCost defaultCycleCost;
+    CycleCost sparseCycleCost;
     if ( blockConfigSparse )
     {
-        auto perfDefault = EstimateOpPerformanceForSparsity(op, blockConfigDefault.get(), op->OFM()->SliceShape().Depth());
-        auto perfSparse = EstimateOpPerformanceForSparsity(op, blockConfigSparse.get(), op->OFM()->SliceShape().Depth());
-        if ( perfSparse.opCycles > perfDefault.opCycles )
+        defaultCycleCost = EstimateOpPerformance(op, blockConfigDefault.get(), op->OFM()->SliceShape().Depth());
+        sparseCycleCost = EstimateOpPerformance(op, blockConfigSparse.get(), op->OFM()->SliceShape().Depth(), WeightFormat::Sparse2_4);
+        if ( sparseCycleCost.opCycles > defaultCycleCost.opCycles )
         {
             supportedFormats.Unset(WeightFormat::Sparse2_4);
         }
@@ -614,6 +618,8 @@ WeightScaleEncoding Scheduler::EncodeBestWeightFormat(
             {
                 supportedFormats.Unset(WeightFormat::Fast);
             }
+            // Sparse2_4 affects opCycles and must be accounted for when selecting the best weight format
+            encoding.cycleCost = (weightFormat % WeightFormat::Sparse2_4) ? sparseCycleCost : defaultCycleCost;
             encodingResults.emplace_back(std::move(encoding));
         }
         catch ( const WeightEncodeException & )
@@ -629,6 +635,7 @@ WeightScaleEncoding Scheduler::EncodeBestWeightFormat(
     auto bestEncoding = ChooseBestWeightFormat(_arch, op, _options.optimizationStrategy, encodingResults);
     bestEncoding.blockConfig =
         (bestEncoding.weightScales.npuWeightsTensor->config->Format() % WeightFormat::Sparse2_4) ? std::move(blockConfigSparse) : std::move(blockConfigDefault);
+
     return bestEncoding;
 }
 
@@ -1742,7 +1749,7 @@ std::vector<FusionQuery> Scheduler::InitFusionQuery(SchedulerOperation *op)
 }
 
 
-CycleCost Scheduler::EstimateOpPerformance(SchedulerOperation *op, ArchitectureOpConfig *config, int ofm_depth)
+CycleCost Scheduler::EstimateOpPerformance(SchedulerOperation *op, ArchitectureOpConfig *config, int ofm_depth, WeightFormat wgtFormat)
 {
     CycleCost cycleCost;
     if ( !op->IsNpuOp() )
@@ -1751,22 +1758,12 @@ CycleCost Scheduler::EstimateOpPerformance(SchedulerOperation *op, ArchitectureO
         return cycleCost;
     }
 
-    PerformanceQuery query = InitPerfQuery(op, config, ofm_depth);
+    PerformanceQuery query = InitPerfQuery(op, config, ofm_depth, wgtFormat);
     std::vector<FusionQuery> fused = InitFusionQuery(op);
     cycleCost = _arch->Performance()->MeasureCycleCost(query, fused);
     return cycleCost;
 }
 
-CycleCost Scheduler::EstimateOpPerformanceForSparsity(SchedulerOperation *op, ArchitectureOpConfig *config, int ofm_depth)
-{
-    CycleCost cycleCost;
-    assert(op->IsNpuOp());
-
-    PerformanceQuery query = InitPerfQuery(op, config, ofm_depth);
-    std::vector<FusionQuery> fused = InitFusionQuery(op);
-    cycleCost = _arch->Performance()->MeasureCycleCostForSparsity(query, fused);
-    return cycleCost;
-}
 
 ElementAccess Scheduler::EstimateOpElementAccess(SchedulerOperation *op, ArchitectureOpConfig *config, int ofm_depth)
 {

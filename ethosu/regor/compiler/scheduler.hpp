@@ -73,6 +73,8 @@ struct WeightScaleEncoding
 {
     std::unique_ptr<ArchitectureOpConfig> blockConfig;
     WeightScaleTensors weightScales;
+    // Keep track of op cycles - used in ChooseBestWeightFormat
+    CycleCost cycleCost;
 };
 
 struct SchedulerBufferTensor
@@ -349,9 +351,8 @@ private:
 
     void CoalesceWeightBufferTensors(Schedule *schedule);
 
-    CycleCost EstimateOpPerformance(SchedulerOperation *op, ArchitectureOpConfig *config, int ofm_depth);
-
-    CycleCost EstimateOpPerformanceForSparsity(SchedulerOperation *op, ArchitectureOpConfig *config, int ofm_depth);
+    CycleCost EstimateOpPerformance(SchedulerOperation *op, ArchitectureOpConfig *config, int ofm_depth,
+        WeightFormat wgtFormat = WeightFormat::Default);
 
     ElementAccess EstimateOpElementAccess(SchedulerOperation *op, ArchitectureOpConfig *config, int ofm_depth);
 

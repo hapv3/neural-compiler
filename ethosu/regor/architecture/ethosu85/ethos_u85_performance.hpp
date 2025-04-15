@@ -67,7 +67,6 @@ public:
 
 public:
     CycleCost MeasureCycleCost(const PerformanceQuery &query, const std::vector<FusionQuery> &fused) override;
-    CycleCost MeasureCycleCostForSparsity(const PerformanceQuery &query, const std::vector<FusionQuery> &fused) override;
     int64_t MemToMemCycles(const ArchitectureMemory *dest, const ArchitectureMemory *source, int sizeBytes) override;
     ElementAccess MeasureElementAccess(const PerformanceQuery &query) override;
     ElementAccess ElementTransferToBytes(const PerformanceQuery &query, const ElementAccess &access) override;
