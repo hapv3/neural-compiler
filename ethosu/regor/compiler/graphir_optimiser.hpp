@@ -41,7 +41,6 @@ class GraphIrOptimiser : public GraphOptimiser
 
 private:
     Operation *ConstPropagation(Graph *const graph, Operation *const operation);
-    Operation *RemoveReshape(Graph *const graph, Operation *const operation);
     Operation *ConvertAttributes(Graph *const graph, Operation *const operation);
     Operation *ConvertResizeOffsets(Graph *const graph, Operation *const operation);
     Tensor *ConvertInt48Tensors(Graph *graph, Tensor *tensor);
@@ -102,7 +101,7 @@ private:
                 &GraphIrOptimiser::ConvertInt4Tensors,
             },
             {
-                &GraphIrOptimiser::RemoveReshape,
+                &GraphOptimiser::RemoveReshape,
             }
         },
         {

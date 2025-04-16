@@ -25,6 +25,7 @@
 #include "graphir_optimiser.hpp"
 #include "op_type.hpp"
 #include "operation.hpp"
+#include "optimiser_utils.hpp"
 #include "tensor.hpp"
 #include "tflite/tflite_supported_operators.hpp"
 #include "tflite_graph_optimiser.hpp"
@@ -41,6 +42,8 @@
 
 namespace regor
 {
+
+using namespace GraphOptimisation;
 
 std::unique_ptr<GraphOptimiser> GraphOptimiser::MakeGraphOptimiser(
     GraphNotation notation, Architecture *arch, const GraphOptimiserOptions &options, OptimiserDatabase *db)
@@ -130,6 +133,77 @@ Operation *GraphOptimiser::RecordOptimisation(Graph *const graph, Operation *con
         _db->AddOptimised(operation, operation);
     }
     return operation;
+}
+
+Operation *GraphOptimiser::RemoveReshape(Graph *const graph, Operation *const operation)
+{
+    Operation *returnOp = operation;
+    const OpType opType = operation->Type();
+    if ( IsReshape(opType) )
+    {
+        auto *ifmConn = operation->Input(TensorUsage::IFM0);
+        auto *ofmConn = operation->Output(TensorUsage::OFM);
+        auto *ifm = ifmConn->tensor.get();
+        auto *ofm = ofmConn->tensor.get();
+
+        // Check if ifm/ofm are network ifm/ofm or constant
+        bool isIfmConst = ifm->IsConstant();
+        bool isIfmSgIfm = IsTensorInVector(graph->Inputs(), ifm);
+        bool isOfmSgOfm = IsTensorInVector(graph->Outputs(), ofm);
+        bool isIfmSgOfm = IsTensorInVector(graph->Outputs(), ifm);
+
+        // Check if ifm/ofm is produced/consumed by a CPU operation
+        auto isPassthroughOp = [](const std::shared_ptr<Operation> &op) { return op->Type() == OpType::Passthrough; };
+        const bool isOfmCpuIfm =
+            std::find_if(ofm->Readers().begin(), ofm->Readers().end(), isPassthroughOp) != ofm->Readers().end();
+        const bool isIfmCpuOfm =
+            std::find_if(ifm->Writers().begin(), ifm->Writers().end(), isPassthroughOp) != ifm->Writers().end();
+
+        // Inserts a copy op if needed before removing reshapes.
+        if ( ((isIfmSgIfm || isIfmSgOfm || isIfmConst || isIfmCpuOfm) && (isOfmSgOfm || isOfmCpuIfm)) ||
+             ((ifm->Readers().size() > 1) && (ifm->StorageShape() != ofm->StorageShape() || ifm->AxisOrder() != ofm->AxisOrder())) )
+        {
+            auto copyOp = InsertCopyOpAfterTensor(ifmConn->tensor, ifmConn->quantization);
+            copyOp->Output(TensorUsage::OFM)->Set(RoundMode::NATURAL);
+
+            // reset the ifm to reflect the reshape's new ifm
+            ifmConn = operation->Input(TensorUsage::IFM0);
+            ifm = ifmConn->tensor.get();
+            returnOp = copyOp.get();
+            RecordOptimisation(operation, returnOp);
+            // Reshape still needs to be removed.
+        }
+
+        // Remove the reshape and one of the tensors.
+        if ( isOfmSgOfm || isOfmCpuIfm )
+        {
+            // The OFM is in graph outputs, do not remove this tensor.
+            // Bypass by replacing ifm with ofm.
+            // Set OFM as output for IFM producers
+            ReplaceProducerOutput(ifm->Writers(), ifm, ofmConn->tensor);
+
+            // Set OFM as input to other IFM consumers.
+            ReplaceConsumerInput(operation, ifm->Readers(), ifm, ofmConn->tensor);
+        }
+        else
+        {
+            // Bypass by replacing ofm with ifm.
+            // Set IFM as input to OFM consumers.
+            ReplaceConsumerInput(nullptr, ofm->Readers(), ofm, ifmConn->tensor);
+            assert(ifm->AxisOrder() == AxisOrder::Unknown || ifm->AxisOrder() == ofm->AxisOrder());
+
+            // This is needed as we use the weight tensor, and not the tensor connection,
+            // during weight encode. MLBEDSW-9267
+            ifmConn->tensor->SetAxisOrder(ofm->AxisOrder());
+            ifmConn->tensor->Reshape(ofm->StorageShape());
+        }
+        // Remove the reshape from ifm readers and ofm writers.
+        // Note the Inputs/Outputs on operation should still be intact to not break the traversal.
+        ifm->RemoveReader(operation->shared_from_this());
+        ofm->RemoveWriter(operation->shared_from_this());
+    }
+
+    return returnOp;
 }
 
 void GraphOptimiser::RecordOptimisation(const Operation *operation, const Operation *op)

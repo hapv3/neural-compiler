@@ -105,7 +105,6 @@ private:
     Operation *RewriteUnpack(Graph *const graph, Operation *const operation);
     Operation *RewriteSlice(Graph *const graph, Operation *const operation);
     Operation *RewriteStridedSlice(Graph *const graph, Operation *const operation);
-    Operation *RemoveReshape(Graph *const graph, Operation *const operation);
     Operation *ConvertReverse(Graph *const graph, Operation *const operation);
     Operation *ConvertGather(Graph *const graph, Operation *const operation);
     Operation *ConvertScatter(Graph *const graph, Operation *const operation);
@@ -240,7 +239,7 @@ public:
         {
              {},
              {
-                &TFLiteGraphOptimiser::RemoveReshape,
+                &GraphOptimiser::RemoveReshape,
             }
         },
         {

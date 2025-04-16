@@ -246,6 +246,7 @@ public:
 #endif
     Operation *RecordOperation(Graph *const graph, Operation *const operation);
     Operation *RecordOptimisation(Graph *const graph, Operation *const operation);
+    Operation *RemoveReshape(Graph *const graph, Operation *const operation);
     void RecordOptimisation(const Operation *operation, const Operation *op);
     void PrintGraph(const Graph *graph, const std::string &label) const;
     void PrintQuantization(const Graph *graph, const std::string &label) const;
