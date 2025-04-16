@@ -200,8 +200,6 @@ public:
         {
             {},
             {
-                // prerequisite to pattern-matching
-                &TFLiteGraphOptimiser::RemoveReshape,
                 // pattern-matching functions
                 // (must run before supported-operator checks)
                 // Every pattern-matching function is responsible of calling
@@ -237,6 +235,12 @@ public:
             {
                 &TFLiteGraphOptimiser::RewriteBatchMatMul,
                 &TFLiteGraphOptimiser::RewriteFullyConnectDynamic
+            }
+        },
+        {
+             {},
+             {
+                &TFLiteGraphOptimiser::RemoveReshape,
             }
         },
         {

@@ -825,7 +825,7 @@ Operation *TFLiteGraphOptimiser::RemoveReshape(Graph *const graph, Operation *co
             std::find_if(ifm->Writers().begin(), ifm->Writers().end(), isPassthroughOp) != ifm->Writers().end();
 
         // Inserts a copy op if needed before removing reshapes.
-        if ( ((isIfmSgIfm || isIfmSgOfm || isIfmConst) && (isOfmSgOfm)) || (isIfmCpuOfm && isOfmCpuIfm) )
+        if ( ((isIfmSgIfm || isIfmSgOfm || isIfmConst || isIfmCpuOfm) && (isOfmSgOfm || isOfmCpuIfm)) )
         {
             auto copyOp = InsertCopyOpAfterTensor(ifmConn->tensor, ifmConn->quantization);
             copyOp->Output(TensorUsage::OFM)->Set(RoundMode::NATURAL);
