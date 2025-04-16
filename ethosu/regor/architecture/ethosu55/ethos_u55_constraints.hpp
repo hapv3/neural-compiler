@@ -38,10 +38,10 @@ public:
     bool SupportsRescale(DataType fromType, DataType toType) override;
     Flags<QueryResult> OperatorQuery(OpType opType, const ArchOperatorQuery *query, ArchRequirements *req) override;
 
-protected:
-    bool SupportedDtypes(OpType opType, DataType ifmType, DataType ifm2Type, DataType ofmType) override;
-    bool SupportsFusedReverse(OpType opType, ReverseType reverseTypeMask) override;
-    TransposeSupport SupportsFusedTranspose(OpType opType, TransposeType transposeType) override;
+private:
+    bool SupportedDtypes(OpType opType, DataType ifmType, DataType ifm2Type, DataType ofmType);
+    bool SupportsFusedReverse(OpType opType, ReverseType reverseTypeMask);
+    TransposeSupport SupportsFusedTranspose(OpType opType, TransposeType transposeType);
 };
 
 }  // namespace regor

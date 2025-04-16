@@ -29,18 +29,18 @@ private:
 
 public:
     EthosU85Constraints(ArchEthosU85 *arch) : _arch(arch) {}
-    bool SupportsFusedReverse(OpType opType, ReverseType reverseTypeMask) override;
     bool SupportsFusedRescale(OpType opType, TensorUsage tensorUsage, DataType rescaleFromType, DataType rescaleToType,
         DataType opFromType, DataType opToType, const Quantization &quantization) override;
-    TransposeSupport SupportsFusedTranspose(OpType opType, TransposeType transposeType) override;
     bool SupportsAccumulatorSaveRestore() override { return true; }
     bool SupportsNegativeStrides() override { return false; };
     bool SupportsElementwiseLeakyRelu(bool quantized, DataType type) override { return true; };
     bool SupportsRescale(DataType fromType, DataType toType) override;
     Flags<QueryResult> OperatorQuery(OpType opType, const ArchOperatorQuery *query, ArchRequirements *req) override;
 
-protected:
-    bool SupportedDtypes(OpType opType, DataType ifmType, DataType ifm2Type, DataType ofmType) override;
+private:
+    bool SupportedDtypes(OpType opType, DataType ifmType, DataType ifm2Type, DataType ofmType);
+    bool SupportsFusedReverse(OpType opType, ReverseType reverseTypeMask);
+    TransposeSupport SupportsFusedTranspose(OpType opType, TransposeType transposeType);
 };
 
 }  // namespace regor

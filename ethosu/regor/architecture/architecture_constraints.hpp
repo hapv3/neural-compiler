@@ -132,11 +132,6 @@ public:
     virtual bool SupportsElementwiseLeakyRelu(bool quantized, DataType type) = 0;
     virtual bool SupportsRescale(DataType fromType, DataType toType) = 0;
     virtual Flags<QueryResult> OperatorQuery(OpType opType, const ArchOperatorQuery *query = nullptr, ArchRequirements *req = nullptr) = 0;
-
-private:
-    virtual bool SupportedDtypes(OpType opType, DataType ifmType, DataType ifm2Type, DataType ofmType) = 0;
-    virtual bool SupportsFusedReverse(OpType opType, ReverseType reverseTypeMask) = 0;
-    virtual TransposeSupport SupportsFusedTranspose(OpType opType, TransposeType transposeType) = 0;
 };
 
 }  // namespace regor
