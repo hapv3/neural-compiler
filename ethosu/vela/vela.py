@@ -382,6 +382,7 @@ Please check the supported operator list for your chosen runtime for further inf
 | GATHER | [Generic](#tflite-generic-constraints) | [Specific](#ethos-u85-tflite-gather-constraints) |
 | HARD_SWISH | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-hard_swish-constraints) |
 | LEAKY_RELU | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-leaky_relu-constraints) |
+| LOG | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-log-constraints) |
 | LOGISTIC | [Generic](#tflite-generic-constraints) |
 | MAXIMUM | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-maximum-constraints) |
 | MAX_POOL_2D | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-max_pool_2d-constraints) |
@@ -596,6 +597,14 @@ This is a list of constraints that the MAXIMUM operator must satisfy in order to
 - IFM and OFM data types must match
 - Both Input quantization parameters must match OFM quantization parameters
 - Broadcasting is only allowed for rank indices with dimension 1, from either IFM1 or IFM2
+
+### Ethos-U85 TFLite LOG Constraints
+
+This is a list of constraints that the LOG operator must satisfy in order to be scheduled on the NPU.
+
+- At least one Input's shape must match the OFM's shape
+- IFM and OFM data types must match
+- IFM must be int8 or int16
 
 ### Ethos-U85 TFLite MAX_POOL_2D Constraints
 

@@ -78,6 +78,7 @@ TfLiteSupportedOperatorsU55::TfLiteSupportedOperatorsU55(IArchitectureConstraint
         OpType::Quantize,
         OpType::HardSwish,
         OpType::MemoryCopy,
+        OpType::Log,
         // clang-format on
     };
     _supportedDataTypes = {

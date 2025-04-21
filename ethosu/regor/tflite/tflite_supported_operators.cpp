@@ -917,6 +917,39 @@ bool TfLiteSupportedOperators::ConstraintStridedSlice(const Operation *op)
     return true;
 }
 
+bool TfLiteSupportedOperators::ConstraintLog(const Operation *op)
+{
+    OpType opType = op->Type();
+    if ( opType != OpType::Log )
+    {
+        return true;
+    }
+    auto ifmConn = op->Input(TensorUsage::IFM);
+    assert(ifmConn);
+    auto ofmConn = op->Output(TensorUsage::OFM);
+    assert(ofmConn);
+    auto ifmType = ifmConn->tensor->Type();
+    auto ofmType = ofmConn->tensor->Type();
+    const auto &ifmShape = ifmConn->shape;
+    const auto &ofmShape = ofmConn->shape;
+    if ( ifmType != DataType::Int8 && ifmType != DataType::Int16 )
+    {
+        Failure(op, fmt::format("{} IFM", DataTypeToString(ifmType)), "IFM must be Int8 or Int16");
+        return false;
+    }
+    if ( ifmType != ofmType )
+    {
+        Failure(op, fmt::format("{} IFM {} OFM", DataTypeToString(ifmType), DataTypeToString(ofmType)), "IFM and OFM data types must match");
+        return false;
+    }
+    if ( ifmShape != ofmShape )
+    {
+        Failure(op, fmt::format("{} IFM {} OFM", ifmShape.ToString(), ofmShape.ToString()), "IFM and OFM shape must match");
+        return false;
+    }
+    return true;
+}
+
 void TfLiteSupportedOperators::Failure(const Operation *op, const std::string &message, const std::string &constraint)
 {
     assert(op);
@@ -977,6 +1010,7 @@ TfLiteSupportedOperators::TfLiteSupportedOperators(IArchitectureConstraints *con
         &TfLiteSupportedOperators::ConstraintPad,
         &TfLiteSupportedOperators::ConstraintTransposeDims,
         &TfLiteSupportedOperators::ConstraintStridedSlice,
+        &TfLiteSupportedOperators::ConstraintLog,
     };
 }
 

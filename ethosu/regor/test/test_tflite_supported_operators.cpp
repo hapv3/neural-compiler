@@ -440,6 +440,31 @@ TEST_CASE("Supported operators Common")
             op->Disconnect();
         }
     }
+
+    SECTION("ConstraintLog")
+    {
+        // Log is only supported with int8 or int16 input
+        auto op = CreateOperation(OpType::Log, Shape(1, 10, 10, 1), DataType::Int8, Shape(1, 10, 10, 1), DataType::Int8);
+        REQUIRE(supportedOps->Check(op.get()) == true);
+        op->Input(TensorUsage::IFM)->tensor->ChangeType(DataType::Int16);
+        op->Output(TensorUsage::OFM)->tensor->ChangeType(DataType::Int16);
+        REQUIRE(supportedOps->Check(op.get()) == true);
+        for ( auto dtype : {DataType::UInt8, DataType::Int32} )
+        {
+            op->Input(TensorUsage::IFM)->tensor->ChangeType(dtype);
+            op->Output(TensorUsage::OFM)->tensor->ChangeType(dtype);
+            REQUIRE(supportedOps->Check(op.get()) == false);
+        }
+        // IFM and OFM data types must match
+        op->Input(TensorUsage::IFM)->tensor->ChangeType(DataType::Int8);
+        op->Output(TensorUsage::OFM)->tensor->ChangeType(DataType::Int16);
+        REQUIRE(supportedOps->Check(op.get()) == false);
+        op->Disconnect();
+        // IFM and OFM shape must match
+        auto op2 = CreateOperation(OpType::Log, Shape(1, 7, 10, 1), DataType::Int8, Shape(1, 10, 10, 1), DataType::Int8);
+        REQUIRE(supportedOps->Check(op2.get()) == false);
+        op2->Disconnect();
+    }
 }
 
 TEST_CASE("Supported operators EthosU55")

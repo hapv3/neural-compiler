@@ -101,6 +101,7 @@ private:
     Operation *ClampActivations(Graph *const graph, Operation *const operation);
     Operation *ConvertConvolutionGroup(Graph *const graph, Operation *const operation);
     Operation *ConvertExpToLUT(Graph *const graph, Operation *const operation);
+    Operation *ConvertLogToLUT(Graph *const graph, Operation *const operation);
     Operation *RewritePack(Graph *const graph, Operation *const operation);
     Operation *RewriteUnpack(Graph *const graph, Operation *const operation);
     Operation *RewriteSlice(Graph *const graph, Operation *const operation);
@@ -249,6 +250,7 @@ public:
                 &TFLiteGraphOptimiser::FixupBias,
                 &TFLiteGraphOptimiser::ConvertReduceMinMaxAnyAll,
                 &TFLiteGraphOptimiser::ConvertExpToLUT,
+                &TFLiteGraphOptimiser::ConvertLogToLUT,
                 &TFLiteGraphOptimiser::ConvertTanhSigmoidToLUT,
                 &TFLiteGraphOptimiser::ConvertSoftmaxOps,
                 &TFLiteGraphOptimiser::ReplacePadByExplicitPadding,

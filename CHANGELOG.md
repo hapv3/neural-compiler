@@ -22,6 +22,22 @@ main feature changes, interface changes and reported defects that have been
 fixed.  The version numbering adheres to the
 [semantic versioning](https://semver.org/) scheme.
 
+## Release 4.3.0 - 25/04/2025
+
+**Main feature changes:**
+
+* Extended operator support:
+  * Ethos-U85:
+    * TFLite: LOG
+
+**Interface changes:**
+
+  * None
+
+**Reported defect fixes:**
+
+  * None
+
 ## Release 4.2.0 - 27/02/2025
 
 The Vela compiler has moved from

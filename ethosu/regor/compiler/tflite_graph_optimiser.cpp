@@ -414,7 +414,7 @@ static Operation *ConvertToInterpolatingLUT16(Operation *op, FUNC func, const st
 
     // Create 32-bit LUT represented by a 16-bit base and 16-bit slope.
     auto lut = std::make_unique<uint32_t[]>(512);
-    float prevLutResult = 0;
+    int16_t prevLutResult = 0;
     for ( int i = 0; i < steps; i++ )
     {
         float val = func(inputMin + i * step);
@@ -427,18 +427,20 @@ static Operation *ConvertToInterpolatingLUT16(Operation *op, FUNC func, const st
         float midpointErr = midpointInterpVal - midpointVal;
         float bias = std::round(midpointErr / 2.0f);
 
-        float lutResult = std::clamp(sampleVal - bias, qMin, qMax);
+        float clampedLutResult = std::clamp(sampleVal - bias, qMin, qMax);
+        int16_t lutResult = int16_t(clampedLutResult);
 
         if ( i > 0 )
         {
-            uint32_t base = uint32_t(prevLutResult);
-            uint32_t slope = uint32_t(lutResult - prevLutResult);
-            lut[i - 1] = base + (slope << 16);
+            int16_t base = prevLutResult;
+            int16_t slope = lutResult - prevLutResult;
+            lut[i - 1] = uint16_t(base) + (uint16_t(slope) << 16);
         }
         prevLutResult = lutResult;
     }
     float val = float(std::round(func(inputMax) * outputScalingInv));
-    float lutResult = std::clamp(val, qMin, qMax);
+    float clampedLutResult = std::clamp(val, qMin, qMax);
+    int16_t lutResult = int16_t(clampedLutResult);
     uint32_t base = uint32_t(prevLutResult);
     uint32_t slope = uint32_t(lutResult - prevLutResult);
     lut[steps - 1] = base + (slope << 16);
@@ -575,6 +577,44 @@ Operation *TFLiteGraphOptimiser::ConvertExpToLUT(Graph *const graph, Operation *
     }
     return returnOp;
 }
+
+
+// Convert LOG operations to LUT
+Operation *TFLiteGraphOptimiser::ConvertLogToLUT(Graph *const graph, Operation *const operation)
+{
+    UNUSED(graph);
+    Operation *returnOp = operation;
+    OpType type = operation->Type();
+    if ( type != OpType::Log )
+    {
+        return returnOp;
+    }
+    const auto &ifmConn = operation->Input(TensorUsage::IFM0);
+    DataType ifmType = ifmConn->tensor->Type();
+
+    const auto &ofmConn = operation->Output(TensorUsage::OFM);
+    float ofmScale(ofmConn->quantization.scales[0].Dequantize());
+    auto zpOut = ofmConn->quantization.zeroPoints[0];
+
+    int qMin = ifmType == DataType::Int8 ? -128 : -32768;
+    float minVal = (qMin - zpOut) * ofmScale;
+    if ( ifmType == DataType::Int8 )
+    {
+        returnOp = ConvertToLUT8(
+            operation, [&](double x) -> float { return x <= 0.0f ? minVal : std::log(float(x)); }, "Log");
+        RecordOptimisation(operation, returnOp);
+        operation->Disconnect();
+    }
+    else if ( ifmType == DataType::Int16 )
+    {
+        returnOp = ConvertToInterpolatingLUT16(
+            operation, [&](double x) -> float { return x <= 0.0f ? minVal : std::log(float(x)); }, "Log16(interp)");
+        RecordOptimisation(operation, returnOp);
+        operation->Disconnect();
+    }
+    return returnOp;
+}
+
 
 // Convert TFLite Pack into TOSA Concat
 Operation *TFLiteGraphOptimiser::RewritePack(Graph *const graph, Operation *const operation)
