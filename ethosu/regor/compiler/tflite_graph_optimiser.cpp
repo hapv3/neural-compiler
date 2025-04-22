@@ -2745,6 +2745,7 @@ void DisconnectActivation(Operation *const op)
 
 Operation *TFLiteGraphOptimiser::SupportedOperatorChecks(Graph *const graph, Operation *const operation)
 {
+    Operation *returnOp = operation;
     if ( !_supportedOps->Check(operation) )
     {
         if ( TfLiteMapping::CanFuseActivationFunction(operation) )
@@ -2761,11 +2762,13 @@ Operation *TFLiteGraphOptimiser::SupportedOperatorChecks(Graph *const graph, Ope
                 // op is an activation function, disconnect op and set pred to passthrough
                 DisconnectActivation(pred.get());
                 pred->SetPassthroughOp();
+                // return pred instead of the disconnected activation
+                returnOp = pred.get();
             }
         }
         operation->SetPassthroughOp();
     }
-    return operation;
+    return returnOp;
 }
 
 Operation *TFLiteGraphOptimiser::ClampActivations(Graph *const graph, Operation *const operation)
