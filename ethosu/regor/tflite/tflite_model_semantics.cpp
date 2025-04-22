@@ -313,17 +313,22 @@ void ConstraintConvGroupsIfmDepth(const Operator &op, const SubGraph &subgraph, 
 {
     auto ifm = TensorFromUsage(regor::TensorUsage::IFM, op, builtinOperator, *subgraph.tensors());
     auto weights = TensorFromUsage(regor::TensorUsage::Weights, op, builtinOperator, *subgraph.tensors());
-    auto ifmDepth = ShapeFromTens(ifm)[-1];
-    auto kernelIc = ShapeFromTens(weights)[-1];
-    if ( kernelIc == 0 || kernelIc < 0 || ifmDepth < 0 )
+    auto ifmShape = ShapeFromTens(ifm);
+    auto weightShape = ShapeFromTens(weights);
+    if ( ifmShape && weightShape )
     {
-        throw std::runtime_error("Error: Out of bounds\n");
-    }
-    if ( ifmDepth % kernelIc != 0 )
-    {
-        std::string constraint = "IFM depth must be a whole multiple of the filter kernel depth";
-        std::string extra = fmt::format("IFM depth = {} and filter kernel depth = {}", ifmDepth, kernelIc);
-        throw InvalidTfLiteException(constraint, extra, op, subgraph, builtinOperator);
+        auto ifmDepth = ifmShape[-1];
+        auto kernelIc = weightShape[-1];
+        if ( kernelIc == 0 || kernelIc < 0 || ifmDepth < 0 )
+        {
+            throw std::runtime_error("Error: Out of bounds\n");
+        }
+        if ( ifmDepth % kernelIc != 0 )
+        {
+            std::string constraint = "IFM depth must be a whole multiple of the filter kernel depth";
+            std::string extra = fmt::format("IFM depth = {} and filter kernel depth = {}", ifmDepth, kernelIc);
+            throw InvalidTfLiteException(constraint, extra, op, subgraph, builtinOperator);
+        }
     }
 }
 
@@ -331,20 +336,24 @@ void ConstraintConvGroupsNumFilters(const Operator &op, const SubGraph &subgraph
 {
     auto ifm = TensorFromUsage(regor::TensorUsage::IFM, op, builtinOperator, *subgraph.tensors());
     auto weights = TensorFromUsage(regor::TensorUsage::Weights, op, builtinOperator, *subgraph.tensors());
-    auto ifmDepth = ShapeFromTens(ifm)[-1];
-    auto kernelIc = ShapeFromTens(weights)[-1];
-    auto kernelOc = ShapeFromTens(weights)[0];
-
-    auto numConvGroups = ifmDepth / kernelIc;
-    if ( numConvGroups == 0 || kernelOc < 0 || numConvGroups < 0 )
+    auto ifmShape = ShapeFromTens(ifm);
+    auto weightsShape = ShapeFromTens(weights);
+    if ( ifmShape && weightsShape )
     {
-        throw std::runtime_error("Error: Out of bounds\n");
-    }
-    if ( kernelOc % numConvGroups != 0 )
-    {
-        std::string constraint = "Number of filter kernels must be equally divisible by the number of convolution groups";
-        std::string extra = fmt::format("Conv Groups = {}, filter kernels = {}", numConvGroups, kernelOc);
-        throw InvalidTfLiteException(constraint, extra, op, subgraph, builtinOperator);
+        auto ifmDepth = ifmShape[-1];
+        auto kernelIc = weightsShape[-1];
+        auto kernelOc = weightsShape[0];
+        auto numConvGroups = ifmDepth / kernelIc;
+        if ( numConvGroups == 0 || kernelOc < 0 || numConvGroups < 0 )
+        {
+            throw std::runtime_error("Error: Out of bounds\n");
+        }
+        if ( kernelOc % numConvGroups != 0 )
+        {
+            std::string constraint = "Number of filter kernels must be equally divisible by the number of convolution groups";
+            std::string extra = fmt::format("Conv Groups = {}, filter kernels = {}", numConvGroups, kernelOc);
+            throw InvalidTfLiteException(constraint, extra, op, subgraph, builtinOperator);
+        }
     }
 }
 
@@ -352,20 +361,23 @@ void ConstraintDepthwiseConvOfmDepth(const Operator &op, const SubGraph &subgrap
 {
     auto ifm = TensorFromUsage(regor::TensorUsage::IFM, op, builtinOperator, *subgraph.tensors());
     auto ofm = TensorFromUsage(regor::TensorUsage::OFM, op, builtinOperator, *subgraph.tensors());
-    auto ifmDepth = ShapeFromTens(ifm)[-1];
-    auto ofmDepth = ShapeFromTens(ofm)[-1];
-
-    int depth_multiplier = CheckedPtr(op.builtin_options_as_DepthwiseConv2DOptions())->depth_multiplier();
-
-    if ( ifmDepth < 0 || ofmDepth < 0 )
+    auto ifmShape = ShapeFromTens(ifm);
+    auto ofmShape = ShapeFromTens(ofm);
+    if ( ifmShape && ofmShape )
     {
-        throw std::runtime_error("Error: Out of bounds\n");
-    }
-    if ( ifmDepth * depth_multiplier != ofmDepth )
-    {
-        std::string constraint = "OFM depth must be a equal to IFM depth times depth multiplier";
-        std::string extra = fmt::format("OFM depth = {}, IFM depth = {} and depth multiplier = {}", ofmDepth, ifmDepth, depth_multiplier);
-        throw InvalidTfLiteException(constraint, extra, op, subgraph, builtinOperator);
+        auto ifmDepth = ifmShape[-1];
+        auto ofmDepth = ofmShape[-1];
+        if ( ifmDepth < 0 || ofmDepth < 0 )
+        {
+            throw std::runtime_error("Error: Out of bounds\n");
+        }
+        int depth_multiplier = CheckedPtr(op.builtin_options_as_DepthwiseConv2DOptions())->depth_multiplier();
+        if ( ifmDepth * depth_multiplier != ofmDepth )
+        {
+            std::string constraint = "OFM depth must be a equal to IFM depth times depth multiplier";
+            std::string extra = fmt::format("OFM depth = {}, IFM depth = {} and depth multiplier = {}", ofmDepth, ifmDepth, depth_multiplier);
+            throw InvalidTfLiteException(constraint, extra, op, subgraph, builtinOperator);
+        }
     }
 }
 

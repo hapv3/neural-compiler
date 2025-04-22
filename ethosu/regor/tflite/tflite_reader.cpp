@@ -44,13 +44,14 @@
 
 namespace regor
 {
+
 static void SetKernel(const std::shared_ptr<Operation> &operation, const Point2i &size, const Point2i &stride,
     const Point2i &dilation, tflite::Padding padding, int depthMultiplier = 1)
 {
     const auto &inputShape = operation->IFM(0)->StorageShape();
     const auto &outputShape = operation->OFM()->StorageShape();
     Margin pad;
-    if ( operation->Type() == OpType::TransposeConv2D )
+    if ( operation->Type() == OpType::TransposeConv2D && inputShape && outputShape )
     {
         // Calculate upscaled ifm height/width by multiplying with stride
         auto ifmWH = inputShape.WH<int>() * stride;
@@ -78,7 +79,7 @@ static void SetKernel(const std::shared_ptr<Operation> &operation, const Point2i
             pad = Margin((ypad + 1) / 2, (xpad + 1) / 2, ypad / 2, xpad / 2);
         }
     }
-    else if ( padding == tflite::Padding::SAME )
+    else if ( padding == tflite::Padding::SAME && inputShape )
     {
         auto dWH = dilation * (size - Point2i(1, 1)) + Point2i(1, 1);
         int xpad = NeededTotalPadding(inputShape.Width(), stride.x, dWH.x);
@@ -257,7 +258,10 @@ void TfLiteReader::LoadGraphs(const uint8_t *input, const tflite::Model *model,
                         auto ifm0 = operation->IFM(0);
                         auto ifm1 = operation->IFM(1);
                         assert(ifm0 && ifm1);
-                        ofm->SetStorageShape(Shape::Max(ifm0->StorageShape(), ifm1->StorageShape()));
+                        if ( ifm0->StorageShape() && ifm1->StorageShape() )
+                        {
+                            ofm->SetStorageShape(Shape::Max(ifm0->StorageShape(), ifm1->StorageShape()));
+                        }
                     }
                 }
                 assert(tensorQuantization.count(ofm->Uid()) > 0);
