@@ -1465,16 +1465,12 @@ static std::vector<std::unique_ptr<SchedulerOperation>> SwapAxes(Architecture *a
         newTensor->uid = GenerateUniqueId();
 
         // Connect input/output
-        Quantization unitQuantZp = Quantization::Unit();
-        unitQuantZp.zeroPoints = tail->quantization.zeroPoints;
         ifmConn->tensor = tail->tensor;
         ifmConn->tensor->consumers.push_back(op.get());
         ifmConn->shape = ifmShape;
-        ifmConn->quantization = unitQuantZp;
         ofmConn->tensor = std::move(newTensor);
         ofmConn->tensor->producers.push_back(op.get());
         ofmConn->shape = ofmShape;
-        ofmConn->quantization = std::move(unitQuantZp);
         ofmConn->transpose = transposeType;
 
         std::swap(shape[a], shape[b]);
@@ -1665,12 +1661,16 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTranspose(Architecture
         const auto &lastTensor = result.back()->OFM()->tensor;
         for ( auto &subOp : result )
         {
+            auto ifm = subOp->IFM(0);
             auto ofm = subOp->OFM();
             if ( ofm->tensor == lastTensor )
             {
                 // Adjust to that last output is written to the original OFM
                 ofm->tensor = ofmConn->tensor;
                 ofm->tensor->producers.push_back(subOp.get());
+
+                // Adjust so ops that write to original OFM has original quantization
+                ifm->quantization = ifmConn->quantization;
                 ofm->quantization = ofmConn->quantization;
             }
         }
