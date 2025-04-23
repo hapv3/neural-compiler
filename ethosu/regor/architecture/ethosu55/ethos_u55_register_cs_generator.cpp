@@ -1222,8 +1222,7 @@ void EthosU55RCSGenerator::UpdateMemoryAccesses(const MemoryAccesses &memoryAcce
 }
 
 // Inserts DMA commands for copying LUTs from constant memory to LUT memory
-void EthosU55RCSGenerator::InsertLUTDMACommand(
-    int index, const HLCStripe *stripe, Temporaries &temps, std::vector<const HighLevelCommand *> &emitted)
+void EthosU55RCSGenerator::InsertLUTDMACommand(const HLCStripe *stripe, Temporaries &temps, std::vector<const HighLevelCommand *> &emitted)
 {
     int lutSlotSize = _arch->_shram.lutSlotSize;
     auto op = stripe->operation;
@@ -1234,7 +1233,7 @@ void EthosU55RCSGenerator::InsertLUTDMACommand(
     const auto &lutTens = op->type == OpType::LUT ? op->parameters.lut : op->subOps[0].parameters.lut;
     assert(config->_layout.lutStart > 0);
     bool alreadyInLutMem;
-    int slot = AllocateLutSlot(lutTens.memArea, lutTens.address, lutTens.sizeBytes, index, alreadyInLutMem);
+    int slot = AllocateLutSlot(lutTens.memArea, lutTens.address, lutTens.sizeBytes, temps.timestamp, alreadyInLutMem);
     _stripeToLutSlot[stripe] = slot;
 
     if ( !alreadyInLutMem )
@@ -1332,7 +1331,10 @@ void EthosU55RCSGenerator::InsertTransposeCommand(const HLCStripe *stripe, Tempo
     auto &ifm = op->ifm[0];
     auto &ofm = op->ofm;
 
-    assert(op->subOps.empty());
+    bool allowSubOps = DataTypeSizeBits(ofm.dataType) == 8;
+    bool subOpsRequireLUT = (!op->subOps.empty() && op->subOps[0].type == OpType::LUT);
+
+    assert(op->subOps.empty() || allowSubOps);
     assert(ifm.dataType == ofm.dataType);
     assert(((ofm.transpose == TransposeType::NWHC) || !ifm.slice.shape || (ifm.shape == ifm.slice.shape)) && "Implementation cannot be sliced");
     ifm.shape = Shape::PadAxes(ifm.shape, 4, 1);
@@ -1347,6 +1349,7 @@ void EthosU55RCSGenerator::InsertTransposeCommand(const HLCStripe *stripe, Tempo
     {
         LOG_WARN("RCS: Emitting no-op transpose as a memory copy\n");
         assert(ifm.format == ofm.format);
+        assert(op->subOps.empty());
         auto dma = std::make_unique<HLCDMA>();
         dma->srcMemArea = ifm.memArea;
         dma->srcAddress = ifm.address;
@@ -1485,9 +1488,14 @@ void EthosU55RCSGenerator::InsertTransposeCommand(const HLCStripe *stripe, Tempo
                 // Create new stripe operations
                 auto cmd = std::make_unique<HLCStripe>(*stripe);
                 cmd->operation = std::make_shared<HLCOperation>();
+                if ( allowSubOps )
+                {
+                    cmd->operation->subOps = op->subOps;
+                    if ( subOpsRequireLUT ) InsertLUTDMACommand(cmd.get(), temps, emitted);
+                }
                 cmd->operation->kernel = Kernel::UnitKernel();
                 cmd->operation->type = OpType::AvgPool;
-                cmd->opGroup = nullptr;
+                cmd->opGroup = stripe->opGroup;
                 cmd->operation->ifm.push_back(inFM);
                 cmd->operation->ofm = outFM;
                 cmd->ofmArea = outFM.shape;
@@ -1634,6 +1642,7 @@ void EthosU55RCSGenerator::InsertMatMulCommand(const HLCStripe *stripe, Temporar
             // Step 2: REDUCE SUM: TEMP BUFFER -> OFM
             // Create Reduce sum stripe operation
             auto sum = std::make_unique<HLCStripe>(std::make_shared<HLCOperation>());
+            sum->operation->subOps = op->subOps;
             sum->operation->type = OpType::ReduceSum;
             sum->operation->kernel = Kernel::UnitKernel();
             sum->operation->ifm.push_back(tempFM);
@@ -1916,28 +1925,34 @@ void EthosU55RCSGenerator::PrepareCommand(int index, HighLevelCommand *cmd, Temp
 {
     emitted.clear();
 
-    if ( cmd->IsStripe() )
+    if ( !cmd->IsStripe() )
     {
-        HLCStripe *stripe = static_cast<HLCStripe *>(cmd);
-        auto op = stripe->operation;
-        if ( op->type == OpType::Tile )
+        // Emit original op
+        emitted.push_back(cmd);
+        return;
+    }
+
+    HLCStripe *stripe = static_cast<HLCStripe *>(cmd);
+    auto op = stripe->operation;
+    temps.timestamp = index;
+    if ( op->type == OpType::Tile )
+    {
+        InsertTileDMACommand(stripe, temps, emitted);
+    }
+    else if ( op->type == OpType::Transpose )
+    {
+        InsertTransposeCommand(stripe, temps, emitted);
+    }
+    else if ( op->type == OpType::MatMul )
+    {
+        InsertMatMulCommand(stripe, temps, emitted);
+    }
+    else
+    {
+        // Pre-prepared ops must integrate sub-op lut handling in case the incoming stripe is replaced
+        if ( (op->type == OpType::LUT) || (!op->subOps.empty() && op->subOps[0].type == OpType::LUT) )
         {
-            InsertTileDMACommand(stripe, temps, emitted);
-            return;  // Return early to replace original op
-        }
-        else if ( op->type == OpType::LUT || (!op->subOps.empty() && op->subOps[0].type == OpType::LUT) )
-        {
-            InsertLUTDMACommand(index, stripe, temps, emitted);
-        }
-        else if ( op->type == OpType::Transpose )
-        {
-            InsertTransposeCommand(stripe, temps, emitted);
-            return;
-        }
-        else if ( op->type == OpType::MatMul )
-        {
-            InsertMatMulCommand(stripe, temps, emitted);
-            return;
+            InsertLUTDMACommand(stripe, temps, emitted);
         }
         else if ( _arch->_shram.reservedEndBanks == 0 )
         {
@@ -1947,10 +1962,9 @@ void EthosU55RCSGenerator::PrepareCommand(int index, HighLevelCommand *cmd, Temp
                 slot = {};
             }
         }
+        // Emit original op
+        emitted.push_back(cmd);
     }
-
-    // Emit original op
-    emitted.push_back(cmd);
 }
 
 

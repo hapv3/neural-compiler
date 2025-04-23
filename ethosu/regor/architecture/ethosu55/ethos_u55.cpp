@@ -734,7 +734,7 @@ int EthosU55OpGroup::Add(const ArchitectureOpGroupQuery &op, const std::vector<i
         auto hwOp = ArchEthosU55::GetHWOp(_ops[0].type);
         if ( hwOp == EthosU55NpuOp::Dma || hwOp == EthosU55NpuOp::Compound )
         {
-            return 0;
+            if ( (_ops[0].type != OpType::Transpose) || (DataTypeStorageSizeBits(_ops[0].ofm.type) != 8) ) return 0;
         }
     }
 

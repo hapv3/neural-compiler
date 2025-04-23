@@ -232,19 +232,19 @@ protected:
 
     struct Temporaries
     {
+        int timestamp;
         std::vector<std::unique_ptr<HighLevelCommand>> cmds;
         std::vector<std::unique_ptr<ArchitectureOpConfig>> configs;
     };
 
     // Inserts DMA commands for copying LUTs from constant memory to LUT memory
-    void InsertLUTDMACommand(int index, const HLCStripe *stripe, Temporaries &temps, std::vector<const HighLevelCommand *> &emitted);
+    void InsertLUTDMACommand(const HLCStripe *stripe, Temporaries &temps, std::vector<const HighLevelCommand *> &emitted);
     // Inserts DMA commands to handle TILE operations
     virtual void InsertTileDMACommand(const HLCStripe *stripe, Temporaries &temps, std::vector<const HighLevelCommand *> &emitted);
     // Inserts commands to handle transposing
     virtual void InsertTransposeCommand(const HLCStripe *stripe, Temporaries &temps, std::vector<const HighLevelCommand *> &emitted);
     // Inserts commands to handle MATMUL operations
     void InsertMatMulCommand(const HLCStripe *stripe, Temporaries &temps, std::vector<const HighLevelCommand *> &emitted);
-
     //----------------------------------------------------------------------
     // Operations
     //----------------------------------------------------------------------

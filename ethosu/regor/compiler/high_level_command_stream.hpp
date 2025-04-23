@@ -160,6 +160,18 @@ struct HLCSubOperation
     HLCFeatureMap ofm;
     HLCParameters parameters = {};
     UniqueId srcId = 0;
+    HLCSubOperation() = default;
+    HLCSubOperation(const HLCSubOperation &other) { *this = other; }
+    void operator=(const HLCSubOperation &other)
+    {
+        type = other.type;
+        ifm = other.ifm;
+        ofm = other.ofm;
+        // Compilers disagree on whether the union is copyable.
+        if ( other.type == OpType::LUT ) parameters.lut = other.parameters.lut;
+        else parameters.resize = other.parameters.resize;
+        srcId = other.srcId;
+    }
 };
 
 /// <summary>
