@@ -236,8 +236,8 @@ constexpr inline bool IsElementwise(OpType opType)
 
 constexpr inline bool DecomposeAsElementwise(OpType opType)
 {
-    return IsElementwise(opType) || IsActivation(opType) || opType == OpType::Rescale || opType == OpType::LUT ||
-           opType == OpType::Table || opType == OpType::Clamp || opType == OpType::Cast;
+    return IsElementwise(opType) || IsActivation(opType) || opType == OpType::Rescale || opType == OpType::Table ||
+           opType == OpType::Cast || opType == OpType::Quantize;
 }
 
 constexpr inline bool IsDepthwise(OpType opType)
