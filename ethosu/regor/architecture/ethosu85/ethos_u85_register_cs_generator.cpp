@@ -657,10 +657,14 @@ int EthosU85RCSGenerator::CalcCommandWaits(const MemoryAccesses &opAccesses, std
 
 // Returns LUT slot to be used for the given LUT operation.
 // Sets alreadyInLutMem to true if the LUT is already in SHRAM.
-int EthosU85RCSGenerator::AllocateLutSlot(
-    std::vector<LutSlot> &lutSlots, const HLCOperation *op, int sizeInSlots, int timestamp, bool &alreadyInLutMem)
+int EthosU85RCSGenerator::AllocateLutSlot(std::vector<LutSlot> &lutSlots, const MemArea &memArea, Address address,
+    int lutSize, int timestamp, bool &alreadyInLutMem)
 {
     alreadyInLutMem = false;
+    int lutSlotSize = ArchEthosU85::LUT_SLOT_SIZE;
+    assert(lutSize % lutSlotSize == 0);
+
+    int sizeInSlots = lutSize / lutSlotSize;
     int totalSlots = int(lutSlots.size());
     if ( sizeInSlots < 0 || sizeInSlots > totalSlots )
     {
@@ -671,13 +675,14 @@ int EthosU85RCSGenerator::AllocateLutSlot(
     int allocatedSlot = 0;
     for ( int i = 0; i < totalSlots; i += sizeInSlots )
     {
-        if ( lutSlots[i].hlcOp == op )
+        if ( lutSlots[i].memory == memArea.memory && lutSlots[i].address == address && lutSlots[i].sizeBytes == lutSize )
         {
             // LUT is already in SHRAM
             allocatedSlot = i;
             alreadyInLutMem = true;
             break;
         }
+        assert(allocatedSlot < static_cast<int>(lutSlots.size()));
         if ( lutSlots[i].lastUsed < lutSlots[allocatedSlot].lastUsed )
         {
             allocatedSlot = i;
@@ -685,7 +690,9 @@ int EthosU85RCSGenerator::AllocateLutSlot(
     }
     for ( int j = allocatedSlot; j < allocatedSlot + sizeInSlots; ++j )
     {
-        lutSlots[j].hlcOp = op;
+        lutSlots[j].memory = memArea.memory;
+        lutSlots[j].address = address;
+        lutSlots[j].sizeBytes = lutSize;
         lutSlots[j].lastUsed = timestamp;
     }
     return allocatedSlot;
@@ -949,8 +956,7 @@ void EthosU85RCSGenerator::GeneratePadding(const HLCPadding &padding)
 void EthosU85RCSGenerator::GenerateActivation(const HLCStripe *stripe, MemoryAccesses &memoryAccesses)
 {
     const HLCOperation *op = stripe->operation.get();
-    OpType opType = OpType::None;
-    const HLCParameters *parameters = nullptr;
+    const HLCSubOperation *activationOp = nullptr;
     assert(stripe->opGroup != nullptr);
     EthosU85OpGroup *opGroup = static_cast<EthosU85OpGroup *>(stripe->opGroup);
     auto &ofm = op->ofm;
@@ -958,23 +964,18 @@ void EthosU85RCSGenerator::GenerateActivation(const HLCStripe *stripe, MemoryAcc
     if ( IsActivation(op->type) )
     {
         // Non-fused activation
-        opType = op->type;
-        parameters = &op->parameters;
+        activationOp = op;
     }
-    else
+    else if ( op->subOps.size() > 0 )
     {
-        for ( auto &subOp : op->subOps )
+        // Check if the first subOp is a fused activation.
+        auto &subOp = op->subOps[0];
+        if ( opGroup->IsFused(subOp.ifm[0].uid) && IsActivation(subOp.type) )
         {
-            if ( opGroup->IsFused(subOp.ifm[0].uid) && IsActivation(subOp.type) )
-            {
-                // Fused activation
-                opType = subOp.type;
-                parameters = &subOp.parameters;
-                // Use subOp ifm datatype to calculate clip range
-                clipDataType = subOp.ifm[0].dataType;
-                // We know there can be only one fused activation
-                break;
-            }
+            // Fused activation
+            activationOp = &subOp;
+            // Use subOp ifm datatype to calculate clip range
+            clipDataType = subOp.ifm[0].dataType;
         }
     }
 
@@ -997,13 +998,13 @@ void EthosU85RCSGenerator::GenerateActivation(const HLCStripe *stripe, MemoryAcc
 
     auto act = activation_function::LUT_NONE;
     uint32_t tableIndex = 0;
-    if ( IsLUTType(opType) )
+    if ( activationOp && IsLUTType(activationOp->type) )
     {
-        auto &lutParams = parameters->lut;
+        auto opType = activationOp->type;
+        auto &lutParams = activationOp->parameters.lut;
         int lutSize = lutParams.sizeBytes;
-
-        auto pos = _stripeToLutSlot.find(stripe);
-        if ( pos != _stripeToLutSlot.end() )
+        auto pos = _opToLutSlot.find(activationOp->srcId);
+        if ( pos != _opToLutSlot.end() )
         {
             tableIndex = pos->second;
         }
@@ -1569,14 +1570,33 @@ void EthosU85RCSGenerator::UpdateMemoryAccesses(const MemoryAccesses &memoryAcce
     }
 }
 
+std::unique_ptr<HLCDMA> EthosU85RCSGenerator::CreateLUTDMA(const HLCSubOperation *op, std::vector<LutSlot> &lutSlots, int timestamp)
+{
+    const auto &lutTens = op->parameters.lut;
+    bool alreadyInLutMem;
+    int slot = AllocateLutSlot(lutSlots, lutTens.memArea, lutTens.address, lutTens.sizeBytes, timestamp, alreadyInLutMem);
+    _opToLutSlot[op->srcId] = slot;
+
+    if ( !alreadyInLutMem )
+    {
+        auto dma = std::make_unique<HLCDMA>();
+        dma->srcMemArea = lutTens.memArea;
+        dma->srcAddress = lutTens.address;
+        dma->length = lutTens.sizeBytes;
+        dma->destMemArea = _arch->LUTMemory();
+        dma->destAddress = slot * ArchEthosU85::LUT_SLOT_SIZE;
+        return dma;
+    }
+    return nullptr;
+}
+
 // Inserts DMA commands for copying LUTs from constant memory
 // to LUT memory
 std::vector<std::unique_ptr<HighLevelCommand>>
 EthosU85RCSGenerator::InsertLUTDMACommands(std::vector<std::unique_ptr<HighLevelCommand>> &cmds)
 {
     std::vector<std::unique_ptr<HighLevelCommand>> result;
-    int lutSlotSize = ArchEthosU85::LUT_SLOT_SIZE;
-    int slots = int(_arch->_lutRam->SizeBytes() / lutSlotSize);
+    int slots = int(_arch->_lutRam->SizeBytes() / ArchEthosU85::LUT_SLOT_SIZE);
     std::vector<LutSlot> lutSlots(slots);
     int timestamp = 0;
     result.reserve(cmds.size());
@@ -1587,28 +1607,26 @@ EthosU85RCSGenerator::InsertLUTDMACommands(std::vector<std::unique_ptr<HighLevel
         {
             auto stripe = static_cast<HLCStripe *>(hlc.get());
             auto op = stripe->operation;
-            // TODO MLBEDSW-9142 LUT for chained subOps should be inserted before the primary Op
-            const auto &subOps = stripe->operation->subOps;
-            auto lutSubOp = std::find_if(
-                subOps.begin(), subOps.end(), [](const auto &subOp) { return IsLUTType(subOp.type); });
-            if ( IsLUTType(op->type) || (lutSubOp != subOps.end()) )
-            {
-                const auto &srcTens = IsLUTType(op->type) ? op->parameters.lut : lutSubOp->parameters.lut;
-                assert(srcTens.sizeBytes % lutSlotSize == 0);
-                bool alreadyInLutMem;
-                int sizeInSlots = srcTens.sizeBytes / lutSlotSize;
-                int slot = AllocateLutSlot(lutSlots, op.get(), sizeInSlots, timestamp, alreadyInLutMem);
-                _stripeToLutSlot[stripe] = slot;
 
-                if ( !alreadyInLutMem )
+            if ( IsLUTType(op->type) )
+            {
+                // Create and insert LUT DMA for a primary op activation
+                if ( auto dma = CreateLUTDMA(op.get(), lutSlots, timestamp) )
                 {
-                    auto dma = std::make_unique<HLCDMA>();
-                    dma->srcMemArea = srcTens.memArea;
-                    dma->srcAddress = srcTens.address;
-                    dma->length = srcTens.sizeBytes;
-                    dma->destMemArea = _arch->LUTMemory();
-                    dma->destAddress = slot * lutSlotSize;
                     result.push_back(std::move(dma));
+                }
+            }
+
+            // Create and insert LUT DMAs for any fused activations in the opgroup
+            const auto &subOps = stripe->operation->subOps;
+            for ( auto subOp = subOps.begin(); subOp != subOps.end(); subOp++ )
+            {
+                if ( IsLUTType(subOp->type) )
+                {
+                    if ( auto dma = CreateLUTDMA(&(*subOp), lutSlots, timestamp) )
+                    {
+                        result.push_back(std::move(dma));
+                    }
                 }
             }
         }
@@ -2007,7 +2025,7 @@ std::shared_ptr<HLCStripe> EthosU85RCSGenerator::MakeStripeForSubOp(HLCStripe *s
     op->type = subOp.type;
     op->ifm = subOp.ifm;
     op->ofm = subOp.ofm;
-    op->_srcId = subOp._srcId;
+    op->srcId = subOp.srcId;
     if ( IsLUTType(subOp.type) )
     {
         op->parameters.lut = subOp.parameters.lut;
@@ -2099,7 +2117,7 @@ bool EthosU85RCSGenerator::GenerateOpGroup(HLCStripe *stripe, HLCStripe *prevOp,
         // Return command mapping information to the caller
         if ( cmdRanges )
         {
-            cmdRanges->emplace_back(stripe->operation->_srcId, emitStart, _emit.Position());
+            cmdRanges->emplace_back(stripe->operation->srcId, emitStart, _emit.Position());
         }
 
         if ( isChained )
@@ -2214,7 +2232,7 @@ std::vector<uint32_t> EthosU85RCSGenerator::GenerateCommandStream(
     std::vector<std::unique_ptr<HighLevelCommand>> &highLevelCommandStream, CmdRanges *cmdRanges, bool verbose)
 {
     _emit.Clear();
-    _stripeToLutSlot.clear();
+    _opToLutSlot.clear();
     GenerateInitialRegisterSetup();
     auto cmds = InsertLUTDMACommands(highLevelCommandStream);
     cmds = InsertTileDMACommands(cmds);

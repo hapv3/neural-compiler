@@ -126,7 +126,6 @@ private:
     int _chainIdx = 0;
     bool _supportsChaining = false;
     bool _supportsFusing = false;
-    bool _hasFusedActivation = false;
     bool _hasFusedTranspose = false;
     bool _hasFusedReverse = false;
 

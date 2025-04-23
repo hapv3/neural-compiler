@@ -497,11 +497,14 @@ int EthosU55RCSGenerator::CalcCommandWaits(const MemoryAccesses &opAccesses, std
 
 // Returns LUT slot to be used for the given LUT operation.
 // Sets alreadyInLutMem to true if the LUT is already in SHRAM.
-int EthosU55RCSGenerator::AllocateLutSlot(
-    std::vector<LutSlot> &lutSlots, const HLCOperation *op, int sizeInSlots, int timestamp, bool &alreadyInLutMem)
+int EthosU55RCSGenerator::AllocateLutSlot(const MemArea &memArea, Address address, int lutSize, int timestamp, bool &alreadyInLutMem)
 {
     alreadyInLutMem = false;
-    int totalSlots = int(lutSlots.size());
+    int lutSlotSize = _arch->_shram.lutSlotSize;
+    assert(lutSize % lutSlotSize == 0);
+
+    int sizeInSlots = lutSize / lutSlotSize;
+    int totalSlots = int(_lutSlots.size());
     if ( sizeInSlots < 0 || sizeInSlots > totalSlots )
     {
         assert(false);
@@ -511,22 +514,25 @@ int EthosU55RCSGenerator::AllocateLutSlot(
     int allocatedSlot = 0;
     for ( int i = 0; i < totalSlots; i += sizeInSlots )
     {
-        if ( lutSlots[i].hlcOp == op )
+        if ( _lutSlots[i].memory == memArea.memory && _lutSlots[i].address == address && _lutSlots[i].sizeBytes == lutSize )
         {
             // LUT is already in SHRAM
             allocatedSlot = i;
             alreadyInLutMem = true;
             break;
         }
-        if ( lutSlots[i].lastUsed < lutSlots[allocatedSlot].lastUsed )
+        assert(allocatedSlot < totalSlots);
+        if ( _lutSlots[i].lastUsed < _lutSlots[allocatedSlot].lastUsed )
         {
             allocatedSlot = i;
         }
     }
     for ( int j = allocatedSlot; j < allocatedSlot + sizeInSlots; ++j )
     {
-        lutSlots[j].hlcOp = op;
-        lutSlots[j].lastUsed = timestamp;
+        _lutSlots[j].memory = memArea.memory;
+        _lutSlots[j].address = address;
+        _lutSlots[j].sizeBytes = lutSize;
+        _lutSlots[j].lastUsed = timestamp;
     }
     return allocatedSlot;
 }
@@ -1225,20 +1231,18 @@ void EthosU55RCSGenerator::InsertLUTDMACommand(
 
     assert(op->type == OpType::LUT || (!op->subOps.empty() && op->subOps[0].type == OpType::LUT));
 
-    const auto &srcTens = op->type == OpType::LUT ? op->parameters.lut : op->subOps[0].parameters.lut;
+    const auto &lutTens = op->type == OpType::LUT ? op->parameters.lut : op->subOps[0].parameters.lut;
     assert(config->_layout.lutStart > 0);
-    assert(srcTens.sizeBytes % lutSlotSize == 0);
     bool alreadyInLutMem;
-    int sizeInSlots = srcTens.sizeBytes / lutSlotSize;
-    int slot = AllocateLutSlot(_lutSlots, op.get(), sizeInSlots, index, alreadyInLutMem);
+    int slot = AllocateLutSlot(lutTens.memArea, lutTens.address, lutTens.sizeBytes, index, alreadyInLutMem);
     _stripeToLutSlot[stripe] = slot;
 
     if ( !alreadyInLutMem )
     {
         auto dma = std::make_unique<HLCDMA>();
-        dma->srcMemArea = srcTens.memArea;
-        dma->srcAddress = srcTens.address;
-        dma->length = srcTens.sizeBytes;
+        dma->srcMemArea = lutTens.memArea;
+        dma->srcAddress = lutTens.address;
+        dma->length = lutTens.sizeBytes;
         dma->destMemArea = _arch->LUTMemory();
         dma->destAddress = _arch->_shram.bankSizeBytes * config->_layout.lutStart + slot * lutSlotSize;
         emitted.push_back(dma.get());
@@ -1940,8 +1944,7 @@ void EthosU55RCSGenerator::PrepareCommand(int index, HighLevelCommand *cmd, Temp
             // LUT is overwritten by SHRAM accumulator buffers; clear slots
             for ( auto &slot : _lutSlots )
             {
-                slot.hlcOp = nullptr;
-                slot.lastUsed = 0;
+                slot = {};
             }
         }
     }
@@ -1959,8 +1962,7 @@ std::vector<uint32_t> EthosU55RCSGenerator::GenerateCommandStream(
     // Clear lut slots at start of command stream generation
     for ( auto &slot : _lutSlots )
     {
-        slot.hlcOp = nullptr;
-        slot.lastUsed = 0;
+        slot = {};
     }
 
     GenerateInitialRegisterSetup();
@@ -2011,7 +2013,7 @@ std::vector<uint32_t> EthosU55RCSGenerator::GenerateCommandStream(
         // Return command mapping information to the caller
         if ( cmdRanges && cmd->IsStripe() )
         {
-            cmdRanges->emplace_back(static_cast<HLCStripe *>(cmd.get())->operation->_srcId, emitStart, _emit.Position());
+            cmdRanges->emplace_back(static_cast<HLCStripe *>(cmd.get())->operation->srcId, emitStart, _emit.Position());
         }
         cmdIndex++;
     }

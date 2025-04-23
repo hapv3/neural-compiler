@@ -1421,19 +1421,6 @@ bool EthosU85OpGroup::Fuse(const ArchitectureOpGroupQuery &op, const std::vector
         return false;
     }
 
-    if ( _chainLength > 1 )
-    {
-        // TODO MLBEDSW-9142: support fusing on chained ops
-        return false;
-    }
-
-    // activation fusing..
-    if ( op.ifm[0].type == DataType::Int16 && (op.type == OpType::Sigmoid || op.type == OpType::Tanh) )
-    {
-        // Can not fuse int16 Sigmoid and Tanh LUT since they require special scaling done by AvgPoolNop
-        return false;
-    }
-
     if ( dependsOn.size() > 1 )
     {
         // Can only fuse with one op
@@ -1454,8 +1441,8 @@ bool EthosU85OpGroup::Fuse(const ArchitectureOpGroupQuery &op, const std::vector
     }
     const EthosU85OpGroup::OpInfo &prevOp = _ops[dep];
 
-    // Can't fuse activation with activation
-    if ( IsActivation(op.type) && _hasFusedActivation )
+    // Can't fuse two consecutive activations
+    if ( IsActivation(op.type) && IsActivation(prevOp.type) )
     {
         return false;
     }
@@ -1489,7 +1476,6 @@ bool EthosU85OpGroup::Fuse(const ArchitectureOpGroupQuery &op, const std::vector
         return false;
     }
 
-    _hasFusedActivation = _hasFusedActivation || IsActivation(op.type);
     _hasFusedTranspose = _hasFusedTranspose || (op.type == OpType::Transpose && !IsNone(op.ofm.transpose));
     _hasFusedReverse = _hasFusedReverse || (op.type == OpType::Reverse && op.ofm.reverse != ReverseType::None);
 
@@ -1510,11 +1496,6 @@ bool EthosU85OpGroup::Chain(const ArchitectureOpGroupQuery &op, const std::vecto
     if ( externalInputs == 0 )
     {
         // can only consider external (non-constant) inputs for chaining
-        return false;
-    }
-    if ( _opsCount > _chainLength )
-    {
-        // TODO MLBEDSW-9142: support chaining on fused ops
         return false;
     }
     if ( npuOp != EthosU85NpuOp::Elementwise )
@@ -1583,7 +1564,6 @@ int EthosU85OpGroup::Add(const ArchitectureOpGroupQuery &op, const std::vector<i
         _supportsFusing = ArchEthosU85::GetHWOp(op.type) != EthosU85NpuOp::Dma;
         _externalIfms = externalInputs;
         _chainLength = 1;
-        _hasFusedActivation = IsActivation(op.type);
         _hasFusedTranspose = (op.type == OpType::Transpose && !IsNone(op.ofm.transpose));
         _hasFusedReverse = (op.type == OpType::Reverse && op.ofm.reverse != ReverseType::None);
     }

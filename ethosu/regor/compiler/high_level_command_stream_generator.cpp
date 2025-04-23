@@ -311,7 +311,7 @@ static HLCSubOperation MakeSubOperation(const std::unique_ptr<SchedulerOperation
     }
     MakeFeatureMap(TensorUsage::OFM, schedOp->OFM(), hlcSubOp.ofm);
 
-    hlcSubOp._srcId = schedOp->Uid();
+    hlcSubOp.srcId = schedOp->Uid();
 
     if ( schedOp->Type() == OpType::LeakyRelu )
     {
@@ -337,7 +337,7 @@ static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, 
     op->type = schedOp->Type();
     op->kernel = *schedOp->Kernel();
     op->config = opInfo->Config();
-    op->_srcId = schedOp->Uid();
+    op->srcId = schedOp->Uid();
     size_t ifms = 0;
     for ( const auto &input : schedOp->inputs.pairs() )
     {
@@ -783,7 +783,7 @@ void HLCStreamGenerator::GenerateCommandsForCascade(vector_span<std::unique_ptr<
         {
             auto &shape = item->second.shape;
             hlcOps[i - 1]->ofm.shape = shape;
-            // TODO MLBEDSW-9142: support fused activations inside chains
+            // TODO MLBEDSW-9143: support cascading of chains
             // for now, we assume maximum one subOp (fused activation) on cascades
             if ( hlcOps[i - 1]->subOps.size() )
             {

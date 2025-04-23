@@ -159,7 +159,7 @@ struct HLCSubOperation
     std::vector<HLCFeatureMap> ifm;
     HLCFeatureMap ofm;
     HLCParameters parameters = {};
-    UniqueId _srcId = 0;
+    UniqueId srcId = 0;
 };
 
 /// <summary>

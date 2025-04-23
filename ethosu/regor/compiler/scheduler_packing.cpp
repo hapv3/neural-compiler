@@ -281,10 +281,10 @@ void SchedulerPacking::SchedulerPacking::PackOperations()
                 LOG_TRACE1("Added {} (key {}) to {} (key {})\n", OpTypeToString(nextOp->Type()), key,
                     OpTypeToString(prevOp->Type()), prevOpKey);
 
-                // Replace primary op's OFM by nextOp's OFM
+                // Replace previous op's OFM by nextOp's OFM
                 if ( IsActivation(nextOp->Type()) )
                 {
-                    auto *ofmConn = primaryOp->OFM();
+                    auto *ofmConn = prevOp->OFM();
                     ofmConn->tensor = nextOp->OFM()->tensor;
                     ofmConn->SetType(nextOp->OFM()->Type());
                     ofmConn->quantization.quantMin = nextOp->Output(TensorUsage::OFM)->quantization.quantMin;
@@ -450,7 +450,7 @@ int SchedulerPacking::CanPack(const SchedulerOperation *schedOp, const Scheduler
         return 0;
     }
 
-    if ( schedOp->OFM()->tensor->isGraphOutput )
+    if ( schedOp->OFM()->tensor->isGraphOutput || prevOp->OFM()->tensor->isGraphOutput )
     {
         return 0;
     }

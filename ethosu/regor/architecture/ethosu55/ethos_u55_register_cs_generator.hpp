@@ -111,7 +111,9 @@ using MemoryAccesses = std::vector<MemoryAccess>;
 
 struct LutSlot
 {
-    const HLCOperation *hlcOp = nullptr;
+    const ArchitectureMemory *memory = nullptr;
+    Address address = -1;
+    int sizeBytes = -1;
     int lastUsed = 0;
 };
 
@@ -164,7 +166,7 @@ protected:
     static int CalcCommandWaits(const MemoryAccesses &opAccesses, std::deque<MemoryAccesses> &outstanding);
     // Returns LUT slot to be used for the given LUT operation.
     // Sets alreadyInLutMem to true if the LUT is already in SHRAM.
-    int AllocateLutSlot(std::vector<LutSlot> &lutSlots, const HLCOperation *op, int sizeInSlots, int timestamp, bool &alreadyInLutMem);
+    int AllocateLutSlot(const MemArea &memArea, Address address, int lutSize, int timestamp, bool &alreadyInLutMem);
     //----------------------------------------------------------------------
     // Scaling (OFM/OPA/OPB_SCALE)
     //----------------------------------------------------------------------

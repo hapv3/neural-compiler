@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -76,14 +76,17 @@ void LiveRangeGraph::ExtractLiveRangesFromCascades(const std::vector<std::unique
             {
                 auto opGroup = schedOp->OpGroup();
                 assert(opGroup != nullptr);
-                if ( opGroup->NeedsAllocation(schedOp->OFM()->tensor->uid) )
+
+                // Get the ofm of the last operator in the group
+                auto opGroupOfm = schedOp->SubOps().size() ? schedOp->SubOps().back()->OFM() : schedOp->OFM();
+                if ( opGroup->NeedsAllocation(opGroupOfm->tensor->uid) )
                 {
                     // Check if op have an ifm tensor that can be reused for the ofm
-                    auto ifmTens = ReusableIFM(schedOp, targetMemory);
+                    auto ifmTens = ReusableIFM(schedOp, opGroupOfm, targetMemory);
                     if ( ifmTens != nullptr )
                     {
                         // ifm can be reused
-                        FuseRanges(ifmTens, schedOp->OFM()->tensor.get());
+                        FuseRanges(ifmTens, opGroupOfm->tensor.get());
                     }
                 }
             }
@@ -220,13 +223,16 @@ LiveRange *LiveRangeGraph::FuseRanges(SchedulerTensor *inTens, SchedulerTensor *
     return lr;
 }
 
-SchedulerTensor *LiveRangeGraph::ReusableIFM(const std::unique_ptr<SchedulerOperation> &schedOp, const MemArea &targetMemory)
+// Check if any of the IFMs consumed by the first operator in an opgroup can be reused for the OFM
+// tensor of the last operator in the opgroup.
+// Requires the first operator to be an elementwise operator and is also applicaple to stand-alone
+// elementwise operators (which are just opgroups of length 1).
+SchedulerTensor *LiveRangeGraph::ReusableIFM(
+    const std::unique_ptr<SchedulerOperation> &schedOp, const SchedulerConnection *ofmConn, const MemArea &targetMemory)
 {
     SchedulerTensor *reusableIfm = nullptr;
     if ( IsElementwise(schedOp->Type()) )
     {
-        // Check if possible to merge ifm/ofm live ranges of elementwise op
-        const auto ofmConn = schedOp->OFM();
         const auto ofmTens = ofmConn->tensor.get();
 
         if ( !ShouldBeIgnored(ofmTens, targetMemory) )

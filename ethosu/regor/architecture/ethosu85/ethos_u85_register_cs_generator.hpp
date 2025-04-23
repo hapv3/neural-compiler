@@ -100,7 +100,9 @@ using MemoryAccesses = std::vector<MemoryAccess>;
 
 struct LutSlot
 {
-    const HLCOperation *hlcOp = nullptr;
+    const ArchitectureMemory *memory = nullptr;
+    Address address = -1;
+    int sizeBytes = -1;
     int lastUsed = 0;
 };
 
@@ -148,7 +150,8 @@ protected:
     static int CalcCommandWaits(const MemoryAccesses &opAccesses, std::deque<MemoryAccesses> &outstanding);
     // Returns LUT slot to be used for the given LUT operation.
     // Sets alreadyInLutMem to true if the LUT is already in SHRAM.
-    int AllocateLutSlot(std::vector<LutSlot> &lutSlots, const HLCOperation *op, int sizeInSlots, int timestamp, bool &alreadyInLutMem);
+    int AllocateLutSlot(std::vector<LutSlot> &lutSlots, const MemArea &memArea, Address address, int lutSize,
+        int timestamp, bool &alreadyInLutMem);
     //----------------------------------------------------------------------
     // Scaling (OFM/IFM/IFM2_SCALE)
     //----------------------------------------------------------------------
@@ -209,6 +212,8 @@ protected:
     void GenerateWaits(bool isKernelWait, const MemoryAccesses &memoryAccesses, std::deque<MemoryAccesses> &outstandingAccesses);
     // Save current memory accesses to accessesToUpdate
     void UpdateMemoryAccesses(const MemoryAccesses &memoryAccesses, std::deque<MemoryAccesses> &accessesToUpdate, int maxWaits);
+    // Create the LUT DMA command required for the given HLCSubOperation
+    std::unique_ptr<HLCDMA> CreateLUTDMA(const HLCSubOperation *op, std::vector<LutSlot> &lutSlots, int timestamp);
     // Inserts DMA commands for copying LUTs from constant memory
     // to LUT memory
     std::vector<std::unique_ptr<HighLevelCommand>> InsertLUTDMACommands(std::vector<std::unique_ptr<HighLevelCommand>> &cmds);
@@ -251,8 +256,8 @@ public:
 
 private:
     ArchEthosU85 *_arch;
-    // For stripes that use LUT: the LUT slot to be used
-    std::unordered_map<const HLCStripe *, int> _stripeToLutSlot;
+    // For operations that use LUT: the LUT slot to be used
+    std::unordered_map<UniqueId, int> _opToLutSlot;
     EthosU85Emitter _emit;
 };
 
