@@ -21,7 +21,6 @@
 #include "common/common.hpp"
 #include "common/logging.hpp"
 
-#include "architecture/architecture_constraints.hpp"
 #include "common/shape.hpp"
 #include "graph.hpp"
 #include "operation.hpp"
@@ -46,11 +45,11 @@ class SchedulerPacking
 {
 protected:
     Architecture *_arch = nullptr;
-    IArchitectureConstraints *_constraints = nullptr;
     bool _disableChaining = false;
     std::vector<std::unique_ptr<SchedulerOperation>> _schedList;
     std::unordered_map<Tensor *, std::shared_ptr<SchedulerTensor>> _tensorMap;
     std::unordered_map<Hash128, UniqueId> _bufferEquivalenceIdMap;
+    const Graph *_graph = nullptr;
 
 public:
     SchedulerPacking(Architecture *arch, bool disableChaining);
@@ -59,24 +58,20 @@ public:
     std::vector<std::unique_ptr<SchedulerOperation>> Process(const Graph *graph);
 
 private:
-    // Decomposes operations
-    void FilterOperations(const std::vector<Operation *> &executionList, const Graph *graph);
-    // Determines NPU/CPU-target
+    void ConvertOperation(const Operation *op, std::vector<std::unique_ptr<SchedulerOperation>> &result);
+    void ConvertOperations(const std::vector<Operation *> &executionList);
     void PrePackOperations();
-    // Performs fusing/chaining
     void PackOperations();
-    // Reorders CPU-operations
     void ReorderOperations();
 
     int CanPack(const SchedulerOperation *schedOp, const SchedulerOperation *prevOp, const SchedulerOperation *op, const int prevOpKey) const;
     void InitSchedulerConnection(SchedulerConnection *schedConn, const std::shared_ptr<SchedulerTensor> &tensor, const TensorConnection &conn);
-    void InitSchedulerTensor(SchedulerTensor *schedTensor, Tensor *tensor, const Graph *graph);
-    void HandleReinterpretCast(Operation *op, const Graph *graph);
-    std::unique_ptr<SchedulerOperation> MakeSchedulerOperation(Operation *op, const Graph *graph);
+    void InitSchedulerTensor(SchedulerTensor *schedTensor, Tensor *tensor);
+    std::unique_ptr<SchedulerOperation> MakeSchedulerOperation(const Operation *op);
     std::vector<std::unique_ptr<SchedulerOperation>> DecomposeSchedulerOperation(std::unique_ptr<SchedulerOperation> op);
     ArchResampling ResamplingMode(TensorUsage usage, OpType opType) const;
     ArchitectureOpGroupQuery CreateOpGroupQuery(const SchedulerOperation *schedOp) const;
-    ArchOperatorQuery CreateOperatorQuery(const SchedulerOperation *schedOp) const;
+    void HandleReinterpretCast(const Operation *op);
 };
 
 }  // namespace regor

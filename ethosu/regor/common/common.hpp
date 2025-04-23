@@ -189,5 +189,23 @@ constexpr bool is_sorted(const TYPE (&list)[SIZE])
     return is_sorted(list, std::less<TYPE>());
 }
 
+// Equivalent functionality not available until C++ 20
+template<class T>
+struct readonly_span_t
+{
+private:
+    const T *_start = nullptr;
+    const T *_end = nullptr;
+
+public:
+    readonly_span_t(){};
+    template<class ATYPE, std::size_t SIZE>
+    readonly_span_t(const std::array<ATYPE, SIZE> &a) noexcept : _start(&a[0]), _end(&a[0] + SIZE)
+    {
+    }
+    readonly_span_t(const T *p, size_t size) : _start(p), _end(p + size) {}
+    const T *begin() const { return _start; }
+    const T *end() const { return _end; }
+};
 
 }  // namespace regor

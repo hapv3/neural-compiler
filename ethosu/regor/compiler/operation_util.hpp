@@ -315,7 +315,7 @@ inline ArchFM &Set(ArchFM &fm, const TensorConnection *conn)
     {
         fm.type = conn->tensor->Type();
         fm.shape = conn->shape;
-        fm.quantization = conn->quantization;
+        fm.quantization = &conn->quantization;
     }
     return fm;
 }

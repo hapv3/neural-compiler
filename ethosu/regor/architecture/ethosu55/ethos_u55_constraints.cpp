@@ -24,38 +24,43 @@ namespace regor
 {
 
 // Table of allowed ifm/ofm data type combinations for each HWOp
-static const std::unordered_map<EthosU55NpuOp, std::unordered_map<DataType, std::vector<DataType>>> s_opDataTypeSupport = {
+static const std::array<DataType, 4> s_defaultAllTypes = {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32};
+static const std::array<DataType, 1> s_defaultUInt8Only = {DataType::UInt8};
+static const std::array<DataType, 1> s_defaultInt8Only = {DataType::Int8};
+static const std::array<DataType, 1> s_defaultInt16Only = {DataType::Int16};
+
+static const std::unordered_map<EthosU55NpuOp, std::unordered_map<DataType, readonly_span_t<DataType>>> s_opDataTypeSupport = {
     {EthosU55NpuOp::Convolution,  // HWOp
         {
             // IFM data type  | OFM data type(s)
-            {DataType::UInt8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int16, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
+            {DataType::UInt8, s_defaultAllTypes},
+            {DataType::Int8, s_defaultAllTypes},
+            {DataType::Int16, s_defaultAllTypes},
         }},
     {EthosU55NpuOp::Depthwise,
         {
-            {DataType::UInt8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int16, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
+            {DataType::UInt8, s_defaultAllTypes},
+            {DataType::Int8, s_defaultAllTypes},
+            {DataType::Int16, s_defaultAllTypes},
         }},
     {EthosU55NpuOp::VectorProduct,
         {
-            {DataType::UInt8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int16, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
+            {DataType::UInt8, s_defaultAllTypes},
+            {DataType::Int8, s_defaultAllTypes},
+            {DataType::Int16, s_defaultAllTypes},
         }},
     {EthosU55NpuOp::Pooling,
         {
-            {DataType::UInt8, {DataType::UInt8}},
-            {DataType::Int8, {DataType::Int8}},
-            {DataType::Int16, {DataType::Int16}},
+            {DataType::UInt8, s_defaultUInt8Only},
+            {DataType::Int8, s_defaultInt8Only},
+            {DataType::Int16, s_defaultInt16Only},
         }},
     {EthosU55NpuOp::ReduceSum,
         {
-            {DataType::UInt8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int16, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int32, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
+            {DataType::UInt8, s_defaultAllTypes},
+            {DataType::Int8, s_defaultAllTypes},
+            {DataType::Int16, s_defaultAllTypes},
+            {DataType::Int32, s_defaultAllTypes},
         }},
 };
 
@@ -182,6 +187,15 @@ bool EthosU55Constraints::SupportsRescale(DataType fromType, DataType toType)
     return true;
 }
 
+
+static const std::array<DataType, 4> s_validAddMulTypes = {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32};
+static const std::array<DataType, 4> s_validMaxAbsTypes = {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32};
+static const std::array<DataType, 1> s_validClzShlTypes = {DataType::Int32};
+static const std::array<DataType, 4> s_validAsrOfmTypes = {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32};
+static const std::array<DataType, 3> s_validReverseTypes = {DataType::UInt8, DataType::Int8, DataType::Int16};
+
+
+
 bool EthosU55Constraints::SupportedDtypes(OpType opType, DataType ifmType, DataType ifm2Type, DataType ofmType)
 {
     auto npuOp = _arch->GetHWOp(opType);
@@ -202,6 +216,8 @@ bool EthosU55Constraints::SupportedDtypes(OpType opType, DataType ifmType, DataT
         return true;
     }
 
+    readonly_span_t<DataType> ofmTypes;
+
     // Check allowed ifm/ofm type mapping
     if ( npuOp != EthosU55NpuOp::Elementwise )
     {
@@ -214,27 +230,23 @@ bool EthosU55Constraints::SupportedDtypes(OpType opType, DataType ifmType, DataT
         auto &typeMap = map->second;
         auto ifmEntry = typeMap.find(ifmType);
         if ( ifmEntry == typeMap.end() )
-        {  // Unsupported ifm data type
+        {
+            // Unsupported ifm data type
             return false;
         }
-        auto &ofmTypes = ifmEntry->second;
-        if ( 0 == std::count(ofmTypes.begin(), ofmTypes.end(), ofmType) )
-        {  // Unsupported ofm data type
-            return false;
-        }
+        ofmTypes = ifmEntry->second;
     }
     else
     {
-        std::vector<DataType> validIfmTypes;
-        std::vector<DataType> validOfmTypes;
+        readonly_span_t<DataType> ifmTypes;
         switch ( opType )
         {
             case OpType::Add:
             case OpType::Sub:
             case OpType::Mul:
             {
-                validIfmTypes = {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32};
-                validOfmTypes = validIfmTypes;
+                ifmTypes = s_validAddMulTypes;
+                ofmTypes = s_validAddMulTypes;
             }
             break;
             case OpType::Minimum:
@@ -242,45 +254,50 @@ bool EthosU55Constraints::SupportedDtypes(OpType opType, DataType ifmType, DataT
             case OpType::LeakyRelu:
             case OpType::Abs:
             {
-                validIfmTypes = {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32};
-                validOfmTypes = {ifmType};
+                ifmTypes = s_validMaxAbsTypes;
+                ofmTypes = s_validMaxAbsTypes;
             }
             break;
             case OpType::CLZ:
             case OpType::SHL:
+            {
+                ifmTypes = s_validClzShlTypes;
+                ofmTypes = s_validClzShlTypes;
+            }
+            break;
             case OpType::Asr:
             {
-                validIfmTypes = {DataType::Int32};
-                validOfmTypes = {DataType::Int32};
-                if ( opType == OpType::Asr )
-                {
-                    validOfmTypes.insert(validOfmTypes.begin(), {DataType::UInt8, DataType::Int8, DataType::Int16});
-                }
+                ifmTypes = s_validClzShlTypes;
+                ofmTypes = s_validAsrOfmTypes;
             }
             break;
             case OpType::Reverse:
             {
-                validIfmTypes = {DataType::UInt8, DataType::Int8, DataType::Int16};
-                validOfmTypes = {DataType::UInt8, DataType::Int8, DataType::Int16};
+                ifmTypes = s_validReverseTypes;
+                ofmTypes = s_validReverseTypes;
             }
             break;
             default:
                 assert(false && "Unkown elementwise type");
                 break;
         }
-        if ( 0 == std::count(validIfmTypes.begin(), validIfmTypes.end(), ifmType) )
-        {  // Unsupported ifm data type
+        if ( !std::any_of(ifmTypes.begin(), ifmTypes.end(), [&](auto t) { return t == ifmType; }) )
+        {
+            // Unsupported ifm data type
             return false;
         }
         if ( IsBinaryElementwise(opType) && ifm2Type != ifmType )
-        {  // ifm2 data type must match ifm data type
-            return false;
-        }
-        if ( 0 == std::count(validOfmTypes.begin(), validOfmTypes.end(), ofmType) )
-        {  // Unsupported ofm data type
+        {
+            // ifm2 data type must match ifm data type
             return false;
         }
     }
+
+    if ( !std::any_of(ofmTypes.begin(), ofmTypes.end(), [&](auto t) { return t == ofmType; }) )
+    {  // Unsupported ofm data type
+        return false;
+    }
+
     return true;
 }
 
@@ -317,24 +334,26 @@ bool EthosU55Constraints::SupportedZeroPoint(int64_t zp, TensorUsage usage, Data
     return true;
 }
 
+namespace
+{
+
+thread_local std::array<ArchTensorRequirement, 4> s_extraTensorReq;
+
+ArchTensorRequirement *NextTensor(ArchTensorRequirement *tr, unsigned &used)
+{
+    assert(used < s_extraTensorReq.size());
+    ArchTensorRequirement *info = &s_extraTensorReq[used++];
+    tr->next = info;
+    return info;
+};
+
+}  // namespace
+
 Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchOperatorQuery *query, ArchRequirements *req)
 {
-    Flags<QueryResult> result = QueryResult::Native;
     static constexpr int32_t MAX_AXIS = (1 << 16);
 
-    // Check hardware-required substitutions first
-    if ( (opType == OpType::Sigmoid) || (opType == OpType::Tanh) )
-    {
-        if ( query && query->ifm[0].type != DataType::Int16 )
-        {
-            if ( req )
-            {
-                req->req.Set(ArchRequirement::OpSubstitution);
-                req->substitution = OpType::LUT;
-            }
-            result.Set(QueryResult::HasRequirements);
-        }
-    }
+    unsigned usedTensors = 0;
     if ( opType == OpType::Resize )
     {
         if ( query->ifm[0].shape.ElementsWH() == 1 )
@@ -346,12 +365,10 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
             req->req = ArchRequirement::Decompose;
             req->substitution = OpType::AvgPool;
         }
-        result.Set(QueryResult::HasRequirements);
-        return result;
+        return QueryResult::NativeHasReq;
     }
-
     // TransposeConv2D and Conv3D are legalized during decomposition
-    if ( opType == OpType::TransposeConv2D || opType == OpType::Conv3D )
+    else if ( opType == OpType::TransposeConv2D || opType == OpType::Conv3D )
     {
         if ( req )
         {
@@ -368,15 +385,17 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
     }
     else if ( npuOp == EthosU55NpuOp::Dma )
     {
-        return result;
+        return QueryResult::Native;
     }
 
     // Short query (no additional detail)
     if ( !query )
     {
-        // more detailed query might fail
+        // More detailed query might fail (constrained)
         return QueryResult::NativeConstrained;
     }
+
+    Flags<QueryResult> result = QueryResult::Native;
 
     if ( npuOp == EthosU55NpuOp::ReduceSum )
     {
@@ -387,6 +406,19 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
             {
                 req->req.Set(ArchRequirement::Decompose);
                 req->decomposeProps.Set(ArchProperty::ReduceAxis);
+            }
+            result.Set(QueryResult::HasRequirements);
+        }
+    }
+    // Check required substitutions first
+    else if ( (opType == OpType::Sigmoid) || (opType == OpType::Tanh) )
+    {
+        if ( query->ifm[0].type != DataType::Int16 )
+        {
+            if ( req )
+            {
+                req->req.Set(ArchRequirement::OpSubstitution);
+                req->substitution = OpType::LUT;
             }
             result.Set(QueryResult::HasRequirements);
         }
@@ -405,32 +437,6 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
     {
         // missing detail, more detailed queries might fail
         result.Set(QueryResult::Constrained);
-    }
-
-    // Validate zeroPoints
-    if ( typeInfo )
-    {
-        for ( auto zp : query->ifm[0].quantization.zeroPoints )
-        {
-            if ( !SupportedZeroPoint(zp, TensorUsage::IFM0, ifmType, opType) )
-            {
-                return QueryResult::Unsupported;
-            }
-        }
-        for ( auto zp : query->ifm[1].quantization.zeroPoints )
-        {
-            if ( !SupportedZeroPoint(zp, TensorUsage::IFM1, ifm2Type, opType) )
-            {
-                return QueryResult::Unsupported;
-            }
-        }
-        for ( auto zp : query->ofm.quantization.zeroPoints )
-        {
-            if ( !SupportedZeroPoint(zp, TensorUsage::OFM, ofmType, opType) )
-            {
-                return QueryResult::Unsupported;
-            }
-        }
     }
 
     // Validate DataTypes
@@ -476,12 +482,8 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
     }
 
     // Detailed operator queries
-    if ( !IsNone(query->transposeMask) )
+    if ( opType == OpType::Transpose )
     {
-        if ( opType != OpType::Transpose )
-        {
-            return QueryResult::Unsupported;
-        }
         // TODO MLBEDSW-10668: Transpose-implementation does not support large-axis decomposition
         if ( req && req->decomposeProps.Any(ArchProperty::TensorAxis) )
         {
@@ -505,14 +507,20 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
             }
             result.Set(QueryResult::HasRequirements);
         }
-        // Always set Input/Output format requirements
         if ( req )
         {
-            req->req.Set(ArchRequirement::OutputFormat, ArchRequirement::InputFormat);
-            req->ifmFormat = TensorFormat::NHWC;
-            req->ofmFormat = TensorFormat::NHWC;
+            req->req.Set(ArchRequirement::Tensor);
+            Set(req->tensor, TensorUsage::IFM, TensorFormat::NHWC);
+            Set(*NextTensor(&req->tensor, usedTensors), TensorUsage::OFM, TensorFormat::NHWC);
         }
-        result.Set(QueryResult::HasRequirements);
+        return result;
+    }
+    else
+    {
+        if ( !IsNone(query->transposeMask) )
+        {
+            return QueryResult::Unsupported;
+        }
     }
 
     // reverseType::W and reverseType::H are supported
@@ -521,20 +529,57 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
         return QueryResult::Unsupported;
     }
 
+    // Validate zeroPoints
+    if ( typeInfo )
+    {
+        if ( query->ifm[0].quantization )
+        {
+            for ( auto zp : query->ifm[0].quantization->zeroPoints )
+            {
+                if ( !SupportedZeroPoint(zp, TensorUsage::IFM0, ifmType, opType) )
+                {
+                    return QueryResult::Unsupported;
+                }
+            }
+        }
+        if ( query->ifm[1].quantization )
+        {
+            for ( auto zp : query->ifm[1].quantization->zeroPoints )
+            {
+                if ( !SupportedZeroPoint(zp, TensorUsage::IFM1, ifm2Type, opType) )
+                {
+                    return QueryResult::Unsupported;
+                }
+            }
+        }
+        if ( query->ofm.quantization )
+        {
+            for ( auto zp : query->ofm.quantization->zeroPoints )
+            {
+                if ( !SupportedZeroPoint(zp, TensorUsage::OFM, ofmType, opType) )
+                {
+                    return QueryResult::Unsupported;
+                }
+            }
+        }
+    }
+
     if ( opType == OpType::MatMul )
     {
         if ( req )
         {
-            req->req.Set(ArchRequirement::ScratchTensor, ArchRequirement::OutputFormat, ArchRequirement::InputFormat);
+            req->req.Set(ArchRequirement::Tensor);
+            ArchTensorRequirement *tr = &req->tensor;
             if ( query->ifm[0].shape )
             {
-                req->scratch.size = query->ifm[0].shape.WithDepth(query->ifm[0].shape.Depth() + 1);
-                req->scratch.type = DataType::Int32;
-                req->scratch.format = TensorFormat::NHWC;
+                req->req.Set(ArchRequirement::Tensor);
+                Set(*tr, TensorUsage::Scratch, DataType::Int32, TensorFormat::NHWC,
+                    query->ifm[0].shape.WithDepth(query->ifm[0].shape.Depth() + 1));
+                tr = NextTensor(tr, usedTensors);
             }
-            req->ifmFormat = TensorFormat::Unknown;
-            req->ifm1Format = TensorFormat::NHWC;  // IFM1 and OFM are depth-sliced
-            req->ofmFormat = TensorFormat::NHWC;   // and cannot be addressed if B16
+            Set(*tr, TensorUsage::IFM1, TensorFormat::NHWC);
+            tr = NextTensor(tr, usedTensors);
+            Set(*tr, TensorUsage::OFM, TensorFormat::NHWC);
         }
         result.Set(QueryResult::HasRequirements);
     }

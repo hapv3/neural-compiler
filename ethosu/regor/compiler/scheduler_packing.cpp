@@ -105,12 +105,14 @@ bool IsConnected(const SchedulerOperation &first, const SchedulerOperation &seco
 }  // namespace
 
 SchedulerPacking::SchedulerPacking(Architecture *arch, bool disableChaining) :
-        _arch(arch), _constraints(arch->Constraints()), _disableChaining(disableChaining)
+        _arch(arch), _disableChaining(disableChaining)
 {
 }
 
 std::vector<std::unique_ptr<SchedulerOperation>> SchedulerPacking::Process(const Graph *graph)
 {
+    _graph = graph;
+
     // Get operation list in execution order
     std::vector<Operation *> executionList;
     Graph::TraverseGraphFromEnd(graph->Outputs(), !graph->Persistent().empty(),
@@ -120,7 +122,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> SchedulerPacking::Process(const
             return true;
         });
 
-    FilterOperations(executionList, graph);
+    ConvertOperations(executionList);
 
     PrePackOperations();
 
@@ -128,38 +130,86 @@ std::vector<std::unique_ptr<SchedulerOperation>> SchedulerPacking::Process(const
 
     ReorderOperations();
 
+    _graph = nullptr;
     return std::move(_schedList);
 }
 
-void SchedulerPacking::FilterOperations(const std::vector<Operation *> &executionList, const Graph *graph)
+void SchedulerPacking::ConvertOperation(const Operation *op, std::vector<std::unique_ptr<SchedulerOperation>> &result)
 {
+    result.clear();
+
+    std::unique_ptr<SchedulerOperation> schedOp = MakeSchedulerOperation(op);
+    if ( !schedOp )
+    {
+        return;
+    }
+
+    // Apply architecture related requirements
+    ArchRequirements req;
+    if ( OperatorQuery(_arch, schedOp.get(), &req).Any(QueryResult::HasRequirements) )
+    {
+        // Operator has a list of tensor requirements
+        if ( req.req.Any(ArchRequirement::Tensor) )
+        {
+            const ArchTensorRequirement *tr = &req.tensor;
+            do
+            {
+                SchedulerConnection *conn = schedOp->TryInput(tr->usage);
+                conn = conn ? conn : schedOp->TryOutput(tr->usage);
+                if ( conn )
+                {
+                    if ( tr->shape )
+                    {
+                        conn->tensor->storageShape = conn->shape = conn->slice.shape = tr->shape;
+                    }
+                    if ( tr->format != TensorFormat::Unknown )
+                    {
+                        conn->tensor->format = tr->format;
+                    }
+                    if ( tr->type != DataType::None )
+                    {
+                        conn->tensor->dataType = tr->type;
+                    }
+                }
+                else
+                {
+                    if ( (tr->usage == TensorUsage::Scratch) && tr->shape )
+                    {
+                        auto scratchTensor = std::make_shared<SchedulerTensor>(tr->type, tr->shape, tr->format);
+                        SchedulerConnection *scratchConn = schedOp->ConnectInput(TensorUsage::Scratch0, scratchTensor);
+                        scratchConn->shape = tr->shape;
+                        scratchTensor->memArea = _arch->FeatureMapMemory();
+                    }
+                }
+                tr = tr->next;
+            } while ( tr );
+        }
+    }
+
+    result.push_back(std::move(schedOp));
+}
+
+void SchedulerPacking::ConvertOperations(const std::vector<Operation *> &executionList)
+{
+    std::vector<std::unique_ptr<SchedulerOperation>> converted(4);
+
     // Convert linear Graph Operations to a list of Scheduler Operations
     for ( Operation *op : executionList )
     {
-        auto schedOp = MakeSchedulerOperation(op, graph);
-        if ( !schedOp )
-        {
-            continue;
-        }
+        ConvertOperation(op, converted);
 
-        if ( ShouldDecompose(_arch, schedOp.get()) )
+        for ( auto &schedOp : converted )
         {
-            auto srcKey = schedOp->_srcKey;
-            auto schedOps = DecomposeSchedulerOperation(std::move(schedOp));
-            // Track source keys
-            for ( auto &newOp : schedOps )
+            if ( ShouldDecompose(_arch, schedOp.get()) )
             {
-                if ( !newOp->_srcKey )
-                {
-                    newOp->_srcKey = srcKey;
-                }
+                auto schedOps = DecomposeSchedulerOperation(std::move(schedOp));
+                _schedList.insert(_schedList.end(), std::make_move_iterator(schedOps.begin()),
+                    std::make_move_iterator(schedOps.end()));
             }
-            _schedList.insert(
-                _schedList.end(), std::make_move_iterator(schedOps.begin()), std::make_move_iterator(schedOps.end()));
-        }
-        else
-        {
-            _schedList.push_back(std::move(schedOp));
+            else
+            {
+                _schedList.push_back(std::move(schedOp));
+            }
         }
     }
 }
@@ -204,7 +254,7 @@ ArchitectureOpGroupQuery SchedulerPacking::CreateOpGroupQuery(const SchedulerOpe
 // We handle reinterpret by catching it before we create a SchedulerOperation.
 // Mapping is modified so that the OFM GraphIR tensor of the preceding OP and
 // the GraphIR IFM tensor of the succeeding OP map to the same SchedulerTensor.
-void SchedulerPacking::HandleReinterpretCast(Operation *op, const Graph *graph)
+void SchedulerPacking::HandleReinterpretCast(const Operation *op)
 {
     assert(op->Type() == OpType::ReinterpretCast && "Op Type is not ReinterpretCast.");
 
@@ -219,7 +269,7 @@ void SchedulerPacking::HandleReinterpretCast(Operation *op, const Graph *graph)
     {
         schedTensor = std::make_shared<SchedulerTensor>();
         schedTensor->srcTensor = ifmConn->tensor;
-        InitSchedulerTensor(schedTensor.get(), ifmConn->tensor.get(), graph);
+        InitSchedulerTensor(schedTensor.get(), ifmConn->tensor.get());
         _tensorMap.emplace(ifmConn->tensor.get(), schedTensor);
     }
     else
@@ -231,22 +281,21 @@ void SchedulerPacking::HandleReinterpretCast(Operation *op, const Graph *graph)
 
     // If reinterpret cast is the last OP, that means that it's output tensor is the output tensor of the network.
     // We therefore set isGraphOutput to true and make sure the srcTensor maps to the graph output tensor.
-    if ( graph->IsOutput(ofmConn->tensor.get()) )
+    if ( _graph->IsOutput(ofmConn->tensor.get()) )
     {
-        InitSchedulerTensor(schedTensor.get(), ofmConn->tensor.get(), graph);
+        InitSchedulerTensor(schedTensor.get(), ofmConn->tensor.get());
         schedTensor->srcTensor = ofmConn->tensor;
     }
 }
 
-void SchedulerPacking::SchedulerPacking::PrePackOperations()
+void SchedulerPacking::PrePackOperations()
 {
-    // Determine if each operation can run on NPU
     for ( auto &schedOp : _schedList )
     {
         ArchRequirements oReq{};
         Flags<QueryResult> result = OperatorQuery(_arch, schedOp.get(), &oReq);
-        // Assert complete query
         assert(result.Any(QueryResult::Constrained) == false && "Constrained result from complete OperatorQuery");
+        // Determine if each operation can run on NPU
         if ( result.Any(QueryResult::Native) )
         {
             // TODO MLBEDSW-10643: This should be a direct-check against QueryResult::Native
@@ -264,10 +313,34 @@ void SchedulerPacking::SchedulerPacking::PrePackOperations()
         {
             schedOp->SetNpuOp(false);
         }
+
+        // Examine elementwise and set a primary path for cascading.
+        if ( IsBinaryElementwise(schedOp->Type()) )
+        {
+            auto ifm0 = schedOp->Input(TensorUsage::IFM0);
+            auto ifm1 = schedOp->Input(TensorUsage::IFM1);
+            auto ofm = schedOp->Output(TensorUsage::OFM);
+            assert(ifm0 && "Binary elementwise op must have IFM0");
+            assert(ifm1 && "Binary elementwise op must have IFM1");
+            assert(ofm && "Binary elementwise op must have OFM");
+            assert(ifm0->shape.Size() > 0 && "IFM0 must have dimension");
+            assert(ifm1->shape.Size() > 0 && "IFM1 must have dimension");
+            // Choose the non-const IFM path for binary operations that have
+            // a constant input on the first IFM
+            if ( ifm0->tensor->IsConstant() && !ifm1->tensor->IsConstant() )
+            {
+                schedOp->SetPrimaryIfmIndex(1);
+            }
+            // Favour the non-broadcast shape for cascading.
+            else if ( (ifm0->shape != ofm->shape) && (ifm1->shape == ofm->shape) )
+            {
+                schedOp->SetPrimaryIfmIndex(1);
+            }
+        }
     }
 }
 
-void SchedulerPacking::SchedulerPacking::PackOperations()
+void SchedulerPacking::PackOperations()
 {
     LOG_TRACE1("Scheduler Packing (of {0} Ops)\n", _schedList.size());
 
@@ -541,14 +614,13 @@ void SchedulerPacking::InitSchedulerConnection(
     schedConn->reverse = conn.reverse;
     schedConn->resamplingMode = ArchResampling::None;
     schedConn->rounding = conn.rounding;
-    schedConn->SetType(tensor->dataType);
     if ( schedConn->slice.stride )
     {
         schedConn->stepXY = schedConn->slice.stride.WH<int>();
     }
 }
 
-void SchedulerPacking::InitSchedulerTensor(SchedulerTensor *schedTensor, Tensor *tensor, const Graph *graph)
+void SchedulerPacking::InitSchedulerTensor(SchedulerTensor *schedTensor, Tensor *tensor)
 {
     const auto type = tensor->Type();
     // Take scheduler-local copies of graph tensor parameters.
@@ -557,9 +629,9 @@ void SchedulerPacking::InitSchedulerTensor(SchedulerTensor *schedTensor, Tensor 
     schedTensor->storageShape = Shape::PadAxes(tensor->StorageShape(), 4, 1);
     schedTensor->dataType = type;
     schedTensor->bufferView = (IsVariablySized(type) || type == DataType::None) ? BufferView() : tensor->View();
-    schedTensor->isGraphInput = graph->IsInput(tensor);
-    schedTensor->isGraphOutput = graph->IsOutput(tensor);
-    schedTensor->isPersistent = graph->IsPersistent(tensor);
+    schedTensor->isGraphInput = _graph->IsInput(tensor);
+    schedTensor->isGraphOutput = _graph->IsOutput(tensor);
+    schedTensor->isPersistent = _graph->IsPersistent(tensor);
     schedTensor->uid = tensor->Uid();
     if ( tensor->View().HasBuffer() )
     {
@@ -578,13 +650,13 @@ void SchedulerPacking::InitSchedulerTensor(SchedulerTensor *schedTensor, Tensor 
     }
 }
 
-std::unique_ptr<SchedulerOperation> SchedulerPacking::MakeSchedulerOperation(Operation *op, const Graph *graph)
+std::unique_ptr<SchedulerOperation> SchedulerPacking::MakeSchedulerOperation(const Operation *op)
 {
     assert(op->Type() != OpType::None);
 
     if ( op->Type() == OpType::ReinterpretCast )
     {
-        HandleReinterpretCast(op, graph);
+        HandleReinterpretCast(op);
         return nullptr;
     }
 
@@ -593,7 +665,7 @@ std::unique_ptr<SchedulerOperation> SchedulerPacking::MakeSchedulerOperation(Ope
     schedOp->SetKernel(*op->Kernel());
     schedOp->SetHasScaling(op->HasScaling());
     schedOp->SetAttributes(op->AttributeRef());
-    schedOp->_srcKey = op;
+    schedOp->_srcKey = reinterpret_cast<void *>(reinterpret_cast<uintptr_t>(op));
 
     // Get the inputs from the source op and connect with scheduler specific tensor
     for ( const auto *list : {&op->Inputs(), &op->Outputs()} )
@@ -610,7 +682,7 @@ std::unique_ptr<SchedulerOperation> SchedulerPacking::MakeSchedulerOperation(Ope
                 auto tmp = std::make_shared<SchedulerTensor>();
                 pos = _tensorMap.emplace(tensor, tmp).first;
                 tmp->srcTensor = item.second.tensor;
-                InitSchedulerTensor(tmp.get(), tensor, graph);
+                InitSchedulerTensor(tmp.get(), tensor);
             }
 
             // Update consumers and manage connectivity
@@ -651,60 +723,13 @@ std::unique_ptr<SchedulerOperation> SchedulerPacking::MakeSchedulerOperation(Ope
         schedOp->OFM()->transpose = TransposeTypeFromShape(attr->perm);
     }
 
-    // Examine elementwise and set a primary path for cascading.
-    if ( IsBinaryElementwise(op->Type()) )
-    {
-        auto ifm0 = op->Input(TensorUsage::IFM0);
-        auto ifm1 = op->Input(TensorUsage::IFM1);
-        auto ofm = op->Output(TensorUsage::OFM);
-        assert(ifm0 && "Binary elementwise op must have IFM0");
-        assert(ifm1 && "Binary elementwise op must have IFM1");
-        assert(ofm && "Binary elementwise op must have OFM");
-        assert(ifm0->shape.Size() > 0 && "IFM0 must have dimension");
-        assert(ifm1->shape.Size() > 0 && "IFM1 must have dimension");
-        // Choose the non-const IFM path for binary operations that have
-        // a constant input on the first IFM
-        if ( ifm0->tensor->IsConstant() && !ifm1->tensor->IsConstant() )
-        {
-            schedOp->SetPrimaryIfmIndex(1);
-        }
-        // Favour the non-broadcast shape for cascading.
-        else if ( (ifm0->shape != ofm->shape) && (ifm1->shape == ofm->shape) )
-        {
-            schedOp->SetPrimaryIfmIndex(1);
-        }
-    }
-
-    // Check that the Architecture understands what do to with this operator
-    const auto ofmConn = schedOp->OFM();
-    const auto ifm0Conn = schedOp->TryIFM(0);
-    const auto ifm1Conn = schedOp->TryIFM(1);
-    ArchOperatorQuery query;
-    Set(query.ifm[0], ifm0Conn);
-    Set(query.ifm[1], ifm1Conn);
-    Set(query.ofm, ofmConn);
-    query.reverseMask = ofmConn->reverse;
-    query.transposeMask = ofmConn->transpose;
-    query.kernel = schedOp->Kernel();
-
-    ArchRequirements req;
-    if ( _arch->Constraints()->OperatorQuery(op->Type(), &query, &req).Any(QueryResult::Native) )
-    {
-        // Operator requires a scratch tensor
-        if ( req.req.Any(ArchRequirement::ScratchTensor) && req.scratch.size )
-        {
-            auto scratchTensor = std::make_shared<SchedulerTensor>(req.scratch.type, req.scratch.size, req.scratch.format);
-            SchedulerConnection *scratchConn = schedOp->ConnectInput(TensorUsage::Scratch0, scratchTensor);
-            scratchConn->shape = req.scratch.size;
-            scratchTensor->memArea = _arch->FeatureMapMemory();
-        }
-    }
-
     return schedOp;
 }
 
 std::vector<std::unique_ptr<SchedulerOperation>> SchedulerPacking::DecomposeSchedulerOperation(std::unique_ptr<SchedulerOperation> op)
 {
+    auto srcKey = op->_srcKey;
+
     std::vector<std::unique_ptr<SchedulerOperation>> result;
     ArchRequirements req{};
 
@@ -768,10 +793,17 @@ std::vector<std::unique_ptr<SchedulerOperation>> SchedulerPacking::DecomposeSche
             }
             else
             {
+                LOG_PRINT("!!!! Can't decompose op:{}", OpTypeToString(op->Type()));
                 assert(false);
             }
             break;
     }
+
+    for ( std::unique_ptr<SchedulerOperation> &so : result )
+        so->_srcKey = srcKey;
+
     return result;
 }
+
+
 }  // namespace regor

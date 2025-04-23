@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -82,13 +82,17 @@ TensorConnection &Operation::ConnectInput(TensorUsage usage, const std::shared_p
     // because the existing connection (if present) might be the last remaining reference to this operation.
     tensor->AddReader(shared_from_this());
 
-    if ( _inputs.contains(usage) && (_inputs[usage].tensor != tensor) )
+    TensorConnection &input = _inputs[usage];
+    if ( input.tensor != tensor )
     {
-        _inputs[usage].tensor->RemoveReader(shared_from_this());
+        if ( input.tensor )
+        {
+            input.tensor->RemoveReader(shared_from_this());
+        }
+        input.tensor = tensor;
     }
-    _inputs[usage].tensor = tensor;
-    _inputs[usage].shape = tensor->StorageShape();
-    return _inputs[usage];
+    input.shape = tensor->StorageShape();
+    return input;
 }
 
 void Operation::DisconnectInputInvalidatingInputs(TensorUsage usage)
@@ -115,14 +119,17 @@ TensorConnection &Operation::ConnectOutput(TensorUsage usage, const std::shared_
     // because the existing connection (if present) might be the last remaining reference to this operation.
     tensor->AddWriter(shared_from_this());
 
-    if ( _outputs.contains(usage) && (_outputs[usage].tensor != tensor) )
+    TensorConnection &output = _outputs[usage];
+    if ( output.tensor != tensor )
     {
-        _outputs[usage].tensor->RemoveWriter(shared_from_this());
+        if ( output.tensor )
+        {
+            output.tensor->RemoveWriter(shared_from_this());
+        }
+        output.tensor = tensor;
     }
-    _outputs[usage].tensor = tensor;
-    _outputs[usage].shape = tensor->StorageShape();
-
-    return _outputs[usage];
+    output.shape = tensor->StorageShape();
+    return output;
 }
 
 void Operation::Disconnect()

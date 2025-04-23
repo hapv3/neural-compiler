@@ -26,61 +26,73 @@
 namespace regor
 {
 
+// Table of allowed ifm/ofm data type combinations for each HWOp
+static const std::array<DataType, 5> s_defaultAllTypes = {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64};
+static const std::array<DataType, 5> s_defaultAllTypesExcl64 = {
+    DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64};
+static const std::array<DataType, 5> s_reduceMinMaxTypes = {
+    DataType::Bool8, DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32};
+static const std::array<DataType, 3> s_poolingTypeBool = {DataType::Bool8, DataType::Int32, DataType::Int64};
+static const std::array<DataType, 3> s_poolingTypeUInt8 = {DataType::UInt8, DataType::Int32, DataType::Int64};
+static const std::array<DataType, 3> s_poolingTypeInt8 = {DataType::Int8, DataType::Int32, DataType::Int64};
+static const std::array<DataType, 3> s_poolingTypeInt16 = {DataType::Int16, DataType::Int32, DataType::Int64};
+static const std::array<DataType, 2> s_defaultInt32_64 = {DataType::Int32, DataType::Int64};
+
 // TODO: This table is from the EthosU55/U65 Embedded NPU Interface Specification, it's not completely valid for
 // Ethos U85 since the allowed data types depend on ifm/ofm as well as selected acc and scaling.
-static const std::unordered_map<EthosU85NpuOp, std::unordered_map<DataType, std::vector<DataType>>> s_opDataTypeSupport = {
+static const std::unordered_map<EthosU85NpuOp, std::unordered_map<DataType, readonly_span_t<DataType>>> s_opDataTypeSupport = {
     {EthosU85NpuOp::Convolution,
         {
-            {DataType::UInt8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64}},
-            {DataType::Int8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64}},
-            {DataType::Int16, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64}},
+            {DataType::UInt8, s_defaultAllTypes},
+            {DataType::Int8, s_defaultAllTypes},
+            {DataType::Int16, s_defaultAllTypes},
         }},
     {EthosU85NpuOp::Depthwise,
         {
-            {DataType::UInt8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64}},
-            {DataType::Int8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64}},
-            {DataType::Int16, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64}},
+            {DataType::UInt8, s_defaultAllTypes},
+            {DataType::Int8, s_defaultAllTypes},
+            {DataType::Int16, s_defaultAllTypes},
         }},
     {EthosU85NpuOp::VectorProduct,
         {
-            {DataType::UInt8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64}},
-            {DataType::Int8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64}},
-            {DataType::Int16, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64}},
+            {DataType::UInt8, s_defaultAllTypes},
+            {DataType::Int8, s_defaultAllTypes},
+            {DataType::Int16, s_defaultAllTypes},
         }},
     {EthosU85NpuOp::Pooling,
         {
-            {DataType::Bool8, {DataType::Bool8, DataType::Int32, DataType::Int64}},
-            {DataType::UInt8, {DataType::UInt8, DataType::Int32, DataType::Int64}},
-            {DataType::Int8, {DataType::Int8, DataType::Int32, DataType::Int64}},
-            {DataType::Int16, {DataType::Int16, DataType::Int32, DataType::Int64}},
+            {DataType::Bool8, s_poolingTypeBool},
+            {DataType::UInt8, s_poolingTypeUInt8},
+            {DataType::Int8, s_poolingTypeInt8},
+            {DataType::Int16, s_poolingTypeInt16},
         }},
     {EthosU85NpuOp::ReduceMinMax,
         {
-            {DataType::Bool8, {DataType::Bool8, DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::UInt8, {DataType::Bool8, DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int8, {DataType::Bool8, DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int16, {DataType::Bool8, DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int32, {DataType::Bool8, DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
+            {DataType::Bool8, s_reduceMinMaxTypes},
+            {DataType::UInt8, s_reduceMinMaxTypes},
+            {DataType::Int8, s_reduceMinMaxTypes},
+            {DataType::Int16, s_reduceMinMaxTypes},
+            {DataType::Int32, s_reduceMinMaxTypes},
         }},
     {EthosU85NpuOp::ReduceSum,
         {
-            {DataType::UInt8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int16, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
-            {DataType::Int32, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32}},
+            {DataType::UInt8, s_defaultAllTypesExcl64},
+            {DataType::Int8, s_defaultAllTypesExcl64},
+            {DataType::Int16, s_defaultAllTypesExcl64},
+            {DataType::Int32, s_defaultAllTypesExcl64},
         }},
     {EthosU85NpuOp::ArgMax,
         {
-            {DataType::Bool8, {DataType::Int32, DataType::Int64}},
-            {DataType::UInt8, {DataType::Int32, DataType::Int64}},
-            {DataType::Int8, {DataType::Int32, DataType::Int64}},
-            {DataType::Int16, {DataType::Int32, DataType::Int64}},
+            {DataType::Bool8, s_defaultInt32_64},
+            {DataType::UInt8, s_defaultInt32_64},
+            {DataType::Int8, s_defaultInt32_64},
+            {DataType::Int16, s_defaultInt32_64},
         }},
     {EthosU85NpuOp::Resize,
         {
-            {DataType::UInt8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64}},
-            {DataType::Int8, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64}},
-            {DataType::Int16, {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64}},
+            {DataType::UInt8, s_defaultAllTypes},
+            {DataType::Int8, s_defaultAllTypes},
+            {DataType::Int16, s_defaultAllTypes},
         }},
 };
 
@@ -234,6 +246,8 @@ bool EthosU85Constraints::SupportedDtypes(OpType opType, DataType ifmType, DataT
         return true;
     }
 
+    readonly_span_t<DataType> ofmTypes;
+
     if ( npuOp != EthosU85NpuOp::Elementwise )
     {
         auto map = s_opDataTypeSupport.find(npuOp);
@@ -249,17 +263,31 @@ bool EthosU85Constraints::SupportedDtypes(OpType opType, DataType ifmType, DataT
             // Unsupported ifm data type
             return false;
         }
-        auto &ofmTypes = ifmEntry->second;
-        if ( 0 == std::count(ofmTypes.begin(), ofmTypes.end(), ofmType) )
-        {
-            // Unsupported ofm data type
-            return false;
-        }
+        ofmTypes = ifmEntry->second;
     }
     else
     {
         // TODO elementwise
+        readonly_span_t<DataType> ifmTypes = s_defaultAllTypes;
+        ofmTypes = s_defaultAllTypes;
+
+        if ( !std::any_of(ifmTypes.begin(), ifmTypes.end(), [&](auto t) { return t == ifmType; }) )
+        {
+            // Unsupported ifm data type
+            return false;
+        }
+        if ( IsBinaryElementwise(opType) && ifm2Type != ifmType )
+        {
+            // ifm2 data type must match ifm data type
+            return false;
+        }
     }
+
+    if ( !std::any_of(ofmTypes.begin(), ofmTypes.end(), [&](auto t) { return t == ofmType; }) )
+    {  // Unsupported ofm data type
+        return false;
+    }
+
     return true;
 }
 
@@ -417,25 +445,34 @@ Flags<QueryResult> EthosU85Constraints::OperatorQuery(OpType opType, const ArchO
     // Validate zeroPoints
     if ( typeInfo )
     {
-        for ( auto zp : query->ifm[0].quantization.zeroPoints )
+        if ( query->ifm[0].quantization )
         {
-            if ( !SupportedZeroPoint(zp, TensorUsage::IFM0, ifmType, opType) )
+            for ( auto zp : query->ifm[0].quantization->zeroPoints )
             {
-                return QueryResult::Unsupported;
+                if ( !SupportedZeroPoint(zp, TensorUsage::IFM0, ifmType, opType) )
+                {
+                    return QueryResult::Unsupported;
+                }
             }
         }
-        for ( auto zp : query->ifm[1].quantization.zeroPoints )
+        if ( query->ifm[1].quantization )
         {
-            if ( !SupportedZeroPoint(zp, TensorUsage::IFM1, ifm2Type, opType) )
+            for ( auto zp : query->ifm[1].quantization->zeroPoints )
             {
-                return QueryResult::Unsupported;
+                if ( !SupportedZeroPoint(zp, TensorUsage::IFM1, ifm2Type, opType) )
+                {
+                    return QueryResult::Unsupported;
+                }
             }
         }
-        for ( auto zp : query->ofm.quantization.zeroPoints )
+        if ( query->ofm.quantization )
         {
-            if ( !SupportedZeroPoint(zp, TensorUsage::OFM, ofmType, opType) )
+            for ( auto zp : query->ofm.quantization->zeroPoints )
             {
-                return QueryResult::Unsupported;
+                if ( !SupportedZeroPoint(zp, TensorUsage::OFM, ofmType, opType) )
+                {
+                    return QueryResult::Unsupported;
+                }
             }
         }
     }
@@ -532,7 +569,7 @@ Flags<QueryResult> EthosU85Constraints::OperatorQuery(OpType opType, const ArchO
         }
 
         if ( opType == OpType::AvgPool && (k->Size().x > 8 || k->Size().y > 8) && !k->Padding().IsZero() &&
-             query->ofm.quantization.scales.size() )
+             query->ofm.quantization->scales.size() )
         {
             if ( req )
             {

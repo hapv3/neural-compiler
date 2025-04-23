@@ -43,7 +43,7 @@ struct ArchFM
     Shape shape;
     DataType type = {};
     TensorFormat format = {};
-    Quantization quantization = {};
+    const Quantization *quantization = nullptr;
 };
 
 struct ArchOperatorQuery
@@ -59,12 +59,10 @@ struct ArchOperatorQuery
 
 enum class ArchRequirement
 {
-    None = 0,
-    ScratchTensor = 1 << 0,
-    OutputFormat = 1 << 1,
-    InputFormat = 1 << 2,
-    OpSubstitution = 1 << 3,
-    Decompose = 1 << 4,
+    None = 0x00,
+    Tensor = 0x01,          // Tensor requirement
+    OpSubstitution = 0x02,  // Operator substitution
+    Decompose = 0x04,       // Decompose
 };
 
 enum class ArchProperty
@@ -80,18 +78,19 @@ enum class ArchProperty
     Scaling = 1 << 7,
 };
 
+struct ArchTensorRequirement
+{
+    const ArchTensorRequirement *next = nullptr;
+    TensorUsage usage = TensorUsage::None;
+    TensorFormat format = TensorFormat::Unknown;
+    DataType type = DataType::None;
+    Shape shape;
+};
+
 struct ArchRequirements
 {
     Flags<ArchRequirement> req;
-    struct
-    {
-        Shape size;
-        DataType type = DataType::None;
-        TensorFormat format = TensorFormat::Unknown;
-    } scratch;
-    TensorFormat ifmFormat = TensorFormat::Unknown;
-    TensorFormat ifm1Format = TensorFormat::Unknown;
-    TensorFormat ofmFormat = TensorFormat::Unknown;
+    ArchTensorRequirement tensor;
     OpType substitution = OpType::None;
     Flags<ArchProperty> decomposeProps;
 };
@@ -137,5 +136,33 @@ public:
     virtual Flags<QueryResult> OperatorQuery(OpType opType, const ArchOperatorQuery *query = nullptr, ArchRequirements *req = nullptr) = 0;
     virtual bool SupportedZeroPoint(int64_t zp, TensorUsage usage, DataType dType, OpType opType) = 0;
 };
+
+inline void Set(ArchTensorRequirement &req, TensorUsage usage, TensorFormat format)
+{
+    req.usage = usage;
+    req.format = format;
+    req.next = nullptr;
+}
+
+inline void Set(ArchTensorRequirement &req, TensorUsage usage, DataType type, TensorFormat format)
+{
+    Set(req, usage, format);
+    req.type = type;
+}
+
+inline void Set(ArchTensorRequirement &req, TensorUsage usage, DataType type, TensorFormat format, const Shape &shape)
+{
+    Set(req, usage, type, format);
+    req.shape = shape;
+}
+
+inline const ArchTensorRequirement *Get(const ArchTensorRequirement *req, TensorUsage usage)
+{
+    while ( req->usage != usage && req->next != nullptr )
+    {
+        req = req->next;
+    }
+    return req;
+}
 
 }  // namespace regor

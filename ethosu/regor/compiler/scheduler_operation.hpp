@@ -74,6 +74,13 @@ public:
         this->uid = GenerateUniqueId();
     }
 
+    SchedulerTensor(DataType type, const Shape &shape, TensorFormat fmt, const std::shared_ptr<Buffer> &buffer) :
+            format(fmt), storageShape(shape), dataType(type)
+    {
+        this->bufferView = BufferView(buffer, 0, DataTypeStorageSizeBits(type), shape, {});
+        this->uid = GenerateUniqueId();
+    }
+
     std::shared_ptr<SchedulerTensor> Clone() const
     {
         auto clone = std::make_shared<SchedulerTensor>(*this);

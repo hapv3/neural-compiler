@@ -259,10 +259,14 @@ int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *con
             query.transposeMask = producer->OFM()->transpose;
             if ( _arch->Constraints()->OperatorQuery(producer->Type(), &query, &req).Any(QueryResult::Native) )
             {
-                if ( (req.req % ArchRequirement::OutputFormat) && req.ofmFormat == TensorFormat::NHWC )
+                if ( req.req % ArchRequirement::Tensor )
                 {
-                    tensor->needsLinearFormat = true;
-                    continue;
+                    auto *tr = Get(&req.tensor, TensorUsage::OFM);
+                    if ( tr && tr->format == TensorFormat::NHWC )
+                    {
+                        tensor->needsLinearFormat = true;
+                        continue;
+                    }
                 }
             }
         }
@@ -308,10 +312,10 @@ int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *con
         query.transposeMask = consumer->OFM()->transpose;
         if ( _arch->Constraints()->OperatorQuery(consumer->Type(), &query, &req).Any(QueryResult::Native) )
         {
-            if ( (req.req % ArchRequirement::InputFormat) )
+            if ( req.req % ArchRequirement::Tensor )
             {
-                if ( (usedAs == TensorUsage::IFM0 && req.ifmFormat == TensorFormat::NHWC) ||
-                     (usedAs == TensorUsage::IFM1 && req.ifm1Format == TensorFormat::NHWC) )
+                auto *tr = Get(&req.tensor, usedAs);
+                if ( tr && tr->format == TensorFormat::NHWC )
                 {
                     tensor->needsLinearFormat = true;
                     continue;
