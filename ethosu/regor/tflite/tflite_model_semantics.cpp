@@ -755,15 +755,15 @@ void ConstraintMatchingEitherShapes(const Operator &op, const SubGraph &subgraph
 {
     auto ifm = TensorFromUsage(regor::TensorUsage::IFM, op, builtinOperator, *subgraph.tensors());
     auto ofm = TensorFromUsage(regor::TensorUsage::OFM, op, builtinOperator, *subgraph.tensors());
-    auto ifmShape = ShapeFromTens(ifm);
-    auto ofmShape = ShapeFromTens(ofm);
+    auto ifmShape = Shape::PadAxes(ShapeFromTens(ifm), 4, 1);
+    auto ofmShape = Shape::PadAxes(ShapeFromTens(ofm), 4, 1);
     bool valid = ifmShape == ofmShape;
     Shape ifm2Shape = Shape();
     auto ifm2 = TensorFromUsage(MakeTensorUsage(regor::TensorUsage::IFM, 1), op, builtinOperator, *subgraph.tensors());
 
     if ( ifm2 && !valid )
     {
-        ifm2Shape = ShapeFromTens(ifm2);
+        ifm2Shape = Shape::PadAxes(ShapeFromTens(ifm2), 4, 1);
         bool isBroadcastable = true;
         for ( auto i = 0; i < std::min(ifmShape.Size(), ifm2Shape.Size()); i++ )
         {
