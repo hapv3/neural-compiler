@@ -857,7 +857,7 @@ Operation *TFLiteGraphOptimiser::ConvertReverse(Graph *const graph, Operation *c
     return returnOp;
 }
 
-// Replace TFLite GatherV2 and GatherNd with GraphIR Gather, if possible.
+// Replace TFLite GatherV2 with GraphIR Gather
 Operation *TFLiteGraphOptimiser::ConvertGather(Graph *const graph, Operation *const operation)
 {
     UNUSED(graph);
@@ -899,12 +899,8 @@ Operation *TFLiteGraphOptimiser::ConvertGather(Graph *const graph, Operation *co
                 assert(batchDimsParam <= axisParam);
             }
         }
-        // TODO: Convert to supported ops check
         // TODO: MLBEDSW-10279 Investigate if constraint can be relaxed
-        if ( axisParam != batchDimsParam )
-        {
-            return returnOp;
-        }
+        assert(axisParam == batchDimsParam);
 
         // Calculate GraphIR Gather N dim
         int N = 1;

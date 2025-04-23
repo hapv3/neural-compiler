@@ -92,7 +92,6 @@ TfLiteSupportedOperatorsU85::TfLiteSupportedOperatorsU85(IArchitectureConstraint
         OpType::Abs,
         OpType::SplitV,
         OpType::ReverseV2,
-        OpType::GatherNd,
         OpType::Quantize,
         OpType::HardSwish,
         OpType::SelectV2,
@@ -120,6 +119,7 @@ TfLiteSupportedOperatorsU85::TfLiteSupportedOperatorsU85(IArchitectureConstraint
     _checks = {
         &TfLiteSupportedOperatorsU85::ConstraintResizeCommon,
         &TfLiteSupportedOperatorsU85::ConstraintResizeBilinear,
+        &TfLiteSupportedOperatorsU85::ConstraintGather,
     };
 }
 
@@ -295,6 +295,35 @@ bool TfLiteSupportedOperatorsU85::ConstraintResizeBilinear(const Operation *op)
     };
     if ( !(ConstrainScaleFactor(width_n, width_d, "width") && ConstrainScaleFactor(height_n, height_d, "height")) )
     {
+        return false;
+    }
+    return true;
+}
+
+bool TfLiteSupportedOperatorsU85::ConstraintGather(const Operation *op)
+{
+    OpType opType = op->Type();
+    if ( opType != OpType::GatherV2 )
+    {
+        return true;
+    }
+    const tflite::Operator *const passthrough = static_cast<const tflite::Operator *>(op->Passthrough());
+    const auto options = passthrough->builtin_options_as_GatherOptions();
+    auto *params = op->Input(TensorUsage::IFM0);
+    assert(params);
+    int paramsRank = params->shape.Size();
+    int batchDimsParam = 0;
+    int axisParam = 0;
+    if ( options )
+    {
+        axisParam = options->axis();
+        if ( axisParam < 0 ) axisParam = paramsRank - (-axisParam);
+        batchDimsParam = options->batch_dims();
+    }
+
+    if ( axisParam != batchDimsParam )
+    {
+        Failure(op, fmt::format("axis: {} != batch_dims: {}", axisParam, batchDimsParam), "axis must be equal to batch_dims");
         return false;
     }
     return true;
