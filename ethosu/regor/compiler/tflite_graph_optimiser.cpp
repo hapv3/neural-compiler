@@ -968,7 +968,7 @@ Operation *TFLiteGraphOptimiser::ConvertGather(Graph *const graph, Operation *co
     return returnOp;
 }
 
-// Replace TFLite ScatterNd with GraphIR Scatter, if possible.
+// Replace TFLite ScatterNd with GraphIR Scatter
 Operation *TFLiteGraphOptimiser::ConvertScatter(Graph *const graph, Operation *const operation)
 {
     UNUSED(graph);
@@ -987,33 +987,10 @@ Operation *TFLiteGraphOptimiser::ConvertScatter(Graph *const graph, Operation *c
         assert(updatesConn);
         assert(shapeConn);
         assert(ofmConn);
-
-        // Can only support this op when last dimension is 1
-        if ( idxConn->shape[-1] != 1 )
-        {
-            return returnOp;
-        }
-
-        // Can only support constant index tensors
-        if ( !idxConn->tensor->IsConstant() )
-        {
-            return operation;
-        }
-        // Can not support duplicates in the index tensor
-        std::unordered_set<int> unique_idxs;
-        for ( int i = 0; i < idxConn->tensor->View().Elements(); i++ )
-        {
-            int idx = idxConn->tensor->View().RawData<int32_t>()[i];
-            if ( unique_idxs.find(idx) != unique_idxs.end() )
-            {
-                return operation;
-            }
-            unique_idxs.insert(idx);
-        }
-
         assert(shapeConn->tensor->IsConstant());
         assert(shapeConn->shape.Size() == 1);
-
+        assert(idxConn->shape[-1] == 1);
+        assert(idxConn->tensor->IsConstant());
         // Calculate GraphIR Scatter N dim
         int N = 1;
 

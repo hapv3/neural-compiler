@@ -42,5 +42,6 @@ private:
     bool ConstraintResizeCommon(const Operation *op);
     bool ConstraintResizeBilinear(const Operation *op);
     bool ConstraintGather(const Operation *op);
+    bool ConstraintScatter(const Operation *op);
 };
 }  // namespace regor

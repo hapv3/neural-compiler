@@ -120,6 +120,7 @@ TfLiteSupportedOperatorsU85::TfLiteSupportedOperatorsU85(IArchitectureConstraint
         &TfLiteSupportedOperatorsU85::ConstraintResizeCommon,
         &TfLiteSupportedOperatorsU85::ConstraintResizeBilinear,
         &TfLiteSupportedOperatorsU85::ConstraintGather,
+        &TfLiteSupportedOperatorsU85::ConstraintScatter,
     };
 }
 
@@ -324,6 +325,46 @@ bool TfLiteSupportedOperatorsU85::ConstraintGather(const Operation *op)
     if ( axisParam != batchDimsParam )
     {
         Failure(op, fmt::format("axis: {} != batch_dims: {}", axisParam, batchDimsParam), "axis must be equal to batch_dims");
+        return false;
+    }
+    return true;
+}
+
+bool TfLiteSupportedOperatorsU85::ConstraintScatter(const Operation *op)
+{
+    OpType opType = op->Type();
+    if ( opType != OpType::ScatterNd )
+    {
+        return true;
+    }
+    auto *idxConn = op->Input(TensorUsage::IFM0);
+    auto *shapeConn = op->Input(TensorUsage::Params);
+    assert(idxConn);
+    assert(shapeConn);
+    // index tensor must have C == 1
+    if ( idxConn->shape[-1] != 1 )
+    {
+        Failure(op, fmt::format("index shape: {}", idxConn->shape.ToString()), "Channel must be 1 for ScatterNd index tensor");
+        return false;
+    }
+    // index tensor must be constant
+    if ( !idxConn->tensor->IsConstant() )
+    {
+        Failure(op, "non-constant index tensor", "index tensor must be constant");
+        return false;
+    }
+    // shape tensor must be constant
+    if ( !shapeConn->tensor->IsConstant() )
+    {
+        Failure(op, "non-constant shape tensor", "shape tensor must be constant");
+        return false;
+    }
+    // Can not support duplicates in the index tensor
+    const auto idxs = idxConn->tensor->View().Values<int32_t>();
+    const std::unordered_set<int32_t> uniqueIdxs(idxs.begin(), idxs.end());
+    if ( idxConn->tensor->View().Elements() != int(uniqueIdxs.size()) )
+    {
+        Failure(op, "index tensor contains duplicates", "index tensor elements must be unique");
         return false;
     }
     return true;
