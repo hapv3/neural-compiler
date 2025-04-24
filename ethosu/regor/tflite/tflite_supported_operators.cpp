@@ -191,7 +191,7 @@ bool TfLiteSupportedOperators::ConstraintTensQuantized(const Operation *op)
 
 bool TfLiteSupportedOperators::ConstraintFCWeightShape(const Operation *op)
 {
-    const char *constraint = "FullyConnected weights must be on the form I,1,1,..,1,O";
+    const char *constraint = "FullyConnected weights must be on the form O,1,1,..,1,I";
     if ( op->Type() != OpType::FullyConnected )
     {
         return true;
@@ -204,6 +204,19 @@ bool TfLiteSupportedOperators::ConstraintFCWeightShape(const Operation *op)
     if ( shape.Size() < 2 || (shape.Elements() != (shape[0] * shape[-1])) )
     {
         Failure(op, fmt::format("Unsupported weights shape: {}", shape.ToString()), constraint);
+        return false;
+    }
+
+    // IC and OC must be smaller than 2^16
+    // TODO MLBEDSW-10739: Decompose FullyConnected
+    if ( shape[0] > (1 << 16) )
+    {
+        Failure(op, fmt::format("Output channels: {}", shape[0]), "Output channels must be less than 2^16");
+        return false;
+    }
+    if ( shape[-1] > (1 << 16) )
+    {
+        Failure(op, fmt::format("Input channels: {}", shape[-1]), "Input channels must be less than 2^16");
         return false;
     }
     return true;
