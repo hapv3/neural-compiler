@@ -245,6 +245,7 @@ bool CanDecompose(Architecture *, const SchedulerOperation *schedOp)
     if ( schedOp->Type() == OpType::Reverse ) return true;
     if ( schedOp->Type() == OpType::Transpose ) return true;
     if ( schedOp->Type() == OpType::MaxPool ) return true;
+    if ( schedOp->Type() == OpType::Resize ) return true;
     return false;
 }
 
@@ -1732,5 +1733,32 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMaxPool(Architecture *
     return result;
 }
 
+std::vector<std::unique_ptr<SchedulerOperation>> DecomposeResize(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
+{
+    std::vector<std::unique_ptr<SchedulerOperation>> result;
+    auto ofmConn = op->Output(TensorUsage::OFM);
+    auto &ofmShape = ofmConn->SliceShape();
+    auto &ofmSlice = ofmConn->slice;
+    auto ifmConn = op->Input(TensorUsage::IFM);
+    auto &ifmShape = ifmConn->SliceShape();
+    auto &ifmSlice = ifmConn->slice;
+
+    ofmSlice.Initialize(ofmShape.WithZeros(), ofmShape);
+    ifmSlice.Initialize(ifmShape.WithZeros(), ifmShape);
+
+    auto req = ArchRequirements();
+    auto qResult = OperatorQuery(arch, op.get(), &req);
+    bool decomposeLeadingDims = false;
+    if ( qResult.Any(QueryResult::HasRequirements) && req.req.Any(ArchRequirement::Decompose) )
+    {
+        decomposeLeadingDims = req.decomposeProps.Any(ArchProperty::TensorDims);
+    }
+    if ( decomposeLeadingDims )
+    {
+        return DecomposeLeadingDimensions(ofmShape.Size() - 3, arch, std::move(op), DecomposeResize);
+    }
+    result.emplace_back(std::move(op));
+    return result;
+}
 
 }  // namespace regor
