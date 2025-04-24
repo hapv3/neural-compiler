@@ -676,7 +676,6 @@ DecomposeForStrides(Architecture *arch, std::unique_ptr<SchedulerOperation> op, 
     {
         for ( auto kx = 0; kx < kernelSize.x; kx++ )
         {
-
             auto newIfmSlice = ifmConn->slice;
             auto ifmStrides = ifmConn->stepXY;
             newIfmSlice.offset =
@@ -695,20 +694,47 @@ DecomposeForStrides(Architecture *arch, std::unique_ptr<SchedulerOperation> op, 
                         std::min(ifmConn->shape.Width() - newIfmSlice.offset.Width(), newIfmSlice.shape.Width() + extend.x)));
             ifmStrides.y *= SY;
             ifmStrides.x *= SX;
-            auto &padding = kernel->Padding();
             // Don't generate an op that will only produce zeros, unless it is the last one in the group,
             // and we have not sent one before.
-            if ( (newIfmSlice.offset.Height() < 0 || newIfmSlice.shape.Height() == 0) &&
-                 (ky < (kernelSize.y - 1) || kx < (kernelSize.x - 1) || didSendOne) )
+            if ( ky < (kernelSize.y - 1) || kx < (kernelSize.x - 1) || didSendOne )
             {
-                auto ifmPointsY = newIfmSlice.shape.Height() / ifmStrides.y;
-                if ( ifmPointsY <= 0 ) continue;
-            }
-            if ( (newIfmSlice.offset.Width() < 0 || newIfmSlice.shape.Width() == 0) &&
-                 (ky < (kernelSize.y - 1) || kx < (kernelSize.x - 1) || didSendOne) )
-            {
-                auto ifmPointsX = newIfmSlice.shape.Width() / ifmStrides.x;
-                if ( ifmPointsX <= 0 ) continue;
+                // Find if the slice reads elements inside the IFM (not counting the padded-area)
+                // for a positive offset this is at least one as long as the shape has nonZero volume
+                if ( newIfmSlice.shape.Elements64() <= 0 )
+                {
+                    // zero-volume read-shape
+                    continue;
+                }
+                // for a negative offset (which should be interpreted as left/top padding)
+                // we need to account for ifmStrides and compute the first positive offset
+                if ( newIfmSlice.offset.Height() < 0 )
+                {
+                    // Find first positive coordinate and check whether it is inside the slice
+                    int firstH = (newIfmSlice.offset.Height() % ifmStrides.y);
+                    if ( firstH < 0 )
+                    {
+                        firstH += ifmStrides.y;
+                    }
+                    if ( firstH >= newIfmSlice.shape.Height() )
+                    {
+                        // First positive coordinate results in zero volume
+                        continue;
+                    }
+                }
+                else if ( newIfmSlice.offset.Width() < 0 )
+                {
+                    // Find first positive coordinate results in zero volume
+                    int firstW = (newIfmSlice.offset.Width() % ifmStrides.x);
+                    if ( firstW < 0 )
+                    {
+                        firstW += ifmStrides.x;
+                    }
+                    if ( firstW >= newIfmSlice.shape.Width() )
+                    {
+                        // First positive coordinate is outside of the slice-shape
+                        continue;
+                    }
+                }
             }
             Point2i ifmPoints =
                 DivRoundUp((Point2i{newIfmSlice.shape.Width(), newIfmSlice.shape.Height()} +
