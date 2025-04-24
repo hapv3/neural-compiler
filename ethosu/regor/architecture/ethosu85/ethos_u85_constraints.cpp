@@ -262,40 +262,40 @@ bool EthosU85Constraints::SupportedDtypes(OpType opType, DataType ifmType, DataT
     }
     return true;
 }
-namespace
+
+// Validate that zero-points are supported
+bool EthosU85Constraints::SupportedZeroPoint(int64_t zp, TensorUsage usage, DataType dType, OpType opType)
 {
-// Validate that IFM zero-points are supported based on ifmType
-bool SupportedIfmZeroPoint(int64_t zp, DataType ifmType)
-{
-    switch ( ifmType )
+    if ( IsIFM(usage) )
     {
-        case DataType::Int8:
-            return (zp >= -128) && (zp <= 127);
-            break;
-        case DataType::UInt8:
-            return (zp >= 0) && (zp <= 255);
-            break;
-        case DataType::UInt16:
-            return (zp == 0) || (zp == 32768);
-            break;
-        default:
-            return zp == 0;
+        switch ( dType )
+        {
+            case DataType::Int8:
+                return (zp >= -128) && (zp <= 127);
+                break;
+            case DataType::UInt8:
+                return (zp >= 0) && (zp <= 255);
+                break;
+            case DataType::UInt16:
+                return (zp == 0) || (zp == 32768);
+                break;
+            default:
+                return zp == 0;
+        }
     }
-    return false;
+    else if ( IsOFM(usage) )
+    {
+        if ( IsSignedInteger(dType) )
+        {
+            return zp >= -128 && zp <= 127;
+        }
+        else
+        {
+            return (zp == 32768) || (zp >= 0 && zp <= 255);
+        }
+    }
+    return true;
 }
-// Validate that OFM zero-points are supported based on ofmType
-bool SupportedOfmZeroPoint(int64_t zp, DataType ofmType)
-{
-    if ( IsSignedInteger(ofmType) )
-    {
-        return zp >= -128 && zp <= 127;
-    }
-    else
-    {
-        return (zp == 32768) || (zp >= 0 && zp <= 255);
-    }
-}
-}  // namespace
 
 Flags<QueryResult> EthosU85Constraints::OperatorQuery(OpType opType, const ArchOperatorQuery *query, ArchRequirements *req)
 {
@@ -393,21 +393,21 @@ Flags<QueryResult> EthosU85Constraints::OperatorQuery(OpType opType, const ArchO
     {
         for ( auto zp : query->ifm[0].quantization.zeroPoints )
         {
-            if ( !SupportedIfmZeroPoint(zp, ifmType) )
+            if ( !SupportedZeroPoint(zp, TensorUsage::IFM0, ifmType, opType) )
             {
                 return QueryResult::Unsupported;
             }
         }
         for ( auto zp : query->ifm[1].quantization.zeroPoints )
         {
-            if ( !SupportedIfmZeroPoint(zp, ifm2Type) )
+            if ( !SupportedZeroPoint(zp, TensorUsage::IFM1, ifm2Type, opType) )
             {
                 return QueryResult::Unsupported;
             }
         }
         for ( auto zp : query->ofm.quantization.zeroPoints )
         {
-            if ( !SupportedOfmZeroPoint(zp, ofmType) )
+            if ( !SupportedZeroPoint(zp, TensorUsage::OFM, ofmType, opType) )
             {
                 return QueryResult::Unsupported;
             }

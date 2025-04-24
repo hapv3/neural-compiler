@@ -278,34 +278,32 @@ bool EthosU55Constraints::SupportedDtypes(OpType opType, DataType ifmType, DataT
     return true;
 }
 
-namespace
+// Validate that zero-points are supported
+bool EthosU55Constraints::SupportedZeroPoint(int64_t zp, TensorUsage usage, DataType dType, OpType opType)
 {
-// Validate that IFM zero-points are supported based on ifmType and opType
-bool SupportedIfmZeroPoint(int64_t zp, DataType ifmType, OpType opType)
-{
-    // must be zero for 32-bit IFM and for CLZ or SHL operations
-    if ( DataTypeSizeBits(ifmType) == 32 || opType == OpType::CLZ || opType == OpType::SHL )
+    if ( IsIFM(usage) )
     {
-        return zp == 0;
+        // must be zero for 32-bit IFM and for CLZ or SHL operations
+        if ( DataTypeSizeBits(dType) == 32 || opType == OpType::CLZ || opType == OpType::SHL )
+        {
+            return zp == 0;
+        }
+    }
+    else if ( IsOFM(usage) )
+    {
+        // must be zero for CLZ or SHL operations
+        if ( opType == OpType::CLZ || opType == OpType::SHL )
+        {
+            return zp == 0;
+        }
+        // must be zero for 32-bit OFM unless op is an activation
+        if ( DataTypeSizeBits(dType) == 32 && !IsActivation(opType) )
+        {
+            return zp == 0;
+        }
     }
     return true;
 }
-// Validate that OFM zero-points are supported based on opType
-bool SupportedOfmZeroPoint(int64_t zp, DataType ofmType, OpType opType)
-{
-    // must be zero for CLZ or SHL operations
-    if ( opType == OpType::CLZ || opType == OpType::SHL )
-    {
-        return zp == 0;
-    }
-    // must be zero for 32-bit OFM unless op is an activation
-    if ( DataTypeSizeBits(ofmType) == 32 && !IsActivation(opType) )
-    {
-        return zp == 0;
-    }
-    return true;
-}
-}  // namespace
 
 Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchOperatorQuery *query, ArchRequirements *req)
 {
@@ -374,21 +372,21 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
     {
         for ( auto zp : query->ifm[0].quantization.zeroPoints )
         {
-            if ( !SupportedIfmZeroPoint(zp, ifmType, opType) )
+            if ( !SupportedZeroPoint(zp, TensorUsage::IFM0, ifmType, opType) )
             {
                 return QueryResult::Unsupported;
             }
         }
         for ( auto zp : query->ifm[1].quantization.zeroPoints )
         {
-            if ( !SupportedIfmZeroPoint(zp, ifm2Type, opType) )
+            if ( !SupportedZeroPoint(zp, TensorUsage::IFM1, ifm2Type, opType) )
             {
                 return QueryResult::Unsupported;
             }
         }
         for ( auto zp : query->ofm.quantization.zeroPoints )
         {
-            if ( !SupportedOfmZeroPoint(zp, ofmType, opType) )
+            if ( !SupportedZeroPoint(zp, TensorUsage::OFM, ofmType, opType) )
             {
                 return QueryResult::Unsupported;
             }

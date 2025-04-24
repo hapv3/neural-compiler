@@ -59,6 +59,7 @@ private:
     bool ConstraintFCWeightShape(const Operation *op);
     bool ConstraintPerAxisQuant(const Operation *op);
     bool ConstraintMatchingQuantization(const Operation *op);
+    bool ConstraintZeroPoints(const Operation *op);
     bool ConstraintDepthMultiplier(const Operation *op);
     bool ConstraintWeightsPrecision(const Operation *op);
     bool ConstraintWeightSum(const Operation *op);

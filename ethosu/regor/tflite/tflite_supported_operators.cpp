@@ -259,6 +259,32 @@ bool TfLiteSupportedOperators::ConstraintMatchingQuantization(const Operation *o
     return true;
 }
 
+bool TfLiteSupportedOperators::ConstraintZeroPoints(const Operation *op)
+{
+    OpType opType = op->Type();
+    // zeroPoints are ignored for the following operations to align with reference
+    if ( opType == OpType::AvgPool || opType == OpType::Resize || opType == OpType::CLZ || opType == OpType::SHL || opType == OpType::Div )
+    {
+        return true;
+    }
+    for ( const auto *list : {&op->Inputs(), &op->Outputs()} )
+    {
+        for ( const auto &[usage, conn] : list->pairs() )
+        {
+            DataType dType = conn.tensor->Type();
+            for ( auto zp : conn.quantization.zeroPoints )
+            {
+                if ( !_archConstraints->SupportedZeroPoint(zp, usage, dType, opType) )
+                {
+                    Failure(op, fmt::format("tensor {} has unsupported zeroPoint: {}", conn.tensor->Name(), zp));
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
+
 bool TfLiteSupportedOperators::ConstraintWeightsPrecision(const Operation *op)
 {
     const char *constraint = "Weight tensors must be 8-bit precision";
@@ -923,6 +949,7 @@ TfLiteSupportedOperators::TfLiteSupportedOperators(IArchitectureConstraints *con
         &TfLiteSupportedOperators::ConstraintTensQuantized,
         &TfLiteSupportedOperators::ConstraintPerAxisQuant,
         &TfLiteSupportedOperators::ConstraintMatchingQuantization,
+        &TfLiteSupportedOperators::ConstraintZeroPoints,
         &TfLiteSupportedOperators::ConstraintWeightsPrecision,
         &TfLiteSupportedOperators::ConstraintWeightSum,
         &TfLiteSupportedOperators::ConstraintBias,

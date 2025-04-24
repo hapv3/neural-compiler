@@ -37,6 +37,7 @@ public:
     bool SupportsElementwiseLeakyRelu(bool quantized, DataType type) override;
     bool SupportsRescale(DataType fromType, DataType toType) override;
     Flags<QueryResult> OperatorQuery(OpType opType, const ArchOperatorQuery *query, ArchRequirements *req) override;
+    bool SupportedZeroPoint(int64_t zp, TensorUsage usage, DataType dtype, OpType opType) override;
 
 private:
     bool SupportedDtypes(OpType opType, DataType ifmType, DataType ifm2Type, DataType ofmType);
