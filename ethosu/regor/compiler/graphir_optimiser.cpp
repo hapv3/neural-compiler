@@ -419,7 +419,7 @@ Operation *GraphIrOptimiser::RewriteFullyConnected(Graph *const graph, Operation
     // Batched Conv2D with kernel 1x1 can be handled the same way as FullyConnected
     if ( opType == OpType::FullyConnected ||
          (opType == OpType::Conv2D && ifm->shape.Batch() > 1 && kernel->Size().AreaXY() == 1 &&
-             kernel->Stride().AreaXY() == 1 && kernel->DilatedWH().AreaXY() == 1) )
+             kernel->Stride().AreaXY() == 1 && kernel->DilatedWH().AreaXY() == 1 && kernel->Padding().IsZero()) )
     {
         const auto &weights = operation->Input(TensorUsage::Weights);
         const auto &shape = weights->tensor->StorageShape();
