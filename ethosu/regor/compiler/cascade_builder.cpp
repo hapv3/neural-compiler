@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -90,7 +90,7 @@ public:
                 auto consumerCost = refSchedule->Cost(consumer);
 
                 bufferShape = RollingBufferShape(producerCost->stripe, consumerCost->stripeInput[0]);
-                bufferSize = DataTypeStorageSizeBytes(ofm->tensor->dataType, bufferShape.Elements());
+                bufferSize = DataTypeStorageSizeBytes(ofm->Type(), bufferShape.Elements());
             }
         }
         _cache.emplace(key, CascadeBuffer(bufferShape, bufferSize));

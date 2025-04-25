@@ -241,7 +241,7 @@ static void MakeFeatureMap(TensorUsage usage, const SchedulerConnection *schedCo
     auto schedTens = schedConn->tensor.get();
     fm.shape = schedConn->shape;
     fm.slice = schedConn->slice;
-    fm.dataType = schedTens->dataType;
+    fm.dataType = schedConn->Type();
     fm.memArea = schedTens->memArea;
     fm.format = schedTens->format;
     fm.usage = usage;
@@ -325,7 +325,7 @@ static HLCSubOperation MakeSubOperation(const std::unique_ptr<SchedulerOperation
         param.memArea = lutTensor->memArea;
         param.address = lutTensor->AllocatedAddress();
         param.sizeBytes = lutTensor->AllocationSizeBytes();
-        param.ifmType = schedOp->IFM(0)->tensor->dataType;
+        param.ifmType = schedOp->IFM(0)->Type();
     }
     return hlcSubOp;
 }
@@ -395,7 +395,7 @@ static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, 
         param.memArea = lutTensor->memArea;
         param.address = lutTensor->AllocatedAddress();
         param.sizeBytes = lutTensor->AllocationSizeBytes();
-        param.ifmType = schedOp->IFM(0)->tensor->dataType;
+        param.ifmType = schedOp->IFM(0)->Type();
     }
 
     for ( auto &subOp : schedOp->SubOps() )
@@ -448,7 +448,7 @@ static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, 
             auto *ifmConn = schedOp->Input(TensorUsage::IFM);
             auto *params = schedOp->Input(TensorUsage::Params);
             assert(params);
-            assert(params->tensor->dataType == DataType::Int32);
+            assert(params->Type() == DataType::Int32);
             auto view = params->tensor->srcTensor->View();
             Shape multiples(view.Buffer()->Data<int32_t>(), view.ViewShape().Elements());
             multiples = Shape::PadAxes(multiples, ifmConn->shape.Size(), 1);

@@ -134,6 +134,10 @@ enum class Buffering
 /// </summary>
 struct SchedulerConnection
 {
+private:
+    DataType dataType = DataType::None;
+
+public:
     std::shared_ptr<SchedulerTensor> tensor;
     Shape shape;
     TensorSlice slice;
@@ -149,6 +153,8 @@ struct SchedulerConnection
 
     int PartialAllocationSizeBytes() const { return TensorAllocationBytes(shape, tensor->format, tensor->dataType); }
     const Shape &SliceShape() const { return slice.shape.IsEmpty() ? shape : slice.shape; }
+    void SetType(DataType dt) { dataType = dt; }
+    DataType Type() const { return dataType == DataType::None ? tensor->dataType : dataType; }
 };
 
 enum class AccumulatorSource

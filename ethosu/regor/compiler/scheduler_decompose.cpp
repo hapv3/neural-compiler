@@ -51,7 +51,6 @@ bool ShouldDecompose(Architecture *arch, const SchedulerOperation *schedOp)
 static std::unique_ptr<SchedulerOperation> MakeMemCopy(const std::shared_ptr<SchedulerTensor> &source,
     const std::shared_ptr<SchedulerTensor> &dest, const TensorSlice *ofmSlice = nullptr)
 {
-    assert(source->dataType == dest->dataType);
     assert(ofmSlice == nullptr || ofmSlice->shape + ofmSlice->offset <= dest->storageShape);
     auto op = std::make_unique<SchedulerOperation>(OpType::MemoryCopy);
 
@@ -61,10 +60,10 @@ static std::unique_ptr<SchedulerOperation> MakeMemCopy(const std::shared_ptr<Sch
     auto ofmConn = op->AddOutput(TensorUsage::OFM);
     ofmConn->tensor = dest;
     if ( ofmSlice ) ofmConn->slice = *ofmSlice;
-    if ( ofmConn->tensor->dataType == DataType::Int64 )
+    if ( ofmConn->Type() == DataType::Int64 )
     {  // Copy int64 data as int32 data with 2 x C by cloning destination tensor
         ofmConn->tensor = std::make_shared<SchedulerTensor>(*dest);
-        ofmConn->tensor->dataType = DataType::Int32;
+        ofmConn->SetType(DataType::Int32);
         ofmConn->tensor->storageShape = dest->storageShape.WithDepth(2 * dest->storageShape.Depth());
         ofmConn->tensor->producers.clear();
         if ( ofmSlice )
@@ -77,10 +76,11 @@ static std::unique_ptr<SchedulerOperation> MakeMemCopy(const std::shared_ptr<Sch
     ofmConn->tensor->producers.push_back(op.get());
 
     auto ifmConn = op->ConnectInput(TensorUsage::IFM, source);
-    if ( ifmConn->tensor->dataType == DataType::Int64 )
+    assert(ifmConn->Type() == ofmConn->Type());
+    if ( ifmConn->Type() == DataType::Int64 )
     {  // Copy int64 data as int32 data with 2 x C by cloning source tensor
         ifmConn->tensor = std::make_shared<SchedulerTensor>(*source);
-        ifmConn->tensor->dataType = DataType::Int32;
+        ifmConn->SetType(DataType::Int32);
         ifmConn->tensor->storageShape = source->storageShape.WithDepth(2 * source->storageShape.Depth());
         source->RemoveReader(op.get());
     }
@@ -92,9 +92,11 @@ static std::unique_ptr<SchedulerOperation> MakeMemCopy(const std::shared_ptr<Sch
 static std::unique_ptr<SchedulerOperation> MakeTransposeOp(
     const std::shared_ptr<SchedulerTensor> &source, const std::shared_ptr<SchedulerTensor> &dest, const Shape &perm)
 {
-    assert(source->dataType == dest->dataType);
     assert(source->storageShape.Size() == perm.Size());
     auto op = std::make_unique<SchedulerOperation>(OpType::Transpose);
+    auto ifmConn = op->AddInput(TensorUsage::IFM);
+    auto ofmConn = op->AddOutput(TensorUsage::OFM);
+    assert(ifmConn->Type() == ofmConn->Type());
 
     auto kernel = Kernel({1, 1}, {1, 1}, {1, 1});
     op->SetKernel(&kernel);
@@ -102,25 +104,23 @@ static std::unique_ptr<SchedulerOperation> MakeTransposeOp(
     const auto attr = op->Attribute<transpose_attr_t>();
     attr->perm = perm;
 
-    auto ifmConn = op->AddInput(TensorUsage::IFM);
     ifmConn->tensor = source;
-    if ( ifmConn->tensor->dataType == DataType::Int64 )
+    if ( ifmConn->Type() == DataType::Int64 )
     {  // Read int64 data as int32 data with dimensions [..., C, 2] by cloning source tensor
         ifmConn->tensor = std::make_shared<SchedulerTensor>(*source);
-        ifmConn->tensor->dataType = DataType::Int32;
+        ifmConn->SetType(DataType::Int32);
         ifmConn->tensor->storageShape = source->storageShape.Insert(source->storageShape.Size(), 2);
         attr->perm = perm.Insert(perm.Size(), perm.Size());  // Update permutation with added dimenson
     }
     ifmConn->shape = ifmConn->tensor->storageShape;
     ifmConn->tensor->consumers.push_back(op.get());
 
-    auto ofmConn = op->AddOutput(TensorUsage::OFM);
     ofmConn->transpose = TransposeTypeFromShape(attr->perm);
     ofmConn->tensor = dest;
-    if ( ofmConn->tensor->dataType == DataType::Int64 )
+    if ( ofmConn->Type() == DataType::Int64 )
     {  // Write int64 data as int32, with dimensions from ifm
         ofmConn->tensor = std::make_shared<SchedulerTensor>(*dest);
-        ofmConn->tensor->dataType = DataType::Int32;
+        ofmConn->SetType(DataType::Int32);
         ofmConn->tensor->storageShape = ifmConn->shape.Permute(uint32_t(ofmConn->transpose));
         ofmConn->tensor->producers.clear();
     }
@@ -191,8 +191,8 @@ static std::unique_ptr<ArchitectureOpConfig> GetOpConfig(Architecture *arch, con
     {
         qConfig.ifmShape[1] = ifm1->SliceShape();
     }
-    qConfig.ifmBits = DataTypeSizeBits(ifm->tensor->dataType);
-    qConfig.ofmBits = DataTypeSizeBits(ofm->tensor->dataType);
+    qConfig.ifmBits = DataTypeSizeBits(ifm->Type());
+    qConfig.ofmBits = DataTypeSizeBits(ofm->Type());
     qConfig.kernel = schedOp->Kernel();
     qConfig.lutBytes = schedOp->TryInput(TensorUsage::LUT) ? 2048 : 0;
     qConfig.scaled = schedOp->HasScaling();
@@ -878,7 +878,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv3D(Architecture *a
         auto acc = std::make_shared<SchedulerTensor>();
         acc->uid = GenerateUniqueId();
         acc->memArea = ofmConn->tensor->memArea;
-        acc->dataType = ifmConn->tensor->dataType == DataType::Int16 ? DataType::Int64 : DataType::Int32;
+        acc->dataType = ifmConn->Type() == DataType::Int16 ? DataType::Int64 : DataType::Int32;
         acc->storageShape = Shape(ofmShape, 4).WithBatch(1);
         // Create ifm zero point SchedulerTensor, only needed for broadcast
         // Setup is done below if needed
@@ -929,7 +929,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv3D(Architecture *a
                 {
                     // Setup SchedulerTensor for 0 input
                     ifm0->uid = GenerateUniqueId();
-                    ifm0->dataType = subOpIfm->tensor->dataType;
+                    ifm0->dataType = subOpIfm->Type();
                     ifm0->memArea = arch->ReadonlyMemory();
                     ifm0->format = TensorFormat::NHWC;
                     const auto bufSize = ifm0shape.Elements();

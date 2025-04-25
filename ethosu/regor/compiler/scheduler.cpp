@@ -292,7 +292,7 @@ int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *con
             continue;
         }
         // Int32 ReduceSum requires linear format
-        else if ( consumer->Type() == OpType::ReduceSum && tensor->dataType == DataType::Int32 )
+        else if ( consumer->Type() == OpType::ReduceSum && conn->Type() == DataType::Int32 )
         {
             tensor->needsLinearFormat = true;
             continue;
@@ -424,8 +424,8 @@ std::unique_ptr<ArchitectureOpConfig> GetOpConfig(Architecture *arch, SchedulerO
     query.ofmShape = Shape::PadAxes(ofmShape, 3, 1);
     query.ifmShape[0] = ifmShape;
     query.ifmShape[1] = ifm2Shape;
-    query.ifmBits = DataTypeSizeBits(ifm->tensor->dataType);
-    query.ofmBits = DataTypeSizeBits(ofm->tensor->dataType);
+    query.ifmBits = DataTypeSizeBits(ifm->Type());
+    query.ofmBits = DataTypeSizeBits(ofm->Type());
     query.kernel = op->Kernel();
     query.lutBytes = op->TryInput(TensorUsage::LUT) ? 2048 : 0;
     query.scaled = op->HasScaling();
@@ -584,9 +584,9 @@ WeightScaleEncoding Scheduler::EncodeBestWeightFormat(
     std::vector<WeightScaleEncoding> encodingResults;
     auto weights = op->Input(TensorUsage::Weights);
     auto scales = op->Input(TensorUsage::Scales);
-    WeightsRef weightsRef = {&weights->tensor->bufferView, weights->tensor->srcTensor->AxisOrder(), weights->tensor->dataType};
+    WeightsRef weightsRef = {&weights->tensor->bufferView, weights->tensor->srcTensor->AxisOrder(), weights->Type()};
     auto ifm = op->IFM(op->PrimaryIfmIndex());
-    auto ifmType = ifm->tensor->dataType;
+    auto ifmType = ifm->Type();
     std::vector<int> depthOffsets{0, ofmShape.Unpermute(uint32_t(op->OFM()->transpose)).Depth()};
 
     std::vector<WF> formatList = {WF(WeightFormat::Default, WeightFormat::Sparse2_4), WF(WeightFormat::Default),
@@ -712,7 +712,7 @@ std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(
         {
             auto scales = op->Input(TensorUsage::Scales);
             auto temp = _arch->WeightEncoder()->MakeExplicit(ifm->quantization, weights->quantization,
-                op->OFM()->quantization, scales->tensor->dataType, ifm->tensor->dataType, op->Type());
+                op->OFM()->quantization, scales->Type(), ifm->Type(), op->Type());
             op->OFM()->quantization = std::move(temp);
             assert(op->OFM()->quantization.type == QuantizationType::EXPLICIT);
         }
@@ -735,7 +735,7 @@ std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(
         // The operation might have been decomposed in depth dimension and have an offset
         const int depthBase = op->OFM()->slice.offset ? op->OFM()->slice.offset.Depth() : 0;
         auto encodingParams = _arch->WeightEncoder()->GetEncodingConfig(
-            blockConfig.get(), weightsRef, op->Kernel(), ifm->tensor->dataType, depthBase, depthOffsets, weightFormat);
+            blockConfig.get(), weightsRef, op->Kernel(), ifm->Type(), depthBase, depthOffsets, weightFormat);
 
         const SchedulerTensor *scaleTensor = scales ? scales->tensor.get() : nullptr;
         weightScales = EncodeQuantizationScaleTensor(std::move(encodingParams), op->OFM()->quantization, scaleTensor);
@@ -1673,7 +1673,7 @@ PerformanceQuery Scheduler::InitPerfQuery(
     SchedulerConnection *ifm0 = op->IFM(0);
     query.ifmShape[0] = ifm0->SliceShape();
     query.ifmMemory[0] = ifm0->tensor->memArea.memory;
-    query.ifmType[0] = ifm0->tensor->dataType;
+    query.ifmType[0] = ifm0->Type();
     query.ifmFormat[0] = ifm0->tensor->format;
 
     SchedulerConnection *ifm1 = op->TryIFM(1);
@@ -1681,7 +1681,7 @@ PerformanceQuery Scheduler::InitPerfQuery(
     {
         query.ifmShape[1] = ifm1->SliceShape();
         query.ifmMemory[1] = ifm1->tensor->memArea.memory;
-        query.ifmType[1] = ifm1->tensor->dataType;
+        query.ifmType[1] = ifm1->Type();
         query.ifmFormat[1] = ifm1->tensor->format;
     }
 
@@ -1689,7 +1689,7 @@ PerformanceQuery Scheduler::InitPerfQuery(
     ofmDepth = (ofmDepth >= 0) ? ofmDepth : ofm->SliceShape().Depth();
     query.ofmShape = ofm->SliceShape().WithDepth(ofmDepth);
     query.ofmMemory = ofm->tensor->memArea.memory;
-    query.ofmType = ofm->tensor->dataType;
+    query.ofmType = ofm->Type();
     query.ofmFormat = ofm->tensor->format;
 
     SchedulerConnection *scratch = op->TryInput(TensorUsage::Scratch);
@@ -1740,7 +1740,7 @@ std::vector<FusionQuery> Scheduler::InitFusionQuery(SchedulerOperation *op)
         {
             fusedOp.ifm2Shape = ifm2->shape;
             fusedOp.ifm2Memory = ifm2->tensor->memArea.memory;
-            fusedOp.ifm2Type = ifm2->tensor->dataType;
+            fusedOp.ifm2Type = ifm2->Type();
             fusedOp.ifm2Format = ifm2->tensor->format;
         }
     }

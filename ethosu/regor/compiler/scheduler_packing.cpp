@@ -171,7 +171,7 @@ ArchitectureOpGroupQuery SchedulerPacking::CreateOpGroupQuery(const SchedulerOpe
     auto ifm1 = schedOp->TryIFM(1);
     auto ofm = schedOp->OFM();
     query.ifm[0].key = ifm0->tensor->uid;
-    query.ifm[0].type = ifm0->tensor->dataType;
+    query.ifm[0].type = ifm0->Type();
     query.ifm[0].shape = ifm0->SliceShape();
     query.ifm[0].transpose = ifm0->transpose;
     query.ifm[0].reverse = ifm0->reverse;
@@ -179,14 +179,14 @@ ArchitectureOpGroupQuery SchedulerPacking::CreateOpGroupQuery(const SchedulerOpe
     if ( ifm1 )
     {
         query.ifm[1].key = ifm1->tensor->uid;
-        query.ifm[1].type = ifm1->tensor->dataType;
+        query.ifm[1].type = ifm1->Type();
         query.ifm[1].shape = ifm1->SliceShape();
         query.ifm[1].transpose = ifm1->transpose;
         query.ifm[1].reverse = ifm1->reverse;
         query.ifm[1].isConst = ifm1->tensor->IsConstant();
     }
     query.ofm.key = ofm->tensor->uid;
-    query.ofm.type = ofm->tensor->dataType;
+    query.ofm.type = ofm->Type();
     query.ofm.shape = ofm->SliceShape();
     query.ofm.transpose = ofm->transpose;
     query.ofm.reverse = ofm->reverse;
@@ -286,6 +286,7 @@ void SchedulerPacking::SchedulerPacking::PackOperations()
                 {
                     auto *ofmConn = primaryOp->OFM();
                     ofmConn->tensor = nextOp->OFM()->tensor;
+                    ofmConn->SetType(nextOp->OFM()->Type());
                     ofmConn->quantization.quantMin = nextOp->Output(TensorUsage::OFM)->quantization.quantMin;
                     ofmConn->quantization.quantMax = nextOp->Output(TensorUsage::OFM)->quantization.quantMax;
                 }
@@ -293,6 +294,7 @@ void SchedulerPacking::SchedulerPacking::PackOperations()
                 {
                     auto *ofmConn = primaryOp->OFM();
                     ofmConn->tensor = nextOp->OFM()->tensor;
+                    ofmConn->SetType(nextOp->OFM()->Type());
                     ofmConn->shape = nextOp->OFM()->shape;
                     ofmConn->transpose = nextOp->OFM()->transpose;
                 }
@@ -300,6 +302,7 @@ void SchedulerPacking::SchedulerPacking::PackOperations()
                 {
                     auto *ofmConn = primaryOp->OFM();
                     ofmConn->tensor = nextOp->OFM()->tensor;
+                    ofmConn->SetType(nextOp->OFM()->Type());
                     ofmConn->shape = nextOp->OFM()->shape;
                     ofmConn->reverse = nextOp->OFM()->reverse;
                 }
@@ -474,6 +477,7 @@ void SchedulerPacking::InitSchedulerConnection(
     schedConn->reverse = conn.reverse;
     schedConn->resamplingMode = ArchResampling::None;
     schedConn->rounding = conn.rounding;
+    schedConn->SetType(tensor->dataType);
     if ( schedConn->slice.stride )
     {
         schedConn->stepXY = schedConn->slice.stride.WH<int>();

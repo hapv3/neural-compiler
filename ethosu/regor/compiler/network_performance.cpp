@@ -319,9 +319,9 @@ void NetworkPerformance::AddToDatabase(const PerformanceResult &perf, SchedulerO
         fmt::format("{}", schedOp->TryIFM(1) ? EnumToString(schedOp->IFM(1)->tensor->format) : ""),
         fmt::format("{}", EnumToString(schedOp->OFM()->tensor->format)),
         // Data types
-        fmt::format("{}", EnumToString(schedOp->IFM(0)->tensor->dataType)),
-        fmt::format("{}", schedOp->TryIFM(1) ? EnumToString(schedOp->IFM(1)->tensor->dataType) : ""),
-        fmt::format("{}", EnumToString(schedOp->OFM()->tensor->dataType)),
+        fmt::format("{}", EnumToString(schedOp->IFM(0)->Type())),
+        fmt::format("{}", schedOp->TryIFM(1) ? EnumToString(schedOp->IFM(1)->Type()) : ""),
+        fmt::format("{}", EnumToString(schedOp->OFM()->Type())),
         // IFM Buffering
         std::to_string(schedOp->IFM(0)->preBuffer),
         schedOp->TryIFM(1) ? std::to_string(schedOp->IFM(1)->preBuffer) : "",
@@ -503,21 +503,21 @@ PerformanceResult NetworkPerformance::EstimateFullOpPerformance(
     auto ofm = schedOp->OFM();
     result.memory[ofm->tensor->memArea.memory].access[AccessType::FeatureMap].bytesWritten += byteAccess.ofmWrite;
     result.memory[ofm->tensor->memArea.memory]
-        .writeTransferOverhead += byteAccess.ofmWrite - DataTypeStorageSizeBytes(ofm->tensor->dataType, access.ofmWrite);
+        .writeTransferOverhead += byteAccess.ofmWrite - DataTypeStorageSizeBytes(ofm->Type(), access.ofmWrite);
 
     // IFM1 read
     auto ifm = schedOp->IFM(0);
     result.memory[ifm->tensor->memArea.memory].access[AccessType::FeatureMap].bytesRead += byteAccess.ifmRead[0];
     result.memory[ifm->tensor->memArea.memory]
-        .readTransferOverhead += byteAccess.ifmRead[0] - DataTypeStorageSizeBytes(ifm->tensor->dataType, access.ifmRead[0]);
+        .readTransferOverhead += byteAccess.ifmRead[0] - DataTypeStorageSizeBytes(ifm->Type(), access.ifmRead[0]);
 
     // IFM2 read
     auto ifm2 = schedOp->TryIFM(1);
     if ( ifm2 )
     {
         result.memory[ifm2->tensor->memArea.memory].access[AccessType::FeatureMap].bytesRead += byteAccess.ifmRead[1];
-        result.memory[ifm2->tensor->memArea.memory].readTransferOverhead +=
-            byteAccess.ifmRead[1] - DataTypeStorageSizeBytes(ifm2->tensor->dataType, access.ifmRead[1]);
+        result.memory[ifm2->tensor->memArea.memory]
+            .readTransferOverhead += byteAccess.ifmRead[1] - DataTypeStorageSizeBytes(ifm2->Type(), access.ifmRead[1]);
     }
 
     // Reads/writes to temporary or intermediate memories
@@ -526,11 +526,11 @@ PerformanceResult NetworkPerformance::EstimateFullOpPerformance(
     {
         result.memory[scratch->tensor->memArea.memory].access[AccessType::FeatureMap].bytesRead += byteAccess.tmpRead;
         result.memory[scratch->tensor->memArea.memory]
-            .readTransferOverhead += byteAccess.tmpRead - DataTypeStorageSizeBytes(scratch->tensor->dataType, access.tmpRead);
+            .readTransferOverhead += byteAccess.tmpRead - DataTypeStorageSizeBytes(scratch->Type(), access.tmpRead);
 
         result.memory[scratch->tensor->memArea.memory].access[AccessType::FeatureMap].bytesWritten += byteAccess.tmpWrite;
-        result.memory[scratch->tensor->memArea.memory].readTransferOverhead +=
-            byteAccess.tmpWrite - DataTypeStorageSizeBytes(scratch->tensor->dataType, access.tmpWrite);
+        result.memory[scratch->tensor->memArea.memory]
+            .readTransferOverhead += byteAccess.tmpWrite - DataTypeStorageSizeBytes(scratch->Type(), access.tmpWrite);
     }
 
     // Weight/scale reads
