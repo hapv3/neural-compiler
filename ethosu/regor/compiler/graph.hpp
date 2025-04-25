@@ -151,6 +151,14 @@ public:
 
     void SetScheduledOrder(std::vector<Operation *> operations) { _opsInScheduledOrder = std::move(operations); }
 
+    // Traverse the graph in right-to-left reverse post-order but processing tensor writers left-to-right.
+    // This means in below graph, where A and B both write to the input tensor of C, A will be processed
+    // before B.
+    //            A   B
+    //             \ /
+    //              |
+    //              C
+    // The rationale is to preserve the order that partial writes are added to the graph.
     template<typename OPFUNC>
     static void TraverseGraphFromEnd(const std::vector<std::shared_ptr<Tensor>> &from, OPFUNC opFunc)
     {
@@ -166,9 +174,10 @@ public:
 
         for ( const auto &tensor : from )
         {
-            for ( const auto &op : tensor->Writers() )
+            const auto &writers = tensor->Writers();
+            for ( auto it = writers.crbegin(); it != writers.crend(); it++ )
             {
-                stack.emplace(false, op);
+                stack.emplace(false, *it);
             }
         }
 
@@ -189,11 +198,12 @@ public:
                 stack.emplace(true, entry.op);
                 for ( const auto &pair : entry.op->Inputs().pairs() )
                 {
-                    for ( const auto &op : pair.second.tensor->Writers() )
+                    const auto &writers = pair.second.tensor->Writers();
+                    for ( auto it = writers.crbegin(); it != writers.crend(); it++ )
                     {
-                        if ( visited.count(op.get()) == 0 )
+                        if ( visited.count(it->get()) == 0 )
                         {
-                            stack.emplace(false, op);
+                            stack.emplace(false, *it);
                         }
                     }
                 }

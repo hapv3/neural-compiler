@@ -950,6 +950,53 @@ bool TfLiteSupportedOperators::ConstraintLog(const Operation *op)
     return true;
 }
 
+bool TfLiteSupportedOperators::ConstraintLSTM(const Operation *op)
+{
+    OpType opType = op->Type();
+    if ( opType != OpType::UnidirectionalSequenceLstm )
+    {
+        return true;
+    }
+
+    for ( int i = 0; i <= 7; i++ )
+    {
+        // Check that all the gate weights are present. If they are not it's either invalid or using Couple
+        // Input and Forget Gate (CIFG), where the input gate is computed implicitly from the forget gate,
+        // which is not supported.
+        if ( op->Input(MakeTensorUsage(TensorUsage::Weights, i)) == nullptr )
+        {
+            Failure(op, "Missing gate weight tensor", "LSTM with implicit gate calculation is not supported");
+            return false;
+        }
+    }
+
+    for ( int i = 8; i <= 10; i++ )
+    {
+        if ( op->Input(MakeTensorUsage(TensorUsage::Weights, i)) )
+        {
+            Failure(op, "Peephole weight tensor present", "Peephole LSTM variant is not supported");
+            return false;
+        }
+    }
+
+    if ( op->Input(MakeTensorUsage(TensorUsage::Weights, 11)) || op->Input(MakeTensorUsage(TensorUsage::Scales, 4)) )
+    {
+        Failure(op, "Projection weight or bias tensor present", "LSTM with projection is not supported");
+        return false;
+    }
+
+    for ( int i = 5; i <= 8; i++ )
+    {
+        if ( op->Input(MakeTensorUsage(TensorUsage::Scales, i)) )
+        {
+            Failure(op, "Normalization coefficient tensor present", "LSTM with gate normalization is not supported");
+            return false;
+        }
+    }
+
+    return true;
+}
+
 void TfLiteSupportedOperators::Failure(const Operation *op, const std::string &message, const std::string &constraint)
 {
     assert(op);
@@ -1011,6 +1058,7 @@ TfLiteSupportedOperators::TfLiteSupportedOperators(IArchitectureConstraints *con
         &TfLiteSupportedOperators::ConstraintTransposeDims,
         &TfLiteSupportedOperators::ConstraintStridedSlice,
         &TfLiteSupportedOperators::ConstraintLog,
+        &TfLiteSupportedOperators::ConstraintLSTM,
     };
 }
 

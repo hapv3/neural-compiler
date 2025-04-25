@@ -288,6 +288,7 @@ regor_lib(
         "compiler/scheduler_packing.cpp"
         "compiler/scheduler_operation.cpp"
         "compiler/softmax.cpp"
+        "compiler/lstm.cpp"
         "compiler/tensor.cpp"
         "compiler/tensor_allocator.cpp"
         "compiler/tflite_graph_optimiser.cpp"

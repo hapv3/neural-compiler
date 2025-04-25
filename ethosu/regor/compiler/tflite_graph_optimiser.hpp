@@ -131,6 +131,8 @@ private:
 
     Operation *ConvertSoftmaxOps(Graph *const graph, Operation *const operation);
 
+    Operation *ConvertLstmOps(Graph *const graph, Operation *const operation);
+
     Operation *ConvertMeanOps(Graph *const, Operation *const operation);
 
     // Converts int8/uint8 Sigmoid and Tanh to a LUT based solution
@@ -253,6 +255,7 @@ public:
                 &TFLiteGraphOptimiser::ConvertLogToLUT,
                 &TFLiteGraphOptimiser::ConvertTanhSigmoidToLUT,
                 &TFLiteGraphOptimiser::ConvertSoftmaxOps,
+                &TFLiteGraphOptimiser::ConvertLstmOps,
                 &TFLiteGraphOptimiser::ReplacePadByExplicitPadding,
                 &TFLiteGraphOptimiser::ConvertMeanOps,
                 &TFLiteGraphOptimiser::ConvertPrelu,

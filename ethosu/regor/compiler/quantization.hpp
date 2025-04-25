@@ -89,4 +89,11 @@ public:
     }
 };
 
+inline int64_t Quantize(float value, const Quantization &quant)
+{
+    float scale = quant.scales.empty() ? 1.0f : float(quant.scales[0].Dequantize());
+    int64_t zp = quant.zeroPoints.empty() ? 0 : quant.zeroPoints[0];
+    return zp + int64_t(std::round(double(value / scale)));
+}
+
 }  // namespace regor

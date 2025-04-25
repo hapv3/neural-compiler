@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -75,12 +75,20 @@ void RescaleElementwise(HLCOperation *op)
     DataType ifmDataType = op->ifm[0].dataType;
     OpType opType = op->type;
 
+    double effectiveScale = 0;
+    if ( !op->subOps.empty() && (op->subOps[0].type == OpType::Sigmoid || op->subOps[0].type == OpType::Tanh) )
+    {
+        // Adjust for Sigmoid/Tanh effective output scale.
+        effectiveScale = 1.0 / 0x3000;
+    }
+
     bool allHaveScale =
         (!ifm1Quant->scales.empty() && !ofmQuant->scales.empty() && ifm2Quant != nullptr && !ifm2Quant->scales.empty());
     if ( opType == OpType::Mul )
     {
         if ( allHaveScale )
         {
+            ofmScale = effectiveScale ? effectiveScale : ofmScale;
             outScale = ElementwiseMulScale(ifm1Scale, ifm2Scale, ofmScale);
         }
     }
@@ -95,6 +103,7 @@ void RescaleElementwise(HLCOperation *op)
     }
     else if ( opType == OpType::Add || opType == OpType::Sub )
     {
+        ofmScale = effectiveScale ? effectiveScale : ofmScale;
         int bitDepth = DataTypeSizeBits(ifmDataType);
         bool useAdvancedScaling = false;
         uint32_t opaScale = 1;

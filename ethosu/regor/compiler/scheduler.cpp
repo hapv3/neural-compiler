@@ -206,8 +206,8 @@ int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *con
         conn->requireFullTensor = true;
     }
 
-    // Force linear format for read only tensors
-    if ( tensor->IsConstant() )
+    // Force linear format for read only or persistent tensors
+    if ( tensor->IsConstant() || tensor->isPersistent )
     {
         tensor->needsLinearFormat = true;
     }

@@ -50,6 +50,7 @@ protected:
     bool _disableChaining = false;
     std::vector<std::unique_ptr<SchedulerOperation>> _schedList;
     std::unordered_map<Tensor *, std::shared_ptr<SchedulerTensor>> _tensorMap;
+    std::unordered_map<Hash128, UniqueId> _bufferEquivalenceIdMap;
 
 public:
     SchedulerPacking(Architecture *arch, bool disableChaining);

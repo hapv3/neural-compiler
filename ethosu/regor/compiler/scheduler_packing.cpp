@@ -429,6 +429,18 @@ int SchedulerPacking::CanPack(const SchedulerOperation *schedOp, const Scheduler
         return 0;
     }
 
+    if ( schedOp->Type() == OpType::FullyConnected )
+    {
+        return 0;
+    }
+
+    // Do not pack persistent tensors with non persistent tensors
+    // if ( ifmTensor->isPersistent != prevOFM->isPersistent )
+    if ( prevOFM->isPersistent != nextOp->OFM()->tensor->isPersistent )
+    {
+        return 0;
+    }
+
     // Previous op in execution order doesn't connect to this one
     if ( prevOFM != ifmTensor && prevOFM != ifm2Tensor )
     {
@@ -497,6 +509,21 @@ void SchedulerPacking::InitSchedulerTensor(SchedulerTensor *schedTensor, Tensor 
     schedTensor->isGraphOutput = graph->IsOutput(tensor);
     schedTensor->isPersistent = graph->IsPersistent(tensor);
     schedTensor->uid = tensor->Uid();
+    if ( tensor->View().HasBuffer() )
+    {
+        // Assign equivalenceIds based on the underlying buffer of the GraphIR tensor (if present).
+        // This ensures that all tensors sharing a buffer will be allocated to the same memory.
+        auto buffer = tensor->View().Buffer();
+        auto eqId = _bufferEquivalenceIdMap.find(buffer->Hash());
+        if ( eqId == _bufferEquivalenceIdMap.end() )
+        {
+            _bufferEquivalenceIdMap.emplace(buffer->Hash(), schedTensor->equivalenceId);
+        }
+        else
+        {
+            schedTensor->equivalenceId = eqId->second;
+        }
+    }
 }
 
 std::unique_ptr<SchedulerOperation> SchedulerPacking::MakeSchedulerOperation(Operation *op, const Graph *graph)

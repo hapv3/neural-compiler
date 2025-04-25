@@ -331,15 +331,27 @@ public:
 
     void Rehash()
     {
-        // Calculate MD5 hash of data, prefixed by the size of data
-        const auto buffer = const_cast<const Buffer *>(this);
-        std::string sizeStr("<");
-        sizeStr += std::to_string(buffer->Size());
-        sizeStr += '>';
-        MD5 hash;
-        hash.Combine(reinterpret_cast<uint8_t *>(sizeStr.data()), int(sizeStr.size()));
-        hash.Combine(buffer->Data<uint8_t>(), buffer->Size());
-        hash.Get(_dataHash);
+        if ( Size() > 0 )
+        {
+            // Calculate MD5 hash of data, prefixed by the size of data
+            std::string sizeStr("<");
+            sizeStr += std::to_string(Size());
+            sizeStr += '>';
+            MD5 hash;
+            // Make sure the const overload of Data() is called
+            const uint8_t *data = std::as_const(*this).Data<uint8_t>();
+            hash.Combine(reinterpret_cast<uint8_t *>(sizeStr.data()), int(sizeStr.size()));
+            hash.Combine(data, Size());
+            hash.Get(_dataHash);
+        }
+        else
+        {
+            // If the buffer is empty use the pointer to this buffer object as a hash to
+            // disambiguate between different empty buffers.
+            uintptr_t ptr = reinterpret_cast<uintptr_t>(this);
+            _dataHash.v32[0] = _dataHash.v32[1] = static_cast<uint32_t>(ptr);
+            _dataHash.v32[2] = _dataHash.v32[3] = static_cast<uint32_t>(ptr >> 32);
+        }
     }
 
 private:

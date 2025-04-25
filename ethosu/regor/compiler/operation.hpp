@@ -122,6 +122,8 @@ struct TensorConnection
         rounding = r;
         return *this;
     }
+
+    const Shape &SliceShape() const { return slice.shape ? slice.shape : shape; }
 };
 
 

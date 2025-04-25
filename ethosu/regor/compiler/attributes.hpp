@@ -280,6 +280,18 @@ struct mirror_pad_mode_attr_t
     END_FIELD_TABLE()
 };
 
+struct unidirectional_sequence_lstm_attr_t
+{
+    int cell_clip;
+    int projection_clip;
+    bool time_major;
+    BEGIN_FIELD_TABLE(unidirectional_sequence_lstm_attr_t)
+        ATTR_FIELD(cell_clip, 0)
+        ATTR_FIELD(projection_clip, 1)
+        ATTR_FIELD(time_major, 2)
+    END_FIELD_TABLE()
+};
+
 #define REDUCED_HASH(hash) (hash & 0x000FFFFF)
 
 DynamicRef CreateAttribute(uint32_t hash);

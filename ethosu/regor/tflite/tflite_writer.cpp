@@ -169,12 +169,20 @@ std::unique_ptr<const uint8_t[]> TfLiteWriter::SerialiseImpl(const std::vector<s
                 _opcodes[opcode_desc] = opcode_index;
             }
 
-            std::vector<int> inputs, outputs;
+            std::vector<int> inputs, outputs, intermediates;
             for ( const auto &tensor : SortedInputTensors(operation, type) )
             {
                 // Skip placeholder tensors
                 if ( graph->IsPlaceholder(tensor) ) continue;
-                inputs.push_back(SerialisedTensorIndex(tensor, tensor_address_map, *graph));
+                if ( (operation->UsageOfTensor(tensor) & TensorUsage::TypeMask) == TensorUsage::Scratch )
+                {
+                    // Scratch usage means this is an intermediate tensor
+                    intermediates.push_back(SerialisedTensorIndex(tensor, tensor_address_map, *graph));
+                }
+                else
+                {
+                    inputs.push_back(SerialisedTensorIndex(tensor, tensor_address_map, *graph));
+                }
             }
             for ( const auto &connection : operation->Outputs() )
             {
@@ -188,7 +196,6 @@ std::unique_ptr<const uint8_t[]> TfLiteWriter::SerialiseImpl(const std::vector<s
             tflite::CustomOptionsFormat custom_options_format = tflite::CustomOptionsFormat::FLEXBUFFERS;
             flatbuffers::Offset<flatbuffers::Vector<uint8_t>> custom_options = 0;
             flatbuffers::Offset<flatbuffers::Vector<uint8_t>> mvi = 0;  // mutating_variable_inputs
-            flatbuffers::Offset<flatbuffers::Vector<int32_t>> intermediates = 0;
             uint64_t large_custom_options_offset = 0;
             uint64_t large_custom_options_size = 0;
 
@@ -212,16 +219,16 @@ std::unique_ptr<const uint8_t[]> TfLiteWriter::SerialiseImpl(const std::vector<s
                 custom_options_format = tflite_operator->custom_options_format();
                 custom_options = FlatbufferUtils::CopyVector<uint8_t>(_flatbuffer, tflite_operator->custom_options());
                 mvi = FlatbufferUtils::CopyVector<uint8_t>(_flatbuffer, tflite_operator->mutating_variable_inputs());
-                intermediates = FlatbufferUtils::CopyVector<int32_t>(_flatbuffer, tflite_operator->intermediates());
             }
 
             auto serialised_inputs = _flatbuffer.CreateVector<int32_t>(inputs);
+            auto serialised_intermediates = _flatbuffer.CreateVector<int32_t>(intermediates);
             auto serialised_outputs = _flatbuffer.CreateVector<int32_t>(outputs);
             auto serialised_options = SerialiseOptions(operation, type);
             auto serialised_options2 = SerialiseOptions2(operation, type);
 
             _serialised_operations.push_back(tflite::CreateOperator(_flatbuffer, opcode_index, serialised_inputs, serialised_outputs,
-                builtin_options_type, serialised_options, custom_options, custom_options_format, mvi, intermediates,
+                builtin_options_type, serialised_options, custom_options, custom_options_format, mvi, serialised_intermediates,
                 large_custom_options_offset, large_custom_options_size, builtin_options_2_type, serialised_options2));
         }
 

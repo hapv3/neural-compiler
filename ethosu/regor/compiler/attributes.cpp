@@ -55,6 +55,7 @@ DynamicRef CreateAttribute(uint32_t reducedHash)
         CASE_MAKE_ATTR_INSTANCE(transpose_conv2d_attr_t);
         CASE_MAKE_ATTR_INSTANCE(while_attr_t);
         CASE_MAKE_ATTR_INSTANCE(mirror_pad_mode_attr_t);
+        CASE_MAKE_ATTR_INSTANCE(unidirectional_sequence_lstm_attr_t);
         default:
             assert(false && "No attribute has this reduced hash");
             // Add a new XXX_attr_t struct to the header then

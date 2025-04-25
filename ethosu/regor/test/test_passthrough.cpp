@@ -515,7 +515,17 @@ TEST_CASE("passthrough")
     }
 
     {
-        // Generate simple output tensor
+        // Generate intermediate tensor (tensor index 4)
+        // Intermediates cannot be constant and must use buffer 0
+        const std::vector<int32_t> shape = {1, 11, 11, 3};
+        const tflite::TensorType type = tflite::TensorType::INT16;
+        const int bufferIndex = 0;
+        const std::string name = "intermediate";
+        tensors.push_back(tflite::CreateTensorDirect(fbb, &shape, type, bufferIndex, name.c_str()));
+    }
+
+    {
+        // Generate simple output tensor (tensor index 5)
         const std::vector<int32_t> shape = {1, 11, 11, 3};
         const tflite::TensorType type = tflite::TensorType::FLOAT32;
         const int bufferIndex = 0;
@@ -536,10 +546,10 @@ TEST_CASE("passthrough")
         // Generate 1 operator
         const uint32_t opcodeIndex = 0;
         const std::vector<int32_t> inputs = {0, 1, 2, 3};
-        const std::vector<int32_t> outputs = {4};
+        const std::vector<int32_t> intermediates = {4};
+        const std::vector<int32_t> outputs = {5};
         const std::vector<uint8_t> customOptions = random_vector<uint8_t>(5);
         const std::vector<uint8_t> mutatingVariableInputs = random_vector<uint8_t>(4);
-        const std::vector<int32_t> intermediates = random_vector<int32_t>(4);
 
         // Generate builtin_options or builtin_options2
         flatbuffers::Offset<> builtinOptions = 0;
@@ -567,7 +577,7 @@ TEST_CASE("passthrough")
     {
         // Generate 1 subgraph
         const std::vector<int32_t> inputs = {0 /* ifm0 */};
-        const std::vector<int32_t> outputs = {4 /* ofm */};
+        const std::vector<int32_t> outputs = {5 /* ofm */};
         const char *name = "subgraph1";
         subgraphs.push_back(tflite::CreateSubGraphDirect(fbb, &tensors, &inputs, &outputs, &operations, name));
     }

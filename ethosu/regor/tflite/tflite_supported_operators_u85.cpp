@@ -101,6 +101,7 @@ TfLiteSupportedOperatorsU85::TfLiteSupportedOperatorsU85(IArchitectureConstraint
         OpType::ReduceAll,
         OpType::MemoryCopy,
         OpType::Log,
+        OpType::UnidirectionalSequenceLstm,
         // clang-format on
     };
     _supportedDataTypes = {

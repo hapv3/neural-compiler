@@ -90,6 +90,27 @@ static void SetKernel(const std::shared_ptr<Operation> &operation, const Point2i
     operation->SetKernel(std::move(kernel));
 }
 
+static void ReshapeFullyConnectedWeights(const std::shared_ptr<Operation> &operation, TensorUsage weightUsage)
+{
+    auto weight_tensor = operation->Input(weightUsage)->tensor;
+    if ( weight_tensor->AxisOrder() == AxisOrder::Unknown )
+    {
+        const auto &shape = weight_tensor->StorageShape();
+        // Reshape weight tensor from (num_outputs, ..., num_inputs) to (num_outputs, 1, 1, num_inputs)
+        if ( shape.Size() >= 2 && shape.Elements() == (shape[0] * shape[-1]) )
+        {
+            weight_tensor->Reshape(Shape(shape[0], 1, 1, shape[-1]));
+            weight_tensor->SetAxisOrder(AxisOrder::OHWI);
+            operation->Input(weightUsage)->shape = weight_tensor->StorageShape();
+        }
+    }
+    else
+    {
+        // Weight tensor has already been reshaped
+        assert(weight_tensor->AxisOrder() == AxisOrder::OHWI);
+    }
+}
+
 const tflite::Model *TfLiteReader::LoadModel(const void *input, size_t size)
 {
     const uint8_t *buffer = static_cast<const uint8_t *>(input);
@@ -192,6 +213,7 @@ void TfLiteReader::LoadGraphs(const uint8_t *input, const tflite::Model *model,
             assert(tflite_inputs);
             auto tflite_outputs = tflite_operator->outputs();
             assert(tflite_outputs);
+            auto tflite_intermediates = tflite_operator->intermediates();
             const auto &input_tensors = *tflite_inputs;  // A vector of indices into the `tensors` vector
             int indirect_index = 0;                      // An index into `input_tensors`
             int ifm_count = 0;
@@ -240,6 +262,19 @@ void TfLiteReader::LoadGraphs(const uint8_t *input, const tflite::Model *model,
                 auto tensor = std::make_shared<Tensor>(fmt::format("placeholder-for-{}-IFM", ext_key), DataType::None);
                 operation->ConnectInput(TensorUsage::IFM, tensor);
                 placeholder.push_back(std::move(tensor));
+            }
+
+            if ( tflite_intermediates )
+            {
+                // Connect operation to its intermediate tensors. They are added as inputs with usage Intermediate.
+                int intermediate_count = 0;
+                for ( const int tensor_index : *tflite_intermediates )
+                {
+                    const auto &intermediate = tensors.at(tensor_index);
+                    assert(tensorQuantization.count(intermediate->Uid()) > 0);
+                    operation->ConnectInput(MakeTensorUsage(TensorUsage::Scratch, intermediate_count++), intermediate)
+                        .Set(tensorQuantization[intermediate->Uid()]);
+                }
             }
 
             // Connect operation to its output tensors
@@ -430,6 +465,14 @@ std::shared_ptr<Tensor> TfLiteReader::ParseTensor(const tflite::Tensor *tflite_t
         LOG_WARN("Tensor '{}' contains sparsity information, which is not supported and will be ignored.\n", name);
     }
 
+    if ( tflite_tensor->is_variable() )
+    {
+        // Create an empty buffer for variable tensor
+        assert(buffer == nullptr && "Unexpected buffer for variable tensor!");
+        auto emptyBuffer = std::make_shared<Buffer>(std::vector<int>{});
+        tensor->SetBuffer(emptyBuffer);
+    }
+
     tensor->SetPassthrough(tflite_tensor);
 
     return tensor;
@@ -510,23 +553,8 @@ void TfLiteReader::ParseOperatorOptions(
             const auto options = GetBuiltinOptions<tflite::FullyConnectedOptions>(tflite_operator);
             activation_function = options->fused_activation_function();
             // TODO: Are `weights_format`, `keep_num_dims` or `asymmetric_quantize_inputs` used?
+            ReshapeFullyConnectedWeights(operation, TensorUsage::Weights);
             auto weight_tensor = operation->Input(TensorUsage::Weights)->tensor;
-            if ( weight_tensor->AxisOrder() == AxisOrder::Unknown )
-            {
-                const auto &shape = weight_tensor->StorageShape();
-                // Reshape weight tensor from (num_outputs, ..., num_inputs) to (num_outputs, 1, 1, num_inputs)
-                if ( shape.Size() >= 2 && shape.Elements() == (shape[0] * shape[-1]) )
-                {
-                    weight_tensor->Reshape(Shape(shape[0], 1, 1, shape[-1]));
-                    weight_tensor->SetAxisOrder(AxisOrder::OHWI);
-                    operation->Input(TensorUsage::Weights)->shape = weight_tensor->StorageShape();
-                }
-            }
-            else
-            {
-                // Weight tensor has already been reshaped
-                assert(weight_tensor->AxisOrder() == AxisOrder::OHWI);
-            }
             if ( operation->Input(TensorUsage::Scales) == nullptr )
             {
                 // Op has no bias; add bias tensor filled with zeros
@@ -698,6 +726,23 @@ void TfLiteReader::ParseOperatorOptions(
         }
         break;
 
+        case tflite::BuiltinOptions::UnidirectionalSequenceLSTMOptions:
+        {
+            const auto options = GetBuiltinOptions<tflite::UnidirectionalSequenceLSTMOptions>(tflite_operator);
+            operation->Attribute<unidirectional_sequence_lstm_attr_t>()->cell_clip = options->cell_clip();
+            operation->Attribute<unidirectional_sequence_lstm_attr_t>()->projection_clip = options->proj_clip();
+            operation->Attribute<unidirectional_sequence_lstm_attr_t>()->time_major = options->time_major();
+
+            for ( int i = 0; i < 12; i++ )
+            {
+                if ( operation->Input(MakeTensorUsage(TensorUsage::Weights, i)) )
+                {
+                    ReshapeFullyConnectedWeights(operation, MakeTensorUsage(TensorUsage::Weights, i));
+                }
+            }
+        }
+        break;
+
         case tflite::BuiltinOptions::ResizeBilinearOptions:
         case tflite::BuiltinOptions::ResizeNearestNeighborOptions:
             break;
@@ -768,7 +813,6 @@ void TfLiteReader::ParseOperatorOptions(
         case tflite::BuiltinOptions::FillOptions:
         case tflite::BuiltinOptions::BidirectionalSequenceLSTMOptions:
         case tflite::BuiltinOptions::BidirectionalSequenceRNNOptions:
-        case tflite::BuiltinOptions::UnidirectionalSequenceLSTMOptions:
         case tflite::BuiltinOptions::FloorModOptions:
         case tflite::BuiltinOptions::RangeOptions:
         case tflite::BuiltinOptions::SquaredDifferenceOptions:

@@ -26,6 +26,7 @@
 #include "common/transpose_type.hpp"
 #include "graph.hpp"
 #include "graph_optimiser.hpp"
+#include "lstm.hpp"
 #include "op_type.hpp"
 #include "operation.hpp"
 #include "optimiser_utils.hpp"
@@ -1699,6 +1700,16 @@ Operation *TFLiteGraphOptimiser::ConvertSoftmaxOps(Graph *const graph, Operation
 {
     UNUSED(graph);
     return _softmax->ConvertOp(operation);
+}
+
+Operation *TFLiteGraphOptimiser::ConvertLstmOps(Graph *const graph, Operation *const operation)
+{
+    if ( operation->Type() == OpType::UnidirectionalSequenceLstm )
+    {
+        auto lstmLowering = LSTM(operation, _db, graph);
+        return lstmLowering.ConvertOp();
+    }
+    return operation;
 }
 
 Operation *TFLiteGraphOptimiser::ConvertMeanOps(Graph *const, Operation *const operation)

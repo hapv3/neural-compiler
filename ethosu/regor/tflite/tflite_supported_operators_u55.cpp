@@ -80,6 +80,7 @@ TfLiteSupportedOperatorsU55::TfLiteSupportedOperatorsU55(IArchitectureConstraint
         OpType::HardSwish,
         OpType::MemoryCopy,
         OpType::Log,
+        OpType::UnidirectionalSequenceLstm,
         // clang-format on
     };
     _supportedDataTypes = {

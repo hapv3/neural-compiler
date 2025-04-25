@@ -261,6 +261,33 @@ inline Operation *CreateRescaleAdd(const std::shared_ptr<Tensor> &ifm, const std
     return op;
 }
 
+inline Operation *CreateFullyConnected(const std::string &name, const std::shared_ptr<Tensor> &ifm,
+    const std::shared_ptr<Tensor> &weights, const Quantization &ifmQuantization, const Quantization &weightQuantization,
+    const Quantization &ofmQuantization, const Shape ifmShape, DataType ofmDtype = DataType::None,
+    std::shared_ptr<Tensor> bias = nullptr, const Quantization &biasQuantization = Quantization::Unit())
+{
+    int numOutputs = weights->StorageShape()[0];
+
+    auto op = std::make_shared<Operation>(OpType::FullyConnected);
+    op->ConnectInput(TensorUsage::IFM, ifm).Set(ifmShape).Set(ifmQuantization);
+    op->ConnectInput(TensorUsage::Weights, weights).Set(weights->StorageShape()).Set(weightQuantization);
+
+    if ( bias == nullptr )
+    {
+        DataType biasType = ifm->Type() == DataType::Int16 ? DataType::Int64 : DataType::Int32;
+        std::vector<uint8_t> zeroBuf(DataTypeStorageSizeBytes(biasType, 1), 0);
+        bias = CreateConstTensor(name + std::string("_bias"), biasType, std::make_shared<Buffer>(std::move(zeroBuf)));
+    }
+
+    op->ConnectInput(TensorUsage::Scales, bias).Set(Shape(numOutputs)).Set(biasQuantization);
+
+    // Setup OFM
+    if ( ofmDtype == DataType::None ) ofmDtype = ifm->Type();
+    auto ofm = std::make_shared<Tensor>(name + "_ofm", ofmDtype, Shape(ifmShape[0], numOutputs));
+    op->ConnectOutput(TensorUsage::OFM, ofm).Set(ofmQuantization);
+    return op.get();
+}
+
 inline TransposeType CalculateTransposeType(const Operation &operation)
 {
     const auto *paramsConn = operation.Input(TensorUsage::Params);
