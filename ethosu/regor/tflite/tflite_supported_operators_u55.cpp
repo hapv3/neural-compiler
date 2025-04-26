@@ -69,6 +69,7 @@ TfLiteSupportedOperatorsU55::TfLiteSupportedOperatorsU55(IArchitectureConstraint
         OpType::ExpandDims,
         OpType::ReduceSum,
         OpType::ResizeBilinear,
+        OpType::ResizeNearestNeighbor,
         OpType::Rsqrt,
         OpType::Pack,
         OpType::Unpack,
@@ -149,9 +150,28 @@ bool TfLiteSupportedOperatorsU55::ConstraintBroadcastShapes(const Operation *op)
 
 bool TfLiteSupportedOperatorsU55::ConstraintResize(const Operation *op)
 {
-    if ( op->Type() != OpType::ResizeBilinear )
+    OpType opType = op->Type();
+    if ( !(opType == OpType::ResizeBilinear || opType == OpType::ResizeNearestNeighbor) )
     {
         return true;
+    }
+    bool halfPixelCentersRB = false;
+    bool alignCorners = false;
+    const auto *passthrough = static_cast<const tflite::Operator *>(op->Passthrough());
+    assert(passthrough);
+
+    if ( opType == OpType::ResizeBilinear )
+    {
+        const auto *opt = passthrough->builtin_options_as_ResizeBilinearOptions();
+        assert(opt);
+        alignCorners = opt->align_corners();
+        halfPixelCentersRB = opt->half_pixel_centers();
+    }
+    else if ( opType == OpType::ResizeNearestNeighbor )
+    {
+        const auto *opt = passthrough->builtin_options_as_ResizeNearestNeighborOptions();
+        assert(opt);
+        alignCorners = opt->align_corners();
     }
     auto ifmConn = op->Input(TensorUsage::IFM);
     auto ofmConn = op->Output(TensorUsage::OFM);
@@ -169,29 +189,34 @@ bool TfLiteSupportedOperatorsU55::ConstraintResize(const Operation *op)
         return true;
     }
 
-    const auto *passthrough = static_cast<const tflite::Operator *>(op->Passthrough());
-    assert(passthrough);
-    const auto *opt = passthrough->builtin_options_as_ResizeBilinearOptions();
-    assert(opt);
-    if ( opt->align_corners() )
+    float hUpscale;
+    float wUpscale;
+    if ( alignCorners )
     {
-        Failure(op, "Align Corners attribute is true", "Align Corners must be false");
-        return false;
+        hUpscale = ofmShape.Height() == 1 ? 1 : float(ofmShape.Height() - 1) / (ifmShape.Height() - 1);
+        wUpscale = ofmShape.Width() == 1 ? 1 : float(ofmShape.Width() - 1) / (ifmShape.Width() - 1);
     }
-    if ( opt->half_pixel_centers() )
+    else
     {
-        Failure(op, "Half Pixel Centers attribute is true", "Half Pixel Centers must be false");
+        hUpscale = float(ofmShape.Height()) / ifmShape.Height();
+        wUpscale = float(ofmShape.Width()) / ifmShape.Width();
+    }
+
+    if ( halfPixelCentersRB )
+    {
+        Failure(op, "Half Pixel Centers attribute is true", "Half Pixel Centers must be false for Resize Bilinear");
         return false;
     }
     std::string constraint =
         "If not (IFM H == IFM W == 1) and not IFM Shape == OFM Shape\n"
         "\tIf W upScale != H upScale:\n"
         "\t\tOFM W or H must be 1, and scaling in the dim that is must also be 1\n"
-        "\tIF W upScale == H upScale \n"
-        "\t\tupScale needs to be one of: 2x/4x/8x";
+        "\tIf align corners:"
+        "\t\tupScale is definied as OFM H-1 / IFM H - 1"
+        "\tElse:"
+        "\t\tupScale is defined as OFM H/IFM H"
+        "\tupScale needs to be one of: 2x/4x/8x";
 
-    int hUpscale = ofmShape.Height() / ifmShape.Height();
-    int wUpscale = ofmShape.Width() / ifmShape.Width();
 
     if ( hUpscale != wUpscale )
     {
@@ -204,10 +229,12 @@ bool TfLiteSupportedOperatorsU55::ConstraintResize(const Operation *op)
             return false;
         }
     }
-    else if ( !((ifmShape.Height() == 1 && ifmShape.Width() == 1) || (ofmShape.Height() % (2 * ifmShape.Height()) == 0 && hUpscale > 1 && hUpscale <= 8)) )
+
+    auto upscale = std::max(hUpscale, wUpscale);
+    if ( !((ifmShape.Height() == 1 && ifmShape.Width() == 1) ||
+             (std::trunc(upscale) == upscale && IsPowerOfTwo(int(upscale)) && upscale > 1 && upscale <= 8)) )
     {
-        Failure(op,
-            fmt::format("Scaling matches and operation has unsupported scaling={}", float(ofmShape.Height()) / ifmShape.Height()), constraint);
+        Failure(op, fmt::format("Scaling matches and operation has unsupported upScaling={}", upscale), constraint);
         return false;
     }
     return true;

@@ -1279,12 +1279,10 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTransposeConv2D(Archit
     return result;
 }
 
-// TODO: Move this to run prior to decomposition.
 std::vector<std::unique_ptr<SchedulerOperation>> LegaliseResize(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
 {
-    // Convert ResizeBilinear/NearestNeighbor to a number of kernel 1x1 average pools with nearest neighbor x2 upScaling
-    // and a final average pool with a kernel size that depends upon the resize ops upScaling factor (x2, x4 or x8). The
-    // maximum upscale factor is limited to x8 because of the limit 8x8 kernel size limit for average pool with padding.
+    // Convert Resize (Bilinear or Nearest) into a sequence of 1×1 AvgPool ops followed by a final
+    // larger AvgPool / DepthwiseConv2D with kernel up to 8x8.
 
     std::vector<std::unique_ptr<SchedulerOperation>> result;
 
@@ -1296,14 +1294,39 @@ std::vector<std::unique_ptr<SchedulerOperation>> LegaliseResize(Architecture *ar
     auto *attr = op->Attribute<resize_attr_t>();
     auto upscaleH = attr->scaleY.n;
     auto upscaleW = attr->scaleX.n;
-    auto remainingUpscale = std::max(upscaleW, upscaleH);
     bool canLegalise = true;
 
     ArchRequirements req{};
     OperatorQuery(arch, op.get(), &req);
-    auto reqScale = QuantizedScale(1, IntLog2(attr->scaleX.n * attr->scaleY.n));
 
+    auto ofmShape = ofmConn->shape;
+    auto ifmShape = ifmConn->shape;
 
+    // half_pixel_centers / align_corners pattern match
+    bool isHalfPixelCenter = false;
+    if ( attr->scaleY.d == 2 && attr->scaleX.d == 2 && upscaleH % 2 == 0 && upscaleW % 2 == 0 )
+    {
+        upscaleW /= 2;
+        upscaleH /= 2;
+
+        if ( attr->offset.x == -1 * (upscaleW - 1) && attr->offset.y == -1 * (upscaleH - 1) )
+        {
+            isHalfPixelCenter = true;
+        }
+    }
+    auto remainingUpscale = std::max(upscaleW, upscaleH);
+
+    bool isAlignCorners = false;
+    if ( std::max(float(ofmShape.Height() - 1) / std::max(ifmShape.Height() - 1, 1),
+             float(ofmShape.Width() - 1) / std::max(ifmShape.Width() - 1, 1)) == remainingUpscale )
+    {
+        if ( !(ifmShape.Height() == 1 && ifmShape.Width() == 1) )
+        {
+            isAlignCorners = true;
+        }
+    }
+    // Transform Gating
+    // Upscale must be one of 2, 4, or 8.
     if ( !IsPowerOfTwo(remainingUpscale) || remainingUpscale > 8 || remainingUpscale < 2 )
     {
         canLegalise = false;
@@ -1312,9 +1335,23 @@ std::vector<std::unique_ptr<SchedulerOperation>> LegaliseResize(Architecture *ar
     {
         canLegalise = false;
     }
-    else if ( ofmConn->quantization.scales[0] != reqScale )
+    else if ( attr->mode == tosa::ResizeMode::BILINEAR )
     {
-        canLegalise = false;
+        auto reqScale = QuantizedScale(1, IntLog2(attr->scaleX.n * attr->scaleY.n));
+
+        if ( ofmConn->quantization.scales[0] != reqScale || isHalfPixelCenter || attr->offset.x != 0 ||
+             attr->offset.y != 0 || attr->scaleX.d != 1 || attr->scaleY.d != 1 )
+        {
+            canLegalise = false;
+        }
+    }
+    else if ( attr->mode == tosa::ResizeMode::NEAREST )
+    {
+        // Must be one of align corners or half pixel centers
+        if ( !(isAlignCorners || isHalfPixelCenter) )
+        {
+            canLegalise = false;
+        }
     }
 
     if ( !canLegalise )
@@ -1323,11 +1360,10 @@ std::vector<std::unique_ptr<SchedulerOperation>> LegaliseResize(Architecture *ar
         return result;
     }
 
-    auto ofmShape = ofmConn->shape;
-    auto ifmShape = ifmConn->shape;
-
-    ofmConn->tensor->dataType = ifmConn->tensor->dataType;
+    ofmConn->tensor->dataType = ifmConn->tensor->dataType;  // Force OFM datatype to match IFM
     ifmConn->resamplingMode = ArchResampling::Nearest;
+    ifmConn->quantization = Quantization::Unit();
+
     // Perform 2x upScaling up to the last required
     while ( remainingUpscale > 2 )
     {
@@ -1349,13 +1385,65 @@ std::vector<std::unique_ptr<SchedulerOperation>> LegaliseResize(Architecture *ar
     ifmConn->resamplingMode = ArchResampling::Nearest;
     auto newOp = std::make_unique<SchedulerOperation>(OpType::AvgPool);
     *newOp->ConnectInput(TensorUsage::IFM, ifmConn->tensor) = *ifmConn;
+    // Set Kernel
+    Kernel kernel = Kernel::UnitKernel();
+    if ( attr->mode == tosa::ResizeMode::BILINEAR )
+    {
+        if ( !isAlignCorners )
+        {
+            kernel = kernel.WithPadding({0, 0, upscaleH - 1, upscaleW - 1, 0, 0});
+        }
+        kernel = kernel.WithSize({upscaleW, upscaleH});
+    }
+    else
+    {
+        if ( isAlignCorners )
+        {
+            newOp = std::make_unique<SchedulerOperation>(OpType::DepthwiseConv2D);
+            *newOp->ConnectInput(TensorUsage::IFM, ifmConn->tensor) = *ifmConn;
+            // Weights
+            Shape wShape(ofmShape.Depth(), upscaleH, upscaleW, ofmShape.Depth());
+            kernel = kernel.WithSize({upscaleW, upscaleH});
+            auto wTensor = std::make_shared<SchedulerTensor>(DataType::Int8, wShape);
+            auto wTensorSrc = std::make_shared<Tensor>("resize_weights", DataType::Int8, wShape);
+            wTensorSrc->SetAxisOrder(AxisOrder::IHWO);
 
-    Kernel kernel = Kernel::UnitKernel().WithPadding({0, 0, upscaleH - 1, upscaleW - 1, 0, 0}).WithSize({upscaleW, upscaleH});
+            const auto wSize = wShape.Elements();
+            auto buffer = std::make_shared<Buffer>(std::make_unique<uint8_t[]>(wSize), wSize);
+            BufferView bufferView(buffer, 0, DataTypeSizeBits(DataType::Int8), wShape, {});
+            auto bufferValues = bufferView.WritableValues<uint8_t>();
+
+            const auto h = upscaleH / 2;
+            const auto w = upscaleW / 2;
+            for ( int i = 0; i < ofmShape.Depth(); i++ )
+            {
+                for ( int o = 0; o < ofmShape.Depth(); o++ )
+                {
+                    bufferValues[{i, h, w, o}] = 1;
+                }
+            }
+            wTensor->srcTensor = std::move(wTensorSrc);
+            wTensor->memArea = arch->ReadonlyMemory();
+            wTensor->bufferView = std::move(bufferView);
+            newOp->ConnectInput(TensorUsage::Weights, wTensor);
+            wTensor->storageShape = wTensor->bufferView.ViewShape();
+            newOp->Input(TensorUsage::Weights)->quantization = Quantization::Unit();
+            // Zero bias
+            auto biasTensor = std::make_shared<SchedulerTensor>(DataType::Int32, Shape(1));
+            auto bufBias = std::make_shared<Buffer>(Buffer::ConstValue<int32_t>(0));
+            biasTensor->memArea = arch->ReadonlyMemory();
+            biasTensor->bufferView = BufferView(bufBias, 0, DataTypeStorageSizeBits(biasTensor->dataType), {1}, {});
+            biasTensor->storageShape = biasTensor->bufferView.ViewShape();
+            newOp->ConnectInput(TensorUsage::Scales, biasTensor);
+        }
+    }
     newOp->SetKernel(kernel);
+
     ofmConn->quantization = Quantization::Unit();
-    ofmConn->rounding = RoundMode::AUTO;
+    ofmConn->rounding = RoundMode::DBL;
     *newOp->ConnectOutput(TensorUsage::OFM, ofmConn->tensor) = *ofmConn;
     result.emplace_back(std::move(newOp));
+
     return result;
 }
 
