@@ -170,7 +170,7 @@ static const uint32_t ONE_OVER_ONE_PLUS_X_LUT[] = {
     // clang-format on
 };
 
-Softmax::Softmax(OptimiserDatabase *db) : _db(db)
+Softmax::Softmax(OptimiserDatabase *db, IArchitectureConstraints *constraints) : _db(db), _constraints(constraints)
 {
 }
 
@@ -223,6 +223,36 @@ void Softmax::RecordOptimisation(Operation *const operation, Operation *op)
     }
 }
 
+Operation *Softmax::CreateTransposeMaxpool(Operation *const operation, TensorConnection *ifmConn, const Shape &transposePerm,
+    const Shape &transposeOFMShape, const Shape &maxPoolOFMStorageShape, const Quantization &noScaleQuant)
+{
+    std::shared_ptr transposeTens = ifmConn->tensor->Clone();
+    transposeTens->SetName(ifmConn->tensor->Name() + "_transpose");
+    transposeTens->SetStorageShape(transposeOFMShape);
+
+    auto transposeOp = std::make_shared<Operation>(OpType::Transpose);
+    auto transposeAttr = transposeOp->Attribute<transpose_attr_t>();
+    transposeAttr->perm = transposePerm;
+    transposeOp->CopyInput(TensorUsage::IFM, *ifmConn);
+    transposeOp->Input(TensorUsage::IFM)->Set(ifmConn->shape).Set(Quantization::Unit());
+    const auto &transposeConn = transposeOp->ConnectOutput(TensorUsage::OFM, transposeTens);
+    RecordOptimisation(operation, transposeOp.get());
+
+    auto maxOp = std::make_shared<Operation>(OpType::MaxPool);
+    auto transposeShape = transposeConn.shape;
+    int height = transposeShape.Height();
+    auto kernel = std::make_unique<Kernel>(Point2i(1, height), Point2i(1, 1), Point2i(1, 1));
+    auto ofm = std::make_shared<Tensor>(transposeTens->Name() + "/maxpool", transposeTens->Type());
+    ofm->SetStorageShape(maxPoolOFMStorageShape);
+    maxOp->SetKernel(std::move(kernel));
+    maxOp->ConnectInput(TensorUsage::IFM, transposeTens).Set(ifmConn->quantization);
+    maxOp->Input(TensorUsage::IFM)->shape = transposeShape;
+    maxOp->ConnectOutput(TensorUsage::OFM, ofm).Set(noScaleQuant);
+    maxOp->Output(TensorUsage::OFM)->shape = Shape(1, 1, transposeShape.Width(), transposeShape.Depth());
+
+    return maxOp.get();
+}
+
 Operation *Softmax::GetGraph8Bit(Operation *const operation, TensorConnection *ifmConn, TensorConnection *ofmConn)
 {
     const auto &ifmQuant = ifmConn->quantization;
@@ -238,11 +268,40 @@ Operation *Softmax::GetGraph8Bit(Operation *const operation, TensorConnection *i
     auto twoScaleQuant = oneScaleQuant;
     twoScaleQuant.scales[0] = {2, 0};
 
+    const Shape ifmShape3D = ReshapeTo3D(ifmConn->shape, {2, 1, 1}, 1);
+
     // PASS 0 - Depthwise Maxpool
-    auto op = CreateDepthwiseMaxpool(ifmConn->tensor, ifmConn->shape, ifmConn->quantization, noScaleQuant);
+    Operation *op;
+    auto queryResult = _constraints->OperatorQuery(OpType::Transpose);
+    bool hasFastTransposeSupport = queryResult.Any(QueryResult::Native) && !queryResult.Any(QueryResult::Emulated);
+    Shape transposeOFMShape;
+    Shape transposePerm;
+    Shape maxPoolOFMStorageShape;
+    // Determine transpose candidates and corresponding shapes
+    if ( ifmShape3D.Width() > 1 )
+    {
+        transposePerm = {2, 0, 1};
+        transposeOFMShape = ifmShape3D.Extract(2, 0, 1);
+        maxPoolOFMStorageShape = Shape(1, transposeOFMShape.Width(), transposeOFMShape.Depth(), 1);
+    }
+    else
+    {
+        transposePerm = {2, 1, 0};
+        transposeOFMShape = ifmShape3D.Extract(2, 1, 0);
+        maxPoolOFMStorageShape = Shape(1, transposeOFMShape.Depth(), 1, 1);
+    }
+    // Insert transpose when it has native support if not a no-op and depth becomes large enough to benefit
+    if ( hasFastTransposeSupport && ifmConn->shape.Depth() != ifmConn->shape.Elements() && transposeOFMShape.Depth() >= 16 )
+    {
+        op = CreateTransposeMaxpool(operation, ifmConn, transposePerm, transposeOFMShape, maxPoolOFMStorageShape, noScaleQuant);
+    }
+    else
+    {
+        op = CreateDepthwiseMaxpool(ifmConn->tensor, ifmConn->shape, ifmConn->quantization, noScaleQuant);
+    }
     op->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
-    auto ifmMax = op->Output(TensorUsage::OFM)->tensor;
     RecordOptimisation(operation, op);
+    auto ifmMax = op->Output(TensorUsage::OFM)->tensor;
 
     // PASS 1 - Sub
     auto subQuant = oneScaleQuant;

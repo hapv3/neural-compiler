@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -37,9 +37,10 @@ class Softmax
 {
 private:
     OptimiserDatabase *_db = nullptr;
+    IArchitectureConstraints *_constraints = nullptr;
 
 public:
-    Softmax(OptimiserDatabase *db);
+    Softmax(OptimiserDatabase *db, IArchitectureConstraints *constraints);
     Operation *ConvertOp(Operation *const operation);
 
 private:
@@ -47,6 +48,8 @@ private:
     Operation *GetGraph8Bit(Operation *const operation, TensorConnection *ifmConn, TensorConnection *ofmConn);
     Operation *GetGraphInt16(Operation *const operation, TensorConnection *ifmConn, TensorConnection *ofmConn);
     std::vector<int32_t> GenerateExpTable(double beta, double inputScale);
+    Operation *CreateTransposeMaxpool(Operation *const operation, TensorConnection *ifmConn, const Shape &transposePerm,
+        const Shape &transposeOFMShape, const Shape &maxPoolOFMStorageShape, const Quantization &noScaleQuant);
 };
 
 }  // namespace regor

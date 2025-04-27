@@ -120,6 +120,7 @@ enum class QueryResult
     Native = 2,
     Constrained = 4,
     HasRequirements = 8,
+    Emulated = 16,
     NativeHasReq = Native | HasRequirements,
     NativeConstrained = Native | Constrained,
     NativeConstrainedHasReq = Native | Constrained | HasRequirements,

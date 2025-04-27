@@ -247,6 +247,12 @@ public:
         {
             {},
             {
+                &TFLiteGraphOptimiser::ConvertTranspose,
+            }
+        },
+        {
+            {},
+            {
                 &TFLiteGraphOptimiser::FixupDilationGT2,
                 &TFLiteGraphOptimiser::FixupBias,
                 &TFLiteGraphOptimiser::ConvertReduceMinMaxAnyAll,
@@ -265,7 +271,6 @@ public:
                 &TFLiteGraphOptimiser::RewriteSquaredDifference,
                 &TFLiteGraphOptimiser::ConvertScatter,
                 &TFLiteGraphOptimiser::ConvertResize,
-                &TFLiteGraphOptimiser::ConvertTranspose,
                 &TFLiteGraphOptimiser::ConvertMirrorPad,
                 &TFLiteGraphOptimiser::ConvertPadV2,
                 &TFLiteGraphOptimiser::RewriteTransposeConvPadding,

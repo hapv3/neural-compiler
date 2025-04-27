@@ -464,11 +464,21 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
         return QueryResult::Native;
     }
 
+    Flags<QueryResult> result = QueryResult::Native;
+
+
+    if ( opType == OpType::Transpose || opType == OpType::MatMul )
+    {
+        result.Set(QueryResult::Emulated);
+    }
+
+
     // Short query (no additional detail)
     if ( !query )
     {
         // More detailed query might fail (constrained)
-        return QueryResult::NativeConstrained;
+        result.Set(QueryResult::Constrained);
+        return result;
     }
 
     // Check for supported weight format for convolution type ops
@@ -481,7 +491,6 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
         }
     }
 
-    Flags<QueryResult> result = QueryResult::Native;
 
     if ( npuOp == EthosU55NpuOp::ReduceSum )
     {
