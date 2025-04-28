@@ -1093,6 +1093,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
             subOfmConn->shape = transposedOfm->storageShape;
             subOfmConn->slice.offset = ofmShape.WithZeros().WithBatch(multiplier);
             subOfmConn->slice.shape = ofmShape.WithDepth(subOfmDepth);
+            subOfmConn->quantization = SliceQ(subOfmConn->quantization, multiplier, depthMultiplier);
             auto subOps = DecomposeDepthwiseConv2D(arch, std::move(subOp));
             result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
         }
