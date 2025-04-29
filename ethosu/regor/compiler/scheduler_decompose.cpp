@@ -84,7 +84,7 @@ static std::unique_ptr<SchedulerOperation> MakeMemCopy(const std::shared_ptr<Sch
         ifmConn->tensor->storageShape = source->storageShape.WithDepth(2 * source->storageShape.Depth());
         source->RemoveReader(op.get());
     }
-    ifmConn->shape = ofmConn->shape;
+    ifmConn->shape = ofmConn->SliceShape();
 
     return op;
 }
