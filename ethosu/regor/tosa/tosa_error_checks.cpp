@@ -1519,11 +1519,15 @@ void ErrorIfCheck_396rg8p65j58r(const regor::Operation *op, [[maybe_unused]] con
 void ErrorIfCheck_3oet4aggtv528(const regor::Operation *op, [[maybe_unused]] const Context &context)
 {
     // Operators: CONST,
+    // Would ideally check that the shape of the attibute "values" matches output shape, but that has already been
+    // read in to the OFM buffer so no tensor exists. Instead, check that buffer has enough elements for the ofm.
     static constexpr char constraint[] = "ERROR_IF(rankCheck(output, values))";
     const auto &ofmConn = op->Output(TensorUsage::OFM);
     const auto bufferSize = ofmConn->tensor->View().Buffer()->Size();
     const auto storageSize = DataTypeStorageSizeBytes(ofmConn->tensor->Type(), ofmConn->shape.Elements());
-    if ( bufferSize != storageSize ) throw std::invalid_argument(constraint);
+    // TOSA tensors align to 8 bytes so can't check exact size
+    // Instead, check that buffer is big enough to fill the OFM
+    if ( bufferSize < storageSize ) throw std::invalid_argument(constraint);
 }
 
 }  // namespace checks
