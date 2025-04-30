@@ -957,8 +957,8 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv3D(Architecture *a
                 subOpIfm->slice.offset = ifm0shape.WithZeros();
                 subOpIfm->slice.shape = ifm0shape;
 
-                // TODO: MLBEDSW-9759 Pooling Decomposition
-                result.emplace_back(std::move(subOp));
+                auto subOps = DecomposeElementwise(arch, std::move(subOp));
+                result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
             }
             else if ( conv2dSubOps.size() > 1 )
             {
