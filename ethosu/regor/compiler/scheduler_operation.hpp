@@ -177,11 +177,11 @@ class SchedulerOperation : public Attributable
 {
     friend class SchedulerPacking;
     friend class Scheduler;
+    std::unique_ptr<class Kernel> _kernel;
 
 public:
     OpType _type;
     int _index = -1;  // Execution index
-    std::unique_ptr<class Kernel> _kernel;
     bool _npuOp = false;
     bool _hasScaling = false;
     void *_srcKey = nullptr;
@@ -214,8 +214,8 @@ public:
     bool IsNpuOp() const { return _npuOp; }
     void SetNpuOp(bool npuOp) { _npuOp = npuOp; }
 
-    class Kernel *Kernel() const { return _kernel.get(); }
-    void SetKernel(const class Kernel *kernel) { _kernel = std::make_unique<class Kernel>(*kernel); }
+    const class Kernel *Kernel() const { return _kernel ? _kernel.get() : &regor::Kernel::UnitKernel(); }
+    void SetKernel(const class Kernel &kernel) { _kernel = std::make_unique<class Kernel>(kernel); }
 
     bool HasScaling() const { return _hasScaling; }
     void SetHasScaling(bool hasScaling) { _hasScaling = hasScaling; }

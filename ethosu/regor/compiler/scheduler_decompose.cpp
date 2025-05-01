@@ -54,8 +54,7 @@ static std::unique_ptr<SchedulerOperation> MakeMemCopy(const std::shared_ptr<Sch
     assert(ofmSlice == nullptr || ofmSlice->shape + ofmSlice->offset <= dest->storageShape);
     auto op = std::make_unique<SchedulerOperation>(OpType::MemoryCopy);
 
-    auto kernel = Kernel({1, 1}, {1, 1}, {1, 1});
-    op->SetKernel(&kernel);
+    op->SetKernel(Kernel::UnitKernel());
 
     auto ofmConn = op->AddOutput(TensorUsage::OFM);
     ofmConn->tensor = dest;
@@ -98,8 +97,7 @@ static std::unique_ptr<SchedulerOperation> MakeTransposeOp(
     auto ofmConn = op->AddOutput(TensorUsage::OFM);
     assert(ifmConn->Type() == ofmConn->Type());
 
-    auto kernel = Kernel({1, 1}, {1, 1}, {1, 1});
-    op->SetKernel(&kernel);
+    op->SetKernel(Kernel::UnitKernel());
 
     const auto attr = op->Attribute<transpose_attr_t>();
     attr->perm = perm;
@@ -136,7 +134,7 @@ MakeSubOperation(const SchedulerOperation *schedOp, const Kernel *newKernel = nu
     assert(schedOp->SubOps().empty());
     assert(schedOp->Parent() == nullptr);
     auto subOp = std::make_unique<SchedulerOperation>(type != OpType::None ? type : schedOp->Type());
-    subOp->SetKernel(newKernel ? newKernel : schedOp->Kernel());
+    subOp->SetKernel(newKernel ? *newKernel : *schedOp->Kernel());
     subOp->SetHasScaling(schedOp->HasScaling());
     subOp->_srcKey = schedOp->_srcKey;
     subOp->SetPrimaryIfmIndex(schedOp->PrimaryIfmIndex());
@@ -459,7 +457,7 @@ static void UpdatePaddingAndIfmOffset(SchedulerOperation *op)
     ifmSlice.offset = ifmSlice.offset.WithHeight(newHeight).WithWidth(newWidth);
     auto newPadding = Margin(topPad, leftPad, padding.Bottom(), padding.Right());
     auto newKernel = kernel->WithPadding(newPadding);
-    op->SetKernel(&newKernel);
+    op->SetKernel(newKernel);
 }
 
 // Return a slice of a tensor
@@ -558,9 +556,9 @@ static Shape NewOfmBlockShape(Architecture *arch, SchedulerOperation *op)
     // Get block config for the op after decomposition to smaller kernel
     // Avoids problems where a block config can't be found as ifm gets too big for RAM
     auto minKernel = kernel.WithSize({1, 1}).WithStride({1, 1});
-    op->SetKernel(&minKernel);
+    op->SetKernel(minKernel);
     auto config = GetOpConfig(arch, op);
-    op->SetKernel(&kernel);
+    op->SetKernel(kernel);
     assert(config && "No config found.");
     if ( !config ) throw DecompositionFailure("No config found");
     auto HW = config->OptimalStripeGranule();
@@ -1273,7 +1271,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTransposeConv2D(Archit
         weightsConn->tensor->consumers.push_back(op.get());
         Kernel newKernel = kernel->WithStride({1, 1});
         op->_type = OpType::Conv2D;
-        op->SetKernel(&newKernel);
+        op->SetKernel(newKernel);
         result.emplace_back(std::move(op));
     }
     else
@@ -1346,8 +1344,6 @@ std::vector<std::unique_ptr<SchedulerOperation>> LegaliseResize(Architecture *ar
         ifmConn->quantization = Quantization::Unit();
         ifmConn->shape = shape;
         ifmConn->resamplingMode = ArchResampling::Nearest;
-        auto kernel = Kernel::UnitKernel();
-        newOp->SetKernel(&kernel);
         result.emplace_back(std::move(newOp));
 
         remainingUpscale /= 2;
@@ -1359,7 +1355,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> LegaliseResize(Architecture *ar
     *newOp->ConnectInput(TensorUsage::IFM, ifmConn->tensor) = *ifmConn;
 
     Kernel kernel = Kernel::UnitKernel().WithPadding({0, 0, upscaleH - 1, upscaleW - 1, 0, 0}).WithSize({upscaleW, upscaleH});
-    newOp->SetKernel(&kernel);
+    newOp->SetKernel(kernel);
     ofmConn->quantization = Quantization::Unit();
     ofmConn->rounding = RoundMode::AUTO;
     *newOp->ConnectOutput(TensorUsage::OFM, ofmConn->tensor) = *ofmConn;
@@ -1565,8 +1561,7 @@ static std::vector<std::unique_ptr<SchedulerOperation>> SwapAxes(Architecture *a
 
         // Create SchedulerOperation
         auto op = std::make_unique<SchedulerOperation>(OpType::Transpose);
-        Kernel kernel({1, 1} /* size */, {1, 1} /* stride */, {1, 1} /* dilation */);
-        op->SetKernel(&kernel);
+        op->SetKernel(Kernel::UnitKernel());
         auto ifmConn = op->AddInput(TensorUsage::IFM);
         auto ofmConn = op->AddOutput(TensorUsage::OFM);
 

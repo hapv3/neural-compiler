@@ -316,7 +316,7 @@ private:
 
     Address CreateSchedulerRepresentation();
 
-    Point2i GetStripeInputRequirement(const Shape &ofmShape, Kernel *kernel, const Point2i &ifmStep, ArchResampling resampling);
+    Point2i GetStripeInputRequirement(const Shape &ofmShape, const Kernel *kernel, const Point2i &ifmStep, ArchResampling resampling);
 
     std::unique_ptr<SchedulerOpInfo> CreateSchedulerOpInfo(SchedulerOperation *op, const Shape &ofmStripeShape,
         const std::unique_ptr<SchedulerOpInfo> &parentInfo = nullptr);

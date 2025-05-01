@@ -204,7 +204,7 @@ struct ArchitectureConfigQuery
     Shape ifmShape[2];
     int ifmBits;
     int ofmBits;
-    Kernel *kernel;
+    const Kernel *kernel;
     int lutBytes;
     bool scaled;
     ArchResampling ifmResampling;
@@ -227,7 +227,7 @@ struct ArchitectureConfigQuery
 struct PerformanceQuery
 {
     OpType type;
-    Kernel *kernel;
+    const Kernel *kernel;
     ArchitectureOpConfig *config;
     Shape ifmShape[2];
     ArchitectureMemory *ifmMemory[2];
@@ -259,7 +259,7 @@ struct WeightStats
 struct FusionQuery
 {
     OpType type;
-    Kernel *kernel = nullptr;
+    const Kernel *kernel = nullptr;
     Shape ifm2Shape;
     ArchitectureMemory *ifm2Memory = nullptr;
     DataType ifm2Type;

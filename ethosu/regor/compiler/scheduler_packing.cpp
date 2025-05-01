@@ -532,7 +532,7 @@ std::unique_ptr<SchedulerOperation> SchedulerPacking::MakeSchedulerOperation(Ope
 
     std::unique_ptr<SchedulerOperation> schedOp = std::make_unique<SchedulerOperation>(op->Type());
 
-    schedOp->SetKernel(op->Kernel());
+    schedOp->SetKernel(*op->Kernel());
     schedOp->SetHasScaling(op->HasScaling());
     schedOp->SetAttributes(op->AttributeRef());
     schedOp->_srcKey = op;

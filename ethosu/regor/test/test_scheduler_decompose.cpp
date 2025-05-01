@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -40,8 +40,6 @@ std::unique_ptr<SchedulerOperation> CreateOperation(OpType opType, Shape ifmShap
     std::unique_ptr<SchedulerOperation> op = CreateSchedulerOperation(
         opType, TensorUsage::IFM0, ifm1, TensorUsage::IFM1, ifm2, TensorUsage::OFM, ofm);
 
-    // set default kernel
-    op->_kernel = std::make_unique<class Kernel>(Point2i(1, 1), Point2i(1, 1), Point2i(1, 1));
     return op;
 }
 
@@ -52,8 +50,6 @@ std::unique_ptr<SchedulerOperation> CreateOperation(OpType opType, Shape ifmShap
 
     std::unique_ptr<SchedulerOperation> op = CreateSchedulerOperation(opType, TensorUsage::IFM0, ifm1, TensorUsage::OFM, ofm);
 
-    // set default kernel
-    op->_kernel = std::make_unique<class Kernel>(Point2i(1, 1), Point2i(1, 1), Point2i(1, 1));
     return op;
 }
 

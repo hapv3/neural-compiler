@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -159,7 +159,11 @@ public:
             _dilation.x, _dilation.y, _padding.ToString());
     }
 
-    static Kernel UnitKernel() { return Kernel({1, 1}, {1, 1}, {1, 1}); }
+    static const Kernel &UnitKernel()
+    {
+        static const Kernel s_kernel({1, 1}, {1, 1}, {1, 1});
+        return s_kernel;
+    }
 };
 
 static inline int RequiredInputSize(int value, int stride, int border, int upscale, int rounding = 0)

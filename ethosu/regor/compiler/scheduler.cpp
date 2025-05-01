@@ -153,7 +153,7 @@ std::shared_ptr<Schedule> Scheduler::Process()
     return chosenSchedule;
 }
 
-Point2i Scheduler::GetStripeInputRequirement(const Shape &ofmShape, Kernel *kernel, const Point2i &ifmStep, ArchResampling resampling)
+Point2i Scheduler::GetStripeInputRequirement(const Shape &ofmShape, const Kernel *kernel, const Point2i &ifmStep, ArchResampling resampling)
 {
     int rounding;
     int upscale = _arch->UpscaleAndRounding(resampling, rounding);

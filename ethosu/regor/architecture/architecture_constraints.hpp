@@ -52,7 +52,7 @@ struct ArchOperatorQuery
     ArchFM ofm;
     ReverseType reverseMask = ReverseType::None;
     TransposeType transposeMask = TransposeType::None;
-    Kernel *kernel = nullptr;
+    const Kernel *kernel = nullptr;
     ~ArchOperatorQuery(){};
 };
 

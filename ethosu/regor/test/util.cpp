@@ -225,7 +225,7 @@ std::unique_ptr<SchedulerOperation> CreateSchedulerOperation(OpType opType, Tens
     s_ops.add_op(op);
 
     auto schedOp = std::make_unique<SchedulerOperation>(opType);
-    schedOp->SetKernel(op->Kernel());
+    schedOp->SetKernel(*op->Kernel());
     schedOp->_srcKey = static_cast<void *>(op.get());
     // ifm
     auto *ifmConn = schedOp->AddInput(ifmUsage);
