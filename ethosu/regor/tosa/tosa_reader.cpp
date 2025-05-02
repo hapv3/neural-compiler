@@ -373,11 +373,14 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
             {
                 const auto &tosa_operator = SafeDeref(tosa_operators[tosa_op_index]);
                 // Connect operation to its input tensors
-                const auto &input_tensors_fb = SafeDeref(tosa_operator.inputs());
                 std::vector<std::string> input_tensors;
-                input_tensors.reserve(input_tensors_fb.size());
-                for ( const auto &ten : input_tensors_fb )
-                    input_tensors.push_back(SafeDeref(ten).str());
+                if ( tosa_operator.inputs() )
+                {
+                    const auto &input_tensors_fb = SafeDeref(tosa_operator.inputs());
+                    input_tensors.reserve(input_tensors_fb.size());
+                    for ( const auto &ten : input_tensors_fb )
+                        input_tensors.push_back(SafeDeref(ten).str());
+                }
                 const auto &output_tensors = SafeDeref(tosa_operator.outputs());
 
                 // Kernel
