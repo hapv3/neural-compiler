@@ -262,6 +262,7 @@ void SchedulerPacking::SchedulerPacking::PackOperations()
 
             // Pack any future ops that will fit
             auto prevOp = primaryOp;
+            auto lastNonFusedOp = primaryOp;
 
             // Try chaining subsequent ops into the primary
             while ( cur != _schedList.end() )
@@ -281,10 +282,10 @@ void SchedulerPacking::SchedulerPacking::PackOperations()
                 LOG_TRACE1("Added {} (key {}) to {} (key {})\n", OpTypeToString(nextOp->Type()), key,
                     OpTypeToString(prevOp->Type()), prevOpKey);
 
-                // Replace previous op's OFM by nextOp's OFM
+                // Replace the last non-fused op's OFM by nextOp's OFM if nextOp is fused
                 if ( IsActivation(nextOp->Type()) )
                 {
-                    auto *ofmConn = prevOp->OFM();
+                    auto *ofmConn = lastNonFusedOp->OFM();
                     ofmConn->tensor = nextOp->OFM()->tensor;
                     ofmConn->SetType(nextOp->OFM()->Type());
                     ofmConn->quantization.quantMin = nextOp->Output(TensorUsage::OFM)->quantization.quantMin;
@@ -292,7 +293,7 @@ void SchedulerPacking::SchedulerPacking::PackOperations()
                 }
                 else if ( nextOp->Type() == OpType::Transpose )
                 {
-                    auto *ofmConn = primaryOp->OFM();
+                    auto *ofmConn = lastNonFusedOp->OFM();
                     ofmConn->tensor = nextOp->OFM()->tensor;
                     ofmConn->SetType(nextOp->OFM()->Type());
                     ofmConn->shape = nextOp->OFM()->shape;
@@ -300,11 +301,16 @@ void SchedulerPacking::SchedulerPacking::PackOperations()
                 }
                 else if ( nextOp->Type() == OpType::Reverse )
                 {
-                    auto *ofmConn = primaryOp->OFM();
+                    auto *ofmConn = lastNonFusedOp->OFM();
                     ofmConn->tensor = nextOp->OFM()->tensor;
                     ofmConn->SetType(nextOp->OFM()->Type());
                     ofmConn->shape = nextOp->OFM()->shape;
                     ofmConn->reverse = nextOp->OFM()->reverse;
+                }
+                else
+                {
+                    // This is a non-fused op - update the tracking variable
+                    lastNonFusedOp = nextOp;
                 }
 
                 primaryOp->AddSubOp(std::move(*cur));

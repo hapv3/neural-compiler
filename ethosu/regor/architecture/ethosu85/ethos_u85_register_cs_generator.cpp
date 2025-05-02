@@ -968,14 +968,25 @@ void EthosU85RCSGenerator::GenerateActivation(const HLCStripe *stripe, MemoryAcc
     }
     else if ( op->subOps.size() > 0 )
     {
-        // Check if the first subOp is a fused activation.
-        auto &subOp = op->subOps[0];
-        if ( opGroup->IsFused(subOp.ifm[0].uid) && IsActivation(subOp.type) )
+        for ( auto &subOp : op->subOps )
         {
-            // Fused activation
-            activationOp = &subOp;
-            // Use subOp ifm datatype to calculate clip range
-            clipDataType = subOp.ifm[0].dataType;
+            if ( opGroup->IsFused(subOp.ifm[0].uid) )
+            {
+                if ( IsActivation(subOp.type) )
+                {
+                    // Fused activation
+                    activationOp = &subOp;
+                    // Use subOp ifm datatype to calculate clip range
+                    clipDataType = subOp.ifm[0].dataType;
+                    // There can be only one fused activation
+                    break;
+                }
+            }
+            else
+            {
+                // subOp is a chained op - which means this stripe doesn't have any fused activation
+                break;
+            }
         }
     }
 

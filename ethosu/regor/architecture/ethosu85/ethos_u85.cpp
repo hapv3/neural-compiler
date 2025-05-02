@@ -1421,6 +1421,12 @@ bool EthosU85OpGroup::Fuse(const ArchitectureOpGroupQuery &op, const std::vector
         return false;
     }
 
+    if ( _chainLength > 1 && !IsActivation(op.type) )
+    {
+        // TODO MLBEDSW-10769: support fusing Transpose and Reverse chained ops
+        return false;
+    }
+
     if ( dependsOn.size() > 1 )
     {
         // Can only fuse with one op
