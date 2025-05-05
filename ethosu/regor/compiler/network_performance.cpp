@@ -210,7 +210,10 @@ PerformanceResult NetworkPerformance::Measure(Schedule *schedule, OptimiserDatab
             {
                 AddToDatabase(perf, subOp.get(), cost, opTable, perfDebugTable, memories, optDb);
             }
-            performance += perf;
+            if ( !IsActivation(subOp->Type()) )
+            {
+                performance += perf;
+            }
             prevOp = subOp.get();
             prevCost = cost;
         }
