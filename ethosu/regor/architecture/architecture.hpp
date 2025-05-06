@@ -168,6 +168,7 @@ struct ArchitectureOpGroupQuery
         TransposeType transpose;
         ReverseType reverse;
         bool isConst;
+        bool isSliced;
     };
 
     OpType type;

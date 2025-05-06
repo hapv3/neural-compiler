@@ -176,6 +176,7 @@ ArchitectureOpGroupQuery SchedulerPacking::CreateOpGroupQuery(const SchedulerOpe
     query.ifm[0].transpose = ifm0->transpose;
     query.ifm[0].reverse = ifm0->reverse;
     query.ifm[0].isConst = ifm0->tensor->IsConstant();
+    query.ifm[0].isSliced = !Shape::IsReducedEqual(ifm0->SliceShape(), ifm0->shape);
     if ( ifm1 )
     {
         query.ifm[1].key = ifm1->tensor->uid;
@@ -184,6 +185,7 @@ ArchitectureOpGroupQuery SchedulerPacking::CreateOpGroupQuery(const SchedulerOpe
         query.ifm[1].transpose = ifm1->transpose;
         query.ifm[1].reverse = ifm1->reverse;
         query.ifm[1].isConst = ifm1->tensor->IsConstant();
+        query.ifm[1].isSliced = !Shape::IsReducedEqual(ifm1->SliceShape(), ifm1->shape);
     }
     query.ofm.key = ofm->tensor->uid;
     query.ofm.type = ofm->Type();
@@ -191,6 +193,7 @@ ArchitectureOpGroupQuery SchedulerPacking::CreateOpGroupQuery(const SchedulerOpe
     query.ofm.transpose = ofm->transpose;
     query.ofm.reverse = ofm->reverse;
     query.ofm.isConst = false;
+    query.ofm.isSliced = !Shape::IsReducedEqual(ofm->SliceShape(), ofm->shape);
     return query;
 }
 
@@ -297,6 +300,7 @@ void SchedulerPacking::SchedulerPacking::PackOperations()
                     ofmConn->tensor = nextOp->OFM()->tensor;
                     ofmConn->SetType(nextOp->OFM()->Type());
                     ofmConn->shape = nextOp->OFM()->shape;
+                    ofmConn->slice = nextOp->OFM()->slice;
                     ofmConn->transpose = nextOp->OFM()->transpose;
                 }
                 else if ( nextOp->Type() == OpType::Reverse )
@@ -305,6 +309,7 @@ void SchedulerPacking::SchedulerPacking::PackOperations()
                     ofmConn->tensor = nextOp->OFM()->tensor;
                     ofmConn->SetType(nextOp->OFM()->Type());
                     ofmConn->shape = nextOp->OFM()->shape;
+                    ofmConn->slice = nextOp->OFM()->slice;
                     ofmConn->reverse = nextOp->OFM()->reverse;
                 }
                 else

@@ -1459,6 +1459,12 @@ bool EthosU85OpGroup::Fuse(const ArchitectureOpGroupQuery &op, const std::vector
         return false;
     }
 
+    // Can't fuse transpose to an op with slice
+    if ( op.type == OpType::Transpose && _ops[0].ofm.isSliced )
+    {
+        return false;
+    }
+
     EthosU85Constraints *constraints = static_cast<EthosU85Constraints *>(_arch->_constraints.get());
 
     // Can't fuse a transpose or reverse type that's not supported by primaryOp in opgroup
