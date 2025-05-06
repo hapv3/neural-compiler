@@ -51,35 +51,7 @@ static void SetKernel(const std::shared_ptr<Operation> &operation, const Point2i
     const auto &inputShape = operation->IFM(0)->StorageShape();
     const auto &outputShape = operation->OFM()->StorageShape();
     Margin pad;
-    if ( operation->Type() == OpType::TransposeConv2D && inputShape && outputShape )
-    {
-        // Calculate upscaled ifm height/width by multiplying with stride
-        auto ifmWH = inputShape.WH<int>() * stride;
-        int ypad = NeededTotalPadding(ifmWH.y, outputShape.Height(), 1, size.y);
-        int xpad = NeededTotalPadding(ifmWH.x, outputShape.Width(), 1, size.x);
-        if ( stride == Point2i(2, 2) || (stride == Point2i(1, 2) && ifmWH.x == 1 && size.x == 1) ||
-             (stride == Point2i(2, 1) && ifmWH.y == 1 && size.y == 1) )
-        {
-            // Padding for upscaled IFM
-            if ( padding == tflite::Padding::SAME )
-            {
-                int bottom = std::max(((ypad + 1) / stride.y) - 1, 0);
-                int top = std::max(size.y - 1 - bottom, 0);
-                int right = std::max(((xpad + 1) / stride.x) - 1, 0);
-                int left = std::max(size.x - 1 - right, 0);
-                pad = Margin(top, left, bottom, right);
-            }
-            else
-            {
-                pad = Margin(size.y - 1, size.x - 1, std::max(size.y - 2, 0), std::max(size.x - 2, 0));
-            }
-        }
-        else
-        {
-            pad = Margin((ypad + 1) / 2, (xpad + 1) / 2, ypad / 2, xpad / 2);
-        }
-    }
-    else if ( padding == tflite::Padding::SAME && inputShape )
+    if ( operation->Type() != OpType::TransposeConv2D && padding == tflite::Padding::SAME && inputShape )
     {
         auto dWH = dilation * (size - Point2i(1, 1)) + Point2i(1, 1);
         int xpad = NeededTotalPadding(inputShape.Width(), stride.x, dWH.x);

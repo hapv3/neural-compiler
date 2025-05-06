@@ -42,6 +42,9 @@ class TosaGraphOptimiser : public GraphOptimiser
 private:
     Operation *ConvertZeroPointTensors(Graph *const graph, Operation *const operation);
 
+    // Rewrites padding by modifying slices and inserting DW Conv operators to write bias
+    Operation *RewriteTransposeConvPadding(Graph *const graph, Operation *const operation);
+
 public:
     // The graph optimisation steps.
     // Order matters, array of rewrites processed in order.
@@ -64,6 +67,7 @@ public:
             {},
             {
                 &TosaGraphOptimiser::ConvertZeroPointTensors,
+                &TosaGraphOptimiser::RewriteTransposeConvPadding
             }
         },
         {

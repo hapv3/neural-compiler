@@ -626,7 +626,7 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         const auto &attr = TosaAttr<tosaFb::Op::TRANSPOSE_CONV2D>::Get(tosaOperator);
 
                         // Default-pad IFM with kernel-size-1
-                        // Might be adjusted when rewriting OFM-padding (see graphir_optimiser)
+                        // Might be adjusted when rewriting OFM-padding (see tosa_graph_optimiser)
                         kernel.paddingTBLRNF[0] = kernel.paddingTBLRNF[1] = shape.axisNHWC[1] - 1;
                         kernel.paddingTBLRNF[2] = kernel.paddingTBLRNF[3] = shape.axisNHWC[2] - 1;
 

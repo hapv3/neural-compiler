@@ -396,7 +396,7 @@ Flags<QueryResult> EthosU85Constraints::OperatorQuery(OpType opType, const ArchO
     }
 
     // TransposeConv2D and Conv3D are legalized during decomposition
-    if ( opType == OpType::TransposeConv2D || opType == OpType::Conv3D )
+    if ( opType == OpType::Conv3D )
     {
         if ( req )
         {
@@ -405,6 +405,22 @@ Flags<QueryResult> EthosU85Constraints::OperatorQuery(OpType opType, const ArchO
             {
                 req->decomposeProps.Set(ArchProperty::TensorDims);
             }
+            req->req.Set(ArchRequirement::Decompose);
+        }
+        return query ? QueryResult::NativeHasReq : QueryResult::NativeConstrainedHasReq;
+    }
+    else if ( opType == OpType::TransposeConv2D )
+    {
+        if ( req )
+        {
+            // Validate tensor dimensions
+            if ( !SupportedTensorDims(opType, ifmShape, ifm2Shape, ofmShape) )
+            {
+                req->decomposeProps.Set(ArchProperty::TensorDims);
+            }
+            // TODO: MLBEDSW-11089 - Enable IFM resampling TransposeConv path for Ethos-U85
+            // For now, always decompose stride
+            req->decomposeProps.Set(ArchProperty::KernelStride);
             req->req.Set(ArchRequirement::Decompose);
         }
         return query ? QueryResult::NativeHasReq : QueryResult::NativeConstrainedHasReq;

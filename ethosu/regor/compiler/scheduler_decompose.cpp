@@ -1322,19 +1322,29 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
 }
 
 // Reverse elements along H and W axes
+// When stride_y = stride_x = 1 and offsetY=offsetX=0, additionalKernelMappingsY=H-1, additionalKernelMappingsX=W-1 this
+// reduces to plain reverse (use ReverseHW wrapper)
 template<typename TYPE>
-static std::shared_ptr<SchedulerTensor> ReverseHW2(SchedulerTensor *tensor)
+static std::shared_ptr<SchedulerTensor> ReverseHWStrided(SchedulerTensor *tensor, int offsetY,
+    int additionalKernelMappingsY, int offsetX, int additionalKernelMappingsX, int strideY, int strideX)
 {
     const auto &inBufferView = tensor->bufferView;
     const auto inBufferValues = inBufferView.Values<TYPE>();
 
-    // Create output buffer that will contain reversed weights
-    const auto size = inBufferView.Elements();
+    // Output shape selects a (ny+1)x(nx+1) sub-grid from the reversed+strided kernel
+    Shape weightShape = tensor->storageShape.WithHeight(additionalKernelMappingsY + 1).WithWidth(additionalKernelMappingsX + 1);
+    const auto size = weightShape.Elements();
     auto outBuffer = std::make_shared<Buffer>(std::make_unique<TYPE[]>(size), size);
-    BufferView outBufferView(std::move(outBuffer), tensor->bufferView);
+    auto newWeights = std::make_shared<Tensor>("reversed_weights", DataTypeOf<TYPE>::value, weightShape, outBuffer);
+
+    auto clonedTensor = tensor->Clone();
+    clonedTensor->bufferView = newWeights->View();
+    clonedTensor->srcTensor = newWeights;
+    clonedTensor->storageShape = newWeights->StorageShape();
+
+    auto &outBufferView = clonedTensor->bufferView;
     auto outBufferValues = outBufferView.WritableValues<TYPE>();
 
-    // Reverse height and width into the output buffer
     int batch = outBufferView.ViewShape().Batch();
     int height = outBufferView.ViewShape().Height();
     int width = outBufferView.ViewShape().Width();
@@ -1347,35 +1357,202 @@ static std::shared_ptr<SchedulerTensor> ReverseHW2(SchedulerTensor *tensor)
             {
                 for ( int c = 0; c < depth; c++ )
                 {
-                    outBufferValues[{n, height - h - 1, width - w - 1, c}] = inBufferValues[{n, h, w, c}];
+                    // Map to reversed indices with stride picking
+                    int newX = offsetX + (additionalKernelMappingsX - w) * strideX;
+                    int newY = offsetY + (additionalKernelMappingsY - h) * strideY;
+                    outBufferValues[{n, h, w, c}] = inBufferValues[{n, newY, newX, c}];
                 }
             }
         }
     }
-
-    // Clone tensor with new buffer with new unique ID because now the tensor is different
-    auto clonedTensor = tensor->Clone();
-    clonedTensor->bufferView = std::move(outBufferView);
-
     return clonedTensor;
 }
 
-// Reverse elements along H and W axes
+// Reverse elements along H and W axes (convenience wrapper without stride)
 static std::shared_ptr<SchedulerTensor> ReverseHW(SchedulerTensor *tensor)
 {
     assert(tensor->IsConstant());
     assert(tensor->producers.size() == 0);
 
+    // Compute default parameters for plain reverse
+    const auto &inBufferView = tensor->bufferView;
+    const int ky = 0;
+    const int kx = 0;
+    const int ny = inBufferView.ViewShape().Height() - 1;
+    const int nx = inBufferView.ViewShape().Width() - 1;
+    const int strideY = 1;
+    const int strideX = 1;
+
     switch ( tensor->dataType )
     {
         case DataType::Int8:
-            return ReverseHW2<int8_t>(tensor);
+            return ReverseHWStrided<int8_t>(tensor, ky, ny, kx, nx, strideY, strideX);
         case DataType::UInt8:
-            return ReverseHW2<uint8_t>(tensor);
+            return ReverseHWStrided<uint8_t>(tensor, ky, ny, kx, nx, strideY, strideX);
         default:
             assert(false && "Unknown data type");
             return nullptr;
     }
+}
+
+// Large stride decomposition of TransposeConv2D - description of algorithm:
+// 1. Partition by stride - Split outputs into stride-offset groups per (oy, ox)
+// 2. Subkernel sampling - For each group, take kernel taps at (ky + m*strideY, kx + n*strideX) to form a compact
+// (ny+1)x(nx+1) subkernel
+// 3. Weight reversal - Reverse the subkernel weights to turn TransposeConv2D into standard Conv2D
+// 4. Sub-ops as Conv2D - Create one Conv2D per group with stride (1,1) and the sampled subkernel
+// 5. Rewrite padding - Calculate how to attribute and rewrite the original padding to each sub-op
+// 6. Strided write - Set each sub-op’s OFM write step to (strideX, strideY) with offset (ox, oy) to fill only its group
+// 7. Combine results - Sub-ops write disjoint OFM positions; together they reconstruct the full output
+std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTransposeConv2DLargeStride(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
+{
+    std::vector<std::unique_ptr<SchedulerOperation>> result;
+    auto ifmConn = op->Input(TensorUsage::IFM);
+    auto ofmConn = op->Output(TensorUsage::OFM);
+    auto weightsConn = op->Input(TensorUsage::Weights);
+    auto origWeights = weightsConn->tensor.get();
+    auto ofmShape = ofmConn->SliceShape();
+    auto ifmSlice = ifmConn->slice;
+    auto ofmSlice = ofmConn->slice;
+    auto kernel = op->Kernel();
+    const int32_t strideY = kernel->Stride().y;
+    const int32_t strideX = kernel->Stride().x;
+    const int32_t kernelY = kernel->Size().y;
+    const int32_t kernelX = kernel->Size().x;
+    auto attr = op->Attribute<transpose_conv2d_attr_t>();
+    auto outPadTBLR = attr->outPadTBLR;
+    const auto topPad = outPadTBLR[0];
+    const auto botPad = outPadTBLR[1];
+    const auto leftPad = outPadTBLR[2];
+    const auto rightPad = outPadTBLR[3];
+
+    // Local helpers for padding/offset calculations
+
+    // Compute the offset for a given sub-kernel position (either y or x)
+    // and padding on the corresponding top/left side.
+    // Returns the starting coordinate in OFM where this sub-kernel writes.
+    auto ComputeCroppedOfmOffset = [](int pad, int offset, int stride) -> int
+    {
+        assert(pad < 0 && "Only valid to calculate cropped OFM offset for negative padding");
+        int cropCount = DivRoundUp(std::abs(pad) - offset, stride);
+        return offset + cropCount * stride + pad;
+    };
+
+    // Compute IFM slice offset and effective kernel left/top extent for a certain sub-kernel position
+    auto ComputeIfmShift = [](int pad, int subKernelPos, int stride, int additionalKernelMappings) -> std::pair<int, int>
+    {
+        // If pad >= 0, sign is +1: we shift kernel right/down by pad
+        // If pad < 0, sign is -1: cropping removes input, so kernel moves opposite
+        int sign = (pad >= 0 ? 1 : -1);
+        // Base kernel application offset plus adjustment for cropping or padding
+        int val = additionalKernelMappings + sign * DivRoundUp(std::abs(pad) - subKernelPos, stride);
+        // The IFM slice offset is the negative of this value
+        int ifmOff = -val;
+        // Clip to positive kernel offset for new kernel origin
+        int clipped = std::max(0, val);
+        return {clipped, ifmOff};
+    };
+
+    // Compute the required padding on the opposite edge (bottom/right) to produce
+    // the right amount of output values.
+    auto ComputeOppositeEdgePad = [](int totalDim, int ofmOffset, int stride, int padOppositeEdge, int additionalKernelMappings) -> int
+    {
+        // Total output values produced starting at specified offset
+        int totalOutVals = DivRoundUp(totalDim - ofmOffset, stride);
+        // Total output values produced if opposite-edge padding is subtracted
+        assert(totalDim >= ofmOffset + padOppositeEdge && "No values remaining");
+        int totalOutValsExclOppositePad = DivRoundUp(totalDim - ofmOffset - padOppositeEdge, stride);
+        // Calculate extra padding required to produce the bottom/right output values
+        return std::max(0, additionalKernelMappings + totalOutVals - totalOutValsExclOppositePad);
+    };
+
+    // Fill OFM with zeros if not all OFM elements get written to
+    // TODO: Only write values that isn't overwritten later
+    if ( strideX > kernelX || strideY > kernelY )
+    {
+        const auto &inBufferView = origWeights->bufferView;
+        const auto inBufferValues = inBufferView.Values<int8_t>();
+
+        Shape weightShape = origWeights->storageShape.WithHW(1, 1);
+        const auto size = weightShape.Elements();
+        auto buf = std::make_unique<int8_t[]>(size);
+        std::fill_n(buf.get(), size, 0);
+        auto outBuffer = std::make_shared<Buffer>(std::move(buf), size);
+        auto zeroWeights = std::make_shared<Tensor>("zeroWeights", DataTypeOf<int8_t>::value, weightShape, outBuffer);
+
+        auto clonedTensor = origWeights->Clone();
+        clonedTensor->bufferView = zeroWeights->View();
+        clonedTensor->srcTensor = zeroWeights;
+        clonedTensor->storageShape = zeroWeights->StorageShape();
+
+        auto zeroWKernel = Kernel::UnitKernel();
+        std::unique_ptr<SchedulerOperation> initZeroOp = MakeSubOperation(op.get(), &zeroWKernel, OpType::Conv2D);
+        initZeroOp->ConnectInput(TensorUsage::Weights, clonedTensor);
+        auto _weightsConn = initZeroOp->Input(TensorUsage::Weights);
+        _weightsConn->quantization = Quantization::Unit();
+        result.emplace_back(std::move(initZeroOp));
+    }
+
+    for ( int oy = 0; oy < std::min(kernelY + std::max(0, topPad), strideY); ++oy )
+    {
+        for ( int ox = 0; ox < std::min(kernelX + std::max(0, leftPad), strideX); ++ox )
+        {
+            int ky = (oy + (strideY - (std::max(0, topPad) % strideY))) % strideY;   // first valid mapping to this oy
+            int ny = ((kernelY - 1) - ky) / strideY;                                 // number of additional ky mappings
+            int kx = (ox + (strideX - (std::max(0, leftPad) % strideX))) % strideX;  // first valid mapping to this ox
+            int nx = ((kernelX - 1) - kx) / strideX;                                 // number of additional kx mappings
+
+            // Skip invalid kx/ky values
+            if ( ky < 0 || kx < 0 || ky >= kernelY || kx >= kernelX ) continue;
+
+            // Extract subkernels with reversed weights according to the k/n calculated above and stride
+            std::shared_ptr<SchedulerTensor> newWeights;
+            switch ( weightsConn->tensor->dataType )
+            {
+                case DataType::Int8:
+                    newWeights = ReverseHWStrided<int8_t>(origWeights, ky, ny, kx, nx, strideY, strideX);
+                    break;
+                case DataType::UInt8:
+                    newWeights = ReverseHWStrided<uint8_t>(origWeights, ky, ny, kx, nx, strideY, strideX);
+                    break;
+                default:
+                    assert(false && "Invalid weight data type");
+                    continue;
+            }
+            // compute OFM offsets from top/left padding
+            int ofmOffsetY = topPad >= 0 ? oy : ComputeCroppedOfmOffset(topPad, oy, strideY);
+            int ofmOffsetX = leftPad >= 0 ? ox : ComputeCroppedOfmOffset(leftPad, ox, strideX);
+            // compute IFM shifts and IFM padding from OFM left/top padding
+            auto [top, ifmOffsetY] = ComputeIfmShift(topPad, oy, strideY, ny);
+            auto [left, ifmOffsetX] = ComputeIfmShift(leftPad, ox, strideX, nx);
+            // compute bottom/right IFM padding for sub-kernel
+            int bot = ComputeOppositeEdgePad(ofmShape.Height(), ofmOffsetY, strideY, botPad, ny);
+            int right = ComputeOppositeEdgePad(ofmShape.Width(), ofmOffsetX, strideX, rightPad, nx);
+            auto subKernel = kernel->WithSize({nx + 1, ny + 1}).WithStride({1, 1}).WithPadding({top, left, bot, right});
+            auto subOp = MakeSubOperation(op.get(), &subKernel, OpType::Conv2D);
+            auto subWeightConn = subOp->Input(TensorUsage::Weights);
+            subOp->ConnectInput(TensorUsage::Weights, newWeights);
+            subWeightConn->quantization = weightsConn->quantization;
+            auto subIfmSlice = subOp->Input(TensorUsage::IFM0)->slice;
+            auto subOfmSlice = subOp->Output(TensorUsage::OFM)->slice;
+
+            subIfmSlice.offset = ifmSlice.offset.WithHW(ifmOffsetY, ifmOffsetX);
+            // limit slice to actual transposed-kernel window: (ny+1)x(nx+1)
+            subIfmSlice.shape = subIfmSlice.shape.WithHW(std::min(ny + 1, ifmSlice.shape.Height() - subIfmSlice.offset.Height()),
+                std::min(nx + 1, ifmSlice.shape.Width() - subIfmSlice.offset.Width()));
+
+            subOfmSlice.offset = ofmSlice.offset.WithHW(ofmOffsetY, ofmOffsetX);
+            subOfmSlice.shape = subOfmSlice.shape.WithHW(ofmSlice.shape.Height() - subOfmSlice.offset.Height(),
+                ofmSlice.shape.Width() - subOfmSlice.offset.Width());
+
+            subOp->Input(TensorUsage::IFM0)->slice = std::move(subIfmSlice);
+            subOp->Output(TensorUsage::OFM)->slice = std::move(subOfmSlice);
+
+            subOp->Output(TensorUsage::OFM)->stepXY = {strideX, strideY};
+            result.emplace_back(std::move(subOp));
+        }
+    }
+    return result;
 }
 
 // Decompose Transpose Conv2D into Conv2D
@@ -1396,47 +1573,59 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTransposeConv2D(Archit
     assert(stride.y > 0);
     assert(kernelSize.x > 0);
     assert(kernelSize.y > 0);
+    assert(arch->Constraints()->SupportsAccumulatorSaveRestore() && "Accumulator Save/Restore required for TransposeConv2D decomposition");
 
     ofmSlice.Initialize(ofmShape.WithZeros(), ofmShape);
     ifmSlice.Initialize(ifmShape.WithZeros(), ifmShape);
 
     ArchRequirements req{};
     Flags<QueryResult> qResult = OperatorQuery(arch, op.get(), &req);
-
     if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::TensorDims) )
     {
         return DecomposeLeadingDimensions(1, arch, std::move(op), DecomposeTransposeConv2D);
     }
-
-    // Convert TransposeConv2D to Conv2D by
-    // if stride == (1,1):
-    //     - reverse weights in X/Y
-    // if stride == (2,2):
-    //     - reverse weights in X/Y
-    //     - Upsample IFM x2 by inserting zeros
-    // Larger strides require decomposition: TODO MLBEDSW-9761
-    if ( stride == Point2i(1, 1) || stride == Point2i(2, 2) ||
-         (stride == Point2i(1, 2) && ifmShape.Width() == 1 && kernelSize.x == 1) ||
-         (stride == Point2i(2, 1) && ifmShape.Height() == 1 && kernelSize.y == 1) )
+    if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::KernelStride) )
     {
-        if ( (stride.x == 2 || stride.y == 2) )
+        // Convert TransposeConv2D to Conv2D by reversing weights in X/Y and decomposing strides
+        // by splitting into stride_x*stride_y kernels
+        auto conv2dSubOps = DecomposeTransposeConv2DLargeStride(arch, std::move(op));
+        auto end = std::make_move_iterator(conv2dSubOps.end());
+        for ( auto subOp = std::make_move_iterator(conv2dSubOps.begin()); subOp != end; ++subOp )
         {
-            ifmConn->resamplingMode = ArchResampling::Zeros;
+            auto subOps = DecomposeConv2D(arch, *subOp);
+            result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
         }
-        // Map to Conv2D by reversing the weights in y and x
-        weightsConn->tensor = ReverseHW(weightsConn->tensor.get());
-        weightsConn->tensor->consumers.push_back(op.get());
-        Kernel newKernel = kernel->WithStride({1, 1});
-        op->_type = OpType::Conv2D;
-        op->SetKernel(newKernel);
-        result.emplace_back(std::move(op));
+        return result;
     }
-    else
-    {
-        // TODO MLBEDSW-9761: TransposeConv2D Large stride decomposition
-        result.emplace_back(std::move(op));
-    }
+    // If we get here, decomposition has failed, the resulting operations will be executed on CPU
+    result.emplace_back(std::move(op));
+    return result;
+}
 
+// Legalise TransposeConv2D into Conv2D with IFM resampling - only applicable for strides <= 2
+std::vector<std::unique_ptr<SchedulerOperation>> LegaliseTransposeConv2D(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
+{
+    std::vector<std::unique_ptr<SchedulerOperation>> result;
+    auto ifmConn = op->Input(TensorUsage::IFM);
+    auto weightsConn = op->Input(TensorUsage::Weights);
+    auto kernel = op->Kernel();
+    const auto stride = kernel->Stride();
+    assert(stride.x > 0);
+    assert(stride.y > 0);
+
+    // TODO: MLBEDSW-11089 - Enable IFM resampling TransposeConv path for Ethos-U85
+    // If accumulator save/restore is not supported, use IFM resampling to upscale by 2x2 to support stride 2
+    if ( (stride.x == 2 || stride.y == 2) )
+    {
+        ifmConn->resamplingMode = ArchResampling::Zeros;
+    }
+    // Map to Conv2D by reversing the weights in y and x
+    weightsConn->tensor = ReverseHW(weightsConn->tensor.get());
+    weightsConn->tensor->consumers.push_back(op.get());
+    Kernel newKernel = kernel->WithStride({1, 1});
+    op->_type = OpType::Conv2D;
+    op->SetKernel(newKernel);
+    result.emplace_back(std::move(op));
     return result;
 }
 

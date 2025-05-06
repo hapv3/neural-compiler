@@ -68,7 +68,6 @@ private:
     Operation *RewriteMatmul(Graph *const graph, Operation *const operation);
     Operation *RewriteArgmax(Graph *const graph, Operation *const operation);
     Operation *RewriteDepthwise(Graph *const graph, Operation *const operation);
-    Operation *RewriteTransposeConvOFMPadding(Graph *const graph, Operation *const operation);
     Operation *OptimiseElementwise(Graph *const graph, Operation *const operation);
     Operation *MergeTransposes(Graph *const graph, Operation *const operation);
     Operation *RearrangeTranspose(Graph *const graph, Operation *const operation);
@@ -168,7 +167,6 @@ private:
                 &GraphIrOptimiser::RewriteSelect,
                 &GraphIrOptimiser::RewriteArgmax,
                 &GraphIrOptimiser::RewriteDepthwise,
-                &GraphIrOptimiser::RewriteTransposeConvOFMPadding,
                 &GraphIrOptimiser::OptimiseElementwise,
                 &GraphIrOptimiser::RearrangeTranspose,
                 &GraphIrOptimiser::ReshapeReverse,

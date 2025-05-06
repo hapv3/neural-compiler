@@ -2906,6 +2906,78 @@ Operation *TFLiteGraphOptimiser::ConvertConvolutionGroup(Graph *const graph, Ope
     return concatOp.get();
 }
 
+Operation *TFLiteGraphOptimiser::RewriteTransposeConvPadding(Graph *const graph, Operation *const operation)
+{
+    UNUSED(graph);
+    Operation *returnOp = operation;
+    if ( operation->Type() != OpType::TransposeConv2D )
+    {
+        return returnOp;
+    }
+    auto kernel = operation->Kernel();
+    auto size = operation->Kernel()->Size();
+    auto stride = operation->Kernel()->Stride();
+    const auto &inputShape = operation->IFM(0)->StorageShape();
+    const auto &outputShape = operation->OFM()->StorageShape();
+    auto *attr = operation->Attribute<transpose_conv2d_attr_t>();
+
+    const tflite::Operator *const passthrough = static_cast<const tflite::Operator *>(operation->Passthrough());
+    assert(passthrough);
+    const auto options = passthrough->builtin_options_as_TransposeConvOptions();
+    assert(options);
+    const auto padding = options->padding();
+
+    if ( _constraints->SupportsAccumulatorSaveRestore() )
+    {
+        // TODO: MLBEDSW-11089 - Enable IFM resampling TransposeConv path for Ethos-U85
+        if ( padding == tflite::Padding::SAME )
+        {
+            // Rewrite TFLite SAME padding to Transpose Conv output padding format
+            // Calculate number of rows/columns to remove
+            int xpad = (size.x - 1) - (inputShape.Width() * stride.x - 1) % stride.x;
+            int ypad = (size.y - 1) - (inputShape.Height() * stride.y - 1) % stride.y;
+            int top = (ypad) / 2;
+            int bottom = ypad - top;
+            int left = (xpad) / 2;
+            int right = xpad - left;
+            // OutPad removes rows/cols when negative and adds rows/cols when positive
+            attr->outPadTBLR = Shape(-top, -bottom, -left, -right);
+        }
+    }
+    else
+    {
+        Margin pad;
+        // Calculate upscaled ifm height/width by multiplying with stride
+        auto ifmWH = inputShape.WH<int>() * stride;
+        int ypad = NeededTotalPadding(ifmWH.y, outputShape.Height(), 1, size.y);
+        int xpad = NeededTotalPadding(ifmWH.x, outputShape.Width(), 1, size.x);
+        if ( stride == Point2i(2, 2) || (stride == Point2i(1, 2) && ifmWH.x == 1 && size.x == 1) ||
+             (stride == Point2i(2, 1) && ifmWH.y == 1 && size.y == 1) )
+        {
+            // Padding for upscaled IFM
+            if ( padding == tflite::Padding::SAME )
+            {
+                int bottom = std::max(((ypad + 1) / stride.y) - 1, 0);
+                int top = std::max(size.y - 1 - bottom, 0);
+                int right = std::max(((xpad + 1) / stride.x) - 1, 0);
+                int left = std::max(size.x - 1 - right, 0);
+                pad = Margin(top, left, bottom, right);
+            }
+            else
+            {
+                pad = Margin(size.y - 1, size.x - 1, std::max(size.y - 2, 0), std::max(size.x - 2, 0));
+            }
+        }
+        else
+        {
+            // Padding for when IFM is not upscaled (stride 1)
+            pad = Margin((ypad + 1) / 2, (xpad + 1) / 2, ypad / 2, xpad / 2);
+        }
+        operation->SetKernel(std::make_unique<Kernel>(kernel->WithPadding(pad)));
+    }
+    return returnOp;
+}
+
 TFLiteGraphOptimiser::TFLiteGraphOptimiser(IArchitectureConstraints *constraints,
     std::unique_ptr<TfLiteSupportedOperators> supportedOps, const GraphOptimiserOptions &options, OptimiserDatabase *db) :
         GraphOptimiser(constraints, options, db)

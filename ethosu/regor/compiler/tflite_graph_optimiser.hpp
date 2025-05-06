@@ -177,6 +177,9 @@ private:
     // Legalizes asymmetric quantization, i.e. non zero zero-point, if required by hardware
     Operation *LegalizeAsymmetricQuantization(Graph *const graph, Operation *const operation);
 
+    // Converts TFLite SAME/VALID padding to GraphIR format
+    Operation *RewriteTransposeConvPadding(Graph *const graph, Operation *const operation);
+
 public:
     // The graph optimisation steps.
     // Order matters, array of rewrites processed in order.
@@ -265,6 +268,7 @@ public:
                 &TFLiteGraphOptimiser::ConvertTranspose,
                 &TFLiteGraphOptimiser::ConvertMirrorPad,
                 &TFLiteGraphOptimiser::ConvertPadV2,
+                &TFLiteGraphOptimiser::RewriteTransposeConvPadding,
             }
         },
         {

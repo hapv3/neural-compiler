@@ -373,7 +373,7 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
         return QueryResult::NativeHasReq;
     }
     // TransposeConv2D and Conv3D are legalized during decomposition
-    else if ( opType == OpType::TransposeConv2D || opType == OpType::Conv3D )
+    else if ( opType == OpType::Conv3D )
     {
         // Check for supported weight format
         if ( query && query->weightFormat != WeightFormat::Default )
@@ -385,6 +385,33 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
             req->req.Set(ArchRequirement::Decompose);
         }
         return QueryResult::NativeConstrainedHasReq;
+    }
+    else if ( opType == OpType::TransposeConv2D )
+    {
+        assert(query);
+        // Check for supported weight format
+        if ( query->weightFormat != WeightFormat::Default )
+        {
+            return QueryResult::Unsupported;
+        }
+
+        // TransposeConv2D constrained to only allow strides that work with IFM resampling
+        auto k = query->kernel;
+        auto stride = k->Stride();
+        if ( stride == Point2i(1, 1) || stride == Point2i(2, 2) ||
+             (stride == Point2i(1, 2) && query->ifm[0].shape.Width() == 1 && k->Size().x == 1) ||
+             (stride == Point2i(2, 1) && query->ifm[0].shape.Height() == 1 && k->Size().y == 1) )
+        {
+            if ( req )
+            {
+                req->req.Set(ArchRequirement::OpSubstitution, ArchRequirement::Decompose);
+            }
+            return QueryResult::NativeHasReq;
+        }
+        else
+        {
+            return QueryResult::Unsupported;
+        }
     }
 
     // Check direct native support of the opType

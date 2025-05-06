@@ -39,6 +39,8 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv2D(Architecture *a
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv3D(Architecture *arch, std::unique_ptr<SchedulerOperation> op);
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Architecture *arch, std::unique_ptr<SchedulerOperation> op);
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTransposeConv2D(Architecture *arch, std::unique_ptr<SchedulerOperation> op);
+std::vector<std::unique_ptr<SchedulerOperation>>
+DecomposeTransposeConv2DLargeStride(Architecture *arch, std::unique_ptr<SchedulerOperation> op);
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeElementwise(Architecture *arch, std::unique_ptr<SchedulerOperation> op);
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMatmul(Architecture *arch, std::unique_ptr<SchedulerOperation> op);
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(Architecture *arch, std::unique_ptr<SchedulerOperation> op);
@@ -48,6 +50,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeAvgPool(Architecture *
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMaxPool(Architecture *arch, std::unique_ptr<SchedulerOperation> op);
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeResize(Architecture *arch, std::unique_ptr<SchedulerOperation> op);
 std::vector<std::unique_ptr<SchedulerOperation>> LegaliseResize(Architecture *arch, std::unique_ptr<SchedulerOperation> op);
+std::vector<std::unique_ptr<SchedulerOperation>> LegaliseTransposeConv2D(Architecture *arch, std::unique_ptr<SchedulerOperation> op);
 
 
 // Operator query helpers
