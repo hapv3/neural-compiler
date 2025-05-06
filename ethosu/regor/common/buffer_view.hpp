@@ -357,8 +357,9 @@ public:
             // If the buffer is empty use the pointer to this buffer object as a hash to
             // disambiguate between different empty buffers.
             uintptr_t ptr = reinterpret_cast<uintptr_t>(this);
-            _dataHash.v32[0] = _dataHash.v32[1] = static_cast<uint32_t>(ptr);
-            _dataHash.v32[2] = _dataHash.v32[3] = static_cast<uint32_t>(ptr >> 32);
+            uint64_t ptr64 = static_cast<uint64_t>(ptr);
+            _dataHash.v32[0] = _dataHash.v32[1] = static_cast<uint32_t>(ptr64);
+            _dataHash.v32[2] = _dataHash.v32[3] = static_cast<uint32_t>(ptr64 >> 32);
         }
         _invalidHash = false;
     }
