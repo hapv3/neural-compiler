@@ -118,7 +118,8 @@ private:
     Placement _placement = Placement::Remote;
     LocalStorage _localStorage;
     DeleteFunc _deleter = nullptr;
-    Hash128 _dataHash;
+    mutable Hash128 _dataHash;
+    mutable bool _invalidHash = true;
 
 public:
     Buffer(const Buffer &) = delete;
@@ -327,9 +328,18 @@ public:
         }
     }
 
-    const Hash128 &Hash() const { return _dataHash; }
+    const Hash128 &Hash() const
+    {
+        if ( _invalidHash )
+        {
+            Rehash();
+        }
+        return _dataHash;
+    }
 
-    void Rehash()
+    void InvalidateHash() { _invalidHash = true; }
+
+    void Rehash() const
     {
         if ( Size() > 0 )
         {
@@ -338,10 +348,8 @@ public:
             sizeStr += std::to_string(Size());
             sizeStr += '>';
             MD5 hash;
-            // Make sure the const overload of Data() is called
-            const uint8_t *data = std::as_const(*this).Data<uint8_t>();
             hash.Combine(reinterpret_cast<uint8_t *>(sizeStr.data()), int(sizeStr.size()));
-            hash.Combine(data, Size());
+            hash.Combine(Data<uint8_t>(), Size());
             hash.Get(_dataHash);
         }
         else
@@ -352,6 +360,7 @@ public:
             _dataHash.v32[0] = _dataHash.v32[1] = static_cast<uint32_t>(ptr);
             _dataHash.v32[2] = _dataHash.v32[3] = static_cast<uint32_t>(ptr >> 32);
         }
+        _invalidHash = false;
     }
 
 private:
@@ -686,6 +695,7 @@ public:
     {
         assert(HasBuffer() && _strideBytes);
         auto *start = _buffer->Data<STORAGE_TYPE>() + _baseOffset;
+        _buffer->InvalidateHash();
         return BufferWriter<STORAGE_TYPE>(_strideBytes, start, _elements);
     }
 

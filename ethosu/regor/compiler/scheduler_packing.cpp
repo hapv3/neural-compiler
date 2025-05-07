@@ -441,7 +441,6 @@ int SchedulerPacking::CanPack(const SchedulerOperation *schedOp, const Scheduler
     }
 
     // Do not pack persistent tensors with non persistent tensors
-    // if ( ifmTensor->isPersistent != prevOFM->isPersistent )
     if ( prevOFM->isPersistent != nextOp->OFM()->tensor->isPersistent )
     {
         return 0;
