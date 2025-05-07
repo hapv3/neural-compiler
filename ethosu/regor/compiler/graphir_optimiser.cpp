@@ -1872,7 +1872,7 @@ Operation *GraphIrOptimiser::RewriteTransposeConvOFMPadding(Graph *const graph, 
         // Create zero-input tensor that has same shape as the padded OFM-area
         std::string inputName = fmt::format("{}_inputZero", name);
         RoundMode rounding;
-        if ( biasType == DataType::Int48 )
+        if ( biasType == DataType::Int48 || biasType == DataType::Int64 )
         {
             auto zeroBuf = std::make_shared<Buffer>(std::vector<int16_t>(sliceElements, 0));
             inputZero = std::make_shared<Tensor>(inputName, DataType::Int16, padSlice.shape, zeroBuf);
