@@ -276,7 +276,8 @@ bool TfLiteSupportedOperators::ConstraintZeroPoints(const Operation *op)
 {
     OpType opType = op->Type();
     // zeroPoints are ignored for the following operations to align with reference
-    if ( opType == OpType::AvgPool || opType == OpType::Resize || opType == OpType::CLZ || opType == OpType::SHL || opType == OpType::Div )
+    if ( opType == OpType::AvgPool || opType == OpType::Resize || opType == OpType::CLZ || opType == OpType::SHL ||
+         opType == OpType::Div || opType == OpType::UnidirectionalSequenceLstm )
     {
         return true;
     }

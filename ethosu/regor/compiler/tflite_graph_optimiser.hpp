@@ -181,6 +181,9 @@ private:
     // Rewrites zero point as expected by reference
     Operation *ConvertZeroPoint(Graph *const graph, Operation *const operation);
 
+    // Legalizes asymmetric quantization, i.e. non zero zero-point, if required by hardware
+    Operation *LegalizeAsymmetricQuantization(Graph *const graph, Operation *const operation);
+
 public:
     // The graph optimisation steps.
     // Order matters, array of rewrites processed in order.
@@ -276,6 +279,7 @@ public:
             {},
             {
                 &TFLiteGraphOptimiser::ConvertZeroPoint,
+                &TFLiteGraphOptimiser::LegalizeAsymmetricQuantization,
             }
         },
         {
