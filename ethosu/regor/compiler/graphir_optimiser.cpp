@@ -116,27 +116,33 @@ Tensor *GraphIrOptimiser::ConvertBool8Tensors(Graph *graph, Tensor *tensor)
 
 Tensor *GraphIrOptimiser::ConvertInt4Tensors(Graph *graph, Tensor *tensor)
 {
-    Tensor *returnTensor = tensor;
-    if ( tensor->Type() == DataType::Int4Packed8 && tensor->IsConstant() )
+    if ( tensor->Type() == DataType::Int4Packed8 )
     {
-        const auto oldView = tensor->View();
-        const auto oldValues = oldView.RawData<uint8_t>();
-        const auto newSize = oldView.Buffer()->Size() * 2;
+        if ( tensor->IsConstant() )
+        {
+            const auto oldView = tensor->View();
+            const auto oldValues = oldView.RawData<uint8_t>();
+            const auto newSize = oldView.Buffer()->Size() * 2;
 
-        auto data = std::make_unique<uint8_t[]>(newSize);
-        for ( int i = 0; i < newSize; i++ )
-        {  // Convert each element to Int8
-            const auto &nibbles = oldValues[i >> 1];
-            uint8_t val = i & 1 ? (nibbles & 0xF0) >> 4 : nibbles & 0x0F;
-            data[i] = val > 7 ? val - 16 : val;
+            auto data = std::make_unique<uint8_t[]>(newSize);
+            for ( int i = 0; i < newSize; i++ )
+            {  // Convert each element to Int8
+                const auto &nibbles = oldValues[i >> 1];
+                uint8_t val = i & 1 ? (nibbles & 0xF0) >> 4 : nibbles & 0x0F;
+                data[i] = val > 7 ? val - 16 : val;
+            }
+
+            tensor->SetBuffer(nullptr);
+            tensor->ChangeType(DataType::Int8);
+            // Replace this tensor's buffer with a new buffer
+            tensor->SetBuffer(std::make_shared<Buffer>(std::move(data), newSize));
         }
-
-        tensor->SetBuffer(nullptr);
-        tensor->ChangeType(DataType::Int8);
-        // Replace this tensor's buffer with a new buffer
-        tensor->SetBuffer(std::make_shared<Buffer>(std::move(data), newSize));
+        else
+        {
+            tensor->ChangeType(DataType::Int8);
+        }
     }
-    return returnTensor;
+    return tensor;
 }
 
 Operation *GraphIrOptimiser::ConvertAttributes(Graph *const graph, Operation *const operation)
