@@ -1,5 +1,6 @@
 //
 // SPDX-FileCopyrightText: Copyright 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2025 Meta Platforms, Inc. and affiliates.
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -708,7 +709,7 @@ void ConstraintInput8bit(const Operator &op, const SubGraph &subgraph, const Bui
     if ( !(ifm->type() == TensorType::INT8 || ifm->type() == TensorType::UINT8) )
     {
         std::string constraint = "IFM has to be 8bit";
-        std::string extra = fmt::format("IFM type={}, OFM type={}", EnumNameTensorType(ifm->type()));
+        std::string extra = fmt::format("IFM type={}, ", EnumNameTensorType(ifm->type()));
         throw InvalidTfLiteException(constraint, extra, op, subgraph, builtinOperator);
     }
 }
@@ -732,7 +733,7 @@ void ConstraintArgmaxOutput(const Operator &op, const SubGraph &subgraph, const 
     if ( !(ofm->type() == TensorType::INT32 || ofm->type() == TensorType::INT64) )
     {
         std::string constraint = "For IFM that are signed, OFM must also be signed";
-        std::string extra = fmt::format("IFM type={}, OFM type={}", EnumNameTensorType(ofm->type()));
+        std::string extra = fmt::format("OFM type={} ", EnumNameTensorType(ofm->type()));
         throw InvalidTfLiteException(constraint, extra, op, subgraph, builtinOperator);
     }
 }

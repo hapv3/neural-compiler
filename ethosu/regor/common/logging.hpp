@@ -1,5 +1,6 @@
 //
 // SPDX-FileCopyrightText: Copyright 2021, 2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2025 Meta Platforms, Inc. and affiliates.
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -118,7 +119,7 @@ public:
         {
             if ( _mask & _context->_filterMask )
             {
-                _context->Write(fmt::format(format, std::forward<TYPES>(args)...));
+                _context->Write(fmt::format(fmt::runtime(format), std::forward<TYPES>(args)...));
             }
         }
 
@@ -127,7 +128,7 @@ public:
         {
             if ( _mask & _context->_filterMask )
             {
-                _context->Write(fmt::format(format.c_str(), std::forward<TYPES>(args)...));
+                _context->Write(fmt::format(fmt::runtime(format.c_str()), std::forward<TYPES>(args)...));
             }
         }
 
