@@ -21,6 +21,7 @@
 #include "common/logging.hpp"
 
 #include <flatbuffers/flatbuffers.h>
+#include <unordered_map>
 
 namespace FlatbufferUtils
 {
