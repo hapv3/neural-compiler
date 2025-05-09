@@ -350,8 +350,8 @@ Flags<QueryResult> EthosU85Constraints::OperatorQuery(OpType opType, const ArchO
                 {
                     req->req.Set(ArchRequirement::Decompose);
                     req->decomposeProps.Set(ArchProperty::TransposeMask);
-                    result.Set(QueryResult::HasRequirements);
                 }
+                result.Set(QueryResult::HasRequirements);
             }
             else
             {
@@ -371,6 +371,32 @@ Flags<QueryResult> EthosU85Constraints::OperatorQuery(OpType opType, const ArchO
     if ( npuOp == EthosU85NpuOp::Dma )
     {
         return result;
+    }
+    else if ( npuOp == EthosU85NpuOp::ReduceMinMax )
+    {
+        // unsupported reduce axis (only H and W supported)
+        if ( query->axis != -3 /* H */ && query->axis != -2 /* W */ )
+        {
+            if ( req )
+            {
+                req->req.Set(ArchRequirement::Decompose);
+                req->decomposeProps.Set(ArchProperty::ReduceAxis);
+            }
+            result.Set(QueryResult::HasRequirements);
+        }
+    }
+    else if ( npuOp == EthosU85NpuOp::ReduceSum )
+    {
+        // unsupported reduce axis (only C supported)
+        if ( query->axis != -1 /* C */ )
+        {
+            if ( req )
+            {
+                req->req.Set(ArchRequirement::Decompose);
+                req->decomposeProps.Set(ArchProperty::ReduceAxis);
+            }
+            result.Set(QueryResult::HasRequirements);
+        }
     }
 
     const auto &ifmShape = query->ifm[0].shape;

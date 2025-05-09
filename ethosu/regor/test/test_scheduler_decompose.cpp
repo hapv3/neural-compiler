@@ -18,6 +18,7 @@
 
 #include "common/common.hpp"
 
+#include "architecture/ethosu85/ethos_u85.hpp"
 #include "compiler/scheduler_decompose.hpp"
 #include "util.hpp"
 
@@ -57,6 +58,8 @@ std::unique_ptr<SchedulerOperation> CreateOperation(OpType opType, Shape ifmShap
 
 TEST_CASE("test_scheduler_decompose")
 {
+    auto arch = CreateArchDefault<ArchEthosU85>(1024);
+
     SECTION("Decompose matmul in height dimension")
     {
         Shape ifmShape(1, 100, 3, 2);  // ifm2 is transposed by graphIR optimiser to same shape as ifm1
@@ -227,14 +230,15 @@ TEST_CASE("test_scheduler_decompose")
         REQUIRE(decomposedOps.size() == 1);
         REQUIRE(orig == decomposedOps[0].get());
     }
-    SECTION("Decompose large axis")
+    SECTION("Decompose reduce large axis (non-reduced axis)")
     {
         uint32_t maxSize = (1UL << 16);
         uint32_t shapeSize = maxSize * 10 + 5;
         Shape ifmShape(1, 1, shapeSize, 5);
         Shape ofmShape(1, 1, shapeSize, 5);
         auto op = CreateOperation(OpType::ReduceMax, ifmShape, ofmShape);
-        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeReduce(nullptr, std::move(op));
+        op->Attribute<axis_attr_t>()->axis = 1;  // H
+        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeReduce(arch.get(), std::move(op));
         REQUIRE(decomposedOps.size() == 11);
         for ( size_t i = 0; i < decomposedOps.size(); i++ )
         {
@@ -246,7 +250,7 @@ TEST_CASE("test_scheduler_decompose")
             REQUIRE(ofmSlice.shape == ofmShape.WithWidth(expectedWidth));
         }
     }
-    SECTION("Decompose large axis (sliced)")
+    SECTION("Decompose reduce large axis (non-reduced axis, sliced)")
     {
         uint32_t maxSize = (1UL << 16);
         uint32_t shapeSize = maxSize * 10 + 5;
@@ -263,9 +267,10 @@ TEST_CASE("test_scheduler_decompose")
         Shape ifmSliceShape(1, 1, maxSize * 2 + 7, 10);
         Shape ofmSliceShape(1, 1, maxSize * 2 + 7, 10);
         auto op = CreateOperation(OpType::ReduceMax, ifmShape, ofmShape);
+        op->Attribute<axis_attr_t>()->axis = 1;  // H
         op->Input(TensorUsage::IFM0)->slice = {ifmSliceOffset, ifmSliceShape};
         op->Output(TensorUsage::OFM)->slice = {ofmSliceOffset, ofmSliceShape};
-        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeReduce(nullptr, std::move(op));
+        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeReduce(arch.get(), std::move(op));
         REQUIRE(decomposedOps.size() == 3);
         for ( size_t i = 0; i < decomposedOps.size(); i++ )
         {
@@ -278,5 +283,53 @@ TEST_CASE("test_scheduler_decompose")
             REQUIRE(ofmSlice.offset == (ofmSliceOffset + Shape(0, 0, i * maxSize, 0)));
             REQUIRE(ifmSlice.offset == (ifmSliceOffset + Shape(0, 0, i * maxSize, 0)));
         }
+    }
+    SECTION("Decompose reduce large axis (reduced axis)")
+    {
+        int maxSize = (1UL << 16);
+        int shapeSize = maxSize * 10 + 5;
+        Shape ifmShape(1, 1, shapeSize, 5);
+        Shape ofmShape(1, 1, 1, 5);
+        auto op = CreateOperation(OpType::ReduceMax, ifmShape, ofmShape);
+        op->Attribute<axis_attr_t>()->axis = 2;  // W
+        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeReduce(arch.get(), std::move(op));
+        REQUIRE(decomposedOps.size() == 12);
+        for ( int i = 0; i < int(decomposedOps.size()) - 1; i++ )
+        {
+            // Check each block
+            auto &subOp = decomposedOps[i];
+            auto &ifmSlice = subOp->Input(TensorUsage::IFM0)->slice;
+            auto &ofmSlice = subOp->Output(TensorUsage::OFM)->slice;
+            int blockSize = std::min(maxSize, shapeSize - i * maxSize);
+            REQUIRE(ifmSlice.shape == ifmShape.WithWidth(blockSize));
+            REQUIRE(ofmSlice.shape == ofmShape.WithWidth(1));
+            REQUIRE(ifmSlice.offset == ifmShape.WithZeros().WithWidth(i * maxSize));
+            REQUIRE(ofmSlice.offset == ofmShape.WithZeros().WithWidth(i));
+        }
+        // Check final reduce
+        auto &subOp = decomposedOps.back();
+        auto &ifmSlice = subOp->Input(TensorUsage::IFM0)->slice;
+        auto &ofmSlice = subOp->Output(TensorUsage::OFM)->slice;
+        int blockCount = decomposedOps.size() - 1;
+        REQUIRE(ifmSlice.shape == ifmShape.WithWidth(blockCount));
+        REQUIRE(ofmSlice.shape == ofmShape);
+        REQUIRE(ifmSlice.offset == ifmShape.WithZeros());
+        REQUIRE(ofmSlice.offset == ofmShape.WithZeros());
+    }
+    SECTION("Decompose reduce with batch dimension")
+    {
+        Shape ifmShape(3, 7, 11, 13);
+        Shape ofmShape(3, 7, 11, 1);
+        auto op = CreateOperation(OpType::ReduceMax, ifmShape, ofmShape);
+        op->Attribute<axis_attr_t>()->axis = 3;  // C
+        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeReduce(arch.get(), std::move(op));
+        REQUIRE(decomposedOps.size() == 1);
+        auto &subOp = decomposedOps[0];
+        auto &ifmSlice = subOp->Input(TensorUsage::IFM0)->slice;
+        auto &ofmSlice = subOp->Output(TensorUsage::OFM)->slice;
+        REQUIRE(ifmSlice.shape == Shape(3 * 7 * 11, 13, 1));
+        REQUIRE(ofmSlice.shape == Shape(3 * 7 * 11, 1, 1));
+        REQUIRE(ifmSlice.offset == Shape(0, 0, 0));
+        REQUIRE(ofmSlice.offset == Shape(0, 0, 0));
     }
 }

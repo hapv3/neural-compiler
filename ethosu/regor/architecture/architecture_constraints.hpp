@@ -53,6 +53,7 @@ struct ArchOperatorQuery
     ReverseType reverseMask = ReverseType::None;
     TransposeType transposeMask = TransposeType::None;
     const Kernel *kernel = nullptr;
+    int axis = 0;  // Uses negative notation: -1 = C, -2 = W, ...
     ~ArchOperatorQuery(){};
 };
 
@@ -75,6 +76,7 @@ enum class ArchProperty
     KernelDilation = 1 << 3,
     DepthMultiplier = 1 << 4,
     TransposeMask = 1 << 5,
+    ReduceAxis = 1 << 6,
 };
 
 struct ArchRequirements

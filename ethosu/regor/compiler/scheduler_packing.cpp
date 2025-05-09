@@ -635,6 +635,7 @@ std::unique_ptr<SchedulerOperation> SchedulerPacking::MakeSchedulerOperation(Ope
         int paddedAxes = schedOp->Output(TensorUsage::OFM)->shape.Size() - op->Output(TensorUsage::OFM)->shape.Size();
         assert(paddedAxes >= 0);
         attr->axis += paddedAxes;
+        assert(attr->axis < schedOp->Input(TensorUsage::IFM)->shape.Size());
     }
     // Update OFM transpose mask if operator has the attribute
     else if ( schedOp->HasAttribute<transpose_attr_t>() )

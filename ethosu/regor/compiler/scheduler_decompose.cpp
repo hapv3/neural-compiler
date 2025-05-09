@@ -40,6 +40,15 @@ Flags<QueryResult> OperatorQuery(Architecture *arch, const SchedulerOperation *s
     query.transposeMask = ofmConn->transpose;
     query.reverseMask = ofmConn->reverse;
     query.kernel = schedOp->Kernel();
+    if ( schedOp->HasAttribute<axis_attr_t>() )
+    {
+        query.axis = schedOp->Attribute<axis_attr_t>()->axis;
+        if ( query.axis >= 0 )
+        {
+            // Convert axis to negative notation
+            query.axis -= query.ifm[0].shape.Size();
+        }
+    }
     return arch->Constraints()->OperatorQuery(schedOp->Type(), &query, req);
 }
 
@@ -1427,27 +1436,141 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(Architecture *a
     ofmSlice.Initialize(ofmShape.WithZeros(), ofmShape);
     ifmSlice.Initialize(ifmShape.WithZeros(), ifmShape);
 
-    if ( auto ifm2Conn = op->TryInput(TensorUsage::IFM1) )
-    {
-        auto ifm2Shape = ifm2Conn->shape;
-        auto &ifm2Slice = ifm2Conn->slice;
+    const auto ifmRank = ifmShape.Size();
+    auto attr = op->Attribute<axis_attr_t>();
+    const int reducedAxis = attr->axis;
+    assert(reducedAxis >= 0);
+    assert(reducedAxis < ifmRank);
+    const bool isReduceInH = reducedAxis == ifmRank - 3;
+    const bool isReduceInW = reducedAxis == ifmRank - 2;
+    const bool isReduceInC = reducedAxis == ifmRank - 1;
 
-        ifm2Slice.Initialize(ifm2Shape.WithZeros(), ifm2Shape);
+    // Decompose Reduce Min/Max/Sum with the following algorithm so that it can run on NPU.
+    //
+    // 1. Reshape the IFM/OFM so that the dimension to reduce is either H, W or C (depending on which type of operation
+    //    it is) and IFM/OFM are 3D shapes. When reshaping >4D shapes, we may lose the slice information, so therefore,
+    //    at this point slicing is not supported.
+    // 2. Create operations so that the reduced axis is reduced in blocks of 64k, with a final operation to produce the
+    //    results in the original OFM.
+
+    // Figure out what we need to decompose
+    ArchRequirements req{};
+    auto qResult = OperatorQuery(arch, op.get(), &req);
+    bool decomposeReshape = false;
+    if ( qResult.Any(QueryResult::HasRequirements) && req.req.Any(ArchRequirement::Decompose) )
+    {
+        decomposeReshape = req.decomposeProps.Any(ArchProperty::ReduceAxis, ArchProperty::TensorDims);
     }
 
-    auto ofmRank = ofmShape.Size();
-    auto attr = op->Attribute<axis_attr_t>();
-    int reducedAxis = attr->axis;
-
-    for ( int axis = 0; axis < ofmRank; axis++ )
+    // Reshape to a 3D tensor
+    if ( decomposeReshape )
     {
-        if ( ofmShape[axis] > MAX_DIM )
+        // Slice offset not supported if we need to reshape
+        assert(ofmSlice.offset.GreaterMask(ofmSlice.offset.WithZeros()) == 0);
+        assert(ifmSlice.offset.GreaterMask(ifmSlice.offset.WithZeros()) == 0);
+
+        if ( op->Type() == OpType::ReduceSum )
         {
-            if ( axis == reducedAxis )
-            {
-                // TODO: MLBEDSW-9408 reduced axis requires specific decomposition
-                continue;
-            }
+            // ReduceSum can only reduce in C
+            assert(isReduceInC);
+
+            // Reshape to 3D with all >=H dimensions in H
+            ifmConn->shape = ReshapeTo3D(ifmConn->shape, {ifmConn->shape.Size() - 2, 1, 1});
+            ifmSlice = {};
+            ofmConn->shape = ReshapeTo3D(ofmConn->shape, {ofmConn->shape.Size() - 2, 1, 1});
+            ofmSlice = {};
+            attr->axis = 2;  // C
+        }
+        else
+        {
+            // Reshape to 3D around W
+            ifmConn->shape = ReshapeTo3DAroundAxis(ifmConn->shape, reducedAxis);
+            ifmSlice = {};
+            ofmConn->shape = ReshapeTo3DAroundAxis(ofmConn->shape, reducedAxis);
+            ofmSlice = {};
+            op->SetKernel(op->Kernel()->WithSize({ifmConn->shape.Width() /* W */, 1 /* H */}));
+            attr->axis = 1;  // W
+        }
+
+        return DecomposeReduce(arch, std::move(op));
+    }
+
+    // Handle reduced axis
+    if ( ifmShape[reducedAxis] > MAX_DIM )
+    {
+        // Create an intermediate tensor
+        const int blockCount = (ifmShape[reducedAxis] - 1) / MAX_DIM + 1;
+        auto newTensor = ifmConn->tensor->Clone();
+        newTensor->srcTensor = nullptr;
+        newTensor->storageShape = ifmShape.With(reducedAxis, blockCount);
+
+        LOG_TRACE1("DecomposeReduce: Reduce dimension too large, axis {}, size {}, intermediate shape ({})\n",
+            reducedAxis, ifmShape[reducedAxis], newTensor->storageShape.ToString());
+
+        for ( int blockIndex = 0; blockIndex < blockCount; blockIndex++ )
+        {
+            // Create one new reduce op for each block
+            const int blockSize = std::min(MAX_DIM, ifmShape[reducedAxis] - blockIndex * MAX_DIM);
+            std::unique_ptr<SchedulerOperation> subOp;
+            Kernel kernel;
+            if ( isReduceInH ) kernel = op->Kernel()->WithSize({1 /* W */, blockSize /* H */});
+            else if ( isReduceInW ) kernel = op->Kernel()->WithSize({blockSize /* W */, 1 /* H */});
+            subOp = MakeSubOperation(op.get(), isReduceInC ? nullptr : &kernel);
+
+            auto *subOpIfmConn = subOp->IFM(0);
+            subOpIfmConn->slice.offset = ifmSlice.offset.With(reducedAxis, blockIndex * MAX_DIM);
+            subOpIfmConn->slice.shape = ifmSlice.shape.With(reducedAxis, blockSize);
+            subOpIfmConn->quantization = ifmConn->quantization;
+            auto *subOpOfmConn = subOp->OFM();
+            subOpOfmConn->tensor = newTensor;
+            subOpOfmConn->shape = newTensor->storageShape;
+            subOpOfmConn->slice.offset = ofmSlice.offset.With(reducedAxis, blockIndex);
+            subOpOfmConn->slice.shape = ofmSlice.shape.With(reducedAxis, 1);
+            subOpOfmConn->quantization = ofmConn->quantization;
+            newTensor->producers.push_back(subOp.get());
+
+            LOG_TRACE1("DecomposeReduce: Block, IFM ({}) @ ({}) from ({}), OFM ({}) @ ({}) from ({})\n",
+                subOpIfmConn->slice.shape.ToString(), subOpIfmConn->slice.offset.ToString(), subOpIfmConn->shape.ToString(),
+                subOpOfmConn->slice.shape.ToString(), subOpOfmConn->slice.offset.ToString(), subOpOfmConn->shape.ToString());
+
+            auto subOps = DecomposeReduce(arch, std::move(subOp));
+            result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
+        }
+
+        // Create one last reduce op that reduces all the blocks
+        std::unique_ptr<SchedulerOperation> subOp;
+        Kernel kernel;
+        if ( isReduceInH ) kernel = op->Kernel()->WithSize({1 /* W */, blockCount /* H */});
+        else if ( isReduceInW ) kernel = op->Kernel()->WithSize({blockCount /* W */, 1 /* H */});
+        subOp = MakeSubOperation(op.get(), isReduceInC ? nullptr : &kernel);
+
+        auto *subOpIfmConn = subOp->IFM(0);
+        subOpIfmConn->tensor = newTensor;
+        subOpIfmConn->shape = newTensor->storageShape;
+        subOpIfmConn->slice.offset = newTensor->storageShape.WithZeros();
+        subOpIfmConn->slice.shape = ifmSlice.shape.With(reducedAxis, blockCount);
+        subOpIfmConn->quantization = Quantization::Unit();
+        newTensor->consumers.push_back(subOp.get());
+        auto *subOpOfmConn = subOp->OFM();
+        subOpOfmConn->quantization = Quantization::Unit();
+
+        LOG_TRACE1("DecomposeReduce: Final block, IFM ({}) @ ({}) from ({}), OFM ({}) @ ({}) from ({})\n",
+            subOpIfmConn->slice.shape.ToString(), subOpIfmConn->slice.offset.ToString(), subOpIfmConn->shape.ToString(),
+            subOpOfmConn->slice.shape.ToString(), subOpOfmConn->slice.offset.ToString(), subOpOfmConn->shape.ToString());
+
+        auto subOps = DecomposeReduce(arch, std::move(subOp));
+        result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
+        return result;
+    }
+
+    // Handle non-reduced axes
+    for ( int axis = 0; axis < ifmRank; axis++ )
+    {
+        // At this point the reduced axis should not be too large
+        assert(ifmShape[axis] <= MAX_DIM || axis != reducedAxis);
+
+        if ( ifmShape[axis] > MAX_DIM )
+        {
             return DecomposeLargeAxis(axis, MAX_DIM, arch, std::move(op), DecomposeReduce);
         }
     }

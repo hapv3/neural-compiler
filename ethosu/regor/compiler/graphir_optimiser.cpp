@@ -199,6 +199,22 @@ Operation *GraphIrOptimiser::ConvertAttributes(Graph *const graph, Operation *co
         assert((mask == ReverseType::None || IsPowerOfTwo(unsigned(mask))) && "Reverse operation can only have one axis");
         ofmConn->reverse = mask;
     }
+    else if ( opType == OpType::ReduceMin || opType == OpType::ReduceMax || opType == OpType::ReduceAny || opType == OpType::ReduceAll )
+    {
+        TensorConnection *ifmConn = operation->Input(TensorUsage::IFM);
+        auto *attr = operation->Attribute<axis_attr_t>();
+        auto axis = attr->axis;
+        if ( axis < 0 ) axis = ifmConn->shape.Size() + axis;
+        assert(axis >= 0);
+        assert(axis < ifmConn->shape.Size());
+        // Create a reduce kernel, if reducing in H or W
+        Kernel kernel = *operation->Kernel();
+        if ( axis == ifmConn->shape.Size() - 3 )
+            kernel = operation->Kernel()->WithSize({1 /* W */, ifmConn->shape.Height() /* H */});
+        else if ( axis == ifmConn->shape.Size() - 2 )
+            kernel = operation->Kernel()->WithSize({ifmConn->shape.Width() /* W */, 1 /* H */});
+        operation->SetKernel(std::make_unique<Kernel>(std::move(kernel)));
+    }
     return operation;
 }
 
@@ -1345,36 +1361,6 @@ Operation *GraphIrOptimiser::RewriteSelect(Graph *const graph, Operation *const 
     return returnOp;
 }
 
-// Rewrite REDUCE_{MIN,MAX,ANY,ALL} IFM/OFM shapes and set a kernel matching the axis to reduce
-Operation *GraphIrOptimiser::RewriteReduceMinMaxAnyAll(Graph *const graph, Operation *const operation)
-{
-    UNUSED(graph);
-    Operation *returnOp = operation;
-    const OpType opType = operation->Type();
-    if ( opType == OpType::ReduceMin || opType == OpType::ReduceMax || opType == OpType::ReduceAny || opType == OpType::ReduceAll )
-    {
-        auto *ifmConn = operation->Input(TensorUsage::IFM);
-        auto *ofmConn = operation->Output(TensorUsage::OFM);
-        auto *attr = operation->Attribute<axis_attr_t>();
-        auto axis = attr->axis;
-        if ( axis < 0 ) axis = ifmConn->shape.Size() + axis;
-        assert(axis >= 0);
-        assert(axis < ifmConn->shape.Size());
-
-        // Reshape IFM/OFM so IFM is HxWxC and OFM is Hx1xC
-        ifmConn->shape = ReshapeTo3DAroundAxis(ifmConn->shape, axis);
-        ofmConn->shape = ifmConn->shape.WithWidth(1);
-
-        // Update the axis to reduce to match the reshapes shapes
-        attr->axis = 1;
-
-        // Set kernel to 1xW (where W is the width of the reshaped shapes)
-        auto kernel = operation->Kernel()->WithSize({ifmConn->shape.Width() /* W */, 1 /* H */});
-        operation->SetKernel(std::make_unique<Kernel>(std::move(kernel)));
-    }
-    return returnOp;
-}
-
 // Rewrite REDUCE_SUM with any axis into a REDUCE_SUM with C axis
 Operation *GraphIrOptimiser::RewriteReduceSum(Graph *const graph, Operation *const operation)
 {
@@ -1518,6 +1504,7 @@ Operation *GraphIrOptimiser::RewriteReduceSum(Graph *const graph, Operation *con
 
                 operation->Input(TensorUsage::IFM)->Set(ifmShape3D);
                 operation->Output(TensorUsage::OFM)->Set(ifmShape3D.WithDepth(1));
+                attr->axis = 2;  // C
             }
         }
     }

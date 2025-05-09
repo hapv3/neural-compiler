@@ -319,7 +319,7 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
     // Check hardware-required substitutions first
     if ( (opType == OpType::Sigmoid) || (opType == OpType::Tanh) )
     {
-        if ( query->ifm[0].type != DataType::Int16 )
+        if ( query && query->ifm[0].type != DataType::Int16 )
         {
             if ( req )
             {
@@ -366,6 +366,20 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
     {
         // more detailed query might fail
         return QueryResult::NativeConstrained;
+    }
+
+    if ( npuOp == EthosU55NpuOp::ReduceSum )
+    {
+        // unsupported reduce axis (only C supported)
+        if ( query->axis != -1 /* C */ )
+        {
+            if ( req )
+            {
+                req->req.Set(ArchRequirement::Decompose);
+                req->decomposeProps.Set(ArchProperty::ReduceAxis);
+            }
+            result.Set(QueryResult::HasRequirements);
+        }
     }
 
     const auto &ifmShape = query->ifm[0].shape;
