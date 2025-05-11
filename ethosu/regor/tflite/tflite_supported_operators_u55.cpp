@@ -167,7 +167,7 @@ bool TfLiteSupportedOperatorsU55::ConstraintResize(const Operation *op)
         alignCorners = opt->align_corners();
         halfPixelCentersRB = opt->half_pixel_centers();
     }
-    else if ( opType == OpType::ResizeNearestNeighbor )
+    else
     {
         const auto *opt = passthrough->builtin_options_as_ResizeNearestNeighborOptions();
         assert(opt);
@@ -201,21 +201,18 @@ bool TfLiteSupportedOperatorsU55::ConstraintResize(const Operation *op)
         hUpscale = float(ofmShape.Height()) / ifmShape.Height();
         wUpscale = float(ofmShape.Width()) / ifmShape.Width();
     }
-
-    if ( halfPixelCentersRB )
-    {
-        Failure(op, "Half Pixel Centers attribute is true", "Half Pixel Centers must be false for Resize Bilinear");
-        return false;
-    }
     std::string constraint =
-        "If not (IFM H == IFM W == 1) and not IFM Shape == OFM Shape\n"
+        "If not (IFM H == IFM W == 1) and not IFM Shape == OFM Shape:\n"
         "\tIf W upScale != H upScale:\n"
         "\t\tOFM W or H must be 1, and scaling in the dim that is must also be 1\n"
-        "\tIf align corners:"
-        "\t\tupScale is definied as OFM H-1 / IFM H - 1"
-        "\tElse:"
-        "\t\tupScale is defined as OFM H/IFM H"
-        "\tupScale needs to be one of: 2x/4x/8x";
+        "\tIf align corners:\n"
+        "\t\tupScale is definied as OFM H-1 / IFM H - 1\n"
+        "\tElse:\n"
+        "\t\tupScale is defined as OFM H/IFM H\n"
+        "\t\tIF Resize Bilinear and half pixel centers:\n"
+        "\t\t\tupscale needs to be 2x\n"
+        "\t\tElse:\n"
+        "\t\t\tupScale needs to be one of: 2x/4x/8x\n";
 
 
     if ( hUpscale != wUpscale )
@@ -228,11 +225,18 @@ bool TfLiteSupportedOperatorsU55::ConstraintResize(const Operation *op)
                 constraint);
             return false;
         }
+        else if ( halfPixelCentersRB )
+        {
+            Failure(op, fmt::format("HW upScaling is not equal and Resize Bilinear has half pixel centers, h up-scale={}, w up-scale={}.", hUpscale, wUpscale),
+                constraint);
+            return false;
+        }
     }
+    auto maxUpscale = halfPixelCentersRB ? 2 : 8;
 
     auto upscale = std::max(hUpscale, wUpscale);
     if ( !((ifmShape.Height() == 1 && ifmShape.Width() == 1) ||
-             (std::trunc(upscale) == upscale && IsPowerOfTwo(int(upscale)) && upscale > 1 && upscale <= 8)) )
+             (std::trunc(upscale) == upscale && IsPowerOfTwo(int(upscale)) && upscale > 1 && upscale <= maxUpscale)) )
     {
         Failure(op, fmt::format("Scaling matches and operation has unsupported upScaling={}", upscale), constraint);
         return false;

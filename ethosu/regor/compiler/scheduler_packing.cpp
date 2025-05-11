@@ -768,7 +768,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> SchedulerPacking::DecomposeSche
             break;
         case OpType::Resize:
             OperatorQuery(_arch, op.get(), &req);
-            if ( req.substitution == OpType::AvgPool )
+            if ( req.req.Any(ArchRequirement::OpSubstitution) )
             {
                 result = LegaliseResize(_arch, std::move(op));
             }

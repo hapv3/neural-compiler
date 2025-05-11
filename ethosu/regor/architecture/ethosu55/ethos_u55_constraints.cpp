@@ -362,8 +362,7 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
         }
         if ( req )
         {
-            req->req = ArchRequirement::Decompose;
-            req->substitution = OpType::AvgPool;
+            req->req.Set(ArchRequirement::OpSubstitution, ArchRequirement::Decompose);
         }
         return QueryResult::NativeHasReq;
     }

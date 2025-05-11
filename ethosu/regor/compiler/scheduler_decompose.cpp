@@ -1295,10 +1295,160 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTransposeConv2D(Archit
     return result;
 }
 
+static bool IsHalfPixelCenters(const resize_attr_t &attr)
+{
+    if ( attr.scaleY.d == 2 && attr.scaleX.d == 2 && attr.scaleY.n % 2 == 0 && attr.scaleX.n % 2 == 0 )
+    {
+        if ( attr.offset.x == -1 * (attr.scaleX.n / 2 - 1) && attr.offset.y == -1 * (attr.scaleY.n / 2 - 1) )
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+static std::shared_ptr<SchedulerTensor> MakeDepthwiseHPCKernel(Architecture *arch, int channels, int8_t w00, int8_t w01, int8_t w10, int8_t w11)
+{
+    Shape kShape(1, 2, 2, channels);
+    const auto wSize = kShape.Elements();
+    auto buffer = std::make_shared<Buffer>(std::make_unique<uint8_t[]>(wSize), wSize);
+    BufferView bufferView(buffer, 0, 8, kShape, {});
+    auto bufferValues = bufferView.WritableValues<int8_t>();
+    for ( int c = 0; c < channels; ++c )
+    {
+        bufferValues[{0, 0, 0, c}] = w00;
+        bufferValues[{0, 0, 1, c}] = w01;
+        bufferValues[{0, 1, 0, c}] = w10;
+        bufferValues[{0, 1, 1, c}] = w11;
+    }
+
+    auto tens = std::make_shared<SchedulerTensor>(DataType::Int8, kShape);
+    auto srcTensor = std::make_shared<Tensor>("resize_weights", DataType::Int8, kShape);
+    srcTensor->SetAxisOrder(AxisOrder::IHWO);
+
+    tens->uid = GenerateUniqueId();
+    tens->srcTensor = std::move(srcTensor);
+    tens->memArea = arch->ReadonlyMemory();
+    tens->bufferView = std::move(bufferView);
+    tens->storageShape = tens->bufferView.ViewShape();
+    return tens;
+}
+
+static std::vector<std::unique_ptr<SchedulerOperation>>
+ConvertResizeBilinearHPCToDepthwise(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
+{
+    // Transform Resize Bilinear Half pixel centers -> Reflect pad with border=1 followed by 4 interleaved depthwise ops
+    std::vector<std::unique_ptr<SchedulerOperation>> result;
+
+    auto ifmConn = op->Input(TensorUsage::IFM);
+    auto ofmConn = op->Output(TensorUsage::OFM);
+    ifmConn->quantization = Quantization::Unit();
+    Shape ifmShape = ifmConn->SliceShape();
+    Shape ofmShape = ofmConn->SliceShape();
+    int channels = ifmShape.Depth();
+    // Kernels to do Bilinear interpolation on interleaved slices of the input feature map
+    constexpr int8_t kCoeff[4][4] = {
+        {1, 3, 3, 9},
+        {3, 1, 9, 3},
+        {3, 9, 1, 3},
+        {9, 3, 3, 1},
+    };
+
+    auto tens = ifmConn->tensor;
+    auto padT = ifmConn->tensor->Clone();
+    padT->isGraphInput = false;
+    padT->storageShape = ifmShape.WithHeight(ifmShape.Height() + 2).WithWidth(ifmShape.Width() + 2);
+    // Reflect Padding to provide the setup for bilinear half pixel centers interpolation
+
+    // Centre
+    {
+        TensorSlice dst = {{0, 1, 1, 0}, ifmShape};
+        auto mc = MakeMemCopy(tens, padT, &dst);
+        ifmConn = mc->Output(TensorUsage::OFM);
+        result.emplace_back(std::move(mc));
+    }
+    // Top and Bottom
+    auto makeRowCopy = [&](int srcH, int dstH)
+    {
+        TensorSlice dst = {{0, dstH, 1, 0}, ifmShape.WithHeight(1)};
+        auto mc = MakeMemCopy(tens, padT, &dst);
+        auto *ifm = mc->IFM(0);
+        ifm->slice.offset = Shape(0, srcH, 0, 0);
+        ifm->slice.shape = dst.shape;
+        ifm->shape = ifmShape;
+        mc->Output(TensorUsage::OFM)->reverse = ReverseType::H;
+        return mc;
+    };
+    // Right and Left
+    auto makeColCopy = [&](int srcW, int dstW)
+    {
+        TensorSlice dst = {{0, 0, dstW, 0}, padT->storageShape.WithWidth(1)};
+        auto mc = MakeMemCopy(padT, padT, &dst);
+        auto *ifm = mc->IFM(0);
+        ifm->slice.offset = Shape(0, 0, srcW, 0);
+        ifm->slice.shape = dst.shape;
+        ifm->shape = padT->storageShape;
+        mc->Output(TensorUsage::OFM)->reverse = ReverseType::W;
+
+        return mc;
+    };
+    result.emplace_back(makeRowCopy(0, 0));
+    result.emplace_back(makeRowCopy(ifmShape.Height() - 1, ifmShape.Height() + 1));
+    result.emplace_back(makeColCopy(ifmShape.Width(), ifmShape.Width() + 1));
+    result.emplace_back(makeColCopy(1, 0));
+
+    // Create 4 interleaved Depthwise ops to do implement Bilinear interpolation with half pixel centers
+    for ( int tile = 0; tile < 4; ++tile )
+    {
+        int ty = tile / 2;
+        int tx = tile % 2;
+
+        auto subOp = std::make_unique<SchedulerOperation>(OpType::DepthwiseConv2D);
+
+        // IFM
+        auto ifmSub = subOp->ConnectInput(TensorUsage::IFM, padT);
+        ifmSub->tensor = padT;
+        ifmSub->shape = padT->storageShape;
+        ifmSub->quantization = Quantization::Unit();
+        ifmSub->slice = {Shape(0, ty, tx, 0),
+            Shape(1, padT->storageShape.Height() - 1, padT->storageShape.Width() - 1, ofmShape.Depth())};
+
+        // Weights
+        auto W = MakeDepthwiseHPCKernel(arch, channels, kCoeff[tile][0], kCoeff[tile][1], kCoeff[tile][2], kCoeff[tile][3]);
+        auto wConn = subOp->ConnectInput(TensorUsage::Weights, W);
+        wConn->shape = W->storageShape;
+        wConn->quantization = Quantization::Unit();
+
+        auto biasTensor = std::make_shared<SchedulerTensor>(DataType::Int32, Shape(1));
+        auto bufBias = std::make_shared<Buffer>(Buffer::ConstValue<int32_t>(0));
+        biasTensor->memArea = arch->ReadonlyMemory();
+        biasTensor->bufferView = BufferView(bufBias, 0, DataTypeStorageSizeBits(biasTensor->dataType), {1}, {});
+        biasTensor->storageShape = biasTensor->bufferView.ViewShape();
+        subOp->ConnectInput(TensorUsage::Scales, biasTensor);
+
+        // OFM
+        auto ofmSub = subOp->ConnectOutput(TensorUsage::OFM, ofmConn->tensor);
+        ofmSub->quantization = Quantization::Unit();
+        // Special quantization for bit-exact Resize Bilinear with half pixel centers
+        // 16x downscale is to normalize the values, and +1 addition is for correct rounding
+        ofmSub->quantization.scales[0] = {1 + (1 << 31), 35};
+        ofmSub->shape = ofmConn->shape;
+        ofmSub->slice.offset = Shape(0, ty, tx, 0);
+        ofmSub->slice.shape = ofmConn->shape.WithHW(ofmConn->shape.Height() - 1, ofmConn->shape.Width() - 1);
+        ofmSub->stepXY = Point2i{2, 2};
+
+        subOp->SetKernel(Kernel::UnitKernel().WithSize({2, 2}));
+
+        result.emplace_back(std::move(subOp));
+    }
+
+    return result;
+}
+
 std::vector<std::unique_ptr<SchedulerOperation>> LegaliseResize(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
 {
     // Convert Resize (Bilinear or Nearest) into a sequence of 1×1 AvgPool ops followed by a final
-    // larger AvgPool / DepthwiseConv2D with kernel up to 8x8.
+    // larger AvgPool or DepthwiseConv2D with kernel up to 8x8.
 
     std::vector<std::unique_ptr<SchedulerOperation>> result;
 
@@ -1317,18 +1467,12 @@ std::vector<std::unique_ptr<SchedulerOperation>> LegaliseResize(Architecture *ar
 
     auto ofmShape = ofmConn->shape;
     auto ifmShape = ifmConn->shape;
-
-    // half_pixel_centers / align_corners pattern match
-    bool isHalfPixelCenter = false;
-    if ( attr->scaleY.d == 2 && attr->scaleX.d == 2 && upscaleH % 2 == 0 && upscaleW % 2 == 0 )
+    // half pixel centers / align corners pattern match
+    bool isHalfPixelCenter = IsHalfPixelCenters(*attr);
+    if ( isHalfPixelCenter )
     {
         upscaleW /= 2;
         upscaleH /= 2;
-
-        if ( attr->offset.x == -1 * (upscaleW - 1) && attr->offset.y == -1 * (upscaleH - 1) )
-        {
-            isHalfPixelCenter = true;
-        }
     }
     auto remainingUpscale = std::max(upscaleW, upscaleH);
 
@@ -1354,9 +1498,21 @@ std::vector<std::unique_ptr<SchedulerOperation>> LegaliseResize(Architecture *ar
     else if ( attr->mode == tosa::ResizeMode::BILINEAR )
     {
         auto reqScale = QuantizedScale(1, IntLog2(attr->scaleX.n * attr->scaleY.n));
-
-        if ( ofmConn->quantization.scales[0] != reqScale || isHalfPixelCenter || attr->offset.x != 0 ||
-             attr->offset.y != 0 || attr->scaleX.d != 1 || attr->scaleY.d != 1 )
+        // ResizeBilinear has quantization requirement, and this function only legalises ResizeBilinear without half
+        // pixel centers
+        if ( ofmConn->quantization.scales[0] == reqScale )
+        {
+            // Only 2x upscale supported for half pixel centers Resize Bilinear
+            if ( isHalfPixelCenter && attr->scaleX.n == 4 && attr->scaleY.n == 4 )
+            {
+                return ConvertResizeBilinearHPCToDepthwise(arch, std::move(op));
+            }
+            else if ( attr->offset.x != 0 || attr->offset.y != 0 || attr->scaleX.d != 1 || attr->scaleY.d != 1 )
+            {
+                canLegalise = false;
+            }
+        }
+        else
         {
             canLegalise = false;
         }
