@@ -113,7 +113,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> SchedulerPacking::Process(const
 {
     // Get operation list in execution order
     std::vector<Operation *> executionList;
-    Graph::TraverseGraphFromEnd(graph->Outputs(),
+    Graph::TraverseGraphFromEnd(graph->Outputs(), !graph->Persistent().empty(),
         [&](Operation *op) -> bool
         {
             executionList.push_back(op);
@@ -477,11 +477,6 @@ int SchedulerPacking::CanPack(const SchedulerOperation *schedOp, const Scheduler
 
     // can't pack CPU operations
     if ( !nextOp->IsNpuOp() )
-    {
-        return 0;
-    }
-
-    if ( schedOp->Type() == OpType::FullyConnected )
     {
         return 0;
     }

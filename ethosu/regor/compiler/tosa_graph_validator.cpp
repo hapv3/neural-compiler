@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -72,7 +72,7 @@ TosaGraphValidator::TosaGraphValidator(GraphNotation notation, uint32_t syntaxVe
 bool TosaGraphValidator::Validate(Graph *graph)
 {
     bool graphValid = true;
-    Graph::TraverseGraphFromEnd(graph->Outputs(),
+    Graph::TraverseGraphFromEnd(graph->Outputs(), !graph->Persistent().empty(),
         [&graphValid, &graph, this](Operation *op) -> bool
         {
             try

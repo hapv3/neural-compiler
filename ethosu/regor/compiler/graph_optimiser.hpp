@@ -110,7 +110,7 @@ public:
             // Traverse from End and collect operators that are at the start of the graph. Their inputs are only either
             // - Constant
             // - Graph inputs
-            Graph::TraverseGraphFromEnd(graph->Outputs(),
+            Graph::TraverseGraphFromEnd(graph->Outputs(), !graph->Persistent().empty(),
                 [&](Operation *op) -> bool
                 {
                     for ( auto [usage, ifmConn] : op->Inputs().pairs() )

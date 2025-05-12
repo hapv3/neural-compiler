@@ -548,7 +548,7 @@ void GraphBuilder::FreeUnconnected()
     {
         // In case somebody added self-supporting graph fragments
         std::unordered_set<Operation *> connected;
-        Graph::TraverseGraphFromEnd(_outputs,
+        Graph::TraverseGraphFromEnd(_outputs, !_persistent.empty(),
             [&](Operation *op) -> bool
             {
                 connected.insert(op);

@@ -128,7 +128,7 @@ public:
     // Finds all operations which precede a graph output and adds them to the vector in execution order
     void GetAllOperations(std::vector<Operation *> &operations) const
     {
-        TraverseGraphFromEnd(Outputs(),
+        TraverseGraphFromEnd(Outputs(), !Persistent().empty(),
             [&](Operation *op) -> bool
             {
                 operations.push_back(op);
@@ -138,7 +138,7 @@ public:
 
     void GetAllOperations(std::vector<std::shared_ptr<Operation>> &operations) const
     {
-        TraverseGraphFromEnd(Outputs(),
+        TraverseGraphFromEnd(Outputs(), !Persistent().empty(),
             [&](Operation *op) -> bool
             {
                 operations.push_back(op->shared_from_this());
@@ -151,16 +151,21 @@ public:
 
     void SetScheduledOrder(std::vector<Operation *> operations) { _opsInScheduledOrder = std::move(operations); }
 
-    // Traverse the graph in right-to-left reverse post-order but processing tensor writers left-to-right.
-    // This means in below graph, where A and B both write to the input tensor of C, A will be processed
-    // before B.
+    // Traverse the graph in right-to-left reverse post-order.
+    //
+    // TODO MLBEDSW-10790: Remove special handling of graphs with persistent tensors
+    // Special care is required if the graph contains any persistent tensors, as they may be written/read
+    // multiple times. To ensure a functional execution order in this case, the traversal will process tensor
+    // writers left-to-right. This preserves the order in whcih the operations were added to the graph.
+    //
+    // For example, in the graph below, where operations A and B both write to the input tensor of operation C.
+    // A will be processed before B (opposite of the default traversal).
     //            A   B
     //             \ /
     //              |
     //              C
-    // The rationale is to preserve the order that partial writes are added to the graph.
     template<typename OPFUNC>
-    static void TraverseGraphFromEnd(const std::vector<std::shared_ptr<Tensor>> &from, OPFUNC opFunc)
+    static void TraverseGraphFromEnd(const std::vector<std::shared_ptr<Tensor>> &from, bool traverseLeftToRight, OPFUNC opFunc)
     {
         struct Entry
         {
@@ -174,10 +179,21 @@ public:
 
         for ( const auto &tensor : from )
         {
-            const auto &writers = tensor->Writers();
-            for ( auto it = writers.crbegin(); it != writers.crend(); it++ )
+            // TODO MLBEDSW-10790: Remove special handling of graphs with persistent tensors
+            if ( traverseLeftToRight )
             {
-                stack.emplace(false, *it);
+                const auto &writers = tensor->Writers();
+                for ( auto it = writers.crbegin(); it != writers.crend(); it++ )
+                {
+                    stack.emplace(false, *it);
+                }
+            }
+            else
+            {
+                for ( const auto &op : tensor->Writers() )
+                {
+                    stack.emplace(false, op);
+                }
             }
         }
 
@@ -198,12 +214,26 @@ public:
                 stack.emplace(true, entry.op);
                 for ( const auto &pair : entry.op->Inputs().pairs() )
                 {
-                    const auto &writers = pair.second.tensor->Writers();
-                    for ( auto it = writers.crbegin(); it != writers.crend(); it++ )
+                    // TODO MLBEDSW-10790: Remove special handling of graphs with persistent tensors
+                    if ( traverseLeftToRight )
                     {
-                        if ( visited.count(it->get()) == 0 )
+                        const auto &writers = pair.second.tensor->Writers();
+                        for ( auto it = writers.crbegin(); it != writers.crend(); it++ )
                         {
-                            stack.emplace(false, *it);
+                            if ( visited.count(it->get()) == 0 )
+                            {
+                                stack.emplace(false, *it);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        for ( const auto &op : pair.second.tensor->Writers() )
+                        {
+                            if ( visited.count(op.get()) == 0 )
+                            {
+                                stack.emplace(false, op);
+                            }
                         }
                     }
                 }
