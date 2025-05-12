@@ -168,7 +168,8 @@ struct HLCSubOperation
         ifm = other.ifm;
         ofm = other.ofm;
         // Compilers disagree on whether the union is copyable.
-        if ( other.type == OpType::LUT ) parameters.lut = other.parameters.lut;
+        if ( other.type == OpType::LUT || other.type == OpType::Sigmoid || other.type == OpType::Tanh )
+            parameters.lut = other.parameters.lut;
         else parameters.resize = other.parameters.resize;
         srcId = other.srcId;
     }
