@@ -1488,11 +1488,6 @@ void EthosU55RCSGenerator::InsertTransposeCommand(const HLCStripe *stripe, Tempo
                 // Create new stripe operations
                 auto cmd = std::make_unique<HLCStripe>(*stripe);
                 cmd->operation = std::make_shared<HLCOperation>();
-                if ( allowSubOps )
-                {
-                    cmd->operation->subOps = op->subOps;
-                    if ( subOpsRequireLUT ) InsertLUTDMACommand(cmd.get(), temps, emitted);
-                }
                 cmd->operation->kernel = Kernel::UnitKernel();
                 cmd->operation->type = OpType::AvgPool;
                 cmd->opGroup = stripe->opGroup;
@@ -1515,6 +1510,11 @@ void EthosU55RCSGenerator::InsertTransposeCommand(const HLCStripe *stripe, Tempo
                     temps.configs.push_back(_arch->GetOpConfig(cmd->operation->type, query));
                 }
                 cmd->operation->config = temps.configs.back().get();
+                if ( allowSubOps )
+                {
+                    cmd->operation->subOps = op->subOps;
+                    if ( subOpsRequireLUT ) InsertLUTDMACommand(cmd.get(), temps, emitted);
+                }
                 // Add to CMD list
                 emitted.push_back(cmd.get());
                 temps.cmds.push_back(std::move(cmd));
