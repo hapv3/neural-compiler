@@ -281,6 +281,12 @@ bool EthosU55Constraints::SupportedDtypes(OpType opType, DataType ifmType, DataT
 // Validate that zero-points are supported
 bool EthosU55Constraints::SupportedZeroPoint(int64_t zp, TensorUsage usage, DataType dType, OpType opType)
 {
+    if ( !IsSignedInteger(dType) && zp < 0 )
+    {
+        // must be non-negative for unsigned data types
+        return false;
+    }
+
     if ( IsIFM(usage) )
     {
         // must be zero for 32-bit IFM and for CLZ or SHL operations

@@ -2648,8 +2648,14 @@ Operation *TFLiteGraphOptimiser::ConvertZeroPoint(Graph *const graph, Operation 
 // quantization which may require legalization depending on which hardware is targeted.
 Operation *TFLiteGraphOptimiser::LegalizeAsymmetricQuantization(Graph *const graph, Operation *const operation)
 {
+    UNUSED(graph);
     auto returnOp = operation;
     OpType opType = operation->Type();
+    if ( opType == OpType::Passthrough )
+    {
+        return returnOp;
+    }
+
     TensorConnection *ifmConn = operation->Input(TensorUsage::IFM);
     if ( ifmConn->quantization.zeroPoints.size() == 0 )
     {
