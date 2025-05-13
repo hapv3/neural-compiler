@@ -717,7 +717,7 @@ void EthosU85RCSGenerator::GenerateOFMScalingForPooling(HLCOperation *poolOp, bo
     QuantizedScale ofmScale(1, 0);
     pooling_mode mode = (poolOp->type == OpType::AvgPool && (poolOp->kernel.Size().x > 8 || poolOp->kernel.Size().y > 8)) ? pooling_mode::SUM : pooling_mode::NONE;
 
-    if ( mode == pooling_mode::SUM && useGlobalScale )
+    if ( mode == pooling_mode::SUM && useGlobalScale && poolOp->kernel.Padding().IsZero() )
     {
         uint32_t scale = 1;
         int shift = 0;

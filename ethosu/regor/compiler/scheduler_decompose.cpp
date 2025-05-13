@@ -20,6 +20,8 @@
 
 #include "common/logging.hpp"
 
+#include "architecture/ethos_u_scaling.hpp"
+#include "common/box.hpp"
 #include "shape_util.hpp"
 
 #include <numeric>
@@ -2290,7 +2292,131 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeAvgPool(Architecture *
         result.emplace_back(std::move(op));
         return result;
     }
-    // Decomposition for large dimensions & strides is needed here.
+
+    ArchRequirements req{};
+    Flags<QueryResult> qResult = OperatorQuery(arch, op.get(), &req);
+
+    // Perform scaling of the output if needed
+    const int scaleSize = ofmConn->quantization.scales.size();
+    if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::Scaling, ArchProperty::KernelStride) && scaleSize )
+    {
+        // Create scaling array
+        int H = (kernel->Padding().Top() || kernel->Padding().Bottom()) ? ofmShape.Height() : 1;
+        int W = (kernel->Padding().Left() || kernel->Padding().Right()) ? ofmShape.Width() : 1;
+        int C = scaleSize > 1 ? ofmShape.Depth() : 1;
+
+        // Create SchedulerTensor for scales and shifts
+        auto shape = Shape(1, H, W, C);
+        auto scaleTensor = std::make_shared<SchedulerTensor>();
+        scaleTensor->uid = GenerateUniqueId();
+        scaleTensor->memArea = arch->ReadonlyMemory();
+        scaleTensor->dataType = DataType::Int32;
+        scaleTensor->storageShape = shape;
+        auto shiftTensor = scaleTensor->Clone();
+
+        // Create buffers that will hold scales and shifts
+        const auto size = shape.Elements();
+        auto scaleBuffer = std::make_unique<int32_t[]>(size);
+        auto shiftBuffer = std::make_unique<int32_t[]>(size);
+
+        // Calculate scales and shifts
+        auto ifmBox = Box(Shape{ifmShape.Height(), ifmShape.Width()});
+        auto kernelBox = Box(Shape{kernel->Size().y, kernel->Size().x});
+        const auto &ifmScales = ifmConn->quantization.scales;
+        const auto &ofmScales = ofmConn->quantization.scales;
+        int pos = 0;
+        for ( int y = 0; y < H; y++ )
+        {
+            int iy = y * kernel->Stride().y - padding.Top();
+            for ( int x = 0; x < W; x++ )
+            {
+                int ix = x * kernel->Stride().x - padding.Left();
+                kernelBox.MoveTo(Shape{iy, ix});
+                assert(ifmBox.Overlaps(kernelBox));
+                int elements = ifmBox.Intersection(kernelBox).SizeShape().Elements();
+                assert(elements);
+                for ( int c = 0; c < C; c++ )
+                {
+                    double ifmScale = float(ifmScales[(c + ifmSlice.offset.Depth()) % ifmScales.size()].Dequantize());
+                    double ofmScale = float(ofmScales[(c + ofmSlice.offset.Depth()) % ofmScales.size()].Dequantize());
+                    double rescale = ifmScale / ofmScale;
+                    // When there is only one kernel element and no rescale
+                    // the effective shift will be zero and no rounding will be performed
+                    // by the ASR, hence the scale needs to be initialized as below
+                    uint32_t scale = 1 << 30;
+                    int shift = 30;
+                    if ( !(elements == 1 && rescale == 1.0) )
+                        QuantizePoolingScale(elements, rescale, 0, scale, shift, 31);
+                    scaleBuffer[pos] = scale;
+                    shiftBuffer[pos] = shift - 30;
+                    pos++;
+                }
+            }
+        }
+
+        // Hand over buffers to the scale and shift tensors
+        scaleTensor->bufferView = BufferView(std::make_shared<Buffer>(std::move(scaleBuffer), size), 0, 8 * sizeof(int32_t), shape, {});
+        shiftTensor->bufferView = BufferView(std::make_shared<Buffer>(std::move(shiftBuffer), size), 0, 8 * sizeof(int32_t), shape, {});
+
+        // Setup intermediate tensors for scaling
+        auto mulIfm = std::make_shared<SchedulerTensor>();
+        mulIfm->uid = GenerateUniqueId();
+        mulIfm->memArea = arch->FeatureMapMemory();
+        mulIfm->dataType = DataType::Int32;
+        mulIfm->storageShape = ofmShape;
+        auto mulOfm = mulIfm->Clone();
+
+        // Apply scales
+        auto mul = std::make_unique<SchedulerOperation>(OpType::Mul);
+        mul->ConnectInput(TensorUsage::IFM0, mulIfm)->shape = mulIfm->storageShape;
+        mul->ConnectInput(TensorUsage::IFM1, scaleTensor)->shape = scaleTensor->storageShape;
+        auto mulOfmConn = mul->ConnectOutput(TensorUsage::OFM, mulOfm);
+        mulOfmConn->shape = mulOfm->storageShape;
+        mulOfmConn->quantization.scales.emplace_back(QuantizedScale{1, 30});
+        mulOfmConn->rounding = RoundMode::TRUNCATE_TO_LOWER;
+        auto mulOps = DecomposeElementwise(arch, std::move(mul));
+
+        // Apply shift
+        auto asr = std::make_unique<SchedulerOperation>(OpType::Asr);
+        asr->ConnectInput(TensorUsage::IFM0, mulOfm)->shape = mulOfm->storageShape;
+        asr->ConnectInput(TensorUsage::IFM1, shiftTensor)->shape = shiftTensor->storageShape;
+        *asr->ConnectOutput(TensorUsage::OFM, ofmConn->tensor) = *ofmConn;
+        asr->OFM()->quantization.scales = {QuantizedScale::Unit()};
+        auto asrOps = DecomposeElementwise(arch, std::move(asr));
+
+        // Redirect ofm to perform scaling and set unit scaling
+        ofmConn = op->ConnectOutput(TensorUsage::OFM, mulIfm);
+        ofmConn->quantization = Quantization::Unit();
+        // Remove scales to signal scaling is done elsewhere, i.e. with the MUL and ASR above
+        ofmConn->quantization.scales.clear();
+        ofmConn->SetType(DataType::None);  // Reset any data type on the connection, since the tensor has been replaced
+        auto subOps = DecomposeAvgPool(arch, std::move(op));
+        result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
+        result.insert(result.end(), std::make_move_iterator(mulOps.begin()), std::make_move_iterator(mulOps.end()));
+        result.insert(result.end(), std::make_move_iterator(asrOps.begin()), std::make_move_iterator(asrOps.end()));
+        return result;
+    }
+
+    // Decomposition for large dimensions
+    try
+    {
+        if ( auto newBlockShape = NewOfmBlockShape(arch, op.get()) )
+        {
+            return DecomposeBlocks(arch, std::move(op), newBlockShape, DecomposeAvgPool);
+        }
+    }
+    catch ( const DecompositionFailure & )
+    {
+        UpdatePaddingAndIfmOffset(op.get());
+        result.emplace_back(std::move(op));
+        return result;
+    }
+    // Decomposition of large stride
+    if ( arch->Constraints()->SupportsAccumulatorSaveRestore() && req.decomposeProps.Any(ArchProperty::KernelStride) )
+    {
+        return DecomposeForStrides(arch, std::move(op), DecomposeAvgPool);
+    }
+
     // If we get here, decomposition has failed, the resulting operations will be executed on CPU
     UpdatePaddingAndIfmOffset(op.get());
     result.emplace_back(std::move(op));

@@ -572,6 +572,11 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
             }
             result.Set(QueryResult::HasRequirements);
         }
+
+        if ( opType == OpType::AvgPool && (k->Size().x > 8 || k->Size().y > 8) && !k->Padding().IsZero() )
+        {
+            return QueryResult::Unsupported;
+        }
     }
     else
     {

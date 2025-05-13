@@ -77,6 +77,7 @@ enum class ArchProperty
     DepthMultiplier = 1 << 4,
     TransposeMask = 1 << 5,
     ReduceAxis = 1 << 6,
+    Scaling = 1 << 7,
 };
 
 struct ArchRequirements

@@ -71,5 +71,25 @@ public:
         return true;
     }
 
+    void Move(const Shape &delta)
+    {
+        assert(delta.Size() == _start.Size());
+        _start += delta;
+        _end += delta;
+    }
+
+    void MoveTo(const Shape &start)
+    {
+        assert(start.Size() == _start.Size());
+        Move(start - _start);
+    }
+
+    Box Intersection(const Box &other)
+    {
+        return Overlaps(other) ? Box(Shape::Max(_start, other._start), Shape::Min(_end, other._end)) : Box{};
+    }
+
+    bool operator==(const Box &other) const { return (_start == other._start) && (_end == other._end); }
+
     std::string ToString() const { return fmt::format("[{} - {}]", _start.ToString(), _end.ToString()); }
 };
