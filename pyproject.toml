@@ -36,7 +36,7 @@ classifiers = [
 keywords = ["ethos-u", "vela compiler", "tflite", "npu"]
 # Third-party dependency versions are restricted based upon compatibility and security concerns.
 dependencies = [
-    "flatbuffers==24.12.23",
+    "flatbuffers==24.3.25",
     "numpy>=1.23.0",
     "lxml>=4.5.2",
     "lxml>=4.5.2, <5.3.2; sys_platform == 'win32'"
