@@ -101,7 +101,6 @@ TfLiteSupportedOperatorsU55::TfLiteSupportedOperatorsU55(IArchitectureConstraint
         &TfLiteSupportedOperatorsU55::Constraint32bitOps,
         &TfLiteSupportedOperatorsU55::ConstraintArgMaxDepth,
         &TfLiteSupportedOperatorsU55::ConstraintArgMaxAxis,
-        &TfLiteSupportedOperatorsU55::ConstraintArgMaxOverflow,  // TODO: Remove after MLBEDSW-9758: TOSA MaxPool decomp
         &TfLiteSupportedOperatorsU55::ConstraintKernelStride,
         &TfLiteSupportedOperatorsU55::ConstraintUnrolledKernelStride,
         &TfLiteSupportedOperatorsU55::ConstraintMatmul,
@@ -424,28 +423,6 @@ bool TfLiteSupportedOperatorsU55::ConstraintArgMaxAxis(const Operation *op)
     if ( axis != noAxes - 1 )
     {
         Failure(op, fmt::format("The axis of the argmax: {}, is not equal to the index of the depth axis: {} ", axis, noAxes - 1));
-        return false;
-    }
-    return true;
-}
-
-// TODO: Remove this constraint when MLBEDSW-9758: decomposition for max pooling has been implemented.
-bool TfLiteSupportedOperatorsU55::ConstraintArgMaxOverflow(const Operation *op)
-{
-    if ( op->Type() != OpType::ArgMax )
-    {
-        return true;
-    }
-    auto ifmConn = op->Input(TensorUsage::IFM);
-    assert(ifmConn);
-    static constexpr int maxProd = 1 << 16;
-    const auto &ifmShape = ifmConn->shape;
-    int w = ifmShape.Size() > 1 ? ifmShape.Width() : 1;
-    int h = ifmShape.Size() > 2 ? ifmShape.Height() : 1;
-    if ( w * h > maxProd )
-    {
-        Failure(op, fmt::format("ifmShape: ({}), W * H = {}", ifmShape.ToString(), ifmShape.ElementsWH()),
-            "The product of IFM width and height must be less than 65536");
         return false;
     }
     return true;
