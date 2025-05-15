@@ -222,10 +222,13 @@ std::unique_ptr<const uint8_t[]> TfLiteWriter::SerialiseImpl(const std::vector<s
             }
 
             auto serialised_inputs = _flatbuffer.CreateVector<int32_t>(inputs);
-            auto serialised_intermediates = _flatbuffer.CreateVector<int32_t>(intermediates);
             auto serialised_outputs = _flatbuffer.CreateVector<int32_t>(outputs);
             auto serialised_options = SerialiseOptions(operation, type);
             auto serialised_options2 = SerialiseOptions2(operation, type);
+
+            // Flatbuffer vectors have a length prefix before the payload. If the op doesn't have any intermediates
+            // the field can be omitted entirely by setting below variable to 0 instead of creating an empty vector.
+            auto serialised_intermediates = !intermediates.empty() ? _flatbuffer.CreateVector<int32_t>(intermediates) : 0;
 
             _serialised_operations.push_back(tflite::CreateOperator(_flatbuffer, opcode_index, serialised_inputs, serialised_outputs,
                 builtin_options_type, serialised_options, custom_options, custom_options_format, mvi, serialised_intermediates,
