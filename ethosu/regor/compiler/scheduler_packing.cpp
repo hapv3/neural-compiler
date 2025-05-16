@@ -508,6 +508,12 @@ int SchedulerPacking::CanPack(const SchedulerOperation *schedOp, const Scheduler
         return 0;
     }
 
+    // Previous op has OFM slice
+    if ( !Shape::IsReducedEqual(prevConnOfm->shape, prevConnOfm->SliceShape()) )
+    {
+        return 0;
+    }
+
     if ( schedOp->OFM()->tensor->isGraphOutput || prevOp->OFM()->tensor->isGraphOutput )
     {
         return 0;
