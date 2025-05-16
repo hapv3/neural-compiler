@@ -258,6 +258,12 @@ bool EthosU55Constraints::SupportedDtypes(OpType opType, DataType ifmType, DataT
                 }
             }
             break;
+            case OpType::Reverse:
+            {
+                validIfmTypes = {DataType::UInt8, DataType::Int8, DataType::Int16};
+                validOfmTypes = {DataType::UInt8, DataType::Int8, DataType::Int16};
+            }
+            break;
             default:
                 assert(false && "Unkown elementwise type");
                 break;

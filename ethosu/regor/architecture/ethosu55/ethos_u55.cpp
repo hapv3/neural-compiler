@@ -275,7 +275,7 @@ Flags<WeightFormat> ArchEthosU55::SupportedWeightFormat(OpType)
 
 bool ArchEthosU55::UseAvgPoolNop(OpType type)
 {
-    return IsActivation(type) || type == OpType::Quantize || type == OpType::MemoryCopy;
+    return IsActivation(type) || type == OpType::Quantize || type == OpType::MemoryCopy || type == OpType::Reverse;
 }
 
 static bool ChooseKernelMethod(const Shape &ifmShape, int ifmBits, const Kernel *kernel)

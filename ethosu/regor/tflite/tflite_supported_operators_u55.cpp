@@ -216,7 +216,7 @@ bool TfLiteSupportedOperatorsU55::ConstraintResize(const Operation *op)
 
 bool TfLiteSupportedOperatorsU55::ConstraintReverse(const Operation *op)
 {
-    if ( op->Type() != OpType::Reverse && op->Type() != OpType::ReverseV2 )
+    if ( op->Type() != OpType::ReverseV2 )
     {
         return true;
     }
