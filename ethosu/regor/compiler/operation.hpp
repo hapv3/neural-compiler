@@ -82,6 +82,9 @@ struct TensorSlice
             stride = stride_;
         }
     }
+
+    // Coverity wrongly thinks this function has side-effects and will complain when used in macros
+    std::string ToString() const { return fmt::format("[{}]@[{}]", shape.ToString(), offset.ToString()); }
 };
 
 struct TensorConnection

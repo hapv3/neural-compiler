@@ -52,7 +52,7 @@ static const std::unordered_map<EthosU85NpuOp, std::unordered_map<DataType, std:
             {DataType::Bool8, {DataType::Bool8, DataType::Int32, DataType::Int64}},
             {DataType::UInt8, {DataType::UInt8, DataType::Int32, DataType::Int64}},
             {DataType::Int8, {DataType::Int8, DataType::Int32, DataType::Int64}},
-            {DataType::Int16, {DataType::Int16}},
+            {DataType::Int16, {DataType::Int16, DataType::Int32, DataType::Int64}},
         }},
     {EthosU85NpuOp::ReduceMinMax,
         {
@@ -372,7 +372,7 @@ Flags<QueryResult> EthosU85Constraints::OperatorQuery(OpType opType, const ArchO
     {
         return result;
     }
-    else if ( npuOp == EthosU85NpuOp::ReduceMinMax )
+    else if ( npuOp == EthosU85NpuOp::ReduceMinMax || npuOp == EthosU85NpuOp::ArgMax )
     {
         // unsupported reduce axis (only H and W supported)
         if ( query->axis != -3 /* H */ && query->axis != -2 /* W */ )

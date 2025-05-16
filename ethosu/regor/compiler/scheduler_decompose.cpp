@@ -157,6 +157,20 @@ MakeSubOperation(const SchedulerOperation *schedOp, const Kernel *newKernel = nu
     return subOp;
 }
 
+// Create a 1-element constant tensor with a given value
+template<typename T>
+static std::shared_ptr<SchedulerTensor> CreateScalarConstTensor(Architecture *arch, const T value)
+{
+    const DataType type = DataTypeOf<T>::value;
+    const Shape shape(1, 1, 1, 1);
+    auto tensor = std::make_unique<SchedulerTensor>(type, shape);
+    const Buffer::ConstValue<T> cv(value);
+    const auto buf = std::make_shared<Buffer>(cv);
+    tensor->bufferView = BufferView(buf, 0, DataTypeSizeBits(type), shape, Shape());
+    tensor->memArea = arch->ReadonlyMemory();
+    return tensor;
+}
+
 static auto GetArchAccumulatorSource(const AccumulatorControl &ac)
 {
     switch ( ac.source )
@@ -1592,14 +1606,6 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(Architecture *a
     const bool isReduceInW = reducedAxis == ifmRank - 2;
     const bool isReduceInC = reducedAxis == ifmRank - 1;
 
-    // Decompose Reduce Min/Max/Sum with the following algorithm so that it can run on NPU.
-    //
-    // 1. Reshape the IFM/OFM so that the dimension to reduce is either H, W or C (depending on which type of operation
-    //    it is) and IFM/OFM are 3D shapes. When reshaping >4D shapes, we may lose the slice information, so therefore,
-    //    at this point slicing is not supported.
-    // 2. Create operations so that the reduced axis is reduced in blocks of 64k, with a final operation to produce the
-    //    results in the original OFM.
-
     // Figure out what we need to decompose
     ArchRequirements req{};
     auto qResult = OperatorQuery(arch, op.get(), &req);
@@ -1612,6 +1618,10 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(Architecture *a
     // Reshape to a 3D tensor
     if ( decomposeReshape )
     {
+        // Reshape the IFM/OFM so that the dimension to reduce is either H, W or C (depending on which type of operation
+        // it is) and IFM/OFM are 3D shapes. When reshaping >4D shapes, we may lose the slice information, so therefore,
+        // at this point slicing is not supported.
+
         // Slice offset not supported if we need to reshape
         assert(ofmSlice.offset.GreaterMask(ofmSlice.offset.WithZeros()) == 0);
         assert(ifmSlice.offset.GreaterMask(ifmSlice.offset.WithZeros()) == 0);
@@ -1645,69 +1655,253 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(Architecture *a
     // Handle reduced axis
     if ( ifmShape[reducedAxis] > MAX_DIM )
     {
-        // Create an intermediate tensor
         const int blockCount = (ifmShape[reducedAxis] - 1) / MAX_DIM + 1;
-        auto newTensor = ifmConn->tensor->Clone();
-        newTensor->srcTensor = nullptr;
-        newTensor->storageShape = ifmShape.With(reducedAxis, blockCount);
 
-        LOG_TRACE1("DecomposeReduce: Reduce dimension too large, axis {}, size {}, intermediate shape ({})\n",
-            reducedAxis, ifmShape[reducedAxis], newTensor->storageShape.ToString());
-
-        for ( int blockIndex = 0; blockIndex < blockCount; blockIndex++ )
+        if ( op->Type() == OpType::ReduceMin || op->Type() == OpType::ReduceMax || op->Type() == OpType::ReduceAny ||
+             op->Type() == OpType::ReduceAll || op->Type() == OpType::ReduceSum )
         {
-            // Create one new reduce op for each block
-            const int blockSize = std::min(MAX_DIM, ifmShape[reducedAxis] - blockIndex * MAX_DIM);
+            // 1. Do blockwise REDUCE MIN/MAX/ANY/ALL/SUM in blocks of 64k into a temporary tensor.
+            // 2. Do a final REDUCE MIN/MAX/ANY/ALL/SUM of the temporary tensor from step 1 into the original OFM.
+
+            // Create an intermediate tensor
+            auto newTensor = ifmConn->tensor->Clone();
+            newTensor->srcTensor = nullptr;
+            newTensor->storageShape = ifmShape.With(reducedAxis, blockCount);
+
+            LOG_TRACE1("DecomposeReduce: Reduce dimension too large, axis {}, size {}, blocks {}\n", reducedAxis,
+                ifmShape[reducedAxis], blockCount);
+            LOG_TRACE1("DecomposeReduce: Allocating tensor, shape ({})\n", newTensor->storageShape.ToString());
+
+            for ( int blockIndex = 0; blockIndex < blockCount; blockIndex++ )
+            {
+                const int blockOffset = blockIndex * MAX_DIM;
+                const int blockSize = std::min(MAX_DIM, ifmShape[reducedAxis] - blockOffset);
+
+                // Create one new reduce op for each block
+                std::unique_ptr<SchedulerOperation> subOp;
+                Kernel kernel;
+                if ( isReduceInH ) kernel = op->Kernel()->WithSize({1 /* W */, blockSize /* H */});
+                else if ( isReduceInW ) kernel = op->Kernel()->WithSize({blockSize /* W */, 1 /* H */});
+                subOp = MakeSubOperation(op.get(), isReduceInC ? nullptr : &kernel);
+                auto *subOpIfmConn = subOp->IFM(0);
+                subOpIfmConn->slice.offset = ifmSlice.offset.With(reducedAxis, blockOffset);
+                subOpIfmConn->slice.shape = ifmSlice.shape.With(reducedAxis, blockSize);
+                subOpIfmConn->quantization = ifmConn->quantization;
+                auto *subOpOfmConn = subOp->ConnectOutput(TensorUsage::OFM, newTensor);
+                subOpOfmConn->shape = newTensor->storageShape;
+                subOpOfmConn->slice.offset = ofmSlice.offset.With(reducedAxis, blockIndex);
+                subOpOfmConn->slice.shape = ofmSlice.shape.With(reducedAxis, 1);
+                subOpOfmConn->quantization = ofmConn->quantization;
+                LOG_TRACE1("DecomposeReduce: Block, IFM {} from ({}), OFM {} from ({})\n", subOpIfmConn->slice.ToString(),
+                    subOpIfmConn->shape.ToString(), subOpOfmConn->slice.ToString(), subOpOfmConn->shape.ToString());
+                auto subOps = DecomposeReduce(arch, std::move(subOp));
+                result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
+            }
+
+            // Create one last reduce op that reduces all the blocks
             std::unique_ptr<SchedulerOperation> subOp;
             Kernel kernel;
-            if ( isReduceInH ) kernel = op->Kernel()->WithSize({1 /* W */, blockSize /* H */});
-            else if ( isReduceInW ) kernel = op->Kernel()->WithSize({blockSize /* W */, 1 /* H */});
+            if ( isReduceInH ) kernel = op->Kernel()->WithSize({1 /* W */, blockCount /* H */});
+            else if ( isReduceInW ) kernel = op->Kernel()->WithSize({blockCount /* W */, 1 /* H */});
             subOp = MakeSubOperation(op.get(), isReduceInC ? nullptr : &kernel);
-
-            auto *subOpIfmConn = subOp->IFM(0);
-            subOpIfmConn->slice.offset = ifmSlice.offset.With(reducedAxis, blockIndex * MAX_DIM);
-            subOpIfmConn->slice.shape = ifmSlice.shape.With(reducedAxis, blockSize);
-            subOpIfmConn->quantization = ifmConn->quantization;
+            auto *subOpIfmConn = subOp->ConnectInput(TensorUsage::IFM, newTensor);
+            subOpIfmConn->shape = newTensor->storageShape;
+            subOpIfmConn->slice.offset = newTensor->storageShape.WithZeros();
+            subOpIfmConn->slice.shape = ifmSlice.shape.With(reducedAxis, blockCount);
+            subOpIfmConn->quantization = Quantization::Unit();
             auto *subOpOfmConn = subOp->OFM();
-            subOpOfmConn->tensor = newTensor;
-            subOpOfmConn->shape = newTensor->storageShape;
-            subOpOfmConn->slice.offset = ofmSlice.offset.With(reducedAxis, blockIndex);
-            subOpOfmConn->slice.shape = ofmSlice.shape.With(reducedAxis, 1);
-            subOpOfmConn->quantization = ofmConn->quantization;
-            newTensor->producers.push_back(subOp.get());
-
-            LOG_TRACE1("DecomposeReduce: Block, IFM ({}) @ ({}) from ({}), OFM ({}) @ ({}) from ({})\n",
-                subOpIfmConn->slice.shape.ToString(), subOpIfmConn->slice.offset.ToString(), subOpIfmConn->shape.ToString(),
-                subOpOfmConn->slice.shape.ToString(), subOpOfmConn->slice.offset.ToString(), subOpOfmConn->shape.ToString());
-
+            subOpOfmConn->quantization = Quantization::Unit();
+            LOG_TRACE1("DecomposeReduce: Final block, IFM {} from ({}), OFM {} from ({})\n", subOpIfmConn->slice.ToString(),
+                subOpIfmConn->shape.ToString(), subOpOfmConn->slice.ToString(), subOpOfmConn->shape.ToString());
             auto subOps = DecomposeReduce(arch, std::move(subOp));
             result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
+
+            return result;
         }
+        else if ( op->Type() == OpType::ArgMax )
+        {
+            // 1. Do blockwise MAXPOOL (W) in blocks of 64k into a temporary tensor. The temporary tensor will contain
+            //    the greatest value of each block.
+            // 2. Do blockwise ARGMAX (W) in blocks of 64k into a temporary tensor, then elementwise ADD the block
+            //    offset to each block. The temporary tensor will contain the index of the largest value of each block.
+            // 3. Do TRANSPOSE and reshape of the temporary tensor from step 1 from [N, H, W, C] to [N*C*H, W, 1], where
+            //    W is the number of blocks in step 1.
+            // 4. Do TRANSPOSE and reshape of the temporary tensor from step 2 from [N, H, W, C] to [N*C*H, W, 1], where
+            //    W is the number of blocks in step 2.
+            // 5. ARGMAX (W) the tensor from step 3 into a temporary tensor. The temporary tensor will contain the block
+            //    index with the largest value.
+            // 6. GATHER the tensor from step 4 and step 5. This will extract the index with the greatest value and
+            //    store it into the original OFM.
 
-        // Create one last reduce op that reduces all the blocks
-        std::unique_ptr<SchedulerOperation> subOp;
-        Kernel kernel;
-        if ( isReduceInH ) kernel = op->Kernel()->WithSize({1 /* W */, blockCount /* H */});
-        else if ( isReduceInW ) kernel = op->Kernel()->WithSize({blockCount /* W */, 1 /* H */});
-        subOp = MakeSubOperation(op.get(), isReduceInC ? nullptr : &kernel);
+            assert(isReduceInH || isReduceInW);
 
-        auto *subOpIfmConn = subOp->IFM(0);
-        subOpIfmConn->tensor = newTensor;
-        subOpIfmConn->shape = newTensor->storageShape;
-        subOpIfmConn->slice.offset = newTensor->storageShape.WithZeros();
-        subOpIfmConn->slice.shape = ifmSlice.shape.With(reducedAxis, blockCount);
-        subOpIfmConn->quantization = Quantization::Unit();
-        newTensor->consumers.push_back(subOp.get());
-        auto *subOpOfmConn = subOp->OFM();
-        subOpOfmConn->quantization = Quantization::Unit();
+            // Create index tensor
+            auto indexTensor = ofmConn->tensor->Clone();
+            indexTensor->srcTensor = nullptr;
+            indexTensor->storageShape = ofmShape.With(reducedAxis, blockCount);
 
-        LOG_TRACE1("DecomposeReduce: Final block, IFM ({}) @ ({}) from ({}), OFM ({}) @ ({}) from ({})\n",
-            subOpIfmConn->slice.shape.ToString(), subOpIfmConn->slice.offset.ToString(), subOpIfmConn->shape.ToString(),
-            subOpOfmConn->slice.shape.ToString(), subOpOfmConn->slice.offset.ToString(), subOpOfmConn->shape.ToString());
+            // Create value tensor
+            auto valueTensor = ifmConn->tensor->Clone();
+            valueTensor->srcTensor = nullptr;
+            valueTensor->storageShape = ifmShape.With(reducedAxis, blockCount);
 
-        auto subOps = DecomposeReduce(arch, std::move(subOp));
-        result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
-        return result;
+            LOG_TRACE1("DecomposeReduce: ArgMax dimension too large, axis {}, size {}, blocks {}\n", reducedAxis,
+                ifmShape[reducedAxis], blockCount);
+            LOG_TRACE1("DecomposeReduce: Allocating index tensor, shape ({})\n", indexTensor->storageShape.ToString());
+            LOG_TRACE1("DecomposeReduce: Allocating value tensor, shape ({})\n", valueTensor->storageShape.ToString());
+
+            for ( int blockIndex = 0; blockIndex < blockCount; blockIndex++ )
+            {
+                const int blockOffset = blockIndex * MAX_DIM;
+                const int blockSize = std::min(MAX_DIM, ifmShape[reducedAxis] - blockOffset);
+
+                // Create one new MaxPool op for each block
+                Kernel maxPoolKernel;
+                if ( isReduceInH ) maxPoolKernel = op->Kernel()->WithSize({1 /* W */, blockSize /* H */});
+                else maxPoolKernel = op->Kernel()->WithSize({blockSize /* W */, 1 /* H */});
+                auto maxPoolOp = MakeSubOperation(op.get(), &maxPoolKernel, OpType::MaxPool);
+                auto *maxPoolIfmConn = maxPoolOp->IFM(0);
+                maxPoolIfmConn->slice.offset = ifmSlice.offset.With(reducedAxis, blockOffset);
+                maxPoolIfmConn->slice.shape = ifmSlice.shape.With(reducedAxis, blockSize);
+                maxPoolIfmConn->quantization = ifmConn->quantization;
+                auto *maxPoolOfmConn = maxPoolOp->ConnectOutput(TensorUsage::OFM, valueTensor);
+                maxPoolOfmConn->shape = valueTensor->storageShape;
+                maxPoolOfmConn->slice.offset = ofmSlice.offset.With(reducedAxis, blockIndex);
+                maxPoolOfmConn->slice.shape = ofmSlice.shape.With(reducedAxis, 1);
+                maxPoolOfmConn->quantization = ofmConn->quantization;
+                maxPoolOfmConn->SetType(DataType::None);
+                LOG_TRACE1("DecomposeReduce: MaxPool block, IFM {} from ({}), OFM {} from ({})\n", maxPoolIfmConn->slice.ToString(),
+                    maxPoolIfmConn->shape.ToString(), maxPoolOfmConn->slice.ToString(), maxPoolOfmConn->shape.ToString());
+                auto subOps1 = DecomposeMaxPool(arch, std::move(maxPoolOp));
+                result.insert(result.end(), std::make_move_iterator(subOps1.begin()), std::make_move_iterator(subOps1.end()));
+
+                auto indexBlockTensor = ofmConn->tensor->Clone();
+                indexBlockTensor->srcTensor = nullptr;
+                indexBlockTensor->storageShape = ofmShape;
+                LOG_TRACE1("DecomposeReduce: Allocating index block tensor, shape ({})\n",
+                    indexBlockTensor->storageShape.ToString());
+
+                // Create one new ArgMax op for each block
+                Kernel argMaxKernel;
+                if ( isReduceInH ) argMaxKernel = op->Kernel()->WithSize({1 /* W */, blockSize /* H */});
+                else argMaxKernel = op->Kernel()->WithSize({blockSize /* W */, 1 /* H */});
+                auto argMaxOp = MakeSubOperation(op.get(), &argMaxKernel, OpType::ArgMax);
+                auto *argMaxIfmConn = argMaxOp->IFM(0);
+                argMaxIfmConn->slice.offset = ifmSlice.offset.With(reducedAxis, blockOffset);
+                argMaxIfmConn->slice.shape = ifmSlice.shape.With(reducedAxis, blockSize);
+                argMaxIfmConn->quantization = ifmConn->quantization;
+                auto *argMaxOfmConn = argMaxOp->ConnectOutput(TensorUsage::OFM, indexBlockTensor);
+                argMaxOfmConn->shape = indexBlockTensor->storageShape;
+                argMaxOfmConn->slice = {};
+                argMaxOfmConn->quantization = ofmConn->quantization;
+                LOG_TRACE1("DecomposeReduce: ArgMax block, IFM {} from ({}), OFM {} from ({})\n", argMaxIfmConn->slice.ToString(),
+                    argMaxIfmConn->shape.ToString(), argMaxOfmConn->slice.ToString(), argMaxOfmConn->shape.ToString());
+                auto subOps2 = DecomposeReduce(arch, std::move(argMaxOp));
+                result.insert(result.end(), std::make_move_iterator(subOps2.begin()), std::make_move_iterator(subOps2.end()));
+
+                // Create a scalar tensor that contains the block offset
+                auto offsetTensor = CreateScalarConstTensor(arch, int32_t(blockOffset));
+
+                // Create one new Add op for each block
+                auto addOp = std::make_unique<SchedulerOperation>(OpType::Add);
+                auto *addIfmConn0 = addOp->ConnectInput(TensorUsage::IFM0, indexBlockTensor);
+                addIfmConn0->shape = indexBlockTensor->storageShape;
+                addIfmConn0->quantization = ifmConn->quantization;
+                auto *addIfmConn1 = addOp->ConnectInput(TensorUsage::IFM1, offsetTensor);
+                addIfmConn1->shape = offsetTensor->storageShape;
+                addIfmConn1->quantization = Quantization::Unit();
+                auto *addOfmConn = addOp->ConnectOutput(TensorUsage::OFM, indexTensor);
+                addOfmConn->shape = indexTensor->storageShape;
+                addOfmConn->slice.offset = ofmSlice.offset.With(reducedAxis, blockIndex);
+                addOfmConn->slice.shape = ofmSlice.shape.With(reducedAxis, 1);
+                addOfmConn->quantization = ofmConn->quantization;
+                LOG_TRACE1("DecomposeReduce: Add block, IFM {} from ({}), IFM2 {} from ({}), OFM {} from ({})\n",
+                    addIfmConn0->slice.ToString(), addIfmConn0->shape.ToString(), addIfmConn1->slice.ToString(),
+                    addIfmConn1->shape.ToString(), addOfmConn->slice.ToString(), addOfmConn->shape.ToString());
+                auto subOps3 = DecomposeElementwise(arch, std::move(addOp));
+                result.insert(result.end(), std::make_move_iterator(subOps3.begin()), std::make_move_iterator(subOps3.end()));
+            }
+
+            const TransposeType mask = isReduceInH ? TransposeType::NCWH : TransposeType::NCHW;
+
+            auto indexTensor2 = indexTensor->Clone();
+            indexTensor2->srcTensor = nullptr;
+            indexTensor2->storageShape = indexTensor->storageShape.Permute(uint32_t(mask));
+            LOG_TRACE1("DecomposeReduce: Allocating transposed index tensor, shape ({})\n", indexTensor2->storageShape.ToString());
+
+            // Create one new Transpose op
+            auto tp1Op = std::make_unique<SchedulerOperation>(OpType::Transpose);
+            auto *tp1IfmConn0 = tp1Op->ConnectInput(TensorUsage::IFM0, indexTensor);
+            tp1IfmConn0->shape = indexTensor->storageShape;
+            auto *tp1OfmConn = tp1Op->ConnectOutput(TensorUsage::OFM, indexTensor2);
+            tp1OfmConn->shape = indexTensor2->storageShape;
+            tp1OfmConn->transpose = mask;
+            LOG_TRACE1("DecomposeReduce: Transpose, IFM {} from ({}), OFM {} from ({})\n", tp1IfmConn0->slice.ToString(),
+                tp1IfmConn0->shape.ToString(), tp1OfmConn->slice.ToString(), tp1OfmConn->shape.ToString());
+            auto subOps4 = DecomposeTranspose(arch, std::move(tp1Op));
+            result.insert(result.end(), std::make_move_iterator(subOps4.begin()), std::make_move_iterator(subOps4.end()));
+
+            auto valueTensor2 = valueTensor->Clone();
+            valueTensor2->srcTensor = nullptr;
+            valueTensor2->storageShape = valueTensor->storageShape.Permute(uint32_t(mask));
+            LOG_TRACE1("DecomposeReduce: Allocating transposed value tensor, shape ({})\n", valueTensor2->storageShape.ToString());
+
+            // Create one new Transpose op
+            auto tp2Op = std::make_unique<SchedulerOperation>(OpType::Transpose);
+            auto *tp2IfmConn0 = tp2Op->ConnectInput(TensorUsage::IFM0, valueTensor);
+            tp2IfmConn0->shape = valueTensor->storageShape;
+            auto *tp2OfmConn0 = tp2Op->ConnectOutput(TensorUsage::OFM, valueTensor2);
+            tp2OfmConn0->shape = valueTensor2->storageShape;
+            tp2OfmConn0->transpose = mask;
+            LOG_TRACE1("DecomposeReduce: Transpose, IFM {} from ({}), OFM {} from ({})\n", tp2IfmConn0->slice.ToString(),
+                tp2IfmConn0->shape.ToString(), tp2OfmConn0->slice.offset.ToString(), tp2OfmConn0->shape.ToString());
+            auto subOps5 = DecomposeTranspose(arch, std::move(tp2Op));
+            result.insert(result.end(), std::make_move_iterator(subOps5.begin()), std::make_move_iterator(subOps5.end()));
+
+            // Create intermediate tensor (this will contain the block that contains the largest value)
+            auto indexTensor3 = valueTensor2->Clone();
+            indexTensor3->srcTensor = nullptr;
+            indexTensor3->storageShape = Shape(1, valueTensor2->storageShape.Height() * valueTensor2->storageShape.Width(), 1, 1);
+            indexTensor3->dataType = DataType::Int32;
+            LOG_TRACE1("DecomposeReduce: Allocating index tensor, shape ({})\n", indexTensor3->storageShape.ToString());
+
+            // Create one new ArgMax op
+            const auto argMaxInputShape = ReshapeTo3D(valueTensor2->storageShape, {3, 1, 0});  // Reshape to (H*W, C, 1)
+            auto argMaxOp = std::make_unique<SchedulerOperation>(OpType::ArgMax);
+            const auto kernel = Kernel::UnitKernel().WithSize({argMaxInputShape.Width(), 1});
+            argMaxOp->SetKernel(kernel);
+            argMaxOp->Attribute<axis_attr_t>()->axis = 2;  // W
+            auto *argMaxIfmConn = argMaxOp->ConnectInput(TensorUsage::IFM0, valueTensor2);
+            argMaxIfmConn->shape = Shape::PadAxes(argMaxInputShape, 4, 1);
+            argMaxIfmConn->quantization = ifmConn->quantization;
+            auto *argMaxOfmConn = argMaxOp->ConnectOutput(TensorUsage::OFM, indexTensor3);
+            argMaxOfmConn->shape = indexTensor3->storageShape;
+            argMaxOfmConn->quantization = ofmConn->quantization;
+            LOG_TRACE1("DecomposeReduce: ArgMax, IFM {} from ({}), {} from ({})\n", argMaxIfmConn->slice.ToString(),
+                argMaxIfmConn->shape.ToString(), argMaxOfmConn->slice.ToString(), argMaxOfmConn->shape.ToString());
+            auto subOps6 = DecomposeReduce(arch, std::move(argMaxOp));
+            result.insert(result.end(), std::make_move_iterator(subOps6.begin()), std::make_move_iterator(subOps6.end()));
+
+            // Create one new Gather op
+            const int N = ofmShape.Elements();
+            const int K = blockCount;
+            const int W = 1;
+            const int C = 1;
+            auto gatherOp = std::make_unique<SchedulerOperation>(OpType::Gather);
+            auto *gatherIfmConn0 = gatherOp->ConnectInput(TensorUsage::IFM0, indexTensor2);  // Values tensor
+            gatherIfmConn0->shape = Shape(1, N, K, C);
+            auto *gatherIfmConn1 = gatherOp->ConnectInput(TensorUsage::IFM1, indexTensor3);  // Indices tensor
+            gatherIfmConn1->shape = Shape(1, 1, N, W);
+            auto *gatherOfmConn = gatherOp->ConnectOutput(TensorUsage::OFM, ofmConn->tensor);
+            gatherOfmConn->shape = Shape(1, N, W, C);
+            LOG_TRACE1("DecomposeReduce: Gather, IFM {} from ({}), IFM2 {} from ({}), OFM {} from ({})\n",
+                gatherIfmConn0->slice.ToString(), gatherIfmConn0->shape.ToString(), gatherIfmConn1->slice.ToString(),
+                gatherIfmConn1->shape.ToString(), gatherOfmConn->slice.ToString(), gatherOfmConn->shape.ToString());
+            auto subOps7 = DecomposeTranspose(arch, std::move(gatherOp));
+            result.insert(result.end(), std::make_move_iterator(subOps7.begin()), std::make_move_iterator(subOps7.end()));
+
+            return result;
+        }
     }
 
     // Handle non-reduced axes
