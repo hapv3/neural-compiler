@@ -1424,7 +1424,7 @@ void EthosU55RCSGenerator::InsertTransposeCommand(const HLCStripe *stripe, Tempo
                 {
                     depth = 1;
                     slices = ifm.shape.Height();
-                    ifmStep = ofmStep = ifm.shape.Depth() * ifm.shape.Width() * elementSize;
+                    ifmStep = ofmStep = ifm.shape.ElementsWC() * elementSize;
                     assert(from == 2 && to == 3);
                 }
                 else if ( ofm.transpose == TransposeType::NCWH )
@@ -1468,8 +1468,8 @@ void EthosU55RCSGenerator::InsertTransposeCommand(const HLCStripe *stripe, Tempo
             // Special case for IFM with sparse strides
             if ( (slices > 1) && (ofm.transpose == TransposeType::NCWH) )
             {
-                outFM.strides = Shape(1, elementSize, elementSize * ifm.shape.Width() * ifm.shape.Height(), elementSize);
-                inFM.strides = Shape(1, elementSize * ifm.shape.Width() * ifm.shape.Depth(), elementSize, elementSize);
+                outFM.strides = Shape(1, elementSize, elementSize * ifm.shape.ElementsWH(), elementSize);
+                inFM.strides = Shape(1, elementSize * ifm.shape.ElementsWC(), elementSize, elementSize);
             }
             else if ( ofm.transpose == TransposeType::NWHC )
             {

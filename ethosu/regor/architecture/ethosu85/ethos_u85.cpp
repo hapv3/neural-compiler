@@ -690,6 +690,7 @@ Shape ArchEthosU85::AreaFit(const FindConfigCommon &common, const Shape &ofmShap
     const int accElements = (_accRamSizeBytes * 8) / common.accBits;
     const int ibElements = (_ifmRamSizeBytes * 8) / common.ifmBits;
     const int ubAccElements = common.ublock.ElementsWH() * ACC_DEPTH_GRANULE;
+    assert(ubAccElements);
 
     double aspect = double(ofmShape.Height()) / ofmShape.Width();
     bool prioritiseDepth = kernel->DilatedWH() == Point2i(1, 1);
@@ -698,7 +699,7 @@ Shape ArchEthosU85::AreaFit(const FindConfigCommon &common, const Shape &ofmShap
     Shape fitShape;
     double bestMetric = std::numeric_limits<double>::max();
     int maxDepth = std::min(std::max(_macs, accElements / ubAccElements), ofmBlockLimit.Depth());
-    double ofmArea = prioritiseDepth ? ofmShape.Width() * ofmShape.Depth() : ofmShape.Width() * ofmShape.Height();
+    double ofmArea = prioritiseDepth ? ofmShape.ElementsWC() : ofmShape.ElementsWH();
 
     for ( int depth = ACC_DEPTH_GRANULE; (depth <= maxDepth); depth += ACC_DEPTH_GRANULE )
     {
@@ -1143,7 +1144,7 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU85::FindBlockConfig(OpType opTyp
                         if ( relativeCost == bestCost )
                         {
                             Shape coverageShape = Shape::Min(ifmShape, ifmBlock);
-                            float coverage = float(ifmShape.ElementsWH()) / float(coverageShape.ElementsWH());
+                            float coverage = float(ifmShape.ElementsWH()) / float(std::max(coverageShape.ElementsWH(), 1));
                             // Small 4x4 IFM constraint found through analysis of networks
                             if ( coverage <= bestCoverage && ((height <= 4 && width <= 4) || isMatmul) )
                             {

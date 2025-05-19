@@ -372,7 +372,7 @@ static int EstimateMemoryTransfer(int cores, bool isRead, ArchitectureMemory *me
         int zStride = (shape.Width() * elementBits * 16) / 8;
         if ( zStride == block.Depth() )
         {
-            burstLen = elementBits * block.Depth() * block.Width();
+            burstLen = elementBits * block.ElementsWC();
         }
         else if ( isRead )
         {
@@ -390,7 +390,7 @@ static int EstimateMemoryTransfer(int cores, bool isRead, ArchitectureMemory *me
         {
             if ( xStride == block.Depth() )
             {
-                burstLen = elementBits * block.Depth() * block.Width();
+                burstLen = elementBits * block.ElementsWC();
             }
             else
             {
@@ -401,7 +401,7 @@ static int EstimateMemoryTransfer(int cores, bool isRead, ArchitectureMemory *me
         {
             if ( (block.Depth() <= 16) && xStride == block.Depth() )
             {
-                burstLen = elementBits * block.Depth() * block.Width();
+                burstLen = elementBits * block.ElementsWC();
             }
             else
             {

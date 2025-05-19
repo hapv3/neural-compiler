@@ -1483,7 +1483,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeElementwise(Architectu
         ifm2Slice.Initialize(ifm2Shape.WithZeros(), ifm2Shape);
     }
     auto ofmRank = ofmShape.Size();
-    if ( ofmRank > 3 && ofmShape.Elements() > ofmShape.Width() * ofmShape.Height() * ofmShape.Depth() )
+    if ( ofmRank > 3 && ofmShape.Elements() > ofmShape.ElementsHWC() )
     {
         return DecomposeLeadingDimensions(ofmRank - 3, arch, std::move(op), DecomposeElementwise);
     }
@@ -1514,7 +1514,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMatmul(Architecture *a
 
     // Decompose Batching
     auto ofmRank = ofmShape.Size();
-    if ( ofmRank > 2 && (ofmShape.Elements() > ofmShape.Width() * ofmShape.Depth()) )
+    if ( ofmRank > 2 && ofmShape.Elements() > ofmShape.ElementsWC() )
     {
         return DecomposeLeadingDimensions(ofmRank - 2, arch, std::move(op), DecomposeMatmul);
     }
@@ -2281,7 +2281,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeAvgPool(Architecture *
     ofmSlice.Initialize(ofmShape.WithZeros(), ofmShape);
     ifmSlice.Initialize(ifmShape.WithZeros().WithHW(-padding.Top(), -padding.Left()), ifmShape);
     auto ofmRank = ofmShape.Size();
-    if ( ofmRank > 3 && (ofmShape.Elements() > ofmShape.Height() * ofmShape.Width() * ofmShape.Depth()) )
+    if ( ofmRank > 3 && (ofmShape.Elements() > ofmShape.ElementsHWC()) )
     {
         return DecomposeLeadingDimensions(ofmRank - 3, arch, std::move(op), DecomposeAvgPool);
     }
@@ -2437,7 +2437,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMaxPool(Architecture *
     ofmSlice.Initialize(ofmShape.WithZeros(), ofmShape);
     ifmSlice.Initialize(ifmShape.WithZeros().WithHW(-padding.Top(), -padding.Left()), ifmShape);
     auto ofmRank = ofmShape.Size();
-    if ( ofmRank > 3 && (ofmShape.Elements() > ofmShape.Height() * ofmShape.Width() * ofmShape.Depth()) )
+    if ( ofmRank > 3 && (ofmShape.Elements() > ofmShape.ElementsHWC()) )
     {
         return DecomposeLeadingDimensions(ofmRank - 3, arch, std::move(op), DecomposeMaxPool);
     }

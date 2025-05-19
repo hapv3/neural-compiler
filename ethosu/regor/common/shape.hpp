@@ -485,16 +485,26 @@ public:
         return Point3<TYPE>(TYPE(Height()), TYPE(Width()), TYPE(Depth()));
     }
 
+    int ElementsHWC() const
+    {
+        int64_t result = ElementsWC();
+        if ( _last >= 2 ) result *= Height();
+        assert(result <= std::numeric_limits<int>::max());
+        return int(result);
+    }
+
     int ElementsWH() const
     {
-        int64_t result = int64_t(Width()) * Height();
+        int64_t result = _last >= 1 ? Width() : 0;
+        if ( _last >= 2 ) result *= Height();
         assert(result <= std::numeric_limits<int>::max());
         return int(result);
     }
 
     int ElementsWC() const
     {
-        int64_t result = int64_t(Width()) * Depth();
+        int64_t result = Depth();
+        if ( _last >= 1 ) result *= Width();
         assert(result <= std::numeric_limits<int>::max());
         return int(result);
     }

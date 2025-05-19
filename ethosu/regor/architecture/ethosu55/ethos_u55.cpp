@@ -499,7 +499,7 @@ std::unique_ptr<EthosU55OpConfig> ArchEthosU55::FindBlockConfig(OpType opType, c
                         if ( relativeCost == bestCost )
                         {
                             Shape coverageShape = Shape::Min(ifmShape, ifmBlock);
-                            float coverage = float(ifmShape.ElementsWH()) / float(coverageShape.ElementsWH());
+                            float coverage = float(ifmShape.ElementsWH()) / float(std::max(coverageShape.ElementsWH(), 1));
                             // Small 4x4 IFM constraint found through analysis of networks
                             if ( coverage <= bestCoverage && (height <= 4 && width <= 4) )
                             {

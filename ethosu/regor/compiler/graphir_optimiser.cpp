@@ -1249,7 +1249,7 @@ Operation *GraphIrOptimiser::OptimiseElementwise(Graph *const, Operation *const 
     {
         auto ofmShape = operation->Output(TensorUsage::OFM)->shape;
         if ( ofmShape.Size() > 3 && (ofmShape.Depth() == 1 || ofmShape.Width() == 1 || ofmShape.Height() == 1) &&
-             ofmShape.Elements() > ofmShape.Depth() * ofmShape.Width() * ofmShape.Height() )
+             ofmShape.Elements() > ofmShape.ElementsHWC() )
         {
             auto *ofmConn = returnOp->Output(TensorUsage::OFM);
             auto *ifmConn = returnOp->Input(TensorUsage::IFM0);
@@ -1832,7 +1832,7 @@ Operation *GraphIrOptimiser::RewriteMatmul(Graph *const graph, Operation *const 
     // Reshape non-WC axes into height
     auto ReshapeFunc = [](const Shape &s)
     {
-        int height = s.Elements() / (s.Width() * s.Depth());
+        int height = s.Elements() / s.ElementsWC();
         return Shape(1, height, s.Width(), s.Depth());
     };
 
