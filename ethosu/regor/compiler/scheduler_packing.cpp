@@ -629,10 +629,11 @@ std::unique_ptr<SchedulerOperation> SchedulerPacking::MakeSchedulerOperation(Ope
     }
 
     // Adjust axis attribute if tensors have been reshaped
-    if ( schedOp->Type() != OpType::Passthrough && schedOp->HasAttribute<axis_attr_t>() )
+    if ( schedOp->HasAttribute<axis_attr_t>() )
     {
         auto attr = schedOp->Attribute<axis_attr_t>();
-        int paddedAxes = schedOp->Output(TensorUsage::OFM)->shape.Size() - op->Output(TensorUsage::OFM)->shape.Size();
+        // The axis attribute refers to the IFM rank
+        int paddedAxes = schedOp->Input(TensorUsage::IFM)->shape.Size() - op->Input(TensorUsage::IFM)->shape.Size();
         assert(paddedAxes >= 0);
         attr->axis += paddedAxes;
         assert(attr->axis < schedOp->Input(TensorUsage::IFM)->shape.Size());
