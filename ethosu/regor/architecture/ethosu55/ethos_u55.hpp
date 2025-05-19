@@ -132,10 +132,12 @@ private:
     std::array<InternalOpInfo, 2> _opsInternal;
     int _opsCount = 0;
     std::unordered_set<UniqueId> _fusedTensors;
+    Flags<Requirement> _requirements = Requirement::None;
 
 public:
     int Add(const ArchitectureOpGroupQuery &op, const std::vector<int> &dependsOn = {}) override;
     bool NeedsAllocation(UniqueId TensorUID) override;
+    Flags<Requirement> Requirements() override { return _requirements; };
 };
 
 /// <summary>

@@ -1602,6 +1602,9 @@ int EthosU85OpGroup::Add(const ArchitectureOpGroupQuery &op, const std::vector<i
     _opsInternal[_opsCount].dependsOn = dependsOn;
     _opsCount++;
 
+    // Update requirements
+    if ( op.type == OpType::LUT ) _requirements.Set(Requirement::UsesLUT);
+
     return key;
 }
 

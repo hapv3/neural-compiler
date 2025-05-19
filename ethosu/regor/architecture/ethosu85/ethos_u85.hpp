@@ -114,6 +114,7 @@ class EthosU85OpGroup : public ArchitectureOpGroup
 
 private:
     ArchEthosU85 *_arch;
+    Flags<Requirement> _requirements = Requirement::None;
     std::array<OpInfo, 8> _ops;
     std::array<InternalOpInfo, 8> _opsInternal;
     std::unordered_map<UniqueId, int> _tensorCbMap;
@@ -133,6 +134,7 @@ public:
     EthosU85OpGroup(ArchEthosU85 *arch) : _arch(arch){};
     int Add(const ArchitectureOpGroupQuery &op, const std::vector<int> &dependsOn = {}) override;
     bool NeedsAllocation(UniqueId tensorUID) override;
+    Flags<Requirement> Requirements() override { return _requirements; };
 
 protected:
     int ChainingBuffer(UniqueId tensorUID);

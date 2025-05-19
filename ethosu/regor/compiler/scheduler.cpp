@@ -415,6 +415,7 @@ std::unique_ptr<ArchitectureOpConfig> GetOpConfig(Architecture *arch, SchedulerO
     const Shape &ifm2Shape, const Shape &ofmShape, WeightFormat wgtFormat)
 {
     assert(op->IsNpuOp());
+    using OpGroupReq = ArchitectureOpGroup::Requirement;
 
     SchedulerConnection *ifm = op->IFM(0);
     SchedulerConnection *ifm2 = op->TryIFM(1);
@@ -427,7 +428,7 @@ std::unique_ptr<ArchitectureOpConfig> GetOpConfig(Architecture *arch, SchedulerO
     query.ifmBits = DataTypeSizeBits(ifm->Type());
     query.ofmBits = DataTypeSizeBits(ofm->Type());
     query.kernel = op->Kernel();
-    query.lutBytes = op->TryInput(TensorUsage::LUT) ? 2048 : 0;
+    query.lutBytes = op->OpGroup()->Requirements().Any(OpGroupReq::UsesLUT) ? 2048 : 0;
     query.scaled = op->HasScaling();
     query.ifmResampling = ifm->resamplingMode;
     query.ofmShape = query.ofmShape.Unpermute(uint32_t(ofm->transpose));

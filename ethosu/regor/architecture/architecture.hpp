@@ -184,9 +184,16 @@ struct ArchitectureOpGroupQuery
 class ArchitectureOpGroup
 {
 public:
+    enum class Requirement
+    {
+        None = 0,
+        UsesLUT = 1,
+    };
+
     virtual ~ArchitectureOpGroup() = default;
     virtual int Add(const ArchitectureOpGroupQuery &op, const std::vector<int> &dependsOn = {}) = 0;
     virtual bool NeedsAllocation(UniqueId tensorUID) = 0;
+    virtual Flags<Requirement> Requirements() = 0;
 };
 
 enum class ArchAccumulatorSource : uint8_t
