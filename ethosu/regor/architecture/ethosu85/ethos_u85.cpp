@@ -776,7 +776,7 @@ Shape ArchEthosU85::AreaFit(const FindConfigCommon &common, const Shape &ofmShap
             }
 
             // Didn't fit both ACC & IB, reduce the volume and retry
-            double ratio = std::min(ibRatio * ibRatio, abRatio);
+            double ratio = std::min(ibRatio, abRatio);
             int newAcc = GranularScale(fitAcc, ubAccElements, ratio);
             // Ratio didn't scale
             if ( newAcc == fitAcc )
@@ -784,7 +784,7 @@ Shape ArchEthosU85::AreaFit(const FindConfigCommon &common, const Shape &ofmShap
                 newAcc = fitAcc - ubAccElements;
             }
             // No fit
-            if ( newAcc <= ubAccElements )
+            if ( newAcc < ubAccElements )
             {
                 break;
             }
