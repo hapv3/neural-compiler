@@ -1098,7 +1098,7 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
     {
         // To be refined and architecture specific depending on mem2mem characteristics and prebuffering
         float bwRatio = std::round(
-            fullTransferCycles /
+            double(fullTransferCycles) /
             _arch->Performance()->MinReadCycles(weightTens->memArea.memory, fullWeightsBytes, TensorUsage::Weights,
                 schedOp->Type(), weightFormat % WeightFormat::Fast));
         needsDMA = (cost->elementAccess.weightsRefetch > 2) || (cost->elementAccess.weightsRefetch == 2 && bwRatio < 2);
