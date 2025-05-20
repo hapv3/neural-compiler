@@ -2878,6 +2878,11 @@ Operation *TFLiteGraphOptimiser::ClampActivations(Graph *const graph, Operation 
     {
         quant.quantMin = {Quantize(0, quant)};
     }
+    else if ( opType == OpType::Relu0To1 )
+    {
+        quant.quantMin = {Quantize(0, quant)};
+        quant.quantMax = {Quantize(1, quant)};
+    }
     else if ( opType == OpType::Relu6 )
     {
         quant.quantMin = {Quantize(0, quant)};

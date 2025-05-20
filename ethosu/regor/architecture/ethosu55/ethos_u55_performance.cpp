@@ -499,7 +499,7 @@ EthosU55ElementCycles EthosU55Performance::EstimateOutputCyclesPerElement(const 
         {
             activationPerfIndex = 0;
         }
-        else if ( fusedOp.type == OpType::Relu || fusedOp.type == OpType::Relu6 || fusedOp.type == OpType::ReluN1To1 )
+        else if ( fusedOp.type == OpType::Relu || fusedOp.type == OpType::Relu0To1 || fusedOp.type == OpType::Relu6 || fusedOp.type == OpType::ReluN1To1 )
         {
             activationPerfIndex = 1;
         }

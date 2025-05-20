@@ -164,6 +164,7 @@ enum class OpType : uint16_t
     Range,
     Rank,
     Relu,
+    Relu0To1,
     Relu6,
     ReluN1To1,
     ReluN,
@@ -211,8 +212,9 @@ inline std::string OpTypeToString(const OpType type)
 
 constexpr inline bool IsActivation(OpType opType)
 {
-    return opType == OpType::Relu || opType == OpType::Relu6 || opType == OpType::ReluN || opType == OpType::ReluN1To1 ||
-           opType == OpType::Prelu || opType == OpType::Clamp || opType == OpType::Sigmoid || opType == OpType::Tanh || opType == OpType::LUT;
+    return opType == OpType::Relu || opType == OpType::Relu0To1 || opType == OpType::Relu6 || opType == OpType::ReluN ||
+           opType == OpType::ReluN1To1 || opType == OpType::Prelu || opType == OpType::Clamp ||
+           opType == OpType::Sigmoid || opType == OpType::Tanh || opType == OpType::LUT;
 }
 
 constexpr inline bool IsUnaryElementwise(OpType opType)

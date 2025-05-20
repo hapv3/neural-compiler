@@ -22,13 +22,15 @@ main feature changes, interface changes and reported defects that have been
 fixed.  The version numbering adheres to the
 [semantic versioning](https://semver.org/) scheme.
 
-## Release 4.3.0 - 25/04/2025
+## Release 4.3.0 - 20/05/2025
 
 **Main feature changes:**
 
 * Extended operator support:
   * Ethos-U85:
-    * TFLite: LOG
+    * TFLite: LOG and RELU_0_TO_1
+  * Ethos-U55/Ethos-U65:
+    * TFLite: RELU_0_TO_1
 
 **Interface changes:**
 

@@ -396,6 +396,7 @@ Please check the supported operator list for your chosen runtime for further inf
 | QUANTIZE | [Generic](#tflite-generic-constraints) |
 | RELU | [Generic](#tflite-generic-constraints) |
 | RELU6 | [Generic](#tflite-generic-constraints) |
+| RELU_0_TO_1 | [Generic](#tflite-generic-constraints) |
 | RELU_N1_TO_1 | [Generic](#tflite-generic-constraints) |
 | RESHAPE | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-reshape-constraints) |
 | RESIZE_BILINEAR | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-resize_bilinear-constraints) |

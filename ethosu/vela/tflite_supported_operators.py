@@ -126,6 +126,7 @@ class TFLiteSupportedOperators:
         (
             Op.Relu,
             Op.Relu6,
+            Op.Relu0To1,
             Op.ReluN1To1,
             Op.Clip,
         )

@@ -199,7 +199,8 @@ const std::map<tflite::BuiltinOperator, OpType> TfLiteMapping::_builtinOperatorT
     {tflite::BuiltinOperator::SEGMENT_SUM,                      OpType::SegmentSum},
     {tflite::BuiltinOperator::BATCH_MATMUL,                     OpType::BatchMatMul},
     {tflite::BuiltinOperator::CUMSUM,                           OpType::Cumsum},
-    {tflite::BuiltinOperator::REDUCE_ALL,                       OpType::ReduceAll}
+    {tflite::BuiltinOperator::REDUCE_ALL,                       OpType::ReduceAll},
+    {tflite::BuiltinOperator::RELU_0_TO_1,                      OpType::Relu0To1}
     // clang-format on
 };
 
@@ -557,6 +558,7 @@ const std::multimap<OpType, TensorUsage> TfLiteMapping::_inputTensorIndices = {
     {OpType::ReduceSum,                         TensorUsage::IFM0},
     {OpType::ReduceSum,                         TensorUsage::Params},
     {OpType::Relu,                              TensorUsage::IFM0},
+    {OpType::Relu0To1,                          TensorUsage::IFM0},
     {OpType::Relu6,                             TensorUsage::IFM0},
     {OpType::ReluN1To1,                         TensorUsage::IFM0},
     {OpType::ReluN,                             TensorUsage::IFM0},
