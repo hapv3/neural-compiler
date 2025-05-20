@@ -28,17 +28,30 @@ fixed.  The version numbering adheres to the
 
 * Extended operator support:
   * Ethos-U85:
-    * TFLite: LOG and RELU_0_TO_1
+    * TFLite:
+      * LOG, LSTM, STRIDED_SLICE with strides larger than one, RELU_0_TO_1
   * Ethos-U55/Ethos-U65:
-    * TFLite: RELU_0_TO_1
+    * TFLite:
+      * RELU_0_TO_1
+* Upgrade TensorFlow Lite support to version 2.18.1
 
 **Interface changes:**
 
-  * None
+* None
 
 **Reported defect fixes:**
 
+* Ethos-U55/Ethos-U65
   * None
+* Ethos-U85
+  * Improved weight format selection for models with 2:4 sparse weights (MLCE-1473)
+* General
+  * Fixed issue with slicing of 64-bit bias causing segmentation fault (MLCE-1476)
+  * Fixed graph connection issues caused by Reshape removal (MLCE-1496)
+  * Fixed unintended disabling of the `--cpu-tensor-alignment` option (MLCE-1472)
+  * Fixed issue where fused activations are recorded as CPU operators (MLCE-1461)
+  * Fixed various issues with MAC count in summary (MLCE-1493 & MLCE-1461)
+
 
 ## Release 4.2.0 - 27/02/2025
 

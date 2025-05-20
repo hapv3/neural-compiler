@@ -36,7 +36,8 @@ kernel).  The following list indicates which TensorFlow version a particular
 Vela version was tested against.  It also indicates which version of the
 TensorFlow Lite/LiteRT flatbuffer schema was supported.
 
-* Vela 4.0.0 to current supports TensorFlow 2.17
+* Vela 4.3.0 to current supports TensorFlow 2.18.1
+* Vela 4.0.0 to 4.2.0 supports TensorFlow 2.17
 * Vela 3.12.0 supports TensorFlow 2.16
 * Vela 3.11.0 supports TensorFlow 2.15
 * Vela 3.10.0 supports TensorFlow 2.14
