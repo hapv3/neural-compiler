@@ -533,14 +533,11 @@ TEST_CASE("passthrough")
         tensors.push_back(tflite::CreateTensorDirect(fbb, &shape, type, bufferIndex, name.c_str()));
     }
 
-    /*
-    // TODO: MLBEDSW-9946: Metadata passthrough is currently not supported
     {
         std::vector<uint8_t> data2 = random_vector<uint8_t>(5, 0, 255);
-        serialised_buffers.push_back(tflite::CreateBufferDirect(fbb, &data2));
-        serialised_metadata.push_back(tflite::CreateMetadataDirect(fbb, "metadata1", serialised_buffers.size() - 1));
+        buffers.push_back(tflite::CreateBufferDirect(fbb, &data2));
+        metadata.push_back(tflite::CreateMetadataDirect(fbb, "metadata1", uint32_t(buffers.size() - 1)));
     }
-    */
 
     {
         // Generate 1 operator

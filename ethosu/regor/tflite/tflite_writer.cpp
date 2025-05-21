@@ -87,7 +87,7 @@ std::unique_ptr<const uint8_t[]> TfLiteWriter::SerialiseImpl(const std::vector<s
     // The zeroth buffer is always present and always empty
     _buffers[BufferDesc()] = 0;
     _serialised_buffers.push_back(tflite::CreateBufferDirect(_flatbuffer, nullptr));
-    std::vector<flatbuffers::Offset<tflite::Metadata>> serialised_metadata;  // TODO: passthrough metadata
+    std::vector<flatbuffers::Offset<tflite::Metadata>> serialised_metadata;
 
     for ( const auto &graph : graphs )
     {
@@ -256,7 +256,38 @@ std::unique_ptr<const uint8_t[]> TfLiteWriter::SerialiseImpl(const std::vector<s
         _serialised_tensors.clear();
     }
 
-    if ( !_skipOfflineMemoryAllocation )
+    bool hasOfflineMemoryAllocation = false;
+    if ( graphs.size() > 0 )
+    {
+        const auto tflite_model = static_cast<const tflite::Model *>(graphs[0]->Passthrough());
+        if ( tflite_model )
+        {
+            const auto *tflite_metadata = tflite_model->metadata();
+            const auto *tflite_buffers = tflite_model->buffers();
+            if ( tflite_metadata && tflite_buffers )
+            {
+                for ( auto it = tflite_metadata->begin(); it != tflite_metadata->end(); it++ )
+                {
+                    const auto buffer = (*it)->buffer();
+                    if ( buffer >= tflite_buffers->size() ) continue;  // Invalid buffer
+                    const auto name = (*it)->name();
+                    if ( !name ) continue;  // Invalid name
+                    const auto data = FlatbufferUtils::CopyVector(_flatbuffer, tflite_buffers->Get(buffer)->data());
+                    const auto offset = tflite_buffers->Get(buffer)->offset();
+                    const auto size = tflite_buffers->Get(buffer)->size();
+                    // Copy buffer
+                    _serialised_buffers.push_back(tflite::CreateBuffer(_flatbuffer, data, offset, size));
+                    // Copy metadata
+                    serialised_metadata.push_back(tflite::CreateMetadata(
+                        _flatbuffer, _flatbuffer.CreateString(name), uint32_t(_serialised_buffers.size() - 1)));
+                    // If we copied a OfflineMemoryAllocation, don't create a new one later on
+                    if ( name->str() == "OfflineMemoryAllocation" ) hasOfflineMemoryAllocation = true;
+                }
+            }
+        }
+    }
+
+    if ( !_skipOfflineMemoryAllocation && !hasOfflineMemoryAllocation )
     {
         serialised_metadata.push_back(SerialiseTensorAddresses(int(_serialised_subgraphs.size())));
     }
