@@ -38,8 +38,8 @@ keywords = ["ethos-u", "vela compiler", "tflite", "npu"]
 dependencies = [
     "flatbuffers==24.3.25",
     "numpy>=1.23.0",
-    "lxml>=4.5.2",
-    "lxml>=4.5.2, <5.3.2; sys_platform == 'win32'"
+    "lxml>=4.7.1",
+    "lxml>=4.7.1, <5.3.2; sys_platform == 'win32'"
 ]
 dynamic = ["readme", "version"]
 
@@ -60,7 +60,7 @@ vela = "ethosu.vela.vela:main"
 
 [build-system]
 requires = [
-    "setuptools >= 42",
+    "setuptools >= 78.1.1",
     "wheel",
     "numpy>=1.23.0",
     "setuptools_scm[toml]~=7.1.0",
