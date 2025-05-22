@@ -35,9 +35,10 @@ disclosure when notifications and patches/mitigations are available.
 
 ### Report
 
-For all security issues, contact Arm by email at [arm-security@arm.com](mailto:arm-security@arm.com).
-In the body of the email include as much information as possible about the issue
-or vulnerability and any additional contact details.
+For all security issues, contact Arm Product Security Incident Response Team (PSIRT)
+by email at [psirt@arm.com](mailto:psirt@arm.com). In the body of the email
+include as much information as possible about the issue or vulnerability and any
+additional contact details.
 
 ### Secure submission using PGP
 
