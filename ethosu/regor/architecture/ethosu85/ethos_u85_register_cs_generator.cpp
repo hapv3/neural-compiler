@@ -771,10 +771,8 @@ void EthosU85RCSGenerator::GenerateScalingForElementwise(HLCOperation *op)
 
     if ( opType == OpType::LeakyRelu )
     {
-        // ifm1Scale is used for rescaling and ifm2Scale is used for alpha
-        float alpha = op->parameters.leaky_relu.alpha;
-        float ifm1Scale = float(input1Scale.Dequantize());
-        input2Scale = QuantizedScale(alpha * ifm1Scale);
+        // input2Scale is used for alpha
+        input2Scale = op->ifm[0].quantization.scales.back();
         ifmCnt = 2;
     }
     else if ( opType == OpType::Add || opType == OpType::Sub )

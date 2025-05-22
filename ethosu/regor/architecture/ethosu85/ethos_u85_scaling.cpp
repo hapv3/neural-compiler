@@ -162,7 +162,9 @@ void RescaleElementwise(HLCOperation *op)
     }
     else if ( opType == OpType::LeakyRelu )
     {
-        input1Scale = QuantizedScale(ifm1Scale / ofmScale);
+        // input1Scale is used for rescaling and input2Scale is used for alpha.
+        input1Scale = QuantizedScale(float(ifm1Scale) / float(ofmScale));
+        input2Scale = QuantizedScale(float(op->parameters.leaky_relu.alpha) * float(ifm1Scale) / float(ofmScale));
     }
     else if ( opType == OpType::Add || opType == OpType::Sub )
     {
@@ -190,6 +192,10 @@ void RescaleElementwise(HLCOperation *op)
         ofmQuant->scales.clear();
         ofmQuant->scales.push_back(outScale);
         ofmQuant->type = QuantizationType::EXPLICIT;
+    }
+    if ( opType == OpType::LeakyRelu )
+    {
+        ifm1Quant->scales.push_back(input2Scale);
     }
 }
 
