@@ -177,6 +177,16 @@ std::shared_ptr<Operation> CreateOperation(OpType opType, TensorUsage ifmUsage, 
     return op;
 }
 
+// Create a Operation with three inputs
+std::shared_ptr<Operation> CreateOperation(OpType opType, TensorUsage ifmUsage, std::shared_ptr<Tensor> &ifm,
+    TensorUsage ifm2Usage, std::shared_ptr<Tensor> &ifm2, TensorUsage ifm3Usage, std::shared_ptr<Tensor> &ifm3,
+    TensorUsage ofmUsage, std::shared_ptr<Tensor> &ofm)
+{
+    auto op = CreateOperation(opType, ifmUsage, ifm, ifm2Usage, ifm2, ofmUsage, ofm);
+    op->ConnectInput(ifm3Usage, ifm3).Set(Quantization::Unit());
+    return op;
+}
+
 // Helpers for Scheduler IR
 // -----------------------------
 // Create a SchedulerTensor with name, storageshape and datatype

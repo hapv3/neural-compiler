@@ -81,6 +81,10 @@ std::shared_ptr<Operation> CreateOperation(OpType opType, TensorUsage ifmUsage, 
 // Create a Operation with binary input
 std::shared_ptr<Operation> CreateOperation(OpType opType, TensorUsage ifmUsage, std::shared_ptr<Tensor> &ifm,
     TensorUsage ifm2Usage, std::shared_ptr<Tensor> &ifm2, TensorUsage ofmUsage, std::shared_ptr<Tensor> &ofm);
+// Create a Operation with three inputs
+std::shared_ptr<Operation> CreateOperation(OpType opType, TensorUsage ifmUsage, std::shared_ptr<Tensor> &ifm,
+    TensorUsage ifm2Usage, std::shared_ptr<Tensor> &ifm2, TensorUsage ifm3Usage, std::shared_ptr<Tensor> &ifm3,
+    TensorUsage ofmUsage, std::shared_ptr<Tensor> &ofm);
 
 // Helpers for Scheduler IR
 // -----------------------------

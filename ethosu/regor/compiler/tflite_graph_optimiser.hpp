@@ -161,13 +161,6 @@ private:
     // padAfter that provides equivalent results when used with explicit padding
     int CalcPadAfter(int inputSize, int stride, int filterSize, int padBefore, int padAfter);
 
-    // Tries to completely remove a PAD operator by using explicit padding.
-    // E.g. a PAD operation that pads 1, followed by a CONV with VALID padding and kernel size 3
-    // is rewritten such that the PAD is removed, and the CONV uses explicit padding.
-    // Converts tens1 -> PAD -> tens2 -> CONV to tens1 -> CONV
-    // This is the most efficient way to implement PAD, but cannot be done for all pad sizes.
-    Operation *ReplacePadByExplicitPadding(Graph *const graph, Operation *const operation);
-
     // Lower PadV2 to TOSA Pad
     Operation *ConvertPadV2(Graph *const graph, Operation *const operation);
 
@@ -259,7 +252,6 @@ public:
                 &TFLiteGraphOptimiser::ConvertTanhSigmoidToLUT,
                 &TFLiteGraphOptimiser::ConvertSoftmaxOps,
                 &TFLiteGraphOptimiser::ConvertLstmOps,
-                &TFLiteGraphOptimiser::ReplacePadByExplicitPadding,
                 &TFLiteGraphOptimiser::ConvertMeanOps,
                 &TFLiteGraphOptimiser::ConvertPrelu,
                 &TFLiteGraphOptimiser::ConvertLeakyRelu,

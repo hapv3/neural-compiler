@@ -52,6 +52,7 @@ private:
     Operation *RewriteRescaleInputs(Graph *const graph, Operation *const operation);
     Operation *RemoveRescaleUnsignedAttribute(Graph *const graph, Operation *const operation);
     Operation *RewriteRescale(Graph *const graph, Operation *const operation);
+    Operation *ReplacePadByExplicitPadding(Graph *const graph, Operation *const operation);
     Operation *RewritePad(Graph *const graph, Operation *const operation);
     Operation *FuseRescale(Graph *const graph, Operation *const operation);
     Operation *RewriteTable(Graph *const graph, Operation *const operation);
@@ -143,6 +144,7 @@ private:
                 &GraphIrOptimiser::ConvertResizeOffsets,
                 &GraphIrOptimiser::RewriteFullyConnected,
                 &GraphIrOptimiser::FixupPoolStrides,
+                &GraphIrOptimiser::ReplacePadByExplicitPadding,
                 &GraphIrOptimiser::RewritePad,
                 &GraphIrOptimiser::RewriteTable,
                 &GraphIrOptimiser::RewriteCast,

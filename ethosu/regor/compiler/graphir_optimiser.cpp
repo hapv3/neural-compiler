@@ -731,6 +731,85 @@ Operation *GraphIrOptimiser::MakeFillOperation(TensorConnection *const ofmConn, 
     return fillOp.get();
 }
 
+// Tries to completely remove a PAD operator by using explicit padding.
+// E.g. a PAD operation that pads 1, followed by a CONV with VALID padding and kernel size 3
+// is rewritten such that the PAD is removed, and the CONV uses explicit padding.
+// Converts tens1 -> PAD -> tens2 -> CONV to tens1 -> CONV
+// This is the most efficient way to implement PAD, but cannot be done for all pad sizes.
+Operation *GraphIrOptimiser::ReplacePadByExplicitPadding(Graph *const graph, Operation *const operation)
+{
+    UNUSED(graph);
+    const OpType opType = operation->Type();
+    if ( IsConvolution(opType) && opType != OpType::TransposeConv2D && operation->Kernel()->Padding().IsZero() )
+    {
+        const auto &producers = operation->IFM(0)->Writers();
+        if ( producers.size() != 1 )
+        {
+            // IFM has multiple producers
+            return operation;
+        }
+
+        const auto &padOp = producers.front();
+        if ( padOp->Type() != OpType::Pad || padOp->Attribute<pad_attr_t>()->pad_const != 0 )
+        {
+            // Not a pad or not padding with zeros
+            return operation;
+        }
+
+        const auto padIfmConn = padOp->Input(TensorUsage::IFM0);
+        const auto padOfmConn = padOp->Output(TensorUsage::OFM);
+        const auto &padIfm = padIfmConn->tensor;
+        const auto &padOfm = padOfmConn->tensor;
+        if ( padIfm->Type() != padOfm->Type() || !IsScalingValidAndEqual(*padIfmConn, *padOfmConn) )
+        {
+            // Different data types or different scaling
+            return operation;
+        }
+
+        const auto padParamConn = padOp->Input(TensorUsage::Params);
+        const auto &padIfmShape = padIfmConn->SliceShape();
+        const auto beforePad = TensorToShape(padParamConn->tensor.get(), padIfmShape.Size(), 2, 0);
+        const auto afterPad = TensorToShape(padParamConn->tensor.get(), padIfmShape.Size(), 2, 1);
+        if ( beforePad.WithHW(0, 0) != beforePad.WithZeros() || afterPad.WithHW(0, 0) != afterPad.WithZeros() )
+        {
+            // Pad in other dimensions than height and width
+            return operation;
+        }
+
+        int top = beforePad.Height();
+        int left = beforePad.Width();
+        int bottom = afterPad.Height();
+        int right = afterPad.Width();
+        const auto &k = operation->Kernel();
+        const auto &kwh = k->DilatedWH();
+        auto CalcPadAfter = [](int inputSize, int stride, int filterSize, int padBefore, int padAfter) -> int
+        {
+            const int totalPadding = NeededTotalPadding(inputSize, stride, filterSize);
+            // The bottom/right padding might need downward adjustment depending on stride/input size
+            const int remainderDiff = padAfter % stride - (totalPadding - padBefore) % stride;
+            return std::max(0, padAfter - remainderDiff - (remainderDiff >= 0 ? 0 : stride));
+        };
+        // Adjust the padding attributes of the convolution operator
+        bottom = CalcPadAfter(padIfmShape.Height(), k->Stride().y, kwh.y, top, bottom);
+        right = CalcPadAfter(padIfmShape.Width(), k->Stride().x, kwh.x, left, right);
+        if ( left >= kwh.x || right >= kwh.x || top >= kwh.y || bottom >= kwh.y )
+        {
+            // Pad greater than or equal to kernel
+            return operation;
+        }
+
+        const auto kernel = k->WithPadding({top, left, bottom, right});
+        operation->SetKernel(std::make_unique<Kernel>(std::move(kernel)));
+        operation->CopyInput(TensorUsage::IFM0, *padIfmConn);
+        if ( padOfm->Readers().empty() )
+        {
+            // Bypass the PAD operator
+            padOp->Disconnect();
+        }
+    }
+    return operation;
+}
+
 Operation *GraphIrOptimiser::RewritePad(Graph *const, Operation *const operation)
 {
     Operation *returnOp = operation;

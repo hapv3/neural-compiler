@@ -260,3 +260,62 @@ TEST_CASE("test_graphir_optimiser - transpose merge")
     REQUIRE(allOps.back()->Type() == OpType::Add);
     REQUIRE(allOps.front()->Output(TensorUsage::OFM)->tensor == allOps.back()->Input(TensorUsage::IFM)->tensor);
 }
+
+TEST_CASE("test_graphir_optimiser - replace pad by explicit padding")
+{
+    // Create arch
+    auto arch = CreateArchDefault<ArchEthosU85>();
+    std::string err = "noerror";
+    arch->CheckConfiguration(err);
+    REQUIRE(err == "noerror");
+
+    // Constant data for the Pad op's paddings tensor
+    std::vector<int8_t> paddings = {{
+        0,
+        0,
+        1 /* top */,
+        4 /* bottom*/,
+        3 /* left */,
+        2 /* right */,
+        0,
+        0,
+    }};
+
+    std::vector<std::shared_ptr<Operation>> ops;
+    auto padIfm = CreateTensor("INPUT", Shape(1, 7, 7, 3), DataType::Int8, 1);
+    auto padParam = CreateTensor("PADPARAM", Shape(8), DataType::Int8, std::move(paddings));
+    auto padOfm = CreateTensor("PADOFM", Shape(1, 12, 12, 3), DataType::Int8);
+    auto convWeights = CreateTensor("WEIGHTS", Shape(1, 6, 6, 9), DataType::Int8, 42);
+    auto convBias = CreateTensor("BIAS", Shape(1, 1, 1, 9), DataType::Int8, 0);
+    auto convOfm = CreateTensor("OUTPUT", Shape(1, 7, 7, 9), DataType::Int8);
+
+    // Create Pad op
+    ops.push_back(CreateOperation(OpType::Pad, TensorUsage::IFM, padIfm, TensorUsage::Params, padParam, TensorUsage::OFM, padOfm));
+    pad_attr_t *attr = ops.back()->Attribute<pad_attr_t>();
+    attr->pad_const = 0;
+
+    // Create Conv2D op
+    ops.push_back(CreateOperation(OpType::Conv2D, TensorUsage::IFM, padOfm, TensorUsage::Weights, convWeights,
+        TensorUsage::Scales, convBias, TensorUsage::OFM, convOfm));
+    Kernel kernel = Kernel::UnitKernel().WithSize({6, 6});
+    ops.back()->SetKernel(std::make_unique<Kernel>(std::move(kernel)));
+
+    auto graph = CreateGraph(ops);
+
+    GraphOptimiserOptions options;
+    auto optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
+
+    optimiser->Process(graph.get());
+
+    std::vector<Operation *> allOps;
+    graph->GetAllOperations(allOps);
+    REQUIRE(allOps.size() == 1);
+    REQUIRE(allOps[0]->Type() == OpType::Conv2D);
+    auto &padding = allOps[0]->Kernel()->Padding();
+    REQUIRE(padding.Top() == 1);
+    REQUIRE(padding.Left() == 3);
+    REQUIRE(padding.Bottom() == 4);
+    REQUIRE(padding.Right() == 2);
+    REQUIRE(padding.Near() == 0);
+    REQUIRE(padding.Far() == 0);
+}
