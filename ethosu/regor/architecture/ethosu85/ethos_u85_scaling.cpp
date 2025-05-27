@@ -99,7 +99,7 @@ void RescaleConvolution(HLCOperation *op)
         }
         else
         {
-            outScale = ElementwiseMulScale(ifm1Scale, ifm2Scale, ofmScale);
+            outScale = ElementwiseMulScale<float, double>(ifm1Scale, ifm2Scale, ofmScale);
         }
     }
 

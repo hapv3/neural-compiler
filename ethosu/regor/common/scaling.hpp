@@ -50,15 +50,15 @@ public:
 };
 
 /* Calculate elementwise Mul OFM QuantizedScale */
-template<typename T = float>
+template<typename T = float, typename TDIV = T>
 QuantizedScale ElementwiseMulScale(double inputScale, double input2Scale, double outputScale)
 {
     // clamp to single-point precision
     T ifm1Scale = ClampToType<T>(inputScale);
     T ifm2Scale = ClampToType<T>(input2Scale);
-    T outScale = ClampToType<T>(outputScale);
+    TDIV outScale = ClampToType<TDIV>(outputScale);
 
-    T outputRescale = (ifm1Scale * ifm2Scale) / outScale;
+    TDIV outputRescale = (ifm1Scale * ifm2Scale) / outScale;
     return QuantizedScale(outputRescale);
 }
 
