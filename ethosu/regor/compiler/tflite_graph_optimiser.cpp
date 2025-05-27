@@ -2385,7 +2385,16 @@ Operation *TFLiteGraphOptimiser::ConvertRSqrtToLUT(Graph *const graph, Operation
         for ( int x = qMin + 1; x <= qMax; ++x )
         {
             int index = std::max(0, x - int(zpIn));
-            auto value = zpOut + MultiplyByQuantizedMultiplier(kRSqrtLut[index], qScale);
+            int32_t value;
+            if ( index == 0 )
+            {
+                // Any value close to 0 (zero index in LUT) is mapped to the max output value
+                value = qMax;
+            }
+            else
+            {
+                value = zpOut + MultiplyByQuantizedMultiplier(kRSqrtLut[index], qScale);
+            }
             lut.push_back(uint8_t(std::min(qMax, std::max(qMin, int(value)))));
         }
 
