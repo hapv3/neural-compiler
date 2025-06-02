@@ -204,6 +204,7 @@ def remove_SplitSliceRead(op, arch):
         #   - if ifm stride multiplier is larger than one in any dimension
         #   - if consumer is a Transpose op since ifm shape has been reshaped and can not be changed
         #   - if consumer is elementwise and ifm needs to be broadcasted
+        #   - if consumer is a SplitSliceRead, do not support multiple Splits
         if (
             op.ofm_shapes[0] == Shape4D.from_list(op.ofm.shape)
             and all(s_mul == 1 for s_mul in op.ifm_stride_multiplier[0])
@@ -212,6 +213,7 @@ def remove_SplitSliceRead(op, arch):
                 and consumer.run_on_npu
                 and consumer.type not in memory_only_ops
                 and consumer.original_type != Op.Transpose
+                and consumer.original_type != Op.SplitSliceRead
                 and check_splitsliceread_to_consumer_shape(op, consumer)
                 and not (
                     consumer.type.is_binary_elementwise_op()
