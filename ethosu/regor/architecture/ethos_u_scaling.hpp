@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -20,6 +20,7 @@
 
 #include "common/data_type.hpp"
 #include "common/scaling.hpp"
+#include "compiler/high_level_command_stream.hpp"
 #include "compiler/op_type.hpp"
 #include "compiler/quantization.hpp"
 
@@ -39,5 +40,12 @@ void SimplifiedElementwiseAddSubScale(double input1Scale, double input2Scale, do
 
 Quantization RescalePerChannel(const Quantization &ifmQuant, const Quantization &weightQuant,
     const Quantization &ofmQuant, const DataType scaleDataType, const DataType ifmDataType, OpType opType);
+
+static inline double GetScaleFactor(HLCOperation *op, bool reducedPrecision = false)
+{
+    float ifmScale = op->ifm[0].quantization.Scale().Dequantize();
+    float ofmScale = op->ofm.quantization.Scale().Dequantize();
+    return reducedPrecision ? (ifmScale / ofmScale) : (static_cast<double>(ifmScale) / static_cast<double>(ofmScale));
+}
 
 }  // namespace regor

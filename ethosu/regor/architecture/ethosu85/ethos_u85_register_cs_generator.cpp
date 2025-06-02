@@ -696,7 +696,7 @@ void EthosU85RCSGenerator::GenerateOFMScalingForPooling(HLCOperation *poolOp, bo
     {
         uint32_t scale = 1;
         int shift = 0;
-        QuantizePoolingScale(poolOp->kernel.ElementsWH(), ethosU85Scaling::GetScaleFactor(poolOp), 0, scale, shift, 31);
+        QuantizePoolingScale(poolOp->kernel.ElementsWH(), GetScaleFactor(poolOp), 0, scale, shift, 31);
         ofmScale = QuantizedScale(int32_t(scale), shift);
     }
     else if ( poolOp->type == OpType::ArgMax && useGlobalScale )

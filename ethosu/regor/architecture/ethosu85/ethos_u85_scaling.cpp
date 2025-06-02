@@ -27,6 +27,7 @@
 
 namespace regor::ethosU85Scaling
 {
+
 namespace
 {
 void AdvancedElementwiseAddSubScale(double input1Scale, double input2Scale, double outputScale, int bitDepth,
@@ -39,30 +40,7 @@ void AdvancedElementwiseAddSubScale(double input1Scale, double input2Scale, doub
     input1Rescale = QuantizedScale(ifm1Rescale);
     input2Rescale = QuantizedScale(ifm2Rescale);
 }
-
-float GetScale(const Quantization *quant)
-{
-    if ( quant != nullptr && quant->scales.size() != 0 )
-    {
-        // Use single precision to match reference
-        return float(quant->scales[0].Dequantize());
-    }
-    else
-    {
-        return 1.0f;
-    }
-}
-
 }  // namespace
-
-double GetScaleFactor(HLCOperation *op)
-{
-    Quantization *ifmQuant = &op->ifm[0].quantization;
-    Quantization *ofmQuant = &op->ofm.quantization;
-    double ifmScale = GetScale(ifmQuant);
-    double ofmScale = GetScale(ofmQuant);
-    return ifmScale / ofmScale;
-}
 
 void RescaleConvolution(HLCOperation *op)
 {
@@ -70,6 +48,7 @@ void RescaleConvolution(HLCOperation *op)
     Quantization *ifm1Quant = &op->ifm[0].quantization;
     Quantization *ifm2Quant = ifmCnt == 2 ? &op->ifm[1].quantization : nullptr;
     Quantization *ofmQuant = &op->ofm.quantization;
+    assert(ifm1Quant && ofmQuant);
 
     if ( ofmQuant->type == QuantizationType::EXPLICIT )
     {
@@ -78,9 +57,9 @@ void RescaleConvolution(HLCOperation *op)
 
     QuantizedScale outScale(1, 0);
 
-    double ifm1Scale = GetScale(ifm1Quant);
-    double ifm2Scale = GetScale(ifm2Quant);
-    double ofmScale = GetScale(ofmQuant);
+    double ifm1Scale = ifm1Quant->Scale().Dequantize();
+    double ifm2Scale = ifm2Quant ? ifm2Quant->Scale().Dequantize() : 1.0;
+    double ofmScale = ofmQuant->Scale().Dequantize();
 
     DataType ifmDataType = op->ifm[0].dataType;
     OpType opType = op->type;
@@ -114,6 +93,7 @@ void RescaleElementwise(HLCOperation *op)
     Quantization *ifm1Quant = &op->ifm[0].quantization;
     Quantization *ifm2Quant = ifmCnt == 2 ? &op->ifm[1].quantization : nullptr;
     Quantization *ofmQuant = &op->ofm.quantization;
+    assert(ifm1Quant && ofmQuant);
 
     if ( ifm1Quant->type == QuantizationType::EXPLICIT && ofmQuant->type == QuantizationType::EXPLICIT &&
          (ifm2Quant == nullptr || ifm2Quant->type == QuantizationType::EXPLICIT) )
@@ -125,9 +105,9 @@ void RescaleElementwise(HLCOperation *op)
     QuantizedScale input2Scale(1, 0);
     QuantizedScale outScale(1, 0);
 
-    double ifm1Scale = GetScale(ifm1Quant);
-    double ifm2Scale = GetScale(ifm2Quant);
-    double ofmScale = GetScale(ofmQuant);
+    double ifm1Scale = ifm1Quant->Scale().Dequantize();
+    double ifm2Scale = ifm2Quant ? ifm2Quant->Scale().Dequantize() : 1.0;
+    double ofmScale = ofmQuant->Scale().Dequantize();
 
     DataType ifmDataType = op->ifm[0].dataType;
     OpType opType = op->type;
@@ -203,6 +183,7 @@ void RescalePooling(HLCOperation *op, bool isNoOp)
 {
     Quantization *ifm1Quant = &op->ifm[0].quantization;
     Quantization *ofmQuant = &op->ofm.quantization;
+    assert(ifm1Quant && ofmQuant);
     uint32_t scale = 1;
     int shift = 0;
     DataType ifmDataType = op->ifm[0].dataType;
@@ -221,10 +202,9 @@ void RescalePooling(HLCOperation *op, bool isNoOp)
     }
     else if ( !ifm1Quant->scales.empty() && !ofmQuant->scales.empty() )
     {
-        double ifmScale = GetScale(ifm1Quant);
-        double ofmScale = GetScale(ofmQuant);
         if ( opType == OpType::Sigmoid || opType == OpType::Tanh )
         {
+            double ifmScale = ifm1Quant->Scale().Dequantize();
             assert(ifmDataType == DataType::Int16);
             double rescale = 0x3000 * ifmScale;
             // Calculate scale and shift for the output scale of 1/(3*4096)
@@ -252,29 +232,27 @@ void RescalePooling(HLCOperation *op, bool isNoOp)
         }
         else if ( opType == OpType::MemoryCopy )
         {
-            double rescale = ifmScale / ofmScale;
             // In the case of concat or other memory operation, rescaling might be needed.
             // The scale is maximised, to get maximum precision
-            QuantizePoolingScaleMaxPrecision(op->kernel.ElementsWH(), rescale, scale, shift, 31);
+            QuantizePoolingScaleMaxPrecision(op->kernel.ElementsWH(), GetScaleFactor(op), scale, shift, 31);
         }
         else if ( opType == OpType::Quantize )
         {
             // Quantize operations need double-precision scaling
-            QuantizedScale quantScale(ifmScale / ofmScale);
+            QuantizedScale quantScale(GetScaleFactor(op));
             scale = uint32_t(quantScale.scale);
             shift = quantScale.shift;
         }
         else if ( isNoOp )
         {
-            QuantizedScale quantScale(float(ifmScale) / float(ofmScale));
+            QuantizedScale quantScale(GetScaleFactor(op, /* reducedPrecision */ true));
             scale = uint32_t(quantScale.scale);
             shift = quantScale.shift;
         }
         else
         {
             // Normal pooling operation, without need for special scaling
-            double rescale = ifmScale / ofmScale;
-            QuantizePoolingScale(op->kernel.ElementsWH(), rescale, 0, scale, shift, 31);
+            QuantizePoolingScale(op->kernel.ElementsWH(), GetScaleFactor(op), 0, scale, shift, 31);
         }
     }
     ofmQuant->scales.clear();

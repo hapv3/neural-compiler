@@ -87,6 +87,8 @@ public:
         }
         return *this;
     }
+
+    const QuantizedScale &Scale() const { return scales.empty() ? QuantizedScale::Unit() : scales.front(); }
 };
 
 inline int64_t Quantize(float value, const Quantization &quant)
