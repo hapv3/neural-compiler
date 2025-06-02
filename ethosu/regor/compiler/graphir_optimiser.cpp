@@ -742,7 +742,7 @@ Operation *GraphIrOptimiser::RewritePad(Graph *const, Operation *const operation
         const Shape ofmShape = ofmConn->shape;
         const auto &paramsConn = operation->Input(TensorUsage::Params);
         const auto &attr = operation->Attribute<pad_attr_t>();
-        uint8_t zeroPoint = ofmConn->quantization.IsValid() ? uint8_t(ofmConn->quantization.zeroPoints[0]) : 0;
+        const int zeroPoint = ofmConn->quantization.IsValid() ? static_cast<int>(ofmConn->quantization.zeroPoints[0]) : 0;
         const int padConst = int(attr->pad_const) + zeroPoint;
 
         // Decode the padding before and after each dimension as two shapes

@@ -2527,7 +2527,7 @@ Operation *TFLiteGraphOptimiser::ConvertPadV2(Graph *const graph, Operation *con
         const auto padConstTens = operation->Input(TensorUsage::Params1)->tensor;
         // This is undoing the existing zero point adjustment to counteract the zero point adjustment
         // which is done in GraphIR lowering of Pad.
-        uint8_t zeroPoint = ofmConn->quantization.IsValid() ? uint8_t(ofmConn->quantization.zeroPoints[0]) : 0;
+        int zeroPoint = ofmConn->quantization.IsValid() ? static_cast<int>(ofmConn->quantization.zeroPoints[0]) : 0;
         attr->pad_const = padConstTens->View().Values<int>(padConstTens->Type())[0] - zeroPoint;
 
         RecordOptimisation(operation, padOp.get());
