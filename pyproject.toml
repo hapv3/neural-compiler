@@ -19,11 +19,11 @@ name = "ethos-u-vela"
 description = "Neural network model compiler for Arm Ethos-U NPUs"
 requires-python = "~=3.9"
 authors = [{name = "Arm Ltd", email = "mlg-vela@arm.com"}]
-license = {text= "Apache License 2.0"}
+license = "Apache-2.0"
+license-files = ["LICENSE.txt"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
     "Operating System :: MacOS",
     "Operating System :: Microsoft :: Windows",
     "Operating System :: POSIX :: Linux",
@@ -33,7 +33,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Compilers",
 ]
-keywords = ["ethos-u", "vela compiler", "tflite", "npu"]
+keywords = ["ethos-u", "vela", "tosa", "tflite", "npu", "compiler"]
 # Third-party dependency versions are restricted based upon compatibility and security concerns.
 dependencies = [
     "flatbuffers==24.3.25",
