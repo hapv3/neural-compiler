@@ -677,6 +677,12 @@ public:
         return BufferView(_buffer, 0, _elementBits, size, Shape());
     }
 
+    BufferView Reshape(const Shape &size, const Shape &strideBytes) const
+    {
+        assert(size.Elements() == _axisElements.Elements());
+        return BufferView(_buffer, 0, _elementBits, size, strideBytes);
+    }
+
     BufferView SubView(const Shape &offset, const Shape &size) const
     {
         assert(_strideBytes && size.Elements() < _axisElements.Elements());

@@ -667,6 +667,12 @@ void SchedulerPacking::InitSchedulerConnection(SchedulerConnection *schedConn, T
         schedConn->stepXY = schedConn->slice.stride.WH<int>();
     }
 
+    // Shaped and strided weights need an updated buffer view
+    if ( usage == TensorUsage::Weights && conn.slice.shape && conn.slice.stride )
+    {
+        tensor->bufferView = tensor->bufferView.Reshape(conn.slice.shape, conn.slice.stride);
+    }
+
     if ( IsIFM(usage) )
     {
         if ( conn.tensor->Type() != tensor->dataType )

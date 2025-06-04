@@ -623,7 +623,7 @@ WeightScaleEncoding Scheduler::EncodeBestWeightFormat(
     const int depthBase = op->OFM()->slice.offset ? op->OFM()->slice.offset.Depth() : 0;
     std::vector<int> depthOffsets{depthBase, depthBase + ofmShape.Unpermute(uint32_t(op->OFM()->transpose)).Depth()};
 
-    std::vector<WF> formatList = {WF(WeightFormat::Default, WeightFormat::Sparse2_4), WF(WeightFormat::Default),
+    const std::array<WF, 4> formatList = {WF(WeightFormat::Default, WeightFormat::Sparse2_4), WF(WeightFormat::Default),
         WF(WeightFormat::Fast, WeightFormat::Sparse2_4), WF(WeightFormat::Fast)};
 
     for ( auto weightFormat : formatList )

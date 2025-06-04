@@ -2140,12 +2140,17 @@ Operation *GraphIrOptimiser::RewriteDepthwise(Graph *const graph, Operation *con
         const auto ofm = operation->Output(TensorUsage::OFM);
         const auto weights = operation->Input(TensorUsage::Weights);
         assert(ifm && ofm && weights && ifm->shape.Depth() > 0);
-        const auto multiplier = weights->shape.Depth() / ifm->shape.Depth();
+        const auto wshape = weights->shape;
+        const auto multiplier = wshape.Depth() / ifm->shape.Depth();
 
         if ( ifm && (ifm->shape.Depth() == 1) && (multiplier != 1) && ofm && (ofm->shape.Depth() == multiplier) )
         {
             auto newOp = std::make_shared<Operation>(OpType::Conv2D);
             auto kernel = std::make_unique<Kernel>(*operation->Kernel());
+            // Use striding to avoid having to permute the constant data
+            weights->shape = Shape(multiplier, wshape.Height(), wshape.Width(), 1);
+            weights->slice.shape = weights->shape;
+            weights->slice.stride = Shape::GetStridesForShape(wshape, 1).Extract(3, 1, 2, 0);
             newOp->SetKernel(std::move(kernel));
 
             ReplaceOperation(operation, newOp.get());
