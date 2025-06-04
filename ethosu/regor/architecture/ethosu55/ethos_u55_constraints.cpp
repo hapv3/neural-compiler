@@ -654,16 +654,6 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
             result.Set(QueryResult::HasRequirements);
         }
 
-        if ( k->DepthMultiplier() > 1 )
-        {
-            if ( req )
-            {
-                req->req.Set(ArchRequirement::Decompose);
-                req->decomposeProps.Set(ArchProperty::DepthMultiplier);
-            }
-            result.Set(QueryResult::HasRequirements);
-        }
-
         if ( opType == OpType::AvgPool && (k->Size().x > 8 || k->Size().y > 8) && !k->Padding().IsZero() )
         {
             return QueryResult::Unsupported;
@@ -673,6 +663,16 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
     {
         // no kernel provided, more detailed queries might fail
         result.Set(QueryResult::Constrained);
+    }
+
+    if ( opType == OpType::DepthwiseConv2D )
+    {
+        // Check for depth multiplier
+        if ( query->weights.shape && ifmShape.Depth() < query->weights.shape.Depth() )
+        {
+            req->req.Set(ArchRequirement::Decompose);
+            result.Set(QueryResult::HasRequirements);
+        }
     }
 
     return result;

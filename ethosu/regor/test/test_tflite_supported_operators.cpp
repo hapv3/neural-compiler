@@ -51,7 +51,6 @@ std::shared_ptr<Operation> CreateOperation(OpType opType, Shape ifmShape, DataTy
     if ( opType == OpType::Conv2D )
     {
         auto weights = CreateTensor("weights", Shape(1, 1, 1, 1), DataType::Int8);
-        weights->SetAxisOrder(AxisOrder::OHWI);
         op->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
     }
     return op;
@@ -79,7 +78,6 @@ TEST_CASE("Supported operators Common")
         auto op = CreateOperation(OpType::Conv2D, Shape(1, 8, 8, 1), DataType::Int8, Shape(1, 8, 8, 1), DataType::Int8);
         std::vector<int8_t> values = {1};
         auto weights = CreateTensor("weights", Shape(1, 1, 1, 1), DataType::Int8, std::move(values));
-        weights->SetAxisOrder(AxisOrder::OHWI);
         op->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
         // Regular op should pass
         REQUIRE(supportedOps->Check(op.get()) == true);
@@ -121,7 +119,6 @@ TEST_CASE("Supported operators Common")
         auto op = CreateOperation(OpType::FullyConnected, Shape(1, 2, 2, 1), DataType::Int8, Shape(1, 2, 1, 1), DataType::Int8);
         std::vector<int8_t> values = {1, 1, 1, 1, 1, 1, 1, 1};
         auto weights = CreateTensor("weights", Shape(4, 1, 1, 2), DataType::Int8, std::move(values));
-        weights->SetAxisOrder(AxisOrder::OHWI);
         op->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
         REQUIRE(supportedOps->Check(op.get()) == true);
         // reshape and reconnect tensor
@@ -163,28 +160,24 @@ TEST_CASE("Supported operators Common")
         {
             std::vector<int8_t> values(1, 1);
             auto weights = CreateTensor("weights", Shape(1, 1, 1, 1), DataType::Int8, std::move(values));
-            weights->SetAxisOrder(AxisOrder::IHWO);
             op->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
             REQUIRE(supportedOps->Check(op.get()) == true);
         }
         {
             std::vector<uint8_t> values(1, 1);
             auto weights = CreateTensor("weights", Shape(1, 1, 1, 1), DataType::UInt8, std::move(values));
-            weights->SetAxisOrder(AxisOrder::IHWO);
             op->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
             REQUIRE(supportedOps->Check(op.get()) == true);
         }
         {
             std::vector<int16_t> values(1, 1);
             auto weights = CreateTensor("weights", Shape(1, 1, 1, 1), DataType::Int16, std::move(values));
-            weights->SetAxisOrder(AxisOrder::IHWO);
             op->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
             REQUIRE(supportedOps->Check(op.get()) == false);
         }
         {
             std::vector<int32_t> values(1, 1);
             auto weights = CreateTensor("weights", Shape(1, 1, 1, 1), DataType::Int32, std::move(values));
-            weights->SetAxisOrder(AxisOrder::IHWO);
             op->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
             REQUIRE(supportedOps->Check(op.get()) == false);
         }
@@ -197,17 +190,15 @@ TEST_CASE("Supported operators Common")
         static const int64_t MAX_SUM = (1 << 16) * 127;
         {
             // Verify supported sum of weights
-            std::vector<int8_t> values((1 << 16) * 2, 127);
-            auto weights = CreateTensor("weights", Shape(1, 1, (1 << 16), 2), DataType::Int8, std::move(values));
-            weights->SetAxisOrder(AxisOrder::IHWO);
+            std::vector<int8_t> values((1 << 16), 127);
+            auto weights = CreateTensor("weights", Shape(1, 1, 1, (1 << 16)), DataType::Int8, std::move(values));
             op->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
             REQUIRE(supportedOps->Check(op.get()) == true);
         }
         {
             // Verify unsupported sum of weights
             std::vector<uint8_t> values((1 << 16) * 2, 127);
-            auto weights = CreateTensor("weights", Shape(1, 1, (1 << 16), 2), DataType::Int8, std::move(values));
-            weights->SetAxisOrder(AxisOrder::OHWI);
+            auto weights = CreateTensor("weights", Shape(1, 2, (1 << 16), 1), DataType::Int8, std::move(values));
             op->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
             REQUIRE(supportedOps->Check(op.get()) == false);
         }
@@ -219,7 +210,6 @@ TEST_CASE("Supported operators Common")
         auto op = CreateOperation(OpType::DepthwiseConv2D, Shape(1, 5, 5, 2), DataType::Int8, Shape(1, 5, 5, 2), DataType::Int8);
         std::vector<int8_t> wValues(2, 1);
         auto weights = CreateTensor("weights", Shape(1, 1, 1, 2), DataType::Int8, std::move(wValues));
-        weights->SetAxisOrder(AxisOrder::IHWO);
         op->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
         REQUIRE(supportedOps->Check(op.get()) == true);
         {
@@ -279,7 +269,7 @@ TEST_CASE("Supported operators Common")
 
         auto SetKernel = [&op](int h, int w)
         {
-            auto kernel = std::make_unique<Kernel>(Point2i{w, h}, Point2i{1, 1}, Point2i{1, 1}, 1, Margin{0, 0, 0, 0});
+            auto kernel = std::make_unique<Kernel>(Point2i{w, h}, Point2i{1, 1}, Point2i{1, 1}, Margin{0, 0, 0, 0});
             op->SetKernel(std::move(kernel));
             auto ofmConn = op->Output(TensorUsage::OFM);
             auto ifmConn = op->Input(TensorUsage::IFM);
@@ -308,7 +298,7 @@ TEST_CASE("Supported operators Common")
             int b = ph - t;
             int l = pw / 2;
             int r = pw - l;
-            auto kernel = std::make_unique<Kernel>(Point2i{w, h}, Point2i{sw, sh}, Point2i{1, 1}, 1, Margin{t, b, l, r});
+            auto kernel = std::make_unique<Kernel>(Point2i{w, h}, Point2i{sw, sh}, Point2i{1, 1}, Margin{t, b, l, r});
             op->SetKernel(std::move(kernel));
             auto ofmConn = op->Output(TensorUsage::OFM);
             auto ifmConn = op->Input(TensorUsage::IFM);
@@ -585,7 +575,7 @@ TEST_CASE("Supported operators EthosU55")
     {
         {
             auto op = CreateOperation(OpType::MaxPool, Shape(1, 10, 10, 1), DataType::Int8, Shape(1, 10, 10, 1), DataType::Int8);
-            auto kernel = std::make_unique<Kernel>(Point2i{1, 1}, Point2i{1, 1}, Point2i{1, 1}, 1, Margin{0, 0, 0, 0});
+            auto kernel = std::make_unique<Kernel>(Point2i{1, 1}, Point2i{1, 1}, Point2i{1, 1}, Margin{0, 0, 0, 0});
             op->SetKernel(std::move(kernel));
             REQUIRE(supportedOps->Check(op.get()) == true);
             op->Disconnect();
@@ -593,7 +583,7 @@ TEST_CASE("Supported operators EthosU55")
         {
             // stride > 3 is not supported for Add
             auto op = CreateOperation(OpType::Add, Shape(1, 10, 10, 1), DataType::Int8, Shape(1, 10, 10, 1), DataType::Int8);
-            auto kernel = std::make_unique<Kernel>(Point2i{1, 1}, Point2i{5, 5}, Point2i{1, 1}, 1, Margin{0, 0, 0, 0});
+            auto kernel = std::make_unique<Kernel>(Point2i{1, 1}, Point2i{5, 5}, Point2i{1, 1}, Margin{0, 0, 0, 0});
             op->SetKernel(std::move(kernel));
             REQUIRE(supportedOps->Check(op.get()) == false);
             op->Disconnect();
@@ -601,7 +591,7 @@ TEST_CASE("Supported operators EthosU55")
         {
             // stride > 3 is supported for Conv2D (it's unrolled)
             auto op = CreateOperation(OpType::Conv2D, Shape(1, 10, 10, 1), DataType::Int8, Shape(1, 2, 2, 1), DataType::Int8);
-            auto kernel = std::make_unique<Kernel>(Point2i{1, 1}, Point2i{5, 5}, Point2i{1, 1}, 1, Margin{0, 0, 0, 0});
+            auto kernel = std::make_unique<Kernel>(Point2i{1, 1}, Point2i{5, 5}, Point2i{1, 1}, Margin{0, 0, 0, 0});
             op->SetKernel(std::move(kernel));
             REQUIRE(supportedOps->Check(op.get()) == true);
             op->Disconnect();

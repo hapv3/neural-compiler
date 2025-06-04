@@ -98,9 +98,9 @@ std::unique_ptr<Graph> GraphPacking::Process(std::vector<std::pair<Operation *, 
                 const auto &schedTensor = schedConn.tensor;
 
                 // Connect input tensor to new CPU operation
-                const auto oldTensor = schedTensor->srcTensor;
+                const auto oldTensor = schedTensor->srcTensor.get();
                 assert(oldTensor && "Missing source graph tensor");
-                const auto newTensor = LookupNewTensor(oldTensor.get(), tensorAddressMap, schedTensor->AllocatedAddress());
+                const auto newTensor = LookupNewTensor(oldTensor, tensorAddressMap, schedTensor->AllocatedAddress());
                 currentOp->ConnectInput(usage, newTensor).Set(schedConn.shape).Set(schedConn.quantization);
             }
 
@@ -109,9 +109,9 @@ std::unique_ptr<Graph> GraphPacking::Process(std::vector<std::pair<Operation *, 
                 const auto &schedTensor = schedConn.tensor;
 
                 // Connect output tensor to new CPU operation
-                const auto oldTensor = schedTensor->srcTensor;
+                const auto oldTensor = schedTensor->srcTensor.get();
                 assert(oldTensor && "Missing source graph tensor");
-                const auto newTensor = LookupNewTensor(oldTensor.get(), tensorAddressMap, schedTensor->AllocatedAddress());
+                const auto newTensor = LookupNewTensor(oldTensor, tensorAddressMap, schedTensor->AllocatedAddress());
                 currentOp->ConnectOutput(usage, newTensor).Set(schedConn.shape).Set(schedConn.quantization);
             }
         }
@@ -211,18 +211,18 @@ void GraphPacking::ConnectTensors(Operation *op, const std::unique_ptr<Scheduler
         }
 
         // Connect input tensor to new Ethos-U operation, but only once
-        const auto &oldTensor = schedTensor->srcTensor;
-        if ( oldTensor )
+        if ( schedTensor->srcTensor )
         {
+            Tensor *oldTensor = schedTensor->srcTensor.get();
             const bool isConsumedByNPUOnly = std::all_of(schedTensor->consumers.begin(), schedTensor->consumers.end(), isNpuOp);
             const bool isProducedByNPUOnly = std::all_of(schedTensor->producers.begin(), schedTensor->producers.end(), isNpuOp);
             if ( isConsumedByNPUOnly && isProducedByNPUOnly && !schedTensor->isGraphInput && !schedTensor->isPersistent )
             {
                 // Remember NPU only tensors so we can add them as placeholder later
-                npuOnly.insert(oldTensor.get());
+                npuOnly.insert(oldTensor);
             }
 
-            const auto newTensor = LookupNewTensor(oldTensor.get(), tensorAddressMap, schedTensor->AllocatedAddress());
+            const auto newTensor = LookupNewTensor(oldTensor, tensorAddressMap, schedTensor->AllocatedAddress());
             if ( op->UsageOfTensor(newTensor.get()) == TensorUsage::None )
             {
                 const auto usage = MakeTensorUsage(TensorUsage::IFM, op->Inputs().size());
@@ -244,18 +244,18 @@ void GraphPacking::ConnectTensors(Operation *op, const std::unique_ptr<Scheduler
         }
 
         // Connect output tensor to new Ethos-U operation, but only once
-        const auto &oldTensor = schedTensor->srcTensor;
-        if ( oldTensor )
+        if ( schedTensor->srcTensor )
         {
+            Tensor *oldTensor = schedTensor->srcTensor.get();
             const bool isProducedByNPUOnly = std::all_of(schedTensor->producers.begin(), schedTensor->producers.end(), isNpuOp);
             const bool isConsumedByNPUOnly = std::all_of(schedTensor->consumers.begin(), schedTensor->consumers.end(), isNpuOp);
             if ( isProducedByNPUOnly && isConsumedByNPUOnly && !schedTensor->isGraphOutput && !schedTensor->isPersistent )
             {
                 // Remember NPU only tensors so we can add them as placeholder later
-                npuOnly.insert(oldTensor.get());
+                npuOnly.insert(oldTensor);
             }
 
-            const auto newTensor = LookupNewTensor(oldTensor.get(), tensorAddressMap, schedTensor->AllocatedAddress());
+            const auto newTensor = LookupNewTensor(oldTensor, tensorAddressMap, schedTensor->AllocatedAddress());
             if ( op->UsageOfTensor(newTensor.get()) == TensorUsage::None )
             {
                 const auto usage = MakeTensorUsage(TensorUsage::OFM, op->Outputs().size());

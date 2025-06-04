@@ -1772,7 +1772,6 @@ void EthosU55RCSGenerator::GeneratePoolingOp(const HLCStripe *stripe, MemoryAcce
         assert(op->kernel.Size() == Point2i(1, 1));
         assert(op->kernel.Stride() == Point2i(1, 1));
         assert(op->kernel.Dilation() == Point2i(1, 1));
-        assert(op->kernel.DepthMultiplier() == 1);
         assert(useGlobalScale);
         assert(op->ifm.size() > 0);
         // Op is being used as a 32-bit unscaled memory copy but

@@ -63,7 +63,6 @@ struct IWeightEncodingConfig
     virtual ~IWeightEncodingConfig() = default;
     virtual uint32_t Hash() = 0;
     virtual bool Equals(IWeightEncodingConfig *other) = 0;
-    virtual const std::vector<int> &DepthOffsets() = 0;
     virtual Flags<WeightFormat> Format() = 0;
 };
 
@@ -118,15 +117,6 @@ struct WeightScaleTensors
     std::shared_ptr<NpuWeightTensor> npuScalesTensor;
 };
 
-
-struct WeightsRef
-{
-    BufferView *view = nullptr;
-    AxisOrder axisOrder = AxisOrder::Unknown;
-    DataType type = DataType::None;
-    bool isScales = false;
-};
-
 struct WeightsInfo
 {
     int sourceSize = 0;
@@ -145,8 +135,8 @@ class WeightEncoder
 public:
     virtual ~WeightEncoder() = default;
 
-    virtual std::unique_ptr<IWeightEncodingConfig> GetEncodingConfig(ArchitectureOpConfig *opCfg, const WeightsRef &weights,
-        const Kernel *kernel, DataType ifmType, int depthBase, const std::vector<int> &depthOffsets, Flags<WeightFormat> format) = 0;
+    virtual std::unique_ptr<IWeightEncodingConfig> GetEncodingConfig(
+        ArchitectureOpConfig *opCfg, const Kernel *kernel, DataType ifmType, Flags<WeightFormat> format) = 0;
 
     virtual int StreamsRequired(IWeightEncodingConfig *config, const Shape &ofmShape, int &scaleStreamsRequired) = 0;
 
@@ -166,7 +156,6 @@ public:
 // IVolumeWeightSource common implementation
 class WeightSourceCommon : public IVolumeWeightSource
 {
-
 protected:
     const void *_source;
     int16_t _streams = 1;
@@ -175,7 +164,7 @@ protected:
     int _ifmDepth = 0;
     int _kernelH = 0;
     int _kernelW = 0;
-    int _ohwiStrides[4];
+    int _ohwiStrides[4];  // Volume strides, inner-axis first.
 
 protected:
     void SetSourceCommon(const void *buffer, int depthOffset, const Shape &ohwiShape, const Shape &ohwiStrides, int streamIndex, bool separated)
@@ -208,11 +197,12 @@ protected:
 struct WeightEncodeException : public std::runtime_error
 {
     WeightEncodeException() : std::runtime_error("weight encode") {}
+    WeightEncodeException(const char *message) : std::runtime_error(message) {}
 };
 
 struct WeightsNotSparse : public WeightEncodeException
 {
-    WeightsNotSparse() {}
+    WeightsNotSparse() : WeightEncodeException("weights not sparse") {}
 };
 
 }  // namespace regor

@@ -654,13 +654,11 @@ Operation *GraphIrOptimiser::RewriteFullyConnected(Graph *const graph, Operation
         }
 
         const auto &shape = weights->tensor->StorageShape();
-        if ( weights->tensor->AxisOrder() == AxisOrder::OI && shape.Size() == 2 )
+        if ( shape.Size() == 2 )
         {
             // Reshape weight tensor from (num_outputs, ..., num_inputs) to (num_outputs, 1, 1, num_inputs)
-            weights->tensor->SetAxisOrder(AxisOrder::OHWI);
             weights->tensor->Reshape(Shape(shape[0], 1, 1, shape[-1]));
         }
-        assert(weights->tensor->AxisOrder() == AxisOrder::OHWI);
 
         // Rewrite input shape to batched shape
         auto nInElems = weights->shape.Depth();
@@ -1759,7 +1757,6 @@ Operation *GraphIrOptimiser::RewriteReduceSum(Graph *const graph, Operation *con
                     auto weightsBuffer = std::make_shared<Buffer>(std::vector<int8_t>(ifmShape4D.Depth(), 1));
                     auto weightsTens = CreateConstTensor("weights", DataType::Int8, weightsBuffer);
                     weightsTens->SetStorageShape({1, 1, 1, ifmShape4D.Depth()});
-                    weightsTens->SetAxisOrder(AxisOrder::OHWI);
                     auto weightsQuant = ifmConn->quantization;
                     weightsQuant.quantMin = {IntegerMin(DataType::Int8)};
                     weightsQuant.quantMax = {IntegerMax(DataType::Int8)};
@@ -2141,21 +2138,15 @@ Operation *GraphIrOptimiser::RewriteDepthwise(Graph *const graph, Operation *con
     {
         const auto ifm = operation->Input(TensorUsage::IFM0);
         const auto ofm = operation->Output(TensorUsage::OFM);
-        const auto multiplier = operation->Kernel()->DepthMultiplier();
+        const auto weights = operation->Input(TensorUsage::Weights);
+        assert(ifm && ofm && weights && ifm->shape.Depth() > 0);
+        const auto multiplier = weights->shape.Depth() / ifm->shape.Depth();
 
         if ( ifm && (ifm->shape.Depth() == 1) && (multiplier != 1) && ofm && (ofm->shape.Depth() == multiplier) )
         {
             auto newOp = std::make_shared<Operation>(OpType::Conv2D);
-            auto kernel = std::make_unique<Kernel>(operation->Kernel()->WithDepthMultiplier(1));
+            auto kernel = std::make_unique<Kernel>(*operation->Kernel());
             newOp->SetKernel(std::move(kernel));
-            const auto weights = operation->Input(TensorUsage::Weights);
-            if ( weights->tensor->AxisOrder() == AxisOrder::HWCM )
-            {
-                const auto &shape = weights->tensor->StorageShape();
-                weights->tensor->Reshape(Shape(1, shape[0], shape[1], shape[3]));
-                weights->tensor->SetAxisOrder(AxisOrder::IHWO);
-                weights->shape = weights->tensor->StorageShape();
-            }
 
             ReplaceOperation(operation, newOp.get());
             newOp->Output(TensorUsage::OFM)->Set(ofm->rounding);
@@ -2297,7 +2288,6 @@ Operation *GraphIrOptimiser::RewriteArgmax(Graph *const graph, Operation *const 
     std::vector<uint8_t> values(weightShape.Elements(), 1 << 7);  // Weights are 128 to mimic the bit shift.
     auto weightBuf = std::make_shared<Buffer>(std::move(values));
     const auto weightTensor = std::make_shared<Tensor>("convOp_unitWeights", DataType::UInt8, weightShape, weightBuf);
-    weightTensor->SetAxisOrder(AxisOrder::IHWO);
 
     // Create a convolution operation for shifting values 7 bits (multiplying by 2**7)
     auto convOp = std::make_shared<Operation>(OpType::DepthwiseConv2D);

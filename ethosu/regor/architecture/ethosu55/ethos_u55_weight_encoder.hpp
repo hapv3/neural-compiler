@@ -38,23 +38,19 @@ private:
     {
     private:
         uint32_t _hash = 0;
-        uint32_t _depthOffsetHash = 0;
-        int _cores = 0;
+        Flags<WeightFormat> _weightFormat = WeightFormat::Default;  // Required for disambiguation
 
     public:
         DataType ifmType = DataType::None;
         int ofmBlockDepth = 0;
         EthosUTraversal traversal = EthosUTraversal::DepthFirst;
-        std::vector<int> depthOffsets;
         Point2i dilation;
-        Shape ohwiStrides;
 
     public:
-        EthosUEncodingConfig(int cores);
+        EthosUEncodingConfig(Flags<WeightFormat> weightFormat);
         void Rehash();
         uint32_t Hash() override;
         bool Equals(IWeightEncodingConfig *other) override;
-        const std::vector<int> &DepthOffsets() override;
         Flags<WeightFormat> Format() override;
     };
 
@@ -62,8 +58,8 @@ public:
     EthosU55WeightEncoder(ArchEthosU55 *arch) : _arch(arch) {}
 
 public:
-    std::unique_ptr<IWeightEncodingConfig> GetEncodingConfig(ArchitectureOpConfig *opCfg, const WeightsRef &weights,
-        const Kernel *kernel, DataType ifmType, int depthBase, const std::vector<int> &depthOffsets, Flags<WeightFormat> format);
+    std::unique_ptr<IWeightEncodingConfig>
+    GetEncodingConfig(ArchitectureOpConfig *opCfg, const Kernel *kernel, DataType ifmType, Flags<WeightFormat> format);
 
     int StreamsRequired(IWeightEncodingConfig *config, const Shape &weightShape, int &scaleStreamsRequired);
 

@@ -268,7 +268,6 @@ void SchedulerPacking::HandleReinterpretCast(const Operation *op)
     if ( pos == _tensorMap.end() )
     {
         schedTensor = std::make_shared<SchedulerTensor>();
-        schedTensor->srcTensor = ifmConn->tensor;
         InitSchedulerTensor(schedTensor.get(), ifmConn->tensor.get());
         _tensorMap.emplace(ifmConn->tensor.get(), schedTensor);
     }
@@ -285,7 +284,6 @@ void SchedulerPacking::HandleReinterpretCast(const Operation *op)
     {
         InitSchedulerTensor(schedTensor.get(), ofmConn->tensor.get());
         schedTensor->dataType = ifmConn->tensor->Type();
-        schedTensor->srcTensor = ofmConn->tensor;
     }
 }
 
@@ -646,8 +644,8 @@ int SchedulerPacking::CanPack(const SchedulerOperation *schedOp, const Scheduler
     return schedOp->_opGroup->Add(op1, {prevOpKey});
 }
 
-void SchedulerPacking::InitSchedulerConnection(
-    SchedulerConnection *schedConn, const std::shared_ptr<SchedulerTensor> &tensor, const TensorConnection &conn)
+void SchedulerPacking::InitSchedulerConnection(SchedulerConnection *schedConn, TensorUsage usage,
+    const std::shared_ptr<SchedulerTensor> &tensor, const TensorConnection &conn)
 {
     schedConn->tensor = tensor;
     // Convert to (minimum) 4D-shapes in scheduler-IR
@@ -658,9 +656,18 @@ void SchedulerPacking::InitSchedulerConnection(
     schedConn->reverse = conn.reverse;
     schedConn->resamplingMode = ArchResampling::None;
     schedConn->rounding = conn.rounding;
+    schedConn->transpose = TransposeType::None;
     if ( schedConn->slice.stride )
     {
         schedConn->stepXY = schedConn->slice.stride.WH<int>();
+    }
+
+    if ( IsIFM(usage) )
+    {
+        if ( conn.tensor->Type() != tensor->dataType )
+        {
+            schedConn->SetType(conn.tensor->Type());
+        }
     }
 }
 
@@ -668,6 +675,7 @@ void SchedulerPacking::InitSchedulerTensor(SchedulerTensor *schedTensor, Tensor 
 {
     const auto type = tensor->Type();
     // Take scheduler-local copies of graph tensor parameters.
+    schedTensor->srcTensor = tensor->shared_from_this();
     schedTensor->format = TensorFormat::NHWC;
     schedTensor->memArea = tensor->IsConstant() ? _arch->ReadonlyMemory() : _arch->FeatureMapMemory();
     schedTensor->storageShape = Shape::PadAxes(tensor->StorageShape(), 4, 1);
@@ -725,28 +733,24 @@ std::unique_ptr<SchedulerOperation> SchedulerPacking::MakeSchedulerOperation(con
                 // Create new scheduler tensor if metadata is missing.
                 auto tmp = std::make_shared<SchedulerTensor>();
                 pos = _tensorMap.emplace(tensor, tmp).first;
-                tmp->srcTensor = item.second.tensor;
                 InitSchedulerTensor(tmp.get(), tensor);
             }
 
             // Update consumers and manage connectivity
             const std::shared_ptr<SchedulerTensor> &schedTensor = pos->second;
 
+            SchedulerConnection *schedConn = nullptr;
             if ( IsOFM(item.first) )
             {
                 schedTensor->producers.push_back(schedOp.get());
+                schedConn = schedOp->AddOutput(item.first);
             }
             else
             {
                 schedTensor->consumers.push_back(schedOp.get());
+                schedConn = schedOp->AddInput(item.first);
             }
-            SchedulerConnection *schedConn = IsOFM(item.first) ? schedOp->AddOutput(item.first) : schedOp->AddInput(item.first);
-            InitSchedulerConnection(schedConn, schedTensor, item.second);
-            if ( IsIFM(item.first) && tensor->Type() != schedTensor->dataType )
-            {
-                schedConn->SetType(tensor->Type());
-            }
-            schedConn->transpose = TransposeType::None;
+            InitSchedulerConnection(schedConn, item.first, schedTensor, item.second);
         }
     }
 

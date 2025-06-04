@@ -1868,7 +1868,6 @@ void EthosU85RCSGenerator::GeneratePoolingOp(HLCStripe *stripe, MemoryAccesses &
         assert(op->kernel.Size() == Point2i(1, 1));
         assert(op->kernel.Stride() == Point2i(1, 1));
         assert(op->kernel.Dilation() == Point2i(1, 1));
-        assert(op->kernel.DepthMultiplier() == 1);
     }
     GenerateCommon(stripe, useGlobalScale, memoryAccesses);
     GenerateOFMScalingForPooling(op, useGlobalScale);

@@ -668,6 +668,7 @@ public:
     bool HasBuffer() const { return _buffer != nullptr; }
     const Shape &ViewShape() const { return _axisElements; }
     const Shape &StrideBytes() const { return _strideBytes; }
+    int BaseOffset() const { return _baseOffset; }
     int Elements() const { return _elements; }
 
     BufferView Reshape(const Shape &size) const

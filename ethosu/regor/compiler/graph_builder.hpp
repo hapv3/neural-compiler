@@ -51,6 +51,11 @@ class GraphBuilder : public GraphApi::IGraphBuilder
     using BufferMapping = GraphApi::BufferMapping;
     using GraphTensorLayout = GraphApi::GraphTensorLayout;
 
+    struct TensorInfo
+    {
+        GraphApi::AxisOrder order = {};
+    };
+
 protected:
     std::string _graphName;
     uint32_t _syntaxVersion = 0;
@@ -61,6 +66,7 @@ protected:
     std::vector<std::shared_ptr<Tensor>> _persistent;
     std::vector<std::shared_ptr<Buffer>> _buffers;
     std::unordered_map<UniqueId, int> _uidToExt;
+    std::unordered_map<UniqueId, TensorInfo> _tensorInfo;
 
 public:
     GraphBuilder(const std::string &name);

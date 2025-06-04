@@ -806,6 +806,41 @@ public:
         return Shape(shape, std::max(axes, shape.Size()), padValue);
     }
 
+    // Take an axis mask and merge axis sizes together into one value
+    static Shape MergeAxes(const Shape &shape, int intoAxis, uint32_t mask, bool preserveLength)
+    {
+        intoAxis = shape.ToOffset(intoAxis);
+        assert(intoAxis < 32);
+        mask |= 1u << intoAxis;  // Ensure destination axis gets included in product
+
+        Shape result(nullptr, shape.Size());
+        auto *from = shape.Storage();
+        auto *to = result.Storage();
+        int write = 0;
+        int product = 1;
+        for ( int read = 0; read <= shape._last; read++ )
+        {
+            if ( (mask >> read) & 1 )
+            {
+                product *= from[read];
+                if ( write == intoAxis ) write++;  // skip the hole where output should be written
+            }
+            else
+            {
+                to[write++] = from[read];
+            }
+        }
+        while ( preserveLength && write <= shape._last )
+        {
+            to[write++] = 1;
+        }
+        assert(intoAxis >= 0 && intoAxis < write);  // Destination axis is not within output range
+        to[intoAxis] = product;
+        assert(write > 0);
+        result._last = write - 1;
+        return result;
+    }
+
     static Shape Min(const Shape &a, const Shape &b)
     {
         return Shape::MinFunc<func_proxy<const int32_t &, std::min<int32_t>>>(a, b);

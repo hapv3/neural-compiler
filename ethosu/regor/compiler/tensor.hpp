@@ -46,7 +46,6 @@ private:
     UniqueId _uid;
     class Shape _storageShape;
     std::shared_ptr<class Buffer> _buffer;
-    enum AxisOrder _axisOrder = AxisOrder::Unknown;
     const void *_passthrough = nullptr;  // Original flatbuffer description of this tensor (if it was loaded from one)
 
     std::vector<std::shared_ptr<Operation>> _readers;
@@ -71,9 +70,6 @@ public:
     bool IsConstant() const;
     void Reshape(const Shape &shape);
     void ChangeType(DataType newType);
-
-    enum AxisOrder AxisOrder() const { return _axisOrder; }
-    void SetAxisOrder(enum AxisOrder axisOrder) { _axisOrder = axisOrder; }
 
     const void *Passthrough() const { return _passthrough; }
     void SetPassthrough(const void *passthrough) { _passthrough = passthrough; }

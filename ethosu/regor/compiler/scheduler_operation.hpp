@@ -47,6 +47,7 @@ private:
 
 public:
     std::shared_ptr<Tensor> srcTensor;
+    std::string internalName;
     TensorFormat format = TensorFormat::Unknown;
     MemArea memArea;
     Shape storageShape;
@@ -124,10 +125,18 @@ public:
         return (allocatedSize > 0) ? allocatedSize : TensorAllocationBytes(storageShape, format, dataType);
     }
 
+    void SetInternalName(const char *name)
+    {
+        if ( name ) internalName = name;
+        else internalName.clear();
+    }
+
     std::string Name() const
     {
-        return srcTensor.get() == nullptr ? "? (uid " + std::to_string(uid) + ")" : srcTensor->Name();
+        if ( internalName.empty() ) return !srcTensor ? std::string("#") + std::to_string(uid) : srcTensor->Name();
+        return internalName;
     }
+
     bool IsConstant() const { return bufferView.HasBuffer() && bufferView.Buffer()->Size(); }
 };
 

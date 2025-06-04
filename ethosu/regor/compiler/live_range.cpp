@@ -22,7 +22,6 @@
 #include "architecture/architecture.hpp"
 #include "scheduler.hpp"
 #include "scheduler_operation.hpp"
-#include "tensor.hpp"
 
 #include <algorithm>
 #include <cassert>

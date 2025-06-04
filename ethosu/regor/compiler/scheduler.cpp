@@ -509,36 +509,6 @@ std::unique_ptr<ArchitectureOpConfig> GetOpConfig(Architecture *arch, SchedulerO
     return arch->GetOpConfig(op->Type(), query);
 }
 
-Shape GetOhwiShape(const SchedulerTensor *weightTens)
-{
-    const auto &weightView = weightTens->bufferView;
-    Shape ohwiShape = weightView.ViewShape();
-    if ( weightTens->srcTensor->AxisOrder() == AxisOrder::IHWO )
-    {
-        ohwiShape = ohwiShape.Extract(3, 1, 2, 0);
-    }
-    else if ( weightTens->srcTensor->AxisOrder() == AxisOrder::HWCM )
-    {
-        ohwiShape = ohwiShape.Extract(2, 0, 1, 3);
-    }
-    return ohwiShape;
-}
-
-Shape GetOhwiStrides(const SchedulerTensor *weightTens)
-{
-    const auto &weightView = weightTens->bufferView;
-    Shape ohwiStrides = weightView.StrideBytes() * 8 / DataTypeSizeBits(weightTens->dataType);
-    if ( weightTens->srcTensor->AxisOrder() == AxisOrder::IHWO )
-    {
-        ohwiStrides = ohwiStrides.Extract(3, 1, 2, 0);
-    }
-    else if ( weightTens->srcTensor->AxisOrder() == AxisOrder::HWCM )
-    {
-        ohwiStrides = ohwiStrides.Extract(2, 0, 1, 3);
-    }
-    return ohwiStrides;
-}
-
 WeightScaleEncoding ChooseBestWeightFormat(Architecture *arch, SchedulerOperation *op,
     OptimizationStrategy optimizationStrategy, std::vector<WeightScaleEncoding> &encodingResults)
 {
@@ -614,6 +584,8 @@ std::unique_ptr<ArchitectureOpConfig> MaybeGetSparsityConfig(regor::Architecture
     }
     return blockConfigSparse;
 }
+
+
 }  // namespace
 
 
@@ -645,10 +617,11 @@ WeightScaleEncoding Scheduler::EncodeBestWeightFormat(
     std::vector<WeightScaleEncoding> encodingResults;
     auto weights = op->Input(TensorUsage::Weights);
     auto scales = op->Input(TensorUsage::Scales);
-    WeightsRef weightsRef = {&weights->tensor->bufferView, weights->tensor->srcTensor->AxisOrder(), weights->Type()};
     auto ifm = op->IFM(op->PrimaryIfmIndex());
     auto ifmType = ifm->Type();
-    std::vector<int> depthOffsets{0, ofmShape.Unpermute(uint32_t(op->OFM()->transpose)).Depth()};
+    // The operation might have been decomposed in depth dimension and have an offset
+    const int depthBase = op->OFM()->slice.offset ? op->OFM()->slice.offset.Depth() : 0;
+    std::vector<int> depthOffsets{depthBase, depthBase + ofmShape.Unpermute(uint32_t(op->OFM()->transpose)).Depth()};
 
     std::vector<WF> formatList = {WF(WeightFormat::Default, WeightFormat::Sparse2_4), WF(WeightFormat::Default),
         WF(WeightFormat::Fast, WeightFormat::Sparse2_4), WF(WeightFormat::Fast)};
@@ -663,16 +636,13 @@ WeightScaleEncoding Scheduler::EncodeBestWeightFormat(
         {
             throw std::runtime_error("Failed to find block configuration\n");
         }
-        // The operation might have been decomposed in depth dimension and have an offset
-        const int depthBase = op->OFM()->slice.offset ? op->OFM()->slice.offset.Depth() : 0;
-        auto encodingParams = _arch->WeightEncoder()->GetEncodingConfig(
-            blockConfig, weightsRef, op->Kernel(), ifmType, depthBase, depthOffsets, weightFormat);
+        auto encodingParams = _arch->WeightEncoder()->GetEncodingConfig(blockConfig, op->Kernel(), ifmType, weightFormat);
 
         try
         {
             WeightScaleEncoding encoding;
-            encoding.weightScales = EncodeWeightAndScaleTensor(std::move(encodingParams), weights->tensor.get(),
-                scales->tensor.get(), weights->quantization, op->OFM()->quantization);
+            encoding.weightScales = EncodeWeightAndScaleTensor(op->Type(), std::move(encodingParams), depthOffsets,
+                weights->tensor.get(), scales->tensor.get(), weights->quantization, op->OFM()->quantization);
 
             if ( checkFastDecoder &&
                  !UseFastDecoder(_arch, op, _options.optimizationStrategy, encoding.weightScales.npuWeightsTensor.get()) )
@@ -788,18 +758,14 @@ std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(
     auto scales = op->TryInput(TensorUsage::Scales);
     if ( !weights && (op->OFM()->quantization.scales.size() > 1 || scales) )
     {
-        WeightsRef weightsRef;
-        weightsRef.isScales = true;
-
-        std::vector<int> depthOffsets{0, ofmShape.Unpermute(uint32_t(op->OFM()->transpose)).Depth()};
+        const int depthBase = op->OFM()->slice.offset ? op->OFM()->slice.offset.Depth() : 0;
+        std::vector<int> depthOffsets{depthBase, depthBase + ofmShape.Unpermute(uint32_t(op->OFM()->transpose)).Depth()};
 
         // The operation might have been decomposed in depth dimension and have an offset
-        const int depthBase = op->OFM()->slice.offset ? op->OFM()->slice.offset.Depth() : 0;
-        auto encodingParams = _arch->WeightEncoder()->GetEncodingConfig(
-            blockConfig.get(), weightsRef, op->Kernel(), ifm->Type(), depthBase, depthOffsets, weightFormat);
+        auto encodingParams = _arch->WeightEncoder()->GetEncodingConfig(blockConfig.get(), op->Kernel(), ifm->Type(), weightFormat);
 
         const SchedulerTensor *scaleTensor = scales ? scales->tensor.get() : nullptr;
-        weightScales = EncodeQuantizationScaleTensor(std::move(encodingParams), op->OFM()->quantization, scaleTensor);
+        weightScales = EncodeQuantizationScaleTensor(op->Type(), std::move(encodingParams), depthOffsets, op->OFM()->quantization, scaleTensor);
     }
     // Finally construct and populate operator information (cost)
     auto opInfo = std::make_unique<SchedulerOpInfo>(std::move(blockConfig), ifmShape, ifm2Shape, ofmShape);
@@ -877,7 +843,7 @@ void Scheduler::MoveConstantData(Schedule *refSchedule)
 
                 // Check if broadcast elementwise can be buffered
                 if ( IsIFM(pos.first) && IsElementwise(schedOp->Type()) && (conn->shape != schedOp->OFM()->shape) &&
-                     conn->tensor->srcTensor->View().Buffer()->Size() > maxIfmShramAvail )
+                     conn->tensor->bufferView.Buffer()->Size() > maxIfmShramAvail )
                 {
                     moveData = true;
                 }
@@ -1014,7 +980,7 @@ static bool FulldepthWeightBuffering(const std::vector<std::unique_ptr<Scheduler
     SchedulerOperation *schedOp, SchedulerOpInfo *cost, SchedulerOperation *prevOp, SchedulerOpInfo *prevCost, Schedule *refSchedule)
 {
     bool forceFullDepthSlice = false;
-    if ( weights->srcTensor->Readers().size() > 1 )
+    if ( weights->consumers.size() > 1u )
     {
         // Check for special case where several consecutive ops have the same weight tensor.
         // If the weigths can fit entire in bufferLimit and the ops all have the same ofm depth slice
@@ -1082,18 +1048,15 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
     const int fullDepthAfterTransposition = refCost->stripe.Depth();
     // The operation might have been decomposed in depth dimension and have an offset
     const int depthBase = ofm->slice.offset ? schedOp->OFM()->slice.offset.Depth() : 0;
-    std::vector<int> ofmFullDepthSlicesBeforeTransposition = {0, fullDepthBeforeTransposition};
+    std::vector<int> ofmFullDepthSlicesBeforeTransposition = {depthBase, depthBase + fullDepthBeforeTransposition};
     std::vector<int> ofmFullDepthSlicesAfterTransposition = {0, fullDepthAfterTransposition};
-
-    WeightsRef weightsRef = {&weightTens->bufferView, weightTens->srcTensor->AxisOrder(), weightTens->dataType};
 
     auto weightFormat = cost->npuWeightsTensor->config->Format();
 
-    auto encodingParams = _arch->WeightEncoder()->GetEncodingConfig(cost->Config(), weightsRef, schedOp->Kernel(),
-        ifm->tensor->dataType, depthBase, ofmFullDepthSlicesBeforeTransposition, weightFormat);
+    auto encodingParams = _arch->WeightEncoder()->GetEncodingConfig(cost->Config(), schedOp->Kernel(), ifm->tensor->dataType, weightFormat);
 
-    auto fullWeightScales = EncodeWeightAndScaleTensor(
-        std::move(encodingParams), weightTens, scaleTens, weights->quantization, ofm->quantization);
+    auto fullWeightScales = EncodeWeightAndScaleTensor(schedOp->Type(), std::move(encodingParams),
+        ofmFullDepthSlicesBeforeTransposition, weightTens, scaleTens, weights->quantization, ofm->quantization);
 
     int fullWeightsBytes = fullWeightScales.npuWeightsTensor->AllocationSizeBytes();
 
@@ -1203,24 +1166,22 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
                 bufferingDepth = int(std::max(bufferingDepth, OFMSplitDepth));
 
                 // Create list of depth slices
-                std::vector<int> depthSlices = {0};
+                std::vector<int> depthSlices = {depthBase};
 
                 for ( int depth = prebufferDepth; depth < refCost->stripe.Depth(); depth += bufferingDepth )
                 {
-                    depthSlices.push_back(depth);
+                    depthSlices.push_back(depthBase + depth);
                 }
-                depthSlices.push_back(refCost->stripe.Depth());
+                depthSlices.push_back(depthBase + refCost->stripe.Depth());
 
                 // Encode weights based depth slices
                 cost->ofmDepthSlices = std::move(depthSlices);
 
-                weightsRef = {&weightTens->bufferView, weightTens->srcTensor->AxisOrder(), weightTens->dataType, false};
+                encodingParams = _arch->WeightEncoder()->GetEncodingConfig(
+                    cost->Config(), schedOp->Kernel(), ifm->tensor->dataType, weightFormat);
 
-                encodingParams = _arch->WeightEncoder()->GetEncodingConfig(cost->Config(), weightsRef,
-                    schedOp->Kernel(), ifm->tensor->dataType, depthBase, cost->ofmDepthSlices, weightFormat);
-
-                encodedWeightScales = EncodeWeightAndScaleTensor(
-                    std::move(encodingParams), weightTens, scaleTens, weights->quantization, ofm->quantization);
+                encodedWeightScales = EncodeWeightAndScaleTensor(schedOp->Type(), std::move(encodingParams),
+                    cost->ofmDepthSlices, weightTens, scaleTens, weights->quantization, ofm->quantization);
 
                 // Chosen buffering might not fit at all, iterate until it does
                 // or until the minimum usable slice size is reached
@@ -1270,7 +1231,6 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
 
         // Create a new tensor in fast storage to use as weights buffer
         cost->bufferedWeightTensor.tensor = std::make_shared<SchedulerTensor>();
-        cost->bufferedWeightTensor.tensor->srcTensor = encodedWeightScales.npuWeightsTensor->srcTensor;
         cost->bufferedWeightTensor.tensor->SetAllocatedSize(weightBufferSize);
         cost->bufferedWeightTensor.tensor->memArea = _arch->StagingMemory();
         cost->bufferedWeightTensor.buffering = buffering;
@@ -1404,7 +1364,6 @@ std::shared_ptr<Schedule> Scheduler::ProposeScheduleStriping(const Shape &finalS
         if ( refCost->bufferedWeightTensor.tensor )
         {
             auto bufferingTensor = std::make_shared<SchedulerTensor>();
-            bufferingTensor->srcTensor = cost->npuWeightsTensor->srcTensor;
             bufferingTensor->SetAllocatedSize(cost->npuWeightsTensor->AllocationSizeBytes());
             bufferingTensor->memArea = refCost->bufferedWeightTensor.tensor->memArea;
             cost->bufferedWeightTensor.buffering = Buffering::Single;  // Stripes are currently single-buffered
@@ -1636,9 +1595,6 @@ void Scheduler::ApplySchedule(Schedule *schedule)
                 bufferTensor->storageShape = bufferTensor->storageShape.WithHW(bufferShape.Height(), bufferShape.Width());
             }
         }
-
-        // Check buffering tensors are meaningfully defined
-        assert(!cost->bufferedWeightTensor.tensor || (cost->bufferedWeightTensor.tensor->srcTensor != nullptr));
     }
 }
 
@@ -1976,8 +1932,7 @@ struct SchedulerTransformParam : public WeightTransformParam
     int zeroCount;
 };
 
-
-static int ApplyZeroPointIHWO(const WeightTransformParam *param, int value)
+static int ApplyZeroPointAxisO(const WeightTransformParam *param, int value)
 {
     const SchedulerTransformParam *p = static_cast<const SchedulerTransformParam *>(param);
     value = (value - int(p->zeroPoints[p->o % p->zeroCount]));
@@ -1985,8 +1940,7 @@ static int ApplyZeroPointIHWO(const WeightTransformParam *param, int value)
     return value;
 }
 
-
-static int ApplyZeroPointOHWI(const WeightTransformParam *param, int value)
+static int ApplyZeroPointAxisI(const WeightTransformParam *param, int value)
 {
     const SchedulerTransformParam *p = static_cast<const SchedulerTransformParam *>(param);
     value = (value - int(p->zeroPoints[p->i % p->zeroCount]));
@@ -1994,23 +1948,24 @@ static int ApplyZeroPointOHWI(const WeightTransformParam *param, int value)
     return value;
 }
 
-WeightScaleTensors Scheduler::EncodeQuantizationScaleTensor(std::unique_ptr<IWeightEncodingConfig> encodingParams,
-    const Quantization &ofmQuantization, const SchedulerTensor *scales)
+WeightScaleTensors Scheduler::EncodeQuantizationScaleTensor(OpType forOp, std::unique_ptr<IWeightEncodingConfig> encodingParams,
+    const std::vector<int> &depthOffsets, const Quantization &ofmQuantization, const SchedulerTensor *scales)
 {
     SchedulerTensor scaleTens;
     scaleTens.dataType = DataType::Int32;
     if ( scales == nullptr ) scales = &scaleTens;
-    return TryEncodeWeightAndScaleTensor(encodingParams.get(), nullptr, scales, {}, ofmQuantization, false, true);
+    return TryEncodeWeightAndScaleTensor(forOp, encodingParams.get(), depthOffsets, nullptr, scales, {}, ofmQuantization, false, true);
 }
 
-WeightScaleTensors Scheduler::EncodeWeightAndScaleTensor(std::unique_ptr<IWeightEncodingConfig> encodingParams, const SchedulerTensor *weightTens,
-    const SchedulerTensor *scaleTens, const Quantization &weightQuantization, const Quantization &ofmQuantization)
+WeightScaleTensors Scheduler::EncodeWeightAndScaleTensor(OpType forOp, std::unique_ptr<IWeightEncodingConfig> encodingParams,
+    const std::vector<int> &depthOffsets, const SchedulerTensor *weightTens, const SchedulerTensor *scaleTens,
+    const Quantization &weightQuantization, const Quantization &ofmQuantization)
 {
     bool doWeights = true;
     bool doScales = true;
 
     // Check cache for weight tensors already encoded with this configuration.
-    auto cacheKey = TensorCacheKey(encodingParams.get(), weightTens->equivalenceId);
+    auto cacheKey = TensorCacheKey(encodingParams.get(), depthOffsets, weightTens->bufferView, weightTens->equivalenceId);
     auto pos = _tensorCache.find(cacheKey);
     std::shared_ptr<NpuWeightTensor> cachedWeightsTensor;
     if ( pos != _tensorCache.end() )
@@ -2029,8 +1984,8 @@ WeightScaleTensors Scheduler::EncodeWeightAndScaleTensor(std::unique_ptr<IWeight
     }
 
     // Attempt the encode (may fail)
-    WeightScaleTensors result = TryEncodeWeightAndScaleTensor(
-        encodingParams.get(), weightTens, scaleTens, weightQuantization, ofmQuantization, doWeights, doScales);
+    WeightScaleTensors result = TryEncodeWeightAndScaleTensor(forOp, encodingParams.get(), depthOffsets, weightTens,
+        scaleTens, weightQuantization, ofmQuantization, doWeights, doScales);
 
     if ( doWeights )
     {
@@ -2057,9 +2012,9 @@ WeightScaleTensors Scheduler::EncodeWeightAndScaleTensor(std::unique_ptr<IWeight
     return result;
 }
 
-WeightScaleTensors Scheduler::TryEncodeWeightAndScaleTensor(IWeightEncodingConfig *encodingParams,
-    const SchedulerTensor *weightTens, const SchedulerTensor *scaleTens, const Quantization &weightQuantization,
-    const Quantization &ofmQuantization, bool doWeights, bool doScales)
+WeightScaleTensors Scheduler::TryEncodeWeightAndScaleTensor(OpType forOp, IWeightEncodingConfig *encodingParams,
+    const std::vector<int> &depthOffsets, const SchedulerTensor *weightTens, const SchedulerTensor *scaleTens,
+    const Quantization &weightQuantization, const Quantization &ofmQuantization, bool doWeights, bool doScales)
 {
     assert(doWeights || doScales);
 
@@ -2073,27 +2028,24 @@ WeightScaleTensors Scheduler::TryEncodeWeightAndScaleTensor(IWeightEncodingConfi
 
     SchedulerTransformParam param;
     const uint8_t *weightsData = nullptr;
-    Shape ohwiStrides;
     std::unique_ptr<IVolumeWeightSource> weightSource;
     std::unique_ptr<IVolumeScaleSource> scaleSource;
 
     if ( weightTens )
     {
         npuTensor->memArea = weightTens->memArea;
-        ohwiStrides = GetOhwiStrides(weightTens);
-        ohwiShape = GetOhwiShape(weightTens);
+        weightsData = weightTens->bufferView.Buffer()->Data<uint8_t>();
+        ohwiShape = weightTens->bufferView.ViewShape();
 
-        const auto &weightView = weightTens->bufferView;
-        weightsData = weightView.Buffer()->Data<uint8_t>();
-
-        channels = ohwiShape[0];
+        channels = (forOp == OpType::DepthwiseConv2D) ? ohwiShape.Depth() : ohwiShape.Batch();
 
         // Set up weight source
         param.zeroPoints = weightQuantization.zeroPoints.data();
         param.zeroCount = int(weightQuantization.zeroPoints.size());
 
-        auto zeroOffsetFunc = (weightTens->srcTensor->AxisOrder() == AxisOrder::OHWI) ? ApplyZeroPointOHWI : ApplyZeroPointIHWO;
+        auto zeroOffsetFunc = (forOp == OpType::DepthwiseConv2D) ? ApplyZeroPointAxisO : ApplyZeroPointAxisI;
         weightSource = _arch->WeightEncoder()->GetWeightSource(encodingParams, weightTens->dataType, zeroOffsetFunc, &param);
+        npuTensor->SetInternalName(weightTens->Name().c_str());
     }
     else
     {
@@ -2103,7 +2055,14 @@ WeightScaleTensors Scheduler::TryEncodeWeightAndScaleTensor(IWeightEncodingConfi
     }
 
     if ( doScales )
+    {
         scaleSource = _arch->WeightEncoder()->GetScaleSource(encodingParams, scaleTens->dataType, ofmQuantization);
+        if ( !doWeights )
+        {
+            assert(scaleTens);
+            npuTensor->SetInternalName(scaleTens->Name().c_str());
+        }
+    }
 
     int totalSourceBytes = 0;
     int totalWeightBytes = 0;
@@ -2115,9 +2074,8 @@ WeightScaleTensors Scheduler::TryEncodeWeightAndScaleTensor(IWeightEncodingConfi
     if ( weightTens == nullptr ) streamsRequired = scaleStreamsRequired;
 
     // Note: in case of multiple cores, each core's weights are interleaved in O-dimension
-    auto const &depthOffsets = encodingParams->DepthOffsets();
-    const int nrDepthOffsets = int(depthOffsets.size());
-    for ( int idx = 0; idx < nrDepthOffsets - 1; ++idx )
+    const int depthOffsetSize = int(depthOffsets.size());
+    for ( int idx = 0; idx < depthOffsetSize - 1; ++idx )
     {
         int depthOffset = depthOffsets[idx];
 
@@ -2161,8 +2119,8 @@ WeightScaleTensors Scheduler::TryEncodeWeightAndScaleTensor(IWeightEncodingConfi
                 range.weightOffset = int(encodedStream.size()) - range.offset;
 
                 // Encode Weights
-                ohwiShape[0] = depthLength;
-                weightSource->SetSource(weightsData, depthOffset, ohwiShape, ohwiStrides, stream);
+                ohwiShape = (forOp == OpType::DepthwiseConv2D) ? ohwiShape.WithDepth(depthLength) : ohwiShape.WithBatch(depthLength);
+                weightSource->SetSource(weightsData, depthOffset, ohwiShape, weightTens->bufferView.StrideBytes(), stream);
                 auto weightInfo = _arch->WeightEncoder()->EncodeWeights(encodingParams, weightSource.get(), encodedStream);
                 range.weightBytes = weightInfo.encodedSize;
                 totalWeightBytes += weightInfo.encodedSize;
@@ -2192,27 +2150,19 @@ WeightScaleTensors Scheduler::TryEncodeWeightAndScaleTensor(IWeightEncodingConfi
     // Reduce stored memory usage as much as possible
     encodedStream.shrink_to_fit();
 
-    auto encodedTensor = std::make_shared<Tensor>(
-        doWeights ?
-            weightTens->Name() :
-        scaleTens->bufferView.HasBuffer() ?
-            scaleTens->Name() :
-            "Scales",
-        DataType::UInt8);
     int streamSize = int(encodedStream.size());
     auto buf = std::make_shared<Buffer>(std::move(encodedStream));
-    encodedTensor->SetStorageShape(Shape(1, 1, 1, streamSize));
-    encodedTensor->SetBuffer(buf);
-
-    npuTensor->srcTensor = encodedTensor;
+    Shape storageShape(1, 1, 1, streamSize);
+    npuTensor->bufferView = BufferView(buf, 0, 8, storageShape, Shape());
+    npuTensor->dataType = DataType::UInt8;
     npuTensor->maxRangeBytes = std::max(maxBufferLen[0], maxBufferLen[1]);
     npuTensor->doubleBufferSize = maxBufferLen[0] + maxBufferLen[1];
     npuTensor->doubleBufferOffset = maxBufferLen[0];
     npuTensor->totalSourceBytes = totalSourceBytes;
     npuTensor->totalWeightBytes = totalWeightBytes;
     npuTensor->subStreams = subStreams;
-    npuTensor->storageShape = encodedTensor->StorageShape();
-    npuTensor->SetAllocatedSize(encodedTensor->View().Buffer()->Size());
+    npuTensor->storageShape = storageShape;
+    npuTensor->SetAllocatedSize(buf->Size());
 
     // Insert encoded weights hash and equivalenceId into map
     auto entry = _equivalenceIdMap.emplace(buf->Hash(), npuTensor->equivalenceId);
@@ -2232,6 +2182,14 @@ WeightScaleTensors Scheduler::TryEncodeWeightAndScaleTensor(IWeightEncodingConfi
     else
     {
         result.npuScalesTensor = std::move(npuTensor);
+    }
+
+    // Trace encoded tensor details to check uniqueness (duplicate values here should be cached)
+    if ( weightTens )
+    {
+        LOG_TRACE2("Cache Tensor: {},  EncSize: {},  Hashed: {:08X}{:08X}{:08X}{:08X}, params={:08X}\n",
+            weightTens->storageShape.ToString(), streamSize, buf->Hash().v32[0], buf->Hash().v32[1], buf->Hash().v32[2],
+            buf->Hash().v32[3], encodingParams->Hash());
     }
 
     return result;

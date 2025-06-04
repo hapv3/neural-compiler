@@ -270,11 +270,11 @@ Operation *TFLiteGraphOptimiser::MakeDepthwiseMeanOp(const TensorConnection *ifm
 
     if ( weightTensor == nullptr )
     {
+        assert(ifmShape4D.Batch() == 1);
         Shape weightShape(ifmShape4D.Batch(), h, w, ifmShape4D.Depth());
         std::vector<uint8_t> ones(weightShape.Elements(), 1);
         auto onesBuf = std::make_shared<Buffer>(std::move(ones));
         weightTensor = std::make_shared<Tensor>(name + "_weights", DataType::UInt8, weightShape, onesBuf);
-        weightTensor->SetAxisOrder(AxisOrder::IHWO);
     }
 
     if ( biasTensor == nullptr )

@@ -329,32 +329,42 @@ bool TfLiteSupportedOperators::ConstraintWeightSum(const Operation *op)
     int ifmBits = DataTypeSizeBits(ifmType);
     int64_t maxWeightSum = ifmBits == 8 ? _maxWeightSum8Bit : _maxWeightSum16Bit;
     auto reader = view.Values<int>(wConn->tensor->Type());
-    AxisOrder order = wConn->tensor->AxisOrder();
     Shape readShape = wConn->tensor->StorageShape();
     assert(readShape.Size() == 4);
-    assert(order == AxisOrder::OHWI || order == AxisOrder::IHWO);
 
-    int outChannels = readShape.Depth();
-    int inChannels = readShape.Batch();
-    if ( order == AxisOrder::OHWI )
+    int outChannels;
+    int inChannels;
+    int64_t maxAccumulation = 0;
+    bool depthwise = op->Type() == OpType::DepthwiseConv2D;
+    if ( depthwise )
     {
-        std::swap(outChannels, inChannels);
+        inChannels = 1;
+        outChannels = readShape.Depth();
+        maxAccumulation = int64_t(255) * readShape.ElementsWH();
     }
-    // abort early if the readShape of the weights tensor guarantees no overflow.
-    if ( (255 * readShape.Elements64() / outChannels) < maxWeightSum )
+    else
+    {
+        inChannels = readShape.Depth();
+        outChannels = readShape.Batch();
+        maxAccumulation = int64_t(255) * readShape.Elements64() / outChannels;
+    }
+
+    // Abort early if the readShape of the weights tensor guarantees no overflow.
+    if ( maxAccumulation < maxWeightSum )
     {
         return true;
     }
+
     // Accumulate the weights in slices of output-channels
     // Fail if any slice overflows maxWeightSum
     for ( int out = 0; out < outChannels; out++ )
     {
+        int64_t sum = 0;
         int64_t zeroPoint = 0;
         if ( !zeroPoints.empty() )
         {
             zeroPoint = zeroPoints.size() > 1 ? zeroPoints[out] : zeroPoints[0];
         }
-        int64_t sum = 0;
         for ( int in = 0; in < inChannels; in++ )
         {
             for ( int h = 0; h < readShape.Height(); h++ )
@@ -362,13 +372,13 @@ bool TfLiteSupportedOperators::ConstraintWeightSum(const Operation *op)
                 for ( int w = 0; w < readShape.Width(); w++ )
                 {
                     int64_t v;
-                    if ( order == AxisOrder::OHWI )
+                    if ( depthwise )
                     {
-                        v = reader[{out, h, w, in}];
+                        v = reader[{0, h, w, out}];
                     }
                     else
                     {
-                        v = reader[{in, h, w, out}];
+                        v = reader[{out, h, w, in}];
                     }
                     sum += std::abs(v - zeroPoint);
                 }

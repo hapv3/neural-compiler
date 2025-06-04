@@ -24,7 +24,6 @@
 #include "common/box.hpp"
 #include "common/numeric_util.hpp"
 #include "common/vector_span.hpp"
-#include "compiler/operation_util.hpp"
 #include "high_level_command_stream.hpp"
 #include "scheduler.hpp"
 
@@ -479,7 +478,8 @@ static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, 
             auto *ifmConn = schedOp->Input(TensorUsage::IFM);
             auto *params = schedOp->Input(TensorUsage::Params);
             assert(params);
-            Shape multiples = TensorToShape(params->tensor->srcTensor.get(), params->shape.Elements());
+            const BufferReader<int> reader = params->tensor->bufferView.Values<int>(params->tensor->dataType);
+            Shape multiples(reader.begin(), reader.Count());
             multiples = Shape::PadAxes(multiples, ifmConn->shape.Size(), 1);
             unsigned axisMask = multiples.GreaterMask(multiples.WithOnes());
             assert((axisMask == 0 || IsPowerOfTwo(axisMask)) && "TILE operation should only have one tiled axis");
@@ -738,7 +738,6 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
                     if ( opInfo->bufferedWeightTensor.tensor != nullptr &&
                          (startHeight == ofmStart.Height() || opInfo->bufferedWeightTensor.buffering == Buffering::Double) )
                     {
-                        assert(opInfo->npuWeightsTensor->config->DepthOffsets().size() == depthSlices.size());
                         // Metadata of new weights to put into the weight buffer tensor
                         auto newWeights = std::make_tuple(opInfo->npuWeightsTensor->equivalenceId, startChannel, depthIndex);
                         if ( _filledWeightBuffers.count(opInfo->bufferedWeightTensor.tensor.get()) == 0 )

@@ -76,8 +76,6 @@ private:
     int _strideZ = 0;
     int _dilationZ = 0;
     Margin _padding;
-    int _depthMultiplier = 0;
-
 
 public:
     Kernel(const GraphApi::GraphKernel *kernel)
@@ -90,17 +88,15 @@ public:
         _dilationZ = kernel->dilationYXZ[2];
         _padding = Margin(kernel->paddingTBLRNF[0], kernel->paddingTBLRNF[2], kernel->paddingTBLRNF[1],
             kernel->paddingTBLRNF[3], kernel->paddingTBLRNF[4], kernel->paddingTBLRNF[5]);
-        _depthMultiplier = 0;
     }
 
-    Kernel(Point2i size, Point2i stride, Point2i dilation, int depthMultiplier = 1, Margin padding = Margin(0, 0, 0, 0))
+    Kernel(Point2i size, Point2i stride, Point2i dilation, Margin padding = Margin(0, 0, 0, 0))
     {
         assert(size.x > 0 && size.y > 0);
         assert(stride.x > 0 && stride.y > 0);
         _size = size;
         _stride = stride;
         _dilation = dilation;
-        _depthMultiplier = depthMultiplier;
         _padding = padding;
     }
     Kernel() = default;
@@ -112,7 +108,6 @@ public:
     const Point2i &Size() const { return _size; }
     const Point2i &Stride() const { return _stride; }
     const Point2i &Dilation() const { return _dilation; }
-    int DepthMultiplier() const { return _depthMultiplier; }
     const Margin &Padding() const { return _padding; }
 
     Kernel WithSize(Point2i size) const
@@ -140,13 +135,6 @@ public:
     {
         Kernel tmp(*this);
         tmp._padding = padding;
-        return tmp;
-    }
-
-    Kernel WithDepthMultiplier(int depthMultiplier) const
-    {
-        Kernel tmp(*this);
-        tmp._depthMultiplier = depthMultiplier;
         return tmp;
     }
 

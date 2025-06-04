@@ -49,6 +49,7 @@ struct ArchFM
 struct ArchOperatorQuery
 {
     ArchFM ifm[2];
+    ArchFM weights;
     ArchFM ofm;
     ReverseType reverseMask = ReverseType::None;
     TransposeType transposeMask = TransposeType::None;
