@@ -84,6 +84,8 @@ public:
     std::shared_ptr<SchedulerTensor> Clone() const
     {
         auto clone = std::make_shared<SchedulerTensor>(*this);
+        clone->isGraphInput = false;   // Cloned tensor is never graph input
+        clone->isGraphOutput = false;  // Cloned tensor is never graph output
         clone->uid = GenerateUniqueId();
         clone->equivalenceId = GenerateUniqueId();
         clone->consumers.clear();

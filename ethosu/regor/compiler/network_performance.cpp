@@ -52,14 +52,15 @@ PerformanceResult NetworkPerformance::Measure(Schedule *schedule, OptimiserDatab
     std::unordered_set<MemArea, MemArea::hash> regions(
         {_arch->ReadonlyMemory(), _arch->FeatureMapMemory(), _arch->LUTMemory(), _arch->StagingMemory()});
     std::unordered_set<UniqueId> tensorUids;
-    int opTable = 0;
+    int perfTable = 0;
     int perfDebugTable = 0;
+    int perfDebugConnectivityTable = 0;
 
     if ( optDb )
     {
         db = optDb->Get();
         _arch->Performance()->InitDatabase(db);
-        opTable = db->AddTable("perf");
+        perfTable = db->AddTable("perf");
         std::vector<std::string> columns = {
             "source_id",
             "optimised_id",
@@ -75,7 +76,7 @@ PerformanceResult NetworkPerformance::Measure(Schedule *schedule, OptimiserDatab
             std::string label = mem->Name() + "_ac";
             columns.push_back(label);
         }
-        db->AddColumns(opTable, columns);
+        db->AddColumns(perfTable, columns);
 
         perfDebugTable = db->AddTable("perf_debug");
 
@@ -174,6 +175,14 @@ PerformanceResult NetworkPerformance::Measure(Schedule *schedule, OptimiserDatab
         }
 
         db->AddColumns(perfDebugTable, std::move(columns));
+
+        perfDebugConnectivityTable = db->AddTable("perf_debug_conn");
+
+        columns = {
+            "input_op_id",
+            "input_index",
+        };
+        db->AddColumns(perfDebugConnectivityTable, std::move(columns));
     }
 
     for ( auto const &schedOp : _ops )
@@ -196,7 +205,7 @@ PerformanceResult NetworkPerformance::Measure(Schedule *schedule, OptimiserDatab
         }
         if ( optDb != nullptr )
         {
-            AddToDatabase(perf, schedOp.get(), cost, opTable, perfDebugTable, memories, optDb);
+            AddToDatabase(perf, schedOp.get(), cost, perfTable, perfDebugTable, perfDebugConnectivityTable, memories, optDb);
         }
         performance += perf;
         prevOp = schedOp.get();
@@ -208,7 +217,7 @@ PerformanceResult NetworkPerformance::Measure(Schedule *schedule, OptimiserDatab
             perf = ProcessOpPerformance(subOp.get(), cost, schedule, prevOp, prevCost, memories);
             if ( optDb != nullptr )
             {
-                AddToDatabase(perf, subOp.get(), cost, opTable, perfDebugTable, memories, optDb);
+                AddToDatabase(perf, subOp.get(), cost, perfTable, perfDebugTable, perfDebugConnectivityTable, memories, optDb);
             }
             if ( !IsActivation(subOp->Type()) )
             {
@@ -257,8 +266,8 @@ PerformanceResult NetworkPerformance::ProcessOpPerformance(SchedulerOperation *s
 }
 
 
-void NetworkPerformance::AddToDatabase(const PerformanceResult &perf, SchedulerOperation *schedOp, SchedulerOpInfo *cost,
-    int opTable, int perfDebugTable, const std::unordered_set<ArchitectureMemory *> &memories, OptimiserDatabase *optDb)
+void NetworkPerformance::AddToDatabase(const PerformanceResult &perf, SchedulerOperation *schedOp, SchedulerOpInfo *cost, int perfTable,
+    int perfDebugTable, int perfDebugConnectivityTable, const std::unordered_set<ArchitectureMemory *> &memories, OptimiserDatabase *optDb)
 {
     // Per-layer calculations
     assert(optDb != nullptr);
@@ -290,7 +299,7 @@ void NetworkPerformance::AddToDatabase(const PerformanceResult &perf, SchedulerO
         row.push_back(std::to_string(perf.memory.at(mem).accessCycles));
     }
 
-    db->AddRow(opTable, schedOp->Uid(), std::move(row));
+    db->AddRow(perfTable, schedOp->Uid(), std::move(row));
 
     row = {};
     auto shapeToStrings = [&row](const std::vector<int> &shape)
@@ -298,7 +307,7 @@ void NetworkPerformance::AddToDatabase(const PerformanceResult &perf, SchedulerO
         std::transform(shape.begin(), shape.end(), std::back_inserter(row),
             [](int n) -> std::string { return n ? std::to_string(n) : ""; });
     };
-    // clang-format off
+
     // FM shapes
     shapeToStrings(ReshapeToNHWC(schedOp->IFM(0)->shape).ToList<int>());
     shapeToStrings(ReshapeToNHWC(schedOp->TryIFM(1) ? schedOp->IFM(1)->shape : Shape()).ToList<int>());
@@ -312,6 +321,7 @@ void NetworkPerformance::AddToDatabase(const PerformanceResult &perf, SchedulerO
     shapeToStrings(ReshapeToNHWC(schedOp->TryIFM(1) ? cost->stripeInput[1] : Shape()).ToList<int>());
     shapeToStrings(ReshapeToNHWC(cost->stripe).ToList<int>());
 
+    // clang-format off
     row.insert(row.end(), {
         // FM Memory
         fmt::format("{}", schedOp->IFM(0)->tensor->memArea.memory->Name()),
@@ -373,6 +383,7 @@ void NetworkPerformance::AddToDatabase(const PerformanceResult &perf, SchedulerO
         std::to_string(schedOp->Kernel()->Stride3D().z),
     });
     // clang-format on
+
     for ( const auto mem : memories )
     {
         // Add read/write transferEfficiencies for all memories
@@ -397,6 +408,35 @@ void NetworkPerformance::AddToDatabase(const PerformanceResult &perf, SchedulerO
     }
 
     db->AddRow(perfDebugTable, schedOp->Uid(), std::move(row));
+
+    // Store graph connectivity
+    if ( perfDebugConnectivityTable )
+    {
+        for ( auto [usage, ifmConn] : schedOp->inputs.pairs() )
+        {
+            if ( !IsIFM(usage) ) continue;
+
+            const auto index = GetUsageIndex(usage);
+            if ( ifmConn.tensor->isGraphInput )
+            {
+                db->AddRow(perfDebugConnectivityTable, schedOp->Uid(), {std::to_string(-1), std::to_string(index)});
+            }
+            for ( auto &prod : ifmConn.tensor->producers )
+            {
+                db->AddRow(perfDebugConnectivityTable, schedOp->Uid(), {std::to_string(prod->Uid()), std::to_string(index)});
+            }
+        }
+
+        for ( auto [usage, ofmConn] : schedOp->outputs.pairs() )
+        {
+            if ( !IsOFM(usage) ) continue;
+
+            if ( ofmConn.tensor->isGraphOutput )
+            {
+                db->AddRow(perfDebugConnectivityTable, -2, {std::to_string(schedOp->Uid()), std::to_string(0)});
+            }
+        }
+    }
 }
 
 
