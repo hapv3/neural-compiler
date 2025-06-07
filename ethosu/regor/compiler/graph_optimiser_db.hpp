@@ -44,18 +44,18 @@ private:
     int _groupTable = 0;
     int _cmdTable = 0;
     int _streamTable = 0;
-    std::unordered_map<const void *, int> _source;
-    std::unordered_map<const void *, std::tuple<int, int>> _optimised;
+    std::unordered_map<UniqueId, int> _source;
+    std::unordered_map<UniqueId, std::tuple<int, int>> _optimised;
 
 public:
     OptimiserDatabase(Database *db);
     Database *Get();
-    int SourceId(const void *op);
-    int OptimisedId(const void *op);
+    int SourceId(UniqueId uid);
+    int OptimisedId(UniqueId uid);
     int SourceOp(const Operation *op, int ext_key = -1);
-    void AddOptimised(const void *from, const Operation *to);
+    void AddOptimised(UniqueId fromId, const Operation *to);
     void AddSubOp(UniqueId primaryUid, UniqueId subOpUid);
-    void AddCommand(void *key, int stream, int cmdIndex, UniqueId id);
+    void AddCommand(UniqueId opId, int stream, int cmdIndex, UniqueId id);
     int AddStream();
 };
 

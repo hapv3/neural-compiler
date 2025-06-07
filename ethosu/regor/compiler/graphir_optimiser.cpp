@@ -424,7 +424,7 @@ Operation *GraphIrOptimiser::RewriteConst(Graph *const graph, Operation *const o
         identityOp->CopyOutput(TensorUsage::OFM, *ofmConn);
 
         returnOp = identityOp.get();
-        RecordOptimisation(operation, returnOp);
+        RecordOptimisation(*operation, returnOp);
         operation->Disconnect();
     }
     return returnOp;
@@ -633,7 +633,7 @@ Operation *GraphIrOptimiser::RewriteRescale(Graph *const, Operation *const opera
                 signAttr->input_unsigned = false;
 
                 ifm32Tens->ChangeType(DataType::Int32);
-                RecordOptimisation(operation, castOp.get());
+                RecordOptimisation(*operation, castOp.get());
                 operation->ConnectInput(TensorUsage::IFM, ifm32Tens);
                 ifmType = DataType::Int32;
             }
@@ -696,7 +696,7 @@ Operation *GraphIrOptimiser::RewriteRescale(Graph *const, Operation *const opera
                     auto mulOp = CreateRescalingMul(startChannel, endChannel, scales, shift);
                     auto mulAttr = mulOp->Attribute<sign_attr_t>();
                     mulAttr->output_unsigned = signAttr->output_unsigned;
-                    RecordOptimisation(operation, mulOp.get());
+                    RecordOptimisation(*operation, mulOp.get());
 
                     // reset scales and startChannel
                     startChannel = endChannel;
@@ -713,7 +713,7 @@ Operation *GraphIrOptimiser::RewriteRescale(Graph *const, Operation *const opera
             auto mulOp = CreateRescalingMul(startChannel, endChannel, scales, shift);
             auto mulAttr = mulOp->Attribute<sign_attr_t>();
             mulAttr->output_unsigned = signAttr->output_unsigned;
-            RecordOptimisation(operation, mulOp.get());
+            RecordOptimisation(*operation, mulOp.get());
             returnOp = mulOp.get();
             operation->Disconnect();
         }
@@ -875,7 +875,7 @@ Operation *GraphIrOptimiser::RewritePad(Graph *const, Operation *const operation
             {
                 TensorSlice newOfmSlice = {zeroShape, newOfmShape.With(padAxis, padBefore)};
                 auto fillOp = MakeFillOperation(ofmConn, newOfmShape, newOfmSlice, padTensor);
-                RecordOptimisation(operation, fillOp);
+                RecordOptimisation(*operation, fillOp);
             }
 
             const int padAfter = paddingAfter[axis];
@@ -883,7 +883,7 @@ Operation *GraphIrOptimiser::RewritePad(Graph *const, Operation *const operation
             {
                 TensorSlice newOfmSlice = {zeroShape.With(padAxis, newOfmShape[padAxis] - padAfter), newOfmShape.With(padAxis, padAfter)};
                 auto fillOp = MakeFillOperation(ofmConn, newOfmShape, newOfmSlice, padTensor);
-                RecordOptimisation(operation, fillOp);
+                RecordOptimisation(*operation, fillOp);
             }
         }
 
@@ -892,7 +892,7 @@ Operation *GraphIrOptimiser::RewritePad(Graph *const, Operation *const operation
         copyOp->CopyInput(TensorUsage::IFM, *ifmConn);
         copyOp->CopyOutput(TensorUsage::OFM, *ofmConn);
         copyOp->Output(TensorUsage::OFM)->Set({paddingBefore, ifmShape}).Set(RoundMode::NATURAL);
-        RecordOptimisation(operation, copyOp.get());
+        RecordOptimisation(*operation, copyOp.get());
         returnOp = copyOp.get();
 
         // Remove original pad
@@ -981,7 +981,7 @@ Operation *GraphIrOptimiser::UnrollConv(Graph *const, Operation *const operation
                     op->CopyInput(TensorUsage::Scales, *scalesConn);
                     op->CopyOutput(TensorUsage::OFM, *ofmConn);
                     op->Output(TensorUsage::OFM)->Set(ofmSlice);
-                    RecordOptimisation(operation, op.get());
+                    RecordOptimisation(*operation, op.get());
 
                     returnOp = op.get();
                 }
@@ -1132,7 +1132,6 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const graph, Operation *const op
     }
     if ( returnOp != operation )
     {
-        RecordOptimisation(operation, returnOp);
         operation->Disconnect();
     }
     return returnOp;
@@ -1246,25 +1245,25 @@ Operation *GraphIrOptimiser::RewriteCast(Graph *const, Operation *const operatio
             const auto castOp1 = std::make_shared<Operation>(OpType::Cast);
             castOp1->CopyInput(TensorUsage::IFM, *ifmConn);
             castOp1->ConnectOutput(TensorUsage::OFM, intermediate32Bit);
-            RecordOptimisation(operation, castOp1.get());
+            RecordOptimisation(*operation, castOp1.get());
 
             // Create reinterpret cast op to reinterpret to 16 bit, double size
             const auto reinterpretOp1 = std::make_shared<Operation>(OpType::ReinterpretCast);
             reinterpretOp1->ConnectInput(TensorUsage::IFM, intermediate32Bit);
             reinterpretOp1->ConnectOutput(TensorUsage::OFM, intermediate16Bit2xSize);
-            RecordOptimisation(operation, reinterpretOp1.get());
+            RecordOptimisation(*operation, reinterpretOp1.get());
 
             // Create additional cast op
             const auto castOp2 = std::make_shared<Operation>(OpType::Cast);
             castOp2->ConnectInput(TensorUsage::IFM, intermediate16Bit2xSize).Set(ifmConn->shape.WithDepth(2 * c));
             castOp2->ConnectOutput(TensorUsage::OFM, intermediate32Bit2xSize).Set(ifmConn->shape.WithDepth(2 * c));
-            RecordOptimisation(operation, castOp2.get());
+            RecordOptimisation(*operation, castOp2.get());
 
             // Create the final reinterpret cast to reinterpret the result as an int64 tensor
             const auto reinterpretOp2 = std::make_shared<Operation>(OpType::ReinterpretCast);
             reinterpretOp2->ConnectInput(TensorUsage::IFM, intermediate32Bit2xSize).Set(ifmConn->shape.WithDepth(2 * c));
             reinterpretOp2->CopyOutput(TensorUsage::OFM, *ofmConn);
-            RecordOptimisation(operation, reinterpretOp2.get());
+            RecordOptimisation(*operation, reinterpretOp2.get());
 
             ofmConn->quantization = Quantization::Unit();
             operation->Disconnect();
@@ -1279,7 +1278,7 @@ Operation *GraphIrOptimiser::RewriteCast(Graph *const, Operation *const operatio
             newOp->CopyInput(TensorUsage::IFM0, *ifmConn);
             newOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_one", int8_t(1)));
             newOp->CopyOutput(TensorUsage::OFM, *ofmConn);
-            RecordOptimisation(operation, newOp.get());
+            RecordOptimisation(*operation, newOp.get());
             operation->Disconnect();
             returnOp = newOp.get();
         }
@@ -1290,7 +1289,7 @@ Operation *GraphIrOptimiser::RewriteCast(Graph *const, Operation *const operatio
             newOp->CopyInput(TensorUsage::IFM0, *ifmConn);
             newOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_zero", ifmConn->tensor->Type(), 0));
             newOp->CopyOutput(TensorUsage::OFM, *ofmConn);
-            RecordOptimisation(operation, newOp.get());
+            RecordOptimisation(*operation, newOp.get());
             operation->Disconnect();
             returnOp = newOp.get();
         }
@@ -1300,7 +1299,7 @@ Operation *GraphIrOptimiser::RewriteCast(Graph *const, Operation *const operatio
             auto copyOp = std::make_shared<Operation>(OpType::Add);
             ReplaceOperation(operation, copyOp.get());
             copyOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_zero", ifmConn->tensor->Type(), 0));
-            RecordOptimisation(operation, copyOp.get());
+            RecordOptimisation(*operation, copyOp.get());
             returnOp = copyOp.get();
 
             // Set max range to disable clipping
@@ -1389,7 +1388,7 @@ Operation *GraphIrOptimiser::RewriteConcat(Graph *const graph, Operation *const 
             copyOp->CopyOutput(TensorUsage::OFM, *ofmConn);
             copyOp->Output(TensorUsage::OFM)->Set({ofmSliceOffset, ifmConn.shape});
             copyOp->Output(TensorUsage::OFM)->Set(RoundMode::NATURAL);
-            RecordOptimisation(operation, copyOp.get());
+            RecordOptimisation(*operation, copyOp.get());
             returnOp = copyOp.get();
 
             ofmSliceOffset[axis] += ifmConn.shape[axis];
@@ -1418,7 +1417,7 @@ Operation *GraphIrOptimiser::RewriteSlice(Graph *const graph, Operation *const o
         copyOp->Input(TensorUsage::IFM)->Set({begin, size});
         copyOp->CopyOutput(TensorUsage::OFM, *ofmConn);
         copyOp->Output(TensorUsage::OFM)->Set(RoundMode::NATURAL);
-        RecordOptimisation(operation, copyOp.get());
+        RecordOptimisation(*operation, copyOp.get());
         returnOp = copyOp.get();
         operation->Disconnect();
     }
@@ -1442,7 +1441,7 @@ Operation *GraphIrOptimiser::RewriteNegate(Graph *const graph, Operation *const 
         newOp->CopyInput(TensorUsage::IFM1, *ifmConn);
         newOp->CopyOutput(TensorUsage::OFM, *ofmConn);
         newOp->Output(TensorUsage::OFM)->Set(RoundMode::NATURAL);
-        RecordOptimisation(operation, newOp.get());
+        RecordOptimisation(*operation, newOp.get());
         returnOp = newOp.get();
         operation->Disconnect();
     }
@@ -1469,7 +1468,7 @@ Operation *GraphIrOptimiser::RewriteSelect(Graph *const graph, Operation *const 
             auto addOp = CreateAdd(selectorConn->tensor, CreateConstTensor("const_zero", DataType::Int8, 0),
                 selectorConn->quantization, Quantization::Unit(), Quantization::Unit(), ofmConn->tensor->Type());
             selectorConn = addOp->Output(TensorUsage::OFM);
-            RecordOptimisation(operation, addOp);
+            RecordOptimisation(*operation, addOp);
         }
 
         // Break down SELECT(selector, a, b) into OR(AND(a, selector), AND_NOT(b, selector))
@@ -1481,9 +1480,9 @@ Operation *GraphIrOptimiser::RewriteSelect(Graph *const graph, Operation *const 
             andNotOp->Output(TensorUsage::OFM)->tensor, ofmConn->quantization, ofmConn->quantization,
             ofmConn->quantization, ofmConn->tensor->Type());
         orOp->CopyOutput(TensorUsage::OFM, *ofmConn);
-        RecordOptimisation(operation, andOp);
-        RecordOptimisation(operation, andNotOp);
-        RecordOptimisation(operation, orOp);
+        RecordOptimisation(*operation, andOp);
+        RecordOptimisation(*operation, andNotOp);
+        RecordOptimisation(*operation, orOp);
         returnOp = orOp;
 
         // Remove old select op
@@ -1531,7 +1530,7 @@ Operation *GraphIrOptimiser::RewriteReduceSum(Graph *const graph, Operation *con
             transposeOp->CopyInput(TensorUsage::IFM, *ifmConn);
             transposeOp->Input(TensorUsage::IFM)->Set(ifmShape3D).Set(Quantization::Unit());
             transposeOp->ConnectOutput(TensorUsage::OFM, transposeTens);
-            RecordOptimisation(operation, transposeOp.get());
+            RecordOptimisation(*operation, transposeOp.get());
 
             // Create ReduceSum op
             auto reduceSumOp = std::make_shared<Operation>(OpType::ReduceSum);
@@ -1540,7 +1539,7 @@ Operation *GraphIrOptimiser::RewriteReduceSum(Graph *const graph, Operation *con
             reduceSumOp->ConnectInput(TensorUsage::IFM, transposeTens).Set(ifmConn->quantization).Set(ifmConn->rounding);
             reduceSumOp->CopyOutput(TensorUsage::OFM, *ofmConn);
             reduceSumOp->Output(TensorUsage::OFM)->Set(transposeTens->StorageShape().WithDepth(1)).Set(ofmConn->rounding);
-            RecordOptimisation(operation, reduceSumOp.get());
+            RecordOptimisation(*operation, reduceSumOp.get());
             returnOp = reduceSumOp.get();
 
             // Remove old ReduceSum op
@@ -1569,7 +1568,7 @@ Operation *GraphIrOptimiser::RewriteReduceSum(Graph *const graph, Operation *con
                     subOp->ConnectInput(TensorUsage::IFM1, zpTens);
                     subOp->CopyOutput(TensorUsage::OFM, *ofmConn);
                     subOp->Output(TensorUsage::OFM)->Set(ofmConn->rounding);
-                    RecordOptimisation(operation, subOp.get());
+                    RecordOptimisation(*operation, subOp.get());
                     returnOp = subOp.get();
 
                     // Connect temporary tensor to reduceSum and remove the zero point
@@ -1615,7 +1614,7 @@ Operation *GraphIrOptimiser::RewriteReduceSum(Graph *const graph, Operation *con
                     convOp->ConnectInput(TensorUsage::Scales, biasTens).Set(biasQuant);
                     convOp->CopyOutput(TensorUsage::OFM, *ofmConn);
                     convOp->Output(TensorUsage::OFM)->Set(ifmShape4D.WithDepth(1)).Set(ofmConn->rounding);
-                    RecordOptimisation(operation, convOp.get());
+                    RecordOptimisation(*operation, convOp.get());
                     returnOp = convOp.get();
 
                     // Remove old ReduceSum op
@@ -1716,7 +1715,7 @@ Operation *GraphIrOptimiser::RewriteTile(Graph *const, Operation *const operatio
                 "multiples", DataType::Int32, std::make_shared<Buffer>(newMultiples.size(), newMultiples.data()));
             tileOp->ConnectInput(TensorUsage::Params, newParamtensor);
 
-            RecordOptimisation(operation, tileOp.get());
+            RecordOptimisation(*operation, tileOp.get());
             returnOp = tileOp.get();
 
             inputConn = tileOp->Output(TensorUsage::OFM);
@@ -1759,7 +1758,7 @@ Operation *GraphIrOptimiser::MergeTransposes(Graph *const graph, Operation *cons
                 newOp->CopyOutput(TensorUsage::OFM, *ofmConn);
                 operation->Disconnect();
                 returnOp = newOp.get();
-                RecordOptimisation(operation, returnOp);
+                RecordOptimisation(*operation, returnOp);
             }
             // Disconnect from surrounding ops, if this is a graph input
             // or output it remains untouched.
@@ -1958,7 +1957,7 @@ Operation *GraphIrOptimiser::RewriteMatmul(Graph *const graph, Operation *const 
         ifm1Conn->tensor->Type(), transposedIfm1Shape);
     transposeOp->ConnectInput(TensorUsage::IFM0, ifm1Conn->tensor).Set(ifm1Shape);
     transposeOp->ConnectOutput(TensorUsage::OFM, transposedIfm1);
-    RecordOptimisation(operation, transposeOp.get());
+    RecordOptimisation(*operation, transposeOp.get());
 
     // replace IFM2 with transposed output
     operation->ConnectInput(TensorUsage::IFM1, transposedIfm1).Set(ifm1Conn->quantization);
@@ -1996,7 +1995,7 @@ Operation *GraphIrOptimiser::RewriteDepthwise(Graph *const graph, Operation *con
             ReplaceOperation(operation, newOp.get());
             newOp->Output(TensorUsage::OFM)->Set(ofm->rounding);
             returnOp = newOp.get();
-            RecordOptimisation(operation, returnOp);
+            RecordOptimisation(*operation, returnOp);
         }
     }
 
@@ -2084,7 +2083,7 @@ Operation *GraphIrOptimiser::RewriteTransposeConvOFMPadding(Graph *const graph, 
         dwOp->CopyOutput(TensorUsage::OFM, *ofmConn);
         dwOp->Output(TensorUsage::OFM)->Set(padSlice).Set(rounding);
 
-        RecordOptimisation(operation, dwOp.get());
+        RecordOptimisation(*operation, dwOp.get());
     };
 
     // Positive output-padding is handled by adjusting the write slice of the OFM
@@ -2374,7 +2373,7 @@ Operation *GraphIrOptimiser::RewriteResize(Graph *const, Operation *const operat
     auto copyOp = std::make_shared<Operation>(OpType::Add);
     ReplaceOperation(operation, copyOp.get());
     copyOp->ConnectInput(TensorUsage::IFM1, zeroTensor).Set(copyOp->Input(TensorUsage::IFM)->quantization);
-    RecordOptimisation(operation, copyOp.get());
+    RecordOptimisation(*operation, copyOp.get());
     return copyOp.get();
 }
 

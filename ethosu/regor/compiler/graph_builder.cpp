@@ -197,6 +197,7 @@ GraphApi::GraphOperation *GraphBuilder::CreateOp(tosa::Op tosaType, const GraphK
     }
 
     auto op = std::make_shared<Operation>(type);
+
     if ( kernel )
     {
         op->SetKernel(std::make_unique<Kernel>(kernel));
@@ -540,6 +541,13 @@ void GraphBuilder::SetAxisOrder(GraphTensor *graphTensor, GraphApi::AxisOrder or
 void GraphBuilder::SetAxisStrides([[maybe_unused]] GraphTensor *graphTensor, [[maybe_unused]] const GraphApi::GraphShape *axisStrides)
 {
     assert(axisStrides == nullptr && "Not currently implemented");
+}
+
+void GraphBuilder::SetExternalId(GraphOperation *graphOp, int extId)
+{
+    auto op = static_cast<Operation *>(graphOp);
+
+    _uidToExt[op->Uid()] = extId;
 }
 
 void GraphBuilder::FreeUnconnected()

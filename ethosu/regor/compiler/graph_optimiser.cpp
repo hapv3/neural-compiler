@@ -118,7 +118,6 @@ Operation *GraphOptimiser::RecordOperation(Graph *const graph, Operation *const 
     UNUSED(graph);
     if ( _db )
     {
-        // TODO: implement ext key tracking for TOSA Networks.
         _db->SourceOp(operation);
     }
     return operation;
@@ -130,7 +129,7 @@ Operation *GraphOptimiser::RecordOptimisation(Graph *const graph, Operation *con
     // Remaining ops probably reference themselves
     if ( _db )
     {
-        _db->AddOptimised(operation, operation);
+        _db->AddOptimised(*operation, operation);
     }
     return operation;
 }
@@ -170,7 +169,7 @@ Operation *GraphOptimiser::RemoveReshape(Graph *const graph, Operation *const op
             ifmConn = operation->Input(TensorUsage::IFM0);
             ifm = ifmConn->tensor.get();
             returnOp = copyOp.get();
-            RecordOptimisation(operation, returnOp);
+            RecordOptimisation(*operation, returnOp);
             // Reshape still needs to be removed.
         }
 
@@ -206,11 +205,11 @@ Operation *GraphOptimiser::RemoveReshape(Graph *const graph, Operation *const op
     return returnOp;
 }
 
-void GraphOptimiser::RecordOptimisation(const Operation *operation, const Operation *op)
+void GraphOptimiser::RecordOptimisation(UniqueId fromId, const Operation *op)
 {
     if ( _db )
     {
-        _db->AddOptimised(operation, op);
+        _db->AddOptimised(fromId, op);
     }
 }
 
@@ -332,15 +331,15 @@ Database *OptimiserDatabase::Get()
     return _db;
 }
 
-int OptimiserDatabase::SourceId(const void *op)
+int OptimiserDatabase::SourceId(UniqueId uid)
 {
     // lookup op in optimised
-    auto pos = _optimised.find(op);
+    auto pos = _optimised.find(uid);
     if ( pos != std::end(_optimised) )
     {
         return std::get<0>(pos->second);
     }
-    else if ( auto ptr = _source.find(op); ptr != std::end(_source) )
+    else if ( auto ptr = _source.find(uid); ptr != std::end(_source) )
     {
         // op is original-op
         return ptr->second;
@@ -348,10 +347,10 @@ int OptimiserDatabase::SourceId(const void *op)
     return 0;
 }
 
-int OptimiserDatabase::OptimisedId(const void *op)
+int OptimiserDatabase::OptimisedId(UniqueId uid)
 {
     // lookup op in optimised
-    auto pos = _optimised.find(op);
+    auto pos = _optimised.find(uid);
     if ( pos != std::end(_optimised) )
     {
         return std::get<1>(pos->second);
@@ -362,13 +361,13 @@ int OptimiserDatabase::OptimisedId(const void *op)
 int OptimiserDatabase::SourceOp(const Operation *op, int ext_key)
 {
     // Op may be a source op or originate from optimised ops in previous graph optimisation pass
-    auto id = SourceId(op);
+    auto id = SourceId(*op);
     if ( id != 0 )
     {
         return id;
     }
     _sourceId++;
-    _source.emplace(op, _sourceId);
+    _source.emplace(*op, _sourceId);
 
     auto k = op->Kernel()->Size();
     auto o = Shape::PadAxes(op->OFM()->StorageShape(), 3, 1);
@@ -378,24 +377,24 @@ int OptimiserDatabase::SourceOp(const Operation *op, int ext_key)
     return _sourceId;
 }
 
-void OptimiserDatabase::AddOptimised(const void *from, const Operation *to)
+void OptimiserDatabase::AddOptimised(UniqueId fromId, const Operation *to)
 {
     assert(to);
 
     // Locate the source operation Id (if any)
     int sourceId = 0;
-    if ( from != nullptr )
+    if ( fromId != INVALID_UID )
     {
         // Look for source op in optimised list first and use that op's parent
         // (source replacement doesn't matter)
-        auto pos = _optimised.find(from);
+        auto pos = _optimised.find(fromId);
         if ( pos != _optimised.end() )
         {
             sourceId = std::get<0>(pos->second);
         }
         else
         {
-            auto srcPos = _source.find(from);
+            auto srcPos = _source.find(fromId);
             if ( srcPos != _source.end() )
             {
                 sourceId = srcPos->second;
@@ -404,7 +403,7 @@ void OptimiserDatabase::AddOptimised(const void *from, const Operation *to)
     }
 
     _optId++;
-    _optimised[to] = std::tuple<int, int>(sourceId, _optId);
+    _optimised[*to] = std::tuple<int, int>(sourceId, _optId);
 
     auto k = to->Kernel()->Size();
     Shape o = Shape::PadAxes(to->OFM()->StorageShape(), 3, 1);
@@ -420,18 +419,10 @@ void OptimiserDatabase::AddSubOp(UniqueId primaryUid, UniqueId subOpUid)
     _db->AddRow(_groupTable, subOpUid, {std::to_string(primaryUid)});
 }
 
-void OptimiserDatabase::AddCommand(void *key, int stream, int cmdIndex, UniqueId schedId)
+void OptimiserDatabase::AddCommand(UniqueId opId, int stream, int cmdIndex, UniqueId schedId)
 {
-    auto pos = _optimised.find(key);
-    if ( key && pos != _optimised.end() )
-    {
-        int optId = std::get<1>(pos->second);
-        _db->AddRow(_cmdTable, 0, {std::to_string(4 * cmdIndex), std::to_string(stream), std::to_string(optId), std::to_string(schedId)});
-    }
-    else
-    {
-        _db->AddRow(_cmdTable, 0, {std::to_string(4 * cmdIndex), std::to_string(stream), "0", std::to_string(schedId)});
-    }
+    auto optID = OptimisedId(opId);
+    _db->AddRow(_cmdTable, 0, {std::to_string(4 * cmdIndex), std::to_string(stream), std::to_string(optID), std::to_string(schedId)});
 }
 
 int OptimiserDatabase::AddStream()

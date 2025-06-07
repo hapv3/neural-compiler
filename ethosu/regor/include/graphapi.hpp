@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2022-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2022-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -208,6 +208,7 @@ struct IGraphBuilder
     virtual void SetZeroPoint(GraphOperation *op, GraphTensorUsage tensor, double zeroPoint) = 0;
     virtual void SetAxisOrder(GraphTensor *tensor, AxisOrder order) = 0;
     virtual void SetAxisStrides(GraphTensor *tensor, const GraphShape *axisStrides) = 0;
+    virtual void SetExternalId(GraphOperation *op, int extId) = 0;
 };
 
 }  // namespace GraphApi

@@ -141,6 +141,7 @@ private:
     OpType _type;
     std::unique_ptr<class Kernel> _kernel;
     const void *_passthrough = nullptr;  // Original flatbuffer description of this op (if it was loaded from one)
+    UniqueId _uid;
 
 public:
     Operation(OpType opType);
@@ -151,6 +152,10 @@ public:
 
 public:
     OpType Type() const { return _type; }
+
+    UniqueId Uid() const { return _uid; }
+    operator UniqueId() const { return _uid; }
+
     const ordered_map<TensorUsage, TensorConnection> &Outputs() const { return _outputs; }
     const ordered_map<TensorUsage, TensorConnection> &Inputs() const { return _inputs; }
 

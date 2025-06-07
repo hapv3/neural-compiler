@@ -52,7 +52,7 @@ void LSTM::RecordOptimisation(Operation *op)
 {
     if ( _db )
     {
-        _db->AddOptimised(_lstmOp, op);
+        _db->AddOptimised(*_lstmOp, op);
     }
 }
 

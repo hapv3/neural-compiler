@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2022-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2022-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -59,6 +59,7 @@ protected:
     std::vector<std::shared_ptr<Tensor>> _outputs;
     std::vector<std::shared_ptr<Tensor>> _persistent;
     std::vector<std::shared_ptr<Buffer>> _buffers;
+    std::unordered_map<UniqueId, int> _uidToExt;
 
 public:
     GraphBuilder(const std::string &name);
@@ -89,6 +90,7 @@ public:
     void SetZeroPoint(GraphOperation *op, GraphTensorUsage usage, double zeroPoint) override;
     void SetAxisOrder(GraphTensor *graphTensor, GraphApi::AxisOrder order) override;
     void SetAxisStrides(GraphTensor *graphTensor, const GraphApi::GraphShape *axisStrides) override;
+    void SetExternalId(GraphOperation *graphOp, int extId) override;
     // Utility
     const std::string &Name() const { return _graphName; }
     uint32_t SyntaxVersion() const { return _syntaxVersion; }

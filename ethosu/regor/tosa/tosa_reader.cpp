@@ -529,6 +529,7 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                 }
 
                 auto op = builder->CreateOp(TosaMapping::FBOpToOp(tosa_operator.op()), kernelPtr);
+                builder->SetExternalId(op, tosa_op_index);
                 builder_assert(op, "Failed to create operation");
 
                 // Fix op Attributes

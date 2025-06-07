@@ -280,9 +280,9 @@ void NetworkPerformance::AddToDatabase(const PerformanceResult &perf, SchedulerO
     {
         opName = conn->tensor->srcTensor->Name();
     }
-
-    int sourceId = optDb->SourceId(schedOp->_srcKey);
-    int optId = optDb->OptimisedId(schedOp->_srcKey);
+    auto op = static_cast<Operation *>(schedOp->_srcKey);
+    int sourceId = optDb->SourceId(*op);
+    int optId = optDb->OptimisedId(*op);
     row = {
         std::to_string(sourceId),
         std::to_string(optId),

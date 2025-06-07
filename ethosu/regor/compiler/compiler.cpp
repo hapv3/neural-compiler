@@ -345,6 +345,20 @@ bool Compiler::BuildNetwork(const char *entryGraph)
             _entryPoint = graph.get();
         }
         _graphs.push_back(std::move(graph));
+        if ( _optDb )
+        {
+            for ( const auto &op : builder._operations )
+            {
+                if ( auto it = builder._uidToExt.find(op->Uid()); it != builder._uidToExt.end() )
+                {
+                    _optDb->SourceOp(op.get(), it->second);
+                }
+                else
+                {
+                    _optDb->SourceOp(op.get());
+                }
+            }
+        }
     }
 
     if ( _graphs.empty() )
@@ -392,11 +406,12 @@ void Compiler::RecordNPUOp(const NPUOperation &npuOp, const CmdRanges &cmdRanges
         if ( opMap.try_get(std::get<0>(cmd), scheduleOp) )
         {
             assert(scheduleOp);
-            _optDb->AddCommand(scheduleOp->_srcKey, streamId, std::get<2>(cmd) - 1, std::get<0>(cmd));
+            auto op = static_cast<Operation *>(scheduleOp->_srcKey);
+            _optDb->AddCommand(op->Uid(), streamId, std::get<2>(cmd) - 1, std::get<0>(cmd));
         }
         else
         {
-            _optDb->AddCommand(nullptr, streamId, std::get<2>(cmd) - 1, std::get<0>(cmd));
+            _optDb->AddCommand(INVALID_UID, streamId, std::get<2>(cmd) - 1, std::get<0>(cmd));
         }
     }
 }

@@ -142,7 +142,7 @@ Operation *TFLiteGraphOptimiser::ConvertHardSwishToLUT(Graph *const graph, Opera
 
     if ( operation != returnOp )
     {
-        RecordOptimisation(operation, returnOp);
+        RecordOptimisation(*operation, returnOp);
         operation->Disconnect();
     }
 

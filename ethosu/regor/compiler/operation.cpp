@@ -34,6 +34,7 @@ Operation::Operation(OpType opType) : _type(opType)
 {
     // Default 1x1 kernel for ops without a kernel
     _kernel = std::make_unique<class Kernel>(Point2i(1, 1), Point2i(1, 1), Point2i(1, 1));
+    _uid = GenerateUniqueId();
 }
 
 Operation::Operation(const Operation &op) : Operation(op._type)

@@ -895,7 +895,7 @@ void TfLiteReader::UnFuseActivation(const std::shared_ptr<Operation> &operation,
     activation->ConnectInput(TensorUsage::IFM, intermediate_tensor).Set(quantization);
     if ( optDb )
     {
-        optDb->AddOptimised(operation.get(), activation.get());
+        optDb->AddOptimised(*operation, activation.get());
     }
 }
 

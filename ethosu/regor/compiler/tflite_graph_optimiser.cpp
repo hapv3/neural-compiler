@@ -149,7 +149,7 @@ Operation *TFLiteGraphOptimiser::ConvertLeakyRelu16bit(TensorConnection &ifmConn
         //     Maximum(alpha * IFM, identity * IFM)
         auto fmAlpha = CreateConstTensor("lrelu_alpha", int16_t(scalar));
         auto alphaMulOp = MakeMulWithConstTensor("alpha", ifmConn, ofmConn, fmAlpha, alphaQuant);
-        RecordOptimisation(operation, alphaMulOp);
+        RecordOptimisation(*operation, alphaMulOp);
 
         TensorConnection *identityConn = &ifmConn;
         if ( !IsScalingValidAndEqual(ifmConn, ofmConn) )
@@ -162,7 +162,7 @@ Operation *TFLiteGraphOptimiser::ConvertLeakyRelu16bit(TensorConnection &ifmConn
             identityQuant.scales[0] = {1, 0};
             auto fmIdentity = CreateConstTensor("lrelu_ident", int16_t(1));
             auto identityMulOp = MakeMulWithConstTensor("identity", ifmConn, ofmConn, fmIdentity, identityQuant);
-            RecordOptimisation(operation, identityMulOp);
+            RecordOptimisation(*operation, identityMulOp);
             identityConn = identityMulOp->Output(TensorUsage::OFM);
         }
 
@@ -171,7 +171,7 @@ Operation *TFLiteGraphOptimiser::ConvertLeakyRelu16bit(TensorConnection &ifmConn
         // Maximum(positive * alpha, positive) = positive
         auto maxOp = MakeOperation(OpType::Maximum, alphaMulOp->Output(TensorUsage::OFM), identityConn, &ofmConn);
         maxOp->Input(TensorUsage::IFM)->Set(ofmConn.quantization);
-        RecordOptimisation(operation, maxOp);
+        RecordOptimisation(*operation, maxOp);
         returnOp = maxOp;
     }
     else
@@ -190,12 +190,12 @@ Operation *TFLiteGraphOptimiser::ConvertLeakyRelu16bit(TensorConnection &ifmConn
         minOp->CopyInput(TensorUsage::IFM0, ifmConn);
         minOp->ConnectInput(TensorUsage::IFM1, zeroTens).Set(ifmConn.quantization);
         minOp->ConnectOutput(TensorUsage::OFM, fmNegative).Set(ifmConn.quantization).Set(RoundMode::DBL);
-        RecordOptimisation(operation, minOp.get());
+        RecordOptimisation(*operation, minOp.get());
 
         // create Mul(alpha)
         auto fmAlpha = CreateConstTensor("lrelu_alpha", int16_t(scalar));
         auto alphaMulOp = MakeMulWithConstTensor("alpha", *minOp->Output(TensorUsage::OFM), ofmConn, fmAlpha, alphaQuant);
-        RecordOptimisation(operation, alphaMulOp);
+        RecordOptimisation(*operation, alphaMulOp);
 
         // create ReLU(IFM) to Select (and scale) values > 0
         std::shared_ptr<Tensor> fmScaled = ofmConn.tensor->Clone();
@@ -204,14 +204,14 @@ Operation *TFLiteGraphOptimiser::ConvertLeakyRelu16bit(TensorConnection &ifmConn
         reluOp->ConnectOutput(TensorUsage::OFM, fmScaled).Set(ofmConn.quantization);
         reluOp->Output(TensorUsage::OFM)->quantization.quantMin.push_back(ofmConn.quantization.zeroPoints[0]);
         reluOp->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
-        RecordOptimisation(operation, reluOp.get());
+        RecordOptimisation(*operation, reluOp.get());
 
         // Create Add(Relu, Mul) to add scaled and alpha-multiplied values
         auto addOp = std::make_shared<Operation>(OpType::Add);
         addOp->CopyInput(TensorUsage::IFM0, *reluOp->Output(TensorUsage::OFM));
         addOp->CopyInput(TensorUsage::IFM1, *alphaMulOp->Output(TensorUsage::OFM));
         addOp->CopyOutput(TensorUsage::OFM, ofmConn);
-        RecordOptimisation(operation, addOp.get());
+        RecordOptimisation(*operation, addOp.get());
         returnOp = addOp.get();
     }
     return returnOp;
@@ -566,14 +566,14 @@ Operation *TFLiteGraphOptimiser::ConvertExpToLUT(Graph *const graph, Operation *
     {
         returnOp = ConvertToLUT8(
             operation, [](double x) -> float { return expf(float(x)); }, "Exp");
-        RecordOptimisation(operation, returnOp);
+        RecordOptimisation(*operation, returnOp);
         operation->Disconnect();
     }
     else if ( ifmType == DataType::Int16 )
     {
         returnOp = ConvertToInterpolatingLUT16(
             operation, [](double x) -> float { return expf(float(x)); }, "Exp16(interp)");
-        RecordOptimisation(operation, returnOp);
+        RecordOptimisation(*operation, returnOp);
         operation->Disconnect();
     }
     return returnOp;
@@ -603,14 +603,14 @@ Operation *TFLiteGraphOptimiser::ConvertLogToLUT(Graph *const graph, Operation *
     {
         returnOp = ConvertToLUT8(
             operation, [&](double x) -> float { return x <= 0.0f ? minVal : std::log(float(x)); }, "Log");
-        RecordOptimisation(operation, returnOp);
+        RecordOptimisation(*operation, returnOp);
         operation->Disconnect();
     }
     else if ( ifmType == DataType::Int16 )
     {
         returnOp = ConvertToInterpolatingLUT16(
             operation, [&](double x) -> float { return x <= 0.0f ? minVal : std::log(float(x)); }, "Log16(interp)");
-        RecordOptimisation(operation, returnOp);
+        RecordOptimisation(*operation, returnOp);
         operation->Disconnect();
     }
     return returnOp;
@@ -782,7 +782,7 @@ Operation *TFLiteGraphOptimiser::RewriteStridedSlice(Graph *const graph, Operati
         copyOp->Input(TensorUsage::IFM)->Set({sliceOffset, sliceShape, sliceStride});
         copyOp->CopyOutput(TensorUsage::OFM, *ofmConn);
         copyOp->Output(TensorUsage::OFM)->Set(Shape::DivRoundUp(sliceShape, sliceStride));
-        RecordOptimisation(operation, copyOp.get());
+        RecordOptimisation(*operation, copyOp.get());
         returnOp = copyOp.get();
 
         // Remove original op
@@ -826,7 +826,7 @@ Operation *TFLiteGraphOptimiser::RewriteUnpack(Graph *const graph, Operation *co
             assert(sliceOffset >= ifmConn->shape.WithZeros());
             attr->size = sliceShape;
             attr->begin = sliceOffset;
-            RecordOptimisation(operation, sliceOp.get());
+            RecordOptimisation(*operation, sliceOp.get());
             returnOp = sliceOp.get();
 
             // Offset of next slice
@@ -885,7 +885,7 @@ Operation *TFLiteGraphOptimiser::ConvertReverse(Graph *const graph, Operation *c
             auto *attr = reverseOp->Attribute<axis_attr_t>();
             attr->axis = axis;
             inputConn = reverseOp->Output(TensorUsage::OFM);
-            RecordOptimisation(operation, reverseOp.get());
+            RecordOptimisation(*operation, reverseOp.get());
             returnOp = reverseOp.get();
         }
 
@@ -1000,7 +1000,7 @@ Operation *TFLiteGraphOptimiser::ConvertGather(Graph *const graph, Operation *co
             auto gatherOp = std::make_shared<Operation>(OpType::Gather);
             ReplaceOperation(operation, gatherOp.get());
             gatherOp->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
-            RecordOptimisation(operation, gatherOp.get());
+            RecordOptimisation(*operation, gatherOp.get());
 
             returnOp = gatherOp.get();
         }
@@ -1076,7 +1076,7 @@ Operation *TFLiteGraphOptimiser::ConvertScatter(Graph *const graph, Operation *c
 
         // Remove TFLite ScatterNd op
         operation->Disconnect();
-        RecordOptimisation(operation, scatterOp.get());
+        RecordOptimisation(*operation, scatterOp.get());
 
         returnOp = scatterOp.get();
     }
@@ -1204,7 +1204,7 @@ Operation *TFLiteGraphOptimiser::ConvertResize(Graph *const graph, Operation *co
         quant.scales[0] = QuantizedScale(1, 0);
         resizeOp->Input(TensorUsage::IFM)->Set(quant);
 
-        RecordOptimisation(operation, resizeOp.get());
+        RecordOptimisation(*operation, resizeOp.get());
         returnOp = resizeOp.get();
         operation->Disconnect();
     }
@@ -1283,7 +1283,7 @@ Operation *TFLiteGraphOptimiser::ConvertReduceMinMaxAnyAll(Graph *const graph, O
             const auto ofmShape = prevConn->shape.With(axis, 1);
             const auto ofmTensor = std::make_shared<Tensor>(ofmName, ofmType, ofmShape);
             reduceOp->ConnectOutput(TensorUsage::OFM, ofmTensor).Set(prevConn->quantization).Set(RoundMode::NATURAL);
-            RecordOptimisation(operation, reduceOp.get());
+            RecordOptimisation(*operation, reduceOp.get());
             returnOp = reduceOp.get();
 
             prevOp = reduceOp.get();
@@ -1360,7 +1360,7 @@ Operation *TFLiteGraphOptimiser::RewriteBatchMatMul(Graph *const, Operation *con
             // Add Transpose op, ifm:  1,n,W,C -> 1,n,C,W
             ifmReshaped = Shape(1, ifmReshaped.Height(), ifmReshaped.Depth(), ifmReshaped.Width());
             auto op = CreateTransposeForMatMul(ifm->tensor, ifmReshaped);
-            RecordOptimisation(operation, op);
+            RecordOptimisation(*operation, op);
             ifmTensor = op->Output(TensorUsage::OFM)->tensor;
         }
 
@@ -1372,7 +1372,7 @@ Operation *TFLiteGraphOptimiser::RewriteBatchMatMul(Graph *const, Operation *con
             // Add Transpose op, ifm2: 1,n,W,C -> 1,n,C,W
             ifm2Reshaped = Shape(1, ifm2Reshaped.Height(), ifm2Reshaped.Depth(), ifm2Reshaped.Width());
             auto op = CreateTransposeForMatMul(ifm2->tensor, ifm2Reshaped);
-            RecordOptimisation(operation, op);
+            RecordOptimisation(*operation, op);
             ifm2Tensor = op->Output(TensorUsage::OFM)->tensor;
         }
 
@@ -1385,7 +1385,7 @@ Operation *TFLiteGraphOptimiser::RewriteBatchMatMul(Graph *const, Operation *con
         newOp->CopyOutput(TensorUsage::OFM, *ofm);
         newOp->Output(TensorUsage::OFM)->Set(ofmReshaped).Set(rounding);
         returnOp = newOp.get();
-        RecordOptimisation(operation, returnOp);
+        RecordOptimisation(*operation, returnOp);
         operation->Disconnect();
     }
     return returnOp;
@@ -1410,7 +1410,7 @@ Operation *TFLiteGraphOptimiser::RewriteFullyConnectDynamic(Graph *const, Operat
         // ifm2Transposed is both a reshape from N,1,1,C to 1,1,N,C and then a transpose to 1,1,C,N
         auto ifm2Transposed = Shape(1, 1, ifm2->shape.Depth(), ifm2->shape.Batch());
         auto transposeOp = CreateTransposeForMatMul(ifm2->tensor, ifm2Transposed);
-        RecordOptimisation(operation, transposeOp);
+        RecordOptimisation(*operation, transposeOp);
         auto ifm2Tensor = transposeOp->Output(TensorUsage::OFM)->tensor;
 
         auto matMulOp = std::make_shared<Operation>(OpType::MatMul);
@@ -1420,7 +1420,7 @@ Operation *TFLiteGraphOptimiser::RewriteFullyConnectDynamic(Graph *const, Operat
         matMulOp->ConnectInput(TensorUsage::IFM1, ifm2Tensor).Set(ifm2Transposed).Set(ifm2->quantization).Set(ifm2->slice);
         matMulOp->ConnectOutput(TensorUsage::OFM, ofm->tensor).Set(ofmShape).Set(ofm->quantization).Set(ofm->slice).Set(rounding);
 
-        RecordOptimisation(operation, matMulOp.get());
+        RecordOptimisation(*operation, matMulOp.get());
         returnOp = matMulOp.get();
 
         operation->Disconnect();
@@ -1487,7 +1487,7 @@ Operation *TFLiteGraphOptimiser::RewriteSquaredDifference(Graph *const, Operatio
         mulOp->Output(TensorUsage::OFM)->quantization.scales.push_back(QuantizedScale(1, quantizedRealInput1.shift));
         mulOp->Output(TensorUsage::OFM)->quantization.type = QuantizationType::EXPLICIT;
         auto ifmScaled = mulOp->Output(TensorUsage::OFM);
-        RecordOptimisation(operation, mulOp);
+        RecordOptimisation(*operation, mulOp);
 
         // Convert ifm2 to 32 bit
         castOp = CreateCastToInt32(ifm2Conn);
@@ -1495,7 +1495,7 @@ Operation *TFLiteGraphOptimiser::RewriteSquaredDifference(Graph *const, Operatio
         castOp->Output(TensorUsage::OFM)->quantization.scales.clear();
         castOp->Output(TensorUsage::OFM)->quantization.scales.push_back(QuantizedScale(1 << leftShift, 0));
         castOp->Output(TensorUsage::OFM)->quantization.type = QuantizationType::EXPLICIT;
-        RecordOptimisation(operation, castOp);
+        RecordOptimisation(*operation, castOp);
 
         // Scale/shift ifm2 (for 32-bit operations, scale is not applied but shift is)
         mulOp = CreateMul(castOp->Output(TensorUsage::OFM)->tensor, input2MultiplierConst, noScaleQuant, noScaleQuant, noScaleQuant);
@@ -1504,19 +1504,19 @@ Operation *TFLiteGraphOptimiser::RewriteSquaredDifference(Graph *const, Operatio
         mulOp->Output(TensorUsage::OFM)->quantization.scales.push_back(QuantizedScale(1, quantizedRealInput2.shift));
         mulOp->Output(TensorUsage::OFM)->quantization.type = QuantizationType::EXPLICIT;
         auto ifm2Scaled = mulOp->Output(TensorUsage::OFM);
-        RecordOptimisation(operation, mulOp);
+        RecordOptimisation(*operation, mulOp);
 
         // Calculate the raw diff
         auto subOp = CreateSub(ifmScaled->tensor, ifm2Scaled->tensor, noScaleQuant, noScaleQuant, noScaleQuant);
         subOp->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
         auto rawDiff = subOp->Output(TensorUsage::OFM);
-        RecordOptimisation(operation, subOp);
+        RecordOptimisation(*operation, subOp);
 
         // Calculate the squared diff
         mulOp = CreateMul(rawDiff->tensor, rawDiff->tensor, noScaleQuant, noScaleQuant, noScaleQuant);
         mulOp->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
         auto squaredRaw = mulOp->Output(TensorUsage::OFM);
-        RecordOptimisation(operation, mulOp);
+        RecordOptimisation(*operation, mulOp);
 
         // Scale/shift ofm ((for 32-bit operations, scale is not applied but shift is)
         returnOp = CreateMul(squaredRaw->tensor, outputMultiplierConst, noScaleQuant, noScaleQuant, ofmConn->quantization);
@@ -1525,7 +1525,7 @@ Operation *TFLiteGraphOptimiser::RewriteSquaredDifference(Graph *const, Operatio
         returnOp->Output(TensorUsage::OFM)->quantization.scales.clear();
         returnOp->Output(TensorUsage::OFM)->quantization.scales.push_back(QuantizedScale(1, quantizedRealOutput.shift));
         returnOp->Output(TensorUsage::OFM)->quantization.type = QuantizationType::EXPLICIT;
-        RecordOptimisation(operation, returnOp);
+        RecordOptimisation(*operation, returnOp);
 
         operation->Disconnect();
     }
@@ -1581,7 +1581,7 @@ Operation *TFLiteGraphOptimiser::RewriteSpaceToBatchConvBatchToSpace(Graph *cons
             if ( _supportedOps->Check(newOp.get()) )
             {
                 returnOp = newOp.get();
-                RecordOptimisation(operation, returnOp);
+                RecordOptimisation(*operation, returnOp);
                 // Disconnect matched pattern
                 prevOp->Disconnect();
                 nextOp->Disconnect();
@@ -1861,7 +1861,7 @@ Operation *TFLiteGraphOptimiser::ConvertMeanOps(Graph *const, Operation *const o
 
             auto op = MakeDepthwiseMeanOp(ifmConn, ifmShape4D, readShape, readOffset, intermediateShape, w, kh,
                 ofmConn->tensor->Name(), weightTensor, biasTensor, oneScaleQuant, weightQuant, oneScaleQuantZp0);
-            RecordOptimisation(operation, op);
+            RecordOptimisation(*operation, op);
 
             if ( i > 0 )
             {
@@ -1872,7 +1872,7 @@ Operation *TFLiteGraphOptimiser::ConvertMeanOps(Graph *const, Operation *const o
                 op->Output(TensorUsage::OFM)->quantization.scales.clear();
                 op->Output(TensorUsage::OFM)->quantization.scales.push_back(QuantizedScale(1, 0));
                 op->Output(TensorUsage::OFM)->quantization.type = QuantizationType::EXPLICIT;
-                RecordOptimisation(operation, op);
+                RecordOptimisation(*operation, op);
             }
             accTensor = op->Output(TensorUsage::OFM)->tensor;
         }
@@ -1905,7 +1905,7 @@ Operation *TFLiteGraphOptimiser::ConvertMeanOps(Graph *const, Operation *const o
         outQuant.scales.push_back({1, outputShift});
         outQuant.type = QuantizationType::EXPLICIT;
         op->ConnectOutput(TensorUsage::OFM, ofmConn->tensor).Set(intermediateShape).Set(outQuant);
-        RecordOptimisation(operation, op);
+        RecordOptimisation(*operation, op);
         operation->Disconnect();
         returnOp = op;
     }
@@ -1958,7 +1958,7 @@ Operation *TFLiteGraphOptimiser::ConvertTanhSigmoidToLUT(Graph *const, Operation
 
     if ( operation != returnOp )
     {
-        RecordOptimisation(operation, returnOp);
+        RecordOptimisation(*operation, returnOp);
         operation->Disconnect();
     }
 
@@ -2050,7 +2050,7 @@ Operation *TFLiteGraphOptimiser::ConvertPrelu(Graph *const graph, Operation *con
                     auto *attr = lreluOp->Attribute<leaky_relu_attr_t>();
                     attr->alpha = scaledAlphaMin;
                     returnOp = lreluOp.get();
-                    RecordOptimisation(operation, returnOp);
+                    RecordOptimisation(*operation, returnOp);
                     operation->Disconnect();
                     return returnOp;
                 }
@@ -2078,7 +2078,7 @@ Operation *TFLiteGraphOptimiser::ConvertPrelu(Graph *const graph, Operation *con
                         .Set(ofmConn->quantization)
                         .Set(ofmConn->slice)
                         .Set(RoundMode::DBL);
-                    RecordOptimisation(operation, mulAlpha.get());
+                    RecordOptimisation(*operation, mulAlpha.get());
 
                     TensorConnection *alphaConn = mulAlpha->Output(TensorUsage::OFM);
                     TensorConnection *identityConn = ifmConn;
@@ -2096,7 +2096,7 @@ Operation *TFLiteGraphOptimiser::ConvertPrelu(Graph *const graph, Operation *con
                             oneTens = CreateConstTensor("one_const", int8_t(1));
                         }
                         auto mulIdentity = MakeMulWithConstTensor("rescaled", *ifmConn, *ofmConn, oneTens, Quantization::Unit());
-                        RecordOptimisation(operation, mulIdentity);
+                        RecordOptimisation(*operation, mulIdentity);
                         identityConn = mulIdentity->Output(TensorUsage::OFM);
                     }
                     // Create Maximum operation that combines identity and alphaConn
@@ -2105,7 +2105,7 @@ Operation *TFLiteGraphOptimiser::ConvertPrelu(Graph *const graph, Operation *con
                     maxOp->CopyInput(TensorUsage::IFM1, *identityConn);
                     maxOp->CopyOutput(TensorUsage::OFM, *ofmConn);
                     maxOp->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
-                    RecordOptimisation(operation, maxOp.get());
+                    RecordOptimisation(*operation, maxOp.get());
                     returnOp = maxOp.get();
                     operation->Disconnect();
                     return returnOp;
@@ -2138,14 +2138,14 @@ Operation *TFLiteGraphOptimiser::ConvertPrelu(Graph *const graph, Operation *con
         minOp->ConnectInput(TensorUsage::IFM1, zeroTens).Set(noScaleQuant);
         minOp->ConnectOutput(TensorUsage::OFM, fmNegative).Set(ifmConn->quantization);
         minOp->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
-        RecordOptimisation(operation, minOp.get());
+        RecordOptimisation(*operation, minOp.get());
 
         // and multiply with alpha tensor
         auto mulAlpha = std::make_shared<Operation>(OpType::Mul);
         mulAlpha->CopyInput(TensorUsage::IFM0, *minOp->Output(TensorUsage::OFM));
         mulAlpha->CopyInput(TensorUsage::IFM1, *params);
         mulAlpha->ConnectOutput(TensorUsage::OFM, fmAlpha).Set(ofmConn->quantization).Set(RoundMode::DBL);
-        RecordOptimisation(operation, mulAlpha.get());
+        RecordOptimisation(*operation, mulAlpha.get());
 
         // Select (and scale) values > 0
         auto reluOp = std::make_shared<Operation>(OpType::Relu);
@@ -2153,7 +2153,7 @@ Operation *TFLiteGraphOptimiser::ConvertPrelu(Graph *const graph, Operation *con
         reluOp->ConnectOutput(TensorUsage::OFM, fmScaled).Set(ofmConn->quantization);
         reluOp->Output(TensorUsage::OFM)->quantization.quantMin.push_back(ofmConn->quantization.zeroPoints[0]);
         reluOp->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
-        RecordOptimisation(operation, reluOp.get());
+        RecordOptimisation(*operation, reluOp.get());
 
         // Add scaled and alpha multiplied values
         auto addOp = std::make_shared<Operation>(OpType::Add);
@@ -2161,7 +2161,7 @@ Operation *TFLiteGraphOptimiser::ConvertPrelu(Graph *const graph, Operation *con
         addOp->ConnectInput(TensorUsage::IFM1, fmScaled).Set(unitQuantOfmZp);
         addOp->CopyOutput(TensorUsage::OFM, *ofmConn);
         addOp->Output(TensorUsage::OFM)->Set(unitQuantOfmZp).Set(RoundMode::DBL);
-        RecordOptimisation(operation, addOp.get());
+        RecordOptimisation(*operation, addOp.get());
         returnOp = addOp.get();
         operation->Disconnect();
     }
@@ -2205,14 +2205,14 @@ Operation *TFLiteGraphOptimiser::ConvertLeakyRelu(Graph *const graph, Operation 
             // alpha == 0 can be converted to ReLU
             auto reluOp = MakeOperation(OpType::Relu, ifmConn, nullptr, ofmConn);
             reluOp->Output(TensorUsage::OFM)->quantization.quantMin.push_back(ofmConn->quantization.zeroPoints[0]);
-            RecordOptimisation(operation, reluOp);
+            RecordOptimisation(*operation, reluOp);
             returnOp = reluOp;
         }
         else if ( alpha == -1 )
         {
             // alpha == -1 can be converted to Abs
             auto absOp = MakeOperation(OpType::Abs, ifmConn, nullptr, ofmConn);
-            RecordOptimisation(operation, absOp);
+            RecordOptimisation(*operation, absOp);
             returnOp = absOp;
         }
         else if ( (ifm->Type() == DataType::Int8 || ifm->Type() == DataType::UInt8) )
@@ -2220,7 +2220,7 @@ Operation *TFLiteGraphOptimiser::ConvertLeakyRelu(Graph *const graph, Operation 
             // convert to 8-bit LUT
             assert(ifm->Type() == ofm->Type());
             returnOp = Convert8bitLeakyReluToLUT(graph, operation, alpha);
-            RecordOptimisation(operation, returnOp);
+            RecordOptimisation(*operation, returnOp);
         }
         else if ( alpha < 0 || isConvertedPrelu ||
                   !_constraints->SupportsElementwiseLeakyRelu(!IsScalingValidAndEqual(*ifmConn, *ofmConn), ifm->Type()) )
@@ -2425,7 +2425,7 @@ Operation *TFLiteGraphOptimiser::ConvertRSqrtToLUT(Graph *const graph, Operation
 
     if ( operation != returnOp )
     {
-        RecordOptimisation(operation, returnOp);
+        RecordOptimisation(*operation, returnOp);
         operation->Disconnect();
     }
 
@@ -2471,7 +2471,7 @@ Operation *TFLiteGraphOptimiser::ConvertPadV2(Graph *const graph, Operation *con
         int zeroPoint = ofmConn->quantization.IsValid() ? static_cast<int>(ofmConn->quantization.zeroPoints[0]) : 0;
         attr->pad_const = padConstTens->View().Values<int>(padConstTens->Type())[0] - zeroPoint;
 
-        RecordOptimisation(operation, padOp.get());
+        RecordOptimisation(*operation, padOp.get());
         operation->Disconnect();
         return padOp.get();
     }
@@ -2492,7 +2492,7 @@ void TFLiteGraphOptimiser::MakeMemoryCopyForMirrorPad(const Operation *operation
         .Set(RoundMode::NATURAL)
         .Set(reverseAxis);
 
-    RecordOptimisation(operation, op.get());
+    RecordOptimisation(*operation, op.get());
 }
 
 Operation *TFLiteGraphOptimiser::ConvertMirrorPad(Graph *const graph, Operation *const operation)
@@ -2522,7 +2522,7 @@ Operation *TFLiteGraphOptimiser::ConvertMirrorPad(Graph *const graph, Operation 
     // Create MemoryCopy op that copies IFM to the right place inside the OFM
     Shape zeroShape = ofmShape.WithZeros();
     auto mainOp = MakeMemoryCopyForConcat(ofmConn, ifmConn, zeroShape.WithHeight(top).WithWidth(left));
-    RecordOptimisation(operation, mainOp.get());
+    RecordOptimisation(*operation, mainOp.get());
 
     // Add operations that fill the borders of the OFM
     if ( top > 0 )
@@ -2673,7 +2673,7 @@ Operation *TFLiteGraphOptimiser::LegalizeAsymmetricQuantization(Graph *const gra
             ifmConn->quantization = unitQuant;
             weightConn->quantization = unitQuant;
 
-            RecordOptimisation(operation, zpCorrectOp.get());
+            RecordOptimisation(*operation, zpCorrectOp.get());
             returnOp = zpCorrectOp.get();
         }
     }
@@ -2708,7 +2708,7 @@ Operation *TFLiteGraphOptimiser::LegalizeAsymmetricQuantization(Graph *const gra
 
         operation->ConnectOutput(TensorUsage::OFM, intermediateTensor).Set(ofmConn->shape).Set(ofmQuantNoZP);
 
-        RecordOptimisation(operation, zpCorrectOp.get());
+        RecordOptimisation(*operation, zpCorrectOp.get());
         returnOp = zpCorrectOp.get();
     }
 
@@ -2935,10 +2935,10 @@ Operation *TFLiteGraphOptimiser::ConvertConvolutionGroup(Graph *const graph, Ope
             .Set(ofmSlice)
             .Set(convGroupOp->Output(TensorUsage::OFM)->quantization);
 
-        RecordOptimisation(operation, convGroupOp.get());
+        RecordOptimisation(*operation, convGroupOp.get());
     }
 
-    RecordOptimisation(operation, concatOp.get());
+    RecordOptimisation(*operation, concatOp.get());
     operation->Disconnect();
     return concatOp.get();
 }
