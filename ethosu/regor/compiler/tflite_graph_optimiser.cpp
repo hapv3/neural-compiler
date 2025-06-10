@@ -1581,6 +1581,7 @@ Operation *TFLiteGraphOptimiser::RewriteSpaceToBatchConvBatchToSpace(Graph *cons
             if ( _supportedOps->Check(newOp.get()) )
             {
                 returnOp = newOp.get();
+                RecordOptimisation(operation, returnOp);
                 // Disconnect matched pattern
                 prevOp->Disconnect();
                 nextOp->Disconnect();
