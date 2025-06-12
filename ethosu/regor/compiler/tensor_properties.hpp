@@ -60,6 +60,7 @@ enum class TensorUsage : uint32_t
     Params0 = Params,
     Params1 = 0x100 | Params,
     Params2 = 0x200 | Params,
+    Params3 = 0x300 | Params,
     Scratch0 = Scratch,
 };
 

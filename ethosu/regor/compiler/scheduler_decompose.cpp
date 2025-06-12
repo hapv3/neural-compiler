@@ -39,6 +39,11 @@ Flags<QueryResult> OperatorQuery(Architecture *arch, const SchedulerOperation *s
     Set(query.ifm[0], schedOp->IFM(0));
     Set(query.ifm[1], schedOp->TryIFM(1));
     Set(query.ofm, ofmConn);
+    const auto weights = schedOp->TryInput(TensorUsage::Weights);
+    const auto scales = schedOp->TryInput(TensorUsage::Scales);
+    const bool constantWeights = weights && weights->tensor && weights->tensor->IsConstant();
+    const bool constantScales = scales && scales->tensor && scales->tensor->IsConstant();
+    query.weightFormat = constantWeights && constantScales ? WeightFormat::Default : WeightFormat::None;
     query.transposeMask = ofmConn->transpose;
     query.reverseMask = ofmConn->reverse;
     query.kernel = schedOp->Kernel();
@@ -240,10 +245,17 @@ bool NeedsDecompose(Architecture *arch, const SchedulerOperation *schedOp)
 
 bool CanDecompose(Architecture *, const SchedulerOperation *schedOp)
 {
-    if ( schedOp->Type() == OpType::Conv2D ) return true;
-    if ( schedOp->Type() == OpType::Conv3D ) return true;
-    if ( schedOp->Type() == OpType::DepthwiseConv2D ) return true;
-    if ( schedOp->Type() == OpType::TransposeConv2D ) return true;
+    // TODO: This additional check can be removed when decomposing
+    //       non-constant weights/scales is implemented
+    auto weights = schedOp->TryInput(TensorUsage::Weights);
+    auto scales = schedOp->TryInput(TensorUsage::Scales);
+    bool constantWeights = weights && weights->tensor && weights->tensor->IsConstant();
+    bool constantScales = scales && scales->tensor && scales->tensor->IsConstant();
+
+    if ( schedOp->Type() == OpType::Conv2D && constantWeights && constantScales ) return true;
+    if ( schedOp->Type() == OpType::Conv3D && constantWeights && constantScales ) return true;
+    if ( schedOp->Type() == OpType::DepthwiseConv2D && constantWeights && constantScales ) return true;
+    if ( schedOp->Type() == OpType::TransposeConv2D && constantWeights && constantScales ) return true;
     if ( DecomposeAsElementwise(schedOp->Type()) || schedOp->Type() == OpType::MemoryCopy ) return true;
     if ( schedOp->Type() == OpType::MatMul ) return true;
     if ( schedOp->Type() == OpType::Resize ) return true;

@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -38,6 +38,9 @@ enum class DType : uint32_t
     UINT16 = 9,
     FP16 = 10,
     BF16 = 11,
+    SHAPE = 12,
+    FP8E4M3 = 13,
+    FP8E5M2 = 14,
 };
 
 enum class ResizeMode : uint32_t
@@ -122,6 +125,10 @@ enum class Op : uint32_t
     RFFT2D = 70,
     ERF = 71,
     DIM = 72,
+    VARIABLE = 73,
+    VARIABLE_WRITE = 74,
+    VARIABLE_READ = 75,
+    CONST_SHAPE = 76,
 };
 
 }  // namespace tosa

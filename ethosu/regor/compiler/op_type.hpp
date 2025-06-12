@@ -35,11 +35,12 @@ enum class OpType : uint16_t
     Conv2D,
     Conv3D,
     DepthwiseConv2D,
-    FullyConnected,
     MatMul,
     MaxPool,
+    // RFFT
     TransposeConv2D,
     Clamp,
+    // Erf
     Sigmoid,
     Tanh,
     Add,
@@ -73,8 +74,8 @@ enum class OpType : uint16_t
     Equal,
     Greater,
     GreaterEqual,
-    ReduceAny,
     ReduceAll,
+    ReduceAny,
     ReduceMax,
     ReduceMin,
     ReduceProduct,
@@ -94,6 +95,11 @@ enum class OpType : uint16_t
     Identity,
     If,
     While,
+    // Yield
+    // Variable
+    // VariabeWrite
+    // VariableRead
+    // ConstShape
 
     // Regor Internal Operators
     MemoryCopy,
@@ -129,6 +135,7 @@ enum class OpType : uint16_t
     Fill,
     FloorDiv,
     FloorMod,
+    FullyConnected,
     GatherNd,
     GatherV2,
     HardSwish,

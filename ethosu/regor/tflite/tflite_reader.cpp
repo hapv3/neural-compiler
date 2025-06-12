@@ -698,12 +698,12 @@ void TfLiteReader::ParseOperatorOptions(
             int axis = 0;
             if ( params->tensor->Type() == DataType::Int64 )
             {
-                assert(params->tensor->View().Values<int64_t>()[0] < std::numeric_limits<int32_t>::max() && "Too large Argmax axis attribute");
-                axis = ClampToType<int32_t>(params->tensor->View().Values<int64_t>()[0]);
+                assert(Scalar<int64_t>(*params->tensor) < std::numeric_limits<int32_t>::max() && "Too large Argmax axis attribute");
+                axis = ClampToType<int32_t>(Scalar<int64_t>(*params->tensor));
             }
             else
             {
-                axis = params->tensor->View().Values<int32_t>()[0];
+                axis = Scalar<int32_t>(*params->tensor);
             }
             if ( axis < 0 )
             {

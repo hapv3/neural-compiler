@@ -369,6 +369,11 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
     // TransposeConv2D and Conv3D are legalized during decomposition
     else if ( opType == OpType::TransposeConv2D || opType == OpType::Conv3D )
     {
+        // Check for supported weight format
+        if ( query && query->weightFormat != WeightFormat::Default )
+        {
+            return QueryResult::Unsupported;
+        }
         if ( req )
         {
             req->req.Set(ArchRequirement::Decompose);
@@ -392,6 +397,15 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
     {
         // More detailed query might fail (constrained)
         return QueryResult::NativeConstrained;
+    }
+
+    // Check for supported weight format for convolution type ops
+    if ( opType == OpType::DepthwiseConv2D || opType == OpType::Conv2D || opType == OpType::FullyConnected )
+    {
+        if ( query->weightFormat != WeightFormat::Default )
+        {
+            return QueryResult::Unsupported;
+        }
     }
 
     Flags<QueryResult> result = QueryResult::Native;

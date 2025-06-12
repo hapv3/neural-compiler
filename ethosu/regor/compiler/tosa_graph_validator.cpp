@@ -27,16 +27,8 @@ namespace
 
 std::optional<uint32_t> MaybeGetTosaVersion(uint32_t syntaxVersion)
 {
-    if ( syntaxVersion == 0 ) syntaxVersion = (GraphApi::VERSION_TOSA_0_80 | GraphApi::PROFILE_BASELINE);
-    if ( (syntaxVersion & GraphApi::VERSION_TOSA_0_60) == GraphApi::VERSION_TOSA_0_60 )
-    {
-        return GraphApi::VERSION_TOSA_0_60;
-    }
-    else if ( (syntaxVersion & GraphApi::VERSION_TOSA_0_80) == GraphApi::VERSION_TOSA_0_80 )
-    {
-        return GraphApi::VERSION_TOSA_0_80;
-    }
-    else if ( (syntaxVersion & GraphApi::VERSION_TOSA_1_00) == GraphApi::VERSION_TOSA_1_00 )
+    if ( syntaxVersion == 0 ) syntaxVersion = (GraphApi::VERSION_TOSA_1_00 | GraphApi::PROFILE_BASELINE);
+    if ( (syntaxVersion & GraphApi::VERSION_TOSA_1_00) == GraphApi::VERSION_TOSA_1_00 )
     {
         return GraphApi::VERSION_TOSA_1_00;
     }
@@ -56,7 +48,7 @@ bool TosaGraphValidator::HandlesSyntax(uint32_t syntaxVersion)
 TosaGraphValidator::TosaGraphValidator(GraphNotation notation, uint32_t syntaxVersion, Compiler *compiler) :
         GraphValidator(notation, syntaxVersion)
 {
-    _context.version = MaybeGetTosaVersion(syntaxVersion).value_or(GraphApi::VERSION_TOSA_0_60);
+    _context.version = MaybeGetTosaVersion(syntaxVersion).value_or(GraphApi::VERSION_TOSA_1_00);
 
     if ( (syntaxVersion & GraphApi::PROFILE_MAIN) == GraphApi::PROFILE_MAIN )
     {

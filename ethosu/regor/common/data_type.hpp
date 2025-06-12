@@ -53,7 +53,11 @@ public:
         return res >> 16;
     }
 
-    operator uint64_t() const { return static_cast<uint64_t>(operator int64_t()); }
+    template<typename TYPE, std::enable_if_t<std::is_integral<TYPE>::value, bool> = 0>
+    explicit operator TYPE() const
+    {
+        return static_cast<TYPE>(operator int64_t());
+    }
 
 private:
     uint8_t _data[6]{0};
@@ -100,7 +104,9 @@ enum class DataType : uint16_t
     QUInt16 = QUInt | Bits16,
     QUInt32 = QUInt | Bits32,
     Float = 1 << 12,
-    BFloat16 = Float | Bits16 | Packed,
+    Float8e4m3 = Float | Bits8 | Asymmetric,
+    Float8e5m2 = Float | Bits8,
+    BFloat16 = Float | Bits16 | Asymmetric,
     Float16 = Float | Bits16,
     Float32 = Float | Bits32,
     Float64 = Float | Bits64,

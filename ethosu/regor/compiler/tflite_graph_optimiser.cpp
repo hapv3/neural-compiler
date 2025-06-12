@@ -137,9 +137,8 @@ Operation *TFLiteGraphOptimiser::ConvertLeakyRelu16bit(TensorConnection &ifmConn
         assert(params->tensor->IsConstant());
         assert(params->tensor->Type() == DataType::Int16);
         assert(params->quantization.zeroPoints.size() > 0);
-        auto view = params->tensor->View();
         // Set scalar and alphaQuant accordingly
-        scalar = int64_t(view.Values<int16_t>()[0]) - params->quantization.zeroPoints[0];
+        scalar = Scalar<int64_t>(*params->tensor) - params->quantization.zeroPoints[0];
         alphaQuant = params->quantization;
     }
 
@@ -231,18 +230,11 @@ int TFLiteGraphOptimiser::GetAxis(const Operation *const operation)
             axis = operation->Attribute<axis_attr_t>()->axis;
             break;
         case OpType::Split:
-        {
-            auto *paramConn = operation->Input(TensorUsage::Params);
-            axis = paramConn->tensor->View().Values<int>()[0];
+            axis = Scalar<int>(*operation->Input(TensorUsage::Params)->tensor);
             break;
-        }
         case OpType::SplitV:
-        {
-            auto usage = MakeTensorUsage(TensorUsage::Params, 1);
-            auto *paramConn = operation->Input(usage);
-            axis = paramConn->tensor->View().Values<int>()[0];
+            axis = Scalar<int>(*operation->Input(TensorUsage::Params1)->tensor);
             break;
-        }
         default:
             break;
     }
@@ -676,8 +668,10 @@ Operation *TFLiteGraphOptimiser::RewriteSlice(Graph *const graph, Operation *con
         assert(sliceOffset + sliceShape <= ifmConn->shape);
         assert(sliceOffset >= ifmConn->shape.WithZeros());
         assert(sliceShape == ofmConn->shape);
-        attr->size = sliceShape;
-        attr->begin = sliceOffset;
+        // Update the shape tensor to guarantee no -1 values
+        sizeParamConn->tensor->SetBuffer(nullptr);
+        sizeParamConn->tensor->ChangeType(DataType::Int32);
+        sizeParamConn->tensor->SetBuffer(std::make_shared<Buffer>(sliceShape.ToList<int32_t>()));
     }
     return returnOp;
 }
@@ -1036,7 +1030,7 @@ Operation *TFLiteGraphOptimiser::ConvertScatter(Graph *const graph, Operation *c
         int N = 1;
 
         // Calculate GraphIR Scatter K dim
-        int K = shapeConn->tensor->View().Values<int32_t>()[0];
+        int K = Scalar<int32_t>(*shapeConn->tensor);
 
         // Calculate GraphIR Scatter W dim
         int W = 1;
@@ -2009,22 +2003,8 @@ Operation *TFLiteGraphOptimiser::ConvertPrelu(Graph *const graph, Operation *con
                 int64_t alphaZp = 0;
                 int alphaMin = 0;
                 int alphaMax = 0;
-                BufferReader<int> reader;
-                switch ( params->tensor->Type() )
-                {
-                    case DataType::Int8:
-                        reader = alpha.Values<int8_t, int>();
-                        break;
-                    case DataType::UInt8:
-                        reader = alpha.Values<uint8_t, int>();
-                        break;
-                    case DataType::Int16:
-                        reader = alpha.Values<int16_t, int>();
-                        break;
-                    default:
-                        assert(false);
-                };
-                auto alphaMinMax = std::minmax_element(reader.begin(), reader.end());
+                auto values = alpha.Values<int>(params->tensor->Type());
+                auto alphaMinMax = std::minmax_element(values.begin(), values.end());
                 alphaMin = *alphaMinMax.first;
                 alphaMax = *alphaMinMax.second;
                 if ( alphaQuant.zeroPoints.size() )
@@ -2269,19 +2249,10 @@ Operation *TFLiteGraphOptimiser::Convert8bitLeakyReluToLUT(Graph *const graph, O
         assert(params->tensor->IsConstant());
         assert(params->quantization.scales.size() > 0);
         assert(params->quantization.zeroPoints.size() > 0);
-        auto view = params->tensor->View();
         QuantizedScale alphaQuant = QuantizedScale(alpha);
         auto alphaZp = params->quantization.zeroPoints[0];
-        if ( params->tensor->Type() == DataType::Int8 )
-        {
-            scalar = int64_t(view.Values<int8_t>()[0]) - alphaZp;
-            alphaQuant = params->quantization.scales[0];
-        }
-        else if ( params->tensor->Type() == DataType::UInt8 )
-        {
-            scalar = int64_t(view.Values<uint8_t>()[0]) - alphaZp;
-            alphaQuant = params->quantization.scales[0];
-        }
+        scalar = Scalar<int64_t>(*params->tensor) - alphaZp;
+        alphaQuant = params->quantization.scales[0];
         alphaScale = ElementwiseMulScale(ifmScale, alphaQuant.Dequantize(), ofmScale);
     }
 
@@ -2440,17 +2411,7 @@ int TFLiteGraphOptimiser::GetPadValue(BufferReader<int> &padValues, int numPadVa
 
 BufferReader<int> TFLiteGraphOptimiser::GetPadValuesFromTensor(const std::shared_ptr<Tensor> tensor)
 {
-    BufferReader<int> padValues;
-    if ( tensor->Type() == DataType::Int32 )
-    {
-        padValues = tensor->View().Values<int32_t, int>();
-    }
-    else
-    {
-        assert(tensor->Type() == DataType::Int64);
-        padValues = tensor->View().Values<int64_t, int>();
-    }
-    return padValues;
+    return tensor->View().Values<int>(tensor->Type());
 }
 
 // Lower PadV2 to TOSA Pad
@@ -2469,7 +2430,7 @@ Operation *TFLiteGraphOptimiser::ConvertPadV2(Graph *const graph, Operation *con
         // This is undoing the existing zero point adjustment to counteract the zero point adjustment
         // which is done in GraphIR lowering of Pad.
         int zeroPoint = ofmConn->quantization.IsValid() ? static_cast<int>(ofmConn->quantization.zeroPoints[0]) : 0;
-        attr->pad_const = padConstTens->View().Values<int>(padConstTens->Type())[0] - zeroPoint;
+        attr->pad_const = Scalar<int>(*padConstTens) - zeroPoint;
 
         RecordOptimisation(*operation, padOp.get());
         operation->Disconnect();

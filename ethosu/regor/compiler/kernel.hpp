@@ -91,7 +91,6 @@ public:
         _padding = Margin(kernel->paddingTBLRNF[0], kernel->paddingTBLRNF[2], kernel->paddingTBLRNF[1],
             kernel->paddingTBLRNF[3], kernel->paddingTBLRNF[4], kernel->paddingTBLRNF[5]);
         _depthMultiplier = 0;
-        assert(_size.x > 0 && _size.y > 0);
     }
 
     Kernel(Point2i size, Point2i stride, Point2i dilation, int depthMultiplier = 1, Margin padding = Margin(0, 0, 0, 0))

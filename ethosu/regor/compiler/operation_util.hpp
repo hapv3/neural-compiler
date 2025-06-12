@@ -78,6 +78,38 @@ inline std::shared_ptr<Tensor> CreateConstTensor(const std::string &name, DataTy
     };
 }
 
+// Returns the DataType scalar value from a Buffer as the templated type
+template<typename TYPE>
+TYPE Scalar(const Buffer &from, DataType type)
+{
+    assert(from.Size() >= DataTypeStorageSizeBytes(type, 1) && "Not enough data for scalar of DataType");
+    switch ( type )
+    {
+        case DataType::Int4Packed8:
+            return TYPE((from.Data<int8_t>()[0] << 4) >> 4);
+        case DataType::Bool8:
+            return TYPE(from.Data<uint8_t>()[0]);
+        case DataType::Int48:
+            return TYPE(int64_t(from.Data<int48_t>()[0]));
+#define TYPE_FUNC(x) \
+    case DataTypeOf<x>::value: \
+        return TYPE(from.Data<x>()[0])
+            FOR_ALL_INT_TYPES(TYPE_FUNC, ;);
+#undef TYPE_FUNC
+        default:
+            assert(false && "Unexpected DataType");
+            return TYPE(from.Data<uint64_t>()[0]);
+    }
+}
+
+// Returns the scalar value of a Tensor's buffer as the templated type
+template<typename TYPE>
+TYPE Scalar(const Tensor &from)
+{
+    assert(from.IsConstant() && "Tensor has no constant buffer");
+    return Scalar<TYPE>(*from.Buffer(), from.Type());
+}
+
 // Convert a constant Tensor to a Shape
 // Parameters:
 // - tensor: Tensor to convert to shape.

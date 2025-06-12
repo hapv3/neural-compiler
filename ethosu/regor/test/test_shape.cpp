@@ -476,3 +476,16 @@ TEST_CASE("Is reduced equal")
     REQUIRE(Shape::IsReducedEqual(shape2a, shape2b));
     REQUIRE(Shape::IsReducedEqual(shape2b, shape2a));
 }
+
+TEST_CASE("Shape: From iterator")
+{
+    int axes = GENERATE(range(1, MAX_TEST_DIMS, 2));
+    std::vector<int> temp = random_vector<int>(axes, 1, 32767);
+    Shape a(temp.data(), axes);
+    Shape b(temp.begin(), axes);
+    Shape c(temp.begin(), temp.end());
+
+    REQUIRE(!a.IsEmpty());
+    REQUIRE(a == b);
+    REQUIRE(b == c);
+}

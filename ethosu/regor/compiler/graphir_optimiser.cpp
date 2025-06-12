@@ -83,6 +83,7 @@ Tensor *GraphIrOptimiser::ConvertBool8Tensors(Graph *graph, Tensor *tensor)
             // Replace the IFM of ops consuming the graph input tensor
             std::shared_ptr<Tensor> graphInputTensor = tensor->shared_from_this();
             std::shared_ptr<Tensor> newTensor = tensor->Clone();
+            newTensor->SetBuffer(nullptr);
             newTensor->SetName(newTensor->Name() + "_int8");
             ReplaceConsumerInput(nullptr, graphInputTensor->Readers(), graphInputTensor.get(), newTensor);
 
@@ -215,6 +216,128 @@ Operation *GraphIrOptimiser::ConvertAttributes(Graph *const graph, Operation *co
             kernel = operation->Kernel()->WithSize({ifmConn->shape.Width() /* W */, 1 /* H */});
         operation->SetKernel(std::make_unique<Kernel>(std::move(kernel)));
     }
+
+    return operation;
+}
+
+Operation *GraphIrOptimiser::ConvertAttributeTensors(Graph *const graph, Operation *const operation)
+{
+    UNUSED(graph);
+    OpType opType = operation->Type();
+    if ( opType == OpType::Mul )
+    {
+        auto *attr = operation->Attribute<mul_attr_t>();
+        // Shift can be a compile time constant tensor
+        if ( auto *shiftConn = operation->Input(TensorUsage::Params) )
+        {
+            assert(shiftConn->tensor->IsConstant());
+            attr->shift = Scalar<int32_t>(*shiftConn->tensor);
+        }
+    }
+    else if ( opType == OpType::Pad )
+    {
+        auto *attr = operation->Attribute<pad_attr_t>();
+        // Pad value can be a compile time constant tensor
+        if ( auto padConstConn = operation->Input(TensorUsage::Params1) )
+        {
+            assert(padConstConn->tensor->IsConstant());
+            attr->pad_const = Scalar<double>(*padConstConn->tensor);
+        }
+    }
+    else if ( opType == OpType::Slice )
+    {
+        auto *attr = operation->Attribute<slice_attr_t>();
+        // Start shape can be a compile time constant tensor
+        if ( auto startConn = operation->Input(TensorUsage::Params0) )
+        {
+            assert(startConn->tensor->IsConstant());
+            attr->begin = TensorToShape(startConn->tensor.get(), startConn->shape.Elements());
+        }
+        // Size shape can be a compile time constant tensor
+        if ( auto sizeConn = operation->Input(TensorUsage::Params1) )
+        {
+            assert(sizeConn->tensor->IsConstant());
+            attr->size = TensorToShape(sizeConn->tensor.get(), sizeConn->shape.Elements());
+        }
+    }
+    else if ( opType == OpType::Resize )
+    {
+        auto *attr = operation->Attribute<resize_attr_t>();
+        // Scale can be a compile time constant tensor
+        if ( const auto scaleConn = operation->Input(TensorUsage::Params0) )
+        {
+            assert(scaleConn->tensor->IsConstant());
+            auto scale = TensorToShape(scaleConn->tensor.get(), scaleConn->shape.Elements());
+            attr->scaleY.n = scale[0];
+            attr->scaleY.d = scale[1];
+            attr->scaleX.n = scale[2];
+            attr->scaleX.d = scale[3];
+        }
+        // Offset can be a compile time constant tensor
+        if ( const auto offsetConn = operation->Input(TensorUsage::Params1) )
+        {
+            assert(offsetConn->tensor->IsConstant());
+            auto offset = TensorToShape(offsetConn->tensor.get(), offsetConn->shape.Elements());
+            attr->offset.x = offset[1];
+            attr->offset.y = offset[0];
+        }
+        // Border can be a compile time constant tensor
+        if ( const auto borderConn = operation->Input(TensorUsage::Params2) )
+        {
+            assert(borderConn->tensor->IsConstant());
+            auto border = TensorToShape(borderConn->tensor.get(), borderConn->shape.Elements());
+            attr->border.x = border[1];
+            attr->border.y = border[0];
+        }
+    }
+
+    return operation;
+}
+
+// Convert compile time constant zero point tensors to quantization zero points
+Operation *GraphIrOptimiser::ConvertZeroPointTensors(Graph *const graph, Operation *const operation)
+{
+    UNUSED(graph);
+    auto SetZeroPoint = [&](TensorUsage target, TensorUsage param, bool asUnsigned = false)
+    {
+        if ( const auto zpConn = operation->Input(param) )
+        {
+            assert(zpConn->tensor->IsConstant());
+            const auto targetConn = IsOFM(target) ? operation->Output(target) : operation->Input(target);
+            assert(targetConn);
+            auto dataType = asUnsigned ? zpConn->tensor->Type() & ~unsigned(DataType::Signed) : zpConn->tensor->Type();
+            auto values = zpConn->tensor->View().Values<int64_t>(dataType);
+            targetConn->quantization.zeroPoints = {values.begin(), values.end()};
+        }
+    };
+    switch ( operation->Type() )
+    {
+        case OpType::AvgPool:
+        case OpType::Neg:
+            SetZeroPoint(TensorUsage::IFM, TensorUsage::Params0);
+            SetZeroPoint(TensorUsage::OFM, TensorUsage::Params1);
+            break;
+        case OpType::Conv2D:
+        case OpType::Conv3D:
+        case OpType::DepthwiseConv2D:
+        case OpType::TransposeConv2D:
+            SetZeroPoint(TensorUsage::IFM, TensorUsage::Params0);
+            SetZeroPoint(TensorUsage::Weights, TensorUsage::Params1);
+            break;
+        case OpType::MatMul:
+            SetZeroPoint(TensorUsage::IFM0, TensorUsage::Params0);
+            SetZeroPoint(TensorUsage::IFM1, TensorUsage::Params1);
+            break;
+        case OpType::Rescale:
+        {
+            const auto signAttr = operation->Attribute<sign_attr_t>();
+            SetZeroPoint(TensorUsage::IFM, TensorUsage::Params2, signAttr->input_unsigned);
+            SetZeroPoint(TensorUsage::OFM, TensorUsage::Params3, signAttr->output_unsigned);
+            break;
+        }
+        default:
+            break;
+    }
     return operation;
 }
 
@@ -255,20 +378,66 @@ Operation *GraphIrOptimiser::ConvertResizeOffsets(Graph *const graph, Operation 
 }
 
 template<typename T>
+static T Scale(int64_t v, const Quantization &quant, RoundMode rounding = RoundMode::AUTO, int doubleRound = 0)
+{
+    assert(doubleRound >= 0 && doubleRound < 31 && "Illegal double round");
+    if ( !quant.IsUnitScale() )
+    {
+        const auto &qs = quant.scales.front();
+        assert(qs.shift >= 0 && qs.shift <= 63);
+        int64_t round = 1ll << (qs.shift - 1);                                            // Natural round
+        const int64_t D = (qs.shift > 31 - doubleRound) ? 1ll << (30 - doubleRound) : 0;  // Double round
+        switch ( rounding )
+        {
+            case RoundMode::AUTO:
+            case RoundMode::NATURAL:
+                break;
+            case RoundMode::SYMMETRIC:
+                if ( v < 0 ) round -= 1;
+                break;
+            case RoundMode::TRUNCATE:
+                round = v >= 0 ? 0 : (1ll << qs.shift) - 1;
+                break;
+            case RoundMode::TRUNCATE_TO_LOWER:
+                round = 0;
+                break;
+            case RoundMode::DBL:
+                round += (v >= 0 ? D : -D);
+                break;
+            case RoundMode::DOUBLE_ASYMMETRIC:
+                round += D;
+                break;
+            default:
+                assert(false && "Unsupported rounding");
+        }
+        v *= qs.scale;
+        v = (v + round) >> qs.shift;
+        assert(v > std::numeric_limits<T>::min() && v < std::numeric_limits<T>::max() && "Overflow - Unpredictable result");
+    }
+    return T(v);
+}
+
+template<typename T>
 struct EwShl
 {
-    T operator()(T a, T b)
+    int64_t operator()(T a, T b)
     {
         assert(b >= 0);
-        return T(std::make_unsigned_t<T>(a) << std::make_unsigned_t<T>(b));
+        return int64_t(std::make_unsigned_t<T>(a) << std::make_unsigned_t<T>(b));
     }
+};
+
+template<typename T>
+struct EwMul
+{
+    int64_t operator()(T a, T b) { return int64_t(a) * int64_t(b); }
 };
 
 template<typename T>
 static std::vector<T> BroadcastValues(const Tensor *in, const Shape &oShape)
 {
     const Shape &iShape = in->StorageShape();
-    const auto &iData = in->View().Values<T>();
+    const auto &iData = in->View().Values<T>(in->Type());
     const int elementCnt = oShape.Elements();
 
     std::vector<T> ret(elementCnt);
@@ -324,7 +493,7 @@ std::shared_ptr<Buffer> ConstPropEw(Operation *const operation)
 
     for ( int i = 0; i < oShape.Elements(); i++ )
     {
-        c[i] = F<T>()(v0[i], v1[i]);
+        c[i] = Scale<T>(F<T>()(v0[i], v1[i]), ofmConn->quantization, ofmConn->rounding);
     }
 
     return std::make_shared<Buffer>(std::move(c));
@@ -338,23 +507,13 @@ std::shared_ptr<Buffer> ConstPropEw(Operation *const operation)
     switch ( dataType )
     {
         case DataType::Int8:
-        {
             return ConstPropEw<F, int8_t>(operation);
-        }
-        break;
         case DataType::Int16:
-        {
             return ConstPropEw<F, int16_t>(operation);
-        }
-        break;
         case DataType::Int32:
-        {
             return ConstPropEw<F, int32_t>(operation);
-        }
-        break;
         default:
             return {};
-            break;
     }
 }
 
@@ -365,10 +524,17 @@ Operation *GraphIrOptimiser::ConstPropagation(Graph *const graph, Operation *con
     {
         if ( !IsIFM(usage) ) continue;
 
-        if ( !ifmConn.tensor->IsConstant() )
+        if ( !ifmConn.tensor->IsConstant() || !ifmConn.quantization.IsUnitScale() )
         {
             return operation;
         }
+    }
+
+    auto *ofmConn = operation->Output(TensorUsage::OFM);
+    if ( ofmConn->quantization.type != QuantizationType::EXPLICIT )
+    {
+        // TODO: Remove this restriction when MLBEDSW-10086 is implemented
+        return operation;
     }
 
     // Op has only constant input and result can be computed
@@ -376,17 +542,17 @@ Operation *GraphIrOptimiser::ConstPropagation(Graph *const graph, Operation *con
     switch ( operation->Type() )
     {
         case OpType::SHL:
-        {
             ofmBuf = ConstPropEw<EwShl>(operation);
-        }
-        break;
+            break;
+        case OpType::Mul:
+            ofmBuf = ConstPropEw<EwMul>(operation);
+            break;
         default:
             break;
     }
 
     if ( ofmBuf )
     {
-        auto *ofmConn = operation->Output(TensorUsage::OFM);
         auto *ofm = ofmConn->tensor.get();
         ofm->SetBuffer(ofmBuf);
 
@@ -489,8 +655,6 @@ Operation *GraphIrOptimiser::RewriteRescaleInputs(Graph *const, Operation *const
         auto ifmConn = operation->Input(TensorUsage::IFM);
         auto mulConn = operation->Input(TensorUsage::Params);
         auto shiftConn = operation->Input(TensorUsage::Params1);
-        auto mulView = mulConn->tensor->View();
-        auto shiftView = shiftConn->tensor->View();
         auto inT = ifmConn->tensor->Type();
         auto mulT = mulConn->tensor->Type();
         auto shiftT = shiftConn->tensor->Type();
@@ -499,17 +663,15 @@ Operation *GraphIrOptimiser::RewriteRescaleInputs(Graph *const, Operation *const
         std::vector<QuantizedScale> newScale;
         auto *attr = operation->Attribute<rescale_attr_t>();
         int channels = attr->per_channel ? ofmConn->shape.Depth() : 1;
+        const auto mulValues = mulConn->tensor->View().Values<int32_t>(mulT);
+        const auto shiftValues = shiftConn->tensor->View().Values<int8_t>();
         for ( int i = 0; i < channels; i++ )
         {
-            QuantizedScale qScale;
-            int32_t scale = mulT == DataType::Int32 ? mulView.Values<int32_t>()[i] : mulView.Values<int16_t>()[i];
-            int32_t shift = shiftView.Values<int8_t>()[i];
+            int32_t scale = mulValues[i];
+            int32_t shift = shiftValues[i];
             assert(attr->scale32 || static_cast<int16_t>(scale) == scale);
             assert(static_cast<int8_t>(shift) == shift);
-
-            qScale.scale = attr->scale32 ? scale : static_cast<int16_t>(scale);
-            qScale.shift = shift;
-            newScale.emplace_back(qScale);
+            newScale.emplace_back(QuantizedScale{attr->scale32 ? scale : static_cast<int16_t>(scale), shift});
         }
         ofmConn->quantization.scales = std::move(newScale);
         auto rescaleOp = operation->shared_from_this();
@@ -620,6 +782,7 @@ Operation *GraphIrOptimiser::RewriteRescale(Graph *const, Operation *const opera
             {
                 auto castOp = std::make_shared<Operation>(OpType::Cast);
                 std::shared_ptr<Tensor> ifm32Tens = ifmConn->tensor->Clone();
+                ifm32Tens->SetBuffer(nullptr);
 
                 castOp->ConnectInput(TensorUsage::IFM, ifmConn->tensor).quantization.zeroPoints = ifmConn->quantization.zeroPoints;
                 ifmConn->quantization.zeroPoints.clear();
@@ -825,8 +988,9 @@ Operation *GraphIrOptimiser::RewritePad(Graph *const, Operation *const operation
         const int padConst = int(attr->pad_const) + zeroPoint;
 
         // Decode the padding before and after each dimension as two shapes
-        Shape paddingBefore = TensorToShape(paramsConn->tensor.get(), paramsConn->shape.Width(), 2, 0);
-        Shape paddingAfter = TensorToShape(paramsConn->tensor.get(), paramsConn->shape.Width(), 2, 1);
+        assert(paramsConn->shape.Elements() == 2 * ifmConn->shape.Size());
+        Shape paddingBefore = TensorToShape(paramsConn->tensor.get(), ifmConn->shape.Size(), 2, 0);
+        Shape paddingAfter = TensorToShape(paramsConn->tensor.get(), ifmConn->shape.Size(), 2, 1);
 
         std::shared_ptr<Tensor> padTensor;
         DataType dataType = ofmConn->tensor->Type();
@@ -1407,7 +1571,7 @@ Operation *GraphIrOptimiser::RewriteSlice(Graph *const graph, Operation *const o
     {
         const auto *ifmConn = operation->Input(TensorUsage::IFM);
         const auto *ofmConn = operation->Output(TensorUsage::OFM);
-        const auto *attr = operation->Attribute<slice_attr_t>();
+        auto *attr = operation->Attribute<slice_attr_t>();
         const Shape begin = attr->begin;
         const Shape size = attr->size;
 
@@ -1520,6 +1684,7 @@ Operation *GraphIrOptimiser::RewriteReduceSum(Graph *const graph, Operation *con
 
             // Create intermediate tensor between Transpose and ReduceSum
             std::shared_ptr<Tensor> transposeTens = ifmConn->tensor->Clone();
+            transposeTens->SetBuffer(nullptr);
             transposeTens->SetName(ifmConn->tensor->Name() + "_transpose");
             transposeTens->SetStorageShape(ifmShape3D.Extract(0, 2, 1));
 
@@ -1665,10 +1830,7 @@ Operation *GraphIrOptimiser::RewriteTile(Graph *const, Operation *const operatio
     assert(params);
 
     // Convert params tensor to vector
-    auto view = params->tensor->View();
-    assert(params->tensor->Type() == DataType::Int32);
-
-    Shape multiples(view.Buffer()->Data<int32_t>(), view.ViewShape().Elements());
+    Shape multiples = TensorToShape(params->tensor.get(), params->shape.Elements());
 
     // axisMask contains ones for every axis that needs to be tiled.
     // e.g. if H,W are tiled, axisMask will be 0110
@@ -2019,7 +2181,6 @@ Operation *GraphIrOptimiser::RewriteTransposeConvOFMPadding(Graph *const graph, 
     auto attr = operation->Attribute<transpose_conv2d_attr_t>();
     assert(attr);
     assert(attr->outPadTBLR.IsValid());
-    assert(attr->outShape.IsValid());
     if ( attr->outPadTBLR.IsEmpty() )
     {
         // no out-padding

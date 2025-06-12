@@ -24,6 +24,7 @@
 #include "common/box.hpp"
 #include "common/numeric_util.hpp"
 #include "common/vector_span.hpp"
+#include "compiler/operation_util.hpp"
 #include "high_level_command_stream.hpp"
 #include "scheduler.hpp"
 
@@ -448,9 +449,7 @@ static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, 
             auto *ifmConn = schedOp->Input(TensorUsage::IFM);
             auto *params = schedOp->Input(TensorUsage::Params);
             assert(params);
-            assert(params->Type() == DataType::Int32);
-            auto view = params->tensor->srcTensor->View();
-            Shape multiples(view.Buffer()->Data<int32_t>(), view.ViewShape().Elements());
+            Shape multiples = TensorToShape(params->tensor->srcTensor.get(), params->shape.Elements());
             multiples = Shape::PadAxes(multiples, ifmConn->shape.Size(), 1);
             unsigned axisMask = multiples.GreaterMask(multiples.WithOnes());
             assert((axisMask == 0 || IsPowerOfTwo(axisMask)) && "TILE operation should only have one tiled axis");

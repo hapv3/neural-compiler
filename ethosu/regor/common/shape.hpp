@@ -76,21 +76,23 @@ public:
         At(3) = n;
     }
 
-    template<typename TYPE>
-    Shape(const TYPE *axes, size_t length)
+    template<class Iterator, std::enable_if_t<std::is_integral<typename std::iterator_traits<Iterator>::value_type>::value, bool> = true>
+    Shape(Iterator first, size_t length)
     {
         assert(length < size_t(std::numeric_limits<int>::max()));
         Init(int(length));
-        if ( axes != nullptr )
+        auto *local = Storage();
+        // Reverses input into position
+        assert(size_t(_last) == length - 1);
+        for ( size_t i = 0; i < length; i++ )
         {
-            auto *local = Storage();
-            // Reverses input into position
-            assert(size_t(_last) == length - 1);
-            for ( size_t i = 0; i < length; i++ )
-            {
-                local[_last - i] = int32_t(axes[i]);
-            }
+            local[_last - i] = int32_t(*first++);
         }
+    }
+
+    template<class Iterator, std::enable_if_t<std::is_integral<typename std::iterator_traits<Iterator>::value_type>::value, bool> = true>
+    Shape(Iterator first, Iterator end) : Shape(first, size_t(std::distance(first, end)))
+    {
     }
 
     Shape(std::nullptr_t, int length, int fillValue = 0) { Init(length, fillValue); }

@@ -470,6 +470,8 @@ public:
         return _get(_data, index);
     }
 
+    size_t Count() const { return _count; }
+
     // Simple wrapping iterator
     template<typename VALUE>
     struct iterator_base_t
@@ -642,7 +644,7 @@ public:
                     v *= axisElements[i];
                 }
 
-                _strideBytes = Shape(&strides[0], sz);
+                _strideBytes = Shape(strides.data(), sz);
             }
         }
         else
@@ -715,6 +717,8 @@ public:
                 return Values<int8_t, TYPE>();
             case DataType::UInt8:
                 return Values<uint8_t, TYPE>();
+            case DataType::Bool8:
+                return Values<uint8_t, TYPE>();
             case DataType::Int16:
                 return Values<int16_t, TYPE>();
             case DataType::UInt16:
@@ -723,6 +727,8 @@ public:
                 return Values<int32_t, TYPE>();
             case DataType::UInt32:
                 return Values<uint32_t, TYPE>();
+            case DataType::Int48:
+                return Values<int48_t, TYPE>();
             case DataType::Int64:
                 return Values<int64_t, TYPE>();
             case DataType::UInt64:

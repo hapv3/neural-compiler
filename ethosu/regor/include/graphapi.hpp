@@ -52,6 +52,7 @@ enum class GraphTensorUsage : uint32_t
     Params0 = Params,
     Params1 = 0x100 | Params,
     Params2 = 0x200 | Params,
+    Params3 = 0x300 | Params,
 };
 
 constexpr inline GraphTensorUsage MakeTensorUsage(GraphTensorUsage type, int index)
@@ -76,6 +77,7 @@ enum class AxisOrder : uint16_t
 /// </summary>
 enum class GraphDataType : uint16_t
 {
+    Unknown = 0,
     Bool8 = 1,
     Int4Packed8,
     Int8,
@@ -88,6 +90,8 @@ enum class GraphDataType : uint16_t
     UInt32,
     UInt48,
     UInt64,
+    Float8e4m3,
+    Float8e5m2,
     BFloat16,
     Float16,
     Float32,
@@ -172,8 +176,6 @@ enum class BufferMapping
 };
 
 // Freeform syntax versioning
-static constexpr uint32_t VERSION_TOSA_0_60 = 0x00003C00;
-static constexpr uint32_t VERSION_TOSA_0_80 = 0x00005000;
 static constexpr uint32_t VERSION_TOSA_1_00 = 0x01000000;
 static constexpr int32_t PROFILE_BASELINE = 0;
 static constexpr int32_t PROFILE_MAIN = 1;

@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -31,16 +31,17 @@ namespace regor
 static constexpr std::pair<tosaFb::DType, GraphApi::GraphDataType> s_tensorTypeToDataType[] = {
     // clang-format off
     {tosaFb::DType::BOOL,          GraphApi::GraphDataType::Bool8},
-    {tosaFb::DType::UINT8,         GraphApi::GraphDataType::UInt8},
     {tosaFb::DType::INT4,          GraphApi::GraphDataType::Int4Packed8},
     {tosaFb::DType::INT8,          GraphApi::GraphDataType::Int8},
     {tosaFb::DType::INT16,         GraphApi::GraphDataType::Int16},
     {tosaFb::DType::INT32,         GraphApi::GraphDataType::Int32},
     {tosaFb::DType::INT48,         GraphApi::GraphDataType::Int48},
     {tosaFb::DType::FP32,          GraphApi::GraphDataType::Float32},
-    {tosaFb::DType::UINT16,        GraphApi::GraphDataType::UInt16},
     {tosaFb::DType::FP16,          GraphApi::GraphDataType::Float16},
     {tosaFb::DType::BF16,          GraphApi::GraphDataType::BFloat16},
+    {tosaFb::DType::SHAPE,         GraphApi::GraphDataType::Int64},
+    {tosaFb::DType::FP8E4M3,       GraphApi::GraphDataType::Float8e4m3},
+    {tosaFb::DType::FP8E5M2,       GraphApi::GraphDataType::Float8e5m2},
     // clang-format on
 };
 
@@ -52,12 +53,13 @@ static constexpr std::pair<tosaFb::Op, tosa::Op> s_FBOpToOp[] = {
     {tosaFb::Op::CONV2D, tosa::Op::CONV2D},
     {tosaFb::Op::CONV3D, tosa::Op::CONV3D},
     {tosaFb::Op::DEPTHWISE_CONV2D, tosa::Op::DEPTHWISE_CONV2D},
-    {tosaFb::Op::FULLY_CONNECTED, tosa::Op::FULLY_CONNECTED},
+    {tosaFb::Op::FFT2D, tosa::Op::FFT2D},
     {tosaFb::Op::MATMUL, tosa::Op::MATMUL},
     {tosaFb::Op::MAX_POOL2D, tosa::Op::MAX_POOL2D},
+    {tosaFb::Op::RFFT2D, tosa::Op::RFFT2D},
     {tosaFb::Op::TRANSPOSE_CONV2D, tosa::Op::TRANSPOSE_CONV2D},
     {tosaFb::Op::CLAMP, tosa::Op::CLAMP},
-    {tosaFb::Op::RESERVED, tosa::Op::RESERVED},
+    {tosaFb::Op::ERF, tosa::Op::ERF},
     {tosaFb::Op::SIGMOID, tosa::Op::SIGMOID},
     {tosaFb::Op::TANH, tosa::Op::TANH},
     {tosaFb::Op::ADD, tosa::Op::ADD},
@@ -92,8 +94,8 @@ static constexpr std::pair<tosaFb::Op, tosa::Op> s_FBOpToOp[] = {
     {tosaFb::Op::EQUAL, tosa::Op::EQUAL},
     {tosaFb::Op::GREATER, tosa::Op::GREATER},
     {tosaFb::Op::GREATER_EQUAL, tosa::Op::GREATER_EQUAL},
-    {tosaFb::Op::REDUCE_ANY, tosa::Op::REDUCE_ANY},
     {tosaFb::Op::REDUCE_ALL, tosa::Op::REDUCE_ALL},
+    {tosaFb::Op::REDUCE_ANY, tosa::Op::REDUCE_ANY},
     {tosaFb::Op::REDUCE_MAX, tosa::Op::REDUCE_MAX},
     {tosaFb::Op::REDUCE_MIN, tosa::Op::REDUCE_MIN},
     {tosaFb::Op::REDUCE_PRODUCT, tosa::Op::REDUCE_PRODUCT},
@@ -115,10 +117,10 @@ static constexpr std::pair<tosaFb::Op, tosa::Op> s_FBOpToOp[] = {
     {tosaFb::Op::CUSTOM, tosa::Op::CUSTOM},
     {tosaFb::Op::COND_IF, tosa::Op::COND_IF},
     {tosaFb::Op::WHILE_LOOP, tosa::Op::WHILE_LOOP},
-    {tosaFb::Op::FFT2D, tosa::Op::FFT2D},
-    {tosaFb::Op::RFFT2D, tosa::Op::RFFT2D},
-    {tosaFb::Op::ERF, tosa::Op::ERF},
-    {tosaFb::Op::DIM, tosa::Op::DIM},
+    {tosaFb::Op::VARIABLE, tosa::Op::VARIABLE},
+    {tosaFb::Op::VARIABLE_WRITE, tosa::Op::VARIABLE_WRITE},
+    {tosaFb::Op::VARIABLE_READ, tosa::Op::VARIABLE_READ},
+    {tosaFb::Op::CONST_SHAPE, tosa::Op::CONST_SHAPE},
     // clang-format on
 };
 
@@ -151,8 +153,7 @@ constexpr VALUE Lookup(const std::pair<KEY, VALUE> (&arr)[SZ], KEY type)
 {
     auto pos = std::equal_range(std::begin(arr), std::end(arr), std::pair<KEY, VALUE>(type, {}),
         [](const auto &a, const auto &b) { return a.first < b.first; });
-    assert(pos.first != std::end(arr));
-    return pos.first->second;
+    return pos.first != std::end(arr) ? pos.first->second : VALUE(0);
 }
 
 GraphApi::GraphDataType TosaMapping::TensorTypeToDataType(tosaFb::DType type)

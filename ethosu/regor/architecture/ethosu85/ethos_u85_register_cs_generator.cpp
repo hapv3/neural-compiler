@@ -25,6 +25,7 @@
 #include "common/data_type.hpp"
 #include "compiler/high_level_command_stream.hpp"
 #include "compiler/op_type.hpp"
+#include "compiler/operation_util.hpp"
 #include "ethos_u85.hpp"
 #define NPU_DISASSEMBLE
 #define NPU_NAMESPACE ethosu85
@@ -593,34 +594,8 @@ bool EthosU85RCSGenerator::IsScalar(const HLCFeatureMap &fm, int32_t &scalarValu
 {
     const auto &buffer = fm.constBuffer;
     // A 1-sized feature map in constant memory is a scalar
-    bool isScalar = fm.shape.Elements() == 1 && buffer;
-    if ( isScalar )
-    {
-        if ( fm.dataType == DataType::Int8 )
-        {
-            scalarValue = buffer->Data<int8_t>()[0];
-        }
-        else if ( fm.dataType == DataType::UInt8 )
-        {
-            scalarValue = buffer->Data<uint8_t>()[0];
-        }
-        else if ( fm.dataType == DataType::Int16 )
-        {
-            scalarValue = buffer->Data<int16_t>()[0];
-        }
-        else if ( fm.dataType == DataType::UInt16 )
-        {
-            scalarValue = buffer->Data<uint16_t>()[0];
-        }
-        else if ( fm.dataType == DataType::Int32 )
-        {
-            scalarValue = buffer->Data<int32_t>()[0];
-        }
-        else
-        {  // Unsupported scalar value
-            isScalar = false;
-        }
-    }
+    bool isScalar = fm.shape.Elements() == 1 && buffer && IsInteger(fm.dataType) && DataTypeSizeBits(fm.dataType) <= 32;
+    if ( isScalar ) scalarValue = Scalar<int32_t>(*buffer, fm.dataType);
     return isScalar;
 }
 

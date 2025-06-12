@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -72,7 +72,6 @@ TEST_CASE("tosa_validator")
 void CreateTestVectors(GraphApi::IGraphBuilder *builder)
 {
     expectedToFail.emplace_back(TestOperation{tosa::Op::ABS, nullptr, "Null GraphOperation"});
-    expectedToFail.emplace_back(TestOperation{tosa::Op::DIM, builder->CreateOp(tosa::Op::DIM, nullptr), "DIM not supported in 0.60"});
     expectedToFail.emplace_back(TestOperation{tosa::Op::SIGMOID, builder->CreateOp(tosa::Op::SIGMOID, nullptr), "SIGMOID unsupported in BI"});
     {
         auto op{builder->CreateOp(tosa::Op::ABS, nullptr)};

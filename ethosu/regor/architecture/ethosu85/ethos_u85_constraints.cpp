@@ -350,7 +350,7 @@ Flags<QueryResult> EthosU85Constraints::OperatorQuery(OpType opType, const ArchO
         {
             req->req.Set(ArchRequirement::Decompose);
         }
-        return QueryResult::NativeConstrainedHasReq;
+        return query ? QueryResult::NativeHasReq : QueryResult::NativeConstrainedHasReq;
     }
 
     // Check direct native support of the opType
@@ -365,6 +365,19 @@ Flags<QueryResult> EthosU85Constraints::OperatorQuery(OpType opType, const ArchO
     {
         // more detailed query might fail
         return QueryResult::NativeConstrained;
+    }
+
+    // Check for supported weight format for convolution type ops
+    if ( opType == OpType::DepthwiseConv2D || opType == OpType::Conv2D || opType == OpType::FullyConnected )
+    {
+        if ( query->weightFormat == WeightFormat::None )
+        {
+            if ( req )
+            {
+                req->req.Set(ArchRequirement::Decompose);
+            }
+            result.Set(QueryResult::HasRequirements);
+        }
     }
 
     // Fusing checks

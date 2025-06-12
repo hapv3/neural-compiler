@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -23,6 +23,7 @@
 
 enum class WeightFormat : uint16_t
 {
+    None = 0,
     Default = 1 << 0,
     Fast = 1 << 1,
     Sparse2_4 = 1 << 2

@@ -94,18 +94,21 @@ REGOR_OP_NAMES = {
     #'DIM',        'OpType::CurrentlyUnsupported'},
 }
 def parse_options
-  options = {profile: 'BI'}
+  options = {profile: 'BI', extensions: ['EXT-INT16', 'EXT-INT4']}
   OptionParser.new do |opts|
     opts.banner = "Usage: tosaValidationGenerator [options]"
     opts.on('-s [ARG]', '--specification [ARG]', "Path to the TOSA Specification git.") do |v|
       options[:spec] = v
     end
-    opts.on('-p [ARG]', '--profile [ARG]', "TOSA profile (BI|MI)") do |v|
+    opts.on('-p [ARG]', '--profile [ARG]', "TOSA profile (BI|MI|PRO-INT|PRO-FP)") do |v|
       options[:profile] = v
     end
     opts.on('-h', '--help', 'Display this help') do
       puts opts
       exit
+    end
+    opts.on('--extensions x,y,z', Array, "Supported extensions") do |extensions|
+      options[:extensions] = extensions
     end
   end.parse!
   if (options[:spec].nil?)
@@ -114,7 +117,7 @@ def parse_options
   if (!File.file?("%s/tosa.xml" % options[:spec]) || !File.file?("%s/tosa_spec.adoc" % options[:spec]))
     abort("No TOSA Specification found at %s" % options[:spec])
   end
-  if (options[:profile] != 'BI')
+  if (options[:profile] != 'BI' && options[:profile] != 'PRO-INT')
     abort("Profile %s not supported." % options[:profile])
   end
   options
@@ -164,7 +167,7 @@ class TosaValidator
   end
 
   def versioned_nametag
-    specArgs = [@specVersion[:major], @specVersion[:minor], @specVersion[:patch], @specVersion[:draft] ? "_draft":"", @profile]
+    specArgs = [@specVersion[:major], @specVersion[:minor], @specVersion[:patch], @specVersion[:draft] ? "_draft":"", @profile.tr('-','_')]
     nametag = "Version_%s_%s_%s%s_Profile_%s" % specArgs
   end
 
@@ -501,7 +504,7 @@ class TosaValidator
       f.write emit_file_header(is_header: true)
 
       f.write "#include \"include/graphapi.hpp\"\n\n"
-      f.write "#include <functional>\n\n"
+      f.write "#include <functional>\n"
       f.write "#include <stdexcept>\n\n"
       f.write "namespace GraphApi\n{\n"
       f.write"struct GraphOperation;\n"
@@ -516,10 +519,10 @@ class TosaValidator
       @level_limits.each { |name, level| f.write indent(1) + "Level%s,\n" % name}
       f.write "};\n\n"
       f.write "struct Context\n{\n"
-      f.write indent(1) + "uint32_t version = GraphApi::VERSION_TOSA_0_80;\n"
+      f.write indent(1) + "uint32_t version = GraphApi::VERSION_TOSA_1_00;\n"
       f.write indent(1) + "int32_t profile = GraphApi::PROFILE_BASELINE;\n"
       f.write indent(1) + "Level level = Level::Level8K;\n"
-      f.write indent(1) + "std::function<const regor::Graph*(const char *)> GetGraph;\n"
+      f.write indent(1) + "std::function<const regor::Graph *(const char *)> GetGraph;\n"
       f.write "};\n\n"
       versions.each { |version| f.write "%s\n" % version }
       f.write "void ValidateOperator(const GraphApi::GraphOperation *graphOp, const Context &context = Context{})"
@@ -553,7 +556,7 @@ class TosaValidator
       patch_string = (patch.empty? || patch.to_i == 0 ? "" : "_" + patch)
       draft_string = draft == "_" ? "" : "_DRAFT"
       tosa_version_const = "GraphApi::VERSION_TOSA_%d_%02d%s%s" % [major.to_i, minor.to_i, patch_string, draft_string]
-      if (profile == "BI")
+      if (profile == "BI" || profile == "PRO_INT")
         tosa_profile_const = "GraphApi::PROFILE_BASELINE"
       elsif (profile == "MAIN")
         tosa_profile_const = "GraphApi::PROFILE_MAIN"
@@ -593,7 +596,7 @@ class Argument
     @shape = xml_argument['shape']
     parse_dimensions
     @element_type = xml_argument['tensor-element-type']
-    if (@element_type == nil && @type != nil)
+    if ((@element_type == nil || @element_type == '-') && @type != nil)
       @element_type = @type.chomp('*')
     end
     rank_node = xml_argument.get_elements('rank').first
@@ -739,15 +742,31 @@ class Operation
     typenames = []
     xml_typesupports = xml_operator.get_elements('./typesupport')
     if (xml_typesupports.size() > 0)
-      xml_types = xml_operator.get_elements('./types').first.get_elements('./type')
-      xml_types.each {|xml_type| typenames.append(xml_type['name'])}
-      xml_typesupports.each {|t| parse_typesupport(t, types, typenames)}
+      xml_types_elem = xml_operator.get_elements('./types')
+      if (xml_types_elem.size() > 0)
+        xml_types = xml_types_elem.first.get_elements('./type')
+        xml_types.each {|xml_type| typenames.append(xml_type['name'])}
+        xml_typesupports.each {|t| parse_typesupport(t, types, typenames)}
+      end
     end
     types
   end
 
-  def parse_typesupport(xml_typesupport, types, typenames)
+  def supported_type(xml_typesupport)
     if (xml_typesupport.children.size == 0)
+      true
+    else
+      supported_profiles = $options[:extensions]
+      supported_profiles.append($options[:profile])
+      profiles = []
+      op_profiles = xml_typesupport.get_elements('./op_profile')
+      op_profiles.each {|op_profile| profiles.append(op_profile['name'])}
+      (supported_profiles & profiles).any?
+    end
+  end
+
+  def parse_typesupport(xml_typesupport, types, typenames)
+    if (supported_type(xml_typesupport))
       mode_types = {}
       mode = xml_typesupport['mode']
       typenames.each {|typename| mode_types[typename] = xml_typesupport[typename] }
@@ -820,11 +839,11 @@ def name_tag(obj)
   tag
 end
 
-options = parse_options
-xmlfile = File.new("%s/tosa.xml" % options[:spec])
+$options = parse_options
+xmlfile = File.new("%s/tosa.xml" % $options[:spec])
 xml = REXML::Document.new(xmlfile)
-doc = Asciidoctor.load_file "%s/tosa_spec.adoc" % options[:spec], safe: :safe, attributes: "generated=%s/out/gen pseudocode=%s/pseudocode" % [File.expand_path(options[:spec]), File.expand_path(options[:spec])]
-validator = TosaValidator.new(xml, doc, 'BI', '8K')
+doc = Asciidoctor.load_file "%s/tosa_spec.adoc" % $options[:spec], safe: :safe, attributes: "generated=%s/out/gen pseudocode=%s/pseudocode" % [File.expand_path($options[:spec]), File.expand_path($options[:spec])]
+validator = TosaValidator.new(xml, doc, $options[:profile], '8K')
 validator.update_argument_checks
 validator.update_error_checks
 validator.update_level_checks

@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -42,7 +42,7 @@ Tensor::Tensor(const std::string &name, DataType type, Shape shape) :
 {
 }
 
-Tensor::Tensor(const std::string &name, DataType type, Shape shape, const std::shared_ptr<Buffer> &buffer) :
+Tensor::Tensor(const std::string &name, DataType type, Shape shape, const std::shared_ptr<class Buffer> &buffer) :
         _name(name), _type(type), _uid(GenerateUniqueId()), _storageShape(shape), _buffer(buffer)
 {
     assert(DataTypeStorageSizeBytes(type, shape.Elements()) <= buffer->Size());

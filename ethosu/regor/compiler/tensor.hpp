@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -55,7 +55,7 @@ private:
 public:
     Tensor(const std::string &name, DataType type);
     Tensor(const std::string &name, DataType type, Shape shape);
-    Tensor(const std::string &name, DataType type, Shape shape, const std::shared_ptr<Buffer> &buffer);
+    Tensor(const std::string &name, DataType type, Shape shape, const std::shared_ptr<class Buffer> &buffer);
 
     const std::string &Name() const { return _name; }
     void SetName(const std::string &name) { _name = name; }
@@ -65,6 +65,7 @@ public:
     const Shape &StorageShape() const { return _storageShape; }
     void SetStorageShape(const Shape &shape) { _storageShape = shape; }
     void SetBuffer(const std::shared_ptr<Buffer> &buffer) { _buffer = buffer; }
+    const class Buffer *Buffer() const { return _buffer.get(); }
 
     BufferView View() const;
     bool IsConstant() const;

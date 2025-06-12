@@ -112,6 +112,13 @@ static constexpr std::pair<tosa::Op, regor::OpType> s_aTosaMapping[] = {
     //{tosa::Op::RFFT2D,     OpType::CurrentlyUnsupported},
     //{tosa::Op::ERF,        OpType::CurrentlyUnsupported},
     //{tosa::Op::DIM,        OpType::CurrentlyUnsupported},
+    //{tosa::Op::COS,        OpType::CurrentlyUnsupported},
+    //{tosa::Op::SIN,        OpType::CurrentlyUnsupported},
+    //{tosa::Op::YIELD,      OpType::CurrentlyUnsupported},
+    //{tosa::Op::VARIABLE,   OpType::CurrentlyUnsupported},
+    //{tosa::Op::VARIABLE_WRITE,    OpType::CurrentlyUnsupported},
+    //{tosa::Op::VARIABLE_READ,     OpType::CurrentlyUnsupported},
+    //{tosa::Op::CONST_SHAPE,       OpType::CurrentlyUnsupported},
 };
 
 static constexpr std::pair<GraphApi::GraphDataType, regor::DataType> s_aTypeMapping[] = {
@@ -127,6 +134,8 @@ static constexpr std::pair<GraphApi::GraphDataType, regor::DataType> s_aTypeMapp
     {GraphApi::GraphDataType::UInt32,     DataType::UInt32},
     {GraphApi::GraphDataType::UInt48,     DataType::UInt48},
     {GraphApi::GraphDataType::UInt64,     DataType::UInt64},
+    {GraphApi::GraphDataType::Float8e4m3, DataType::Float8e4m3},
+    {GraphApi::GraphDataType::Float8e5m2, DataType::Float8e5m2},
     {GraphApi::GraphDataType::BFloat16,   DataType::BFloat16},
     {GraphApi::GraphDataType::Float16,    DataType::Float16},
     {GraphApi::GraphDataType::Float32,    DataType::Float32},
@@ -180,7 +189,7 @@ bool GraphBuilder::RequireSyntaxVersion(uint32_t version, int32_t level)
 {
     _syntaxVersion = (version & 0xFFFFFF00) | uint32_t(level);
 
-    if ( _syntaxVersion > (GraphApi::VERSION_TOSA_0_80 | GraphApi::PROFILE_BASELINE) )  // 0.80.Baseline
+    if ( _syntaxVersion > (GraphApi::VERSION_TOSA_1_00 | GraphApi::PROFILE_BASELINE) )  // 1.0.Baseline
     {
         return false;
     }
