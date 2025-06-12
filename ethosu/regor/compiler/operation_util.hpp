@@ -59,8 +59,8 @@ inline std::shared_ptr<Tensor> CreateConstTensor(
 template<typename T>
 std::shared_ptr<Tensor> CreateConstTensor(const std::string &name, T value)
 {
-    auto buf = std::make_shared<Buffer>(std::vector<T>{value});
-    return CreateConstTensor(name, DataTypeOf<T>::value, buf);
+    using T2 = typename std::conditional<std::is_same<T, bool>::value, uint8_t, T>::type;
+    return CreateConstTensor(name, DataTypeOf<T>::value, std::make_shared<Buffer>(Buffer::ConstValue<T2>(T2(value))));
 }
 
 // Create a single element constant tensor with the specified data type and value (value is not bounds-checked)

@@ -136,10 +136,9 @@ public:
     Buffer(const ConstValue<TYPE> &value) :
             _typeHash(TypeHash<TYPE>::value), _utypeHash(TypeHash<std::make_unsigned_t<TYPE>>::value)
     {
-        _refData.constValue = uint64_t(value._value);
+        _refData.constValue = uint64_t(std::make_unsigned_t<TYPE>(value._value));
         _sizeBytes = sizeof(TYPE);
         _placement = Placement::LocalConst;
-        _dataHash.v32[0] = uint32_t(value._value);
     }
 
     template<typename TYPE, std::enable_if_t<IsSupportedIntegral<TYPE>::value, int> = 0>

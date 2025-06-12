@@ -27,8 +27,11 @@ namespace regor
 {
 
 // Table of allowed ifm/ofm data type combinations for each HWOp
-static const std::array<DataType, 5> s_defaultAllTypes = {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64};
-static const std::array<DataType, 5> s_defaultAllTypesExcl64 = {
+static const std::array<DataType, 6> s_defaultAllTypes = {
+    DataType::Bool8, DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64};
+static const std::array<DataType, 5> s_defaultIntegerTypes = {
+    DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64};
+static const std::array<DataType, 5> s_defaultIntegerTypesExcl64 = {
     DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64};
 static const std::array<DataType, 5> s_reduceMinMaxTypes = {
     DataType::Bool8, DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32};
@@ -43,21 +46,21 @@ static const std::array<DataType, 2> s_defaultInt32_64 = {DataType::Int32, DataT
 static const std::unordered_map<EthosU85NpuOp, std::unordered_map<DataType, readonly_span_t<DataType>>> s_opDataTypeSupport = {
     {EthosU85NpuOp::Convolution,
         {
-            {DataType::UInt8, s_defaultAllTypes},
-            {DataType::Int8, s_defaultAllTypes},
-            {DataType::Int16, s_defaultAllTypes},
+            {DataType::UInt8, s_defaultIntegerTypes},
+            {DataType::Int8, s_defaultIntegerTypes},
+            {DataType::Int16, s_defaultIntegerTypes},
         }},
     {EthosU85NpuOp::Depthwise,
         {
-            {DataType::UInt8, s_defaultAllTypes},
-            {DataType::Int8, s_defaultAllTypes},
-            {DataType::Int16, s_defaultAllTypes},
+            {DataType::UInt8, s_defaultIntegerTypes},
+            {DataType::Int8, s_defaultIntegerTypes},
+            {DataType::Int16, s_defaultIntegerTypes},
         }},
     {EthosU85NpuOp::VectorProduct,
         {
-            {DataType::UInt8, s_defaultAllTypes},
-            {DataType::Int8, s_defaultAllTypes},
-            {DataType::Int16, s_defaultAllTypes},
+            {DataType::UInt8, s_defaultIntegerTypes},
+            {DataType::Int8, s_defaultIntegerTypes},
+            {DataType::Int16, s_defaultIntegerTypes},
         }},
     {EthosU85NpuOp::Pooling,
         {
@@ -76,10 +79,10 @@ static const std::unordered_map<EthosU85NpuOp, std::unordered_map<DataType, read
         }},
     {EthosU85NpuOp::ReduceSum,
         {
-            {DataType::UInt8, s_defaultAllTypesExcl64},
-            {DataType::Int8, s_defaultAllTypesExcl64},
-            {DataType::Int16, s_defaultAllTypesExcl64},
-            {DataType::Int32, s_defaultAllTypesExcl64},
+            {DataType::UInt8, s_defaultIntegerTypesExcl64},
+            {DataType::Int8, s_defaultIntegerTypesExcl64},
+            {DataType::Int16, s_defaultIntegerTypesExcl64},
+            {DataType::Int32, s_defaultIntegerTypesExcl64},
         }},
     {EthosU85NpuOp::ArgMax,
         {
@@ -90,9 +93,9 @@ static const std::unordered_map<EthosU85NpuOp, std::unordered_map<DataType, read
         }},
     {EthosU85NpuOp::Resize,
         {
-            {DataType::UInt8, s_defaultAllTypes},
-            {DataType::Int8, s_defaultAllTypes},
-            {DataType::Int16, s_defaultAllTypes},
+            {DataType::UInt8, s_defaultIntegerTypes},
+            {DataType::Int8, s_defaultIntegerTypes},
+            {DataType::Int16, s_defaultIntegerTypes},
         }},
 };
 
@@ -267,7 +270,6 @@ bool EthosU85Constraints::SupportedDtypes(OpType opType, DataType ifmType, DataT
     }
     else
     {
-        // TODO elementwise
         readonly_span_t<DataType> ifmTypes = s_defaultAllTypes;
         ofmTypes = s_defaultAllTypes;
 

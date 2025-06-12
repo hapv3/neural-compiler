@@ -89,7 +89,7 @@ Tensor *GraphIrOptimiser::ConvertBool8Tensors(Graph *graph, Tensor *tensor)
             // Create and insert an elementwise CMP_NE to convert to internal bool representation
             auto newOp = std::make_shared<Operation>(OpType::NotEqual);
             newOp->ConnectInput(TensorUsage::IFM0, graphInputTensor);
-            newOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_zero", int8_t(0)));
+            newOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_zero", bool(false)));
             newOp->ConnectOutput(TensorUsage::OFM, newTensor);
             RecordOptimisation(graph, newOp.get());
             returnTensor = graphInputTensor.get();
@@ -105,7 +105,7 @@ Tensor *GraphIrOptimiser::ConvertBool8Tensors(Graph *graph, Tensor *tensor)
             // Create and insert an elementwise BITWISE_AND to convert from internal bool representation
             auto newOp = std::make_shared<Operation>(OpType::And);
             newOp->ConnectInput(TensorUsage::IFM0, newTensor);
-            newOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_one", int8_t(1)));
+            newOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_one", bool(true)));
             newOp->ConnectOutput(TensorUsage::OFM, graphOutputTensor);
             RecordOptimisation(graph, newOp.get());
             returnTensor = newTensor.get();

@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -271,6 +271,11 @@ template<typename T>
 struct DataTypeOf
 {
     static constexpr DataType value = DataType::None;
+};
+template<>
+struct DataTypeOf<bool>
+{
+    static constexpr DataType value = DataType::Bool8;
 };
 template<>
 struct DataTypeOf<int8_t>
