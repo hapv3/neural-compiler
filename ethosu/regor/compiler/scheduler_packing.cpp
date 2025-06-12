@@ -738,6 +738,8 @@ std::vector<std::unique_ptr<SchedulerOperation>> SchedulerPacking::DecomposeSche
 
     switch ( op->Type() )
     {
+        case OpType::FullyConnected:
+            [[fallthrough]];
         case OpType::Conv2D:
             result = DecomposeConv2D(_arch, std::move(op));
             break;

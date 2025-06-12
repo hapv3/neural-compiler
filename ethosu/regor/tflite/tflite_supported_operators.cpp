@@ -207,18 +207,6 @@ bool TfLiteSupportedOperators::ConstraintFCWeightShape(const Operation *op)
         return false;
     }
 
-    // IC and OC must be smaller than 2^16
-    // TODO MLBEDSW-10739: Decompose FullyConnected
-    if ( shape[0] > (1 << 16) )
-    {
-        Failure(op, fmt::format("Output channels: {}", shape[0]), "Output channels must be less than 2^16");
-        return false;
-    }
-    if ( shape[-1] > (1 << 16) )
-    {
-        Failure(op, fmt::format("Input channels: {}", shape[-1]), "Input channels must be less than 2^16");
-        return false;
-    }
     return true;
 }
 

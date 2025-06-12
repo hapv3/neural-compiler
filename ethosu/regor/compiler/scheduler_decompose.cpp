@@ -270,6 +270,7 @@ bool CanDecompose(Architecture *, const SchedulerOperation *schedOp)
     if ( schedOp->Type() == OpType::AvgPool ) return true;
     if ( schedOp->Type() == OpType::MaxPool ) return true;
     if ( schedOp->Type() == OpType::Resize ) return true;
+    if ( schedOp->Type() == OpType::FullyConnected ) return true;
     return false;
 }
 
