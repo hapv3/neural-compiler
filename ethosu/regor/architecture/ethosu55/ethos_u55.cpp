@@ -738,9 +738,9 @@ int EthosU55OpGroup::Add(const ArchitectureOpGroupQuery &op, const std::vector<i
         }
     }
 
-    if ( _opsCount > 0 && !IsActivation(op.type) )
+    if ( _opsCount > 0 && (!IsActivation(op.type) || IsActivation(_ops[0].type)) )
     {
-        // Can only fuse with activation
+        // Can only fuse with activation. Can also not fuse two consecutive activations.
         return 0;
     }
 
