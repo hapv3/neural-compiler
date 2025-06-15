@@ -591,8 +591,8 @@ TEST_CASE("Supported operators EthosU55")
             op->Disconnect();
         }
         {
-            // stride > 3 is not supported for MaxPool
-            auto op = CreateOperation(OpType::MaxPool, Shape(1, 10, 10, 1), DataType::Int8, Shape(1, 2, 2, 1), DataType::Int8);
+            // stride > 3 is not supported for Add
+            auto op = CreateOperation(OpType::Add, Shape(1, 10, 10, 1), DataType::Int8, Shape(1, 10, 10, 1), DataType::Int8);
             auto kernel = std::make_unique<Kernel>(Point2i{1, 1}, Point2i{5, 5}, Point2i{1, 1}, 1, Margin{0, 0, 0, 0});
             op->SetKernel(std::move(kernel));
             REQUIRE(supportedOps->Check(op.get()) == false);

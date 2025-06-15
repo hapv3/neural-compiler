@@ -1065,18 +1065,24 @@ Operation *GraphIrOptimiser::RewritePad(Graph *const, Operation *const operation
     return returnOp;
 }
 
-Operation *GraphIrOptimiser::UnrollConv(Graph *const, Operation *const operation)
+Operation *GraphIrOptimiser::UnrollKernelStrides(Graph *const, Operation *const operation)
 {
     auto returnOp = operation;
 
-    if ( operation->Type() == OpType::Conv2D )
+    if ( operation->Type() == OpType::Conv2D || operation->Type() == OpType::AvgPool || operation->Type() == OpType::MaxPool )
     {
         const auto ifmConn = operation->Input(TensorUsage::IFM);
         assert(ifmConn);
-        const auto weightsConn = operation->Input(TensorUsage::Weights);
-        assert(weightsConn);
-        const auto scalesConn = operation->Input(TensorUsage::Scales);
-        assert(scalesConn);
+        TensorConnection *weightsConn = nullptr;
+        TensorConnection *scalesConn = nullptr;
+
+        if ( operation->Type() == OpType::Conv2D )
+        {
+            weightsConn = operation->Input(TensorUsage::Weights);
+            assert(weightsConn);
+            scalesConn = operation->Input(TensorUsage::Scales);
+            assert(scalesConn);
+        }
         const auto ofmConn = operation->Output(TensorUsage::OFM);
         assert(ofmConn);
 
@@ -1098,23 +1104,12 @@ Operation *GraphIrOptimiser::UnrollConv(Graph *const, Operation *const operation
         const bool hasIfmSlice = ifmConn->slice.shape.IsValid() || ifmConn->slice.offset.IsValid();
         const bool hasOfmSlice = ofmConn->slice.shape.IsValid() || ofmConn->slice.offset.IsValid();
 
-        tflite::Padding paddingType = tflite::Padding::VALID;
-        const tflite::Operator *const passthrough = static_cast<const tflite::Operator *>(operation->Passthrough());
-        if ( passthrough )
-        {
-            const auto options = passthrough->builtin_options_as_Conv2DOptions();
-            if ( options )
-            {
-                paddingType = options->padding();
-            }
-        }
-
         // Figure out if op needs to be unrolled
         const bool needUnrollH = stride_h > 3;
         const bool needUnrollW = stride_w > 3;
 
         // Figure out if op can be unrolled
-        const bool canUnroll = !hasPadding && !hasIfmSlice && !hasOfmSlice && paddingType == tflite::Padding::VALID;
+        const bool canUnroll = !hasPadding && !hasIfmSlice && !hasOfmSlice && kernel->Padding().IsZero();
         const bool canUnrollH = dilation_h == 1 && canUnroll;
         const bool canUnrollW = dilation_w == 1 && canUnroll;
 
@@ -1141,8 +1136,14 @@ Operation *GraphIrOptimiser::UnrollConv(Graph *const, Operation *const operation
                     op->SetKernel(std::make_unique<Kernel>(kernel->WithStride({1, 1})));
                     op->CopyInput(TensorUsage::IFM, *ifmConn);
                     op->Input(TensorUsage::IFM)->Set(ifmSlice);
-                    op->CopyInput(TensorUsage::Weights, *weightsConn);
-                    op->CopyInput(TensorUsage::Scales, *scalesConn);
+                    if ( weightsConn )
+                    {
+                        op->CopyInput(TensorUsage::Weights, *weightsConn);
+                    }
+                    if ( scalesConn )
+                    {
+                        op->CopyInput(TensorUsage::Scales, *scalesConn);
+                    }
                     op->CopyOutput(TensorUsage::OFM, *ofmConn);
                     op->Output(TensorUsage::OFM)->Set(ofmSlice);
                     RecordOptimisation(*operation, op.get());

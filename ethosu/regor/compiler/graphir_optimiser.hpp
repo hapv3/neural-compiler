@@ -76,7 +76,7 @@ private:
     Operation *ReshapeReverse(Graph *const graph, Operation *const operation);
     void MoveToConsumer(const Operation *const operation, Operation *const cons);
     Operation *MoveSplitSliceToConsumer(Graph *const, Operation *const operation);
-    Operation *UnrollConv(Graph *const, Operation *const operation);
+    Operation *UnrollKernelStrides(Graph *const, Operation *const operation);
     // Utility/Helper methods
     Operation *MakeFillOperation(TensorConnection *const ofmConn, const Shape &ofmShape, const TensorSlice &ofmSlice,
         std::shared_ptr<Tensor> padTensor);
@@ -166,7 +166,7 @@ private:
                 &GraphIrOptimiser::OptimiseElementwise,
                 &GraphIrOptimiser::RearrangeTranspose,
                 &GraphIrOptimiser::ReshapeReverse,
-                &GraphIrOptimiser::UnrollConv
+                &GraphIrOptimiser::UnrollKernelStrides
             }
         },
         // MoveSplitSliceToConsumer need to be done after any other optimisation that can affect the ifm/ofm shapes

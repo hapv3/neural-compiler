@@ -469,9 +469,9 @@ bool TfLiteSupportedOperatorsU55::ConstraintKernelStride(const Operation *op)
     assert(kernel);
     const int32_t stride_w = kernel->Stride().x;
     const int32_t stride_h = kernel->Stride().y;
-    if ( op->Type() == OpType::Conv2D )
+    if ( op->Type() == OpType::Conv2D || op->Type() == OpType::AvgPool || op->Type() == OpType::MaxPool )
     {
-        // Conv2D is handled by ConstraintUnrolledKernelStride
+        // Conv2D and Pooling is handled by ConstraintUnrolledKernelStride
         return true;
     }
     if ( stride_w > 3 || stride_h > 3 )
@@ -484,7 +484,7 @@ bool TfLiteSupportedOperatorsU55::ConstraintKernelStride(const Operation *op)
 
 bool TfLiteSupportedOperatorsU55::ConstraintUnrolledKernelStride(const Operation *op)
 {
-    // Constraints for UnrollConv
+    // Constraints for UnrollKernelStrides
     const static char *constraint =
         "Stride >3 is only supported when:\n"
         "\t * kernel dilation = 1\n"
@@ -496,7 +496,7 @@ bool TfLiteSupportedOperatorsU55::ConstraintUnrolledKernelStride(const Operation
     assert(ifmConn);
     assert(ofmConn);
     assert(kernel);
-    if ( op->Type() != OpType::Conv2D )
+    if ( !(op->Type() == OpType::Conv2D || op->Type() == OpType::AvgPool || op->Type() == OpType::MaxPool) )
     {
         return true;
     }
@@ -517,6 +517,7 @@ bool TfLiteSupportedOperatorsU55::ConstraintUnrolledKernelStride(const Operation
     if ( !canUnroll )
     {
         Failure(op, fmt::format("Unsupported kernel stride: {}, {}", stride_w, stride_h), constraint);
+        return false;
     }
     return true;
 }
