@@ -36,13 +36,17 @@ bool QuantizedScale::operator!=(const QuantizedScale &other) const
 QuantizedScale::QuantizedScale(double scale_, bool reduced)
 {
     int exponent = 0;
-    int leftShift = reduced ? 15 : 31;
     double significand = std::frexp(scale_, &exponent);
     // convert from left to right-shift
-    scale = int32_t(std::round(significand * double(1LL << leftShift)));
-    // make sure reduced scale does not overflow
-    if ( reduced ) scale = ClampToType<int16_t>(scale);
-    shift = leftShift - exponent;
+    scale = int32_t(std::round(significand * double(1LL << 31)));
+    shift = 31 - exponent;
+    if ( reduced )
+    {
+        scale = (scale >> 16) + (scale >> 15 & 1);
+        // make sure reduced scale does not overflow
+        scale = std::min<int32_t>(scale, 0x7FFF);
+        shift -= 16;
+    }
     // if shift is out of bounds [0,63], try to get back within bounds
     if ( shift > 63 )
     {
