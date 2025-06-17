@@ -188,6 +188,7 @@ bool EthosU55Constraints::SupportsRescale(DataType fromType, DataType toType)
 }
 
 
+static const std::array<DataType, 5> s_validAddOfmTypes = {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64};
 static const std::array<DataType, 4> s_validAddMulTypes = {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32};
 static const std::array<DataType, 4> s_validMaxAbsTypes = {DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32};
 static const std::array<DataType, 1> s_validClzShlTypes = {DataType::Int32};
@@ -242,6 +243,11 @@ bool EthosU55Constraints::SupportedDtypes(OpType opType, DataType ifmType, DataT
         switch ( opType )
         {
             case OpType::Add:
+            {
+                ifmTypes = s_validAddMulTypes;
+                ofmTypes = s_validAddOfmTypes;
+            }
+            break;
             case OpType::Sub:
             case OpType::Mul:
             {
