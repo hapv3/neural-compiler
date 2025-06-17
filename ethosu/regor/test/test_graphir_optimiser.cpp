@@ -319,3 +319,97 @@ TEST_CASE("test_graphir_optimiser - replace pad by explicit padding")
     REQUIRE(padding.Near() == 0);
     REQUIRE(padding.Far() == 0);
 }
+
+TEST_CASE("test_graphir_optimiser - fuse rescale with reshape, before")
+{
+    // Create arch
+    auto arch = CreateArchDefault<ArchEthosU85>();
+    std::string err = "noerror";
+    arch->CheckConfiguration(err);
+    REQUIRE(err == "noerror");
+
+    std::vector<std::shared_ptr<Operation>> ops;
+    auto input = CreateTensor("INPUT", Shape(1, 8, 2, 1), DataType::Int8);
+    auto mulParam = CreateTensor("MUL_PARAM", Shape(1, 1), DataType::Int32, 1073741824);
+    auto shiftParam = CreateTensor("SHIFT_PARAM", Shape(1, 1), DataType::Int8, 31);
+    auto rescaleOfm = CreateTensor("RESCALE_OFM", Shape(1, 8, 2, 1), DataType::Int8);
+    auto reshapeOfm = CreateTensor("RESHAPE_OFM", Shape(1, 4, 4, 1), DataType::Int8);
+    auto absOfm = CreateTensor("ABS_OFM", Shape(1, 4, 4, 1), DataType::Int8);
+
+    // Create a RESCALE-RESHAPE-ABS graph
+    ops.push_back(CreateOperation(OpType::Rescale, TensorUsage::IFM, input, TensorUsage::Params0, mulParam,
+        TensorUsage::Params1, shiftParam, TensorUsage::OFM, rescaleOfm));
+    auto *rescaleAttr = ops.back()->Attribute<rescale_attr_t>();
+    rescaleAttr->double_round = false;
+    rescaleAttr->per_channel = false;
+    rescaleAttr->scale32 = true;
+    auto *signAttr = ops.back()->Attribute<sign_attr_t>();
+    signAttr->input_unsigned = false;
+    signAttr->output_unsigned = false;
+    ops.push_back(CreateOperation(OpType::Reshape, TensorUsage::IFM, rescaleOfm, TensorUsage::OFM, reshapeOfm));
+    ops.push_back(CreateOperation(OpType::Abs, TensorUsage::IFM, reshapeOfm, TensorUsage::OFM, absOfm));
+
+    auto graph = CreateGraph(ops);
+
+    GraphOptimiserOptions options;
+    auto optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
+
+    optimiser->Process(graph.get());
+
+    std::vector<Operation *> allOps;
+    graph->GetAllOperations(allOps);
+    REQUIRE(allOps.size() == 1);
+    REQUIRE(allOps[0]->Type() == OpType::Abs);
+    REQUIRE(allOps[0]->Input(TensorUsage::IFM)->SliceShape() == Shape(1, 4, 4, 1));
+    REQUIRE(allOps[0]->Input(TensorUsage::IFM)->quantization.zeroPoints[0] == 0);
+    REQUIRE(allOps[0]->Input(TensorUsage::IFM)->quantization.scales[0].scale == 1073741824);
+    REQUIRE(allOps[0]->Input(TensorUsage::IFM)->quantization.scales[0].shift == 31);
+    REQUIRE(allOps[0]->Output(TensorUsage::OFM)->SliceShape() == Shape(1, 4, 4, 1));
+}
+
+TEST_CASE("test_graphir_optimiser - fuse rescale with reshape, after")
+{
+    // Create arch
+    auto arch = CreateArchDefault<ArchEthosU85>();
+    std::string err = "noerror";
+    arch->CheckConfiguration(err);
+    REQUIRE(err == "noerror");
+
+    std::vector<std::shared_ptr<Operation>> ops;
+    auto input = CreateTensor("INPUT", Shape(1, 4, 4, 1), DataType::Int8);
+    auto absOfm = CreateTensor("ABS_OFM", Shape(1, 4, 4, 1), DataType::Int8);
+    auto reshapeOfm = CreateTensor("RESHAPE_OFM", Shape(1, 8, 2, 1), DataType::Int8);
+    auto mulParam = CreateTensor("MUL_PARAM", Shape(1, 1), DataType::Int32, 1073741824);
+    auto shiftParam = CreateTensor("SHIFT_PARAM", Shape(1, 1), DataType::Int8, 31);
+    auto rescaleOfm = CreateTensor("RESCALE_OFM", Shape(1, 8, 2, 1), DataType::Int8);
+
+    // Create a ABS-RESHAPE-RESCALE graph
+    ops.push_back(CreateOperation(OpType::Abs, TensorUsage::IFM, input, TensorUsage::OFM, absOfm));
+    ops.push_back(CreateOperation(OpType::Reshape, TensorUsage::IFM, absOfm, TensorUsage::OFM, reshapeOfm));
+    ops.push_back(CreateOperation(OpType::Rescale, TensorUsage::IFM, reshapeOfm, TensorUsage::Params0, mulParam,
+        TensorUsage::Params1, shiftParam, TensorUsage::OFM, rescaleOfm));
+    auto *rescaleAttr = ops.back()->Attribute<rescale_attr_t>();
+    rescaleAttr->double_round = false;
+    rescaleAttr->per_channel = false;
+    rescaleAttr->scale32 = true;
+    auto *signAttr = ops.back()->Attribute<sign_attr_t>();
+    signAttr->input_unsigned = false;
+    signAttr->output_unsigned = false;
+
+    auto graph = CreateGraph(ops);
+
+    GraphOptimiserOptions options;
+    auto optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
+
+    optimiser->Process(graph.get());
+
+    std::vector<Operation *> allOps;
+    graph->GetAllOperations(allOps);
+    REQUIRE(allOps.size() == 1);
+    REQUIRE(allOps[0]->Type() == OpType::Abs);
+    REQUIRE(allOps[0]->Input(TensorUsage::IFM)->SliceShape() == Shape(1, 4, 4, 1));
+    REQUIRE(allOps[0]->Output(TensorUsage::OFM)->SliceShape() == Shape(1, 4, 4, 1));
+    REQUIRE(allOps[0]->Output(TensorUsage::OFM)->quantization.zeroPoints[0] == 0);
+    REQUIRE(allOps[0]->Output(TensorUsage::OFM)->quantization.scales[0].scale == 1073741824);
+    REQUIRE(allOps[0]->Output(TensorUsage::OFM)->quantization.scales[0].shift == 31);
+}

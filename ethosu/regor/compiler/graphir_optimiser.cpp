@@ -1264,7 +1264,7 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const graph, Operation *const op
                             // avoid performing this fuse operation.
                             if ( !sameType ) break;
                         }
-                        consumer->CopyInput(ifm.first, *ifmConn);
+                        ReplaceConsumerInput(nullptr, ofmConn->tensor->Readers(), ofmConn->tensor.get(), ifmConn->tensor);
                         ifm.second.quantization = ifmQuant;
                         consumer->Input(ifm.first)->Set(ofmConn->rounding);
                         returnOp = consumer.get();
@@ -1290,7 +1290,7 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const graph, Operation *const op
                  ofmConn->tensor->Type(), producer->IFM(0)->Type(), producer->OFM()->Type(), ofmQuant) )
         {
             // Propagate rescaling to output of previous op
-            producer->CopyOutput(TensorUsage::OFM, *ofmConn);
+            ReplaceProducerOutput(ifmConn->tensor->Writers(), ifmConn->tensor.get(), ofmConn->tensor);
             producer->Output(TensorUsage::OFM)->Set(ofmConn->rounding).Set(ofmQuant);
             returnOp = producer.get();
         }
