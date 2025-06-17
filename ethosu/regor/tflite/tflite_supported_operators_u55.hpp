@@ -22,7 +22,6 @@
 #include "compiler/operation.hpp"
 #include "tflite_supported_operators.hpp"
 
-#include <unordered_set>
 #include <vector>
 
 namespace regor
@@ -30,26 +29,25 @@ namespace regor
 
 class TfLiteSupportedOperatorsU55 : public TfLiteSupportedOperators
 {
-    using OperatorCheck = bool (TfLiteSupportedOperatorsU55::*)(const Operation *);
-
-private:
-    std::vector<OperatorCheck> _checks;
-
 public:
-    TfLiteSupportedOperatorsU55(IArchitectureConstraints *constraints);
-    bool Check(const Operation *) override;
+    TfLiteSupportedOperatorsU55();
 
 private:
-    bool ConstraintBroadcastShapes(const Operation *op);
-    bool ConstraintReverse(const Operation *op);
-    bool Constraint32bitOps(const Operation *op);
-    bool ConstraintKernelStride(const Operation *op);
-    bool ConstraintUnrolledKernelStride(const Operation *op);
-    bool ConstraintMatmul(const Operation *op);
-    bool ConstraintArgMaxDepth(const Operation *op);
-    bool ConstraintArgMaxAxis(const Operation *op);
-    bool ConstraintTranspose(const Operation *op);
-    bool ConstraintTCStrides(const Operation *op);
-    bool ConstraintResize(const Operation *op);
+    ConstraintCheck broadcastShapes;
+    ConstraintCheck reverseMask;
+    ConstraintCheck kernelStride;
+    ConstraintCheck unrolledKernelStride;
+    ConstraintCheck matmulReducedAxis;
+    ConstraintCheck matmulOFMDepth;
+    ConstraintCheck matmulIFMPrecision;
+    ConstraintCheck argMaxDepth;
+    ConstraintCheck transpose32Bit;
+    ConstraintCheck transpose8And16Bit;
+    ConstraintCheck resizeBilinear;
+    ConstraintCheck resizeNearest;
+    ConstraintCheck reject32BitPrecision;
+    ConstraintCheck reject64BitPrecision;
+    ConstraintCheck constrainZeroPoints;
+    ConstraintCheck transposeConvStrides;
 };
 }  // namespace regor

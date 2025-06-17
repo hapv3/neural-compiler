@@ -25,114 +25,113 @@
 #include "compiler/operation_util.hpp"
 #include "compiler/shape_util.hpp"
 
+#include <set>
+#include <unordered_set>
+
 namespace regor
 {
 
-TfLiteSupportedOperatorsU55::TfLiteSupportedOperatorsU55(IArchitectureConstraints *constraints) :
-        TfLiteSupportedOperators(constraints)
-{
-    _supportedOpTypes = {
-        // clang-format off
-        OpType::Add,
-        OpType::AvgPool,
-        OpType::BatchMatMul,
-        OpType::Concat,
-        OpType::Conv2D,
-        OpType::DepthwiseConv2D,
-        OpType::FullyConnected,
-        OpType::Sigmoid,
-        OpType::MaxPool,
-        OpType::Mul,
-        OpType::Relu,
-        OpType::Relu0To1,
-        OpType::Relu6,
-        OpType::ReluN1To1,
-        OpType::Reshape,
-        OpType::Softmax,
-        OpType::Tanh,
-        OpType::Pad,
-        OpType::Transpose,
-        OpType::Mean,
-        OpType::Sub,
-        OpType::Squeeze,
-        OpType::StridedSlice,
-        OpType::Exp,
-        OpType::Split,
-        OpType::Prelu,
-        OpType::Maximum,
-        OpType::ArgMax,
-        OpType::Minimum,
-        OpType::PadV2,
-        OpType::Slice,
-        OpType::TransposeConv2D,
-        OpType::Tile,
-        OpType::ExpandDims,
-        OpType::ReduceSum,
-        OpType::ResizeBilinear,
-        OpType::ResizeNearestNeighbor,
-        OpType::Rsqrt,
-        OpType::Pack,
-        OpType::Unpack,
-        OpType::LeakyRelu,
-        OpType::SquaredDifference,
-        OpType::MirrorPad,
-        OpType::Abs,
-        OpType::SplitV,
-        OpType::Quantize,
-        OpType::HardSwish,
-        OpType::MemoryCopy,
-        OpType::Log,
-        OpType::UnidirectionalSequenceLstm,
-        // clang-format on
-    };
-    _supportedDataTypes = {
-        // clang-format off
-        DataType::UInt8,
-        DataType::Int8,
-        DataType::Int16,
-        DataType::Int32,
-        DataType::Int64,
-        // clang-format on
-    };
-    _maxWeightSum8Bit = 127 * (1 << 16);
-    _maxWeightSum16Bit = 127 * (1 << 16);
-    _maxBias = (1LL << 40) - 1;
-    _checks = {
-        &TfLiteSupportedOperatorsU55::ConstraintBroadcastShapes,
-        &TfLiteSupportedOperatorsU55::ConstraintReverse,
-        &TfLiteSupportedOperatorsU55::Constraint32bitOps,
-        &TfLiteSupportedOperatorsU55::ConstraintArgMaxDepth,
-        &TfLiteSupportedOperatorsU55::ConstraintArgMaxAxis,
-        &TfLiteSupportedOperatorsU55::ConstraintKernelStride,
-        &TfLiteSupportedOperatorsU55::ConstraintUnrolledKernelStride,
-        &TfLiteSupportedOperatorsU55::ConstraintMatmul,
-        &TfLiteSupportedOperatorsU55::ConstraintTranspose,
-        &TfLiteSupportedOperatorsU55::ConstraintTCStrides,
-        &TfLiteSupportedOperatorsU55::ConstraintResize,
-    };
-}
+static const std::set<OpType> s_supportedOpTypes = {
+    OpType::Add,
+    OpType::AvgPool,
+    OpType::BatchMatMul,
+    OpType::Concat,
+    OpType::Conv2D,
+    OpType::DepthwiseConv2D,
+    OpType::FullyConnected,
+    OpType::Sigmoid,
+    OpType::MaxPool,
+    OpType::Mul,
+    OpType::Relu,
+    OpType::Relu0To1,
+    OpType::Relu6,
+    OpType::ReluN1To1,
+    OpType::Reshape,
+    OpType::ReverseV2,
+    OpType::Softmax,
+    OpType::Tanh,
+    OpType::Pad,
+    OpType::Transpose,
+    OpType::Mean,
+    OpType::Sub,
+    OpType::Squeeze,
+    OpType::StridedSlice,
+    OpType::Exp,
+    OpType::Split,
+    OpType::Prelu,
+    OpType::Maximum,
+    OpType::ArgMax,
+    OpType::Minimum,
+    OpType::PadV2,
+    OpType::Slice,
+    OpType::TransposeConv2D,
+    OpType::Tile,
+    OpType::ExpandDims,
+    OpType::ReduceSum,
+    OpType::ResizeBilinear,
+    OpType::ResizeNearestNeighbor,
+    OpType::Rsqrt,
+    OpType::Pack,
+    OpType::Unpack,
+    OpType::LeakyRelu,
+    OpType::SquaredDifference,
+    OpType::MirrorPad,
+    OpType::Abs,
+    OpType::SplitV,
+    OpType::Quantize,
+    OpType::HardSwish,
+    OpType::MemoryCopy,
+    OpType::Log,
+    OpType::UnidirectionalSequenceLstm,
+};
 
-bool TfLiteSupportedOperatorsU55::Check(const Operation *op)
-{
-    for ( auto &check : _genericChecks )
-    {
-        if ( !((this->*check)(op)) ) return false;
-    }
-    for ( auto &check : _checks )
-    {
-        if ( !((this->*check)(op)) ) return false;
-    }
-    return true;
-}
+// generic dataType support
+static const std::set<DataType> s_supportedDataTypes = {
+    DataType::UInt8,
+    DataType::Int8,
+    DataType::Int16,
+    DataType::Int32,
+    DataType::Int64,
+};
 
-bool TfLiteSupportedOperatorsU55::ConstraintBroadcastShapes(const Operation *op)
+static const std::unordered_set<OpType> s_supports32Bit = {
+    OpType::ReduceSum,
+    OpType::ArgMax,
+    OpType::Transpose,
+    OpType::MirrorPad,
+    OpType::Add,
+    OpType::Mul,
+    OpType::Sub,
+    OpType::BatchMatMul,
+    OpType::FullyConnected,
+    OpType::Reshape,
+    OpType::QuantizedReshape,
+    OpType::Squeeze,
+    OpType::ExpandDims,
+    OpType::Identity,
+    OpType::MemoryCopy,
+};
+
+static const std::unordered_set<OpType> s_supports64Bit = {
+    OpType::ArgMax,
+    OpType::MemoryCopy,
+};
+
+// zeroPoints are ignored for the following OpTypes to align with reference
+static const std::unordered_set<OpType> s_ignoreZeroPoints = {
+    OpType::AvgPool,
+    OpType::ResizeBilinear,
+    OpType::ResizeNearestNeighbor,
+    OpType::UnidirectionalSequenceLstm,
+};
+
+namespace
 {
-    static const char *constraint = "One input-tensor must match the shape of the output-tensor.";
-    if ( !IsElementwise(op->Type()) )
-    {
-        // only applied to elementwise ops
-        return true;
-    }
+
+// One input-tensor must match the shape of the output-tensor
+bool BroadcastShapes(const Operation *op)
+{
+    assert(IsElementwise(op->Type()));
     auto ifmConn = op->Input(TensorUsage::IFM);
     auto ifm2Conn = op->Input(TensorUsage::IFM1);
     auto ofmConn = op->Output(TensorUsage::OFM);
@@ -143,121 +142,18 @@ bool TfLiteSupportedOperatorsU55::ConstraintBroadcastShapes(const Operation *op)
     Shape ifm2Shape = ifm2Conn ? ifm2Conn->shape : Shape();
     if ( ifmShape != ofmShape && (ifm2Shape == false || ifm2Shape != ofmShape) )
     {
-        Failure(op, "Operation has invalid broadcast.", constraint);
+        Failure(op, "Operation has unsupported broadcast.");
         return false;
     }
     return true;
 }
 
-bool TfLiteSupportedOperatorsU55::ConstraintResize(const Operation *op)
+// Axis attributes are not supported
+bool ReverseMask(const Operation *op)
 {
-    OpType opType = op->Type();
-    if ( !(opType == OpType::ResizeBilinear || opType == OpType::ResizeNearestNeighbor) )
-    {
-        return true;
-    }
-    bool halfPixelCentersRB = false;
-    bool alignCorners = false;
-    const auto *passthrough = static_cast<const tflite::Operator *>(op->Passthrough());
-    assert(passthrough);
-
-    if ( opType == OpType::ResizeBilinear )
-    {
-        const auto *opt = passthrough->builtin_options_as_ResizeBilinearOptions();
-        assert(opt);
-        alignCorners = opt->align_corners();
-        halfPixelCentersRB = opt->half_pixel_centers();
-    }
-    else
-    {
-        const auto *opt = passthrough->builtin_options_as_ResizeNearestNeighborOptions();
-        assert(opt);
-        alignCorners = opt->align_corners();
-    }
-    auto ifmConn = op->Input(TensorUsage::IFM);
-    auto ofmConn = op->Output(TensorUsage::OFM);
-    assert(ifmConn);
-    assert(ofmConn);
-    Shape ifmShape = Shape::PadAxes(ifmConn->shape, 4, 1);
-    Shape ofmShape = Shape::PadAxes(ofmConn->shape, 4, 1);
-
-    if ( ifmShape.Height() == 1 && ifmShape.Width() == 1 )
-    {
-        return true;
-    }
-    if ( ifmShape.Height() == ofmShape.Height() && ifmShape.Height() == ofmShape.Height() )
-    {
-        return !halfPixelCentersRB;
-    }
-
-    float hUpscale;
-    float wUpscale;
-    if ( alignCorners )
-    {
-        hUpscale = ofmShape.Height() == 1 ? 1 : float(ofmShape.Height() - 1) / (ifmShape.Height() - 1);
-        wUpscale = ofmShape.Width() == 1 ? 1 : float(ofmShape.Width() - 1) / (ifmShape.Width() - 1);
-    }
-    else
-    {
-        hUpscale = float(ofmShape.Height()) / ifmShape.Height();
-        wUpscale = float(ofmShape.Width()) / ifmShape.Width();
-    }
-    std::string constraint =
-        "If not (IFM H == IFM W == 1) and not IFM Shape == OFM Shape:\n"
-        "\tIf W upScale != H upScale:\n"
-        "\t\tOFM W or H must be 1, and scaling in the dim that is must also be 1\n"
-        "\tIf align corners:\n"
-        "\t\tupScale is definied as OFM H-1 / IFM H - 1\n"
-        "\tElse:\n"
-        "\t\tupScale is defined as OFM H/IFM H\n"
-        "\t\tIF Resize Bilinear and half pixel centers:\n"
-        "\t\t\tupscale needs to be 2x\n"
-        "\t\tElse:\n"
-        "\t\t\tupScale needs to be one of: 2x/4x/8x\n";
-
-
-    if ( hUpscale != wUpscale )
-    {
-        if ( !((ofmShape.Height() == 1 && hUpscale == 1) || (ofmShape.Width() == 1 && wUpscale == 1)) )
-        {
-            Failure(op,
-                fmt::format("HW upScaling is not equal and operation has unsupported parameter combination ofm h={}, h up-scale={}, ofm w={}, w up-scale={}.",
-                    ofmShape.Height(), hUpscale, ofmShape.Width(), wUpscale),
-                constraint);
-            return false;
-        }
-        else if ( halfPixelCentersRB )
-        {
-            Failure(op, fmt::format("HW upScaling is not equal and Resize Bilinear has half pixel centers, h up-scale={}, w up-scale={}.", hUpscale, wUpscale),
-                constraint);
-            return false;
-        }
-    }
-    auto maxUpscale = halfPixelCentersRB ? 2 : 8;
-
-    auto upscale = std::max(hUpscale, wUpscale);
-    if ( !((ifmShape.Height() == 1 && ifmShape.Width() == 1) ||
-             (std::trunc(upscale) == upscale && IsPowerOfTwo(int(upscale)) && upscale > 1 && upscale <= maxUpscale)) )
-    {
-        Failure(op, fmt::format("Scaling matches and operation has unsupported upScaling={}", upscale), constraint);
-        return false;
-    }
-    return true;
-}
-
-
-bool TfLiteSupportedOperatorsU55::ConstraintReverse(const Operation *op)
-{
-    if ( op->Type() != OpType::ReverseV2 )
-    {
-        return true;
-    }
+    assert(op->Type() == OpType::ReverseV2);
     auto params = op->Input(TensorUsage::Params);
     assert(params);
-    if ( !params->tensor->IsConstant() )
-    {
-        return false;
-    }
     auto ofmConn = op->Output(TensorUsage::OFM);
     assert(ofmConn);
     auto view = params->tensor->View();
@@ -265,280 +161,39 @@ bool TfLiteSupportedOperatorsU55::ConstraintReverse(const Operation *op)
     auto mask = ToReverseMask(axes, ofmConn->shape.Size());
     if ( mask != ReverseType::None )
     {
-        Failure(op, fmt::format("Reverse is not supported"), "");
+        Failure(op, fmt::format("Unsupported reverse mask."));
         return false;
     }
     return true;
 }
 
-bool TfLiteSupportedOperatorsU55::ConstraintTranspose(const Operation *op)
-{
-    OpType opType = op->Type();
-    if ( opType != OpType::Transpose )
-    {
-        return true;
-    }
-    auto ifmConn = op->Input(TensorUsage::IFM);
-    auto ofmConn = op->Output(TensorUsage::OFM);
-    auto ifmShape = Shape::PadAxes(ifmConn->shape, 4, 1);
-    auto ifmType = ifmConn->tensor->Type();
-    auto *params = op->Input(TensorUsage::Params);
-    assert(params);
-    Shape perm = TensorToShape(params->tensor.get(), params->shape.Depth());
-    auto transposeMask = TransposeTypeFromShape(perm);
-    if ( ifmType == DataType::Int32 )
-    {
-        static const char *constraint =
-            "IFM Shape constraints for 32-bit Transpose:\n"
-            "  * Rank must be less than or equal to 4\n"
-            "  * Max shape based on permutation:\n"
-            "     NHWC: C <= 2^16\n"
-            "     NWHC: N ==1, H <= 2^16, W <= 2^16, C <= 2^14\n"
-            "     NHCW: N*H <= 2^16, W <= 2^16, C <= 2^16\n"
-            "     Any other permutation vector is unsupported";
-        if ( ifmShape.Size() > 4 )
-        {
-            Failure(op, fmt::format("32-bit transpose with rank > 4: {}", ifmShape.ToString()), constraint);
-            return false;
-        }
-        switch ( transposeMask )
-        {
-            case TransposeType::None:
-                // 32-bit NHWC: C-axis must be 0->32768
-                if ( ifmShape.Depth() > (1 << 15) )
-                {
-                    Failure(op, fmt::format("32-bit NHWC transpose with depth > 32768: {}", ifmShape.ToString()), constraint);
-                    return false;
-                }
-                break;
-            case TransposeType::NWHC:
-            {
-                // 32-bit NWHC: max-shape (1,65536,65536,16384)
-                const static Shape maxShape = Shape(1, (1 << 16), (1 << 16), (1 << 14));
-                if ( ifmShape.GreaterMask(maxShape) > 0 )
-                {
-                    Failure(op, fmt::format("32-bit NWHC transpose with shape out of range: {}", ifmShape.ToString()), constraint);
-                    return false;
-                }
-            }
-            break;
-            case TransposeType::NHCW:
-            {
-                // 32-bit NHCW: (N*H: 65536, W: 65536, C: 65536)
-                const static Shape maxShape = Shape((1 << 16), (1 << 16), (1 << 16));
-                Shape ifmSquashed = ifmShape.WithHeight(ifmShape.Height() * ifmShape.Batch()).WithBatch(1);
-                if ( ifmSquashed.GreaterMask(maxShape) > 0 )
-                {
-                    Failure(op, fmt::format("32-bit NHCW transpose with shape out of range: {}", ifmSquashed.ToString()), constraint);
-                    return false;
-                }
-            }
-            break;
-            default:
-                Failure(op, "Unsupported transpose-type", constraint);
-                return false;
-        }
-    }
-    else
-    {
-        static const char *constraint =
-            "IFM shape constraints for 8 or 16-bit Transpose:\n"
-            "  * Max shape based on permutation:\n"
-            "    NHWC: no shape constraints\n"
-            "    ELSE IF Rank <= 4D and permutation is: NWHC/NHCW/NCWH:\n"
-            "      (N*H, W, C) <= (2^16, 2^16, 2^16)\n"
-            "    ELSE:\n"
-            "      Product of elements must be less than or equal to 2^16.";
-        if ( transposeMask == TransposeType::None )
-        {
-            // NHWC: any size is supported
-            return true;
-        }
-        if ( (ifmShape.Size() <= 4) &&
-             (transposeMask == TransposeType::NWHC || transposeMask == TransposeType::NHCW || transposeMask == TransposeType::NCWH ||
-                 transposeMask == TransposeType::NWCH || transposeMask == TransposeType::NCHW) )
-        {
-            // Directly HW-supported transpose-masks
-            // NWHC/NHCW/NCWH: (N*H: 65536, W: 65536, C: 65536)
-            // Indirectly HW-supported transpose-masks through decomposition
-            // NWCH/NCHW: (N*H: 65536, W: 65536, C: 65536)
-            const static Shape maxShape = Shape((1 << 16), (1 << 16), (1 << 16));
-            Shape ifmSquashed = ifmShape.WithHeight(ifmShape.Height() * ifmShape.Batch()).WithBatch(1);
-            if ( ifmSquashed.GreaterMask(maxShape) > 0 )
-            {
-                Failure(op,
-                    fmt::format("Transpose with permutation {} has shape out of range: {}", EnumToString(transposeMask),
-                        ifmSquashed.ToString()),
-                    constraint);
-                return false;
-            }
-        }
-        else
-        {
-            // Decomposed transpose-masks
-            // Axis product must be less or equal to 65536
-            if ( ifmShape.Elements64() > (1 << 16) )
-            {
-                Failure(op,
-                    fmt::format("Transpose with permutation {} has shape out of range: {}", perm.ToString(), ifmShape.ToString()), constraint);
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
-bool TfLiteSupportedOperatorsU55::ConstraintTCStrides(const Operation *op)
-{
-    static const std::string constraint =
-        "Stride values WxH must be:\n"
-        "\t1x1 OR 2x2\n"
-        "\tOR 2x1 if ifm height and kernel height = 1\n"
-        "\tOR 1x2 if ifm width and kernel width = 1";
-    OpType opType = op->Type();
-    if ( opType != OpType::TransposeConv2D )
-    {
-        return true;
-    }
-    auto ifmConn = op->Input(TensorUsage::IFM);
-    auto kernel = op->Kernel();
-    assert(ifmConn);
-    assert(kernel);
-    const auto &ifmShape = ifmConn->shape;
-    auto [kw, kh] = kernel->Size();
-    auto stride = kernel->Stride();
-
-    if ( stride.x < 1 || stride.x > 2 || stride.y < 1 || stride.y > 2 )
-    {
-        Failure(op, fmt::format("stride out of range: ({},{})", stride.x, stride.y), constraint);
-        return false;
-    }
-    if ( stride == Point2i(1, 2) && !(ifmShape.Width() == 1 && kw == 1) )
-    {
-        Failure(op, fmt::format("unsupported stride combination: ({},{})", stride.x, stride.y), constraint);
-        return false;
-    }
-    if ( stride == Point2i(2, 1) && !(ifmShape.Height() == 1 && kh == 1) )
-    {
-        Failure(op, fmt::format("unsupported stride combination: ({},{})", stride.x, stride.y), constraint);
-        return false;
-    }
-    return true;
-}
-
-bool TfLiteSupportedOperatorsU55::Constraint32bitOps(const Operation *op)
-{
-    static const std::unordered_set<OpType> supported = {
-        OpType::ReduceSum,
-        OpType::ArgMax,
-        OpType::Transpose,
-        OpType::MirrorPad,
-        OpType::Add,
-        OpType::Mul,
-        OpType::Sub,
-        OpType::BatchMatMul,
-        OpType::FullyConnected,
-        OpType::Reshape,
-        OpType::QuantizedReshape,
-        OpType::Squeeze,
-        OpType::ExpandDims,
-        OpType::Identity,
-        OpType::MemoryCopy,
-    };
-
-    OpType opType = op->Type();
-
-    if ( supported.count(opType) > 0 )
-    {
-        return true;
-    }
-
-    for ( const auto *list : {&op->Inputs(), &op->Outputs()} )
-    {
-        for ( const auto &[usage, conn] : list->pairs() )
-        {
-            auto type = conn.tensor->Type();
-            if ( type == DataType::Int32 && (IsIFM(usage) || IsOFM(usage)) )
-            {
-                Failure(op, "Operation does not support Int32 inputs/outputs", "");
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
-
-// Check that depth is not greater than 127
-bool TfLiteSupportedOperatorsU55::ConstraintArgMaxDepth(const Operation *op)
-{
-    if ( op->Type() != OpType::ArgMax )
-    {
-        return true;
-    }
-    int depth = op->Input(TensorUsage::IFM)->shape.Depth();
-    if ( depth > 127 )
-    {
-        Failure(op, fmt::format("The depth of the argmax: {}, is over the limit: 127.", depth));
-        return false;
-    }
-    return true;
-}
-
-// Check that the operations are performed along the depth axis
-bool TfLiteSupportedOperatorsU55::ConstraintArgMaxAxis(const Operation *op)
-{
-    if ( op->Type() != OpType::ArgMax )
-    {
-        return true;
-    }
-    auto axis = op->Attribute<axis_attr_t>()->axis;
-    const int noAxes = op->Input(TensorUsage::IFM)->shape.Size();
-    if ( axis != noAxes - 1 )
-    {
-        Failure(op, fmt::format("The axis of the argmax: {}, is not equal to the index of the depth axis: {} ", axis, noAxes - 1));
-        return false;
-    }
-    return true;
-}
-
-bool TfLiteSupportedOperatorsU55::ConstraintKernelStride(const Operation *op)
+// Kernel stride must be in the range (1,3)
+bool KernelStride(const Operation *op)
 {
     const auto kernel = op->Kernel();
     assert(kernel);
     const int32_t stride_w = kernel->Stride().x;
     const int32_t stride_h = kernel->Stride().y;
-    if ( op->Type() == OpType::Conv2D || op->Type() == OpType::AvgPool || op->Type() == OpType::MaxPool )
-    {
-        // Conv2D and Pooling is handled by ConstraintUnrolledKernelStride
-        return true;
-    }
     if ( stride_w > 3 || stride_h > 3 )
     {
-        Failure(op, fmt::format("Unsupported kernel stride: {}, {}", stride_w, stride_h), "kernel stride must be in the range (1,3)");
+        Failure(op, fmt::format("Unsupported kernel stride: {}, {}", stride_w, stride_h));
         return false;
     }
     return true;
 }
 
-bool TfLiteSupportedOperatorsU55::ConstraintUnrolledKernelStride(const Operation *op)
+// Stride > 3 is only supported IF:
+//    * dilation == 1
+//    * padding == VALID
+bool UnrolledKernelStride(const Operation *op)
 {
-    // Constraints for UnrollKernelStrides
-    const static char *constraint =
-        "Stride >3 is only supported when:\n"
-        "\t * kernel dilation = 1\n"
-        "\t * IFM and OFM are not sliced\n"
-        "\t * padding = VALID\n";
+    // Constraints for UnrollConv
     const auto ifmConn = op->Input(TensorUsage::IFM);
     const auto ofmConn = op->Output(TensorUsage::OFM);
     const auto kernel = op->Kernel();
     assert(ifmConn);
     assert(ofmConn);
     assert(kernel);
-    if ( !(op->Type() == OpType::Conv2D || op->Type() == OpType::AvgPool || op->Type() == OpType::MaxPool) )
-    {
-        return true;
-    }
     const int32_t stride_w = kernel->Stride().x;
     const int32_t stride_h = kernel->Stride().y;
     if ( stride_w <= 3 && stride_h <= 3 )
@@ -548,33 +203,24 @@ bool TfLiteSupportedOperatorsU55::ConstraintUnrolledKernelStride(const Operation
     }
     // stride > 3 requires unrolling, check unroll conditions
     const bool hasPadding = !kernel->Padding().IsZero();
-    const bool hasIfmSlice = ifmConn->slice.shape.IsValid() || ifmConn->slice.offset.IsValid();
-    const bool hasOfmSlice = ofmConn->slice.shape.IsValid() || ofmConn->slice.offset.IsValid();
     const int32_t dilation_h = kernel->Dilation().y;
     const int32_t dilation_w = kernel->Dilation().x;
-    const bool canUnroll = !hasPadding && !hasIfmSlice && !hasOfmSlice && (dilation_h == 1) && (dilation_w == 1);
+    const bool canUnroll = !hasPadding && (dilation_h == 1) && (dilation_w == 1);
     if ( !canUnroll )
     {
-        Failure(op, fmt::format("Unsupported kernel stride: {}, {}", stride_w, stride_h), constraint);
+        Failure(op, fmt::format("Unsupported kernel stride: {}, {}", stride_w, stride_h));
         return false;
     }
     return true;
 }
 
-bool TfLiteSupportedOperatorsU55::ConstraintMatmul(const Operation *op)
+// Reduced axis must be less than or equal to 2^16
+bool MatmulReducedAxis(const Operation *op)
 {
-    OpType opType = op->Type();
-    if ( opType != OpType::BatchMatMul && opType != OpType::FullyConnected )
-    {
-        return true;
-    }
     auto ifmConn = op->Input(TensorUsage::IFM0);
-    auto ofmConn = op->Output(TensorUsage::OFM);
+    auto opType = op->Type();
     assert(ifmConn);
-    assert(ofmConn);
     auto ifmShape = ifmConn->shape;
-    auto ofmShape = ofmConn->shape;
-
     bool adj_x = false;
     if ( opType == OpType::FullyConnected )
     {
@@ -595,31 +241,456 @@ bool TfLiteSupportedOperatorsU55::ConstraintMatmul(const Operation *op)
             adj_x = options->adj_x();
         }
     }
-
     if ( adj_x )
     {
         // NHWC-transpose ifm-shape
         ifmShape = ifmShape.Permute(0x3201);
     }
     // OFM-depth and the reduced axis (ifmShape.Depth()) is constrained to 16-bits
-    const static int maxAxis = 1 << 16;
-    if ( ifmShape.Depth() > maxAxis )
+    if ( ifmShape.Depth() > (1 << 16) )
     {
-        static const std::string constraint = fmt::format("The reduced axis must be less than or equal to {}", maxAxis);
-        Failure(op, fmt::format("The reduced Axis is: {}", ifmShape.Depth()), constraint);
-        return false;
-    }
-    if ( ofmShape.Depth() > maxAxis )
-    {
-        static const std::string constraint = fmt::format("The OFM depth must be less than or equal to {}", maxAxis);
-        Failure(op, fmt::format("OFM channel: {}", ofmShape.Depth()), constraint);
-        return false;
-    }
-    if ( ifmConn->tensor->Type() != DataType::Int8 )
-    {
-        Failure(op, fmt::format("IFM has datatype: {}", DataTypeToString(ifmConn->tensor->Type())), "IFM must be Int8");
+        Failure(op, fmt::format("Reduced axis is too large: {}", ifmShape.Depth()));
         return false;
     }
     return true;
+}
+
+// OFM Depth must be less than or equal to 2^16
+bool MatmulOFMDepth(const Operation *op)
+{
+    auto opType = op->Type();
+    auto ofmConn = op->Output(TensorUsage::OFM);
+    auto ofmShape = ofmConn->shape;
+    if ( opType == OpType::FullyConnected )
+    {
+        auto wConn = op->Input(TensorUsage::Weights);
+        assert(wConn);
+        if ( wConn->tensor->IsConstant() )
+        {
+            // Non-dynamic weights, not a matmul
+            return true;
+        }
+    }
+    if ( ofmShape.Depth() > (1 << 16) )
+    {
+        Failure(op, fmt::format("OFM depth is too large: {}", ofmShape.Depth()));
+        return false;
+    }
+    return true;
+}
+
+// IFM precision must be INT8
+bool MatmulIFMPrecision(const Operation *op)
+{
+    auto opType = op->Type();
+    if ( opType == OpType::FullyConnected )
+    {
+        auto wConn = op->Input(TensorUsage::Weights);
+        assert(wConn);
+        if ( wConn->tensor->IsConstant() )
+        {
+            // Non-dynamic weights, not a matmul
+            return true;
+        }
+    }
+    auto ifmConn = op->Input(TensorUsage::IFM);
+    assert(ifmConn);
+    auto ifmType = ifmConn->tensor->Type();
+    if ( ifmType != DataType::Int8 )
+    {
+        Failure(op, "Matmul with unsupported IFM type");
+        return false;
+    }
+    return true;
+}
+
+// IFM depth must be less than or equal to 127
+bool ArgMaxDepth(const Operation *op)
+{
+    int depth = op->Input(TensorUsage::IFM)->shape.Depth();
+    if ( depth > 127 )
+    {
+        Failure(op, fmt::format("The depth of the argmax: {}, is over the limit: 127.", depth));
+        return false;
+    }
+    return true;
+}
+
+// Shape constraints for 32-bit transpose
+bool Transpose32Bit(const Operation *op)
+{
+    auto ifmConn = op->Input(TensorUsage::IFM);
+    auto ifmShape = Shape::PadAxes(ifmConn->shape, 4, 1);
+    auto ifmType = ifmConn->tensor->Type();
+    auto *params = op->Input(TensorUsage::Params);
+    assert(params);
+    Shape perm = TensorToShape(params->tensor.get(), params->shape.Depth());
+    auto transposeMask = TransposeTypeFromShape(perm);
+    if ( ifmType != DataType::Int32 )
+    {
+        return true;
+    }
+    if ( ifmShape.Size() > 4 )
+    {
+        Failure(op, fmt::format("32-bit transpose with rank > 4: {}", ifmShape.ToString()));
+        return false;
+    }
+    switch ( transposeMask )
+    {
+        case TransposeType::None:
+            // 32-bit NHWC: C-axis must be 0->32768
+            if ( ifmShape.Depth() > (1 << 15) )
+            {
+                Failure(op, fmt::format("32-bit NHWC transpose with depth > 32768: {}", ifmShape.ToString()));
+                return false;
+            }
+            break;
+        case TransposeType::NWHC:
+        {
+            // 32-bit NWHC: max-shape (1,65536,65536,16384)
+            const static Shape maxShape = Shape(1, (1 << 16), (1 << 16), (1 << 14));
+            if ( ifmShape.GreaterMask(maxShape) > 0 )
+            {
+                Failure(op, fmt::format("32-bit NWHC transpose with shape out of range: {}", ifmShape.ToString()));
+                return false;
+            }
+        }
+        break;
+        case TransposeType::NHCW:
+        {
+            // 32-bit NHCW: (N*H: 65536, W: 65536, C: 65536)
+            const static Shape maxShape = Shape((1 << 16), (1 << 16), (1 << 16));
+            Shape ifmSquashed = ifmShape.WithHeight(ifmShape.Height() * ifmShape.Batch()).WithBatch(1);
+            if ( ifmSquashed.GreaterMask(maxShape) > 0 )
+            {
+                Failure(op, fmt::format("32-bit NHCW transpose with shape out of range: {}", ifmSquashed.ToString()));
+                return false;
+            }
+        }
+        break;
+        default:
+            Failure(op, "Unsupported transpose-type");
+            return false;
+    }
+    return true;
+}
+
+// Shape constraints for 8- and 16-bit transpose
+bool Transpose8And16Bit(const Operation *op)
+{
+    auto ifmConn = op->Input(TensorUsage::IFM);
+    auto ifmShape = Shape::PadAxes(ifmConn->shape, 4, 1);
+    auto ifmType = ifmConn->tensor->Type();
+    auto *params = op->Input(TensorUsage::Params);
+    assert(params);
+    Shape perm = TensorToShape(params->tensor.get(), params->shape.Depth());
+    auto transposeMask = TransposeTypeFromShape(perm);
+    if ( DataTypeSizeBits(ifmType) > 16 )
+    {
+        return true;
+    }
+    if ( transposeMask == TransposeType::None )
+    {
+        // NHWC: any size is supported
+        return true;
+    }
+    if ( (ifmShape.Size() <= 4) &&
+         (transposeMask == TransposeType::NWHC || transposeMask == TransposeType::NHCW || transposeMask == TransposeType::NCWH ||
+             transposeMask == TransposeType::NWCH || transposeMask == TransposeType::NCHW) )
+    {
+        // Directly HW-supported transpose-masks
+        // NWHC/NHCW/NCWH: (N*H: 65536, W: 65536, C: 65536)
+        // Indirectly HW-supported transpose-masks through decomposition
+        // NWCH/NCHW: (N*H: 65536, W: 65536, C: 65536)
+        const static Shape maxShape = Shape((1 << 16), (1 << 16), (1 << 16));
+        Shape ifmSquashed = ifmShape.WithHeight(ifmShape.Height() * ifmShape.Batch()).WithBatch(1);
+        if ( ifmSquashed.GreaterMask(maxShape) > 0 )
+        {
+            Failure(op,
+                fmt::format("Transpose with permutation {} has shape out of range: {}", EnumToString(transposeMask),
+                    ifmSquashed.ToString()));
+            return false;
+        }
+    }
+    else
+    {
+        // Decomposed transpose-masks
+        // Axis product must be less or equal to 65536
+        if ( ifmShape.Elements64() > (1 << 16) )
+        {
+            Failure(op,
+                fmt::format("Transpose with permutation {} has shape out of range: {}", perm.ToString(), ifmShape.ToString()));
+            return false;
+        }
+    }
+    return true;
+}
+
+// Scale-factor constraints for Resize operations
+bool Resize(const Operation *op)
+{
+    OpType opType = op->Type();
+    assert(opType == OpType::ResizeBilinear || opType == OpType::ResizeNearestNeighbor);
+    bool halfPixelCentersRB = false;
+    bool alignCorners = false;
+    const auto *passthrough = static_cast<const tflite::Operator *>(op->Passthrough());
+    assert(passthrough);
+    if ( opType == OpType::ResizeBilinear )
+    {
+        const auto *opt = passthrough->builtin_options_as_ResizeBilinearOptions();
+        assert(opt);
+        alignCorners = opt->align_corners();
+        halfPixelCentersRB = opt->half_pixel_centers();
+    }
+    else
+    {
+        const auto *opt = passthrough->builtin_options_as_ResizeNearestNeighborOptions();
+        assert(opt);
+        alignCorners = opt->align_corners();
+    }
+    auto ifmConn = op->Input(TensorUsage::IFM);
+    auto ofmConn = op->Output(TensorUsage::OFM);
+    assert(ifmConn);
+    assert(ofmConn);
+    Shape ifmShape = Shape::PadAxes(ifmConn->shape, 4, 1);
+    Shape ofmShape = Shape::PadAxes(ofmConn->shape, 4, 1);
+    if ( ifmShape.Height() == 1 && ifmShape.Width() == 1 )
+    {
+        return true;
+    }
+    if ( ifmShape.Height() == ofmShape.Height() && ifmShape.Width() == ofmShape.Width() )
+    {
+        return !halfPixelCentersRB;
+    }
+    float hUpscale;
+    float wUpscale;
+    if ( alignCorners )
+    {
+        hUpscale = ofmShape.Height() == 1 ? 1 : float(ofmShape.Height() - 1) / (ifmShape.Height() - 1);
+        wUpscale = ofmShape.Width() == 1 ? 1 : float(ofmShape.Width() - 1) / (ifmShape.Width() - 1);
+    }
+    else
+    {
+        hUpscale = float(ofmShape.Height()) / ifmShape.Height();
+        wUpscale = float(ofmShape.Width()) / ifmShape.Width();
+    }
+    if ( hUpscale != wUpscale )
+    {
+        if ( !((ofmShape.Height() == 1 && hUpscale == 1) || (ofmShape.Width() == 1 && wUpscale == 1)) )
+        {
+            Failure(op,
+                fmt::format("HW scale-factor is not equal and operation has unsupported parameter combination ofm h={}, h scale-factor={}, ofm w={}, w scale-factor={}.",
+                    ofmShape.Height(), hUpscale, ofmShape.Width(), wUpscale));
+            return false;
+        }
+        else if ( halfPixelCentersRB )
+        {
+            Failure(op, fmt::format("HW scale-factor is not equal and Resize Bilinear has half pixel centers, h scale-factor={}, w scale-factor={}.", hUpscale, wUpscale));
+            return false;
+        }
+    }
+    auto maxUpscale = halfPixelCentersRB ? 2 : 8;
+    auto upscale = std::max(hUpscale, wUpscale);
+    if ( !((ifmShape.Height() == 1 && ifmShape.Width() == 1) ||
+             (std::trunc(upscale) == upscale && IsPowerOfTwo(int(upscale)) && upscale > 1 && upscale <= maxUpscale)) )
+    {
+        Failure(op, fmt::format("Scaling matches and operation has unsupported scale-factor={}", upscale));
+        return false;
+    }
+    return true;
+}
+
+// Used to explicitly reject some dataTypes for certain optypes
+bool RejectPrecision(const Operation *op, int precision)
+{
+    for ( const auto *list : {&op->Inputs(), &op->Outputs()} )
+    {
+        for ( const auto &[usage, conn] : list->pairs() )
+        {
+            auto type = conn.tensor->Type();
+
+            if ( DataTypeSizeBits(type) == precision && (IsIFM(usage) || IsOFM(usage)) )
+            {
+                Failure(op, fmt::format("Unsupported dataType {}", DataTypeToString(type)));
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// Zero points must be:
+// * 0 for Int32
+// * non-negative for unsigned dataTypes
+bool ConstrainZeroPoints(const Operation *op)
+{
+    OpType opType = op->Type();
+    for ( const auto *list : {&op->Inputs(), &op->Outputs()} )
+    {
+        for ( const auto &[usage, conn] : list->pairs() )
+        {
+            DataType dType = conn.tensor->Type();
+            for ( auto zp : conn.quantization.zeroPoints )
+            {
+                if ( IsOFM(usage) || IsIFM(usage) )
+                {
+                    // must be 0 for 32-bit featureMaps
+                    if ( DataTypeSizeBits(dType) == 32 && zp != 0 )
+                    {
+                        Failure(op, fmt::format("Unsupported zeroPoint {} for dataType: {}", zp, DataTypeToString(dType)));
+                        return false;
+                    }
+                    // must be non-negative for unsigned featureMaps
+                    if ( !IsSignedInteger(dType) && zp < 0 )
+                    {
+                        Failure(op, fmt::format("Unsupported zeroPoint {} for dataType: {}", zp, DataTypeToString(dType)));
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    return true;
+}
+
+// Stride values must be 1x1 or 2x2
+// or 2x1 if IFM height and kernel height is 1
+// or 1x2 if IFM width and kernel width is 1
+bool TransposeConvStrides(const Operation *op)
+{
+    auto ifmConn = op->Input(TensorUsage::IFM);
+    auto kernel = op->Kernel();
+    assert(ifmConn);
+    assert(kernel);
+    const auto &ifmShape = ifmConn->shape;
+    auto [kw, kh] = kernel->Size();
+    auto stride = kernel->Stride();
+    if ( stride.x < 1 || stride.x > 2 || stride.y < 1 || stride.y > 2 )
+    {
+        Failure(op, fmt::format("stride out of range: ({},{})", stride.x, stride.y));
+        return false;
+    }
+    if ( stride == Point2i(1, 2) && !(ifmShape.Width() == 1 && kw == 1) )
+    {
+        Failure(op, fmt::format("unsupported stride combination: ({},{})", stride.x, stride.y));
+        return false;
+    }
+    if ( stride == Point2i(2, 1) && !(ifmShape.Height() == 1 && kh == 1) )
+    {
+        Failure(op, fmt::format("unsupported stride combination: ({},{})", stride.x, stride.y));
+        return false;
+    }
+    return true;
+}
+
+}  // namespace
+
+TfLiteSupportedOperatorsU55::TfLiteSupportedOperatorsU55() :
+        TfLiteSupportedOperators(127 * (1 << 16),  // maxWeightSum8Bit
+            127 * (1 << 16),                       // maxWeightSum16Bit
+            (1LL << 40) - 1,                       // maxBias
+            s_supportedDataTypes, s_supportedOpTypes)
+{
+    // create constraint objects
+    broadcastShapes = {&BroadcastShapes, "One input-tensor must match the shape of the output-tensor"};
+    reverseMask = {&ReverseMask, "Axis attribute is not supported."};
+    kernelStride = {&KernelStride, "Kernel stride must be in the range (1,3)."};
+    unrolledKernelStride = {&UnrolledKernelStride, "Stride>3 is only supported IF (dilation = 1 AND padding = VALID)"};
+    matmulReducedAxis = {&MatmulReducedAxis, "IF Matmul or (FC with dynamic weights): Reduced axis must be less than or equal to 2^16"};
+    matmulOFMDepth = {&MatmulOFMDepth, "IF Matmul or (FC with dynamic weights): OFM depth must be less than or equal to 2^16"};
+    matmulIFMPrecision = {&MatmulIFMPrecision, "IF Matmul or (FC with dynamic weights): IFM precision must be Int8"};
+    argMaxDepth = {&ArgMaxDepth, "IFM depth must be less than or equal to 127."};
+    transpose32Bit = {&Transpose32Bit,
+        "IF IFM is Int32:\n"
+        "  - Rank must be less than or equal to 4\n"
+        "  - NHWC: C <= 2^16\n"
+        "  - NWHC: N ==1, H <= 2^16, W <= 2^16, C <= 2^14\n"
+        "  - NHCW: N*H <= 2^16, W <= 2^16, C <= 2^16\n"
+        "  - Any other permutation vector is unsupported"};
+
+    transpose8And16Bit = {&Transpose8And16Bit,
+        "IF IFM is Int8 or Int16\n"
+        "  - NHWC: no shape constraints\n"
+        "  - ELSE IF Rank <= 4D and permutation is: NWHC/NHCW/NCWH/NWCH/NCHW:\n"
+        "    - (N*H, W, C) <= (2^16, 2^16, 2^16)\n"
+        "  - ELSE:\n"
+        "    - Product of elements must be less than or equal to 2^16."};
+
+    resizeBilinear = {&Resize,
+        "IF not (IFM H == IFM W == 1) AND not IFM Shape == OFM Shape:\n"
+        "  - IF W Scale-factor != H Scale-factor:\n"
+        "    - OFM W or H must be 1, and scaling in the dim that is must also be 1\n"
+        "  - IF align corners:\n"
+        "    - Scale-factor is defined as OFM H-1 / IFM H-1\n"
+        "  - ELSE:\n"
+        "    - Scale-factor is defined as OFM H/IFM H\n"
+        "  - IF half pixel centers:\n"
+        "    - Scale-factor needs to be 2x\n"
+        "  - Else:\n"
+        "    - Scale-factor needs to be one of: 2x/4x/8x\n"};
+
+    resizeNearest = {&Resize,
+        "IF NOT (IFM H == IFM W == 1) AND NOT IFM Shape == OFM Shape:\n"
+        "  - IF W Scale-factor != H Scale-factor:\n"
+        "    - OFM W or H must be 1, and scaling in the dim that is must also be 1\n"
+        "  - IF align corners:\n"
+        "    - Scale-factor is defined as OFM H-1 / IFM H-1\n"
+        "  - ELSE:\n"
+        "    - Scale-factor is defined as OFM H / IFM H\n"
+        "  - Scale-factor must be one of: 2x/4x/8x\n"};
+
+    reject32BitPrecision = {[](const Operation *op) { return RejectPrecision(op, 32); }, "32-bit feature-maps are not supported."};
+
+    reject64BitPrecision = {[](const Operation *op) { return RejectPrecision(op, 64); }, "64-bit feature-maps are not supported."};
+
+    constrainZeroPoints = {&ConstrainZeroPoints, "Zero-points must be 0 for Int32 and non-negative for unsigned dataTypes"};
+
+    transposeConvStrides = {&TransposeConvStrides,
+        "Stride values WxH must be: 1x1 OR 2x2 OR 2x1 (if IFM height and kernel height is 1) OR 1x2 (if IFM width and kernel width is 1)"};
+
+    // populate opConstraints
+    for ( OpType type : s_supportedOpTypes )
+    {
+        if ( s_ignoreZeroPoints.count(type) == 0 )
+        {
+            opConstraints[type].push_back(&constrainZeroPoints);
+        }
+        if ( s_supports32Bit.count(type) == 0 )
+        {
+            opConstraints[type].push_back(&reject32BitPrecision);
+        }
+        if ( s_supports64Bit.count(type) == 0 )
+        {
+            opConstraints[type].push_back(&reject64BitPrecision);
+        }
+        if ( IsElementwise(type) )
+        {
+            opConstraints[type].push_back(&broadcastShapes);
+        }
+        if ( IsConvolution(type) || IsPooling(type) || type == OpType::FullyConnected )
+        {
+            if ( type == OpType::Conv2D || type == OpType::AvgPool || type == OpType::MaxPool )
+            {
+                opConstraints[type].push_back(&unrolledKernelStride);
+            }
+            else if ( type != OpType::TransposeConv2D )
+            {
+                opConstraints[type].push_back(&kernelStride);
+            }
+        }
+    }
+    opConstraints[OpType::ReverseV2].push_back(&reverseMask);
+    opConstraints[OpType::FullyConnected].push_back(&matmulReducedAxis);
+    opConstraints[OpType::FullyConnected].push_back(&matmulOFMDepth);
+    opConstraints[OpType::FullyConnected].push_back(&matmulIFMPrecision);
+    opConstraints[OpType::BatchMatMul].push_back(&matmulReducedAxis);
+    opConstraints[OpType::BatchMatMul].push_back(&matmulOFMDepth);
+    opConstraints[OpType::BatchMatMul].push_back(&matmulIFMPrecision);
+    opConstraints[OpType::ArgMax].push_back(&argMaxDepth);
+    opConstraints[OpType::Transpose].push_back(&transpose32Bit);
+    opConstraints[OpType::Transpose].push_back(&transpose8And16Bit);
+    opConstraints[OpType::ResizeBilinear].push_back(&resizeBilinear);
+    opConstraints[OpType::ResizeNearestNeighbor].push_back(&resizeNearest);
+    opConstraints[OpType::TransposeConv2D].push_back(&transposeConvStrides);
 }
 }  // namespace regor

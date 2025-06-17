@@ -56,8 +56,7 @@ std::vector<std::unique_ptr<GraphOptimiser>> GraphOptimiser::MakeGraphOptimiser(
         case GraphNotation::TFLite:
         {
             std::unique_ptr<TfLiteSupportedOperators> supportedOps;
-            arch->Call([&supportedOps, &arch](const std::string &target)
-                { supportedOps = MakeSupportedOpsChecker(target, arch->Constraints()); });
+            arch->Call([&supportedOps](const std::string &target) { supportedOps = MakeSupportedOpsChecker(target); });
             graphOptimisers.emplace_back(
                 std::make_unique<TFLiteGraphOptimiser>(arch->Constraints(), std::move(supportedOps), options, db));
         }

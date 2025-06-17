@@ -18,68 +18,89 @@
 
 #pragma once
 
-#include "architecture/architecture.hpp"
-#include "architecture/architecture_constraints.hpp"
+#include "common/ordered_map.hpp"
 #include "compiler/graph.hpp"
 #include "compiler/operation.hpp"
 #include "tflite_mapping.hpp"
+
+#include <functional>
+#include <set>
 
 namespace regor
 {
 
 class TfLiteSupportedOperators
 {
-    using OperatorCheck = bool (TfLiteSupportedOperators::*)(const Operation *);
-
-protected:
-    std::vector<OperatorCheck> _genericChecks;
-    IArchitectureConstraints *_archConstraints;
-    std::unordered_set<OpType> _supportedOpTypes;
-    std::unordered_set<DataType> _supportedDataTypes;
-    int64_t _maxWeightSum8Bit;
-    int64_t _maxWeightSum16Bit;
-    int64_t _maxBias;
 
 public:
-    TfLiteSupportedOperators(IArchitectureConstraints *constraints);
     virtual ~TfLiteSupportedOperators() = default;
-    virtual bool Check(const Operation *) = 0;
+    // Performs constraint-check for a given operation
+    bool Check(const Operation *);
+    // Maps opname to list of constraints
+    ordered_map<OpType, std::vector<std::string>> Documentation();
 
 protected:
-    static void Failure(const Operation *op, const std::string &message = "", const std::string &constraint = "");
+    TfLiteSupportedOperators(int64_t maxWeightSum8Bit, int64_t maxWeightSum16Bit, int64_t maxBias,
+        const std::set<DataType> &supportedDataTypes, const std::set<OpType> &supportedOpTypes);
 
-private:
-    bool ConstraintOpType(const Operation *op);
-    bool ConstraintTensDtypes(const Operation *op);
-    bool ConstraintNumSplits(const Operation *op);
-    bool ConstraintMustHaveIFM(const Operation *op);
-    bool ConstraintMustHaveOFM(const Operation *op);
-    bool ConstraintTensMustHaveShape(const Operation *op);
-    bool ConstraintTensQuantized(const Operation *op);
-    bool ConstraintFCWeightShape(const Operation *op);
-    bool ConstraintPerAxisQuant(const Operation *op);
-    bool ConstraintMatchingQuantization(const Operation *op);
-    bool ConstraintZeroPoints(const Operation *op);
-    bool ConstraintDepthMultiplier(const Operation *op);
-    bool ConstraintWeightsPrecision(const Operation *op);
-    bool ConstraintWeightSum(const Operation *op);
-    bool ConstraintBias(const Operation *op);
-    bool ConstraintAvgPool(const Operation *op);
-    bool ConstraintMaxPool(const Operation *op);
-    bool ConstraintTCStrides(const Operation *op);
-    bool ConstraintTCShapes(const Operation *op);
-    bool ConstraintRsqrt(const Operation *op);
-    bool ConstraintConstParams(const Operation *op);
-    bool ConstraintMean(const Operation *op);
-    bool ConstraintSoftmax(const Operation *op);
-    bool ConstraintPad(const Operation *op);
-    bool ConstraintTransposeDims(const Operation *op);
-    bool ConstraintStridedSlice(const Operation *op);
-    bool ConstraintLog(const Operation *op);
-    bool ConstraintLSTM(const Operation *op);
+    // protected subclass for constraintChecks
+    // A ConstraintCheck object is represented by a check-function and a documentation string
+    // The documentation string is emitted at failure, and can be used to generate documentation
+    class ConstraintCheck
+    {
+    public:
+        ConstraintCheck(std::function<bool(const Operation *)> checkFunc, const std::string &docString) :
+                Check(std::move(checkFunc)), _documentation(docString){};
+        ConstraintCheck(){};
+        std::function<bool(const Operation *)> Check;
+
+        std::string Documentation() { return _documentation; }
+
+    private:
+        std::string _documentation;
+    };
+
+    // Op-specific constraint map
+    ordered_map<OpType, std::vector<ConstraintCheck *>> opConstraints;
+    ConstraintCheck mustHaveIFM;
+    ConstraintCheck mustHaveOFM;
+    ConstraintCheck tensMustHaveShape;
+    ConstraintCheck supportedDTypes;
+    ConstraintCheck tensQuantized;
+    ConstraintCheck fcWeightShape;
+    ConstraintCheck perAxisQuant;
+    ConstraintCheck matchingQuantization;
+    ConstraintCheck weightsPrecision;
+    ConstraintCheck weightSum;
+    ConstraintCheck biasShape;
+    ConstraintCheck biasConstant;
+    ConstraintCheck biasPrecision;
+    ConstraintCheck bias64BitRange;
+    ConstraintCheck avgPoolPad;
+    ConstraintCheck maxPool;
+    ConstraintCheck transposeConvShape;
+    ConstraintCheck rsqrtIFMPrecision;
+    ConstraintCheck constParams;
+    ConstraintCheck softmaxOverflow;
+    ConstraintCheck padParams;
+    ConstraintCheck transposeDims;
+    ConstraintCheck logShapes;
+    ConstraintCheck logPrecision;
+    ConstraintCheck unitBatch;
+    ConstraintCheck meanDepth;
+    ConstraintCheck meanAxisSize;
+    ConstraintCheck meanTotalElements;
+    ConstraintCheck meanDataType;
+    ConstraintCheck stridedSlice;
+    ConstraintCheck lstmImplicitGateCalc;
+    ConstraintCheck lstmPeephole;
+    ConstraintCheck lstmProjection;
+    ConstraintCheck lstmGateNorm;
+    ConstraintCheck splitsMatchOutputs;
 };
 
+void Failure(const Operation *op, const std::string &extra = "");
 // Factory for supported-ops checkers
-std::unique_ptr<TfLiteSupportedOperators> MakeSupportedOpsChecker(const std::string &target, IArchitectureConstraints *constraints);
+std::unique_ptr<TfLiteSupportedOperators> MakeSupportedOpsChecker(const std::string &target);
 
 }  // namespace regor

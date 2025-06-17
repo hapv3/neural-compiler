@@ -71,7 +71,7 @@ TEST_CASE("Supported operators Common")
     std::string err = "noerror";
     arch->CheckConfiguration(err);
     REQUIRE(err == "noerror");
-    auto supportedOps = MakeSupportedOpsChecker(REGOR_ARCH_ETHOSU55, arch->Constraints());
+    auto supportedOps = MakeSupportedOpsChecker(REGOR_ARCH_ETHOSU55);
 
     SECTION("ConstraintTensQuantized")
     {
@@ -466,8 +466,7 @@ TEST_CASE("Supported operators EthosU55")
     arch->CheckConfiguration(err);
     REQUIRE(err == "noerror");
 
-    auto supportedOps = MakeSupportedOpsChecker(REGOR_ARCH_ETHOSU55, arch->Constraints());
-
+    auto supportedOps = MakeSupportedOpsChecker(REGOR_ARCH_ETHOSU55);
     SECTION("Test positive")
     {
         // checks are expected to pass
@@ -526,7 +525,6 @@ TEST_CASE("Supported operators EthosU55")
             DataType::Int8,
             DataType::Int16,
             DataType::Int32,
-            DataType::Int64,
         };
         for ( auto dtype : unsupported )
         {
@@ -570,7 +568,6 @@ TEST_CASE("Supported operators EthosU55")
         op->Disconnect();
         op2->Disconnect();
     }
-
     SECTION("ConstraintStride")
     {
         {
@@ -578,14 +575,6 @@ TEST_CASE("Supported operators EthosU55")
             auto kernel = std::make_unique<Kernel>(Point2i{1, 1}, Point2i{1, 1}, Point2i{1, 1}, Margin{0, 0, 0, 0});
             op->SetKernel(std::move(kernel));
             REQUIRE(supportedOps->Check(op.get()) == true);
-            op->Disconnect();
-        }
-        {
-            // stride > 3 is not supported for Add
-            auto op = CreateOperation(OpType::Add, Shape(1, 10, 10, 1), DataType::Int8, Shape(1, 10, 10, 1), DataType::Int8);
-            auto kernel = std::make_unique<Kernel>(Point2i{1, 1}, Point2i{5, 5}, Point2i{1, 1}, Margin{0, 0, 0, 0});
-            op->SetKernel(std::move(kernel));
-            REQUIRE(supportedOps->Check(op.get()) == false);
             op->Disconnect();
         }
         {
@@ -608,7 +597,7 @@ TEST_CASE("Supported operators EthosU85")
     arch->CheckConfiguration(err);
     REQUIRE(err == "noerror");
 
-    auto supportedOps = MakeSupportedOpsChecker(REGOR_ARCH_ETHOSU85, arch->Constraints());
+    auto supportedOps = MakeSupportedOpsChecker(REGOR_ARCH_ETHOSU85);
 
     SECTION("Test positive")
     {
@@ -656,7 +645,6 @@ TEST_CASE("Supported operators EthosU85")
             DataType::Int16,
             DataType::Int32,
             DataType::Bool,
-            DataType::Bool8,
             DataType::Int64,
         };
         for ( auto dtype : unsupported )

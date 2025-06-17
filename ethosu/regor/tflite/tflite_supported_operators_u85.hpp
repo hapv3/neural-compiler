@@ -22,26 +22,24 @@
 #include "compiler/operation.hpp"
 #include "tflite_supported_operators.hpp"
 
-#include <unordered_set>
-
 namespace regor
 {
 
 class TfLiteSupportedOperatorsU85 : public TfLiteSupportedOperators
 {
-    using OperatorCheck = bool (TfLiteSupportedOperatorsU85::*)(const Operation *);
-
-private:
-    std::vector<OperatorCheck> _checks;
-
 public:
-    TfLiteSupportedOperatorsU85(IArchitectureConstraints *constraints);
-    bool Check(const Operation *) override;
+    TfLiteSupportedOperatorsU85();
 
 private:
-    bool ConstraintResizeCommon(const Operation *op);
-    bool ConstraintResizeBilinear(const Operation *op);
-    bool ConstraintGather(const Operation *op);
-    bool ConstraintScatter(const Operation *op);
+    ConstraintCheck resizeACHPC;
+    ConstraintCheck resizeScaleFactor;
+    ConstraintCheck resizeBilinearPowerOfTwo;
+    ConstraintCheck scatterShapeConst;
+    ConstraintCheck scatterIndexConst;
+    ConstraintCheck scatterIndexUnitChannel;
+    ConstraintCheck scatterIndexUniqueElements;
+    ConstraintCheck gatherAxis;
+    ConstraintCheck ifmZeroPoints;
+    ConstraintCheck ofmZeroPoints;
 };
 }  // namespace regor
