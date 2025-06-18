@@ -354,10 +354,13 @@ bool TfLiteSupportedOperatorsU55::ConstraintTranspose(const Operation *op)
             return true;
         }
         if ( (ifmShape.Size() <= 4) &&
-             (transposeMask == TransposeType::NWHC || transposeMask == TransposeType::NHCW || transposeMask == TransposeType::NCWH) )
+             (transposeMask == TransposeType::NWHC || transposeMask == TransposeType::NHCW || transposeMask == TransposeType::NCWH ||
+                 transposeMask == TransposeType::NWCH || transposeMask == TransposeType::NCHW) )
         {
             // Directly HW-supported transpose-masks
-            // NWHC/NHCW/NCWH: (N*H: 65536, 65536, 65536)
+            // NWHC/NHCW/NCWH: (N*H: 65536, W: 65536, C: 65536)
+            // Indirectly HW-supported transpose-masks through decomposition
+            // NWCH/NCHW: (N*H: 65536, W: 65536, C: 65536)
             const static Shape maxShape = Shape((1 << 16), (1 << 16), (1 << 16));
             Shape ifmSquashed = ifmShape.WithHeight(ifmShape.Height() * ifmShape.Batch()).WithBatch(1);
             if ( ifmSquashed.GreaterMask(maxShape) > 0 )
