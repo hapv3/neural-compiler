@@ -542,13 +542,14 @@ Flags<QueryResult> EthosU85Constraints::OperatorQuery(OpType opType, const ArchO
     // Detailed operator queries
     if ( opType == OpType::MatMul )
     {
-        // Constrain Matmul height to 1
-        if ( ofmShape.Size() > 2 && ofmShape.Height() > 1 )
+        // Constrain MatMul Batch to 1
+        // Note that MatMul's OFM are effectively rank 3 with dimensions [N, H, W] with a possible leading 1
+        if ( ofmShape.Size() > 2 && ofmShape[ofmShape.Size() - 3] > 1 )
         {
             if ( req )
             {
                 req->req.Set(ArchRequirement::Decompose);
-                req->decomposeProps.Set(ArchProperty::TensorAxis);
+                req->decomposeProps.Set(ArchProperty::TensorDims);
             }
             result.Set(QueryResult::HasRequirements);
         }

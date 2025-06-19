@@ -570,34 +570,58 @@ Slice(SchedulerTensor *tensor, const Shape &offset, const Shape &shape, Shape re
     }
 }
 
-static Shape NewOfmBlockShape(Architecture *arch, SchedulerOperation *op)
+static Shape MaxOfmShape(Shape &ofmShape, Shape &ifmShape, Kernel &kernel)
 {
-    // Find a block shape for decomposition that will fit in accumulator RAM,
-    // and where ifm also fits.
-    // GetOpConfig finds a block that fulfills this.
-    // TODO: MLBEDSW-9860
-    // If block decomposition is needed just because of too large ifm/ofm dimension,
-    // a larger block size could potentially be used.
-    // For a 1x1 kernel without ifm/ofm size above the limit, no block decomposition is needed,
-    // as accumulators do not need to be retained.
+    // Calculate max IFM height and width which can be consumed by a single block
+    const auto &padding = kernel.Padding();
+    int maxIfmHeight = std::min(ifmShape.Height() + padding.Top() + padding.Bottom(), MAX_DIM);
+    int maxIfmWidth = std::min(ifmShape.Width() + padding.Left() + padding.Right(), MAX_DIM);
 
+    // Calculate max OFM dimensions for a single block
+    int maxOfmHeight = std::min(int((maxIfmHeight - kernel.DilatedWH().y) / kernel.Stride().y) + 1, MAX_DIM);
+    int maxOfmWidth = std::min(int((maxIfmWidth - kernel.DilatedWH().x) / kernel.Stride().x) + 1, MAX_DIM);
+    int maxOfmDepth = std::min(ofmShape.Depth(), MAX_DIM);
+
+    return ofmShape.WithHeight(maxOfmHeight).WithWidth(maxOfmWidth).WithDepth(maxOfmDepth);
+}
+
+static Shape NewOfmBlockShape(Architecture *arch, SchedulerOperation *op, const ArchRequirements &req)
+{
     Shape newBlock;
+    auto ifmShape = op->IFM(0)->SliceShape();
     auto ofmShape = op->OFM()->SliceShape();
     auto kernel = *op->Kernel();
-    // Get block config for the op after decomposition to smaller kernel
-    // Avoids problems where a block config can't be found as ifm gets too big for RAM
-    auto minKernel = kernel.WithSize({1, 1}).WithStride({1, 1});
-    op->SetKernel(minKernel);
-    auto config = GetOpConfig(arch, op);
-    op->SetKernel(kernel);
-    assert(config && "No config found.");
-    if ( !config ) throw DecompositionFailure("No config found");
-    auto HW = config->OptimalStripeGranule();
-    Shape configBlock = ofmShape.WithBatch(1).WithHW(HW.y, HW.x).WithDepth(config->OptimalDepthGranule());
-    if ( Shape::Min(ofmShape, configBlock) != ofmShape )
+
+    // Max OFM shape that can be produced by one op
+    Shape maxShape = MaxOfmShape(ofmShape, ifmShape, kernel);
+
+    if ( req.decomposeProps.Any(ArchProperty::KernelStride) || ifmShape.Depth() > MAX_DIM )
     {
-        newBlock = Shape::Min(ofmShape, configBlock);
+        // Decomposition of strides and/or IFM channels requires decomposing into blocks which
+        // will fit in accumulator RAM, and where ifm also fits.
+        // GetOpConfig finds a block that fulfills this.
+        // Get block config for the op after decomposition to smaller kernel
+        // Avoids problems where a block config can't be found as ifm gets too big for RAM
+        auto minKernel = kernel.WithSize({1, 1}).WithStride({1, 1});
+        op->SetKernel(minKernel);
+        auto config = GetOpConfig(arch, op);
+        op->SetKernel(kernel);
+        assert(config && "No config found.");
+        if ( !config ) throw DecompositionFailure("No config found");
+        auto HW = config->OptimalStripeGranule();
+        Shape configBlock = ofmShape.WithBatch(1).WithHW(HW.y, HW.x).WithDepth(config->OptimalDepthGranule());
+        if ( Shape::Min(ofmShape, configBlock) != ofmShape )
+        {
+            newBlock = Shape::Min(ofmShape, configBlock);
+        }
     }
+    else if ( Shape::Min(ofmShape, maxShape) != ofmShape )
+    {
+        // Decompose OFM into blocks that are as large as possible, limited only by constraints
+        // on Tensor axes of IFM and OFM.
+        newBlock = Shape::Min(ofmShape, maxShape);
+    }
+
     return newBlock;
 }
 
@@ -836,7 +860,10 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv2D(Architecture *a
     ofmSlice.Initialize(ofmShape.WithZeros(), ofmShape);
     ifmSlice.Initialize(ifmShape.WithZeros().WithHW(-padding.Top(), -padding.Left()), ifmShape);
 
-    if ( ofmShape.Batch() > 1 )
+    ArchRequirements req{};
+    Flags<QueryResult> qResult = OperatorQuery(arch, op.get(), &req);
+
+    if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::TensorDims) )
     {
         return DecomposeLeadingDimensions(1, arch, std::move(op), DecomposeConv2D);
     }
@@ -847,13 +874,13 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv2D(Architecture *a
         return result;
     }
     auto &dilation = kernel->Dilation();
-    if ( dilation.x > 1 || dilation.y > 1 )
+    if ( req.decomposeProps.Any(ArchProperty::KernelDilation) )
     {
         return HandleDilation(arch, std::move(op), DecomposeConv2D);
     }
     try
     {
-        if ( auto newBlockShape = NewOfmBlockShape(arch, op.get()) )
+        if ( auto newBlockShape = NewOfmBlockShape(arch, op.get(), req) )
         {
             return DecomposeBlocks(arch, std::move(op), newBlockShape, DecomposeConv2D);
         }
@@ -865,8 +892,8 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv2D(Architecture *a
         return result;
     }
 
-    if ( arch->Constraints()->SupportsAccumulatorSaveRestore() &&
-         op->Input(TensorUsage::Weights)->tensor->IsConstant() && op->Kernel()->Stride().AreaXY() > 1 )
+    if ( arch->Constraints()->SupportsAccumulatorSaveRestore() && req.decomposeProps.Any(ArchProperty::KernelStride) &&
+         op->Input(TensorUsage::Weights)->tensor->IsConstant() )
     {
         return DecomposeForStrides(arch, std::move(op), DecomposeConv2D);
     }
@@ -891,7 +918,10 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv3D(Architecture *a
     ofmSlice.Initialize(ofmShape.WithZeros(), ofmShape);
     ifmSlice.Initialize(ifmShape.WithZeros(), ifmShape);
 
-    if ( ofmShape[0] > 1 )  // Batch
+    ArchRequirements req{};
+    Flags<QueryResult> qResult = OperatorQuery(arch, op.get(), &req);
+
+    if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::TensorDims) )
     {
         return DecomposeLeadingDimensions(1, arch, std::move(op), DecomposeConv3D);
     }
@@ -1063,7 +1093,10 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
     ofmSlice.Initialize(ofmShape.WithZeros(), ofmShape);
     ifmSlice.Initialize(ifmShape.WithZeros().WithHW(-padding.Top(), -padding.Left()), ifmShape);
 
-    if ( ofmShape.Batch() > 1 )
+    ArchRequirements req{};
+    Flags<QueryResult> qResult = OperatorQuery(arch, op.get(), &req);
+
+    if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::TensorDims) )
     {
         return DecomposeLeadingDimensions(1, arch, std::move(op), DecomposeDepthwiseConv2D);
     }
@@ -1169,13 +1202,13 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
     }
 
     auto &dilation = kernel->Dilation();
-    if ( dilation.x > 1 || dilation.y > 1 )
+    if ( req.decomposeProps.Any(ArchProperty::KernelDilation) )
     {
         return HandleDilation(arch, std::move(op), DecomposeDepthwiseConv2D);
     }
     try
     {
-        if ( auto newBlockShape = NewOfmBlockShape(arch, op.get()) )
+        if ( auto newBlockShape = NewOfmBlockShape(arch, op.get(), req) )
         {
             return DecomposeBlocks(arch, std::move(op), newBlockShape, DecomposeDepthwiseConv2D);
         }
@@ -1188,7 +1221,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
     }
 
     if ( arch->Constraints()->SupportsAccumulatorSaveRestore() &&
-         op->Input(TensorUsage::Weights)->tensor->IsConstant() && op->Kernel()->Stride().AreaXY() > 1 )
+         req.decomposeProps.Any(ArchProperty::KernelDilation) && op->Input(TensorUsage::Weights)->tensor->IsConstant() )
     {
         return DecomposeForStrides(arch, std::move(op), DecomposeDepthwiseConv2D);
     }
@@ -1277,7 +1310,10 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTransposeConv2D(Archit
     ofmSlice.Initialize(ofmShape.WithZeros(), ofmShape);
     ifmSlice.Initialize(ifmShape.WithZeros(), ifmShape);
 
-    if ( ofmShape.Batch() > 1 )
+    ArchRequirements req{};
+    Flags<QueryResult> qResult = OperatorQuery(arch, op.get(), &req);
+
+    if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::TensorDims) )
     {
         return DecomposeLeadingDimensions(1, arch, std::move(op), DecomposeTransposeConv2D);
     }
@@ -1657,10 +1693,13 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeElementwise(Architectu
 
         ifm2Slice.Initialize(ifm2Shape.WithZeros(), ifm2Shape);
     }
-    auto ofmRank = ofmShape.Size();
-    if ( ofmRank > 3 && ofmShape.Elements() > ofmShape.ElementsHWC() )
+
+    ArchRequirements req{};
+    Flags<QueryResult> qResult = OperatorQuery(arch, op.get(), &req);
+
+    if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::TensorDims) )
     {
-        return DecomposeLeadingDimensions(ofmRank - 3, arch, std::move(op), DecomposeElementwise);
+        return DecomposeLeadingDimensions(ofmShape.Size() - 3, arch, std::move(op), DecomposeElementwise);
     }
     if ( auto maxShape = Shape::Min(Shape(nullptr, ofmShape.Size(), MAX_DIM), ofmShape); maxShape != ofmShape )
     {
@@ -1687,11 +1726,13 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMatmul(Architecture *a
     ifmSlice.Initialize(ifmShape.WithZeros(), ifmShape);
     ifm2Slice.Initialize(ifm2Shape.WithZeros(), ifm2Shape);
 
+    ArchRequirements req{};
+    Flags<QueryResult> qResult = OperatorQuery(arch, op.get(), &req);
+
     // Decompose Batching
-    auto ofmRank = ofmShape.Size();
-    if ( ofmRank > 2 && ofmShape.Elements() > ofmShape.ElementsWC() )
+    if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::TensorDims) )
     {
-        return DecomposeLeadingDimensions(ofmRank - 2, arch, std::move(op), DecomposeMatmul);
+        return DecomposeLeadingDimensions(ofmShape.Size() - 2, arch, std::move(op), DecomposeMatmul);
     }
 
     // Define total dimensions of input and output matrices
@@ -2456,10 +2497,13 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeAvgPool(Architecture *
     auto &padding = kernel->Padding();
     ofmSlice.Initialize(ofmShape.WithZeros(), ofmShape);
     ifmSlice.Initialize(ifmShape.WithZeros().WithHW(-padding.Top(), -padding.Left()), ifmShape);
-    auto ofmRank = ofmShape.Size();
-    if ( ofmRank > 3 && (ofmShape.Elements() > ofmShape.ElementsHWC()) )
+
+    ArchRequirements req{};
+    Flags<QueryResult> qResult = OperatorQuery(arch, op.get(), &req);
+
+    if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::TensorDims) )
     {
-        return DecomposeLeadingDimensions(ofmRank - 3, arch, std::move(op), DecomposeAvgPool);
+        return DecomposeLeadingDimensions(1, arch, std::move(op), DecomposeAvgPool);
     }
 
     if ( !NeedsDecompose(arch, op.get()) )
@@ -2468,9 +2512,6 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeAvgPool(Architecture *
         result.emplace_back(std::move(op));
         return result;
     }
-
-    ArchRequirements req{};
-    Flags<QueryResult> qResult = OperatorQuery(arch, op.get(), &req);
 
     // Perform scaling of the output if needed
     const int scaleSize = ofmConn->quantization.scales.size();
@@ -2576,7 +2617,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeAvgPool(Architecture *
     // Decomposition for large dimensions
     try
     {
-        if ( auto newBlockShape = NewOfmBlockShape(arch, op.get()) )
+        if ( auto newBlockShape = NewOfmBlockShape(arch, op.get(), req) )
         {
             return DecomposeBlocks(arch, std::move(op), newBlockShape, DecomposeAvgPool);
         }
@@ -2612,10 +2653,13 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMaxPool(Architecture *
     auto &padding = kernel->Padding();
     ofmSlice.Initialize(ofmShape.WithZeros(), ofmShape);
     ifmSlice.Initialize(ifmShape.WithZeros().WithHW(-padding.Top(), -padding.Left()), ifmShape);
-    auto ofmRank = ofmShape.Size();
-    if ( ofmRank > 3 && (ofmShape.Elements() > ofmShape.ElementsHWC()) )
+
+    ArchRequirements req{};
+    Flags<QueryResult> qResult = OperatorQuery(arch, op.get(), &req);
+
+    if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::TensorDims) )
     {
-        return DecomposeLeadingDimensions(ofmRank - 3, arch, std::move(op), DecomposeMaxPool);
+        return DecomposeLeadingDimensions(ofmShape.Size() - 3, arch, std::move(op), DecomposeMaxPool);
     }
     if ( !NeedsDecompose(arch, op.get()) )
     {
@@ -2625,7 +2669,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMaxPool(Architecture *
     }
     try
     {
-        if ( auto newBlockShape = NewOfmBlockShape(arch, op.get()) )
+        if ( auto newBlockShape = NewOfmBlockShape(arch, op.get(), req) )
         {
             return DecomposeBlocks(arch, std::move(op), newBlockShape, DecomposeMaxPool);
         }
@@ -2636,7 +2680,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMaxPool(Architecture *
         result.emplace_back(std::move(op));
         return result;
     }
-    if ( arch->Constraints()->SupportsAccumulatorSaveRestore() && op->Kernel()->Stride().AreaXY() > 1 )
+    if ( arch->Constraints()->SupportsAccumulatorSaveRestore() && req.decomposeProps.Any(ArchProperty::KernelStride) )
     {
         return DecomposeForStrides(arch, std::move(op), DecomposeMaxPool);
     }
@@ -2661,12 +2705,8 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeResize(Architecture *a
 
     ArchRequirements req{};
     auto qResult = OperatorQuery(arch, op.get(), &req);
-    bool decomposeLeadingDims = false;
-    if ( qResult.Any(QueryResult::HasRequirements) && req.req.Any(ArchRequirement::Decompose) )
-    {
-        decomposeLeadingDims = req.decomposeProps.Any(ArchProperty::TensorDims);
-    }
-    if ( decomposeLeadingDims )
+
+    if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::TensorDims) )
     {
         return DecomposeLeadingDimensions(ofmShape.Size() - 3, arch, std::move(op), DecomposeResize);
     }
