@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -114,11 +114,11 @@ def test_ethos_u_vela_with_regor_raw_output(tmp_path):
     assert raw["scratch_fast_shape"].tolist() == [0]
     assert raw["scratch_fast_region"] == 0
     assert raw["scratch_fast_size"] == 0
-    assert raw["input_shape"][0].tolist() == [1, 64, 64, 16]
+    assert raw["input_shape"][0].tolist() == [1, 1, 1, 64, 64, 16]
     assert raw["input_elem_size"][0] == 1
     assert raw["input_region"][0] == 1
     assert raw["input_offset"][0] >= 0
-    assert raw["output_shape"][0].tolist() == [1, 64, 64, 8]
+    assert raw["output_shape"][0].tolist() == [1, 1, 1, 64, 64, 8]
     assert raw["output_elem_size"][0] == 1
     assert raw["output_region"][0] == 1
     assert raw["output_offset"][0] >= 0

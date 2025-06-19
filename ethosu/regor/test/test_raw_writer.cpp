@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -49,19 +49,19 @@ TEST_CASE("raw_writer")
     REQUIRE_FALSE(scratchFast->IsConstant());
 
     // Build input tensor
-    const auto input = std::make_shared<Tensor>("input_1", DataType::Int8, Shape({1, 1, 8}));
+    const auto input = std::make_shared<Tensor>("input_1", DataType::Int8, Shape::FromVector<int>({2, 3, 4, 5, 6, 7}));
     REQUIRE_FALSE(input->IsConstant());
 
     // Build output tensor
-    const auto output = std::make_shared<Tensor>("output_1", DataType::Int8, Shape({1, 1, 1, 10}));
+    const auto output = std::make_shared<Tensor>("output_1", DataType::Int8, Shape::FromVector<int>({3, 4, 5, 6, 7, 8}));
     REQUIRE_FALSE(output->IsConstant());
 
     // Build variable tensor
-    const auto variable1 = std::make_shared<Tensor>("variable_1", DataType::Int8, Shape({1, 1, 1, 9}));
+    const auto variable1 = std::make_shared<Tensor>("variable_1", DataType::Int8, Shape::FromVector<int>({4, 5, 6, 7, 8, 9}));
     REQUIRE_FALSE(variable1->IsConstant());
 
     // Build another variable tensor
-    const auto variable2 = std::make_shared<Tensor>("variable_2", DataType::Int8, Shape({1, 1, 1, 11}));
+    const auto variable2 = std::make_shared<Tensor>("variable_2", DataType::Int8, Shape::FromVector<int>({5, 6, 7, 8, 9, 10}));
     REQUIRE_FALSE(variable2->IsConstant());
 
     // Create custom op
@@ -186,14 +186,16 @@ TEST_CASE("raw_writer")
         regor_raw_tensor_header_t header;
         std::copy_n(data.get(), sizeof(header), reinterpret_cast<uint8_t *>(&header));
         REQUIRE(header.type == regor_raw_tensor_header_t::RAW_TENSOR_TYPE_INPUT);
-        REQUIRE(header.tensor.input.size == 8);
+        REQUIRE(header.tensor.input.size == 2 * 3 * 4 * 5 * 6 * 7);
         REQUIRE(header.tensor.input.region == 1);
         REQUIRE(header.tensor.input.address == 88);
         REQUIRE(header.tensor.input.element_size == 1);
-        REQUIRE(header.tensor.input.shape[0] == 1);
-        REQUIRE(header.tensor.input.shape[1] == 1);
-        REQUIRE(header.tensor.input.shape[2] == 1);
-        REQUIRE(header.tensor.input.shape[3] == 8);
+        REQUIRE(header.tensor.input.shape[0] == 2);
+        REQUIRE(header.tensor.input.shape[1] == 3);
+        REQUIRE(header.tensor.input.shape[2] == 4);
+        REQUIRE(header.tensor.input.shape[3] == 5);
+        REQUIRE(header.tensor.input.shape[4] == 6);
+        REQUIRE(header.tensor.input.shape[5] == 7);
     }
 
     // Check output
@@ -207,14 +209,16 @@ TEST_CASE("raw_writer")
         regor_raw_tensor_header_t header;
         std::copy_n(data.get(), sizeof(header), reinterpret_cast<uint8_t *>(&header));
         REQUIRE(header.type == regor_raw_tensor_header_t::RAW_TENSOR_TYPE_OUTPUT);
-        REQUIRE(header.tensor.output.size == 10);
+        REQUIRE(header.tensor.output.size == 3 * 4 * 5 * 6 * 7 * 8);
         REQUIRE(header.tensor.output.region == 1);
         REQUIRE(header.tensor.output.address == 99);
         REQUIRE(header.tensor.output.element_size == 1);
-        REQUIRE(header.tensor.output.shape[0] == 1);
-        REQUIRE(header.tensor.output.shape[1] == 1);
-        REQUIRE(header.tensor.output.shape[2] == 1);
-        REQUIRE(header.tensor.output.shape[3] == 10);
+        REQUIRE(header.tensor.output.shape[0] == 3);
+        REQUIRE(header.tensor.output.shape[1] == 4);
+        REQUIRE(header.tensor.output.shape[2] == 5);
+        REQUIRE(header.tensor.output.shape[3] == 6);
+        REQUIRE(header.tensor.output.shape[4] == 7);
+        REQUIRE(header.tensor.output.shape[5] == 8);
     }
 
     // Check (input) variable
@@ -228,14 +232,16 @@ TEST_CASE("raw_writer")
         regor_raw_tensor_header_t header;
         std::copy_n(data.get(), sizeof(header), reinterpret_cast<uint8_t *>(&header));
         REQUIRE(header.type == regor_raw_tensor_header_t::RAW_TENSOR_TYPE_VARIABLE);
-        REQUIRE(header.tensor.input.size == 9);
+        REQUIRE(header.tensor.input.size == 4 * 5 * 6 * 7 * 8 * 9);
         REQUIRE(header.tensor.input.region == 1);
         REQUIRE(header.tensor.input.address == 11);
         REQUIRE(header.tensor.input.element_size == 1);
-        REQUIRE(header.tensor.input.shape[0] == 1);
-        REQUIRE(header.tensor.input.shape[1] == 1);
-        REQUIRE(header.tensor.input.shape[2] == 1);
-        REQUIRE(header.tensor.input.shape[3] == 9);
+        REQUIRE(header.tensor.input.shape[0] == 4);
+        REQUIRE(header.tensor.input.shape[1] == 5);
+        REQUIRE(header.tensor.input.shape[2] == 6);
+        REQUIRE(header.tensor.input.shape[3] == 7);
+        REQUIRE(header.tensor.input.shape[4] == 8);
+        REQUIRE(header.tensor.input.shape[5] == 9);
     }
 
     // Check (output) variable
@@ -249,13 +255,15 @@ TEST_CASE("raw_writer")
         regor_raw_tensor_header_t header;
         std::copy_n(data.get(), sizeof(header), reinterpret_cast<uint8_t *>(&header));
         REQUIRE(header.type == regor_raw_tensor_header_t::RAW_TENSOR_TYPE_VARIABLE);
-        REQUIRE(header.tensor.input.size == 11);
+        REQUIRE(header.tensor.input.size == 5 * 6 * 7 * 8 * 9 * 10);
         REQUIRE(header.tensor.input.region == 1);
         REQUIRE(header.tensor.input.address == 22);
         REQUIRE(header.tensor.input.element_size == 1);
-        REQUIRE(header.tensor.input.shape[0] == 1);
-        REQUIRE(header.tensor.input.shape[1] == 1);
-        REQUIRE(header.tensor.input.shape[2] == 1);
-        REQUIRE(header.tensor.input.shape[3] == 11);
+        REQUIRE(header.tensor.input.shape[0] == 5);
+        REQUIRE(header.tensor.input.shape[1] == 6);
+        REQUIRE(header.tensor.input.shape[2] == 7);
+        REQUIRE(header.tensor.input.shape[3] == 8);
+        REQUIRE(header.tensor.input.shape[4] == 9);
+        REQUIRE(header.tensor.input.shape[5] == 10);
     }
 }

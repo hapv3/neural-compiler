@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -450,7 +450,7 @@ private:
                         address = header.tensor.input.address;
                         data_size = header.tensor.input.size;
                         element_size = header.tensor.input.element_size;
-                        shape.insert(shape.end(), header.tensor.input.shape, header.tensor.input.shape + 4);
+                        shape.insert(shape.end(), std::begin(header.tensor.input.shape), std::end(header.tensor.input.shape));
                         raw.inputs.emplace_back(region, address, size, element_size, shape);
                         break;
                     case regor_raw_tensor_header_t::RAW_TENSOR_TYPE_OUTPUT:
@@ -458,7 +458,7 @@ private:
                         address = header.tensor.output.address;
                         data_size = header.tensor.output.size;
                         element_size = header.tensor.output.element_size;
-                        shape.insert(shape.end(), header.tensor.output.shape, header.tensor.output.shape + 4);
+                        shape.insert(shape.end(), std::begin(header.tensor.output.shape), std::end(header.tensor.output.shape));
                         raw.outputs.emplace_back(region, address, size, element_size, shape);
                         break;
                     case regor_raw_tensor_header_t::RAW_TENSOR_TYPE_VARIABLE:
@@ -466,7 +466,8 @@ private:
                         address = header.tensor.variable.address;
                         data_size = header.tensor.variable.size;
                         element_size = header.tensor.variable.element_size;
-                        shape.insert(shape.end(), header.tensor.variable.shape, header.tensor.variable.shape + 4);
+                        shape.insert(shape.end(), std::begin(header.tensor.variable.shape),
+                            std::end(header.tensor.variable.shape));
                         raw.variables.emplace_back(region, address, size, element_size, shape);
                         break;
                     default:

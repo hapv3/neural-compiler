@@ -232,8 +232,8 @@ void RawWriter::SerialiseInputTensor(const Tensor *tensor, Address address)
     header.type = regor_raw_tensor_header_t::RAW_TENSOR_TYPE_INPUT;
     header.tensor.input.region = INPUT_REGION;
     header.tensor.input.element_size = DataTypeStorageSizeBytes(tensor->Type(), 1);
-    auto shape = Shape::PadAxes(tensor->StorageShape(), 4, 1).ToList<uint32_t>();
-    std::copy(shape.begin(), shape.end(), header.tensor.input.shape);
+    auto shape = Shape::PadAxes(tensor->StorageShape(), 6, 1).ToList<uint32_t>();
+    std::copy_n(shape.begin(), 6, header.tensor.input.shape);
     header.tensor.input.size = DataTypeStorageSizeBytes(tensor->Type(), tensor->StorageShape().Elements());
     header.tensor.input.address = address;
 
@@ -255,8 +255,8 @@ void RawWriter::SerialiseOutputTensor(const Tensor *tensor, Address address)
     header.type = regor_raw_tensor_header_t::RAW_TENSOR_TYPE_OUTPUT;
     header.tensor.output.region = OUTPUT_REGION;
     header.tensor.output.element_size = DataTypeStorageSizeBytes(tensor->Type(), 1);
-    auto shape = Shape::PadAxes(tensor->StorageShape(), 4, 1).ToList<uint32_t>();
-    std::copy(shape.begin(), shape.end(), header.tensor.output.shape);
+    auto shape = Shape::PadAxes(tensor->StorageShape(), 6, 1).ToList<uint32_t>();
+    std::copy_n(shape.begin(), 6, header.tensor.output.shape);
     header.tensor.output.size = DataTypeStorageSizeBytes(tensor->Type(), tensor->StorageShape().Elements());
     header.tensor.output.address = address;
 
@@ -278,8 +278,8 @@ void RawWriter::SerialiseVariableTensor(const Tensor *tensor, Address address)
     header.type = regor_raw_tensor_header_t::RAW_TENSOR_TYPE_VARIABLE;
     header.tensor.variable.region = VARIABLE_REGION;
     header.tensor.variable.element_size = DataTypeStorageSizeBytes(tensor->Type(), 1);
-    auto shape = Shape::PadAxes(tensor->StorageShape(), 4, 1).ToList<uint32_t>();
-    std::copy(shape.begin(), shape.end(), header.tensor.variable.shape);
+    auto shape = Shape::PadAxes(tensor->StorageShape(), 6, 1).ToList<uint32_t>();
+    std::copy_n(shape.begin(), 6, header.tensor.variable.shape);
     header.tensor.variable.size = DataTypeStorageSizeBytes(tensor->Type(), tensor->StorageShape().Elements());
     header.tensor.variable.address = address;
 

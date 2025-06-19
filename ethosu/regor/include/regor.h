@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -148,7 +148,7 @@ typedef struct regor_raw_tensor_header_t
             uint32_t size;
             uint64_t address;
             uint8_t element_size;
-            uint32_t shape[4];
+            uint32_t shape[6];
         } input;
         struct
         {
@@ -156,7 +156,7 @@ typedef struct regor_raw_tensor_header_t
             uint32_t size;
             uint64_t address;
             uint8_t element_size;
-            uint32_t shape[4];
+            uint32_t shape[6];
         } output;
         struct
         {
@@ -164,7 +164,7 @@ typedef struct regor_raw_tensor_header_t
             uint32_t size;
             uint64_t address;
             uint8_t element_size;
-            uint32_t shape[4];
+            uint32_t shape[6];
         } variable;
     } tensor;
 } regor_raw_tensor_header_t;
