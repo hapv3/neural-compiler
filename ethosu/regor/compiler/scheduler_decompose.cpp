@@ -1837,6 +1837,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(Architecture *a
             // Create an intermediate tensor
             auto newTensor = ifmConn->tensor->Clone();
             newTensor->srcTensor = nullptr;
+            newTensor->bufferView = {};
             newTensor->storageShape = ifmShape.With(reducedAxis, blockCount);
 
             LOG_TRACE1("DecomposeReduce: Reduce dimension too large, axis {}, size {}, blocks {}\n", reducedAxis,
