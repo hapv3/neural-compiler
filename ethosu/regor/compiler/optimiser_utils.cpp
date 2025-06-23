@@ -23,16 +23,6 @@
 namespace regor::GraphOptimisation
 {
 
-// Find specified tensor in Inputs() / Outputs() vectors.
-// returns true if found in given vector.
-bool IsTensorInVector(const std::vector<std::shared_ptr<Tensor>> &tensorVec, const Tensor *const tensorToFind)
-{
-    auto pos = std::find_if(
-        tensorVec.begin(), tensorVec.end(), [&](const std::shared_ptr<Tensor> &t) { return t.get() == tensorToFind; });
-
-    return (pos != tensorVec.end());
-}
-
 // Insert a MemoryCopy operation after given ifm tensor. Returns a copy op shared_ptr.
 // Will make a clone of ifm as ofm  and connects any other consumers of the ifm to it.
 std::shared_ptr<Operation> InsertCopyOpAfterTensor(const std::shared_ptr<Tensor> &ifm, const Quantization &quantization)

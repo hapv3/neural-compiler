@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -26,9 +26,6 @@
 namespace regor::GraphOptimisation
 {
 
-// Find specified tensor in Inputs() / Outputs() vectors.
-// returns true if found in given vector.
-bool IsTensorInVector(const std::vector<std::shared_ptr<Tensor>> &tensorVec, const Tensor *const tensorToFind);
 
 // Insert a MemoryCopy operation after given ifm tensor. Returns a copy op shared_ptr.
 // Will make a clone of ifm as ofm  and connects any other consumers of the ifm to it.

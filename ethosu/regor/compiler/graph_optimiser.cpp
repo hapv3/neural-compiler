@@ -147,9 +147,10 @@ Operation *GraphOptimiser::RemoveReshape(Graph *const graph, Operation *const op
 
         // Check if ifm/ofm are network ifm/ofm or constant
         bool isIfmConst = ifm->IsConstant();
-        bool isIfmSgIfm = IsTensorInVector(graph->Inputs(), ifm);
-        bool isOfmSgOfm = IsTensorInVector(graph->Outputs(), ofm);
-        bool isIfmSgOfm = IsTensorInVector(graph->Outputs(), ifm);
+        // Determine whether the tensors belong to the graph IO using the dedicated helpers on Graph
+        bool isIfmSgIfm = graph->IsInput(ifm);
+        bool isOfmSgOfm = graph->IsOutput(ofm);
+        bool isIfmSgOfm = graph->IsOutput(ifm);
 
         // Check if ifm/ofm is produced/consumed by a CPU operation
         auto isPassthroughOp = [](const std::shared_ptr<Operation> &op) { return op->Type() == OpType::Passthrough; };

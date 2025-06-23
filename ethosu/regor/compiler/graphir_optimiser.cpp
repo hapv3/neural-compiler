@@ -1151,7 +1151,7 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const graph, Operation *const op
         // Note (ZeroPoints): For input fusing we cannot have an output zero point on the Rescale operation (since the
         //       zero point is applied before scaling on inputs), however input zero point is fine.
         if ( ofmConn->tensor->Readers().size() == 1 && ofmConn->quantization.zeroPoints == Quantization::Unit().zeroPoints &&
-             !IsTensorInVector(graph->Outputs(), ofmConn->tensor.get()) )
+             !graph->IsOutput(ofmConn->tensor.get()) )
         {
             // Propagate rescaling to input of next op
             auto consumer = ofmConn->tensor->Readers().front();
@@ -1193,8 +1193,7 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const graph, Operation *const op
                             {
                                 // Check if the other ifm rescale can be fused
                                 auto opSign = otherProducer->Attribute<sign_attr_t>();
-                                bool otherFusedTensorInGraphOutputs = IsTensorInVector(
-                                    graph->Outputs(), consumerOtherIfmCon->tensor.get());
+                                bool otherFusedTensorInGraphOutputs = graph->IsOutput(consumerOtherIfmCon->tensor.get());
                                 bool otherRescaleUnsigned = opSign ? (opSign->input_unsigned || opSign->output_unsigned) : false;
 
                                 auto otherIfmQuant = otherProducer->Input(TensorUsage::IFM)->quantization;
@@ -1240,7 +1239,7 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const graph, Operation *const op
              producer->Output(TensorUsage::OFM)->quantization.EqualScales(Quantization::Unit()) &&
              ifmConn->quantization.zeroPoints == Quantization::Unit().zeroPoints &&
              // fused tensor cannot be in graph-outputs
-             !IsTensorInVector(graph->Outputs(), ifmConn->tensor.get()) &&
+             !graph->IsOutput(ifmConn->tensor.get()) &&
              _constraints->SupportsFusedRescale(producer->Type(), TensorUsage::OFM, ifmConn->tensor->Type(),
                  ofmConn->tensor->Type(), producer->IFM(0)->Type(), producer->OFM()->Type(), ofmQuant) )
         {
