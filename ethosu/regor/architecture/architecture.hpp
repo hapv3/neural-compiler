@@ -137,6 +137,7 @@ public:
     virtual std::unique_ptr<ArchitectureOpConfig> Clone() = 0;
     virtual int MaxIFMBuffering() = 0;
     virtual Point2i OptimalStripeGranule() = 0;
+    virtual Point2i MinimalStripeGranule() = 0;
     virtual int OptimalDepthGranule() = 0;
     virtual std::string ToString(bool full) = 0;
 };

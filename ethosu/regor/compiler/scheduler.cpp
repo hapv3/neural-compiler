@@ -1501,10 +1501,11 @@ std::shared_ptr<Schedule> Scheduler::OptimizeSubSchedule(const CascadeInfo &casc
     // anyway if no new cascades are created below
     SchedulerOpInfo *minCost = refSchedule->Cost(subOps.back().get());
     const int minStripeHeight = minCost->stripe.Height() + 1;
+    const int minStripeHeightStep = minCost->Config()->MinimalStripeGranule().y;
 
     std::vector<Shape> possibleStripes;
-    possibleStripes.reserve(maxStripeHeight);
-    for ( int h = minStripeHeight; h <= maxStripeHeight; h++ )
+    possibleStripes.reserve(maxStripeHeight / minStripeHeightStep);
+    for ( int h = RoundAway(minStripeHeight, minStripeHeightStep); h <= maxStripeHeight; h += minStripeHeightStep )
     {
         possibleStripes.push_back(finalOFMShape.With(-3, h));
     }

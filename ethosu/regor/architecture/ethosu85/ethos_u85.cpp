@@ -941,6 +941,9 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU85::FindBlockConfig(OpType opTyp
         if ( (query.transpose & TransposeType::MaskC) == TransposeType::H ) ofmBlockGranule[-3] = 16;
     }
 
+    int rounding = 0;
+    int upscale = UpscaleAndRounding(query.ifmResampling, rounding);
+
     // Operator configuration to be returned
     auto config = std::make_unique<EthosU85OpConfig>();
     config->_ofmUBlock = ofmUBlock;
@@ -949,6 +952,7 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU85::FindBlockConfig(OpType opTyp
     config->_accumulatorOutputEnabled = query.accOutputEnabled;
     config->_ifmRamSizeBytes = _ifmRamSizeBytes;
     config->_traversal = EthosU85Traversal::DepthFirst;
+    config->_minimalStripeGranule = {upscale, upscale};
 
     // Common search variables
     FindConfigCommon common;
@@ -1011,8 +1015,6 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU85::FindBlockConfig(OpType opTyp
     EthosU85Traversal traversal = isDepthwise ? EthosU85Traversal::Depthwise : (isPartKernel ? EthosU85Traversal::PartKernel : EthosU85Traversal::DepthFirst);
 
     int accBits = AccumulatorBits(accType);
-    int rounding;
-    int upscale = UpscaleAndRounding(query.ifmResampling, rounding);
     int numBlocksInRam = 2;
 
     // Subkernel repeats of the IFM
@@ -1297,6 +1299,7 @@ std::unique_ptr<ArchitectureOpConfig> EthosU85OpConfig::Clone()
     config->_ofmBlock = _ofmBlock;
     config->_ofmUBlock = _ofmUBlock;
     config->_ifmBlock = _ifmBlock;
+    config->_minimalStripeGranule = _minimalStripeGranule;
     return std::unique_ptr<ArchitectureOpConfig>(config.release());
 }
 
@@ -1308,6 +1311,11 @@ int EthosU85OpConfig::MaxIFMBuffering()
 Point2i EthosU85OpConfig::OptimalStripeGranule()
 {
     return _ofmBlock.WH<int>();
+}
+
+Point2i EthosU85OpConfig::MinimalStripeGranule()
+{
+    return _minimalStripeGranule;
 }
 
 int EthosU85OpConfig::OptimalDepthGranule()

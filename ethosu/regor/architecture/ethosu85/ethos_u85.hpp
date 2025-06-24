@@ -76,6 +76,7 @@ private:
     Shape _ifmBlock;
     Shape _ofmBlock;
     Shape _ofmUBlock;
+    Point2i _minimalStripeGranule;
     EthosU85Accumulator _accumulatorType = EthosU85Accumulator::Acc32;
     ArchAccumulatorSource _accumulatorSource = ArchAccumulatorSource::Reset;
     bool _accumulatorOutputEnabled = true;
@@ -93,6 +94,7 @@ public:
     std::unique_ptr<ArchitectureOpConfig> Clone() override;
     int MaxIFMBuffering() override;
     Point2i OptimalStripeGranule() override;
+    Point2i MinimalStripeGranule() override;
     int OptimalDepthGranule() override;
     std::string ToString(bool full) override;
 };

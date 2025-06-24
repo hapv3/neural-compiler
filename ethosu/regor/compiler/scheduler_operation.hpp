@@ -124,7 +124,10 @@ public:
         return (allocatedSize > 0) ? allocatedSize : TensorAllocationBytes(storageShape, format, dataType);
     }
 
-    std::string Name() const { return srcTensor.get() == nullptr ? "?" : srcTensor->Name(); }
+    std::string Name() const
+    {
+        return srcTensor.get() == nullptr ? "? (uid " + std::to_string(uid) + ")" : srcTensor->Name();
+    }
     bool IsConstant() const { return bufferView.HasBuffer() && bufferView.Buffer()->Size(); }
 };
 

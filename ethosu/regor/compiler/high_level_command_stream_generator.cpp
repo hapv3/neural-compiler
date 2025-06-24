@@ -36,11 +36,11 @@ namespace regor
 
 
 static void CalcPaddingAndSkirt(const Kernel *kernel, const Shape &inputShape, const Shape &outputShape,
-    const Point2i &inputDilation, HLCPadding &padding, HLCPadding &skirt)
+    const Point2i &inputDilation, const int upscaling, HLCPadding &padding, HLCPadding &skirt)
 {
     auto dilatedWH = kernel->DilatedWH() * inputDilation;
-    int ypad = NeededTotalPadding(inputShape.Height(), outputShape.Height(), kernel->Stride().y, dilatedWH.y);
-    int xpad = NeededTotalPadding(inputShape.Width(), outputShape.Width(), kernel->Stride().x, dilatedWH.x);
+    int ypad = NeededTotalPadding(inputShape.Height() * upscaling, outputShape.Height(), kernel->Stride().y, dilatedWH.y);
+    int xpad = NeededTotalPadding(inputShape.Width() * upscaling, outputShape.Width(), kernel->Stride().x, dilatedWH.x);
     const auto &pad = kernel->Padding();
     padding.left = pad.Left();
     padding.right = pad.Right();
@@ -669,13 +669,13 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
         // Use full ifm shape for broadcast elementwise operators
         maxIfmShape = Shape::Max(ifm0Conn->SliceShape(), ifm1Conn->SliceShape());
     }
-    CalcPaddingAndSkirt(kernel, maxIfmShape, ofmShape, ofmConn->stepXY, padding, skirt);
 
     int upscaling = 1;
     if ( ifm0Conn->resamplingMode != ArchResampling::None )
     {
         upscaling = 2;
     }
+    CalcPaddingAndSkirt(kernel, maxIfmShape, ofmShape, ofmConn->stepXY, upscaling, padding, skirt);
     auto &depthSlices = opInfo->ofmDepthSlices;
     int dilatedKernelHeight = kernel->DilatedWH().y;
 

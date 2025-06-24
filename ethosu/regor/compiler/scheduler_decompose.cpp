@@ -1594,12 +1594,15 @@ std::vector<std::unique_ptr<SchedulerOperation>> LegaliseResize(Architecture *ar
     // Perform 2x upScaling up to the last required
     while ( remainingUpscale > 2 )
     {
+        // Create a new intermediate tensor
+        auto shape = ofmShape.WithHW(ifmConn->shape.Height() * std::min(2, upscaleH), ifmConn->shape.Width() * std::min(2, upscaleW));
+        auto intermediate = std::make_shared<SchedulerTensor>(ofmConn->tensor->dataType, shape);
+        intermediate->memArea = arch->FeatureMapMemory();
+
+        // Create a new op that outputs to the intermediate tensor
         auto newOp = std::make_unique<SchedulerOperation>(OpType::AvgPool);
         *newOp->ConnectInput(TensorUsage::IFM, ifmConn->tensor) = *ifmConn;
-        std::shared_ptr<SchedulerTensor> tens = ofmConn->tensor->Clone();
-        auto shape = ofmShape.WithHW(ifmConn->shape.Height() * std::min(2, upscaleH), ifmConn->shape.Width() * std::min(2, upscaleW));
-        tens->storageShape = shape;
-        ifmConn = newOp->ConnectOutput(TensorUsage::OFM, tens);
+        ifmConn = newOp->ConnectOutput(TensorUsage::OFM, intermediate);
         ifmConn->quantization = Quantization::Unit();
         ifmConn->shape = shape;
         ifmConn->resamplingMode = ArchResampling::Nearest;

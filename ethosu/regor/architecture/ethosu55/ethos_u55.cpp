@@ -366,6 +366,9 @@ std::unique_ptr<EthosU55OpConfig> ArchEthosU55::FindBlockConfig(OpType opType, c
     bool isEqualDepthOp = (ewUsage != ElementwiseUsage::No) || (isPooling && !isReduceSum) || isDepthwise;
     bool isPartKernel = npuOp == EthosU55NpuOp::Convolution && ChooseKernelMethod(ifmShape, query.ifmBits, query.kernel);
 
+    int rounding = 0;
+    int upscale = UpscaleAndRounding(query.ifmResampling, rounding);
+
     // Operator configuration to be returned
     auto config = std::make_unique<EthosU55OpConfig>();
     config->_bankSize = _shram.bankSizeBytes;
@@ -378,6 +381,7 @@ std::unique_ptr<EthosU55OpConfig> ArchEthosU55::FindBlockConfig(OpType opType, c
             1;
     config->_ifmDepthBufScaling = ifmDepthBufScaling;
     config->_traversal = isDepthwise ? EthosUTraversal::Depthwise : (isPartKernel ? EthosUTraversal::PartKernel : EthosUTraversal::DepthFirst);
+    config->_minimalStripeGranule = {upscale, upscale};
 
     // Accumulator & granule settings
     EthosU55SHRamElements accType = SHRAM_Acc32;
@@ -400,8 +404,6 @@ std::unique_ptr<EthosU55OpConfig> ArchEthosU55::FindBlockConfig(OpType opType, c
         ifmGranule = _ifmBankGranules[query.ifmBits / 8 - 1];
     }
 
-    int rounding;
-    int upscale = UpscaleAndRounding(query.ifmResampling, rounding);
     int lutBanks = std::max(DivRoundUp(query.lutBytes, 1024), _shram.reservedEndBanks);
 
     // Subkernel repeats of the IFM
@@ -637,6 +639,7 @@ std::unique_ptr<ArchitectureOpConfig> EthosU55OpConfig::Clone()
     config->_accumulatorType = _accumulatorType;
     config->_ofmBlock = _ofmBlock;
     config->_ifmBlock = _ifmBlock;
+    config->_minimalStripeGranule = _minimalStripeGranule;
     config->_layout = _layout;
     if ( _prevConfig )
     {
@@ -653,6 +656,11 @@ int EthosU55OpConfig::MaxIFMBuffering()
 Point2i EthosU55OpConfig::OptimalStripeGranule()
 {
     return _ofmBlock.WH<int>();
+}
+
+Point2i EthosU55OpConfig::MinimalStripeGranule()
+{
+    return _minimalStripeGranule;
 }
 
 int EthosU55OpConfig::OptimalDepthGranule()

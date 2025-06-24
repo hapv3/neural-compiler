@@ -91,6 +91,7 @@ private:
     SHRAMLayout _layout;
     Shape _ifmBlock;
     Shape _ofmBlock;
+    Point2i _minimalStripeGranule;
     int _bankSize = 0;
     EthosU55SHRamElements _accumulatorType = SHRAM_Acc32;
     EthosUTraversal _traversal = EthosUTraversal::DepthFirst;
@@ -106,6 +107,7 @@ public:
     std::unique_ptr<ArchitectureOpConfig> Clone() override;
     int MaxIFMBuffering() override;
     Point2i OptimalStripeGranule() override;
+    Point2i MinimalStripeGranule() override;
     int OptimalDepthGranule() override;
     std::string ToString(bool full) override;
 
