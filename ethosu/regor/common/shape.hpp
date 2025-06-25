@@ -189,7 +189,16 @@ public:
         return true;
     }
 
-    explicit operator uint32_t() const { return At(0) ^ (At(1) << 8) ^ (At(2) << 16) ^ (At(3) << 24); }
+    explicit operator uint32_t() const
+    {
+        uint32_t hash = 0;
+        auto *local = Storage();
+        for ( int i = 0; i <= _last; i++ )
+        {
+            hash = hash * 31 + local[i];
+        }
+        return hash;
+    }
 
     explicit operator uint64_t() const { return uint64_t(uint32_t(*this)); }
 
