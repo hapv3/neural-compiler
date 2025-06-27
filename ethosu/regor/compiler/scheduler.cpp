@@ -859,56 +859,9 @@ bool Scheduler::AllocateAddresses(Schedule *schedule)
 }
 
 
-/// @brief Specialised LiveRangeGraph for read only (flash) memory which ignores scalars if possible
-class ReadOnlyLiveRangeGraph : public LiveRangeGraph
-{
-private:
-    Architecture *_arch;
-
-public:
-    ReadOnlyLiveRangeGraph(Architecture *arch) : _arch(arch) {}
-    bool ShouldBeIgnored(SchedulerTensor *tens, const MemArea &targetMemory) override
-    {
-        // First do the regular check for matching memory type
-        if ( LiveRangeGraph::ShouldBeIgnored(tens, targetMemory) )
-        {
-            return true;
-        }
-        // Memory type correct, check if this tensor is a scalar that can be encoded
-        // in the command stream for this architecture
-        auto srcTens = tens->srcTensor;
-        if ( srcTens && srcTens->StorageShape().Elements() == 1 && srcTens->IsConstant() )
-        {
-            // All consumers must accept this scalar if we are to ignore it
-            for ( auto op : tens->consumers )
-            {
-                // Find usage of the tensor for this consumer op
-                TensorUsage usage(TensorUsage::None);
-                for ( auto input : op->inputs.pairs() )
-                {
-                    if ( input.second.tensor.get() == tens )
-                    {
-                        usage = input.first;
-                    }
-                }
-                if ( !_arch->SupportsScalar(op->Type(), tens->dataType, usage) )
-                {  // This scalar cannot be ignored and must be handled
-                    return false;
-                }
-            }
-            // At this point we have determined that the tensor can be encoded
-            // as a scalar in the command stream and can safely be ignored
-            return true;
-        }
-        // Not a scalar - cannot be ignored
-        return false;
-    }
-};
-
-
 void Scheduler::AllocateReadOnlyAddresses(Schedule *schedule, IncrementalLinearAllocator &readOnlyAllocator)
 {
-    auto lrGraph = ReadOnlyLiveRangeGraph(_arch);
+    LiveRangeGraph lrGraph;
     lrGraph.ExtractLiveRangesFromCascades(_ops, schedule, _arch->ReadonlyMemory(), false);
     auto totalSize = readOnlyAllocator.Allocate(&lrGraph, NPUTensorAlignment, _options.verboseAllocation);
     schedule->memoryUsage[_arch->ReadonlyMemory()] = int(totalSize);

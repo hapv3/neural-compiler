@@ -1885,7 +1885,7 @@ void EthosU85RCSGenerator::GenerateElementwiseOp(HLCStripe *stripe, MemoryAccess
         GenerateScalingForElementwise(op);
         GenerateCommon(stripe, useGlobalScale, memoryAccesses);
         bool ifmIsScalar = IsScalar(op->ifm[0], scalarValue);
-        bool ifm2IsScalar = IsScalar(op->ifm[1], scalarValue);
+        bool ifm2IsScalar = !ifmIsScalar && IsScalar(op->ifm[1], scalarValue);
         GenerateIFM2Precision(op->ifm[1], ifm2Chained, ifm2IsScalar);
         GenerateIFM2(opType, op->ifm[1], stripe->ifmAreas[1], ifm2IsScalar, scalarValue, ifm2Cb);
         if ( !ifm2IsScalar && !ifm2Chained )
