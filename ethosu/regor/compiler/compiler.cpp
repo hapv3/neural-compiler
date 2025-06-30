@@ -33,6 +33,7 @@
 #include "tensor_allocator.hpp"
 #include "tflite/custom_operator_ethosu.hpp"
 #include "tflite/tflite_reader.hpp"
+#include "tflite/tflite_supported_operators.hpp"
 #include "tflite/tflite_writer.hpp"
 #include "tosa/tosa_reader.hpp"
 
@@ -558,6 +559,13 @@ Graph *Compiler::GetGraph(const char *name)
         return pos->get();
     }
     return nullptr;
+}
+
+ordered_map<OpType, std::vector<std::string>> Compiler::GetTFLiteConstraints()
+{
+    std::unique_ptr<TfLiteSupportedOperators> supportedOps;
+    _architecture->Call([&supportedOps](const std::string &target) { supportedOps = MakeSupportedOpsChecker(target); });
+    return supportedOps->Documentation();
 }
 
 }  // namespace regor

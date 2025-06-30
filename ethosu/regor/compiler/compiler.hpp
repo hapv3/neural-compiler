@@ -22,6 +22,7 @@
 
 #include "architecture/architecture.hpp"
 #include "architecture/register_command_stream_generator.hpp"
+#include "common/ordered_map.hpp"
 #include "database.hpp"
 #include "graph.hpp"
 #include "graph_builder.hpp"
@@ -128,6 +129,8 @@ public:
 
     GraphApi::IGraphBuilder *CreateGraph(const char *name);
     Graph *GetGraph(const char *name);
+
+    ordered_map<OpType, std::vector<std::string>> GetTFLiteConstraints();
 
 private:
     bool BuildNetwork(const char *entryGraph);

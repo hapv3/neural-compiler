@@ -64,11 +64,14 @@ struct IGraphBuilder;
 }  // namespace GraphAPI
 #endif
 
+const size_t REGOR_PERF_NAME_MAX = 32;
+const size_t REGOR_MAX_CONSTRAINTS = 32;
+const size_t REGOR_CONSTRAINT_MAX_LENGTH = 256;
 
 typedef struct regor_memory_access_perf_t
 {
-    char memoryName[32];
-    char accessType[32];
+    char memoryName[REGOR_PERF_NAME_MAX];
+    char accessType[REGOR_PERF_NAME_MAX];
     int64_t bytesRead;
     int64_t bytesWritten;
     int64_t accessCycles;
@@ -76,7 +79,7 @@ typedef struct regor_memory_access_perf_t
 
 typedef struct regor_peak_memory_usage_t
 {
-    char memoryName[32];
+    char memoryName[REGOR_PERF_NAME_MAX];
     int64_t peakUsage;
 } regor_peak_memory_usage_t;
 
@@ -99,6 +102,19 @@ typedef struct regor_perf_report_t
     regor_peak_memory_usage_t peakUsages[4];
     regor_memory_access_perf_t *access;
 } regor_perf_report_t;
+
+typedef struct regor_operator_constraints_t
+{
+    char operatorName[REGOR_PERF_NAME_MAX];
+    char constraint[REGOR_MAX_CONSTRAINTS][REGOR_CONSTRAINT_MAX_LENGTH];
+    int constraints;
+} regor_operator_constraints_t;
+
+typedef struct regor_operator_constraints_report_t
+{
+    regor_operator_constraints_t *opConstraints;
+    int operators;
+} regor_operator_constraints_report_t;
 
 typedef struct regor_raw_tensor_header_t
 {
@@ -211,6 +227,8 @@ typedef void (*regor_log_writer_t)(const void *data, size_t size_to_write);
 int regor_set_logging(regor_log_writer_t log_writer, unsigned filter_mask);
 
 int regor_get_perf_report(regor_context_t ctx, regor_perf_report_t *report);
+
+int regor_get_tflite_constraints(regor_context_t ctx, regor_operator_constraints_report_t *report);
 
 struct REGOR_NS IRegorReporting *regor_get_reporting_interface(regor_context_t ctx);
 

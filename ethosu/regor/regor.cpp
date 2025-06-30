@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -30,7 +30,9 @@
 #include "compiler/compiler.hpp"
 #include "compiler/network_performance.hpp"
 #include "include/regor_interface.hpp"
+#include "tflite/tflite_mapping.hpp"
 
+#include <algorithm>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -587,6 +589,42 @@ DLL_EXPORT int regor_get_perf_report(regor_context_t ctx, regor_perf_report_t *r
     return 1;
 }
 
+DLL_EXPORT int regor_get_tflite_constraints(regor_context_t ctx, regor_operator_constraints_report_t *report)
+{
+    Compiler *compiler = GetContext(ctx);
+    if ( !compiler || !report )
+    {
+        return 0;
+    }
+    const ordered_map<OpType, std::vector<std::string>> &opConstraints = compiler->GetTFLiteConstraints();
+    if ( report->opConstraints != nullptr )
+    {
+        int opIdx = 0;
+        for ( const auto &[opType, constraints] : opConstraints.pairs() )
+        {
+            assert(opIdx < report->operators);
+            auto tfLiteType = TfLiteMapping::OpTypeToBuiltinOperator(opType);
+            std::string opName = TfLiteMapping::BuiltinOperatorToString(tfLiteType);
+            assert(opName.size() < (REGOR_PERF_NAME_MAX - 1));
+            char *target = report->opConstraints[opIdx].operatorName;
+            size_t eos = opName.copy(target, REGOR_PERF_NAME_MAX - 1);
+            target[eos] = 0;
+            assert(constraints.size() <= REGOR_MAX_CONSTRAINTS);
+            report->opConstraints[opIdx].constraints = constraints.size();
+            for ( int i = 0; i < int(constraints.size()); i++ )
+            {
+                const auto &constraint = constraints[i];
+                target = report->opConstraints[opIdx].constraint[i];
+                assert(constraint.size() < REGOR_CONSTRAINT_MAX_LENGTH);
+                eos = constraint.copy(target, REGOR_CONSTRAINT_MAX_LENGTH - 1);
+                target[eos] = 0;
+            }
+            opIdx += 1;
+        }
+    }
+    report->operators = int(opConstraints.size());
+    return 1;
+}
 
 DLL_EXPORT struct REGOR_NS IRegorReporting *regor_get_reporting_interface(regor_context_t ctx)
 {

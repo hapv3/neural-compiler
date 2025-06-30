@@ -255,6 +255,38 @@ def generate_supported_ops():
         ]
         return f" - [{', '.join(sorted(constraints_excluded_names))}]" if constraints_excluded_names else ""
 
+    def _regor_generic_constraints(supported_ops):
+        # extract generic constraints from Regor supported-ops
+        # A generic constraint applies to all opTypes except a list of exceptions
+        # a constraint is considered generic if it applies to more than 80% of the opTypes
+        threshold = 0.20 * len(supported_ops)
+        allconstraints = set()
+        exceptions = dict()
+        for op in supported_ops:
+            for constraint in supported_ops[op]:
+                allconstraints.add(constraint)
+                exceptions[constraint] = list()
+        for op in supported_ops:
+            for constraint in [c for c in allconstraints if c not in supported_ops[op]]:
+                exceptions[constraint].append(op)
+        return {k: v for k, v in exceptions.items() if len(v) < threshold}
+
+    def _regor_specific_constraints(supported_ops, generic_constraints):
+        # extract specific constraints from Regor supported-ops
+        # A constraint is considered op-specific if it's not in the generic constraints
+        specific_constraints = dict()
+        # create op-specific constraints
+        for op in sorted(supported_ops):
+            constraints = supported_ops[op]
+            # Regor renames ARG_MAX to avoid name-collisions
+            op = op.replace("ARGMAX", "ARG_MAX")
+            specific_constraints[op] = sorted(filter(lambda c: c not in generic_constraints, constraints))
+        return specific_constraints
+
+    supported_ops_u85 = regor.tflite_operator_constraints("EthosU85")
+    u85_generic = _regor_generic_constraints(supported_ops_u85)
+    u85_specific = _regor_specific_constraints(supported_ops_u85, u85_generic)
+
     # Add license for supported ops
     lines = [
         "<!--",
@@ -289,7 +321,7 @@ def generate_supported_ops():
         "Summary table of constraints for:",
     ]
 
-    # Ethos-U55 and Ethos-U65 TFLite and TOSA
+    # Ethos-U55 and Ethos-U65 TFLite and TOSA summary links
     for network_type in NetworkType:
         if network_type.value in exclude_generation_network_type_value:
             continue
@@ -299,12 +331,12 @@ def generate_supported_ops():
             f"(#ethos-u55-and-ethos-u65-{network_type.name.lower()}-summary-table)",
         ]
 
-    # Ethos-U85 TFLite
+    # Ethos-U85 TFLite summary link
     lines += [
         "- [Ethos-U85 TFLite](#ethos-u85-tflite-summary-table)",
     ]
 
-    # Ethos-U55 and Ethos-U65 TFLite and TOSA
+    # Ethos-U55 and Ethos-U65 TFLite and TOSA Summary Table
     for network_type in NetworkType:
         if network_type.value in exclude_generation_network_type_value:
             continue
@@ -345,7 +377,7 @@ def generate_supported_ops():
         for op, name in op_list:
             internal_op = builtin_operator_map[op][0]
             if internal_op in TFLiteSupportedOperators.supported_operators:
-                links = f"[Generic](#{network_type.name.lower()}-generic-constraints)"
+                links = f"[Generic](#ethos-u55-and-ethos-u65-{network_type.name.lower()}-generic-constraints)"
                 if (
                     internal_op in supported.specific_constraints
                     or internal_op in semantic_checker.specific_constraints
@@ -355,93 +387,54 @@ def generate_supported_ops():
                     )
                     op_constraint_links.append((internal_op, name))
                 lines.append(f"| {name} | {links} |")
-        # Ethos-U85 TFLite
-        lines += [
-            """
-## Ethos-U85 TFLite Summary Table
 
-The table below contains TFLite operators that can be placed on the Ethos-U85.
-If the constraints are not met, then that operator will be scheduled on the CPU instead.
-For any other TFLite operator not listed, will be left untouched and scheduled on the CPU.
-Please check the supported operator list for your chosen runtime for further information.
+        if network_type == NetworkType.TFLite:
+            # Ethos-U85 TFLite Summary Table
+            lines += [
+                "",
+                "## Ethos-U85 TFLite Summary Table",
+                "",
+            ]
+            lines += [
+                "The table below contains TFLite operators that can be placed on the Ethos-U85.  ",
+                "If the constraints are not met, then that operator will be scheduled on the CPU instead.  ",
+                "For any other TFLite operator not listed, will be left untouched and scheduled on the CPU.  ",
+                "Please check the supported operator list for your chosen runtime for further information.  ",
+                "",
+                "| Operator | TFLite Constraints |",
+                "| --- | --- |",
+            ]
+            for op in u85_specific:
+                sconstraints = u85_specific[op]
+                links = "[Generic](#ethos-u85-tflite-generic-constraints)"
+                if len(sconstraints):
+                    links += f", [Specific](#ethos-u85-tflite-{op.lower()}-constraints)"
+                lines.append(f"| {op.upper()} | {links} |")
 
-| Operator | TFLite Constraints |
-| --- | --- |
-| ABS | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-abs-constraints) |
-| ADD | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-add-constraints) |
-| ARG_MAX | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-arg_max-constraints) |
-| AVERAGE_POOL_2D | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-average_pool_2d-constraints) |
-| BATCH_MATMUL | [Generic](#tflite-generic-constraints) |
-| CONCATENATION | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-concatenation-constraints) |
-| CONV_2D | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-conv_2d-constraints) |
-| DEPTHWISE_CONV_2D | [Generic](#tflite-generic-constraints), \
-[Specific](#ethos-u85-tflite-depthwise_conv_2d-constraints) |
-| EXP | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-exp-constraints) |
-| EXPAND_DIMS | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-expand_dims-constraints) |
-| FULLY_CONNECTED | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-fully_connected-constraints) |
-| GATHER | [Generic](#tflite-generic-constraints) | [Specific](#ethos-u85-tflite-gather-constraints) |
-| HARD_SWISH | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-hard_swish-constraints) |
-| LEAKY_RELU | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-leaky_relu-constraints) |
-| LOG | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-log-constraints) |
-| LOGISTIC | [Generic](#tflite-generic-constraints) |
-| MAXIMUM | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-maximum-constraints) |
-| MAX_POOL_2D | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-max_pool_2d-constraints) |
-| MEAN | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-mean-constraints) |
-| MINIMUM | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-minimum-constraints) |
-| MIRROR_PAD | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-mirror_pad-constraints) |
-| MUL | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-mul-constraints) |
-| PACK | [Generic](#tflite-generic-constraints) |
-| PAD | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-pad-constraints) |
-| PRELU | [Generic](#tflite-generic-constraints) |
-| QUANTIZE | [Generic](#tflite-generic-constraints) |
-| RELU | [Generic](#tflite-generic-constraints) |
-| RELU6 | [Generic](#tflite-generic-constraints) |
-| RELU_0_TO_1 | [Generic](#tflite-generic-constraints) |
-| RELU_N1_TO_1 | [Generic](#tflite-generic-constraints) |
-| RESHAPE | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-reshape-constraints) |
-| RESIZE_BILINEAR | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-resize_bilinear-constraints) |
-| RESIZE_NEAREST_NEIGHBOR | [Generic](#tflite-generic-constraints), \
-[Specific](#ethos-u85-tflite-resize_nearest_neighbor-constraints) |
-| RSQRT | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-rsqrt-constraints) |
-| SCATTER | [Generic](#tflite-generic-constraints) | [Specific](#ethos-u85-tflite-scatter-constraints) |
-| SELECT | [Generic](#tflite-generic-constraints) |
-| SELECT_V2 | [Generic](#tflite-generic-constraints) |
-| SHAPE | [Generic](#tflite-generic-constraints) |
-| SLICE | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-slice-constraints) |
-| SOFTMAX | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-softmax-constraints) |
-| SPLIT | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-split-constraints) |
-| SPLIT_V | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-split_v-constraints) |
-| SQUARED_DIFFERENCE | [Generic](tflite-generic-constraints), \
-[Specific](#ethos-u85-tflite-squared_difference-constraints) |
-| SQUEEZE | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-squeeze-constraints) |
-| STRIDED_SLICE | [Generic](#tflite-generic-constraints), \
-[Specific](#ethos-u85-tflite-strided_slice-constraints) |
-| SUB | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-sub-constraints) |
-| TANH | [Generic](#tflite-generic-constraints) |
-| TRANSPOSE | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-transpose-constraints) |
-| TRANSPOSE_CONV | [Generic](#tflite-generic-constraints), [Specific](#ethos-u85-tflite-transpose_conv-constraints) |
-| UNIDIRECTIONAL_SEQUENCE_LSTM | [Generic](#tflite-generic-constraints), \
-[Specific](#ethos-u85-tflite-unidirectional_sequence_lstm-constraints) |
-| UNPACK | [Generic](#tflite-generic-constraints) |
-"""
-        ]
+        # Ethos-U55 and Ethos-U65 generic constraints
         lines += [
             "",
-            f"### {network_type.name} Generic Constraints",
+            f"## Ethos-U55 and Ethos-U65 {network_type.name} Generic Constraints",
             "",
-            "This is a list of constraints that most operators must satisfy in order to be scheduled on the NPU.",
-            "(Operators excluded from certain constraints are shown in brackets [ ] )\n" "",
+            "This is a list of constraints that most operators must satisfy in order to be scheduled on the NPU.  ",
+            "(Operators excluded from certain constraints are listed as exceptions )\n" "",
         ]
         for constraint in semantic_checker.generic_constraints:
             # Markdown needs two spaces at the end of a line to render it as a separate line
             reason = constraint.__doc__.replace("\n", "  \n")
             exclude_list = TFLiteSemantic.get_generic_constraint_exclude_list().items()
-            lines.append(f"- {reason}{_exclude_list_names(constraint, exclude_list)}")
+            lines.append(f"- {reason}")
+            excluded_ops = _exclude_list_names(constraint, exclude_list)
+            if excluded_ops:
+                lines.append(f"  - Exceptions: {excluded_ops}")
         for constraint in supported.generic_constraints:
             # Markdown needs two spaces at the end of a line to render it as a separate line
             reason = constraint.__doc__.replace("\n", "  \n")
             exclude_list = supported.generic_constraints_exceptions.items()
-            lines.append(f"- {reason}{_exclude_list_names(constraint, exclude_list)}")
+            lines.append(f"- {reason}")
+            excluded_ops = _exclude_list_names(constraint, exclude_list)
+            if excluded_ops:
+                lines.append(f"  - Exceptions: {excluded_ops}")
         lines += ["", "## Ethos-U55 and Ethos-U65 Specific Operator constraints"]
         for op, name in op_constraint_links:
             lines += [
@@ -461,368 +454,42 @@ Please check the supported operator list for your chosen runtime for further inf
                 reason = constraint.__doc__.replace("\n", "  \n")
                 lines.append(f"- {reason}")
 
-    # Ethos-U85 TFLite
+    # Generic TFLite constraints for Ethos-U85
     lines += [
-        """
-## Ethos-U85 Specific Operator Constraints
-
-### Ethos-U85 TFLite ABS Constraints
-
-This is a list of constraints that the ABS operator must satisfy in order to be scheduled on the NPU.
-
-- At least one Input's shape must match the OFM's shape
-- IFM and OFM data types must match
-
-### Ethos-U85 TFLite ADD Constraints
-
-This is a list of constraints that the ADD operator must satisfy in order to be scheduled on the NPU.
-
-- At least one Input's shape must match the OFM's shape
-- Both Input data types must match
-- For IFM that are signed, OFM must also be signed
-- For IFM that are unsigned, OFM must either be the same type or int32
-- Broadcasting is only allowed for rank indices with dimension 1, from either IFM1 or IFM2
-
-### Ethos-U85 TFLite ARG_MAX Constraints
-
-This is a list of constraints that the ARG_MAX operator must satisfy in order to be scheduled on the NPU.
-
-- OFM must be int32 or int64
-
-### Ethos-U85 TFLite AVERAGE_POOL_2D Constraints
-
-This is a list of constraints that the AVERAGE_POOL_2D operator must satisfy in order to be scheduled on the NPU.
-
-- Stride values for both width and height must be integer types
-- IFM and OFM data types must match
-- Kernel filter values for both width and height must be integer types
-- Stride values for both width and height must be in the range [1, 3]
-- Kernel filter values for both width and height must be in the range [1, 8]
-- VALID padding: Kernel filter height must be in the range [1, 256]
-- VALID padding: Product of kernel filter width and height must be in the range [1, 65536]
-
-### Ethos-U85 TFLite CONCATENATION Constraints
-
-This is a list of constraints that the CONCATENATION operator must satisfy in order to be scheduled on the NPU.
-
-- Axis attribute must exist
-- Axis attribute must be in the range [0, <ofm_dimensions>)
-- All Input dimensionalities must match OFM dimensionality
-- All Input dimensions must match OFM dimension in all axes except the one defined by the axis attribute
-- The size of the OFM axis must match the sum of all IFM axis defined by the axis attribute
-
-### Ethos-U85 TFLite CONV_2D Constraints
-
-This is a list of constraints that the CONV_2D operator must satisfy in order to be scheduled on the NPU.
-
-- Stride values for both width and height must be integer types
-- IFM depth must be a whole multiple of the filter kernel depth
-- Dilation factor values for both width and height must be integer types
-- Stride values for both width and height must be in the range [1, 3]
-- Dilated kernel height must be in the range [1, 64]
-- Product of dilated kernel width and height must be in the range [1, 4096]
-- Weight tensor must be 8-bit
-- Weight tensor must be constant
-- The sum of the weights cannot exceed 8323072
-- Optional Bias tensor must be of shape: 1D
-- Optional Bias tensor must be of type: int32, int64
-- Optional Bias tensor values must fit within 40-bits
-
-### Ethos-U85 TFLite DEPTHWISE_CONV_2D Constraints
-
-This is a list of constraints that the DEPTHWISE_CONV_2D operator must satisfy in order to be scheduled on the NPU.
-
-- Stride values for both width and height must be integer types
-- Dilation factor values for both width and height must be integer types
-- Dilated kernel height must be in the range [1, 64]
-- Product of dilated kernel width and height must be in the range [1, 4096]
-- Weight tensor must be 8-bit
-- Weight tensor must be constant
-- The sum of the weights cannot exceed 8323072
-- Optional Bias tensor must be of shape: 1D
-- Optional Bias tensor must be of type: int32, int64
-- Optional Bias tensor values must fit within 40-bits
-- Stride values for both width and height must be between 1 and 3
-- For depth multipliers > 1, IFM channels must be 1 and OFM channels must be equal to the depth multiplier
-
-### Ethos-U85 TFLite EXP Constraints
-
-This is a list of constraints that the EXP operator must satisfy in order to be scheduled on the NPU.
-
-- At least one Input's shape must match the OFM's shape
-- IFM and OFM data types must match
-- IFM must be int8 or int16
-
-### Ethos-U85 TFLite EXPAND_DIMS Constraints
-
-This is a list of constraints that the EXPAND_DIMS operator must satisfy in order to be scheduled on the NPU.
-
-- Input and output quantisation must match.
-- Input and output number of elements must match.
-
-### Ethos-U85 TFLite FULLY_CONNECTED Constraints
-
-This is a list of constraints that the FULLY_CONNECTED operator must satisfy in order to be scheduled on the NPU.
-
-- The output tensor(s) must have 2D shape
-- The IFM and OFM must have the same number of dimensions if keep_num_dims is set to true
-- Weight tensor must be 8-bit
-- Weight tensor must be constant
-- Optional Bias tensor must be of shape: 1D
-- Optional Bias tensor must be of type: int32, int64
-- Optional Bias tensor values must fit within 40-bits
-
-### Ethos-U85 TFLite GATHER Constraints
-
-This is a list of constraints that the GATHER operator must satisfy in order to be scheduled on the NPU.
-
-- Axis parameter must equal batch dim parameter
-
-### Ethos-U85 TFLite HARD_SWISH Constraints
-
-This is a list of constraints that the HARD_SWISH operator must satisfy in order to be scheduled on the NPU.
-
-- IFM must be int8 or uint8
-- IFM and OFM data types must match
-
-### Ethos-U85 TFLite LEAKY_RELU Constraints
-
-This is a list of constraints that the LEAKY_RELU operator must satisfy in order to be scheduled on the NPU.
-
-- At least one Input's shape must match the OFM's shape
-- IFM and OFM data types must match
-
-### Ethos-U85 TFLite MAXIMUM Constraints
-
-This is a list of constraints that the MAXIMUM operator must satisfy in order to be scheduled on the NPU.
-
-- At least one Input's shape must match the OFM's shape
-- IFM and OFM data types must match
-- Both Input quantization parameters must match OFM quantization parameters
-- Broadcasting is only allowed for rank indices with dimension 1, from either IFM1 or IFM2
-
-### Ethos-U85 TFLite LOG Constraints
-
-This is a list of constraints that the LOG operator must satisfy in order to be scheduled on the NPU.
-
-- At least one Input's shape must match the OFM's shape
-- IFM and OFM data types must match
-- IFM must be int8 or int16
-
-### Ethos-U85 TFLite MAX_POOL_2D Constraints
-
-This is a list of constraints that the MAX_POOL_2D operator must satisfy in order to be scheduled on the NPU.
-
-- Stride values for both width and height must be integer types
-- IFM and OFM data types must match
-- Kernel filter values for both width and height must be integer types
-- Stride values for both width and height must be in the range [1, 3]
-- Kernel filter height must be in the range [1, 256]
-- Product of kernel filter width and height must be in the range [1, 65536]
-
-### Ethos-U85 TFLite MEAN Constraints
-
-This is a list of constraints that the MEAN operator must satisfy in order to be scheduled on the NPU.
-
-- Input tensor must be at least 2D
-- Requirements for axis parameter:  
-        When IFM tensor is 2D:  
-          - Reduction in both axes is supported.  
-        When IFM tensor is 3D or 4D:  
-          - Reduction in Batch axis is only supported if batch size is 1.  
-          - Reduction in both Height and Width axes is supported.  
-          - Reduction in Depth axis is supported if at least one of H,W,C are of size 1.
-- Product of reduced axes must be no greater than:  
-        - 16777216 for signed 8-bit inputs.  
-        - 8388608 for unsigned 8-bit inputs.  
-        - 65536 for signed 16-bit inputs.
-- If Width axis is reduced its shape must be no greater than 4096.
-- If Depth axis is reduced its shape must be no greater than 4096.
-
-### Ethos-U85 TFLite MINIMUM Constraints
-
-This is a list of constraints that the MINIMUM operator must satisfy in order to be scheduled on the NPU.
-
-- At least one Input's shape must match the OFM's shape
-- IFM and OFM data types must match
-- Both Input quantization parameters must match OFM quantization parameters
-- Broadcasting is only allowed for rank indices with dimension 1, from either IFM1 or IFM2
-
-### Ethos-U85 TFLite MIRROR_PAD Constraints
-
-This is a list of constraints that the MIRROR_PAD operator must satisfy in order to be scheduled on the NPU.
-
-- The padding tensor must have the shape [3,2] or [4,2]
-- The pad tensor can only pad width and height
-- Pad tensor must be of type: int32, int64
-- The number of pad values for each direction must not be larger than the ifm size in that dimension
-
-### Ethos-U85 TFLite MUL Constraints
-
-This is a list of constraints that the MUL operator must satisfy in order to be scheduled on the NPU.
-
-- At least one Input's shape must match the OFM's shape
-- Both Input data types must match
-- For IFM that are signed, OFM must also be signed
-- For IFM that are unsigned, OFM must either be the same type or int32
-- Broadcasting is only allowed for rank indices with dimension 1, from either IFM1 or IFM2
-
-### Ethos-U85 TFLite PAD Constraints
-
-This is a list of constraints that the PAD operator must satisfy in order to be scheduled on the NPU.
-
-- Number of input tensors must be exactly 2
-- The padding tensor must be constant
-- Shape of output tensor must equal to size of input tensor plus padding
-- The padding tensor must have the shape [3,2] or [4,2]
-- The pad tensor can only pad width and height
-- Pad tensor must be of type: int32, int64
-
-### Ethos-U85 TFLite RESHAPE Constraints
-
-This is a list of constraints that the RESHAPE operator must satisfy in order to be scheduled on the NPU.
-
-- Input and output quantisation must match.
-- Input and output number of elements must match.
-- Shape must be constant
-
-### Ethos-U85 TFLite RESIZE_BILINEAR Constraints
-
-This is a list of constraints that the RESIZE_BILINEAR operator must satisfy in order to be scheduled on the NPU.
-
-- The size tensor must match the output tensor shape
-- Both align_corners and half_pixel_centers can't be True
-
-### Ethos-U85 TFLite RESIZE_NEAREST_NEIGHBOR Constraints
-
-This is a list of constraints that the RESIZE_NEAREST_NEIGHBOR operator must satisfy in order to be scheduled on the \
-NPU.
-
-- The size tensor must match the output tensor shape
-- Both align_corners and half_pixel_centers can't be True
-
-### Ethos-U85 TFLite RSQRT Constraints
-
-This is a list of constraints that the RSQRT operator must satisfy in order to be scheduled on the NPU.
-
-- At least one Input's shape must match the OFM's shape
-- IFM and OFM data types must match
-- IFM must be int8
-
-### Ethos-U85 TFLite SCATTER Constraints
-
-This is a list of constraints that the SCATTER operator must satisfy in order to be scheduled on the NPU.
-
-- Index tensor must be constant
-- Index tensor must not contain any duplicate values
-- Last dimension of index tensor must be 1
-- Shape tensor must be constant
-
-### Ethos-U85 TFLite SLICE Constraints
-
-This is a list of constraints that the SLICE operator must satisfy in order to be scheduled on the NPU.
-
-- Begin and Size Input tensors must be constant
-
-### Ethos-U85 TFLite SOFTMAX Constraints
-
-This is a list of constraints that the SOFTMAX operator must satisfy in order to be scheduled on the NPU.
-
-- IFM and OFM shapes must match
-- IFM and OFM data types must match
-- Beta value needs to be positive
-
-### Ethos-U85 TFLite SPLIT Constraints
-
-This is a list of constraints that the SPLIT operator must satisfy in order to be scheduled on the NPU.
-
-- Axis value must be in the range [-RANK(IFM) to +RANK(IFM))
-- Axis must be divisible by number of splits
-
-### Ethos-U85 TFLite SPLIT_V Constraints
-
-This is a list of constraints that the SPLIT_V operator must satisfy in order to be scheduled on the NPU.
-
-- Only one size is allowed to be inferred
-
-### Ethos-U85 TFLite SQUARED_DIFFERENCE Constraints
-
-This is a list of constraints that the SQUARED_DIFFERENCE operator must satisfy in order to be scheduled on the NPU.
-
-- At least one Input's shape must match the OFM's shape
-
-### Ethos-U85 TFLite SQUEEZE Constraints
-
-This is a list of constraints that the SQUEEZE operator must satisfy in order to be scheduled on the NPU.
-
-- Input and output quantisation must match.
-- Input and output number of elements must match.
-
-### Ethos-U85 TFLite STRIDED_SLICE Constraints
-
-This is a list of constraints that the STRIDED_SLICE operator must satisfy in order to be scheduled on the NPU.
-
-- Exactly 4 Input tensors are required
-- Begin, End and Stride Input tensors must be constant
-- ellipsis_mask must be 0
-- new_axis_mask and shrink_axis_mask cannot both be set
-- Slice 'end' values must be greater than 'begin' values
-- All Strides values must be 1
-- Offset attribute must be False
-
-### Ethos-U85 TFLite SUB Constraints
-
-This is a list of constraints that the SUB operator must satisfy in order to be scheduled on the NPU.
-
-- At least one Input's shape must match the OFM's shape
-- Both Input data types must match
-- For IFM that are signed, OFM must also be signed
-- For IFM that are unsigned, OFM must either be the same type or int32
-- Broadcasting is only allowed for rank indices with dimension 1, from either IFM1 or IFM2
-
-### Ethos-U85 TFLite TRANSPOSE Constraints
-
-This is a list of constraints that the TRANSPOSE operator must satisfy in order to be scheduled on the NPU.
-
-- Permutation array must be a 1D tensor with RANK(IFM) elements
-- Permutation array must have constant values in the range [0, RANK(IFM))
-
-### Ethos-U85 TFLite TRANSPOSE_CONV Constraints
-
-This is a list of constraints that the TRANSPOSE_CONV operator must satisfy in order to be scheduled on the NPU.
-
-- Stride values for both width and height must be integer types
-- Dilated kernel height must be in the range [1, 64]
-- Product of dilated kernel width and height must be in the range [1, 4096]
-- Weight tensor must be 8-bit
-- Weight tensor must be constant
-- The sum of the weights cannot exceed 8323072
-- Optional Bias tensor must be of shape: 1D
-- Optional Bias tensor must be of type: int32, int64
-- Optional Bias tensor values must fit within 40-bits
-- SAME padding: OFM dimensions must equal IFM dimensions multiplied by stride
-- VALID padding: OFM dimensions must equal IFM dimensions multiplied by stride,  
-        minus difference between kernel size and stride
-
-### Ethos-U85 TFLite UNIDIRECTIONAL_SEQUENCE_LSTM Constraints
-
-This is a list of constraints that the UNIDIRECTIONAL_SEQUENCE_LSTM operator must satisfy in order to be scheduled on \
-the NPU.
-
-- IFM must be int8 or int16
-- IFM and OFM data types must match
-- IFM and OFM must have 3D shape
-- Must have 24 input tensors
-- Must have 5 intermediate tensors
-- State tensors must be variable
-- Must not use CIFG
-- Must not use Peephole
-- Must not use Projection
-- Must not use Normalisation
-- All input and recurrent weights must be available
-- All recurrent weights must be 2D
-"""
+        "",
+        "## Ethos-U85 TFLite Generic Constraints",
+        "",
+        "This is a list of constraints that most operators must satisfy in order to be scheduled on the NPU.  ",
+        "(Operators excluded from certain constraints are listed as exceptions )\n" "",
+        "",
     ]
+    for constraint in u85_generic:
+        exceptions = u85_generic[constraint]
+        lines.append(f"- {constraint}")
+        if len(exceptions):
+            lines.append(f"  - Exceptions: [{', '.join(exceptions)}]")
+
+    # Op-specific TFLite constraints for Ethos-U85
+    lines += [
+        "",
+        "## Ethos-U85 Specific Operator Constraints",
+    ]
+
+    for name in u85_specific:
+        constraints = u85_specific[name]
+        if not len(constraints):
+            continue
+        lines += [
+            "",
+            f"### Ethos-U85 TFLite {name.upper()} Constraints",
+            "",
+            f"This is a list of constraints that the {name.upper()} operator "
+            "must satisfy in order to be scheduled on the"
+            " NPU.",
+            "",
+        ]
+        for constraint in constraints:
+            lines.append(f"- {constraint}")
 
     # Note. this will generate the file in the CWD
     filepath = os.path.join(os.getcwd(), "SUPPORTED_OPS.md")

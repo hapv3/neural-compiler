@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <iostream>
 #include <limits>
+#include <unordered_map>
 #include <vector>
 
 #include "include/regor.h"
@@ -285,6 +286,34 @@ public:
         return ToPyDatabase(db);
     }
 
+    std::unordered_map<std::string, std::vector<std::string>> GetTFLiteConstraints()
+    {
+        std::unordered_map<std::string, std::vector<std::string>> mapping;
+        regor_operator_constraints_report_t report;
+        int rStatus;
+        report.opConstraints = nullptr;
+        report.operators = 0;
+        rStatus = regor_get_tflite_constraints(_context, &report);
+        assert(rStatus);
+        // Parse operators and call again to populate opConstraints
+        std::vector<regor_operator_constraints_t> opConstraints;
+        if ( report.operators > 0 )
+        {
+            opConstraints.resize(report.operators);
+            report.opConstraints = opConstraints.data();
+            rStatus = regor_get_tflite_constraints(_context, &report);
+            assert(rStatus);
+            for ( int op = 0; op < report.operators; op++ )
+            {
+                for ( int c = 0; c < report.opConstraints[op].constraints; c++ )
+                {
+                    mapping[report.opConstraints[op].operatorName].push_back(report.opConstraints[op].constraint[c]);
+                }
+            }
+        }
+        return mapping;
+    }
+
 private:
     static void Log(const void *data, size_t size)
     {
@@ -539,7 +568,8 @@ PYBIND11_MODULE(regor, m)
         .def("SetCompilerOptions", &PyRegor::SetCompilerOptions, "Set compiler options")
         .def("Compile", &PyRegor::PyCompile, "Compile the input model into a TFLite Flatbuffer", py::arg("input"), py::arg("fmt"))
         .def("GetPerfReport", &PyRegor::GetPerfReport, "Get the performance report for the latest compiled model")
-        .def("GetOptDatabase", &PyRegor::GetOptDatabase, "Get the optimiser database for the latest compiled model");
+        .def("GetOptDatabase", &PyRegor::GetOptDatabase, "Get the optimiser database for the latest compiled model")
+        .def("GetTFLiteConstraints", &PyRegor::GetTFLiteConstraints, "Get TFLite constraints per operator");
 
     py::class_<PyRegorCompiledRawModelNonConstantTensor>(m, "CompiledRawModelNonConstantTensor", "A non-constant tensor of a Regor-compiled model in raw format")
         .def(py::init<>())
@@ -592,4 +622,16 @@ PYBIND11_MODULE(regor, m)
             Returns a compiled model
         )pbdoc",
         py::arg("arch"), py::arg("input"), py::arg("fmt"), py::arg("sysconfig"), py::arg("options") = "", py::arg("verbose") = false);
+
+    m.def(
+        "tflite_operator_constraints",
+        [](const std::string &arch, bool verbose = false) -> std::unordered_map<std::string, std::vector<std::string>>
+        {
+            PyRegor pyr(arch, verbose);
+            return pyr.GetTFLiteConstraints();
+        },
+        R"pbdoc(
+                Get TFLite supported ops documentation
+            )pbdoc",
+        py::arg("arch"), py::arg("verbose") = false);
 }
