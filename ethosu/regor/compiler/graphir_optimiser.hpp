@@ -44,7 +44,6 @@ private:
     Operation *RewriteConst(Graph *const graph, Operation *const operation);
     Operation *ConvertAttributes(Graph *const graph, Operation *const operation);
     Operation *ConvertAttributeTensors(Graph *const graph, Operation *const operation);
-    Operation *ConvertZeroPointTensors(Graph *const graph, Operation *const operation);
     Operation *ConvertResizeOffsets(Graph *const graph, Operation *const operation);
     Tensor *ConvertInt48Tensors(Graph *graph, Tensor *tensor);
     Tensor *ConvertBool8Tensors(Graph *graph, Tensor *tensor);
@@ -128,7 +127,6 @@ private:
         {
             {},
             {
-                &GraphIrOptimiser::ConvertZeroPointTensors,
                 &GraphIrOptimiser::RewriteRescaleInputs,
                 &GraphIrOptimiser::FuseRescale,  // First pass fuse all possible ifm and ofm rescales
             }

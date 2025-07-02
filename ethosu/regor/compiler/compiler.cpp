@@ -437,21 +437,12 @@ std::unique_ptr<Graph> Compiler::CompileGraph(std::unique_ptr<Graph> &graph,
 
     try
     {
-        if ( graph->Notation() == GraphNotation::TFLite )
-        {
-            // Run GraphNotation::TFLite Preprocess/optimise step
-            std::unique_ptr<GraphOptimiser> optimiser = GraphOptimiser::MakeGraphOptimiser(
-                GraphNotation::TFLite, _architecture.get(), _graphOptimiserOptions, _optDb.get());
-            if ( optimiser )
-            {
-                optimiser->Process(graph.get());
-            }
-        }
+        // Create both the specific pre-optimiser and the general post-optimiser
+        auto graphOptimisers = GraphOptimiser::MakeGraphOptimiser(
+            graph->Notation(), _architecture.get(), _graphOptimiserOptions, _optDb.get());
 
-        // Run GraphNotation::GraphAPI Preprocess/optimise step
-        std::unique_ptr<GraphOptimiser> optimiser = GraphOptimiser::MakeGraphOptimiser(
-            GraphNotation::GraphAPI, _architecture.get(), _graphOptimiserOptions, _optDb.get());
-        if ( optimiser )
+        // Run the graph optimisers
+        for ( const auto &optimiser : graphOptimisers )
         {
             optimiser->Process(graph.get());
         }

@@ -29,6 +29,7 @@
 #include "tensor.hpp"
 #include "tflite/tflite_supported_operators.hpp"
 #include "tflite_graph_optimiser.hpp"
+#include "tosa_graph_optimiser.hpp"
 
 #include <cassert>
 #include <iterator>
@@ -45,9 +46,11 @@ namespace regor
 
 using namespace GraphOptimisation;
 
-std::unique_ptr<GraphOptimiser> GraphOptimiser::MakeGraphOptimiser(
+std::vector<std::unique_ptr<GraphOptimiser>> GraphOptimiser::MakeGraphOptimiser(
     GraphNotation notation, Architecture *arch, const GraphOptimiserOptions &options, OptimiserDatabase *db)
 {
+    std::vector<std::unique_ptr<GraphOptimiser>> graphOptimisers;
+
     switch ( notation )
     {
         case GraphNotation::TFLite:
@@ -55,20 +58,23 @@ std::unique_ptr<GraphOptimiser> GraphOptimiser::MakeGraphOptimiser(
             std::unique_ptr<TfLiteSupportedOperators> supportedOps;
             arch->Call([&supportedOps, &arch](const std::string &target)
                 { supportedOps = MakeSupportedOpsChecker(target, arch->Constraints()); });
-            return std::unique_ptr<GraphOptimiser>(
+            graphOptimisers.emplace_back(
                 std::make_unique<TFLiteGraphOptimiser>(arch->Constraints(), std::move(supportedOps), options, db));
         }
+        break;
 
         case GraphNotation::GraphAPI:
-            return std::unique_ptr<GraphOptimiser>(std::make_unique<GraphIrOptimiser>(arch->Constraints(), options, db));
+            graphOptimisers.emplace_back(std::make_unique<TosaGraphOptimiser>(arch->Constraints(), options, db));
+            break;
 
         default:
             LOG_ERROR("Invalid graph notation");
             assert(false);
     }
-
-    return {};
+    graphOptimisers.emplace_back(std::make_unique<GraphIrOptimiser>(arch->Constraints(), options, db));
+    return graphOptimisers;
 }
+
 
 // Some debug functions
 #if LOG_TRACE1_ON

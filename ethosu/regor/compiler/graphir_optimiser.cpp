@@ -295,53 +295,6 @@ Operation *GraphIrOptimiser::ConvertAttributeTensors(Graph *const graph, Operati
     return operation;
 }
 
-// Convert compile time constant zero point tensors to quantization zero points
-Operation *GraphIrOptimiser::ConvertZeroPointTensors(Graph *const graph, Operation *const operation)
-{
-    UNUSED(graph);
-    auto SetZeroPoint = [&](TensorUsage target, TensorUsage param, bool asUnsigned = false)
-    {
-        if ( const auto zpConn = operation->Input(param) )
-        {
-            assert(zpConn->tensor->IsConstant());
-            const auto targetConn = IsOFM(target) ? operation->Output(target) : operation->Input(target);
-            assert(targetConn);
-            auto dataType = asUnsigned ? zpConn->tensor->Type() & ~unsigned(DataType::Signed) : zpConn->tensor->Type();
-            auto values = zpConn->tensor->View().Values<int64_t>(dataType);
-            targetConn->quantization.zeroPoints = {values.begin(), values.end()};
-        }
-    };
-    switch ( operation->Type() )
-    {
-        case OpType::AvgPool:
-        case OpType::Neg:
-            SetZeroPoint(TensorUsage::IFM, TensorUsage::Params0);
-            SetZeroPoint(TensorUsage::OFM, TensorUsage::Params1);
-            break;
-        case OpType::Conv2D:
-        case OpType::Conv3D:
-        case OpType::DepthwiseConv2D:
-        case OpType::TransposeConv2D:
-            SetZeroPoint(TensorUsage::IFM, TensorUsage::Params0);
-            SetZeroPoint(TensorUsage::Weights, TensorUsage::Params1);
-            break;
-        case OpType::MatMul:
-            SetZeroPoint(TensorUsage::IFM0, TensorUsage::Params0);
-            SetZeroPoint(TensorUsage::IFM1, TensorUsage::Params1);
-            break;
-        case OpType::Rescale:
-        {
-            const auto signAttr = operation->Attribute<sign_attr_t>();
-            SetZeroPoint(TensorUsage::IFM, TensorUsage::Params2, signAttr->input_unsigned);
-            SetZeroPoint(TensorUsage::OFM, TensorUsage::Params3, signAttr->output_unsigned);
-            break;
-        }
-        default:
-            break;
-    }
-    return operation;
-}
-
 Operation *GraphIrOptimiser::ConvertResizeOffsets(Graph *const graph, Operation *const operation)
 {
     UNUSED(graph);

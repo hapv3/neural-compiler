@@ -293,6 +293,7 @@ regor_lib(
         "compiler/tensor_allocator.cpp"
         "compiler/tflite_graph_optimiser.cpp"
         "compiler/tflite_graph_optimiser_tp.cpp"
+        "compiler/tosa_graph_optimiser.cpp"
         "compiler/cascade_builder.cpp"
         "compiler/graph_optimiser.cpp"
         "compiler/graphir_optimiser.cpp"

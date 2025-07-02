@@ -76,8 +76,9 @@ public:
 
 
 
-    static std::unique_ptr<GraphOptimiser> MakeGraphOptimiser(
+    static std::vector<std::unique_ptr<GraphOptimiser>> MakeGraphOptimiser(
         GraphNotation notation, Architecture *arch, const GraphOptimiserOptions &options, OptimiserDatabase *db);
+
     static void ParseGraphOptimiserOptions(GraphOptimiserOptions &opt, IniReader &reader);
 
     void Process(Graph *graph);

@@ -60,15 +60,15 @@ TEST_CASE("test_graphir_optimiser - constant propagation")
         }();
 
         GraphOptimiserOptions options;
-        auto optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
+        const auto &optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
 
         std::vector<Operation *> allOps;
 
         graph->GetAllOperations(allOps);
         REQUIRE(allOps.size() == 2);
 
-        REQUIRE(bool(optimiser));
-        optimiser->Process(graph.get());
+        REQUIRE(!optimiser.empty());
+        optimiser.back()->Process(graph.get());
         allOps.clear();
 
         graph->GetAllOperations(allOps);
@@ -106,15 +106,15 @@ TEST_CASE("test_graphir_optimiser - constant propagation")
         }();
 
         GraphOptimiserOptions options;
-        auto optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
+        const auto &optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
 
         std::vector<Operation *> allOps;
 
         graph->GetAllOperations(allOps);
         REQUIRE(allOps.size() == 3);
 
-        REQUIRE(bool(optimiser));
-        optimiser->Process(graph.get());
+        REQUIRE(!optimiser.empty());
+        optimiser.back()->Process(graph.get());
         allOps.clear();
 
         graph->GetAllOperations(allOps);
@@ -157,10 +157,10 @@ TEST_CASE("test_graphir_optimiser - ReduceSum")
         }();
 
         GraphOptimiserOptions options;
-        auto optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
+        const auto &optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
 
-        REQUIRE(bool(optimiser));
-        optimiser->Process(graph.get());
+        REQUIRE(!optimiser.empty());
+        optimiser.back()->Process(graph.get());
 
         SchedulerPacking packing(arch.get(), false);
         auto scheduleOps = packing.Process(graph.get());
@@ -204,9 +204,9 @@ TEST_CASE("test_graphir_optimiser - transpose removal")
     auto graph = CreateGraph(ops);
 
     GraphOptimiserOptions options;
-    auto optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
+    const auto &optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
 
-    optimiser->Process(graph.get());
+    optimiser.back()->Process(graph.get());
 
     std::vector<Operation *> allOps;
     graph->GetAllOperations(allOps);
@@ -248,9 +248,9 @@ TEST_CASE("test_graphir_optimiser - transpose merge")
     auto graph = CreateGraph(ops);
 
     GraphOptimiserOptions options;
-    auto optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
+    const auto &optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
 
-    optimiser->Process(graph.get());
+    optimiser.back()->Process(graph.get());
 
     // Result Add->Add
     std::vector<Operation *> allOps;
@@ -303,9 +303,9 @@ TEST_CASE("test_graphir_optimiser - replace pad by explicit padding")
     auto graph = CreateGraph(ops);
 
     GraphOptimiserOptions options;
-    auto optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
+    const auto &optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
 
-    optimiser->Process(graph.get());
+    optimiser.back()->Process(graph.get());
 
     std::vector<Operation *> allOps;
     graph->GetAllOperations(allOps);
@@ -352,9 +352,9 @@ TEST_CASE("test_graphir_optimiser - fuse rescale with reshape, before")
     auto graph = CreateGraph(ops);
 
     GraphOptimiserOptions options;
-    auto optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
+    const auto &optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
 
-    optimiser->Process(graph.get());
+    optimiser.back()->Process(graph.get());
 
     std::vector<Operation *> allOps;
     graph->GetAllOperations(allOps);
@@ -399,9 +399,9 @@ TEST_CASE("test_graphir_optimiser - fuse rescale with reshape, after")
     auto graph = CreateGraph(ops);
 
     GraphOptimiserOptions options;
-    auto optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
+    const auto &optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
 
-    optimiser->Process(graph.get());
+    optimiser.back()->Process(graph.get());
 
     std::vector<Operation *> allOps;
     graph->GetAllOperations(allOps);
