@@ -185,6 +185,7 @@ Operation *TFLiteGraphOptimiser::ConvertLeakyRelu16bit(TensorConnection &ifmConn
         // Create Minimum(IFM, 0)
         std::shared_ptr<Tensor> zeroTens = CreateConstTensor("zero_const", ifmConn.tensor->Type(), 0);
         std::shared_ptr<Tensor> fmNegative = ifmConn.tensor->Clone();
+        fmNegative->SetBuffer(nullptr);
         auto minOp = std::make_shared<Operation>(OpType::Minimum);
         minOp->CopyInput(TensorUsage::IFM0, ifmConn);
         minOp->ConnectInput(TensorUsage::IFM1, zeroTens).Set(ifmConn.quantization);
@@ -2109,6 +2110,7 @@ Operation *TFLiteGraphOptimiser::ConvertPrelu(Graph *const graph, Operation *con
 
         std::shared_ptr<Tensor> zeroTens = CreateConstTensor("zero_const", ifmConn->tensor->Type(), 0);
         std::shared_ptr<Tensor> fmNegative = ifmConn->tensor->Clone();
+        fmNegative->SetBuffer(nullptr);
         std::shared_ptr<Tensor> fmAlpha = ofmConn->tensor->Clone();
         std::shared_ptr<Tensor> fmScaled = ofmConn->tensor->Clone();
 

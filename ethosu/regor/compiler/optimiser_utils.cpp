@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -38,6 +38,7 @@ bool IsTensorInVector(const std::vector<std::shared_ptr<Tensor>> &tensorVec, con
 std::shared_ptr<Operation> InsertCopyOpAfterTensor(const std::shared_ptr<Tensor> &ifm, const Quantization &quantization)
 {
     std::shared_ptr<Tensor> copyTensor = ifm->Clone();
+    copyTensor->SetBuffer(nullptr);
     auto copyOp = std::make_shared<Operation>(OpType::MemoryCopy);
     copyOp->ConnectInput(TensorUsage::IFM0, ifm).Set(quantization);
     auto name = ifm->Name();

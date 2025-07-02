@@ -130,7 +130,6 @@ private:
             {
                 &GraphIrOptimiser::ConvertZeroPointTensors,
                 &GraphIrOptimiser::RewriteRescaleInputs,
-                &GraphIrOptimiser::RemoveRescaleUnsignedAttribute,
                 &GraphIrOptimiser::FuseRescale,  // First pass fuse all possible ifm and ofm rescales
             }
         },

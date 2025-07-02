@@ -226,6 +226,11 @@ inline std::string DataTypeToString(const DataType type)
     return EnumToString<DataType>(type);
 }
 
+inline constexpr DataType DataTypeSetSignedness(DataType type, bool setSigned)
+{
+    return (type & ~unsigned(DataType::Signed)) | (setSigned ? DataType::Signed : DataType::None);
+}
+
 inline constexpr bool IsInteger(DataType type)
 {
     return (type & DataType::Int) == DataType::Int;

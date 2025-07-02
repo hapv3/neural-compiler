@@ -289,6 +289,11 @@ static HLCSubOperation MakeSubOperation(const std::unique_ptr<SchedulerOperation
     hlcSubOp.type = schedOp->Type();
     auto lutConn = schedOp->TryInput(TensorUsage::LUT);
     size_t ifms = 0;
+    sign_attr_t *signAttr = nullptr;
+    if ( schedOp->Type() == OpType::Rescale && schedOp->HasAttribute<sign_attr_t>() )
+    {
+        signAttr = schedOp->Attribute<sign_attr_t>();
+    }
     for ( const auto &input : schedOp->inputs.pairs() )
     {
         if ( IsIFM(input.first) || GetUsageType(input.first) == TensorUsage::Scratch )
@@ -308,9 +313,19 @@ static HLCSubOperation MakeSubOperation(const std::unique_ptr<SchedulerOperation
                 at = hlcSubOp.ifm.emplace(hlcSubOp.ifm.end());
             }
             MakeFeatureMap(input.first, &input.second, *at);
+            if ( signAttr )
+            {
+                // Fixup IFM datatype signedness for rescale ops
+                at->dataType = DataTypeSetSignedness(at->dataType, !signAttr->input_unsigned);
+            }
         }
     }
     MakeFeatureMap(TensorUsage::OFM, schedOp->OFM(), hlcSubOp.ofm);
+    if ( signAttr )
+    {
+        // Fixup OFM datatype signedness for rescale ops
+        hlcSubOp.ofm.dataType = DataTypeSetSignedness(hlcSubOp.ofm.dataType, !signAttr->output_unsigned);
+    }
 
     hlcSubOp.srcId = schedOp->Uid();
 
@@ -340,6 +355,11 @@ static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, 
     op->config = opInfo->Config();
     op->srcId = schedOp->Uid();
     size_t ifms = 0;
+    sign_attr_t *signAttr = nullptr;
+    if ( schedOp->Type() == OpType::Rescale && schedOp->HasAttribute<sign_attr_t>() )
+    {
+        signAttr = schedOp->Attribute<sign_attr_t>();
+    }
     for ( const auto &input : schedOp->inputs.pairs() )
     {
         if ( IsIFM(input.first) || GetUsageType(input.first) == TensorUsage::Scratch )
@@ -358,9 +378,19 @@ static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, 
                 at = op->ifm.emplace(op->ifm.end());
             }
             MakeFeatureMap(input.first, &input.second, *at);
+            if ( signAttr )
+            {
+                // Fixup IFM datatype signedness for rescale ops
+                at->dataType = DataTypeSetSignedness(at->dataType, !signAttr->input_unsigned);
+            }
         }
     }
     MakeFeatureMap(TensorUsage::OFM, schedOp->OFM(), op->ofm);
+    if ( signAttr )
+    {
+        // Fixup OFM datatype signedness for rescale ops
+        op->ofm.dataType = DataTypeSetSignedness(op->ofm.dataType, !signAttr->output_unsigned);
+    }
 
 #ifndef NDEBUG
     op->name = schedOp->OFM()->tensor->Name();

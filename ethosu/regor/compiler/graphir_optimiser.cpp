@@ -99,6 +99,7 @@ Tensor *GraphIrOptimiser::ConvertBool8Tensors(Graph *graph, Tensor *tensor)
         {
             // Replace the OFM of ops producing the graph output tensor
             std::shared_ptr<Tensor> newTensor = tensor->Clone();
+            newTensor->SetBuffer(nullptr);
             newTensor->SetName(newTensor->Name() + "_int8");
             std::shared_ptr<Tensor> graphOutputTensor = tensor->shared_from_this();
             ReplaceProducerOutput(graphOutputTensor->Writers(), graphOutputTensor.get(), newTensor);
@@ -679,58 +680,6 @@ Operation *GraphIrOptimiser::RewriteRescaleInputs(Graph *const, Operation *const
         rescaleOp->DisconnectInputInvalidatingInputs(TensorUsage::Params1);
     }
     return returnOp;
-}
-
-Operation *GraphIrOptimiser::RemoveRescaleUnsignedAttribute(Graph *const, Operation *const operation)
-{
-    OpType opType = operation->Type();
-    if ( opType == OpType::Rescale )
-    {
-        auto signAttr = operation->Attribute<sign_attr_t>();
-        if ( signAttr->input_unsigned )
-        {
-            const auto &ifmConn = operation->Input(TensorUsage::IFM0);
-            DataType ifmType = ifmConn->tensor->Type();
-            auto newIfmType = ifmType & ~unsigned(DataType::Signed);
-
-            // Create a reinterpret OP to reinterpret the input as unsigned
-            auto reinterpretOp = std::make_shared<Operation>(OpType::ReinterpretCast);
-
-            // Create an unsigned data type tensor for the reinterpret OP
-            std::shared_ptr unsignedTensor = ifmConn->tensor->Clone();
-            unsignedTensor->ChangeType(newIfmType);
-
-            // Connect the reinterpret OP between the rescale and the rescale IFM
-            reinterpretOp->CopyInput(TensorUsage::IFM, *ifmConn);
-            reinterpretOp->ConnectOutput(TensorUsage::OFM, unsignedTensor);
-
-            // Connect the rescale OP input to the unsigned data type tensor
-            operation->ConnectInput(TensorUsage::IFM, unsignedTensor);
-            signAttr->input_unsigned = false;
-        }
-        if ( signAttr->output_unsigned )
-        {
-            const auto &ofmConn = operation->Output(TensorUsage::OFM);
-            DataType ofmType = ofmConn->tensor->Type();
-            auto newOfmType = ofmType & ~unsigned(DataType::Signed);
-
-            // Create a reinterpret OP to reinterpret the input as unsigned
-            auto reinterpretOp = std::make_shared<Operation>(OpType::ReinterpretCast);
-
-            // Create an unsigned data type tensor for the reinterpret OP
-            std::shared_ptr unsignedTensor = ofmConn->tensor->Clone();
-            unsignedTensor->ChangeType(newOfmType);
-
-            // Connect the reinterpret OP between the rescale and the rescale OFM
-            reinterpretOp->ConnectInput(TensorUsage::IFM, unsignedTensor);
-            reinterpretOp->CopyOutput(TensorUsage::OFM, *ofmConn);
-
-            // Connect the rescale OP output to the unsigned data type tensor
-            operation->ConnectOutput(TensorUsage::OFM, unsignedTensor);
-            signAttr->output_unsigned = false;
-        }
-    }
-    return operation;
 }
 
 /*
@@ -1723,6 +1672,7 @@ Operation *GraphIrOptimiser::RewriteReduceSum(Graph *const graph, Operation *con
 
                     // Temporary tensor between ReduceSum and Sub
                     std::shared_ptr<Tensor> reduceSumTens = ofmConn->tensor->Clone();
+                    reduceSumTens->SetBuffer(nullptr);
                     reduceSumTens->SetName(ofmConn->tensor->Name() + "_reducesum");
                     reduceSumTens->ChangeType(DataType::Int32);
                     reduceSumTens->SetStorageShape(ofmConn->shape);
