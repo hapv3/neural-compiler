@@ -255,6 +255,7 @@ regor_lib(
         "common/transpose_type.cpp"
         "common/reverse_type.cpp"
         "architecture/architecture.cpp"
+        "architecture/architecture_constraints.cpp"
         "architecture/ethos_u_scaling.cpp"
         "architecture/mlw_encode.cpp"
         "architecture/ethosu55/ethos_u55.cpp"
