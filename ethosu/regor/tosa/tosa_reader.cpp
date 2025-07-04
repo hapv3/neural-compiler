@@ -416,29 +416,32 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
 
             // Decode shape objects as tensors
             // TODO: MLBEDSW-10904 Improve support for TosaShape
-            for ( const auto &tosa_shape : SafeDeref(tosa_basicblock->shapes()) )
+            if ( tosa_basicblock->shapes() )
             {
-                GraphApi::GraphBuffer *buffer = nullptr;
-
-                const char *name = SafeDeref(tosa_shape->name(), "No shape name").c_str();
-                tosa_assert(name, "Shape needs a valid name");
-                const auto type = GraphApi::GraphDataType::Int64;
-
-                const auto &shapeData = tosa_shape->data();
-                if ( shapeData && shapeData->size() )
+                for ( const auto &tosa_shape : SafeDeref(tosa_basicblock->shapes()) )
                 {
-                    buffer = builder->CreateBuffer(shapeData->size(), GraphApi::BufferMapping::Alias, shapeData->Data());
-                    builder_assert(buffer, "Failed to create buffer");
+                    GraphApi::GraphBuffer *buffer = nullptr;
+
+                    const char *name = SafeDeref(tosa_shape->name(), "No shape name").c_str();
+                    tosa_assert(name, "Shape needs a valid name");
+                    const auto type = GraphApi::GraphDataType::Int64;
+
+                    const auto &shapeData = tosa_shape->data();
+                    if ( shapeData && shapeData->size() )
+                    {
+                        buffer = builder->CreateBuffer(shapeData->size(), GraphApi::BufferMapping::Alias, shapeData->Data());
+                        builder_assert(buffer, "Failed to create buffer");
+                    }
+
+                    GraphApi::GraphShape tosaShape;
+                    tosaShape.count = 1;
+                    tosaShape.axisNHWC[0] = tosa_shape->rank();
+                    auto tensor = builder->CreateTensor(name, tosaShape, GraphApi::GraphTensorLayout::Linear, type, buffer);
+                    builder_assert(tensor, "Failed to create tensor");
+
+                    tosa_assert(tensors.count(name) == 0, "Shape and Tensor name collision");
+                    tensors[name] = tensor;
                 }
-
-                GraphApi::GraphShape tosaShape;
-                tosaShape.count = 1;
-                tosaShape.axisNHWC[0] = tosa_shape->rank();
-                auto tensor = builder->CreateTensor(name, tosaShape, GraphApi::GraphTensorLayout::Linear, type, buffer);
-                builder_assert(tensor, "Failed to create tensor");
-
-                tosa_assert(tensors.count(name) == 0, "Shape and Tensor name collision");
-                tensors[name] = tensor;
             }
 
             const auto &tosa_operators = SafeDeref(tosa_basicblock->operators(), "No operators");
