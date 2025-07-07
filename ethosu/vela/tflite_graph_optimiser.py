@@ -2957,8 +2957,14 @@ def convert_conv_groups(op: Operation, arch, nng):
             # across all of the convolution groups
             conv_group_op_weights_shape = op.weights.shape[:-1] + [num_filters_cg]
             conv_group_op_weights_quant = op.weights.quantization.clone()
-            conv_group_op_weights_quant.scale_f32 = op.weights.quantization.scale_f32[..., cg_oc_start:cg_oc_end]
-            conv_group_op_weights_quant.zero_point = op.weights.quantization.zero_point[..., cg_oc_start:cg_oc_end]
+
+            if np.isscalar(op.weights.quantization.scale_f32):
+                conv_group_op_weights_quant.scale_f32 = op.weights.quantization.scale_f32
+                conv_group_op_weights_quant.zero_point = op.weights.quantization.zero_point
+            else:
+                conv_group_op_weights_quant.scale_f32 = op.weights.quantization.scale_f32[..., cg_oc_start:cg_oc_end]
+                conv_group_op_weights_quant.zero_point = op.weights.quantization.zero_point[..., cg_oc_start:cg_oc_end]
+
             conv_group_op.add_input_tensor(
                 create_const_tensor(
                     f"{op.weights.name}_cg{i}",
@@ -2976,8 +2982,14 @@ def convert_conv_groups(op: Operation, arch, nng):
             else:
                 conv_group_op_bias_shape = op.bias.shape[:-1] + [num_filters_cg]
                 conv_group_op_bias_quant = op.bias.quantization.clone()
-                conv_group_op_bias_quant.scale_f32 = op.bias.quantization.scale_f32[..., cg_oc_start:cg_oc_end]
-                conv_group_op_bias_quant.zero_point = op.bias.quantization.zero_point[..., cg_oc_start:cg_oc_end]
+
+                if np.isscalar(op.bias.quantization.scale_f32):
+                    conv_group_op_bias_quant.scale_f32 = op.bias.quantization.scale_f32
+                    conv_group_op_bias_quant.zero_point = op.bias.quantization.zero_point
+                else:
+                    conv_group_op_bias_quant.scale_f32 = op.bias.quantization.scale_f32[..., cg_oc_start:cg_oc_end]
+                    conv_group_op_bias_quant.zero_point = op.bias.quantization.zero_point[..., cg_oc_start:cg_oc_end]
+
                 conv_group_op.add_input_tensor(
                     create_const_tensor(
                         f"{op.bias.name}_cg{i}",
