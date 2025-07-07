@@ -312,7 +312,7 @@ public:
     static std::vector<FusionQuery> InitFusionQuery(SchedulerOperation *op);
 
 private:
-    int UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *conn);
+    int UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *conn, std::unordered_set<UniqueId> &visited);
 
     Address CreateSchedulerRepresentation();
 

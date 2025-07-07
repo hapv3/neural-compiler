@@ -195,23 +195,176 @@ static bool CheckLinearFormatForConcatSplit(SchedulerTensor *tensor)
 }
 
 
-int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *conn)
+int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *conn, std::unordered_set<UniqueId> &visited)
 {
     auto tensor = conn->tensor.get();
+    if ( visited.insert(tensor->uid).second )
+    {
+        // Force linear format for read only or persistent tensors
+        if ( tensor->IsConstant() || tensor->isPersistent )
+        {
+            tensor->needsLinearFormat = true;
+        }
+        if ( CheckLinearFormatForConcatSplit(tensor) )
+        {
+            tensor->needsLinearFormat = true;
+        }
 
+        std::unordered_set<Point2i, Point2Hash<int>> ifmShapes;
+        bool isAnyConsumerReduceSum = false;
+
+        for ( auto producer : tensor->producers )  // Can be refactored into check tensor once.
+        {
+            if ( producer->IsNpuOp() )
+            {
+                tensor->hasNPUWriters = true;
+            }
+            else
+            {
+                tensor->hasCPUWriters = true;
+            }
+
+            // TODO: Gather doesn't support brick format yet (MLBEDSW-8410)
+            if ( producer->Type() == OpType::Scatter || producer->Type() == OpType::Gather )
+            {
+                tensor->needsLinearFormat = true;
+                continue;
+            }
+            // TODO: Tile doesn't support brick format yet (MLBEDSW-9485)
+            else if ( producer->Type() == OpType::Tile )
+            {
+                tensor->needsLinearFormat = true;
+                continue;
+            }
+            else
+            {
+                ArchRequirements req;
+                ArchOperatorQuery query;
+                query.transposeMask = producer->OFM()->transpose;
+                if ( _arch->Constraints()->OperatorQuery(producer->Type(), &query, &req).Any(QueryResult::Native) )
+                {
+                    if ( req.req % ArchRequirement::Tensor )
+                    {
+                        auto *tr = Get(&req.tensor, TensorUsage::OFM);
+                        if ( tr && tr->format == TensorFormat::NHWC )
+                        {
+                            tensor->needsLinearFormat = true;
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+
+        for ( auto consumer : tensor->consumers )
+        {
+            if ( consumer->IsNpuOp() )
+            {
+                tensor->hasNPUReaders = true;
+            }
+            else
+            {
+                tensor->hasCPUReaders = true;
+            }
+            // Int32 ReduceSum requires linear format
+            if ( consumer->Type() == OpType::ReduceSum )
+            {
+                isAnyConsumerReduceSum = true;
+            }
+            for ( const auto [tensorUsage, connection] : consumer->inputs.pairs() )
+            {
+                if ( connection.tensor.get() == tensor && IsIFM(tensorUsage) )
+                {
+                    ifmShapes.insert(connection.SliceShape().WC<int>(1));
+                }
+            }
+
+            // TODO: Gather doesn't support brick format yet (MLBEDSW-8410)
+            if ( consumer->Type() == OpType::Scatter || consumer->Type() == OpType::Gather )
+            {
+                tensor->needsLinearFormat = true;
+                continue;
+            }
+            // TODO: Tile doesn't support brick format yet (MLBEDSW-9485)
+            else if ( consumer->Type() == OpType::Tile )
+            {
+                tensor->needsLinearFormat = true;
+                continue;
+            }
+        }
+        // Check if consumer shape requires linear format
+        // Brick format can only be used if both shapes have equal W and C
+        // Need to check full shape on connection since tensor might have many producers (concat)
+        for ( auto producer : tensor->producers )
+        {
+            if ( tensor->needsLinearFormat ) break;
+            for ( const auto [_, connection] : producer->outputs.pairs() )
+            {
+                if ( connection.tensor.get() == tensor )
+                {
+                    if ( ifmShapes.count(connection.shape.WC<int>(1)) != ifmShapes.size() )
+                    {
+                        tensor->needsLinearFormat = true;
+                        break;
+                    }
+                    else if ( isAnyConsumerReduceSum && connection.Type() == DataType::Int32 )
+                    {
+                        tensor->needsLinearFormat = true;
+                        break;
+                    }
+                }
+            }
+        }
+        for ( auto consumer : tensor->consumers )
+        {
+            if ( tensor->needsLinearFormat ) break;
+
+            ArchRequirements req;
+            ArchOperatorQuery query;
+            Set(query.ifm[0], consumer->TryIFM(0));
+            Set(query.ifm[1], consumer->TryIFM(1));
+            if ( consumer->Type() == OpType::Rescale && consumer->HasAttribute<sign_attr_t>() )
+            {
+                const auto attr = consumer->Attribute<sign_attr_t>();
+                query.ifm[0].type = DataTypeSetSignedness(query.ifm[0].type, !attr->input_unsigned);
+            }
+            query.transposeMask = consumer->OFM()->transpose;
+            for ( const auto [consumerUsage, connection] : consumer->inputs.pairs() )
+            {
+                if ( connection.tensor.get() == tensor )
+                {
+                    if ( ifmShapes.count(connection.shape.WC<int>(1)) != ifmShapes.size() )
+                    {
+                        tensor->needsLinearFormat = true;
+                        break;
+                    }
+                    else if ( isAnyConsumerReduceSum && connection.Type() == DataType::Int32 )
+                    {
+                        tensor->needsLinearFormat = true;
+                        break;
+                    }
+                    else if ( _arch->Constraints()->OperatorQuery(consumer->Type(), &query, &req).Any(QueryResult::Native) )
+                    {
+                        if ( req.req % ArchRequirement::Tensor )
+                        {
+                            auto *tr = Get(&req.tensor, consumerUsage);
+                            if ( tr && tr->format == TensorFormat::NHWC )
+                            {
+                                tensor->needsLinearFormat = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     // Multiple consumers/producers require the full tensor present
     if ( tensor->producers.size() > 1 || tensor->consumers.size() > 1 || (IsOFM(usage) && conn->slice.offset.Size() > 0) ||  // Concat
          tensor->isGraphInput || tensor->isGraphOutput )
     {
         conn->requireFullTensor = true;
     }
-
-    // Force linear format for read only or persistent tensors
-    if ( tensor->IsConstant() || tensor->isPersistent )
-    {
-        tensor->needsLinearFormat = true;
-    }
-
     // Force linear output from Reverse for C dimension because brick output from Reverse has special requirements
     if ( IsOFM(usage) && conn->reverse == ReverseType::C )
     {
@@ -222,126 +375,17 @@ int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *con
     {
         tensor->needsLinearFormat = true;
     }
-
     // Force linear format for strided access in the width dimension
     if ( conn->stepXY.x != 1 )
     {
         tensor->needsLinearFormat = true;
     }
 
-    for ( auto producer : tensor->producers )
-    {
-        if ( producer->IsNpuOp() )
-        {
-            tensor->hasNPUWriters = true;
-        }
-        else
-        {
-            tensor->hasCPUWriters = true;
-        }
-
-        // TODO: Gather doesn't support brick format yet (MLBEDSW-8410)
-        if ( producer->Type() == OpType::Scatter || producer->Type() == OpType::Gather )
-        {
-            tensor->needsLinearFormat = true;
-            continue;
-        }
-        // TODO: Tile doesn't support brick format yet (MLBEDSW-9485)
-        else if ( producer->Type() == OpType::Tile )
-        {
-            tensor->needsLinearFormat = true;
-            continue;
-        }
-        else
-        {
-            ArchRequirements req;
-            ArchOperatorQuery query;
-            query.transposeMask = producer->OFM()->transpose;
-            if ( _arch->Constraints()->OperatorQuery(producer->Type(), &query, &req).Any(QueryResult::Native) )
-            {
-                if ( req.req % ArchRequirement::Tensor )
-                {
-                    auto *tr = Get(&req.tensor, TensorUsage::OFM);
-                    if ( tr && tr->format == TensorFormat::NHWC )
-                    {
-                        tensor->needsLinearFormat = true;
-                        continue;
-                    }
-                }
-            }
-        }
-    }
-
-    for ( auto consumer : tensor->consumers )
-    {
-        if ( consumer->IsNpuOp() )
-        {
-            tensor->hasNPUReaders = true;
-        }
-        else
-        {
-            tensor->hasCPUReaders = true;
-        }
-
-        // TODO: Gather doesn't support brick format yet (MLBEDSW-8410)
-        if ( consumer->Type() == OpType::Scatter || consumer->Type() == OpType::Gather )
-        {
-            tensor->needsLinearFormat = true;
-            continue;
-        }
-        // TODO: Tile doesn't support brick format yet (MLBEDSW-9485)
-        else if ( consumer->Type() == OpType::Tile )
-        {
-            tensor->needsLinearFormat = true;
-            continue;
-        }
-        // Int32 ReduceSum requires linear format
-        else if ( consumer->Type() == OpType::ReduceSum && conn->Type() == DataType::Int32 )
-        {
-            tensor->needsLinearFormat = true;
-            continue;
-        }
-
-        TensorUsage usedAs = TensorUsage::None;
-        auto tensorConn = consumer->HasInput(tensor, usedAs);
-
-        ArchRequirements req;
-        ArchOperatorQuery query;
-        Set(query.ifm[0], consumer->TryIFM(0));
-        Set(query.ifm[1], consumer->TryIFM(1));
-        if ( consumer->Type() == OpType::Rescale && consumer->HasAttribute<sign_attr_t>() )
-        {
-            const auto attr = consumer->Attribute<sign_attr_t>();
-            query.ifm[0].type = DataTypeSetSignedness(query.ifm[0].type, !attr->input_unsigned);
-        }
-        query.transposeMask = consumer->OFM()->transpose;
-        if ( _arch->Constraints()->OperatorQuery(consumer->Type(), &query, &req).Any(QueryResult::Native) )
-        {
-            if ( req.req % ArchRequirement::Tensor )
-            {
-                auto *tr = Get(&req.tensor, usedAs);
-                if ( tr && tr->format == TensorFormat::NHWC )
-                {
-                    tensor->needsLinearFormat = true;
-                    continue;
-                }
-            }
-        }
-
-        // Check if consumer shape requires linear format
-        // Brick format can only be used if both shapes have equal W and C
-        // Need to check full shape on connection since tensor might have many producers (concat)
-        if ( IsIFM(usedAs) && conn->shape && tensorConn && (tensorConn->SliceShape().WC<int>(1) != conn->shape.WC<int>(1)) )
-        {
-            tensor->needsLinearFormat = true;
-        }
-    }
-
     // Initial criteria (may change)
     bool cpuTensor =
         tensor->hasCPUWriters || tensor->hasCPUReaders || tensor->isGraphInput || tensor->isGraphOutput || tensor->isPersistent;
     conn->requireFullTensor = conn->requireFullTensor || cpuTensor;
-    tensor->needsLinearFormat = tensor->needsLinearFormat || cpuTensor || CheckLinearFormatForConcatSplit(tensor);
+    tensor->needsLinearFormat = tensor->needsLinearFormat || cpuTensor;
 
     if ( (_options.separateIORegions || tensor->IsConstant()) && cpuTensor && !tensor->hasNPUWriters && !tensor->hasNPUReaders )
     {
@@ -365,6 +409,7 @@ int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *con
 Address Scheduler::CreateSchedulerRepresentation()
 {
     int minMemoryRequired = 0;
+    std::unordered_set<UniqueId> visited;
 
     for ( auto const &schedOp : _ops )
     {
@@ -373,25 +418,25 @@ Address Scheduler::CreateSchedulerRepresentation()
         for ( auto pos : schedOp->outputs.pairs() )
         {
             assert(!pos.second.tensor->producers.empty());
-            opMemoryRequired += UpdateSchedulerTensor(pos.first, &pos.second);
+            opMemoryRequired += UpdateSchedulerTensor(pos.first, &pos.second, visited);
         }
 
         for ( auto pos : schedOp->inputs.pairs() )
         {
             assert(!pos.second.tensor->consumers.empty());
-            opMemoryRequired += UpdateSchedulerTensor(pos.first, &pos.second);
+            opMemoryRequired += UpdateSchedulerTensor(pos.first, &pos.second, visited);
         }
 
         for ( auto const &subOp : schedOp->SubOps() )
         {
             for ( auto pos : subOp->outputs.pairs() )
             {
-                opMemoryRequired += UpdateSchedulerTensor(pos.first, &pos.second);
+                opMemoryRequired += UpdateSchedulerTensor(pos.first, &pos.second, visited);
             }
 
             for ( auto pos : subOp->inputs.pairs() )
             {
-                opMemoryRequired += UpdateSchedulerTensor(pos.first, &pos.second);
+                opMemoryRequired += UpdateSchedulerTensor(pos.first, &pos.second, visited);
             }
         }
         minMemoryRequired = std::max(minMemoryRequired, opMemoryRequired);
