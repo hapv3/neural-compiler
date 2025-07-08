@@ -1161,7 +1161,7 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const graph, Operation *const op
             auto ifmQuant = ifmConn->quantization;
             // Normalize scales to shift 0 if possible
             ifmQuant.scales = ConvertedScales(ofmConn);
-
+            bool replaceInput = false;
             for ( auto ifm : consumer->Inputs().pairs() )
             {
                 if ( ifm.second.tensor == ofmConn->tensor )
@@ -1213,12 +1213,18 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const graph, Operation *const op
                             // avoid performing this fuse operation.
                             if ( !sameType ) break;
                         }
-                        ReplaceConsumerInput(nullptr, ofmConn->tensor->Readers(), ofmConn->tensor.get(), ifmConn->tensor);
                         ifm.second.quantization = ifmQuant;
                         consumer->Input(ifm.first)->Set(ofmConn->rounding);
                         returnOp = consumer.get();
+                        replaceInput = true;
                     }
                 }
+            }
+            if ( replaceInput )
+            {
+                // This is done outside the loop to avoid modifying the consumer inputs while they are being iterated
+                // over.
+                ReplaceConsumerInput(nullptr, ofmConn->tensor->Readers(), ofmConn->tensor.get(), ifmConn->tensor);
             }
         }
         // If the rescale could not be fused to the consumer of the output of the rescale, check if there
