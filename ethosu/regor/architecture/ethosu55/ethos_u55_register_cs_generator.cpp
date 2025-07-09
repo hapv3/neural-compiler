@@ -1397,14 +1397,14 @@ void EthosU55RCSGenerator::InsertTransposeCommand(const HLCStripe *stripe, Tempo
                     depth = sliceShape.Depth();
                     slices = 1;
                     ifmStep = ofmStep = 0;
-                    assert(from == 1 && to == 2);
+                    assert((from == ifm.shape.Size() - 3) && (to == ifm.shape.Size() - 2));
                 }
                 else if ( ofm.transpose == TransposeType::NHCW )
                 {
                     depth = 1;
                     slices = ifm.shape.Height();
                     ifmStep = ofmStep = ifm.shape.ElementsWC() * elementSize;
-                    assert(from == 2 && to == 3);
+                    assert((from == ifm.shape.Size() - 2) && (to == ifm.shape.Size() - 1));
                 }
                 else if ( ofm.transpose == TransposeType::NCWH )
                 {
@@ -1413,7 +1413,7 @@ void EthosU55RCSGenerator::InsertTransposeCommand(const HLCStripe *stripe, Tempo
                     slices = ifm.shape.Width();
                     ifmStep = ifm.shape.Depth() * elementSize;
                     ofmStep = ifm.shape.Height() * elementSize;
-                    assert(from == 1 && to == 3);
+                    assert((from == ifm.shape.Size() - 3) && (to == ifm.shape.Size() - 1));
                 }
                 else
                 {
