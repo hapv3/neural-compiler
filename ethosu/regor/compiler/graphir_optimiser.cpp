@@ -2491,6 +2491,7 @@ Operation *GraphIrOptimiser::RewriteResize(Graph *const, Operation *const operat
     auto copyOp = std::make_shared<Operation>(OpType::Add);
     ReplaceOperation(operation, copyOp.get());
     copyOp->ConnectInput(TensorUsage::IFM1, zeroTensor).Set(copyOp->Input(TensorUsage::IFM)->quantization);
+    copyOp->Output(TensorUsage::OFM)->rounding = RoundMode::DBL;
     RecordOptimisation(*operation, copyOp.get());
     return copyOp.get();
 }
