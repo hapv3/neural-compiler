@@ -180,13 +180,13 @@ bool TfLiteSupportedOperatorsU55::ConstraintResize(const Operation *op)
     Shape ifmShape = Shape::PadAxes(ifmConn->shape, 4, 1);
     Shape ofmShape = Shape::PadAxes(ofmConn->shape, 4, 1);
 
-    if ( ifmShape.Height() == ofmShape.Height() && ifmShape.Height() == ofmShape.Height() )
-    {
-        return true;
-    }
     if ( ifmShape.Height() == 1 && ifmShape.Width() == 1 )
     {
         return true;
+    }
+    if ( ifmShape.Height() == ofmShape.Height() && ifmShape.Height() == ofmShape.Height() )
+    {
+        return !halfPixelCentersRB;
     }
 
     float hUpscale;

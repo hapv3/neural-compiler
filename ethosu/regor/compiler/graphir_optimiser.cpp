@@ -550,6 +550,39 @@ Operation *GraphIrOptimiser::RewriteConst(Graph *const graph, Operation *const o
     return returnOp;
 }
 
+Operation *GraphIrOptimiser::RewriteIdentityResize(Graph *const graph, Operation *const operation)
+{
+    Operation *returnOp = operation;
+    OpType opType = operation->Type();
+    if ( opType == OpType::Resize )
+    {
+        auto *attr = operation->Attribute<resize_attr_t>();
+        const auto ofmConn = operation->Output(TensorUsage::OFM);
+        bool noBorder = attr->border.x == 0 && attr->border.y;
+        bool noOffset = attr->offset.x == 0 && attr->offset.y == 0;
+        bool unitUpscale = attr->scaleX.n == 1 && attr->scaleX.d == 1 && attr->scaleY.n == 1 && attr->scaleY.d == 1;
+        bool identityUpscaleNoRescaleRequired =
+            attr->mode == tosa::ResizeMode::NEAREST && attr->scaleX.n == attr->scaleX.d &&
+            attr->scaleY.n == attr->scaleY.d;
+
+        bool isIdentity = noBorder && noOffset && (unitUpscale || identityUpscaleNoRescaleRequired);
+        if ( isIdentity )
+        {
+            const auto ifmConn = operation->Input(TensorUsage::IFM);
+
+            auto identityOp = std::make_shared<Operation>(OpType::Identity);
+            identityOp->ConnectInput(TensorUsage::IFM, ifmConn->tensor).Set(Quantization::Unit()).Set(ifmConn->tensor->StorageShape());
+            identityOp->ConnectOutput(TensorUsage::OFM, ofmConn->tensor).Set(Quantization::Unit()).Set(ofmConn->tensor->StorageShape());
+
+
+            returnOp = identityOp.get();
+            RecordOptimisation(*operation, returnOp);
+            operation->Disconnect();
+        }
+    }
+    return returnOp;
+}
+
 Operation *GraphIrOptimiser::RewriteFullyConnected(Graph *const graph, Operation *const operation)
 {
     UNUSED(graph);

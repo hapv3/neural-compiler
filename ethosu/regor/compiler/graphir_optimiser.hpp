@@ -76,6 +76,7 @@ private:
     void MoveToConsumer(const Operation *const operation, Operation *const cons);
     Operation *MoveSplitSliceToConsumer(Graph *const, Operation *const operation);
     Operation *UnrollKernelStrides(Graph *const, Operation *const operation);
+    Operation *RewriteIdentityResize(Graph *const graph, Operation *const operation);
     // Utility/Helper methods
     Operation *MakeFillOperation(TensorConnection *const ofmConn, const Shape &ofmShape, const TensorSlice &ofmSlice,
         std::shared_ptr<Tensor> padTensor);
@@ -102,6 +103,7 @@ private:
             {},
             {
                 &GraphIrOptimiser::RewriteConst,
+                &GraphIrOptimiser::RewriteIdentityResize
             },
         },
         {
