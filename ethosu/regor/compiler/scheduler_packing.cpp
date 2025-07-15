@@ -284,6 +284,7 @@ void SchedulerPacking::HandleReinterpretCast(const Operation *op)
     if ( _graph->IsOutput(ofmConn->tensor.get()) )
     {
         InitSchedulerTensor(schedTensor.get(), ofmConn->tensor.get());
+        schedTensor->dataType = ifmConn->tensor->Type();
         schedTensor->srcTensor = ofmConn->tensor;
     }
 }
