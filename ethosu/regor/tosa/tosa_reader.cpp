@@ -753,6 +753,13 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                             "Failed to set OUTPAD attribute on TRANSPOSE_CONV2D");
                     }
                     break;
+                    case tosaFb::Op::MUL:
+                    {
+                        const auto &mulShiftTensor = input_tensors[2];
+                        tosa_assert(shapes.at(mulShiftTensor).count == 1,
+                            ("MUL shift tensor " + mulShiftTensor + " needs to have rank 1.").c_str());
+                    }
+                    break;
                     default:
                         break;
                 }
