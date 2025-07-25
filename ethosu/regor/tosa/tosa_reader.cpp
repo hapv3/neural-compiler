@@ -28,6 +28,7 @@
 #include "tosa_mapping.hpp"
 #include "tosa_schema_generated.hpp"
 
+#include <compiler/tensor.hpp>
 #include <cstdint>
 #include <iterator>
 #include <memory>
@@ -489,6 +490,12 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         inputTensors.push_back(SafeDeref(ten, "Invalid tensor name").str());
                 }
                 const auto &outputTensors = SafeDeref(tosaOperator.outputs(), "No outputs");
+                if ( outputTensors.empty() )
+                {
+                    auto message = fmt::format("WARNING: Operator: {} at index {} does not output to any tensor.\n",
+                        tosaFb::EnumNameOp(tosaOperator.op()), tosaOpIndex);
+                    LOG_WARN(message);
+                }
 
                 // Kernel
                 GraphApi::GraphKernel kernel = {};
@@ -865,8 +872,12 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
             }
             for ( auto ten : SafeDeref(tosaBasicBlock->outputs(), "No BasicBlock outputs") )
             {
-                TosaAssert(tensors.count(ten->str()), fmt::format("BasicBlock output tensor '{}' not found", ten->str()).c_str());
-                builder->AddOutput(tensors.at(ten->str()).tensor);
+                TosaAssert(tensors.count(ten->str()),
+                    fmt::format("BasicBlock output tensor '{}' not found.", ten->str()).c_str());
+                auto outputTensor = static_cast<Tensor *>(tensors.at(ten->str()).tensor);  // NOLINT(*-pro-type-static-cast-downcast)
+                TosaAssert(!outputTensor->Writers().empty(),
+                    fmt::format("Output tensor {} does not have any writers.", ten->str()).c_str());
+                builder->AddOutput(outputTensor);
             }
         }
     }
