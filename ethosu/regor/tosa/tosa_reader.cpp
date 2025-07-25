@@ -743,6 +743,14 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                             "Failed to set RESCALE_INPUT_UNSIGNED attribute on RESCALE");
                         builder_assert(builder->Set(op, GraphApi::OpAttr::RESCALE_OUTPUT_UNSIGNED, tosa_attr.output_unsigned()),
                             "Failed to set RESCALE_OUTPUT_UNSIGNED attribute on RESCALE");
+
+                        if ( tosa_attr.per_channel() )
+                        {
+                            const auto &rescaleInputTensor = input_tensors[0];
+                            tosa_assert(shapes.at(rescaleInputTensor).count != 0,
+                                fmt::format("RESCALE input tensor {} needs to have rank > 0 when per channel attribute is set.", rescaleInputTensor)
+                                    .c_str());
+                        }
                     }
                     break;
                     case tosaFb::Op::RESIZE:
