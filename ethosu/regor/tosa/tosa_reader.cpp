@@ -19,6 +19,7 @@
 #include "tosa_reader.hpp"
 
 #include "common/common.hpp"
+#include "common/logging.hpp"
 
 #include "common/shape.hpp"
 #include "compiler/attributes.hpp"
@@ -398,7 +399,13 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                 const auto &tensorData = tosa_tensor->data();
                 if ( tensorData && tensorData->size() )
                 {
-                    buffer = builder->CreateBuffer(tensorData->size(), GraphApi::BufferMapping::Alias, tensorData->Data());
+                    GraphApi::BufferMapping mapping = GraphApi::BufferMapping::Alias;
+                    if ( reinterpret_cast<uintptr_t>(tensorData->Data()) % 8 != 0 )
+                    {
+                        LOG_DEBUG("{} tensor buffer is not 8 byte aligned\n", name);
+                        mapping = GraphApi::BufferMapping::Allocate;
+                    }
+                    buffer = builder->CreateBuffer(tensorData->size(), mapping, tensorData->Data());
                     builder_assert(buffer, "Failed to create buffer");
                 }
 
@@ -429,7 +436,13 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                     const auto &shapeData = tosa_shape->data();
                     if ( shapeData && shapeData->size() )
                     {
-                        buffer = builder->CreateBuffer(shapeData->size(), GraphApi::BufferMapping::Alias, shapeData->Data());
+                        GraphApi::BufferMapping mapping = GraphApi::BufferMapping::Alias;
+                        if ( reinterpret_cast<uintptr_t>(shapeData->Data()) % 8 != 0 )
+                        {
+                            LOG_DEBUG("{} tensor buffer is not 8 byte aligned\n", name);
+                            mapping = GraphApi::BufferMapping::Allocate;
+                        }
+                        buffer = builder->CreateBuffer(shapeData->size(), mapping, shapeData->Data());
                         builder_assert(buffer, "Failed to create buffer");
                     }
 
