@@ -1220,8 +1220,8 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
         return result;
     }
 
-    if ( arch->Constraints()->SupportsAccumulatorSaveRestore() &&
-         req.decomposeProps.Any(ArchProperty::KernelDilation) && op->Input(TensorUsage::Weights)->tensor->IsConstant() )
+    if ( arch->Constraints()->SupportsAccumulatorSaveRestore() && req.decomposeProps.Any(ArchProperty::KernelStride) &&
+         op->Input(TensorUsage::Weights)->tensor->IsConstant() )
     {
         return DecomposeForStrides(arch, std::move(op), DecomposeDepthwiseConv2D);
     }
