@@ -372,7 +372,13 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
             // Vector to API shape
             auto ToApiShape = [](const ::flatbuffers::Vector<int32_t> *in) -> GraphApi::GraphShape
             {
-                GraphApi::GraphShape out;
+                GraphApi::GraphShape out{};
+                // Interpret a missing shape vector as scalar, rank 0 shape.
+                if ( in == nullptr )
+                {
+                    out.count = 0;
+                    return out;
+                }
                 const auto &buf = SafeDeref(in, "No shape vector");
                 tosa_assert(buf.size() <= std::size(out.axisNHWC), "Shape rank exceeds maximum allowed");
                 for ( int i = 0; i < int(buf.size()); i++ )
