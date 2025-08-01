@@ -874,7 +874,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv2D(Architecture *a
         return result;
     }
     auto &dilation = kernel->Dilation();
-    if ( req.decomposeProps.Any(ArchProperty::KernelDilation) )
+    if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::KernelDilation) )
     {
         return HandleDilation(arch, std::move(op), DecomposeConv2D);
     }
@@ -1202,7 +1202,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
     }
 
     auto &dilation = kernel->Dilation();
-    if ( req.decomposeProps.Any(ArchProperty::KernelDilation) )
+    if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::KernelDilation) )
     {
         return HandleDilation(arch, std::move(op), DecomposeDepthwiseConv2D);
     }

@@ -600,16 +600,6 @@ Flags<QueryResult> EthosU85Constraints::OperatorQuery(OpType opType, const ArchO
             result.Set(QueryResult::HasRequirements);
         }
 
-        if ( k->Dilation().x > 2 || k->Dilation().y > 2 )
-        {
-            if ( req )
-            {
-                req->req.Set(ArchRequirement::Decompose);
-                req->decomposeProps.Set(ArchProperty::KernelDilation);
-            }
-            result.Set(QueryResult::HasRequirements);
-        }
-
         if ( k->DepthMultiplier() > 1 )
         {
             if ( req )
@@ -629,6 +619,26 @@ Flags<QueryResult> EthosU85Constraints::OperatorQuery(OpType opType, const ArchO
                 req->decomposeProps.Set(ArchProperty::Scaling);
             }
             result.Set(QueryResult::HasRequirements);
+        }
+
+        if ( k->Dilation().x > 1 || k->Dilation().y > 1 )
+        {
+            if ( req && req->req.Any(ArchRequirement::Decompose) )
+            {
+                // Dilation > 1 needs to be decomposed if decomposition is needed for any reason.
+                // However, dilation > 1 in itself does not require decomposition.
+                req->decomposeProps.Set(ArchProperty::KernelDilation);
+            }
+            if ( k->Dilation().x > 2 || k->Dilation().y > 2 )
+            {
+                if ( req )
+                {
+                    // Dilation > 2 requires decomposition.
+                    req->req.Set(ArchRequirement::Decompose);
+                    req->decomposeProps.Set(ArchProperty::KernelDilation);
+                }
+                result.Set(QueryResult::HasRequirements);
+            }
         }
     }
 
