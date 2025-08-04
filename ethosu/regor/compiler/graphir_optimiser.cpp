@@ -388,9 +388,14 @@ struct EwMul
 };
 
 template<typename T>
-static std::vector<T> BroadcastValues(const Tensor *in, const Shape &oShape)
+struct EwMemoryCopy
 {
-    const Shape &iShape = in->StorageShape();
+    int64_t operator()(T a) { return int64_t(a); }
+};
+
+template<typename T>
+static std::vector<T> BroadcastValues(const Tensor *in, const Shape &iShape, const Shape &oShape)
+{
     const auto &iData = in->View().Values<T>(in->Type());
     const int elementCnt = oShape.Elements();
 
@@ -431,18 +436,20 @@ static std::vector<T> BroadcastValues(const Tensor *in, const Shape &oShape)
 }
 
 template<template<typename> typename F, typename T>
-std::shared_ptr<Buffer> ConstPropEw(Operation *const operation)
+std::shared_ptr<Buffer> ConstPropBinEw(Operation *const operation)
 {
     auto ifmConn0 = operation->Input(TensorUsage::IFM);
     auto ifmConn1 = operation->Input(TensorUsage::IFM1);
     auto ofmConn = operation->Output(TensorUsage::OFM);
-    const auto &oShape = ofmConn->tensor->StorageShape();
+    const auto &oShape = ofmConn->SliceShape();
+    const auto &iShape0 = ifmConn0->SliceShape();
+    const auto &iShape1 = ifmConn1->SliceShape();
     auto *ifm0 = ifmConn0->tensor.get();
     auto *ifm1 = ifmConn1->tensor.get();
     auto *ofm = ofmConn->tensor.get();
 
-    auto v0 = BroadcastValues<T>(ifm0, oShape);
-    auto v1 = BroadcastValues<T>(ifm1, oShape);
+    auto v0 = BroadcastValues<T>(ifm0, iShape0, oShape);
+    auto v1 = BroadcastValues<T>(ifm1, iShape1, oShape);
     std::vector<T> c(oShape.Elements());
 
     for ( int i = 0; i < oShape.Elements(); i++ )
@@ -454,18 +461,57 @@ std::shared_ptr<Buffer> ConstPropEw(Operation *const operation)
 }
 
 template<template<typename> typename F>
-std::shared_ptr<Buffer> ConstPropEw(Operation *const operation)
+std::shared_ptr<Buffer> ConstPropBinEw(Operation *const operation)
 {
     auto dataType = operation->Output(TensorUsage::OFM)->tensor->Type();
 
     switch ( dataType )
     {
         case DataType::Int8:
-            return ConstPropEw<F, int8_t>(operation);
+            return ConstPropBinEw<F, int8_t>(operation);
         case DataType::Int16:
-            return ConstPropEw<F, int16_t>(operation);
+            return ConstPropBinEw<F, int16_t>(operation);
         case DataType::Int32:
-            return ConstPropEw<F, int32_t>(operation);
+            return ConstPropBinEw<F, int32_t>(operation);
+        default:
+            return {};
+    }
+}
+
+template<template<typename> typename F, typename T>
+std::shared_ptr<Buffer> ConstPropUnEw(Operation *const operation)
+{
+    auto ifmConn = operation->Input(TensorUsage::IFM);
+    auto ofmConn = operation->Output(TensorUsage::OFM);
+    const auto &oShape = ofmConn->SliceShape();
+    const auto &iShape = ifmConn->SliceShape();
+    auto *ifm0 = ifmConn->tensor.get();
+    auto *ofm = ofmConn->tensor.get();
+
+    auto v0 = BroadcastValues<T>(ifm0, iShape, oShape);
+    std::vector<T> c(oShape.Elements());
+
+    for ( int i = 0; i < oShape.Elements(); i++ )
+    {
+        c[i] = Scale<T>(F<T>()(v0[i]), ofmConn->quantization, ofmConn->rounding);
+    }
+
+    return std::make_shared<Buffer>(std::move(c));
+}
+
+template<template<typename> typename F>
+std::shared_ptr<Buffer> ConstPropUnEw(Operation *const operation)
+{
+    auto dataType = operation->Output(TensorUsage::OFM)->tensor->Type();
+
+    switch ( dataType )
+    {
+        case DataType::Int8:
+            return ConstPropUnEw<F, int8_t>(operation);
+        case DataType::Int16:
+            return ConstPropUnEw<F, int16_t>(operation);
+        case DataType::Int32:
+            return ConstPropUnEw<F, int32_t>(operation);
         default:
             return {};
     }
@@ -496,10 +542,13 @@ Operation *GraphIrOptimiser::ConstPropagation(Graph *const graph, Operation *con
     switch ( operation->Type() )
     {
         case OpType::SHL:
-            ofmBuf = ConstPropEw<EwShl>(operation);
+            ofmBuf = ConstPropBinEw<EwShl>(operation);
             break;
         case OpType::Mul:
-            ofmBuf = ConstPropEw<EwMul>(operation);
+            ofmBuf = ConstPropBinEw<EwMul>(operation);
+            break;
+        case OpType::MemoryCopy:
+            ofmBuf = ConstPropUnEw<EwMemoryCopy>(operation);
             break;
         default:
             break;
