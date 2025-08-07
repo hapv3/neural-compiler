@@ -1943,8 +1943,69 @@ std::vector<std::unique_ptr<SchedulerOperation>> LegaliseResize(Architecture *ar
     return result;
 }
 
+// Reshape elementwise operators to remove dimensions that are 1 from the shape.
+// Additionally, squash any leading dimensions into the height for any operators with >3 dimensions.
+static void ReshapeElementwise(SchedulerOperation *op)
+{
+    if ( !IsElementwise(op->Type()) )
+    {
+        return;
+    }
+    auto *ofmConn = op->Output(TensorUsage::OFM);
+    auto *ifmConn = op->Input(TensorUsage::IFM0);
+    auto *ifm2Conn = op->TryInput(TensorUsage::IFM1);
+    // Abort if broadcast (IFM0 and IFM1 exist but have different shapes) or if we have slicing.
+    auto scalarIfm1 = ifmConn->shape.Elements() == 1;
+    auto scalarIfm2 = ifm2Conn && ifm2Conn->shape.Elements() == 1;
+    bool broadcast = ifm2Conn && !scalarIfm2 && ifmConn->shape != ifm2Conn->shape;
+    bool hasSlices =
+        ifmConn->shape != ifmConn->SliceShape() || ofmConn->shape != ofmConn->SliceShape() ||
+        (ifm2Conn && ifm2Conn->shape != ofmConn->SliceShape());
+    if ( broadcast || hasSlices )
+    {
+        return;
+    }
+    // Remove all the dimensions from the OFM that are 1.
+    auto ofmShape = ofmConn->shape;
+    while ( ofmShape.Size() > 3 && (ofmShape.Depth() == 1 || ofmShape.Width() == 1 || ofmShape.Height() == 1) &&
+            ofmShape.Elements() > ofmShape.ElementsHWC() )
+    {
+        if ( ofmShape.Size() > 3 && ofmShape[-1] == 1 )
+        {
+            ofmShape = ofmShape.Erase(-1);
+        }
+        if ( ofmShape.Size() > 3 && ofmShape[-2] == 1 )
+        {
+            ofmShape = ofmShape.Erase(-2);
+        }
+        if ( ofmShape.Size() > 3 && ofmShape[-3] == 1 )
+        {
+            ofmShape = ofmShape.Erase(-3);
+        }
+    }
+
+    // Stack all lower dimensions above 4 onto the height dimension to ensure that no large values are left in
+    // the higher axes, leading to inefficient elementwise decomposition.
+    // Merge the leading dimensions and N into H. Then set N to 1.
+    if ( ofmShape.Size() > 3 )
+    {
+        ofmShape = Shape::MergeAxes(ofmShape, -3, 0xFFFFFFF8, false);
+        ofmShape = ofmShape.Insert(0, 1);
+    }
+    ofmConn->shape = ofmShape;
+    if ( !scalarIfm1 )
+    {
+        ifmConn->shape = ofmShape;
+    }
+    if ( ifm2Conn && !scalarIfm2 )
+    {
+        ifm2Conn->shape = ofmShape;
+    }
+}
+
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeElementwise(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
 {
+    ReshapeElementwise(op.get());
     std::vector<std::unique_ptr<SchedulerOperation>> result;
     auto ofmConn = op->Output(TensorUsage::OFM);
     auto &ofmShape = ofmConn->SliceShape();

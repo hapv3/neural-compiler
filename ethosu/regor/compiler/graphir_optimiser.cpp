@@ -1483,52 +1483,6 @@ Operation *GraphIrOptimiser::RewriteCast(Graph *const, Operation *const operatio
     return returnOp;
 }
 
-Operation *GraphIrOptimiser::OptimiseElementwise(Graph *const, Operation *const operation)
-{
-    Operation *returnOp = operation;
-    const OpType opType = operation->Type();
-    if ( DecomposeAsElementwise(opType) )
-    {
-        auto ofmShape = operation->Output(TensorUsage::OFM)->shape;
-        if ( ofmShape.Size() > 3 && (ofmShape.Depth() == 1 || ofmShape.Width() == 1 || ofmShape.Height() == 1) &&
-             ofmShape.Elements() > ofmShape.ElementsHWC() )
-        {
-            auto *ofmConn = returnOp->Output(TensorUsage::OFM);
-            auto *ifmConn = returnOp->Input(TensorUsage::IFM0);
-            auto *ifm2Conn = returnOp->Input(TensorUsage::IFM1);
-            while ( ofmShape.Size() > 3 && (ofmShape.Depth() == 1 || ofmShape.Width() == 1 || ofmShape.Height() == 1) )
-            {
-                auto Reshape = [&](int indexToRemove)
-                {
-                    ofmShape = ofmShape.Erase(indexToRemove);
-                    ofmConn->Set(ofmShape);
-                    if ( ifmConn->shape.Size() > indexToRemove )
-                    {
-                        ifmConn->Set(ifmConn->shape.Erase(indexToRemove));
-                    }
-                    if ( ifm2Conn && ifm2Conn->shape.Size() > indexToRemove )
-                    {
-                        ifm2Conn->Set(ifm2Conn->shape.Erase(indexToRemove));
-                    }
-                };
-                if ( ofmShape.Depth() == 1 )
-                {
-                    Reshape(ofmShape.Size() - 1);
-                }
-                else if ( ofmShape.Width() == 1 )
-                {
-                    Reshape(ofmShape.Size() - 2);
-                }
-                else if ( ofmShape.Height() == 1 )
-                {
-                    Reshape(ofmShape.Size() - 3);
-                }
-            }
-        }
-    }
-    return returnOp;
-}
-
 // Rewrite TOSA Concat to one MemoryCopy per IFM
 Operation *GraphIrOptimiser::RewriteConcat(Graph *const graph, Operation *const operation)
 {
