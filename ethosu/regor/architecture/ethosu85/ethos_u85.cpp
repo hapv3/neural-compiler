@@ -851,7 +851,7 @@ Shape ArchEthosU85::FindDepthwiseConfig(const ArchitectureConfigQuery &query, co
                 }
                 else if ( (depth > width || (forceReduce & 1)) && depth > depthGranule )
                 {
-                    depth -= common.granule.Depth();
+                    depth -= depthGranule;
                 }
                 else if ( (width != ofmShape.Width() || (forceReduce & 4)) && width > common.granule.Width() )
                 {
