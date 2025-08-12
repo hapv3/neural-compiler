@@ -407,7 +407,9 @@ void SchedulerPacking::PackOperations()
                 if ( IsActivation(nextOp->Type()) )
                 {
                     auto *ofmConn = lastNonFusedOp->OFM();
+                    ofmConn->tensor->RemoveWriter(lastNonFusedOp);
                     ofmConn->tensor = nextOp->OFM()->tensor;
+                    ofmConn->tensor->producers.push_back(lastNonFusedOp);
                     ofmConn->SetType(nextOp->OFM()->Type());
                     ofmConn->quantization.quantMin = nextOp->Output(TensorUsage::OFM)->quantization.quantMin;
                     ofmConn->quantization.quantMax = nextOp->Output(TensorUsage::OFM)->quantization.quantMax;
@@ -415,7 +417,9 @@ void SchedulerPacking::PackOperations()
                 else if ( nextOp->Type() == OpType::Transpose )
                 {
                     auto *ofmConn = lastNonFusedOp->OFM();
+                    ofmConn->tensor->RemoveWriter(lastNonFusedOp);
                     ofmConn->tensor = nextOp->OFM()->tensor;
+                    ofmConn->tensor->producers.push_back(lastNonFusedOp);
                     ofmConn->SetType(nextOp->OFM()->Type());
                     ofmConn->shape = nextOp->OFM()->shape;
                     ofmConn->slice = nextOp->OFM()->slice;
@@ -424,7 +428,9 @@ void SchedulerPacking::PackOperations()
                 else if ( nextOp->Type() == OpType::Reverse )
                 {
                     auto *ofmConn = lastNonFusedOp->OFM();
+                    ofmConn->tensor->RemoveWriter(lastNonFusedOp);
                     ofmConn->tensor = nextOp->OFM()->tensor;
+                    ofmConn->tensor->producers.push_back(lastNonFusedOp);
                     ofmConn->SetType(nextOp->OFM()->Type());
                     ofmConn->shape = nextOp->OFM()->shape;
                     ofmConn->slice = nextOp->OFM()->slice;

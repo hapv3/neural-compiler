@@ -119,4 +119,56 @@ TEST_CASE("test_scheduler_packing")
             REQUIRE(axis == ofmShape.Size() - 2);
         }
     }
+
+    SECTION("Pack operation and activation")
+    {
+        std::vector<std::shared_ptr<Operation>> ops;
+        auto ifm = CreateTensor("IFM", Shape(10, 10, 10), DataType::Int8);
+        auto ofm = CreateTensor("OFM", Shape(10, 10, 10), DataType::Int8);
+        auto actofm = CreateTensor("ACTOFM", Shape(10, 10, 10), DataType::Int8);
+        auto op1 = CreateOperation(OpType::Abs, TensorUsage::IFM, ifm, TensorUsage::OFM, ofm);
+        ops.push_back(std::move(op1));
+        auto op2 = CreateOperation(OpType::Relu, TensorUsage::IFM, ofm, TensorUsage::OFM, actofm);
+        ops.push_back(std::move(op2));
+
+        // Create graph with ops
+        auto graph = CreateGraph(ops);
+
+        // Perform scheduler_packing
+        auto schedOps = packing.Process(graph.get());
+        REQUIRE(schedOps.size() == 1);
+
+        // Validate that the second op is packed as subop of first
+        auto &abs = schedOps[0];
+        REQUIRE(abs->Type() == OpType::Abs);
+        REQUIRE(abs->SubOps().size() == 1);
+        auto &relu = abs->SubOps()[0];
+        REQUIRE(relu->Type() == OpType::Relu);
+
+        // Validate the primary op
+        auto *absIfmConn = abs->Input(TensorUsage::IFM);
+        auto *absOfmConn = abs->Output(TensorUsage::OFM);
+        REQUIRE(absIfmConn->tensor->Name() == "IFM");
+        REQUIRE(absIfmConn->tensor->producers.empty());
+        REQUIRE(absIfmConn->tensor->consumers.size() == 1);
+        REQUIRE(absIfmConn->tensor->consumers[0] == abs.get());
+        REQUIRE(absOfmConn->tensor->Name() == "ACTOFM");
+        REQUIRE(absOfmConn->tensor->producers.size() == 2);
+        REQUIRE(absOfmConn->tensor->producers[0] == relu.get());
+        REQUIRE(absOfmConn->tensor->producers[1] == abs.get());
+        REQUIRE(absOfmConn->tensor->consumers.empty());
+
+        // Validate the activation op
+        auto *reluIfmConn = relu->Input(TensorUsage::IFM);
+        auto *reluOfmConn = relu->Output(TensorUsage::OFM);
+        REQUIRE(reluIfmConn->tensor->Name() == "OFM");
+        REQUIRE(reluIfmConn->tensor->producers.empty());
+        REQUIRE(reluIfmConn->tensor->consumers.size() == 1);
+        REQUIRE(reluIfmConn->tensor->consumers[0] == relu.get());
+        REQUIRE(reluOfmConn->tensor->Name() == "ACTOFM");
+        REQUIRE(reluOfmConn->tensor->producers.size() == 2);
+        REQUIRE(reluOfmConn->tensor->producers[0] == relu.get());
+        REQUIRE(reluOfmConn->tensor->producers[1] == abs.get());
+        REQUIRE(reluOfmConn->tensor->consumers.empty());
+    }
 }
