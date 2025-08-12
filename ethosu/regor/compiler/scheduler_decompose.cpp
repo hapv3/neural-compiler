@@ -570,58 +570,33 @@ Slice(SchedulerTensor *tensor, const Shape &offset, const Shape &shape, Shape re
     }
 }
 
-static Shape MaxOfmShape(Shape &ofmShape, Shape &ifmShape, Kernel &kernel)
+static Shape NewOfmBlockShape(Architecture *arch, SchedulerOperation *op)
 {
-    // Calculate max IFM height and width which can be consumed by a single block
-    const auto &padding = kernel.Padding();
-    int maxIfmHeight = std::min(ifmShape.Height() + padding.Top() + padding.Bottom(), MAX_DIM);
-    int maxIfmWidth = std::min(ifmShape.Width() + padding.Left() + padding.Right(), MAX_DIM);
-
-    // Calculate max OFM dimensions for a single block
-    int maxOfmHeight = std::min(int((maxIfmHeight - kernel.DilatedWH().y) / kernel.Stride().y) + 1, MAX_DIM);
-    int maxOfmWidth = std::min(int((maxIfmWidth - kernel.DilatedWH().x) / kernel.Stride().x) + 1, MAX_DIM);
-    int maxOfmDepth = std::min(ofmShape.Depth(), MAX_DIM);
-
-    return ofmShape.WithHeight(maxOfmHeight).WithWidth(maxOfmWidth).WithDepth(maxOfmDepth);
-}
-
-static Shape NewOfmBlockShape(Architecture *arch, SchedulerOperation *op, const ArchRequirements &req)
-{
+    // Find a block shape for decomposition that will fit in accumulator RAM,
+    // and where ifm also fits.
+    // GetOpConfig finds a block that fulfills this.
+    // TODO: MLBEDSW-9860
+    // If block decomposition is needed just because of too large ifm/ofm dimension,
+    // a larger block size could potentially be used.
+    // For a 1x1 kernel without ifm/ofm size above the limit, no block decomposition is needed,
+    // as accumulators do not need to be retained.
     Shape newBlock;
-    auto ifmShape = op->IFM(0)->SliceShape();
     auto ofmShape = op->OFM()->SliceShape();
     auto kernel = *op->Kernel();
-
-    // Max OFM shape that can be produced by one op
-    Shape maxShape = MaxOfmShape(ofmShape, ifmShape, kernel);
-
-    if ( req.decomposeProps.Any(ArchProperty::KernelStride) || ifmShape.Depth() > MAX_DIM )
+    // Get block config for the op after decomposition to smaller kernel
+    // Avoids problems where a block config can't be found as ifm gets too big for RAM
+    auto minKernel = kernel.WithSize({1, 1}).WithStride({1, 1});
+    op->SetKernel(minKernel);
+    auto config = GetOpConfig(arch, op);
+    op->SetKernel(kernel);
+    assert(config && "No config found.");
+    if ( !config ) throw DecompositionFailure("No config found");
+    auto HW = config->OptimalStripeGranule();
+    Shape configBlock = ofmShape.WithBatch(1).WithHW(HW.y, HW.x).WithDepth(config->OptimalDepthGranule());
+    if ( Shape::Min(ofmShape, configBlock) != ofmShape )
     {
-        // Decomposition of strides and/or IFM channels requires decomposing into blocks which
-        // will fit in accumulator RAM, and where ifm also fits.
-        // GetOpConfig finds a block that fulfills this.
-        // Get block config for the op after decomposition to smaller kernel
-        // Avoids problems where a block config can't be found as ifm gets too big for RAM
-        auto minKernel = kernel.WithSize({1, 1}).WithStride({1, 1});
-        op->SetKernel(minKernel);
-        auto config = GetOpConfig(arch, op);
-        op->SetKernel(kernel);
-        assert(config && "No config found.");
-        if ( !config ) throw DecompositionFailure("No config found");
-        auto HW = config->OptimalStripeGranule();
-        Shape configBlock = ofmShape.WithBatch(1).WithHW(HW.y, HW.x).WithDepth(config->OptimalDepthGranule());
-        if ( Shape::Min(ofmShape, configBlock) != ofmShape )
-        {
-            newBlock = Shape::Min(ofmShape, configBlock);
-        }
+        newBlock = Shape::Min(ofmShape, configBlock);
     }
-    else if ( Shape::Min(ofmShape, maxShape) != ofmShape )
-    {
-        // Decompose OFM into blocks that are as large as possible, limited only by constraints
-        // on Tensor axes of IFM and OFM.
-        newBlock = Shape::Min(ofmShape, maxShape);
-    }
-
     return newBlock;
 }
 
@@ -880,7 +855,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv2D(Architecture *a
     }
     try
     {
-        if ( auto newBlockShape = NewOfmBlockShape(arch, op.get(), req) )
+        if ( auto newBlockShape = NewOfmBlockShape(arch, op.get()) )
         {
             return DecomposeBlocks(arch, std::move(op), newBlockShape, DecomposeConv2D);
         }
@@ -1208,7 +1183,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
     }
     try
     {
-        if ( auto newBlockShape = NewOfmBlockShape(arch, op.get(), req) )
+        if ( auto newBlockShape = NewOfmBlockShape(arch, op.get()) )
         {
             return DecomposeBlocks(arch, std::move(op), newBlockShape, DecomposeDepthwiseConv2D);
         }
@@ -2620,7 +2595,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeAvgPool(Architecture *
     // Decomposition for large dimensions
     try
     {
-        if ( auto newBlockShape = NewOfmBlockShape(arch, op.get(), req) )
+        if ( auto newBlockShape = NewOfmBlockShape(arch, op.get()) )
         {
             return DecomposeBlocks(arch, std::move(op), newBlockShape, DecomposeAvgPool);
         }
@@ -2672,7 +2647,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMaxPool(Architecture *
     }
     try
     {
-        if ( auto newBlockShape = NewOfmBlockShape(arch, op.get(), req) )
+        if ( auto newBlockShape = NewOfmBlockShape(arch, op.get()) )
         {
             return DecomposeBlocks(arch, std::move(op), newBlockShape, DecomposeMaxPool);
         }
