@@ -432,8 +432,19 @@ void SchedulerPacking::PackOperations()
                     ofmConn->tensor->producers.push_back(lastNonFusedOp);  // Add PRIMARY to T3 producers
                     ofmConn->tensor->RemoveWriter(nextOp);                 // Remove ACTIVATION from T3 producers
                     ofmConn->SetType(nextOp->OFM()->Type());
-                    ofmConn->quantization.quantMin = nextOp->Output(TensorUsage::OFM)->quantization.quantMin;
-                    ofmConn->quantization.quantMax = nextOp->Output(TensorUsage::OFM)->quantization.quantMax;
+
+                    auto quantMin = ofmConn->quantization.quantMin;
+                    auto quantMax = ofmConn->quantization.quantMax;
+                    // Clamping is defined as  disabled when quantMin[0] and quantmax[0] are at the int64 limits
+                    bool clampingDisabled =
+                        !quantMin.empty() && quantMin[0] == std::numeric_limits<int64_t>::min() && !quantMax.empty() &&
+                        quantMax[0] == std::numeric_limits<int64_t>::max();
+                    // If clamping has been explicitly unset this if-statement makes sure we don't re-enable it.
+                    if ( !clampingDisabled )
+                    {
+                        ofmConn->quantization.quantMin = nextOp->Output(TensorUsage::OFM)->quantization.quantMin;
+                        ofmConn->quantization.quantMax = nextOp->Output(TensorUsage::OFM)->quantization.quantMax;
+                    }
                 }
                 else if ( nextOp->Type() == OpType::Transpose )
                 {
