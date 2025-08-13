@@ -383,7 +383,7 @@ void Compiler::RecordNPUOp(const NPUOperation &npuOp, const CmdRanges &cmdRanges
 {
     assert(_optDb);
     const auto &scheduleOps = npuOp.Operations();
-    ordered_map<UniqueId, SchedulerOperation *> opMap(scheduleOps.size());
+    std::unordered_map<UniqueId, SchedulerOperation *> opMap(scheduleOps.size());
 
     // Record scheduler operations
     for ( const auto &scheduleOp : scheduleOps )
@@ -402,14 +402,14 @@ void Compiler::RecordNPUOp(const NPUOperation &npuOp, const CmdRanges &cmdRanges
     int streamId = _optDb->AddStream();
     for ( auto const &cmd : cmdRanges )
     {
-        SchedulerOperation *scheduleOp;
-        if ( opMap.try_get(std::get<0>(cmd), scheduleOp) )
+        try
         {
+            SchedulerOperation *scheduleOp = opMap.at(std::get<0>(cmd));
             assert(scheduleOp);
             auto op = static_cast<Operation *>(scheduleOp->_srcKey);
             _optDb->AddCommand(op->Uid(), streamId, std::get<2>(cmd) - 1, std::get<0>(cmd));
         }
-        else
+        catch ( const std::out_of_range & )
         {
             _optDb->AddCommand(INVALID_UID, streamId, std::get<2>(cmd) - 1, std::get<0>(cmd));
         }
