@@ -159,7 +159,7 @@ inline Operation *CreateLUT(const std::shared_ptr<Tensor> &ifm, const std::share
         ofm = std::make_shared<Tensor>(ifm->Name() + "/lut", dtype);
         ofm->SetStorageShape(*ifmShape);
     }
-    op->ConnectOutput(TensorUsage::OFM, ofm).Set(ofm->StorageShape()).Set(ofmQuantization).Set(ofmSlice);
+    op->ConnectOutput(TensorUsage::OFM, ofm).Set(*ifmShape).Set(ofmQuantization).Set(ofmSlice);
     return op.get();
 }
 
