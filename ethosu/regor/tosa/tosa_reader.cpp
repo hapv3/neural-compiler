@@ -527,6 +527,11 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         kernel.dilationYXZ[0] = (*attr.dilation())[0];
                         kernel.dilationYXZ[1] = (*attr.dilation())[1];
                         kernel.dilationYXZ[2] = 1;
+                        // Check for illegal accumulator type
+                        auto accType = attr.acc_type();
+                        TosaAssert(accType == tosaFb::DType::INT32 || accType == tosaFb::DType::INT48,
+                            fmt::format("Invalid acc_type attribute on DEPTHWISE_CONV2D operator with index {}.", tosaOpIndex)
+                                .c_str());
                     }
                     break;
                     case tosaFb::Op::CONV2D:
@@ -554,6 +559,10 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         kernel.dilationYXZ[0] = (*attr.dilation())[0];
                         kernel.dilationYXZ[1] = (*attr.dilation())[1];
                         kernel.dilationYXZ[2] = 1;
+                        // Check for illegal accumulator type
+                        auto accType = attr.acc_type();
+                        TosaAssert(accType == tosaFb::DType::INT32 || accType == tosaFb::DType::INT48,
+                            fmt::format("Invalid acc_type attribute on CONV2D operator with index {}.", tosaOpIndex).c_str());
                     }
                     break;
                     case tosaFb::Op::CONV3D:
@@ -584,6 +593,10 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         kernel.dilationYXZ[0] = (*attr.dilation())[1];
                         kernel.dilationYXZ[1] = (*attr.dilation())[2];
                         kernel.dilationYXZ[2] = (*attr.dilation())[0];
+                        // Check for illegal accumulator type
+                        auto accType = attr.acc_type();
+                        TosaAssert(accType == tosaFb::DType::INT32 || accType == tosaFb::DType::INT48,
+                            fmt::format("Invalid acc_type attribute on CONV3D operator with index {}.", tosaOpIndex).c_str());
                     }
                     break;
                     case tosaFb::Op::TRANSPOSE_CONV2D:
@@ -609,6 +622,11 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         kernel.dilationYXZ[0] = 1;
                         kernel.dilationYXZ[1] = 1;
                         kernel.dilationYXZ[2] = 1;
+                        // Check for illegal accumulator type
+                        auto accType = attr.acc_type();
+                        TosaAssert(accType == tosaFb::DType::INT32 || accType == tosaFb::DType::INT48,
+                            fmt::format("Invalid acc_type attribute on TRANSPOSE_CONV2D operator with index {}.", tosaOpIndex)
+                                .c_str());
                     }
                     break;
                     case tosaFb::Op::AVG_POOL2D:
@@ -634,6 +652,10 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         kernel.dilationYXZ[0] = 1;
                         kernel.dilationYXZ[1] = 1;
                         kernel.dilationYXZ[2] = 1;
+                        // Check for illegal accumulator type
+                        auto accType = attr.acc_type();
+                        TosaAssert(accType == tosaFb::DType::INT32,
+                            fmt::format("Invalid acc_type attribute on AVG_POOL2D operator with index {}.", tosaOpIndex).c_str());
                     }
                     break;
                     case tosaFb::Op::MAX_POOL2D:
