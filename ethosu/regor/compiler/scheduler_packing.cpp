@@ -403,13 +403,34 @@ void SchedulerPacking::PackOperations()
                 LOG_TRACE1("Added {} (key {}) to {} (key {})\n", OpTypeToString(nextOp->Type()), key,
                     OpTypeToString(prevOp->Type()), prevOpKey);
 
-                // Replace the last non-fused op's OFM by nextOp's OFM if nextOp is fused
+                // Replace the last non-fused op's OFM by nextOp's OFM if nextOp is fused. Also adjust producers and
+                // consumers of the tensors involved like below.
+                //
+                // Before: [T1] -> PRIMARY -> [T2] -> ACTIVATION -> [T3]
+                // T1 producers = ?
+                // T1 consumers = {PRIMARY}
+                // T2 producers = {PRIMARY}
+                // T2 consumers = {ACTIVATION}
+                // T3 producers = {ACTIVATION}
+                // T3 consumers = ?
+                //
+                // After: [T1] -> PRIMARY (with ACTIVATION as subop) -> [T3]
+                // T1 producers = ?
+                // T1 consumers = {PRIMARY}
+                // T2 producers = {}
+                // T2 consumers = {ACTIVATION}
+                // T3 producers = {PRIMARY}
+                // T3 consumers = ?
+                //
+                // After fuse T2 still exists, but only as an unused input to ACTIVATION.
+
                 if ( IsActivation(nextOp->Type()) )
                 {
                     auto *ofmConn = lastNonFusedOp->OFM();
-                    ofmConn->tensor->RemoveWriter(lastNonFusedOp);
+                    ofmConn->tensor->RemoveWriter(lastNonFusedOp);  // Remove PRIMARY from T2 producers
                     ofmConn->tensor = nextOp->OFM()->tensor;
-                    ofmConn->tensor->producers.push_back(lastNonFusedOp);
+                    ofmConn->tensor->producers.push_back(lastNonFusedOp);  // Add PRIMARY to T3 producers
+                    ofmConn->tensor->RemoveWriter(nextOp);                 // Remove ACTIVATION from T3 producers
                     ofmConn->SetType(nextOp->OFM()->Type());
                     ofmConn->quantization.quantMin = nextOp->Output(TensorUsage::OFM)->quantization.quantMin;
                     ofmConn->quantization.quantMax = nextOp->Output(TensorUsage::OFM)->quantization.quantMax;
@@ -420,6 +441,7 @@ void SchedulerPacking::PackOperations()
                     ofmConn->tensor->RemoveWriter(lastNonFusedOp);
                     ofmConn->tensor = nextOp->OFM()->tensor;
                     ofmConn->tensor->producers.push_back(lastNonFusedOp);
+                    ofmConn->tensor->RemoveWriter(nextOp);
                     ofmConn->SetType(nextOp->OFM()->Type());
                     ofmConn->shape = nextOp->OFM()->shape;
                     ofmConn->slice = nextOp->OFM()->slice;
@@ -431,6 +453,7 @@ void SchedulerPacking::PackOperations()
                     ofmConn->tensor->RemoveWriter(lastNonFusedOp);
                     ofmConn->tensor = nextOp->OFM()->tensor;
                     ofmConn->tensor->producers.push_back(lastNonFusedOp);
+                    ofmConn->tensor->RemoveWriter(nextOp);
                     ofmConn->SetType(nextOp->OFM()->Type());
                     ofmConn->shape = nextOp->OFM()->shape;
                     ofmConn->slice = nextOp->OFM()->slice;

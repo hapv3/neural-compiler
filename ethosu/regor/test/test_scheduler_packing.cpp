@@ -153,9 +153,8 @@ TEST_CASE("test_scheduler_packing")
         REQUIRE(absIfmConn->tensor->consumers.size() == 1);
         REQUIRE(absIfmConn->tensor->consumers[0] == abs.get());
         REQUIRE(absOfmConn->tensor->Name() == "ACTOFM");
-        REQUIRE(absOfmConn->tensor->producers.size() == 2);
-        REQUIRE(absOfmConn->tensor->producers[0] == relu.get());
-        REQUIRE(absOfmConn->tensor->producers[1] == abs.get());
+        REQUIRE(absOfmConn->tensor->producers.size() == 1);
+        REQUIRE(absOfmConn->tensor->producers[0] == abs.get());
         REQUIRE(absOfmConn->tensor->consumers.empty());
 
         // Validate the activation op
@@ -166,9 +165,8 @@ TEST_CASE("test_scheduler_packing")
         REQUIRE(reluIfmConn->tensor->consumers.size() == 1);
         REQUIRE(reluIfmConn->tensor->consumers[0] == relu.get());
         REQUIRE(reluOfmConn->tensor->Name() == "ACTOFM");
-        REQUIRE(reluOfmConn->tensor->producers.size() == 2);
-        REQUIRE(reluOfmConn->tensor->producers[0] == relu.get());
-        REQUIRE(reluOfmConn->tensor->producers[1] == abs.get());
+        REQUIRE(reluOfmConn->tensor->producers.size() == 1);
+        REQUIRE(reluOfmConn->tensor->producers[0] == abs.get());
         REQUIRE(reluOfmConn->tensor->consumers.empty());
     }
 }
