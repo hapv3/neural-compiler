@@ -338,7 +338,7 @@ round_mode_ifm GetIfmRoundingMode(const HLCOperation *op, int index)
 pooling_mode GetPoolingMode(const HLCOperation *op)
 {
     OpType opType = op->type;
-    assert(IsPooling(opType));
+    assert(IsPooling(opType) || opType == OpType::NullPool);
     pooling_mode mode;
     if ( opType == OpType::AvgPool )
     {
@@ -359,6 +359,10 @@ pooling_mode GetPoolingMode(const HLCOperation *op)
     else if ( opType == OpType::ReduceMin || opType == OpType::ReduceAny )
     {
         mode = pooling_mode::MIN;
+    }
+    else if ( opType == OpType::NullPool )
+    {
+        mode = pooling_mode::NONE;
     }
     else
     {
@@ -1083,20 +1087,22 @@ void EthosU85RCSGenerator::GenerateKernel(const Kernel &kernel, bool partKernel)
 
 
 // Generates IFM_BROADCAST/IFM2_BROADCAST register for binary elementwise operations
-static broadcast_mode CalculateBroadcast(const Shape &shape1, const Shape &shape2)
+static broadcast_mode CalculateBroadcast(const Shape &shape1, const Shape &shape2, const Shape &ofmShape)
 {
+    // If both shape1 and shape2 are 1 in H, W or C and they are smaller than ofmShape, both will be broadcasted.
+    auto maxShape = Shape::Max(shape1, shape2);
     uint8_t mode = uint8_t(broadcast_mode::NONE);
-    if ( shape1.Height() < shape2.Height() && shape1.Height() == 1 )
+    if ( ((shape1.Height() < shape2.Height()) || (maxShape.Height() < ofmShape.Height())) && shape1.Height() == 1 )
     {
         // Broadcast in 'H' dimension
         mode |= uint8_t(broadcast_mode::H);
     }
-    if ( shape1.Width() < shape2.Width() && shape1.Width() == 1 )
+    if ( ((shape1.Width() < shape2.Width()) || (maxShape.Width() < ofmShape.Width())) && shape1.Width() == 1 )
     {
         // Broadcast in 'W' dimension
         mode |= uint8_t(broadcast_mode::W);
     }
-    if ( shape1.Depth() < shape2.Depth() && shape1.Depth() == 1 )
+    if ( ((shape1.Depth() < shape2.Depth()) || (maxShape.Depth() < ofmShape.Depth())) && shape1.Depth() == 1 )
     {
         // Broadcast in 'C' dimension
         mode |= uint8_t(broadcast_mode::C);
@@ -1104,15 +1110,16 @@ static broadcast_mode CalculateBroadcast(const Shape &shape1, const Shape &shape
     return broadcast_mode(mode);
 }
 
-void EthosU85RCSGenerator::GenerateInputBroadcast(const Shape &ifmShape, const Shape &ifm2Shape, bool ifmIsScalar, bool ifm2IsScalar)
+void EthosU85RCSGenerator::GenerateInputBroadcast(
+    const Shape &ifmShape, const Shape &ifm2Shape, bool ifmIsScalar, bool ifm2IsScalar, const Shape &ofmShape)
 {
     assert(!(ifmIsScalar && ifm2IsScalar));
     broadcast_mode mode1 = ifmIsScalar ? broadcast_mode::SCALAR : broadcast_mode::NONE;
     broadcast_mode mode2 = ifm2IsScalar ? broadcast_mode::SCALAR : broadcast_mode::NONE;
     if ( ifmShape && ifm2Shape )
     {
-        if ( !ifmIsScalar ) mode1 = CalculateBroadcast(ifmShape, ifm2Shape);
-        if ( !ifm2IsScalar ) mode2 = CalculateBroadcast(ifm2Shape, ifmShape);
+        if ( !ifmIsScalar ) mode1 = CalculateBroadcast(ifmShape, ifm2Shape, ofmShape);
+        if ( !ifm2IsScalar ) mode2 = CalculateBroadcast(ifm2Shape, ifmShape, ofmShape);
     }
     Emit(isa::npu_set_ifm_broadcast_t(mode1));
     Emit(isa::npu_set_ifm2_broadcast_t(mode2));
@@ -1710,7 +1717,7 @@ void EthosU85RCSGenerator::GenerateOperationCode(const HLCOperation *op)
         resize_mode mode = ToResizeMode(op->parameters.resize.mode);
         Emit(isa::npu_op_resize_t(mode));
     }
-    else if ( IsPooling(opType) )
+    else if ( IsPooling(opType) || opType == OpType::NullPool )
     {
         Emit(isa::npu_op_pool_t(GetPoolingMode(op)));
     }
@@ -1859,6 +1866,7 @@ void EthosU85RCSGenerator::GenerateElementwiseOp(HLCStripe *stripe, MemoryAccess
     auto op = stripe->operation.get();
     auto opType = op->type;
     constexpr bool useGlobalScale = true;
+    auto ofmShape = stripe->ofmArea.SizeShape();
     if ( IsUnaryElementwise(opType) )
     {
         assert(op->ifm.size() == 1);
@@ -1867,7 +1875,7 @@ void EthosU85RCSGenerator::GenerateElementwiseOp(HLCStripe *stripe, MemoryAccess
         int32_t scalarValue = 0;
         bool ifmIsScalar = IsScalar(op->ifm[0], scalarValue);
         auto ifmShape = stripe->ifmAreas[0].SizeShape();
-        GenerateInputBroadcast(ifmShape, Shape(), ifmIsScalar, false);
+        GenerateInputBroadcast(ifmShape, Shape(), ifmIsScalar, false, ofmShape);
     }
     else
     {
@@ -1892,7 +1900,7 @@ void EthosU85RCSGenerator::GenerateElementwiseOp(HLCStripe *stripe, MemoryAccess
         {
             memoryAccesses.push_back(ToMemoryAccess(op->ifm[1], stripe->ifmAreas[1], AccessDirection::Read));
         }
-        GenerateInputBroadcast(ifmShape, ifm2Shape, ifmIsScalar, ifm2IsScalar);
+        GenerateInputBroadcast(ifmShape, ifm2Shape, ifmIsScalar, ifm2IsScalar, ofmShape);
     }
 }
 

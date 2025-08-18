@@ -646,6 +646,13 @@ Operation *GraphIrOptimiser::RewriteFullyConnected(Graph *const graph, Operation
              kernel->Stride().AreaXY() == 1 && kernel->DilatedWH().AreaXY() == 1 && kernel->Padding().IsZero()) )
     {
         const auto &weights = operation->Input(TensorUsage::Weights);
+        const auto &bias = operation->Input(TensorUsage::Scales);
+        if ( !weights->tensor->IsConstant() || !bias->tensor->IsConstant() )
+        {
+            // Do not rewrite if bias or weights are non-constant
+            return returnOp;
+        }
+
         const auto &shape = weights->tensor->StorageShape();
         if ( weights->tensor->AxisOrder() == AxisOrder::OI && shape.Size() == 2 )
         {
@@ -1066,6 +1073,11 @@ Operation *GraphIrOptimiser::UnrollKernelStrides(Graph *const, Operation *const 
             assert(weightsConn);
             scalesConn = operation->Input(TensorUsage::Scales);
             assert(scalesConn);
+            if ( !weightsConn->tensor->IsConstant() || !scalesConn->tensor->IsConstant() )
+            {
+                // Do not unroll kernel if bias or weights are non-constant
+                return returnOp;
+            }
         }
         const auto ofmConn = operation->Output(TensorUsage::OFM);
         assert(ofmConn);
@@ -2528,6 +2540,82 @@ Operation *GraphIrOptimiser::RewriteResize(Graph *const, Operation *const operat
     copyOp->Output(TensorUsage::OFM)->rounding = RoundMode::DBL;
     RecordOptimisation(*operation, copyOp.get());
     return copyOp.get();
+}
+
+// This function does two things to legalize Convolution-like ops with non-constant weights and/or bias.
+//  1. Replaces kernel padding with zero-point values padded around the IFM tensor.
+//  2. Broadcast the bias values to a tensor with the same width and channels as the OFM.
+//     This is required for consecutively preloading all of the accumulators with bias values
+//     later on in decomposition.
+Operation *GraphIrOptimiser::RewriteNonConstWeightOp(Graph *const, Operation *const operation)
+{
+    if ( !IsConvolution(operation->Type()) && operation->Type() != OpType::Conv3D )
+    {
+        return operation;
+    }
+
+    auto *weightsConn = operation->Input(TensorUsage::Weights);
+    auto *biasConn = operation->Input(TensorUsage::Scales);
+    if ( weightsConn->tensor->IsConstant() && biasConn->tensor->IsConstant() )
+    {
+        return operation;
+    }
+
+    auto *ifmConn = operation->Input(TensorUsage::IFM);
+    auto *ofmConn = operation->Output(TensorUsage::OFM);
+    auto &padding = operation->Kernel()->Padding();
+    if ( !padding.IsZero() )
+    {
+        // Translate the kernel padding into a Pad op parameter tensor
+        std::vector<int> padVec = {0, 0, padding.Top(), padding.Bottom(), padding.Left(), padding.Right(), 0, 0};
+        Shape padParamShape = Shape(padVec.size());
+        auto buffer = std::make_shared<Buffer>(std::move(padVec));
+        auto paddingParams = CreateConstTensor("padding_params", DataType::Int32, buffer, &padParamShape);
+
+        // Create intermediate tensor with the IFM + padding shape
+        auto &ifmShape = ifmConn->shape;
+        Shape paddedIfmShape = ifmShape.WithHW((ifmShape.Height() + padding.Top() + padding.Bottom()),
+            (ifmShape.Width() + padding.Left() + padding.Right()));
+        const auto intermediateTensor = std::make_shared<Tensor>("padded_ifm", ifmConn->tensor->Type(), paddedIfmShape);
+
+        // Create Pad operation
+        auto padOp = std::make_shared<Operation>(OpType::Pad);
+        padOp->CopyInput(TensorUsage::IFM, *ifmConn);
+        padOp->ConnectInput(TensorUsage::Params, paddingParams);
+        padOp->ConnectOutput(TensorUsage::OFM, intermediateTensor);
+
+        // Reset to no quantization on the Pad IFM
+        padOp->Input(TensorUsage::IFM)->quantization = Quantization();
+
+        // Pad with the zero point
+        const auto &attr = padOp->Attribute<pad_attr_t>();
+        attr->pad_const = ifmConn->quantization.zeroPoints[0];
+
+        // Remove kernel padding and replace IFM with the padded intermediate tensor
+        operation->SetKernel(std::make_unique<Kernel>(operation->Kernel()->WithPadding({0, 0, 0, 0})));
+        operation->ConnectInput(TensorUsage::IFM, intermediateTensor);
+        RecordOptimisation(*operation, padOp.get());
+    }
+
+    // Broadcast bias tensor if needed
+    Shape broadcastBiasShape(1, 1, ofmConn->shape.Width(), ofmConn->shape.Depth());
+    if ( broadcastBiasShape != biasConn->shape )
+    {
+        std::shared_ptr<Tensor> newBiasTensor = ofmConn->tensor->Clone();
+        newBiasTensor->SetName(fmt::format("{}_broadcasted", biasConn->tensor->Name()));
+        newBiasTensor->SetStorageShape(broadcastBiasShape);
+
+        auto broadcastOp = std::make_shared<Operation>(OpType::Add);
+        broadcastOp->ConnectInput(TensorUsage::IFM0, biasConn->tensor);
+        broadcastOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_zero", 0));
+        broadcastOp->ConnectOutput(TensorUsage::OFM, newBiasTensor);
+
+        // Replace bias with new broadcasted bias tensor
+        operation->ConnectInput(TensorUsage::Scales, newBiasTensor);
+        RecordOptimisation(*operation, broadcastOp.get());
+    }
+
+    return operation;
 }
 
 // Move Split/slice op to consumer

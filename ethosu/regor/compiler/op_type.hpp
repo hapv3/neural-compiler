@@ -107,6 +107,7 @@ enum class OpType : uint16_t
     Passthrough,
     LUT,
     AndNot,
+    NullPool,
 
     // Compatibility Operators
     AddN,

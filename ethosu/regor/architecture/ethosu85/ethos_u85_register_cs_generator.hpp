@@ -186,7 +186,7 @@ protected:
     // Generates KERNEL related registers
     void GenerateKernel(const Kernel &kernel, bool partKernel);
     // Generates IFM_BROADCAST and IFM2_BROADCAST register for binary elementwise operations
-    void GenerateInputBroadcast(const Shape &ifmShape, const Shape &ifm2Shape, bool ifmIsScalar, bool ifm2IsScalar);
+    void GenerateInputBroadcast(const Shape &ifmShape, const Shape &ifm2Shape, bool ifmIsScalar, bool ifm2IsScalar, const Shape &ofmShape);
     // Generates IFM_PRECISION register
     void GenerateIFMPrecision(const HLCFeatureMap &fm, bool chained, bool isScalar, DataType type);
     // Generates IFM2_PRECISION register

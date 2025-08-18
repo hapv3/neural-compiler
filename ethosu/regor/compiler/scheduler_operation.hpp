@@ -247,9 +247,11 @@ public:
     SchedulerConnection *AddInput(TensorUsage usage) { return &inputs[usage]; }
     SchedulerConnection *ConnectInput(TensorUsage usage, const std::shared_ptr<SchedulerTensor> &tensor)
     {
+        assert(tensor);
         auto conn = &inputs[usage];
         if ( conn->tensor && conn->tensor != tensor ) conn->tensor->RemoveReader(this);
         conn->tensor = tensor;
+        if ( !conn->shape ) conn->shape = tensor->storageShape;  // Connection shapes should be valid
         tensor->consumers.push_back(this);
         return conn;
     }
@@ -280,24 +282,38 @@ public:
         return nullptr;
     }
 
-    // Invalidates all pointers to input connections.
-    void RemoveInput(TensorUsage usage)
+    // Detach any tensor
+    std::shared_ptr<SchedulerTensor> Detach(TensorUsage usage)
     {
-        auto inputConnection = inputs.try_ref(usage);
-        if ( inputConnection )
+        const bool isOutput = IsOFM(usage);
+        auto &list = isOutput ? outputs : inputs;
+        auto conn = list.try_ref(usage);
+        if ( conn )
         {
-            if ( inputConnection->tensor ) inputConnection->tensor->RemoveReader(this);
-            inputs.erase(usage);
+            std::shared_ptr<SchedulerTensor> tensor = conn->tensor;
+            if ( tensor )
+            {
+                if ( isOutput ) tensor->RemoveWriter(this);
+                else tensor->RemoveReader(this);
+            }
+            list.erase(usage);
+            return tensor;
         }
+        return {};
     }
+
+    // Invalidates all pointers to input connections.
+    void RemoveInput(TensorUsage usage) { Detach(usage); }
 
     // Output connections
     SchedulerConnection *AddOutput(TensorUsage usage) { return &outputs[usage]; }
     SchedulerConnection *ConnectOutput(TensorUsage usage, const std::shared_ptr<SchedulerTensor> &tensor)
     {
+        assert(tensor);
         auto conn = &outputs[usage];
         if ( conn->tensor && conn->tensor != tensor ) conn->tensor->RemoveWriter(this);
         conn->tensor = tensor;
+        if ( !conn->shape ) conn->shape = tensor->storageShape;  // Connection shapes should be valid
         tensor->producers.push_back(this);
         return conn;
     }

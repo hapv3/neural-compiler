@@ -258,7 +258,7 @@ bool CanDecompose(Architecture *, const SchedulerOperation *schedOp)
     bool constantWeights = weights && weights->tensor && weights->tensor->IsConstant();
     bool constantScales = scales && scales->tensor && scales->tensor->IsConstant();
 
-    if ( schedOp->Type() == OpType::Conv2D && constantWeights && constantScales ) return true;
+    if ( schedOp->Type() == OpType::Conv2D ) return true;
     if ( schedOp->Type() == OpType::Conv3D && constantWeights && constantScales ) return true;
     if ( schedOp->Type() == OpType::DepthwiseConv2D && constantWeights && constantScales ) return true;
     if ( schedOp->Type() == OpType::TransposeConv2D && constantWeights && constantScales ) return true;
@@ -822,6 +822,114 @@ DecomposeForStrides(Architecture *arch, std::unique_ptr<SchedulerOperation> op, 
     return result;
 }
 
+/**
+ * Decompose convolution with non-constant weights or bias.
+ * A convolution with a KHxKW kernel is decomposed into KH*KW convolutions with 1x1 kernels which
+ * act on one row and one channel at a time.
+ */
+static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeNonConstWeights(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
+{
+    std::vector<std::unique_ptr<SchedulerOperation>> result;
+
+    auto *ifmConn = op->Input(TensorUsage::IFM);
+    auto *ofmConn = op->Output(TensorUsage::OFM);
+    auto *weightsConn = op->Input(TensorUsage::Weights);
+    auto *biasConn = op->Input(TensorUsage::Scales);
+
+    Shape ifmShape = ifmConn->SliceShape();
+    Shape ofmShape = ofmConn->SliceShape();
+    Shape kernelShape = weightsConn->SliceShape();
+    Shape biasShape = biasConn->SliceShape();
+    int ofmHeight = ofmShape.Height();
+    int ofmWidth = ofmShape.Width();
+    int ofmDepth = ofmShape.Depth();
+
+    int kernelH = kernelShape.Height();
+    int kernelW = kernelShape.Width();
+    int kernelC = kernelShape.Depth();
+    const Point2i stride = op->Kernel()->Stride();
+    const Point2i dilation = op->Kernel()->Dilation();
+
+    // Block config query, biasing ofm block towards width as height and depth has to be 1
+    regor::ArchitectureConfigQuery qConfig{};
+    qConfig.ifmShape[0] = ifmShape.WithHeight(1);
+    qConfig.ofmShape = ofmShape.WithHeight(1).WithDepth(1);
+    qConfig.ifmBits = DataTypeSizeBits(ifmConn->Type());
+    qConfig.ofmBits = DataTypeSizeBits(ofmConn->Type());
+    qConfig.kernel = &Kernel::UnitKernel();
+    qConfig.lutBytes = 0;
+    qConfig.scaled = false;
+    qConfig.ifmResampling = ArchResampling::None;
+    qConfig.transpose = TransposeType::None;
+    qConfig.ofmFormat = TensorFormat::NHWC;
+    auto opConfig = arch->GetOpConfig(op->Type(), qConfig);
+    int ofmBlockWidth = opConfig->OptimalStripeGranule().x;
+
+    for ( int ofmY = 0; ofmY < ofmHeight; ofmY++ )
+    {
+        int ifmY = ofmY * stride.y;
+        for ( int ofmX = 0; ofmX < ofmWidth; ofmX += ofmBlockWidth )
+        {
+            int ifmX = ofmX * stride.x;
+            for ( int ofmZ = 0; ofmZ < ofmDepth; ofmZ++ )
+            {
+                // Preload the bias using a NullPool
+                assert(biasConn->Type() == DataType::Int32 || biasConn->Type() == DataType::Int48);
+                auto biasOp = std::make_unique<SchedulerOperation>(OpType::NullPool);
+                biasOp->SetAccumulatorMode({AccumulatorSource::Reset, false});
+                biasOp->SetKernel(Kernel::UnitKernel());
+                auto *biasIfmConn = biasOp->ConnectInput(TensorUsage::IFM, biasConn->tensor);
+                biasIfmConn->slice.shape = Shape(1, 1, std::min(ofmWidth - ofmX, ofmBlockWidth), 1);
+                biasIfmConn->slice.offset = Shape(0, 0, ofmX, ofmZ);
+                // Op must have an output to maintain schedule connectivity, even though
+                // there is no output from NullPool.
+                auto *biasOfmConn = biasOp->ConnectOutput(TensorUsage::OFM, ofmConn->tensor);
+                biasOfmConn->slice.shape = biasIfmConn->slice.shape;
+                result.push_back(std::move(biasOp));
+
+                for ( int ky = 0; ky < kernelH; ky++ )
+                {
+                    for ( int kx = 0; kx < kernelW; kx++ )
+                    {
+                        auto subOp = std::make_unique<SchedulerOperation>(op->Type());
+                        subOp->SetKernel(Kernel::UnitKernel());
+
+                        // Connect IFM tensor with correct slicing
+                        auto *subIfmConn = subOp->ConnectInput(TensorUsage::IFM, ifmConn->tensor);
+                        subIfmConn->slice.shape = Shape(1, 1, ofmBlockWidth * stride.x, ifmShape.Depth());
+                        subIfmConn->slice.offset = Shape(
+                            ifmConn->slice.offset.Batch(), ifmY + ky * dilation.y, ifmX + kx * dilation.x, 0);
+                        // This effectively sets the stride for IFM width to kernel stride x.
+                        subIfmConn->stepXY = Point2i(stride.x, 1);
+                        subIfmConn->quantization = ifmConn->quantization;
+
+                        // Connect Weight tensor as IFM1 with correct slicing
+                        auto *subWeightsConn = subOp->ConnectInput(TensorUsage::IFM1, weightsConn->tensor);
+                        subWeightsConn->slice.shape = Shape(1, 1, 1, kernelC);
+                        subWeightsConn->slice.offset = Shape(ofmZ, ky, kx, 0);
+                        subWeightsConn->quantization = weightsConn->quantization;
+
+                        // Connect OFM tensor with correct slicing
+                        auto *subOfmConn = subOp->ConnectOutput(TensorUsage::OFM, ofmConn->tensor);
+                        subOfmConn->slice.shape = Shape(1, 1, std::min(ofmWidth - ofmX, ofmBlockWidth), 1);
+                        subOfmConn->slice.offset = Shape(ofmConn->slice.offset.Batch(), ofmY, ofmX, ofmZ);
+                        subOfmConn->quantization = ofmConn->quantization;
+
+                        // Set accumulator mode according to these conditions:
+                        //  * Always keep accumulators since they were reset during bias preloading
+                        //  * Enable output if last kernel element
+                        AccumulatorControl accMode = {AccumulatorSource::Acc, (ky == kernelH - 1) && (kx == kernelW - 1)};
+                        subOp->SetAccumulatorMode(accMode);
+                        result.emplace_back(std::move(subOp));
+                    }
+                }
+            }
+        }
+    }
+
+    return result;
+}
+
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv2D(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
 {
     std::vector<std::unique_ptr<SchedulerOperation>> result;
@@ -848,6 +956,11 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv2D(Architecture *a
         UpdatePaddingAndIfmOffset(op.get());
         result.emplace_back(std::move(op));
         return result;
+    }
+    if ( arch->Constraints()->SupportsAccumulatorSaveRestore() && qResult.Any(QueryResult::HasRequirements) &&
+         req.decomposeProps.Any(ArchProperty::NonConstantWeights) )
+    {
+        return DecomposeNonConstWeights(arch, std::move(op));
     }
     auto &dilation = kernel->Dilation();
     if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::KernelDilation) )

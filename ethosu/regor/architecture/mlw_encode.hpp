@@ -26,7 +26,7 @@ enum class WeightFormat : uint16_t
     None = 0,
     Default = 1 << 0,
     Fast = 1 << 1,
-    Sparse2_4 = 1 << 2
+    Sparse2_4 = 1 << 2,
 };
 
 inline constexpr bool operator&(WeightFormat type, WeightFormat mask)

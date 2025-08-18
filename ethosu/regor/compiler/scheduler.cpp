@@ -200,6 +200,12 @@ int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *con
     auto tensor = conn->tensor.get();
     if ( visited.insert(tensor->uid).second )
     {
+        // Force linear format if number of elements overflows in brick format
+        if ( Shape::RoundAway(tensor->storageShape, Shape(1, 1, 1, 16)).Elements64() > std::numeric_limits<int>::max() )
+        {
+            tensor->needsLinearFormat = true;
+        }
+
         // Force linear format for read only or persistent tensors
         if ( tensor->IsConstant() || tensor->isPersistent )
         {

@@ -236,6 +236,11 @@ bool EthosU85Constraints::SupportsRescale(DataType fromType, DataType toType)
 
 bool EthosU85Constraints::SupportedDtypes(OpType opType, DataType ifmType, DataType ifm2Type, DataType ofmType)
 {
+    if ( opType == OpType::NullPool )
+    {
+        return true;
+    }
+
     auto npuOp = _arch->GetHWOp(opType);
     if ( IsFloat(ifmType | ifm2Type | ofmType) )
     {
@@ -422,13 +427,23 @@ Flags<QueryResult> EthosU85Constraints::OperatorQuery(OpType opType, const ArchO
     // Check for supported weight format for convolution type ops
     if ( opType == OpType::DepthwiseConv2D || opType == OpType::Conv2D || opType == OpType::FullyConnected )
     {
-        if ( query->weightFormat == WeightFormat::None )
+        // Check for non-constant weights or bias
+        if ( query->weightFormat == WeightFormat::None && !query->ifm[1].shape )
         {
             if ( req )
             {
                 req->req.Set(ArchRequirement::Decompose);
+                req->decomposeProps.Set(ArchProperty::NonConstantWeights);
             }
             result.Set(QueryResult::HasRequirements);
+        }
+        else if ( query->ifm[1].shape )
+        {
+            // If weights are in IFM2 the kernel has to be 1x1
+            if ( query->ifm[1].shape.ElementsWH() != 1 )
+            {
+                return QueryResult::Unsupported;
+            }
         }
     }
 

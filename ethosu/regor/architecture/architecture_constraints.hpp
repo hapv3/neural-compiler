@@ -77,6 +77,7 @@ enum class ArchProperty
     TransposeMask = 1 << 5,
     ReduceAxis = 1 << 6,
     Scaling = 1 << 7,
+    NonConstantWeights = 1 << 8,
 };
 
 struct ArchTensorRequirement

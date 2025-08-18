@@ -248,7 +248,10 @@ bool ArchEthosU85::UseAvgPoolNop(OpType type)
 
 bool ArchEthosU85::UseNullPool(OpType opType, int bits)
 {
-    return ((opType == OpType::MemoryCopy || opType == OpType::Rescale || opType == OpType::Transpose || opType == OpType::Reverse) && bits >= 32);
+    return (
+        (opType == OpType::NullPool || opType == OpType::MemoryCopy || opType == OpType::Rescale ||
+            opType == OpType::Transpose || opType == OpType::Reverse) &&
+        bits >= 32);
 }
 
 // Return true if kernel first mode has a better utilisation than depth first mode
@@ -1343,6 +1346,7 @@ EthosU85NpuOp ArchEthosU85::GetHWOp(OpType type)
         {OpType::MatMul, EthosU85NpuOp::VectorProduct},
         {OpType::MaxPool, EthosU85NpuOp::Pooling},
         {OpType::AvgPool, EthosU85NpuOp::Pooling},
+        {OpType::NullPool, EthosU85NpuOp::Pooling},
         {OpType::QuantizedAvgPool, EthosU85NpuOp::Pooling},
         {OpType::QuantizedMaxPool, EthosU85NpuOp::Pooling},
         {OpType::ArgMax, EthosU85NpuOp::ArgMax},
