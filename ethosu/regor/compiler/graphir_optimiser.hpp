@@ -129,7 +129,12 @@ private:
         {
             {},
             {
-                &GraphIrOptimiser::RewriteRescaleInputs,
+                &GraphIrOptimiser::RewriteRescaleInputs,  // All rescale inputs must be rewritten before attempting to fuse rescales
+            }
+        },
+        {
+            {},
+            {
                 &GraphIrOptimiser::FuseRescale,  // First pass fuse all possible ifm and ofm rescales
             }
         },
