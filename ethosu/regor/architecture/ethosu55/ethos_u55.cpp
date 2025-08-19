@@ -330,12 +330,14 @@ std::unique_ptr<EthosU55OpConfig> ArchEthosU55::FindBlockConfig(OpType opType, c
 {
     assert(query.ifmBits > 0 && query.ifmBits <= 32);
     assert(query.ofmShape.Size() > 2 && "Insufficient dimensions to search for block config");
+    assert(query.ofmShape.Elements() > 0);
     assert(query.kernel != nullptr);
 
     const int OFMSplitDepth = 16;  // Specific to this architecture
 
     // Elementwise larger-volume correction
     const Shape &ifmShape = (query.ifmShape[1].Elements() > query.ifmShape[0].Elements()) ? query.ifmShape[1] : query.ifmShape[0];
+    assert(ifmShape.Elements() > 0);
 
     EthosU55NpuOp npuOp = GetHWOp(opType);
     assert(npuOp != EthosU55NpuOp::None);

@@ -462,16 +462,16 @@ HandleDilation(Architecture *arch, std::unique_ptr<SchedulerOperation> op, const
     return result;
 }
 
+// Calculate the new padding to use for a block. Offset is in IFM space and block is in OFM space.
 static Margin NewPaddingForBlock(const Margin &padding, const Shape &offset, const Shape &ifmShape, const Shape &block,
     const Point2i &stride, const Point2i &kernelSize)
 {
-    Point2i unpaddedOffset = {offset.Width() > 0 ? offset.Width() : 0, offset.Height() > 0 ? offset.Height() : 0};
-    int top = std::max(padding.Top() - unpaddedOffset.y, 0);
-    int left = std::max(padding.Left() - unpaddedOffset.x, 0);
-    int remainingWidth = std::max(ifmShape.Width() - (unpaddedOffset.x + block.Width()) * stride.x - (kernelSize.x - 1), 0);
-    int remainingHeight = std::max(ifmShape.Height() - (unpaddedOffset.y + block.Height()) * stride.y - (kernelSize.y - 1), 0);
-    int bottom = std::max(padding.Bottom() - remainingHeight, 0);
-    int right = std::max(padding.Right() - remainingWidth, 0);
+    int top = std::max(padding.Top() - std::max(offset.Height(), 0), 0);
+    int left = std::max(padding.Left() - std::max(offset.Width(), 0), 0);
+    int remainingHeight = ifmShape.Height() - (block.Height() * stride.y + offset.Height() + kernelSize.y - 1);
+    int remainingWidth = ifmShape.Width() - (block.Width() * stride.x + offset.Width() + kernelSize.x - 1);
+    int bottom = std::min(padding.Bottom(), std::max(-remainingHeight, 0));
+    int right = std::min(padding.Right(), std::max(-remainingWidth, 0));
     return Margin(top, left, bottom, right);
 }
 
@@ -644,9 +644,12 @@ DecomposeBlocks(Architecture *arch, std::unique_ptr<SchedulerOperation> op, Shap
 
                 newOfmSlice.shape = newOfmShape.WithHeight(newOfmHeight).WithWidth(newOfmWidth).WithDepth(newOfmDepth);
                 if ( !newOfmSlice.shape.Elements() ) continue;
-                // Compensate for negative offset (i.e. padding)
-                auto ifmBlockWidth = ifmStep.Width() + (newIfmSlice.offset.Width() < 0 ? newIfmSlice.offset.Width() : 0);
-                auto ifmBlockHeight = ifmStep.Height() + (newIfmSlice.offset.Height() < 0 ? newIfmSlice.offset.Height() : 0);
+                // Calculate block padding
+                Margin newPadding = NewPaddingForBlock(
+                    padding, newIfmSlice.offset, ifmConn->shape, blockShape, stride, kernel->Size());
+                // Calculate block IFM size
+                int ifmBlockWidth = ((newOfmWidth - 1) * stride.x) + kernel->Size().x - newPadding.Left() - newPadding.Right();
+                int ifmBlockHeight = ((newOfmHeight - 1) * stride.y) + kernel->Size().y - newPadding.Top() - newPadding.Bottom();
                 if ( ofmStep.Width() >= ofmConn->SliceShape().Width() ) ifmBlockWidth = ifmConn->SliceShape().Width();
                 if ( ofmStep.Height() >= ofmConn->SliceShape().Height() )
                     ifmBlockHeight = ifmConn->SliceShape().Height();
@@ -654,8 +657,6 @@ DecomposeBlocks(Architecture *arch, std::unique_ptr<SchedulerOperation> op, Shap
                     ifmConn->SliceShape()
                         .WithWidth(std::min(ifmBlockWidth, ifmConn->shape.Width() - newIfmSlice.offset.Width()))
                         .WithHeight(std::min(ifmBlockHeight, ifmConn->shape.Height() - newIfmSlice.offset.Height()));
-                Margin newPadding = NewPaddingForBlock(
-                    padding, newIfmSlice.offset, ifmConn->shape, blockShape, stride, kernel->Size());
                 auto newKernel = kernel->WithPadding(newPadding);
                 std::unique_ptr<SchedulerOperation> subOp = MakeSubOperation(op.get(), &newKernel);
                 auto *subIfmConn = subOp->Input(TensorUsage::IFM);

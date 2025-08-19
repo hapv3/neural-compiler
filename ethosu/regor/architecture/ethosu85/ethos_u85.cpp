@@ -896,6 +896,7 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU85::FindBlockConfig(OpType opTyp
     constexpr int OFMSplitDepth = 16;  // Specific to this architecture
     assert(query.ifmBits > 0 && (query.ifmBits <= 32 || (query.ifmBits == 64 && (opType == OpType::Rescale || opType == OpType::MemoryCopy))));
     assert(query.ofmShape.Size() > 2 && "Insufficient dimensions to search for block config");
+    assert(query.ofmShape.Elements() > 0);
     assert(query.kernel != nullptr);
 
     EthosU85NpuOp npuOp = GetHWOp(opType);
@@ -904,6 +905,7 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU85::FindBlockConfig(OpType opTyp
 
     // Elementwise larger-volume correction
     const Shape &ifmShape = (query.ifmShape[1].Elements() > query.ifmShape[0].Elements()) ? query.ifmShape[1] : query.ifmShape[0];
+    assert(ifmShape.Elements() > 0);
 
     // Operator typing help
     const bool isPooling = npuOp == EthosU85NpuOp::Pooling || npuOp == EthosU85NpuOp::ReduceMinMax || npuOp == EthosU85NpuOp::ArgMax;
