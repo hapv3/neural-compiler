@@ -56,11 +56,12 @@ struct TensorInfo
     GraphApi::GraphTensor *tensor;
     GraphApi::GraphShape shape;
     GraphApi::GraphDataType type;
+    bool constant;
 
     TensorInfo() = default;
 
-    TensorInfo(GraphApi::GraphTensor *t, const GraphApi::GraphShape &s, GraphApi::GraphDataType d) :
-            tensor(t), shape(s), type(d)
+    TensorInfo(GraphApi::GraphTensor *t, const GraphApi::GraphShape &s, GraphApi::GraphDataType d, bool c) :
+            tensor(t), shape(s), type(d), constant(c)
     {
     }
 };
@@ -190,6 +191,14 @@ double ToDouble<GraphApi::GraphDataType::BFloat16, const ::flatbuffers::Vector<u
     }
     u <<= 16;
     return double(BitCast<float>(u));
+}
+
+// Check that zero points are compile time constants
+inline void CheckConstantZeroPoint(TensorInfo &tensorInfo, const char *tensorRole, const char *opName, int tosaOpIndex)
+{
+    TosaAssert(tensorInfo.constant,
+        fmt::format("{} zero point tensor must be a compile time constant on {} operator at index {}.", tensorRole, opName, tosaOpIndex)
+            .c_str());
 }
 
 template<typename ALLOC_TYPE = void, typename FB_TYPE>
@@ -433,7 +442,7 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                 auto tensor = builder->CreateTensor(name, tosaShape, GraphApi::GraphTensorLayout::Linear, type, buffer);
                 BuilderAssert(tensor, "Failed to create tensor");
 
-                tensors.emplace(std::string(name), TensorInfo(tensor, tosaShape, type));
+                tensors.emplace(std::string(name), TensorInfo(tensor, tosaShape, type, buffer != nullptr));
 
                 builder->SetAxisStrides(tensor, nullptr);  // Autocalculate
                 if ( variable ) builder->AddPersistent(tensor);
@@ -471,7 +480,7 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                     BuilderAssert(tensor, "Failed to create tensor");
 
                     TosaAssert(tensors.count(name) == 0, "Shape and Tensor name collision");
-                    tensors.emplace(name, TensorInfo(tensor, shape, GraphApi::GraphDataType::Int32));
+                    tensors.emplace(name, TensorInfo(tensor, shape, GraphApi::GraphDataType::Int32, buffer != nullptr));
                 }
             }
 
@@ -532,6 +541,9 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         TosaAssert(accType == tosaFb::DType::INT32 || accType == tosaFb::DType::INT48,
                             fmt::format("Invalid acc_type attribute on DEPTHWISE_CONV2D operator with index {}.", tosaOpIndex)
                                 .c_str());
+
+                        CheckConstantZeroPoint(tensors.at(inputTensors[3]), "Input", "DEPTHWISE_CONV2D", tosaOpIndex);
+                        CheckConstantZeroPoint(tensors.at(inputTensors[4]), "Weight", "DEPTHWISE_CONV2D", tosaOpIndex);
                     }
                     break;
                     case tosaFb::Op::CONV2D:
@@ -563,6 +575,8 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         auto accType = attr.acc_type();
                         TosaAssert(accType == tosaFb::DType::INT32 || accType == tosaFb::DType::INT48,
                             fmt::format("Invalid acc_type attribute on CONV2D operator with index {}.", tosaOpIndex).c_str());
+                        CheckConstantZeroPoint(tensors.at(inputTensors[3]), "Input", "CONV2D", tosaOpIndex);
+                        CheckConstantZeroPoint(tensors.at(inputTensors[4]), "Weight", "CONV2D", tosaOpIndex);
                     }
                     break;
                     case tosaFb::Op::CONV3D:
@@ -597,6 +611,8 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         auto accType = attr.acc_type();
                         TosaAssert(accType == tosaFb::DType::INT32 || accType == tosaFb::DType::INT48,
                             fmt::format("Invalid acc_type attribute on CONV3D operator with index {}.", tosaOpIndex).c_str());
+                        CheckConstantZeroPoint(tensors.at(inputTensors[3]), "Input", "CONV3D", tosaOpIndex);
+                        CheckConstantZeroPoint(tensors.at(inputTensors[4]), "Weight", "CONV3D", tosaOpIndex);
                     }
                     break;
                     case tosaFb::Op::TRANSPOSE_CONV2D:
@@ -627,6 +643,8 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         TosaAssert(accType == tosaFb::DType::INT32 || accType == tosaFb::DType::INT48,
                             fmt::format("Invalid acc_type attribute on TRANSPOSE_CONV2D operator with index {}.", tosaOpIndex)
                                 .c_str());
+                        CheckConstantZeroPoint(tensors.at(inputTensors[3]), "Input", "TRANSPOSE_CONV2D", tosaOpIndex);
+                        CheckConstantZeroPoint(tensors.at(inputTensors[4]), "Weight", "TRANSPOSE_CONV2D", tosaOpIndex);
                     }
                     break;
                     case tosaFb::Op::AVG_POOL2D:
@@ -656,6 +674,8 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         auto accType = attr.acc_type();
                         TosaAssert(accType == tosaFb::DType::INT32,
                             fmt::format("Invalid acc_type attribute on AVG_POOL2D operator with index {}.", tosaOpIndex).c_str());
+                        CheckConstantZeroPoint(tensors.at(inputTensors[1]), "Input", "AVG_POOL2D", tosaOpIndex);
+                        CheckConstantZeroPoint(tensors.at(inputTensors[2]), "Output", "AVG_POOL2D", tosaOpIndex);
                     }
                     break;
                     case tosaFb::Op::MAX_POOL2D:
@@ -681,6 +701,12 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         kernel.dilationYXZ[0] = 1;
                         kernel.dilationYXZ[1] = 1;
                         kernel.dilationYXZ[2] = 1;
+                    }
+                    break;
+                    case tosaFb::Op::MATMUL:
+                    {
+                        CheckConstantZeroPoint(tensors.at(inputTensors[2]), "InputA", "MATMUL", tosaOpIndex);
+                        CheckConstantZeroPoint(tensors.at(inputTensors[3]), "InputB", "MATMUL", tosaOpIndex);
                     }
                     break;
                     default:
