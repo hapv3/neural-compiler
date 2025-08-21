@@ -42,7 +42,7 @@ LSTM::LSTM(Operation *operation, OptimiserDatabase *db, Graph *graph) : _lstmOp(
     _ofmConn = _lstmOp->Output(TensorUsage::OFM);
 
     // Input dimensions
-    Shape ifmShape = _ifmConn->shape;
+    const auto &ifmShape = _ifmConn->shape;
     _nFeature = ifmShape[-1];
     _nTime = ifmShape[_isTimeMajor ? 0 : 1];
     _nBatch = ifmShape[_isTimeMajor ? 1 : 0];
