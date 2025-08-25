@@ -897,12 +897,12 @@ bool Scheduler::AllocateAddresses(Schedule *schedule)
 {
     const auto verbose = _options.verboseAllocation;
     // If graph input/outputs tensors are in FeatureMap memory, allocate with user-specified tensor alignment
-    AllocateTensors(_ops, schedule, _arch->FeatureMapMemory(), TensorAllocator::HillClimb,
+    AllocateTensors(_ops, schedule, _arch->FeatureMapMemory(), _options.tensorAllocator,
         _options.separateIORegions ? NPUTensorAlignment : _options.cpuTensorAlignment, verbose);
     if ( _spilling )
     {
         const auto limit = _options.optimizationStagingLimit;
-        AllocateTensors(_ops, schedule, _arch->StagingMemory(), TensorAllocator::HillClimb, NPUTensorAlignment, verbose, limit);
+        AllocateTensors(_ops, schedule, _arch->StagingMemory(), _options.tensorAllocator, NPUTensorAlignment, verbose, limit);
 
         return schedule->memoryUsage[_arch->StagingMemory()] <= limit;
     }
@@ -1891,6 +1891,10 @@ bool ParseSchedulerOptions(SchedulerOptions &opt, IniReader &reader)
                 {
                     opt.optimizationStrategy = OptimizationStrategy::Performance;
                 }
+                else
+                {
+                    LOG_WARN("Unrecognised optimize value {}\n", value);
+                }
             }
         }
         else if ( key == "verbose" )
@@ -1932,6 +1936,25 @@ bool ParseSchedulerOptions(SchedulerOptions &opt, IniReader &reader)
         else if ( key == "cpu_tensor_alignment" )
         {
             opt.cpuTensorAlignment = reader.Get<int>();
+        }
+        else if ( key == "tensor_allocator" )
+        {
+            std::string value;
+            if ( reader.Read(value) )
+            {
+                if ( _strnicmp(value.data(), "linearalloc", 11) == 0 )
+                {
+                    opt.tensorAllocator = TensorAllocator::LinearAlloc;
+                }
+                else if ( _strnicmp(value.data(), "hillclimb", 9) == 0 )
+                {
+                    opt.tensorAllocator = TensorAllocator::HillClimb;
+                }
+                else
+                {
+                    LOG_WARN("Unrecognised allocator value {}\n", value);
+                }
+            }
         }
 
         reader.End();

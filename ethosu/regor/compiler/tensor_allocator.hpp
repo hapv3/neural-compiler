@@ -30,16 +30,6 @@ namespace regor
 
 class LiveRangeGraph;
 
-// Tensor allocation algorithms
-enum class TensorAllocator : uint16_t
-{
-    // Allocator that does not reuse memory
-    LinearAlloc = 0,
-    // Search based allocator
-    HillClimb = 1,
-    Last,
-};
-
 /// <summary>
 /// Linear allocator that can be used to allocate addresses across multiple subgraphs
 /// </summary>

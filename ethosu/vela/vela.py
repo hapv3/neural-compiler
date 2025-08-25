@@ -856,6 +856,7 @@ def get_compiler_config(
     cop_format: str,
     separate_io_regions: bool,
     cpu_tensor_alignment: int,
+    tensor_allocator: str,
 ) -> str:
     """Build compiler config file."""
     config = "\n[compiler]\n"
@@ -891,6 +892,7 @@ def get_compiler_config(
     if separate_io_regions:
         config += "separate_io_regions=true\n"
     config += f"cpu_tensor_alignment={cpu_tensor_alignment}\n"
+    config += f"tensor_allocator={tensor_allocator}\n"
 
     config += "\n[graph]\n"
     if verbose_graph:
@@ -1261,6 +1263,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             args.cop_format,
             args.separate_io_regions,
             args.cpu_tensor_alignment,
+            args.tensor_allocator,
         )
 
         process_regor(
