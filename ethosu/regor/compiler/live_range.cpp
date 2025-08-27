@@ -231,7 +231,8 @@ SchedulerTensor *LiveRangeGraph::ReusableIFM(
     const std::unique_ptr<SchedulerOperation> &schedOp, const SchedulerConnection *ofmConn, const MemArea &targetMemory)
 {
     SchedulerTensor *reusableIfm = nullptr;
-    if ( IsElementwise(schedOp->Type()) )
+    const auto *ofm = schedOp->Output(TensorUsage::OFM);
+    if ( IsElementwise(schedOp->Type()) && ofm->reverse == ReverseType::None && IsNone(ofm->transpose) )
     {
         const auto ofmTens = ofmConn->tensor.get();
 
