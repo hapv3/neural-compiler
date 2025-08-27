@@ -32,6 +32,22 @@ namespace regor
 
 static constexpr int MAX_DIM = 65536;
 
+static auto GetArchAccumulatorSource(const AccumulatorControl &ac)
+{
+    switch ( ac.source )
+    {
+        case AccumulatorSource::Reset:
+            return ArchAccumulatorSource::Reset;
+        case AccumulatorSource::Acc:
+            return ArchAccumulatorSource::Acc;
+        case AccumulatorSource::Ifm2:
+            return ArchAccumulatorSource::Ifm2;
+        default:
+            assert(false);
+            return ArchAccumulatorSource::Reset;
+    }
+}
+
 Flags<QueryResult> OperatorQuery(Architecture *arch, const SchedulerOperation *schedOp, ArchRequirements *req)
 {
     ArchOperatorQuery query{};
@@ -52,6 +68,7 @@ Flags<QueryResult> OperatorQuery(Architecture *arch, const SchedulerOperation *s
     query.weightFormat = constantWeights && constantScales ? WeightFormat::Default : WeightFormat::None;
     query.transposeMask = ofmConn->transpose;
     query.reverseMask = ofmConn->reverse;
+    query.accSrc = GetArchAccumulatorSource(schedOp->AccumulatorMode());
     query.kernel = schedOp->Kernel();
     if ( schedOp->HasAttribute<axis_attr_t>() )
     {
@@ -182,22 +199,6 @@ static std::shared_ptr<SchedulerTensor> CreateScalarConstTensor(Architecture *ar
     tensor->bufferView = BufferView(buf, 0, DataTypeSizeBits(type), shape, Shape());
     tensor->memArea = arch->ReadonlyMemory();
     return tensor;
-}
-
-static auto GetArchAccumulatorSource(const AccumulatorControl &ac)
-{
-    switch ( ac.source )
-    {
-        case AccumulatorSource::Reset:
-            return ArchAccumulatorSource::Reset;
-        case AccumulatorSource::Acc:
-            return ArchAccumulatorSource::Acc;
-        case AccumulatorSource::Ifm2:
-            return ArchAccumulatorSource::Ifm2;
-        default:
-            assert(false);
-            return ArchAccumulatorSource::Reset;
-    }
 }
 
 static std::unique_ptr<ArchitectureOpConfig> GetOpConfig(Architecture *arch, const SchedulerOperation *schedOp)

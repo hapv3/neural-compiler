@@ -437,7 +437,7 @@ Flags<QueryResult> EthosU85Constraints::OperatorQuery(OpType opType, const ArchO
             }
             result.Set(QueryResult::HasRequirements);
         }
-        else if ( query->ifm[1].shape )
+        else if ( query->ifm[1].shape && query->accSrc != ArchAccumulatorSource::Ifm2 )
         {
             // If weights are in IFM2 the kernel has to be 1x1
             if ( query->ifm[1].shape.ElementsWH() != 1 )

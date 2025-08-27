@@ -53,6 +53,7 @@ struct ArchOperatorQuery
     ReverseType reverseMask = ReverseType::None;
     TransposeType transposeMask = TransposeType::None;
     WeightFormat weightFormat = WeightFormat::None;
+    ArchAccumulatorSource accSrc = ArchAccumulatorSource::Reset;
     const Kernel *kernel = nullptr;
     int axis = 0;  // Uses negative notation: -1 = C, -2 = W, ...
     ~ArchOperatorQuery(){};
