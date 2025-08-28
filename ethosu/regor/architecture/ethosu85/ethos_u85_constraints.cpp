@@ -510,6 +510,17 @@ Flags<QueryResult> EthosU85Constraints::OperatorQuery(OpType opType, const ArchO
             }
             result.Set(QueryResult::HasRequirements);
         }
+        // maximum supported axis for ArgMax
+        static constexpr int32_t MAX_AXIS = (1 << 15);
+        if ( npuOp == EthosU85NpuOp::ArgMax && query->ifm->shape && query->ifm->shape[query->axis] > MAX_AXIS )
+        {
+            if ( req )
+            {
+                req->req.Set(ArchRequirement::Decompose);
+                req->decomposeProps.Set(ArchProperty::TensorAxis);
+            }
+            result.Set(QueryResult::HasRequirements);
+        }
     }
     else if ( npuOp == EthosU85NpuOp::ReduceSum )
     {

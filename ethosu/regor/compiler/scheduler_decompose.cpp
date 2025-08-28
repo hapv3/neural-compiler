@@ -2086,6 +2086,11 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMatmul(Architecture *a
 
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
 {
+    // The block size used when decomposing into blocks for large dimensions in the
+    // reduce axis. For ArgMax this is half the maximum tensor dimension to avoid negative
+    // indices due to the way the resulting index is shifted out. For all other operations
+    // the block size is the same as the maximum tensor dimension.
+    const int BLOCK_SIZE = op->Type() == OpType::ArgMax ? MAX_DIM / 2 : MAX_DIM;
     std::vector<std::unique_ptr<SchedulerOperation>> result;
     auto ofmConn = op->Output(TensorUsage::OFM);
     auto ofmShape = ofmConn->SliceShape();
@@ -2153,9 +2158,9 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(Architecture *a
     }
 
     // Handle reduced axis
-    if ( ifmShape[reducedAxis] > MAX_DIM )
+    if ( ifmShape[reducedAxis] > BLOCK_SIZE )
     {
-        const int blockCount = (ifmShape[reducedAxis] - 1) / MAX_DIM + 1;
+        const int blockCount = (ifmShape[reducedAxis] - 1) / BLOCK_SIZE + 1;
 
         if ( op->Type() == OpType::ReduceMin || op->Type() == OpType::ReduceMax || op->Type() == OpType::ReduceAny ||
              op->Type() == OpType::ReduceAll || op->Type() == OpType::ReduceSum )
@@ -2175,8 +2180,8 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(Architecture *a
 
             for ( int blockIndex = 0; blockIndex < blockCount; blockIndex++ )
             {
-                const int blockOffset = blockIndex * MAX_DIM;
-                const int blockSize = std::min(MAX_DIM, ifmShape[reducedAxis] - blockOffset);
+                const int blockOffset = blockIndex * BLOCK_SIZE;
+                const int blockSize = std::min(BLOCK_SIZE, ifmShape[reducedAxis] - blockOffset);
 
                 // Create one new reduce op for each block
                 std::unique_ptr<SchedulerOperation> subOp;
@@ -2253,8 +2258,8 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(Architecture *a
 
             for ( int blockIndex = 0; blockIndex < blockCount; blockIndex++ )
             {
-                const int blockOffset = blockIndex * MAX_DIM;
-                const int blockSize = std::min(MAX_DIM, ifmShape[reducedAxis] - blockOffset);
+                const int blockOffset = blockIndex * BLOCK_SIZE;
+                const int blockSize = std::min(BLOCK_SIZE, ifmShape[reducedAxis] - blockOffset);
 
                 // Create one new MaxPool op for each block
                 Kernel maxPoolKernel;
@@ -2409,7 +2414,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(Architecture *a
     for ( int axis = 0; axis < ifmRank; axis++ )
     {
         // At this point the reduced axis should not be too large
-        assert(ifmShape[axis] <= MAX_DIM || axis != reducedAxis);
+        assert(ifmShape[axis] <= BLOCK_SIZE || axis != reducedAxis);
 
         if ( ifmShape[axis] > MAX_DIM )
         {
