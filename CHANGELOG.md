@@ -22,6 +22,33 @@ main feature changes, interface changes and reported defects that have been
 fixed.  The version numbering adheres to the
 [semantic versioning](https://semver.org/) scheme.
 
+## Release 4.4.0 - 01/09/2025
+
+**Main feature changes:**
+
+* Updated to TOSA v1.0
+  * Support for TOSA v0.80 is now removed. Users are encouraged to migrate models to v1.0 for continued compatibility.
+* Ethos-U85:
+  * Added decomposition support for FULLY_CONNECTED, MATMUL, AVG_POOL, ARGMAX
+    * Enabling strides, dilation, tensors, and ranks greater than native Ethos-U can support
+  * Added support for Conv2D with non-constant weights and/or bias
+* Ethos-U55/Ethos-U65:
+  * None
+
+**Interface changes:**
+
+* None
+
+**Reported defect fixes:**
+
+* Ethos-U55/Ethos-U65:
+  * Fixed issue with consecutive Split operators (MLCE-1518, MLCE-1520)
+* Ethos-U85:
+  * Fixed issue with LUT followed by a Reshape (MLCE-1549)
+  * Fixed issue with constant CPU-only tensors being incorrectly placed in ReadOnly memory (MLCE-1524)
+  * Fixed issue with values near zero in LUT table for RSQRT (MLCE-1518)
+
+
 ## Release 4.3.0 - 20/05/2025
 
 **Main feature changes:**
