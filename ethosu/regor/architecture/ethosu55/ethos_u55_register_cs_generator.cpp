@@ -626,13 +626,26 @@ RCSIfmScaleMode EthosU55RCSGenerator::GenerateScalingForElementwise(HLCOperation
 // BLOCKDEP calculation
 //----------------------------------------------------------------------
 
-static Shape CalcIFMJobShape(const Shape &ofmBlock, Kernel *kernel, int ifmBlockDepth)
+static Shape CalcIFMJobShape(const Shape &ofmBlock, Kernel *kernel, int ifmBlockDepth, Point2i stepXY)
 {
     // TODO MLBEDSW-8498: Consider ifm_upscale_mode for job-shape calculations
     Point2i dilatedSize = kernel->DilatedWH();
     int h = RequiredInputSize(ofmBlock.Height(), kernel->Stride().y, dilatedSize.y, 1);
     int w = RequiredInputSize(ofmBlock.Width(), kernel->Stride().x, dilatedSize.x, 1);
+    // Block size represents the values produced - scale height and width with stepXY to reflect the
+    // area the job reads from
+    h *= stepXY.y;
+    w *= stepXY.x;
     return Shape(1, h, w, ifmBlockDepth);
+}
+
+static Shape CalcOFMJobShape(const Shape &ofmBlock, Point2i stepXY)
+{
+    // Block size represents the values produced - scale height and width with stepXY to reflect the
+    // area the job writes to
+    int h = ofmBlock.Height() * stepXY.y;
+    int w = ofmBlock.Width() * stepXY.x;
+    return Shape(1, h, w, ofmBlock.Depth());
 }
 
 // Given the area and block size, adds the first/last jobs (depending on fromStart) to jobs.
@@ -720,13 +733,14 @@ int EthosU55RCSGenerator::CalcBlockDep(const HLCStripe *prevStripe, const HLCStr
     auto prevConfig = static_cast<EthosU55OpConfig *>(prevOp->config);
     Shape prevBlock = prevConfig->OfmBlock();
     auto config = static_cast<EthosU55OpConfig *>(op->config);
-    Shape currBlock = CalcIFMJobShape(config->OfmBlock(), &op->kernel, config->IfmBlock().Depth());
     // Get the last few jobs from the previous operation (each job produces a part of the current op's IFM)
     std::vector<Box> lastPrevJobs;
-    GetJobs(prevStripe->ofmArea, prevBlock, maxJobs, false, lastPrevJobs);
+    Shape prevOfmJobShape = CalcOFMJobShape(prevBlock, prevOfm.stepXY);
+    GetJobs(prevStripe->ofmArea, prevOfmJobShape, maxJobs, false, lastPrevJobs);
     // Get the first few jobs from the current operation (each job consumes a part of the current op's IFM)
     std::vector<Box> firstCurrJobs;
-    GetJobs(stripe->ifmAreas[ifmIndex], currBlock, maxJobs, true, firstCurrJobs);
+    Shape ifmJobShape = CalcIFMJobShape(config->OfmBlock(), &op->kernel, config->IfmBlock().Depth(), ifm.stepXY);
+    GetJobs(stripe->ifmAreas[ifmIndex], ifmJobShape, maxJobs, true, firstCurrJobs);
     // Find the highest block dependency such that there is no overlap between
     // any job from the previous op with any job from the current op during block dependency jobs
     int sz = int(std::min(lastPrevJobs.size(), firstCurrJobs.size()));
