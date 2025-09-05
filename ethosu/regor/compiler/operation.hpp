@@ -83,6 +83,9 @@ struct TensorSlice
         }
     }
 
+    bool IsValid() const { return offset.IsValid() && shape.IsValid(); }
+    explicit operator bool() const { return IsValid(); }
+
     // Coverity wrongly thinks this function has side-effects and will complain when used in macros
     std::string ToString() const { return fmt::format("[{}]@[{}]", shape.ToString(), offset.ToString()); }
 };
