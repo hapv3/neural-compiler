@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -47,8 +47,8 @@ Address LinearAllocateLiveRanges(LiveRangeGraph &lrGraph, int alignment)
 
 void PrintAllocation(LiveRangeGraph &lrGraph, Address totalSize)
 {
-    LOG_PRINT("{0:10} - {1:10}: {2:>10} - {3:>10}: {4:11}: {5:12} : {6}\n", "Start Time", "End Time", "Start Addr",
-        "End Addr", "Tensor Size", "Memory Usage", "Name");
+    LOG_PRINT("{0:10} - {1:10}: {2:>10} - {3:>10}: {4:11}: {5:12}: {6:14} : {7}\n", "Start Time", "End Time",
+        "Start Addr", "End Addr", "Tensor Size", "Memory Usage", "Format", "Name");
     auto lrs = lrGraph.LiveRanges();
     // Sort LiveRanges
     std::sort(lrs.begin(), lrs.end(),
@@ -77,8 +77,8 @@ void PrintAllocation(LiveRangeGraph &lrGraph, Address totalSize)
         auto peakUsageDuringLiveRange = *std::max_element(memHist.begin() + lr->startTime, memHist.begin() + lr->endTime + 1);
         for ( const auto &tens : lr->tensors )
         {
-            LOG_PRINT("{0:10} - {1:10}: {2:#10x} - {3:#10x}: {4:11}: {5:12} : {6}\n", lr->startTime, lr->endTime,
-                address, address + lr->size, lr->size, peakUsageDuringLiveRange, tens->Name());
+            LOG_PRINT("{0:10} - {1:10}: {2:#10x} - {3:#10x}: {4:11}: {5:12}: {6:14} : {7}\n", lr->startTime, lr->endTime, address,
+                address + lr->size, lr->size, peakUsageDuringLiveRange, EnumToString<TensorFormat>(tens->format), tens->Name());
         }
     }
     LOG_PRINT("Allocation Peak Tensor Size: {} bytes == {} KiB\n", totalSize, double(totalSize) / 1024.0);
