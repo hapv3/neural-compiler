@@ -321,7 +321,7 @@ private:
         {
             const auto offset = tensor->AllocatedAddress();
             const auto allocation = tensor->AllocationSizeBytes();
-            const auto buffer = tensor->srcTensor ? tensor->srcTensor->View().Buffer() : tensor->bufferView.Buffer();
+            const auto buffer = tensor->bufferView.Buffer();
             const auto size = buffer->Size();
 
             assert(tensor->memArea.usage % MemUsage::ReadOnly);

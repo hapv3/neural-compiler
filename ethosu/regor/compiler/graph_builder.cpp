@@ -304,10 +304,6 @@ void GraphBuilder::AddInput(GraphOperation *graphOp, GraphTensorUsage usage, Gra
     auto tmp = GraphAPIUsageToTensorUsage(usage);
     int count = op->CountInputs(tmp);
     op->ConnectInput(MakeTensorUsage(tmp, count), tensor->shared_from_this()).Set(Quantization::Unit());
-    if ( usage == GraphTensorUsage::Weights && tensor->AxisOrder() == AxisOrder::HWCM )
-    {  // Update kernel depth multiplier
-        op->SetKernel(std::make_unique<Kernel>(op->Kernel()->WithDepthMultiplier(tensor->StorageShape().Depth())));
-    }
 }
 
 void GraphBuilder::AddOutput(GraphOperation *graphOp, GraphTensorUsage usage, GraphTensor *graphTensor)
@@ -543,8 +539,17 @@ void GraphBuilder::SetZeroPoint(GraphOperation *graphOp, GraphTensorUsage tensor
 void GraphBuilder::SetAxisOrder(GraphTensor *graphTensor, GraphApi::AxisOrder order)
 {
     auto tensor = static_cast<Tensor *>(graphTensor);
-    assert(tensor->Readers().size() == 0 || tensor->AxisOrder() == regor::AxisOrder(order));
-    tensor->SetAxisOrder(regor::AxisOrder(order));
+
+    TensorInfo &info = _tensorInfo[tensor->Uid()];
+    if ( info.order != order )
+    {
+        info.order = order;
+        if ( order == GraphApi::AxisOrder::HWCM )
+        {
+            Shape shape = Shape::MergeAxes(tensor->StorageShape(), -1, 0x3, true);
+            tensor->Reshape(shape);
+        }
+    }
 }
 
 void GraphBuilder::SetAxisStrides([[maybe_unused]] GraphTensor *graphTensor, [[maybe_unused]] const GraphApi::GraphShape *axisStrides)

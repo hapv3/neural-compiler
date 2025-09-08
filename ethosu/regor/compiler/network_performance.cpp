@@ -276,9 +276,9 @@ void NetworkPerformance::AddToDatabase(const PerformanceResult &perf, SchedulerO
     Database *db = optDb->Get();
 
     const auto *conn = schedOp->TryOFM();
-    if ( conn != nullptr && conn->tensor != nullptr && conn->tensor->srcTensor != nullptr )
+    if ( conn != nullptr && conn->tensor != nullptr )
     {
-        opName = conn->tensor->srcTensor->Name();
+        opName = conn->tensor->Name();
     }
     auto op = static_cast<Operation *>(schedOp->_srcKey);
     int sourceId = optDb->SourceId(*op);
@@ -365,7 +365,8 @@ void NetworkPerformance::AddToDatabase(const PerformanceResult &perf, SchedulerO
         cost->bufferedWeightTensor.tensor ? EnumToString(cost->bufferedWeightTensor.buffering) : "",
         cost->bufferedWeightTensor.tensor ? std::to_string(cost->fullWeightTransferCycles) : "",
         // Kernel
-        std::to_string(schedOp->Kernel()->DepthMultiplier()),
+        std::to_string(schedOp->Type() == OpType::DepthwiseConv2D ?
+                       schedOp->OFM()->SliceShape().Depth() /  schedOp->IFM(0)->SliceShape().Depth() : 1 ),
         std::to_string(schedOp->Kernel()->Padding().Top()),
         std::to_string(schedOp->Kernel()->Padding().Bottom()),
         std::to_string(schedOp->Kernel()->Padding().Left()),

@@ -273,23 +273,26 @@ class Scheduler
     {
     public:
         IWeightEncodingConfig *_config;  // must persist as map entry
+        uint32_t _hash;
         UniqueId _uid;
 
     public:
-        TensorCacheKey(IWeightEncodingConfig *config, UniqueId uid) : _config(config), _uid(uid) {}
+        TensorCacheKey(IWeightEncodingConfig *config, const std::vector<int> &depthOffsets, const BufferView &view, UniqueId uid) :
+                _config(config), _uid(uid)
+        {
+            _hash = SimpleHash32(HashVector32(depthOffsets), view.BaseOffset(), view.StrideBytes(), view.ViewShape(),
+                _config->Hash(), uid);
+        }
 
         bool operator==(const TensorCacheKey &other) const
         {
-            return _config->Equals(other._config) && _uid == other._uid;
+            return _config->Equals(other._config) && (_uid == other._uid) && (_hash == other._hash);
         }
     };
 
     struct TensorCacheHash
     {
-        std::size_t operator()(const TensorCacheKey &key) const
-        {
-            return key._config->Hash() + 37 * std::uintptr_t(key._uid);
-        }
+        std::size_t operator()(const TensorCacheKey &key) const { return key._hash; }
     };
 
 private:
@@ -368,15 +371,16 @@ private:
 
     void PrintSchedule(Schedule *schedule);
 
-    WeightScaleTensors EncodeQuantizationScaleTensor(std::unique_ptr<IWeightEncodingConfig> encodingParams,
-        const Quantization &ofmQuantization, const SchedulerTensor *scales = nullptr);
+    WeightScaleTensors EncodeQuantizationScaleTensor(OpType forOp, std::unique_ptr<IWeightEncodingConfig> encodingParams,
+        const std::vector<int> &depthOffsets, const Quantization &ofmQuantization, const SchedulerTensor *scales = nullptr);
 
-    WeightScaleTensors EncodeWeightAndScaleTensor(std::unique_ptr<IWeightEncodingConfig> encodingParams, const SchedulerTensor *weightTens,
-        const SchedulerTensor *scaleTens, const Quantization &weightQuantization, const Quantization &ofmQuantization);
+    WeightScaleTensors EncodeWeightAndScaleTensor(OpType forOp, std::unique_ptr<IWeightEncodingConfig> encodingParams,
+        const std::vector<int> &depthOffsets, const SchedulerTensor *weightTens, const SchedulerTensor *scaleTens,
+        const Quantization &weightQuantization, const Quantization &ofmQuantization);
 
-    WeightScaleTensors TryEncodeWeightAndScaleTensor(IWeightEncodingConfig *encodingParams,
-        const SchedulerTensor *weightTens, const SchedulerTensor *scaleTens, const Quantization &weightQuantization,
-        const Quantization &ofmQuantization, bool doWeights, bool doScales);
+    WeightScaleTensors TryEncodeWeightAndScaleTensor(OpType forOp, IWeightEncodingConfig *encodingParams,
+        const std::vector<int> &depthOffsets, const SchedulerTensor *weightTens, const SchedulerTensor *scaleTens,
+        const Quantization &weightQuantization, const Quantization &ofmQuantization, bool doWeights, bool doScales);
 
     WeightScaleEncoding EncodeBestWeightFormat(SchedulerOperation *op, Shape &ifmShape, Shape &ifm2Shape,
         Shape &ofmShape, Flags<WeightFormat> supportedFormats);

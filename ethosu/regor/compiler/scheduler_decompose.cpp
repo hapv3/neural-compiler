@@ -54,6 +54,7 @@ Flags<QueryResult> OperatorQuery(Architecture *arch, const SchedulerOperation *s
     const SchedulerConnection *ofmConn = schedOp->OFM();
     Set(query.ifm[0], schedOp->IFM(0));
     Set(query.ifm[1], schedOp->TryIFM(1));
+    Set(query.weights, schedOp->TryInput(TensorUsage::Weights));
     Set(query.ofm, ofmConn);
     if ( schedOp->Type() == OpType::Rescale && schedOp->HasAttribute<sign_attr_t>() )
     {
@@ -1179,7 +1180,6 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
     auto &ifmSlice = ifmConn->slice;
     auto *kernel = op->Kernel();
     auto &padding = kernel->Padding();
-    const int depthMultiplier = kernel->DepthMultiplier();
     ofmSlice.Initialize(ofmShape.WithZeros(), ofmShape);
     ifmSlice.Initialize(ifmShape.WithZeros().WithHW(-padding.Top(), -padding.Left()), ifmShape);
 
@@ -1190,6 +1190,10 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
     {
         return DecomposeLeadingDimensions(1, arch, std::move(op), DecomposeDepthwiseConv2D);
     }
+
+    if ( ifmShape.Depth() < 1 ) throw DecompositionFailure("IFM has no depth");
+
+    const int depthMultiplier = weightsShape.Depth() / ifmShape.Depth();
     if ( depthMultiplier > 1 )
     {
         int subOfmDepth = ofmConn->shape.Depth() / depthMultiplier;
@@ -1222,19 +1226,20 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
             return ret;
         };
 
+        int kw = weightsShape.Width();
+        int kh = weightsShape.Height();
+        // We want to view the weights tensor as HWCM in order to slice it into 'M' pieces
+        auto subWeightsReadShape = Shape(kh, kw, subOfmDepth, depthMultiplier);
         for ( int multiplier = 0; multiplier < depthMultiplier; multiplier++ )
         {
-            auto newKernel = kernel->WithDepthMultiplier(1);
-            auto subOp = MakeSubOperation(op.get(), &newKernel);
-            auto subWeightsReadShape = Shape(kernel->Size().y, kernel->Size().x, subOfmDepth, depthMultiplier);
+            auto subOp = MakeSubOperation(op.get());
             auto subWeightsShape = subWeightsReadShape.WithDepth(1);
             auto subWeightOffset = weightsShape.WithZeros().WithDepth(multiplier);
             auto subWeights = Slice(weightsConn->tensor.get(), subWeightOffset, subWeightsShape, subWeightsReadShape);
             auto subWeightsConn = subOp->ConnectInput(TensorUsage::Weights, subWeights);
-            // Tensor is now in AxisOrder::HWCM with M=1
-            subWeightsConn->tensor->srcTensor->SetAxisOrder(AxisOrder::HWCM);
-            subWeightsConn->shape = subWeightsShape;
+            subWeightsConn->shape = Shape(1, kh, kw, subOfmDepth);
             subWeightsConn->quantization = SliceQ(subWeightsConn->quantization, multiplier, depthMultiplier);
+            subWeights->bufferView = subWeights->bufferView.Reshape(subWeightsConn->shape);
             if ( biasShape.Depth() > 1 )
             {
                 auto subBiasReadShape = Shape(subOfmDepth, depthMultiplier);
@@ -1277,18 +1282,6 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
         UpdatePaddingAndIfmOffset(op.get());
         result.emplace_back(std::move(op));
         return result;
-    }
-
-    // If weight tensor is in AxisOrder::HWCM (with M=1, since depthMultiplier=1 at this point),
-    // reshape and set AxisOrder::IHWO with I=1, since the rest of the decomposition code
-    // only handles weight tensors with AxisOrder::OHWI or AxisOrder::IHWO
-    if ( weightsConn->tensor->srcTensor->AxisOrder() == AxisOrder::HWCM )
-    {
-        auto weightShapeIHWO = weightsConn->SliceShape().Permute(0x0321);
-        weightsConn->tensor->srcTensor->SetAxisOrder(AxisOrder::IHWO);
-        weightsConn->tensor->bufferView = weightsConn->tensor->bufferView.Reshape(weightShapeIHWO);
-        weightsConn->tensor->storageShape = weightShapeIHWO;
-        weightsConn->shape = weightShapeIHWO;
     }
 
     auto &dilation = kernel->Dilation();
@@ -1658,7 +1651,6 @@ static std::shared_ptr<SchedulerTensor> MakeDepthwiseHPCKernel(Architecture *arc
 
     auto tens = std::make_shared<SchedulerTensor>(DataType::Int8, kShape);
     auto srcTensor = std::make_shared<Tensor>("resize_weights", DataType::Int8, kShape);
-    srcTensor->SetAxisOrder(AxisOrder::IHWO);
 
     tens->uid = GenerateUniqueId();
     tens->srcTensor = std::move(srcTensor);
@@ -1911,11 +1903,9 @@ std::vector<std::unique_ptr<SchedulerOperation>> LegaliseResize(Architecture *ar
             newOp = std::make_unique<SchedulerOperation>(OpType::DepthwiseConv2D);
             *newOp->ConnectInput(TensorUsage::IFM, ifmConn->tensor) = *ifmConn;
             // Weights
-            Shape wShape(ofmShape.Depth(), upscaleH, upscaleW, ofmShape.Depth());
+            Shape wShape(1, upscaleH, upscaleW, ofmShape.Depth());
             kernel = kernel.WithSize({upscaleW, upscaleH});
             auto wTensor = std::make_shared<SchedulerTensor>(DataType::Int8, wShape);
-            auto wTensorSrc = std::make_shared<Tensor>("resize_weights", DataType::Int8, wShape);
-            wTensorSrc->SetAxisOrder(AxisOrder::IHWO);
 
             const auto wSize = wShape.Elements();
             auto buffer = std::make_shared<Buffer>(std::make_unique<uint8_t[]>(wSize), wSize);
@@ -1926,17 +1916,13 @@ std::vector<std::unique_ptr<SchedulerOperation>> LegaliseResize(Architecture *ar
             const auto w = upscaleW / 2;
             for ( int i = 0; i < ofmShape.Depth(); i++ )
             {
-                for ( int o = 0; o < ofmShape.Depth(); o++ )
-                {
-                    bufferValues[{i, h, w, o}] = 1;
-                }
-            }
-            wTensor->srcTensor = std::move(wTensorSrc);
+                bufferValues[{0, h, w, i}] = 1;
+            };
             wTensor->memArea = arch->ReadonlyMemory();
             wTensor->bufferView = std::move(bufferView);
-            newOp->ConnectInput(TensorUsage::Weights, wTensor);
-            wTensor->storageShape = wTensor->bufferView.ViewShape();
-            newOp->Input(TensorUsage::Weights)->quantization = Quantization::Unit();
+            auto *weightConn = newOp->ConnectInput(TensorUsage::Weights, wTensor);
+            wTensor->storageShape = wShape;
+            weightConn->quantization = Quantization::Unit();
             // Zero bias
             auto biasTensor = std::make_shared<SchedulerTensor>(DataType::Int32, Shape(1));
             auto bufBias = std::make_shared<Buffer>(Buffer::ConstValue<int32_t>(0));

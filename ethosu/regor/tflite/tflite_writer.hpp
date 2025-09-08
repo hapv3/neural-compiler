@@ -243,26 +243,6 @@ private:
     flatbuffers::Offset<tflite::Buffer> SerialiseBuffer(const Buffer *buffer);
     flatbuffers::Offset<tflite::Buffer> SerialiseBuffer(const uint8_t *data, size_t size);
 
-    struct TfLiteKernel
-    {
-        const tflite::Padding padding;
-        const int filter_w;
-        const int filter_h;
-        const int stride_w;
-        const int stride_h;
-        const int dilation_w_factor;
-        const int dilation_h_factor;
-        const int depth_multiplier;
-
-        TfLiteKernel(const Kernel &kernel) :
-                padding(kernel.Padding().IsZero() ? tflite::Padding::VALID : tflite::Padding::SAME),
-                filter_w(kernel.Size().x), filter_h(kernel.Size().y), stride_w(kernel.Stride().x),
-                stride_h(kernel.Stride().y), dilation_w_factor(kernel.Dilation().x),
-                dilation_h_factor(kernel.Dilation().y), depth_multiplier(kernel.DepthMultiplier())
-        {
-        }
-    };
-
     static std::vector<const Tensor *> SortedInputTensors(const Operation *operation, OpType type);
 };
 

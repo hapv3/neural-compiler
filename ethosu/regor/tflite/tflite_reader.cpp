@@ -46,7 +46,7 @@ namespace regor
 {
 
 static void SetKernel(const std::shared_ptr<Operation> &operation, const Point2i &size, const Point2i &stride,
-    const Point2i &dilation, tflite::Padding padding, int depthMultiplier = 1)
+    const Point2i &dilation, tflite::Padding padding)
 {
     const auto &inputShape = operation->IFM(0)->StorageShape();
     const auto &outputShape = operation->OFM()->StorageShape();
@@ -58,28 +58,19 @@ static void SetKernel(const std::shared_ptr<Operation> &operation, const Point2i
         int ypad = NeededTotalPadding(inputShape.Height(), stride.y, dWH.y);
         pad = Margin(ypad / 2, xpad / 2, (ypad + 1) / 2, (xpad + 1) / 2);
     }
-    auto kernel = std::make_unique<Kernel>(size, stride, dilation, depthMultiplier, pad);
+    auto kernel = std::make_unique<Kernel>(size, stride, dilation, pad);
     operation->SetKernel(std::move(kernel));
 }
 
 static void ReshapeFullyConnectedWeights(const std::shared_ptr<Operation> &operation, TensorUsage weightUsage)
 {
     auto weight_tensor = operation->Input(weightUsage)->tensor;
-    if ( weight_tensor->AxisOrder() == AxisOrder::Unknown )
+    const auto &shape = weight_tensor->StorageShape();
+    // Reshape weight tensor from (num_outputs, ..., num_inputs) to (num_outputs, 1, 1, num_inputs)
+    if ( shape.Size() >= 2 && shape.Elements() == (shape[0] * shape[-1]) )
     {
-        const auto &shape = weight_tensor->StorageShape();
-        // Reshape weight tensor from (num_outputs, ..., num_inputs) to (num_outputs, 1, 1, num_inputs)
-        if ( shape.Size() >= 2 && shape.Elements() == (shape[0] * shape[-1]) )
-        {
-            weight_tensor->Reshape(Shape(shape[0], 1, 1, shape[-1]));
-            weight_tensor->SetAxisOrder(AxisOrder::OHWI);
-            operation->Input(weightUsage)->shape = weight_tensor->StorageShape();
-        }
-    }
-    else
-    {
-        // Weight tensor has already been reshaped
-        assert(weight_tensor->AxisOrder() == AxisOrder::OHWI);
+        weight_tensor->Reshape(Shape(shape[0], 1, 1, shape[-1]));
+        operation->Input(weightUsage)->shape = weight_tensor->StorageShape();
     }
 }
 
@@ -470,7 +461,6 @@ void TfLiteReader::ParseOperatorOptions(
         {
             const auto options = GetBuiltinOptions<tflite::Conv2DOptions>(tflite_operator);
             auto weight_tensor = operation->Input(TensorUsage::Weights)->tensor;
-            weight_tensor->SetAxisOrder(AxisOrder::OHWI);
             SetKernel(operation, Point2i(weight_tensor->StorageShape().Width(), weight_tensor->StorageShape().Height()),
                 Point2i(options->stride_w(), options->stride_h()),
                 Point2i(options->dilation_w_factor(), options->dilation_h_factor()), options->padding());
@@ -482,16 +472,9 @@ void TfLiteReader::ParseOperatorOptions(
         {
             const auto options = GetBuiltinOptions<tflite::DepthwiseConv2DOptions>(tflite_operator);
             auto weight_tensor = operation->Input(TensorUsage::Weights)->tensor;
-            weight_tensor->SetAxisOrder(AxisOrder::IHWO);
-            Shape weightShape = weight_tensor->StorageShape();
-            int depth_multiplier = options->depth_multiplier();
-            if ( depth_multiplier == 0 )  // Depth multiplier is implicit. Derive it from tensor dimensions.
-            {
-                const int input_depth = operation->Input(TensorUsage::IFM)->tensor->StorageShape().Depth();
-                depth_multiplier = weightShape.Depth() / input_depth;
-            }
+            Shape weightShape = Shape::PadAxes(weight_tensor->StorageShape(), 4, 1);
             SetKernel(operation, weightShape.WH<int>(), Point2i(options->stride_w(), options->stride_h()),
-                Point2i(options->dilation_w_factor(), options->dilation_h_factor()), options->padding(), depth_multiplier);
+                Point2i(options->dilation_w_factor(), options->dilation_h_factor()), options->padding());
             activation_function = options->fused_activation_function();
         }
         break;
@@ -500,7 +483,6 @@ void TfLiteReader::ParseOperatorOptions(
         {
             const auto options = GetBuiltinOptions<tflite::TransposeConvOptions>(tflite_operator);
             auto weight_tensor = operation->Input(TensorUsage::Weights)->tensor;
-            weight_tensor->SetAxisOrder(AxisOrder::OHWI);
             SetKernel(operation, Point2i(weight_tensor->StorageShape().Width(), weight_tensor->StorageShape().Height()),
                 Point2i(options->stride_w(), options->stride_h()), Point2i(1, 1) /* no dilation */, options->padding());
             activation_function = options->fused_activation_function();

@@ -65,7 +65,8 @@ private:
     void ReorderOperations();
 
     int CanPack(const SchedulerOperation *schedOp, const SchedulerOperation *prevOp, const SchedulerOperation *op, const int prevOpKey) const;
-    void InitSchedulerConnection(SchedulerConnection *schedConn, const std::shared_ptr<SchedulerTensor> &tensor, const TensorConnection &conn);
+    void InitSchedulerConnection(SchedulerConnection *schedConn, TensorUsage usage,
+        const std::shared_ptr<SchedulerTensor> &tensor, const TensorConnection &conn);
     void InitSchedulerTensor(SchedulerTensor *schedTensor, Tensor *tensor);
     std::unique_ptr<SchedulerOperation> MakeSchedulerOperation(const Operation *op);
     std::vector<std::unique_ptr<SchedulerOperation>> DecomposeSchedulerOperation(std::unique_ptr<SchedulerOperation> op);

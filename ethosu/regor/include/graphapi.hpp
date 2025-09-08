@@ -67,9 +67,8 @@ enum class AxisOrder : uint16_t
 {
     Unknown = 0,
     OHWI = 1,
-    IHWO = 2,
+    HWCM = 2,
     OI = 3,
-    HWCM = 4,
 };
 
 /// <summary>

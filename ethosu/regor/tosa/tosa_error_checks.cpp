@@ -234,7 +234,7 @@ void ErrorIfCheck_2vhj6e48eyzlr(const regor::Operation *op, [[maybe_unused]] con
     auto IH = op->Input(TensorUsage::IFM)->shape.Height();
     int WeightHeightIndex =
         (op->Type() == regor::OpType::DepthwiseConv2D) ?
-            0 :
+            -3 :
         (op->Type() == regor::OpType::Conv3D) ?
             2 :
             1;
@@ -261,13 +261,13 @@ void ErrorIfCheck_147wc580l2tik(const regor::Operation *op, [[maybe_unused]] con
     // Operators: CONV2D, CONV3D, DEPTHWISE_CONV2D,
     static constexpr char constraint[] = "ERROR_IF(OW != idiv_check(IW - 1 + pad_left + pad_right - (KW - 1) * dilation_x, stride_x) + 1)";
     auto IW = op->Input(TensorUsage::IFM)->shape.Width();
-    int WeightWitdhIndex =
+    int WeightWidthIndex =
         (op->Type() == regor::OpType::DepthwiseConv2D) ?
-            1 :
+            -2 :
         (op->Type() == regor::OpType::Conv3D) ?
             3 :
             2;
-    auto KW = op->Input(TensorUsage::Weights)->shape[WeightWitdhIndex];
+    auto KW = op->Input(TensorUsage::Weights)->shape[WeightWidthIndex];
     auto OW = op->Output(TensorUsage::OFM)->shape.Width();
     const auto &padding = op->Kernel()->Padding();
     const auto &stride = op->Kernel()->Stride();
@@ -430,7 +430,11 @@ void ErrorIfCheck_1qxtjwwlh068t(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "ERROR_IF(shapeCheck(weight, [KH,KW,C,M], input, [N,IH,IW,C]))";
     const auto *input = op->Input(TensorUsage::IFM);
     const auto *weight = op->Input(TensorUsage::Weights);
-    if ( !shapeCheck(input, 3, weight, 2) ) throw std::invalid_argument(constraint);  // C
+    if ( input->shape[-1] != 0 )
+    {
+        // Actual layout is OHWI where I=C*M. Where M=weights.C / input.C
+        if ( (weight->shape[-1] % input->shape[-1]) != 0 ) throw std::invalid_argument(constraint);
+    }
 }
 
 void ErrorIfCheck_1hp4djlq1mi8i(const regor::Operation *op, [[maybe_unused]] const Context &context)

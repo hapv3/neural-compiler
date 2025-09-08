@@ -37,16 +37,14 @@ namespace regor
 {
 
 
-EthosU85WeightEncoder::EthosUEncodingConfig::EthosUEncodingConfig(int cores, Flags<WeightFormat> weightFormat) :
-        _cores(cores), _weightFormat(weightFormat)
+EthosU85WeightEncoder::EthosUEncodingConfig::EthosUEncodingConfig(Flags<WeightFormat> weightFormat) :
+        _weightFormat(weightFormat)
 {
 }
 
 void EthosU85WeightEncoder::EthosUEncodingConfig::Rehash()
 {
-    _depthOffsetHash = HashVector32(depthOffsets);
-    _hash = SimpleHash32(_depthOffsetHash, ifmType, ofmBlockDepth, ifmBlockDepth, traversal, acc, dilation, stride,
-        ohwiStrides, ofmUBlock, _weightFormat);
+    _hash = SimpleHash32(ifmType, ofmBlockDepth, ifmBlockDepth, traversal, acc, dilation, stride, ofmUBlock, _weightFormat);
 }
 
 uint32_t EthosU85WeightEncoder::EthosUEncodingConfig::Hash()
@@ -57,13 +55,8 @@ uint32_t EthosU85WeightEncoder::EthosUEncodingConfig::Hash()
 bool EthosU85WeightEncoder::EthosUEncodingConfig::Equals(IWeightEncodingConfig *other)
 {
     EthosUEncodingConfig *p = static_cast<EthosUEncodingConfig *>(other);
-    return std::tie(ofmBlockDepth, ifmBlockDepth, traversal, _depthOffsetHash, ifmType, dilation, ohwiStrides, _weightFormat) ==
-           std::tie(p->ofmBlockDepth, p->ifmBlockDepth, p->traversal, p->_depthOffsetHash, p->ifmType, p->dilation, p->ohwiStrides, p->_weightFormat);
-}
-
-const std::vector<int> &EthosU85WeightEncoder::EthosUEncodingConfig::DepthOffsets()
-{
-    return this->depthOffsets;
+    return std::tie(ifmType, ofmBlockDepth, ifmBlockDepth, traversal, acc, dilation, stride, ofmUBlock, _weightFormat) ==
+           std::tie(p->ifmType, p->ofmBlockDepth, p->ifmBlockDepth, p->traversal, p->acc, p->dilation, p->stride, p->ofmUBlock, p->_weightFormat);
 }
 
 Flags<WeightFormat> EthosU85WeightEncoder::EthosUEncodingConfig::Format()
@@ -71,13 +64,12 @@ Flags<WeightFormat> EthosU85WeightEncoder::EthosUEncodingConfig::Format()
     return _weightFormat;
 }
 
-
-std::unique_ptr<IWeightEncodingConfig> EthosU85WeightEncoder::GetEncodingConfig(ArchitectureOpConfig *opCfg, const WeightsRef &weights,
-    const Kernel *kernel, DataType ifmType, int depthBase, const std::vector<int> &depthOffsets, Flags<WeightFormat> format)
+std::unique_ptr<IWeightEncodingConfig> EthosU85WeightEncoder::GetEncodingConfig(
+    ArchitectureOpConfig *opCfg, const Kernel *kernel, DataType ifmType, Flags<WeightFormat> format)
 {
     assert(opCfg);
     assert(kernel);
-    std::unique_ptr<EthosUEncodingConfig> params = std::make_unique<EthosUEncodingConfig>(_arch->_cores, format);
+    std::unique_ptr<EthosUEncodingConfig> params = std::make_unique<EthosUEncodingConfig>(format);
 
     EthosU85OpConfig *opConfig = static_cast<EthosU85OpConfig *>(opCfg);
     params->ofmUBlock = opConfig->OfmUBlock();
@@ -88,26 +80,6 @@ std::unique_ptr<IWeightEncodingConfig> EthosU85WeightEncoder::GetEncodingConfig(
     params->ifmType = ifmType;
     params->dilation = kernel->Dilation();
     params->stride = kernel->Stride();
-
-    std::for_each(depthOffsets.begin(), depthOffsets.end(), [&](int d) { params->depthOffsets.push_back(d + depthBase); });
-
-    if ( !weights.isScales )
-    {
-        Shape ohwiStrides = weights.view->StrideBytes() * 8 / DataTypeSizeBits(weights.type);
-        if ( weights.axisOrder == AxisOrder::IHWO )
-        {
-            ohwiStrides = ohwiStrides.Extract(3, 1, 2, 0);
-        }
-        else if ( weights.axisOrder == AxisOrder::HWCM )
-        {
-            ohwiStrides = ohwiStrides.Extract(2, 0, 1, 3);
-        }
-        params->ohwiStrides = std::move(ohwiStrides);
-    }
-    else
-    {
-        params->ohwiStrides = Shape{nullptr, 4, 0};
-    }
     params->Rehash();
 
     return params;
@@ -272,7 +244,9 @@ public:
 
     void SetSource(const void *buffer, int depthOffset, const Shape &ohwiShape, const Shape &ohwiStrides, int streamIndex) override
     {
-        SetSourceCommon(buffer, depthOffset, ohwiShape, ohwiStrides, streamIndex, false);
+        Shape sourceShape = (_traversal == EthosU85Traversal::Depthwise) ? ohwiShape.Extract(3, 1, 2, 0) : ohwiShape;
+        Shape sourceStrides = (_traversal == EthosU85Traversal::Depthwise) ? ohwiStrides.Extract(3, 1, 2, 0) : ohwiStrides;
+        SetSourceCommon(buffer, depthOffset, sourceShape, sourceStrides, streamIndex, false);
         assert(_streamIndex == streamIndex);
         _ofmUBlockZ = _streamIndex * InterleaveDepth;
         _sparsity.Reset();

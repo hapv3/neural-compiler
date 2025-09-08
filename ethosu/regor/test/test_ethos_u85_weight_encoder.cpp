@@ -66,8 +66,7 @@ TEST_CASE("ethos_u85_weightsource")
     auto opCfg = arch->GetOpConfig(OpType::Conv2D, query);
     auto encoder = arch->WeightEncoder();
     auto view = weightTensor.View();
-    WeightsRef weightsRef = {&view, AxisOrder::OHWI, weightTensor.Type()};
-    auto config = encoder->GetEncodingConfig(opCfg.get(), weightsRef, &kernel, DataType::Int8, 0, depthOffsets, WeightFormat::Default);
+    auto config = encoder->GetEncodingConfig(opCfg.get(), &kernel, DataType::Int8, WeightFormat::Default);
     auto transform = [](const WeightTransformParam *, int weight) { return weight; };
     auto source = encoder->GetWeightSource(config.get(), DataType::Int8, transform, &param);
     source->SetSource(view.RawData<uint8_t>(), 0, weightShape, view.StrideBytes(), 0);

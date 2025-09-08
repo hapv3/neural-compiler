@@ -132,9 +132,8 @@ Operation *TosaGraphOptimiser::RewriteTransposeConvPadding(Graph *const graph, O
         std::vector<int8_t> ones(weightShape.Elements(), 1);
         auto weightBuf = std::make_shared<Buffer>(std::move(ones));
         auto weightTensor = std::make_shared<Tensor>(fmt::format("{}_unitWeights", name), DataType::UInt8, weightShape, weightBuf);
-        weightTensor->SetAxisOrder(AxisOrder::IHWO);
 
-        dwOp->SetKernel(std::make_unique<Kernel>(Point2i(1, 1), Point2i(1, 1), Point2i(1, 1)));
+        dwOp->SetKernel(std::make_unique<Kernel>(Kernel::UnitKernel()));
         dwOp->ConnectInput(TensorUsage::IFM, inputZero).Set(Quantization::Unit());
         dwOp->ConnectInput(TensorUsage::Weights, weightTensor).Set(Quantization::Unit());
         dwOp->CopyInput(TensorUsage::Scales, *biasConn);

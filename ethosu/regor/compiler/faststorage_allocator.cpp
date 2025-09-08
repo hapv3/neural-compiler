@@ -290,11 +290,11 @@ void FastStorageAllocator::AllocateFeatureMaps(const std::vector<std::unique_ptr
                     break;
                 }
 
-                if ( ifm->tensor->srcTensor == tens->srcTensor && consCost )
+                if ( ifm->tensor->equivalenceId == tens->equivalenceId && consCost )
                 {
                     access += consCost->elementAccess.ifmRead[0];
                 }
-                else if ( ifm2 && ifm2->tensor->srcTensor == tens->srcTensor && consCost )
+                else if ( ifm2 && ifm2->tensor->equivalenceId == tens->equivalenceId && consCost )
                 {
                     access += consCost->elementAccess.ifmRead[1];
                 }

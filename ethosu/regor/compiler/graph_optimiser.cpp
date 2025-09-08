@@ -167,7 +167,7 @@ Operation *GraphOptimiser::RemoveReshape(Graph *const graph, Operation *const op
 
         // Inserts a copy op if needed before removing reshapes.
         if ( ((isIfmSgIfm || isIfmSgOfm || isIfmConst || isIfmCpuOfm) && (isOfmSgOfm || isOfmCpuIfm)) ||
-             ((ifm->Readers().size() > 1) && (ifm->StorageShape() != ofm->StorageShape() || ifm->AxisOrder() != ofm->AxisOrder())) )
+             ((ifm->Readers().size() > 1) && (ifm->StorageShape() != ofm->StorageShape())) )
         {
             auto copyOp = InsertCopyOpAfterTensor(ifmConn->tensor, ifmConn->quantization);
             copyOp->Output(TensorUsage::OFM)->Set(RoundMode::NATURAL);
@@ -196,11 +196,6 @@ Operation *GraphOptimiser::RemoveReshape(Graph *const graph, Operation *const op
             // Bypass by replacing ofm with ifm.
             // Set IFM as input to OFM consumers.
             ReplaceConsumerInput(nullptr, ofm->Readers(), ofm, ifmConn->tensor);
-            assert(ifm->AxisOrder() == AxisOrder::Unknown || ifm->AxisOrder() == ofm->AxisOrder());
-
-            // This is needed as we use the weight tensor, and not the tensor connection,
-            // during weight encode. MLBEDSW-9267
-            ifmConn->tensor->SetAxisOrder(ofm->AxisOrder());
             ifmConn->tensor->Reshape(ofm->StorageShape());
         }
         // Remove the reshape from ifm readers and ofm writers.

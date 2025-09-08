@@ -169,7 +169,7 @@ inline Operation *CreateDepthwiseMaxpool(const std::shared_ptr<Tensor> &ifm, con
     auto op = std::make_shared<Operation>(OpType::MaxPool);
     int height = ifmShape.ElementsWH();
     int width = ifmShape.Depth();
-    auto kernel = std::make_unique<Kernel>(Point2i(width, 1), Point2i(1, 1), Point2i(1, 1), 1);
+    auto kernel = std::make_unique<Kernel>(Point2i(width, 1), Point2i(1, 1), Point2i(1, 1));
     auto ofm = std::make_shared<Tensor>(ifm->Name() + "/maxpool", ifm->Type());
     ofm->SetStorageShape(Shape(1, ifmShape.Height(), ifmShape.Width(), 1));
     op->SetKernel(std::move(kernel));
