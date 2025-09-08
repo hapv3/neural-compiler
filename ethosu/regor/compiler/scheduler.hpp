@@ -45,6 +45,15 @@ enum class OptimizationStrategy
     Performance,
 };
 
+enum class TensorAllocator
+{
+    // Allocator that does not reuse memory
+    LinearAlloc = 0,
+    // Search based allocator
+    HillClimb = 1,
+    Last,
+};
+
 enum class SchedulerFeature : uint16_t
 {
     WeightBuffering = 1 << 0,
@@ -67,6 +76,7 @@ struct SchedulerOptions
     Flags<SchedulerFeature> disabled;
     bool separateIORegions = false;
     int cpuTensorAlignment = 16;
+    TensorAllocator tensorAllocator = TensorAllocator::HillClimb;
 };
 
 struct WeightScaleEncoding
