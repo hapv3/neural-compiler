@@ -1565,7 +1565,7 @@ void EthosU55RCSGenerator::InsertMatMulCommand(const HLCStripe *stripe, Temporar
     inFM1.shape = Shape::PadAxes(inFM1.shape, 4, 1);
     outFM.shape = Shape::PadAxes(outFM.shape, 4, 1);
 
-    assert((!inFM0.slice.shape || (inFM0.shape.WC<int>() == inFM0.slice.shape.WC<int>())) && "Implementation cannot be sliced in depth");
+    assert((!inFM0.slice.shape || (inFM0.shape.WC<int>() == inFM0.slice.shape.WC<int>())) && "Implementation inFM0 cannot be sliced in width or channels");
     assert(MatMul::Cols(inFM0.shape) == MatMul::Cols(inFM1.shape) && (MatMul::Rows(inFM1.shape) == MatMul::Cols(outFM.shape)) && "Second ifm must be pre-transposed");
 
     // Minimum required temporary space is one IFM0 W/C slice.
@@ -1610,6 +1610,8 @@ void EthosU55RCSGenerator::InsertMatMulCommand(const HLCStripe *stripe, Temporar
     outFM.quantization.type = QuantizationType::EXPLICIT;
     outFM.quantization.scales.push_back(QuantizedScale(scaling));
 
+    Shape ifm0Start(0, inFM0.slice.offset ? inFM0.slice.offset.Height() : 0, 0, 0);
+
     for ( int batch = 0; batch < batchLoops; batch++ )
     {
         Shape ifm1Start(0, batch, 0, 0);
@@ -1626,7 +1628,7 @@ void EthosU55RCSGenerator::InsertMatMulCommand(const HLCStripe *stripe, Temporar
             mul->operation->ofm = tempFM;
             mul->operation->config = mulConfig;
             mul->ofmArea = ifm0Shape;
-            mul->ifmAreas.emplace_back(ifm0Shape);
+            mul->ifmAreas.emplace_back(ifm0Start, Box::Size(ifm0Shape));
             mul->ifmAreas.emplace_back(ifm1Start, Box::Size(ifm1Shape));
             mul->opGroup = nullptr;
             emitted.push_back(mul.get());
