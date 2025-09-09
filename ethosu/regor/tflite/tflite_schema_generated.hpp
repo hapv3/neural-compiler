@@ -2,7 +2,7 @@
 //
 // To reproduce:
 //   flatc version 24.12.23
-//   schema.fbs @v2.18.0
+//   schema.fbs @v2.19.1
 //   flatc --cpp --scoped-enums --reflect-names --gen-mutable schema.fbs
 //   sed -i 's/ARG_MAX/ARGMAX/g' tflite_schema_generated.hpp
 
@@ -23,6 +23,9 @@ namespace tflite {
 
 struct CustomQuantization;
 struct CustomQuantizationBuilder;
+
+struct BlockwiseQuantization;
+struct BlockwiseQuantizationBuilder;
 
 struct QuantizationParameters;
 struct QuantizationParametersBuilder;
@@ -98,6 +101,9 @@ struct StablehloConvolutionOptionsBuilder;
 
 struct StablehloScatterOptions;
 struct StablehloScatterOptionsBuilder;
+
+struct StablehloCaseOptions;
+struct StablehloCaseOptionsBuilder;
 
 struct StablehloRngBitGeneratorOptions;
 struct StablehloRngBitGeneratorOptionsBuilder;
@@ -518,6 +524,8 @@ struct ModelBuilder;
 
 inline const ::flatbuffers::TypeTable *CustomQuantizationTypeTable();
 
+inline const ::flatbuffers::TypeTable *BlockwiseQuantizationTypeTable();
+
 inline const ::flatbuffers::TypeTable *QuantizationParametersTypeTable();
 
 inline const ::flatbuffers::TypeTable *Int32VectorTypeTable();
@@ -567,6 +575,8 @@ inline const ::flatbuffers::TypeTable *StablehloSliceOptionsTypeTable();
 inline const ::flatbuffers::TypeTable *StablehloConvolutionOptionsTypeTable();
 
 inline const ::flatbuffers::TypeTable *StablehloScatterOptionsTypeTable();
+
+inline const ::flatbuffers::TypeTable *StablehloCaseOptionsTypeTable();
 
 inline const ::flatbuffers::TypeTable *StablehloRngBitGeneratorOptionsTypeTable();
 
@@ -930,29 +940,32 @@ inline const char *EnumNameTensorType(TensorType e) {
 enum class QuantizationDetails : uint8_t {
   NONE = 0,
   CustomQuantization = 1,
+  BlockwiseQuantization = 2,
   MIN = NONE,
-  MAX = CustomQuantization
+  MAX = BlockwiseQuantization
 };
 
-inline const QuantizationDetails (&EnumValuesQuantizationDetails())[2] {
+inline const QuantizationDetails (&EnumValuesQuantizationDetails())[3] {
   static const QuantizationDetails values[] = {
     QuantizationDetails::NONE,
-    QuantizationDetails::CustomQuantization
+    QuantizationDetails::CustomQuantization,
+    QuantizationDetails::BlockwiseQuantization
   };
   return values;
 }
 
 inline const char * const *EnumNamesQuantizationDetails() {
-  static const char * const names[3] = {
+  static const char * const names[4] = {
     "NONE",
     "CustomQuantization",
+    "BlockwiseQuantization",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameQuantizationDetails(QuantizationDetails e) {
-  if (::flatbuffers::IsOutRange(e, QuantizationDetails::NONE, QuantizationDetails::CustomQuantization)) return "";
+  if (::flatbuffers::IsOutRange(e, QuantizationDetails::NONE, QuantizationDetails::BlockwiseQuantization)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesQuantizationDetails()[index];
 }
@@ -963,6 +976,10 @@ template<typename T> struct QuantizationDetailsTraits {
 
 template<> struct QuantizationDetailsTraits<tflite::CustomQuantization> {
   static const QuantizationDetails enum_value = QuantizationDetails::CustomQuantization;
+};
+
+template<> struct QuantizationDetailsTraits<tflite::BlockwiseQuantization> {
+  static const QuantizationDetails enum_value = QuantizationDetails::BlockwiseQuantization;
 };
 
 bool VerifyQuantizationDetails(::flatbuffers::Verifier &verifier, const void *obj, QuantizationDetails type);
@@ -1263,11 +1280,12 @@ enum class BuiltinOperator : int32_t {
   STABLEHLO_COMPOSITE = 206,
   STABLEHLO_SHIFT_LEFT = 207,
   STABLEHLO_CBRT = 208,
+  STABLEHLO_CASE = 209,
   MIN = ADD,
-  MAX = STABLEHLO_CBRT
+  MAX = STABLEHLO_CASE
 };
 
-inline const BuiltinOperator (&EnumValuesBuiltinOperator())[209] {
+inline const BuiltinOperator (&EnumValuesBuiltinOperator())[210] {
   static const BuiltinOperator values[] = {
     BuiltinOperator::ADD,
     BuiltinOperator::AVERAGE_POOL_2D,
@@ -1477,13 +1495,14 @@ inline const BuiltinOperator (&EnumValuesBuiltinOperator())[209] {
     BuiltinOperator::REDUCE_WINDOW,
     BuiltinOperator::STABLEHLO_COMPOSITE,
     BuiltinOperator::STABLEHLO_SHIFT_LEFT,
-    BuiltinOperator::STABLEHLO_CBRT
+    BuiltinOperator::STABLEHLO_CBRT,
+    BuiltinOperator::STABLEHLO_CASE
   };
   return values;
 }
 
 inline const char * const *EnumNamesBuiltinOperator() {
-  static const char * const names[210] = {
+  static const char * const names[211] = {
     "ADD",
     "AVERAGE_POOL_2D",
     "CONCATENATION",
@@ -1693,13 +1712,14 @@ inline const char * const *EnumNamesBuiltinOperator() {
     "STABLEHLO_COMPOSITE",
     "STABLEHLO_SHIFT_LEFT",
     "STABLEHLO_CBRT",
+    "STABLEHLO_CASE",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameBuiltinOperator(BuiltinOperator e) {
-  if (::flatbuffers::IsOutRange(e, BuiltinOperator::ADD, BuiltinOperator::STABLEHLO_CBRT)) return "";
+  if (::flatbuffers::IsOutRange(e, BuiltinOperator::ADD, BuiltinOperator::STABLEHLO_CASE)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesBuiltinOperator()[index];
 }
@@ -2644,11 +2664,12 @@ enum class BuiltinOptions2 : uint8_t {
   ReduceWindowOptions = 20,
   StableHLOCompositeOptions = 21,
   StablehloShiftLeftOptions = 22,
+  StablehloCaseOptions = 23,
   MIN = NONE,
-  MAX = StablehloShiftLeftOptions
+  MAX = StablehloCaseOptions
 };
 
-inline const BuiltinOptions2 (&EnumValuesBuiltinOptions2())[23] {
+inline const BuiltinOptions2 (&EnumValuesBuiltinOptions2())[24] {
   static const BuiltinOptions2 values[] = {
     BuiltinOptions2::NONE,
     BuiltinOptions2::StablehloConcatenateOptions,
@@ -2672,13 +2693,14 @@ inline const BuiltinOptions2 (&EnumValuesBuiltinOptions2())[23] {
     BuiltinOptions2::StablehloRngBitGeneratorOptions,
     BuiltinOptions2::ReduceWindowOptions,
     BuiltinOptions2::StableHLOCompositeOptions,
-    BuiltinOptions2::StablehloShiftLeftOptions
+    BuiltinOptions2::StablehloShiftLeftOptions,
+    BuiltinOptions2::StablehloCaseOptions
   };
   return values;
 }
 
 inline const char * const *EnumNamesBuiltinOptions2() {
-  static const char * const names[24] = {
+  static const char * const names[25] = {
     "NONE",
     "StablehloConcatenateOptions",
     "StablehloBroadcastInDimOptions",
@@ -2702,13 +2724,14 @@ inline const char * const *EnumNamesBuiltinOptions2() {
     "ReduceWindowOptions",
     "StableHLOCompositeOptions",
     "StablehloShiftLeftOptions",
+    "StablehloCaseOptions",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameBuiltinOptions2(BuiltinOptions2 e) {
-  if (::flatbuffers::IsOutRange(e, BuiltinOptions2::NONE, BuiltinOptions2::StablehloShiftLeftOptions)) return "";
+  if (::flatbuffers::IsOutRange(e, BuiltinOptions2::NONE, BuiltinOptions2::StablehloCaseOptions)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesBuiltinOptions2()[index];
 }
@@ -2803,6 +2826,10 @@ template<> struct BuiltinOptions2Traits<tflite::StableHLOCompositeOptions> {
 
 template<> struct BuiltinOptions2Traits<tflite::StablehloShiftLeftOptions> {
   static const BuiltinOptions2 enum_value = BuiltinOptions2::StablehloShiftLeftOptions;
+};
+
+template<> struct BuiltinOptions2Traits<tflite::StablehloCaseOptions> {
+  static const BuiltinOptions2 enum_value = BuiltinOptions2::StablehloCaseOptions;
 };
 
 bool VerifyBuiltinOptions2(::flatbuffers::Verifier &verifier, const void *obj, BuiltinOptions2 type);
@@ -3313,6 +3340,79 @@ inline ::flatbuffers::Offset<CustomQuantization> CreateCustomQuantizationDirect(
       custom__);
 }
 
+struct BlockwiseQuantization FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef BlockwiseQuantizationBuilder Builder;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return BlockwiseQuantizationTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_SCALES = 4,
+    VT_ZERO_POINTS = 6,
+    VT_BLOCK_SIZE = 8
+  };
+  int32_t scales() const {
+    return GetField<int32_t>(VT_SCALES, 0);
+  }
+  bool mutate_scales(int32_t _scales = 0) {
+    return SetField<int32_t>(VT_SCALES, _scales, 0);
+  }
+  int32_t zero_points() const {
+    return GetField<int32_t>(VT_ZERO_POINTS, 0);
+  }
+  bool mutate_zero_points(int32_t _zero_points = 0) {
+    return SetField<int32_t>(VT_ZERO_POINTS, _zero_points, 0);
+  }
+  int32_t block_size() const {
+    return GetField<int32_t>(VT_BLOCK_SIZE, 0);
+  }
+  bool mutate_block_size(int32_t _block_size = 0) {
+    return SetField<int32_t>(VT_BLOCK_SIZE, _block_size, 0);
+  }
+  bool Verify(::flatbuffers::Verifier &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<int32_t>(verifier, VT_SCALES, 4) &&
+           VerifyField<int32_t>(verifier, VT_ZERO_POINTS, 4) &&
+           VerifyField<int32_t>(verifier, VT_BLOCK_SIZE, 4) &&
+           verifier.EndTable();
+  }
+};
+
+struct BlockwiseQuantizationBuilder {
+  typedef BlockwiseQuantization Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_scales(int32_t scales) {
+    fbb_.AddElement<int32_t>(BlockwiseQuantization::VT_SCALES, scales, 0);
+  }
+  void add_zero_points(int32_t zero_points) {
+    fbb_.AddElement<int32_t>(BlockwiseQuantization::VT_ZERO_POINTS, zero_points, 0);
+  }
+  void add_block_size(int32_t block_size) {
+    fbb_.AddElement<int32_t>(BlockwiseQuantization::VT_BLOCK_SIZE, block_size, 0);
+  }
+  explicit BlockwiseQuantizationBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<BlockwiseQuantization> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<BlockwiseQuantization>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<BlockwiseQuantization> CreateBlockwiseQuantization(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    int32_t scales = 0,
+    int32_t zero_points = 0,
+    int32_t block_size = 0) {
+  BlockwiseQuantizationBuilder builder_(_fbb);
+  builder_.add_block_size(block_size);
+  builder_.add_zero_points(zero_points);
+  builder_.add_scales(scales);
+  return builder_.Finish();
+}
+
 struct QuantizationParameters FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef QuantizationParametersBuilder Builder;
   static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
@@ -3361,6 +3461,9 @@ struct QuantizationParameters FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::T
   const tflite::CustomQuantization *details_as_CustomQuantization() const {
     return details_type() == tflite::QuantizationDetails::CustomQuantization ? static_cast<const tflite::CustomQuantization *>(details()) : nullptr;
   }
+  const tflite::BlockwiseQuantization *details_as_BlockwiseQuantization() const {
+    return details_type() == tflite::QuantizationDetails::BlockwiseQuantization ? static_cast<const tflite::BlockwiseQuantization *>(details()) : nullptr;
+  }
   void *mutable_details() {
     return GetPointer<void *>(VT_DETAILS);
   }
@@ -3390,6 +3493,10 @@ struct QuantizationParameters FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::T
 
 template<> inline const tflite::CustomQuantization *QuantizationParameters::details_as<tflite::CustomQuantization>() const {
   return details_as_CustomQuantization();
+}
+
+template<> inline const tflite::BlockwiseQuantization *QuantizationParameters::details_as<tflite::BlockwiseQuantization>() const {
+  return details_as_BlockwiseQuantization();
 }
 
 struct QuantizationParametersBuilder {
@@ -5892,6 +5999,63 @@ inline ::flatbuffers::Offset<StablehloScatterOptions> CreateStablehloScatterOpti
       index_vector_dim,
       unique_indices,
       update_computation_subgraph_index);
+}
+
+struct StablehloCaseOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef StablehloCaseOptionsBuilder Builder;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return StablehloCaseOptionsTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_BRANCH_SUBGRAPH_INDICES = 4
+  };
+  const ::flatbuffers::Vector<int32_t> *branch_subgraph_indices() const {
+    return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_BRANCH_SUBGRAPH_INDICES);
+  }
+  ::flatbuffers::Vector<int32_t> *mutable_branch_subgraph_indices() {
+    return GetPointer<::flatbuffers::Vector<int32_t> *>(VT_BRANCH_SUBGRAPH_INDICES);
+  }
+  bool Verify(::flatbuffers::Verifier &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffset(verifier, VT_BRANCH_SUBGRAPH_INDICES) &&
+           verifier.VerifyVector(branch_subgraph_indices()) &&
+           verifier.EndTable();
+  }
+};
+
+struct StablehloCaseOptionsBuilder {
+  typedef StablehloCaseOptions Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_branch_subgraph_indices(::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> branch_subgraph_indices) {
+    fbb_.AddOffset(StablehloCaseOptions::VT_BRANCH_SUBGRAPH_INDICES, branch_subgraph_indices);
+  }
+  explicit StablehloCaseOptionsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<StablehloCaseOptions> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<StablehloCaseOptions>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<StablehloCaseOptions> CreateStablehloCaseOptions(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> branch_subgraph_indices = 0) {
+  StablehloCaseOptionsBuilder builder_(_fbb);
+  builder_.add_branch_subgraph_indices(branch_subgraph_indices);
+  return builder_.Finish();
+}
+
+inline ::flatbuffers::Offset<StablehloCaseOptions> CreateStablehloCaseOptionsDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const std::vector<int32_t> *branch_subgraph_indices = nullptr) {
+  auto branch_subgraph_indices__ = branch_subgraph_indices ? _fbb.CreateVector<int32_t>(*branch_subgraph_indices) : 0;
+  return tflite::CreateStablehloCaseOptions(
+      _fbb,
+      branch_subgraph_indices__);
 }
 
 struct StablehloRngBitGeneratorOptions FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
@@ -12945,6 +13109,9 @@ struct Operator FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const tflite::StablehloShiftLeftOptions *builtin_options_2_as_StablehloShiftLeftOptions() const {
     return builtin_options_2_type() == tflite::BuiltinOptions2::StablehloShiftLeftOptions ? static_cast<const tflite::StablehloShiftLeftOptions *>(builtin_options_2()) : nullptr;
   }
+  const tflite::StablehloCaseOptions *builtin_options_2_as_StablehloCaseOptions() const {
+    return builtin_options_2_type() == tflite::BuiltinOptions2::StablehloCaseOptions ? static_cast<const tflite::StablehloCaseOptions *>(builtin_options_2()) : nullptr;
+  }
   void *mutable_builtin_options_2() {
     return GetPointer<void *>(VT_BUILTIN_OPTIONS_2);
   }
@@ -13571,6 +13738,10 @@ template<> inline const tflite::StableHLOCompositeOptions *Operator::builtin_opt
 
 template<> inline const tflite::StablehloShiftLeftOptions *Operator::builtin_options_2_as<tflite::StablehloShiftLeftOptions>() const {
   return builtin_options_2_as_StablehloShiftLeftOptions();
+}
+
+template<> inline const tflite::StablehloCaseOptions *Operator::builtin_options_2_as<tflite::StablehloCaseOptions>() const {
+  return builtin_options_2_as_StablehloCaseOptions();
 }
 
 struct OperatorBuilder {
@@ -14373,6 +14544,10 @@ inline bool VerifyQuantizationDetails(::flatbuffers::Verifier &verifier, const v
       auto ptr = reinterpret_cast<const tflite::CustomQuantization *>(obj);
       return verifier.VerifyTable(ptr);
     }
+    case QuantizationDetails::BlockwiseQuantization: {
+      auto ptr = reinterpret_cast<const tflite::BlockwiseQuantization *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
     default: return true;
   }
 }
@@ -15040,6 +15215,10 @@ inline bool VerifyBuiltinOptions2(::flatbuffers::Verifier &verifier, const void 
       auto ptr = reinterpret_cast<const tflite::StablehloShiftLeftOptions *>(obj);
       return verifier.VerifyTable(ptr);
     }
+    case BuiltinOptions2::StablehloCaseOptions: {
+      auto ptr = reinterpret_cast<const tflite::StablehloCaseOptions *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
     default: return true;
   }
 }
@@ -15111,17 +15290,20 @@ inline const ::flatbuffers::TypeTable *TensorTypeTypeTable() {
 inline const ::flatbuffers::TypeTable *QuantizationDetailsTypeTable() {
   static const ::flatbuffers::TypeCode type_codes[] = {
     { ::flatbuffers::ET_SEQUENCE, 0, -1 },
-    { ::flatbuffers::ET_SEQUENCE, 0, 0 }
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 1 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
-    tflite::CustomQuantizationTypeTable
+    tflite::CustomQuantizationTypeTable,
+    tflite::BlockwiseQuantizationTypeTable
   };
   static const char * const names[] = {
     "NONE",
-    "CustomQuantization"
+    "CustomQuantization",
+    "BlockwiseQuantization"
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_UNION, 2, type_codes, type_refs, nullptr, nullptr, names
+    ::flatbuffers::ST_UNION, 3, type_codes, type_refs, nullptr, nullptr, names
   };
   return &tt;
 }
@@ -15170,6 +15352,7 @@ inline const ::flatbuffers::TypeTable *SparseIndexVectorTypeTable() {
 
 inline const ::flatbuffers::TypeTable *BuiltinOperatorTypeTable() {
   static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_INT, 0, 0 },
     { ::flatbuffers::ET_INT, 0, 0 },
     { ::flatbuffers::ET_INT, 0, 0 },
     { ::flatbuffers::ET_INT, 0, 0 },
@@ -15592,10 +15775,11 @@ inline const ::flatbuffers::TypeTable *BuiltinOperatorTypeTable() {
     "REDUCE_WINDOW",
     "STABLEHLO_COMPOSITE",
     "STABLEHLO_SHIFT_LEFT",
-    "STABLEHLO_CBRT"
+    "STABLEHLO_CBRT",
+    "STABLEHLO_CASE"
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_ENUM, 209, type_codes, type_refs, nullptr, nullptr, names
+    ::flatbuffers::ST_ENUM, 210, type_codes, type_refs, nullptr, nullptr, names
   };
   return &tt;
 }
@@ -16017,7 +16201,8 @@ inline const ::flatbuffers::TypeTable *BuiltinOptions2TypeTable() {
     { ::flatbuffers::ET_SEQUENCE, 0, 18 },
     { ::flatbuffers::ET_SEQUENCE, 0, 19 },
     { ::flatbuffers::ET_SEQUENCE, 0, 20 },
-    { ::flatbuffers::ET_SEQUENCE, 0, 21 }
+    { ::flatbuffers::ET_SEQUENCE, 0, 21 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 22 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     tflite::StablehloConcatenateOptionsTypeTable,
@@ -16041,7 +16226,8 @@ inline const ::flatbuffers::TypeTable *BuiltinOptions2TypeTable() {
     tflite::StablehloRngBitGeneratorOptionsTypeTable,
     tflite::ReduceWindowOptionsTypeTable,
     tflite::StableHLOCompositeOptionsTypeTable,
-    tflite::StablehloShiftLeftOptionsTypeTable
+    tflite::StablehloShiftLeftOptionsTypeTable,
+    tflite::StablehloCaseOptionsTypeTable
   };
   static const char * const names[] = {
     "NONE",
@@ -16066,10 +16252,11 @@ inline const ::flatbuffers::TypeTable *BuiltinOptions2TypeTable() {
     "StablehloRngBitGeneratorOptions",
     "ReduceWindowOptions",
     "StableHLOCompositeOptions",
-    "StablehloShiftLeftOptions"
+    "StablehloShiftLeftOptions",
+    "StablehloCaseOptions"
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_UNION, 23, type_codes, type_refs, nullptr, nullptr, names
+    ::flatbuffers::ST_UNION, 24, type_codes, type_refs, nullptr, nullptr, names
   };
   return &tt;
 }
@@ -16355,6 +16542,23 @@ inline const ::flatbuffers::TypeTable *CustomQuantizationTypeTable() {
   };
   static const ::flatbuffers::TypeTable tt = {
     ::flatbuffers::ST_TABLE, 1, type_codes, nullptr, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *BlockwiseQuantizationTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_INT, 0, -1 },
+    { ::flatbuffers::ET_INT, 0, -1 },
+    { ::flatbuffers::ET_INT, 0, -1 }
+  };
+  static const char * const names[] = {
+    "scales",
+    "zero_points",
+    "block_size"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 3, type_codes, nullptr, nullptr, nullptr, names
   };
   return &tt;
 }
@@ -16857,6 +17061,19 @@ inline const ::flatbuffers::TypeTable *StablehloScatterOptionsTypeTable() {
   };
   static const ::flatbuffers::TypeTable tt = {
     ::flatbuffers::ST_TABLE, 7, type_codes, nullptr, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *StablehloCaseOptionsTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_INT, 1, -1 }
+  };
+  static const char * const names[] = {
+    "branch_subgraph_indices"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 1, type_codes, nullptr, nullptr, nullptr, names
   };
   return &tt;
 }
