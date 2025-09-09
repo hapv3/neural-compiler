@@ -800,9 +800,6 @@ This is a list of constraints that the TRANSPOSE_CONV operator must satisfy in o
 - Optional Bias tensor must be of shape: 1D
 - Optional Bias tensor must be of type: int32, int64
 - Optional Bias tensor values must fit within 40-bits
-- Stride values for width and height must match one of the following criteria:  
-        Stride values WxH must be 1x1 or 2x2  
-        Stride WxH 2x1 supported if ifm height and kernel height = 1
 - SAME padding: OFM dimensions must equal IFM dimensions multiplied by stride
 - VALID padding: OFM dimensions must equal IFM dimensions multiplied by stride,  
         minus difference between kernel size and stride

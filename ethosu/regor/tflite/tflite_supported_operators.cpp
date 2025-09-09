@@ -502,44 +502,6 @@ bool TfLiteSupportedOperators::ConstraintMaxPool(const Operation *op)
     return true;
 }
 
-bool TfLiteSupportedOperators::ConstraintTCStrides(const Operation *op)
-{
-    static const std::string constraint =
-        "Stride values WxH must be:\n"
-        "\t1x1 OR 2x2\n"
-        "\tOR 2x1 if ifm height and kernel height = 1\n"
-        "\tOR 1x2 if ifm width and kernel width = 1";
-    OpType opType = op->Type();
-    if ( opType != OpType::TransposeConv2D )
-    {
-        return true;
-    }
-    auto ifmConn = op->Input(TensorUsage::IFM);
-    auto kernel = op->Kernel();
-    assert(ifmConn);
-    assert(kernel);
-    const auto &ifmShape = ifmConn->shape;
-    auto [kw, kh] = kernel->Size();
-    auto stride = kernel->Stride();
-
-    if ( stride.x < 1 || stride.x > 2 || stride.y < 1 || stride.y > 2 )
-    {
-        Failure(op, fmt::format("stride out of range: ({},{})", stride.x, stride.y), constraint);
-        return false;
-    }
-    if ( stride == Point2i(1, 2) && !(ifmShape.Width() == 1 && kw == 1) )
-    {
-        Failure(op, fmt::format("unsupported stride combination: ({},{})", stride.x, stride.y), constraint);
-        return false;
-    }
-    if ( stride == Point2i(2, 1) && !(ifmShape.Height() == 1 && kh == 1) )
-    {
-        Failure(op, fmt::format("unsupported stride combination: ({},{})", stride.x, stride.y), constraint);
-        return false;
-    }
-    return true;
-}
-
 bool TfLiteSupportedOperators::ConstraintTCShapes(const Operation *op)
 {
     static const std::string constraint =
@@ -1047,7 +1009,6 @@ TfLiteSupportedOperators::TfLiteSupportedOperators(IArchitectureConstraints *con
         &TfLiteSupportedOperators::ConstraintBias,
         &TfLiteSupportedOperators::ConstraintAvgPool,
         &TfLiteSupportedOperators::ConstraintMaxPool,
-        &TfLiteSupportedOperators::ConstraintTCStrides,
         &TfLiteSupportedOperators::ConstraintTCShapes,
         &TfLiteSupportedOperators::ConstraintRsqrt,
         &TfLiteSupportedOperators::ConstraintConstParams,
