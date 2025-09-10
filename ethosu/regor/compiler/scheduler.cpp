@@ -1269,9 +1269,16 @@ std::shared_ptr<Schedule> Scheduler::ProposeMinimalSchedule()
     for ( auto pos = _ops.rbegin(); pos != _ops.rend(); pos++ )
     {
         auto const &schedOp = *pos;
-        int minStripeHeight = (prevOp != nullptr) ? prevOp->Kernel()->Stride().y : 1;
         const auto ofm = schedOp->OFM();
         const auto &ofmShape = ofm->SliceShape();
+        int minStripeHeight = 1;
+        if ( prevOp )
+        {
+            // Accumulator keep decomposed ops have special shape requirements and can't currently be striped
+            const bool isNextAccKeep = prevOp->AccumulatorMode().source == AccumulatorSource::Acc;
+            const bool isAccKeep = schedOp->AccumulatorMode().source == AccumulatorSource::Acc;
+            minStripeHeight = isNextAccKeep || isAccKeep ? ofmShape.Height() : prevOp->Kernel()->Stride().y;
+        }
         Shape minStripe = Shape::PadAxes(ofmShape, 3, 1).WithHeight(minStripeHeight);
         auto cost = CreateSchedulerOpInfo(schedOp.get(), minStripe);
         if ( ofmShape )
