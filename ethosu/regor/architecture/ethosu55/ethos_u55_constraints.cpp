@@ -364,6 +364,7 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
     {
         if ( query->ifm[0].shape.ElementsWH() == 1 )
         {
+            LOG_TRACE1("{} has unsupported IFM shape\n", OpTypeToString(opType));
             return QueryResult::Unsupported;
         }
         if ( req )
@@ -378,6 +379,7 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
         // Check for supported weight format
         if ( query && query->weightFormat != WeightFormat::Default )
         {
+            LOG_TRACE1("{} has unsupported weights format\n", OpTypeToString(opType));
             return QueryResult::Unsupported;
         }
         if ( req )
@@ -418,6 +420,7 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
     auto npuOp = _arch->GetHWOp(opType);
     if ( npuOp == EthosU55NpuOp::None )
     {
+        LOG_TRACE1("{} has unsupported type\n", OpTypeToString(opType));
         return QueryResult::Unsupported;
     }
     else if ( npuOp == EthosU55NpuOp::Dma )
@@ -437,6 +440,7 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
     {
         if ( query->weightFormat != WeightFormat::Default )
         {
+            LOG_TRACE1("{} has unsupported weights format\n", OpTypeToString(opType));
             return QueryResult::Unsupported;
         }
     }
@@ -486,8 +490,9 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
     }
 
     // Validate DataTypes
-    if ( typeInfo && !SupportedDtypes(opType, query->ifm[0].type, query->ifm[1].type, query->ofm.type) )
+    if ( typeInfo && !SupportedDtypes(opType, ifmType, ifm2Type, ofmType) )
     {
+        LOG_TRACE1("{} has unsupported data types\n", OpTypeToString(opType));
         return QueryResult::Unsupported;
     }
 
@@ -533,6 +538,7 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
         // TODO MLBEDSW-10668: Transpose-implementation does not support large-axis decomposition
         if ( req && req->decomposeProps.Any(ArchProperty::TensorAxis) )
         {
+            LOG_TRACE1("{} has unsupported tensor axis\n", OpTypeToString(opType));
             return QueryResult::Unsupported;
         }
         // TODO MLBEDSW-10668: channel-axis for 32-bit NWHC-transpose is constrained to 14-bits
@@ -540,6 +546,7 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
         if ( (shapeInfo && typeInfo) && (query->ifm[0].type == DataType::Int32) &&
              (query->transposeMask == TransposeType::NWHC) && (query->ifm[0].shape.Depth() > TRANSPOSE_32_MAX_CHANNEL) )
         {
+            LOG_TRACE1("{} has unsupported transpose mask\n", OpTypeToString(opType));
             return QueryResult::Unsupported;
         }
         // Validate supported transpose-masks
@@ -565,6 +572,7 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
     {
         if ( !IsNone(query->transposeMask) )
         {
+            LOG_TRACE1("{} has unsupported transpose mask\n", OpTypeToString(opType));
             return QueryResult::Unsupported;
         }
     }
@@ -572,6 +580,7 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
     // reverseType::W and reverseType::H are supported
     if ( Flags<ReverseType>(query->reverseMask).Unset(ReverseType::H, ReverseType::W) != ReverseType::None )
     {
+        LOG_TRACE1("{} has unsupported reverse mask\n", OpTypeToString(opType));
         return QueryResult::Unsupported;
     }
 
@@ -584,6 +593,7 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
             {
                 if ( !SupportedZeroPoint(zp, TensorUsage::IFM0, ifmType, opType) )
                 {
+                    LOG_TRACE1("{} IFM0 has unsupported input zero point\n", OpTypeToString(opType));
                     return QueryResult::Unsupported;
                 }
             }
@@ -594,6 +604,7 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
             {
                 if ( !SupportedZeroPoint(zp, TensorUsage::IFM1, ifm2Type, opType) )
                 {
+                    LOG_TRACE1("{} IFM1 has unsupported input zero point\n", OpTypeToString(opType));
                     return QueryResult::Unsupported;
                 }
             }
@@ -604,6 +615,7 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
             {
                 if ( !SupportedZeroPoint(zp, TensorUsage::OFM, ofmType, opType) )
                 {
+                    LOG_TRACE1("{} OFM has unsupported input zero point\n", OpTypeToString(opType));
                     return QueryResult::Unsupported;
                 }
             }
@@ -656,6 +668,7 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
 
         if ( opType == OpType::AvgPool && (k->Size().x > 8 || k->Size().y > 8) && !k->Padding().IsZero() )
         {
+            LOG_TRACE1("{} has unsupported kernel\n", OpTypeToString(opType));
             return QueryResult::Unsupported;
         }
     }

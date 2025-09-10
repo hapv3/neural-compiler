@@ -304,7 +304,10 @@ void SchedulerPacking::PrePackOperations()
             // HasRequirements at this point should result in failure
             if ( result.Any(QueryResult::HasRequirements) && oReq.req.Any(ArchRequirement::Decompose) )
             {
-                throw std::runtime_error("Non-passthrough operation could not run on NPU.");
+                LOG_TRACE1("{} is not on NPU ({}, {}, {})\n", OpTypeToString(schedOp->Type()), result.ToString(),
+                    oReq.req.ToString(), oReq.decomposeProps.ToString());
+                throw std::runtime_error(
+                    fmt::format("Non-passthrough operation ({}) could not run on NPU", OpTypeToString(schedOp->Type())));
             }
             else
             {
@@ -313,7 +316,9 @@ void SchedulerPacking::PrePackOperations()
         }
         else
         {
-            throw std::runtime_error("Non-passthrough operation could not run on NPU.");
+            LOG_TRACE1("{} is not on NPU ({})\n", OpTypeToString(schedOp->Type()), result.ToString());
+            throw std::runtime_error(
+                fmt::format("Non-passthrough operation ({}) could not run on NPU", OpTypeToString(schedOp->Type())));
         }
 
         // Examine elementwise and set a primary path for cascading.
