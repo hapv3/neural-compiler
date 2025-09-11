@@ -49,6 +49,7 @@ private:
     bool ConstraintArgMaxDepth(const Operation *op);
     bool ConstraintArgMaxAxis(const Operation *op);
     bool ConstraintTranspose(const Operation *op);
+    bool ConstraintTCStrides(const Operation *op);
     bool ConstraintResize(const Operation *op);
 };
 }  // namespace regor
