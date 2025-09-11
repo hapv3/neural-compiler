@@ -205,6 +205,12 @@ bool EthosU55Constraints::SupportedDtypes(OpType opType, DataType ifmType, DataT
         return false;
     }
 
+    if ( IsActivation(opType) && ifmType == DataType::Int16 && ofmType == DataType::Int32 )
+    {
+        // Int16 activation functions do not support Int32 output.
+        return false;
+    }
+
     if ( _arch->UseAvgPoolNop(opType) || opType == OpType::Rescale )
     {
         // TODO MLBEDSW-10667: The rules for UseAvgPoolNop are not the same as for a Pooling operation, so skip checks
