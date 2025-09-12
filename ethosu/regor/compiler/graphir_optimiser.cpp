@@ -2516,6 +2516,38 @@ Operation *GraphIrOptimiser::RewriteNonConstWeightOp(Graph *const, Operation *co
     return operation;
 }
 
+Operation *GraphIrOptimiser::ReplaceBroadcastWithAdd(Graph *const, Operation *const operation)
+{
+    if ( IsBinaryElementwise(operation->Type()) && !_constraints->SupportsDoubleBroadcast() )
+    {
+        auto *ifm0Conn = operation->Input(TensorUsage::IFM0);
+        auto *ifm1Conn = operation->Input(TensorUsage::IFM1);
+        auto *ofmConn = operation->Output(TensorUsage::OFM);
+        auto ofmShape = ofmConn->shape;
+        if ( ifm0Conn->shape != ofmShape && ifm1Conn->shape != ofmShape )
+        {
+            std::shared_ptr<Tensor> newTensor = ofmConn->tensor->Clone();
+            newTensor->ChangeType(ifm0Conn->tensor->Type());
+            newTensor->SetName(fmt::format("{}_broadcasted", ifm0Conn->tensor->Name()));
+            newTensor->SetStorageShape(ofmShape);
+
+            auto broadcastOp = std::make_shared<Operation>(OpType::Add);
+            broadcastOp->ConnectInput(TensorUsage::IFM1, ifm0Conn->tensor);
+
+            std::vector<int8_t> zeroVector(DataTypeStorageSizeBytes(ifm0Conn->tensor->Type(), ofmShape.Elements()), 0);
+            auto zeroBuffer = std::make_shared<Buffer>(std::move(zeroVector));
+            auto constTensor = CreateConstTensor("const_zero", ifm0Conn->tensor->Type(), zeroBuffer, &ofmShape);
+
+            broadcastOp->ConnectInput(TensorUsage::IFM0, constTensor);
+            broadcastOp->ConnectOutput(TensorUsage::OFM, newTensor);
+
+            operation->ConnectInput(TensorUsage::IFM0, newTensor).Set(ofmShape);
+            RecordOptimisation(*operation, broadcastOp.get());
+        }
+    }
+    return operation;
+}
+
 // Move Split/slice op to consumer
 void GraphIrOptimiser::MoveToConsumer(const Operation *const operation, Operation *const cons)
 {

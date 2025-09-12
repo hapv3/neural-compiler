@@ -35,6 +35,7 @@ public:
     bool SupportsNegativeStrides() override { return false; };
     bool SupportsElementwiseLeakyRelu(bool quantized, DataType type) override { return true; };
     bool SupportsRescale(DataType fromType, DataType toType) override;
+    bool SupportsDoubleBroadcast() override { return true; };
     Flags<QueryResult> OperatorQuery(OpType opType, const ArchOperatorQuery *query, ArchRequirements *req) override;
     bool SupportedZeroPoint(int64_t zp, TensorUsage usage, DataType dtype, OpType opType) override;
 
