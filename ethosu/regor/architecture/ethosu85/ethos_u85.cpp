@@ -897,7 +897,8 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU85::FindBlockConfig(OpType opTyp
     LOG_INDENT(Logging::Out);
 
     constexpr int OFMSplitDepth = 16;  // Specific to this architecture
-    assert(query.ifmBits > 0 && (query.ifmBits <= 32 || (query.ifmBits == 64 && (opType == OpType::Rescale || opType == OpType::MemoryCopy))));
+    assert(query.ifmBits > 0 &&
+           (query.ifmBits <= 32 || (query.ifmBits == 64 && (opType == OpType::Rescale || opType == OpType::MemoryCopy || opType == OpType::NullPool))));
     assert(query.ofmShape.Size() > 2 && "Insufficient dimensions to search for block config");
     assert(query.ofmShape.Elements() > 0);
     assert(query.kernel != nullptr);
@@ -927,7 +928,8 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU85::FindBlockConfig(OpType opTyp
     }
 
     const bool sparse = query.weightFormat & WeightFormat::Sparse2_4;
-    const bool isPartKernel = (npuOp == EthosU85NpuOp::Convolution) && ChooseKernelFirst(ifmShape, query.kernel, sparse);
+    const bool weightsIfm2 = query.ifmShape[1] && query.accSource != ArchAccumulatorSource::Ifm2;
+    const bool isPartKernel = (npuOp == EthosU85NpuOp::Convolution && !weightsIfm2) && ChooseKernelFirst(ifmShape, query.kernel, sparse);
 
     const Shape ofmUBlock = FindUBlock(opType, query, isPartKernel);
     if ( !ofmUBlock )

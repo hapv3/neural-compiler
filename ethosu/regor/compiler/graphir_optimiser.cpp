@@ -2459,24 +2459,6 @@ Operation *GraphIrOptimiser::RewriteNonConstWeightOp(Graph *const, Operation *co
         RecordOptimisation(*operation, padOp.get());
     }
 
-    // Broadcast bias tensor if needed
-    Shape broadcastBiasShape(1, 1, ofmConn->shape.Width(), ofmConn->shape.Depth());
-    if ( broadcastBiasShape != biasConn->shape )
-    {
-        std::shared_ptr<Tensor> newBiasTensor = ofmConn->tensor->Clone();
-        newBiasTensor->SetName(fmt::format("{}_broadcasted", biasConn->tensor->Name()));
-        newBiasTensor->SetStorageShape(broadcastBiasShape);
-
-        auto broadcastOp = std::make_shared<Operation>(OpType::Add);
-        broadcastOp->ConnectInput(TensorUsage::IFM0, biasConn->tensor);
-        broadcastOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_zero", 0));
-        broadcastOp->ConnectOutput(TensorUsage::OFM, newBiasTensor);
-
-        // Replace bias with new broadcasted bias tensor
-        operation->ConnectInput(TensorUsage::Scales, newBiasTensor);
-        RecordOptimisation(*operation, broadcastOp.get());
-    }
-
     return operation;
 }
 

@@ -870,6 +870,54 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeNonConstWeights
     int ofmBlockWidth = opConfig->OptimalStripeGranule().x;
     int ofmBlockDepth = opConfig->OptimalDepthGranule();
 
+    // Broadcast bias tensor to acc block size
+    auto zeroTensor = CreateScalarConstTensor(arch, int32_t(0));
+    zeroTensor->SetInternalName("const_zero");
+    Shape broadcastBiasShape(1, 1, ofmBlockWidth, ofmDepth);
+    auto broadcastBiasTensor = std::make_shared<SchedulerTensor>(biasConn->Type(), broadcastBiasShape);
+    broadcastBiasTensor->SetInternalName(fmt::format("{}_broadcasted", biasConn->tensor->Name()).c_str());
+    broadcastBiasTensor->memArea = arch->FeatureMapMemory();
+    auto broadcastBiasOp = std::make_unique<SchedulerOperation>(OpType::Add);
+    auto broadcastBiasIfmConn = broadcastBiasOp->ConnectInput(TensorUsage::IFM0, biasConn->tensor);
+    broadcastBiasOp->ConnectInput(TensorUsage::IFM1, zeroTensor);
+    auto broadcastBiasOfmConn = broadcastBiasOp->ConnectOutput(TensorUsage::OFM, broadcastBiasTensor);
+    if ( broadcastBiasTensor->dataType == DataType::Int64 )
+    {
+        // There is no broadcasting int64 operation
+        // We want to do int64 [1, 1, 1, C] => [1, 1, OW, OC] broadcast in WC
+        // We need to do int32 [1, 1, C, 2] => [1, OW, OC, 2] broadcast in HW (using add 0),
+        // with the int64 value as two int32 values
+        broadcastBiasIfmConn->SetType(DataType::Int32);
+        broadcastBiasIfmConn->shape = broadcastBiasIfmConn->shape.Erase(0).Insert(-1, 2);
+        broadcastBiasOfmConn->SetType(DataType::Int32);
+        broadcastBiasOfmConn->shape = broadcastBiasOfmConn->shape.Erase(0).Insert(-1, 2);
+    }
+    result.push_back(std::move(broadcastBiasOp));
+
+    // If the data type of the weights differ from the ifm data type
+    // we need to convert them
+    auto weightsTensor = weightsConn->tensor;
+    auto weightsQuantization = weightsConn->quantization;
+    if ( weightsConn->Type() != ifmConn->Type() )
+    {
+        assert(weightsConn->Type() == DataType::Int8);
+        assert(weightsQuantization.zeroPoints.size() == 1);
+        auto zp = weightsQuantization.zeroPoints[0];
+        auto zeroPointTensor = CreateScalarConstTensor(arch, int8_t(zp));
+        zeroPointTensor->SetInternalName(fmt::format("const_{}_zp", weightsConn->tensor->Name()).c_str());
+        weightsTensor = std::make_shared<SchedulerTensor>(ifmConn->Type(), weightsTensor->storageShape);
+        weightsTensor->SetInternalName(fmt::format("{}_zp_adjusted", weightsConn->tensor->Name()).c_str());
+        weightsTensor->memArea = arch->FeatureMapMemory();
+        auto subZpOp = std::make_unique<SchedulerOperation>(OpType::Sub);
+        subZpOp->ConnectInput(TensorUsage::IFM0, weightsConn->tensor);
+        subZpOp->ConnectInput(TensorUsage::IFM1, zeroPointTensor);
+        subZpOp->ConnectOutput(TensorUsage::OFM, weightsTensor);
+        weightsQuantization.zeroPoints[0] = 0;
+        auto subOps = DecomposeElementwise(arch, std::move(subZpOp));
+        result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
+    }
+
+    // Decompose into blocks
     for ( int ofmY = 0; ofmY < ofmHeight; ofmY++ )
     {
         int ifmY = ofmY * stride.y;
@@ -880,17 +928,18 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeNonConstWeights
             {
                 auto validOfmDepth = std::min(ofmDepth - ofmZ, ofmBlockDepth);
                 // Preload the bias using a NullPool
-                assert(biasConn->Type() == DataType::Int32 || biasConn->Type() == DataType::Int48);
+                assert(broadcastBiasTensor->dataType == DataType::Int32 || broadcastBiasTensor->dataType == DataType::Int64);
                 auto biasOp = std::make_unique<SchedulerOperation>(OpType::NullPool);
                 biasOp->SetAccumulatorMode({AccumulatorSource::Reset, false});
                 biasOp->SetKernel(Kernel::UnitKernel());
-                auto *biasIfmConn = biasOp->ConnectInput(TensorUsage::IFM, biasConn->tensor);
+                auto *biasIfmConn = biasOp->ConnectInput(TensorUsage::IFM, broadcastBiasTensor);
                 biasIfmConn->slice.shape = Shape(1, 1, std::min(ofmWidth - ofmX, ofmBlockWidth), validOfmDepth);
                 biasIfmConn->slice.offset = Shape(0, 0, ofmX, ofmZ);
                 // Op must have an output to maintain schedule connectivity, even though
                 // there is no output from NullPool.
                 auto *biasOfmConn = biasOp->ConnectOutput(TensorUsage::OFM, ofmConn->tensor);
                 biasOfmConn->slice.shape = biasIfmConn->slice.shape;
+                biasOfmConn->slice.offset = biasIfmConn->slice.shape.WithZeros();
                 result.push_back(std::move(biasOp));
 
                 for ( int ky = 0; ky < kernelH; ky++ )
@@ -910,7 +959,7 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeNonConstWeights
                         subIfmConn->quantization = ifmConn->quantization;
 
                         // Connect Weight tensor as IFM1 with correct slicing
-                        auto *subWeightsConn = subOp->ConnectInput(TensorUsage::IFM1, weightsConn->tensor);
+                        auto *subWeightsConn = subOp->ConnectInput(TensorUsage::IFM1, weightsTensor);
                         // Reshape Weights from [OC, KH, KW, IC] -> [1, 1, OC * KH * KW, IC]
                         subWeightsConn->shape = Shape(1, 1, weightsShape[0] * weightsShape[1] * weightsShape[2], weightsShape[3]);
                         // Use `slice.shape.width = validOfmDepth * kernelArea` together with `stepXY.x = kernelArea`
@@ -921,7 +970,7 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeNonConstWeights
                         // Step through the flattened width by kernelArea to jump between consecutive output channels
                         // while keeping the same (ky, kx)
                         subWeightsConn->stepXY.x = kernelArea;
-                        subWeightsConn->quantization = weightsConn->quantization;
+                        subWeightsConn->quantization = weightsQuantization;
 
                         // Connect OFM tensor with correct slicing
                         auto *subOfmConn = subOp->ConnectOutput(TensorUsage::OFM, ofmConn->tensor);
