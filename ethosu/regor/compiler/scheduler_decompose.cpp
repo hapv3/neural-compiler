@@ -1239,6 +1239,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
             auto subWeightsConn = subOp->ConnectInput(TensorUsage::Weights, subWeights);
             subWeightsConn->shape = Shape(1, kh, kw, subOfmDepth);
             subWeightsConn->quantization = SliceQ(subWeightsConn->quantization, multiplier, depthMultiplier);
+            subWeights->storageShape = subWeightsConn->shape;  // Required for further kernel-stride decomposition
             subWeights->bufferView = subWeights->bufferView.Reshape(subWeightsConn->shape);
             if ( biasShape.Depth() > 1 )
             {
