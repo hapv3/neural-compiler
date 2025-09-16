@@ -88,6 +88,12 @@ PerformanceResult NetworkPerformance::Measure(Schedule *schedule, OptimiserDatab
             "ifm_slice",
             "ifm2_slice",
             "ofm_slice",
+            "ifm_offset",
+            "ifm2_offset",
+            "ofm_offset",
+            "ifm_strides",
+            "ifm2_strides",
+            "ofm_strides",
             "ifm_stripe",
             "ifm2_stripe",
             "ofm_stripe",
@@ -116,8 +122,8 @@ PerformanceResult NetworkPerformance::Measure(Schedule *schedule, OptimiserDatab
                 "ifm2_pre_buffering",
                 "ifm_buffering",
                 "ifm2_buffering",
-                "reverse_type",
                 "transpose_type",
+                "reverse_type",
                 "time_index",
                 "cascade",
                 "weight_format",
@@ -316,6 +322,15 @@ void NetworkPerformance::AddToDatabase(const PerformanceResult &perf, SchedulerO
     shapeToStrings(ReshapeToNHWC(schedOp->IFM(0)->slice.shape).ToList<int>());
     shapeToStrings(ReshapeToNHWC(schedOp->TryIFM(1) ? schedOp->IFM(1)->slice.shape : Shape()).ToList<int>());
     shapeToStrings(ReshapeToNHWC(schedOp->OFM()->slice.shape).ToList<int>());
+    // Slice offset
+    shapeToStrings(ReshapeToNHWC(schedOp->IFM(0)->slice.shape).ToList<int>());
+    shapeToStrings(ReshapeToNHWC(schedOp->TryIFM(1) ? schedOp->IFM(1)->slice.shape : Shape()).ToList<int>());
+    shapeToStrings(ReshapeToNHWC(schedOp->OFM()->slice.shape).ToList<int>());
+    // Slice strides
+    shapeToStrings(ReshapeToNHWC(Shape(schedOp->IFM(0)->stepXY.y, schedOp->IFM(0)->stepXY.x, 1)).ToList<int>());
+    shapeToStrings(
+        ReshapeToNHWC(schedOp->TryIFM(1) ? Shape(schedOp->IFM(0)->stepXY.y, schedOp->IFM(0)->stepXY.x, 1) : Shape()).ToList<int>());
+    shapeToStrings(ReshapeToNHWC(Shape(schedOp->OFM()->stepXY.y, schedOp->OFM()->stepXY.x, 1)).ToList<int>());
     // Stripe shapes
     shapeToStrings(ReshapeToNHWC(cost->stripeInput[0]).ToList<int>());
     shapeToStrings(ReshapeToNHWC(schedOp->TryIFM(1) ? cost->stripeInput[1] : Shape()).ToList<int>());
