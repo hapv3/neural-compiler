@@ -26,3 +26,4 @@ class BuiltinOptions2(object):
     ReduceWindowOptions = 20
     StableHLOCompositeOptions = 21
     StablehloShiftLeftOptions = 22
+    StablehloCaseOptions = 23
