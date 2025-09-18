@@ -2393,6 +2393,11 @@ Operation *GraphIrOptimiser::RewriteNonConstWeightOp(Graph *const, Operation *co
     {
         // Translate the kernel padding into a Pad op parameter tensor
         std::vector<int> padVec = {0, 0, padding.Top(), padding.Bottom(), padding.Left(), padding.Right(), 0, 0};
+        if ( operation->Type() == OpType::Conv3D )
+        {
+            assert(padVec.size() >= 2);
+            padVec.insert(padVec.begin() + 2, {padding.Near(), padding.Far()});
+        }
         Shape padParamShape = Shape(padVec.size());
         auto buffer = std::make_shared<Buffer>(std::move(padVec));
         auto paddingParams = CreateConstTensor("padding_params", DataType::Int32, buffer, &padParamShape);
@@ -2401,6 +2406,10 @@ Operation *GraphIrOptimiser::RewriteNonConstWeightOp(Graph *const, Operation *co
         auto &ifmShape = ifmConn->shape;
         Shape paddedIfmShape = ifmShape.WithHW((ifmShape.Height() + padding.Top() + padding.Bottom()),
             (ifmShape.Width() + padding.Left() + padding.Right()));
+        if ( operation->Type() == OpType::Conv3D )
+        {
+            paddedIfmShape[-4] += padding.Near() + padding.Far();
+        }
         const auto intermediateTensor = std::make_shared<Tensor>("padded_ifm", ifmConn->tensor->Type(), paddedIfmShape);
 
         // Create Pad operation
@@ -2417,7 +2426,7 @@ Operation *GraphIrOptimiser::RewriteNonConstWeightOp(Graph *const, Operation *co
         attr->pad_const = ifmConn->quantization.zeroPoints[0];
 
         // Remove kernel padding and replace IFM with the padded intermediate tensor
-        operation->SetKernel(std::make_unique<Kernel>(operation->Kernel()->WithPadding({0, 0, 0, 0})));
+        operation->SetKernel(std::make_unique<Kernel>(operation->Kernel()->WithPadding({})));
         operation->ConnectInput(TensorUsage::IFM, intermediateTensor);
         RecordOptimisation(*operation, padOp.get());
     }
