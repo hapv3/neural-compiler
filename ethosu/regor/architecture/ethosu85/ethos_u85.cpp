@@ -463,7 +463,7 @@ void ArchEthosU85::SetupOfmUBlockToOpTable()
     // clang-format on
 }
 
-bool ArchEthosU85::IsUBlockValid(const OpType opType, int ifmBits, const Shape &ofmUBlock, bool hasIfm2, bool depthFirst1x1)
+bool ArchEthosU85::IsUBlockValid(const OpType opType, int ifmBits, const Shape &ofmUBlock, bool hasIfm2, bool depthFirst1x1, bool outputEnabled)
 {
     EthosU85NpuOp npuOp = GetHWOp(opType);
     if ( npuOp == EthosU85NpuOp::None )
@@ -473,6 +473,8 @@ bool ArchEthosU85::IsUBlockValid(const OpType opType, int ifmBits, const Shape &
 
     if ( UseNullPool(opType, ifmBits) )
     {
+        // All ublocks supported for accumulator restore
+        if ( opType == OpType::NullPool && !outputEnabled ) return true;
         // Implemented by none pooling op with IFM set to int8 (not used by the operation) and
         // input instead handled by ArchAccumulatorSource::Ifm2
         ifmBits = 8;
@@ -521,13 +523,25 @@ Shape ArchEthosU85::FindUBlock(OpType opType, const ArchitectureConfigQuery &que
     const bool depthFirst1x1 = (query.kernel->Size().x == 1 && query.kernel->Size().y == 1) && !partKernel;
     assert(npuOp != EthosU85NpuOp::None);
 
+    if ( query.compatibleWithConfig )
+    {
+        auto config = static_cast<EthosU85OpConfig *>(query.compatibleWithConfig);
+        // If a compatible configuration is requested, return the OFM uBlock from the query if valid
+        if ( IsUBlockValid(opType, query.ifmBits, config->OfmUBlock(), !!query.ifmShape[1], depthFirst1x1, query.accOutputEnabled) )
+        {
+            return config->OfmUBlock();
+        }
+        LOG_DEBUG("Requested OFM microblock {} is not valid for the {} operation\n", config->OfmUBlock().ToString(), OpTypeToString(opType));
+        return {};
+    }
+
     int bestWaste = std::numeric_limits<int>::max();
     Shape bestUblk;
 
     for ( int i = 0; i < _nOfmUBlocks; i++ )
     {
         const Shape &ublk = _ofmUBlocks[i];
-        if ( !IsUBlockValid(opType, query.ifmBits, ublk, !!query.ifmShape[1], depthFirst1x1) )
+        if ( !IsUBlockValid(opType, query.ifmBits, ublk, !!query.ifmShape[1], depthFirst1x1, query.accOutputEnabled) )
         {
             continue;
         }

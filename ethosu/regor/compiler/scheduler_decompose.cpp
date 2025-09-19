@@ -282,10 +282,10 @@ bool CanDecompose(Architecture *, const SchedulerOperation *schedOp)
     return false;
 }
 
-typedef std::function<std::vector<std::unique_ptr<SchedulerOperation>>(Architecture *, std::unique_ptr<SchedulerOperation>)> DecomposeFunc;
+typedef std::function<std::vector<std::unique_ptr<SchedulerOperation>>(DecompositionContext &, std::unique_ptr<SchedulerOperation>)> DecomposeFunc;
 
-static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeBlocksElementwise(
-    Architecture *arch, std::unique_ptr<SchedulerOperation> op, Shape &blockShape, const DecomposeFunc &doDecompose)
+static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeBlocksElementwise(DecompositionContext &ctx,
+    std::unique_ptr<SchedulerOperation> op, Shape &blockShape, const DecomposeFunc &doDecompose)
 {
     std::vector<std::unique_ptr<SchedulerOperation>> result;
     const auto BH = blockShape.Height();
@@ -333,7 +333,7 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeBlocksElementwi
                 }
                 auto *subOfmConn = subOp->OFM();
                 subOfmConn->slice = std::move(newOfmSlice);
-                auto subOps = doDecompose(arch, std::move(subOp));
+                auto subOps = doDecompose(ctx, std::move(subOp));
                 result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
             }
         }
@@ -342,8 +342,8 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeBlocksElementwi
 }
 
 // Decompose to sub-operations in slices along the specified axis.
-static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeLargeAxis(int axis, int sliceSize, Architecture *arch,
-    std::unique_ptr<SchedulerOperation> op, const DecomposeFunc &doDecompose)
+static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeLargeAxis(int axis, int sliceSize,
+    DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op, const DecomposeFunc &doDecompose)
 {
     std::vector<std::unique_ptr<SchedulerOperation>> result;
     auto *ofmConn = op->Output(TensorUsage::OFM);
@@ -379,7 +379,7 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeLargeAxis(int a
         {
             subOp->Input(TensorUsage::IFM1)->slice = SliceFunc(ifm2Conn, axis, sliceSize, i);
         }
-        auto subOps = doDecompose(arch, std::move(subOp));
+        auto subOps = doDecompose(ctx, std::move(subOp));
         result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
     }
     return result;
@@ -388,25 +388,25 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeLargeAxis(int a
 // Decompose to sub-operations with size 1 along the leading <dimension> axes.
 // Used for the batch dimension, and for the leading N-3 dimensions for elementwise operations.
 static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeLeadingDimensions(
-    int dimensions, Architecture *arch, std::unique_ptr<SchedulerOperation> op, const DecomposeFunc &doDecompose)
+    int dimensions, DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op, const DecomposeFunc &doDecompose)
 {
     int axis = dimensions - 1;
     // Use a callback-mechanism to recurse over all leading dimensions
-    DecomposeFunc cb = [axis, &doDecompose](Architecture *_arch, std::unique_ptr<SchedulerOperation> _op)
+    DecomposeFunc cb = [axis, &doDecompose](DecompositionContext &ctx_, std::unique_ptr<SchedulerOperation> op_)
     {
         if ( axis > 0 )
         {
-            return DecomposeLeadingDimensions(axis, _arch, std::move(_op), doDecompose);
+            return DecomposeLeadingDimensions(axis, ctx_, std::move(op_), doDecompose);
         }
-        return doDecompose(_arch, std::move(_op));
+        return doDecompose(ctx_, std::move(op_));
     };
 
-    return DecomposeLargeAxis(axis, 1, arch, std::move(op), cb);
+    return DecomposeLargeAxis(axis, 1, ctx, std::move(op), cb);
 }
 
 // Handle dilation by decomposing to suboperations with input stride = dilation and dilation 1
 static std::vector<std::unique_ptr<SchedulerOperation>>
-HandleDilation(Architecture *arch, std::unique_ptr<SchedulerOperation> op, const DecomposeFunc &doDecompose)
+HandleDilation(DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op, const DecomposeFunc &doDecompose)
 {
     std::vector<std::unique_ptr<SchedulerOperation>> result;
     auto *ofmConn = op->Output(TensorUsage::OFM);
@@ -456,7 +456,7 @@ HandleDilation(Architecture *arch, std::unique_ptr<SchedulerOperation> op, const
                         subOfmConn->slice.offset.Height(), subOfmConn->slice.offset.Width());
                     subIfm2Conn->stepXY = subOfmConn->stepXY;
                 }
-                auto subOps = doDecompose(arch, std::move(subOp));
+                auto subOps = doDecompose(ctx, std::move(subOp));
                 result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
             }
         }
@@ -603,8 +603,8 @@ static Shape NewOfmBlockShape(Architecture *arch, SchedulerOperation *op)
 }
 
 // Decompose into smaller blocks
-static std::vector<std::unique_ptr<SchedulerOperation>>
-DecomposeBlocks(Architecture *arch, std::unique_ptr<SchedulerOperation> op, Shape &blockShape, DecomposeFunc doDecompose)
+static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeBlocks(
+    DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op, Shape &blockShape, DecomposeFunc doDecompose)
 {
     std::vector<std::unique_ptr<SchedulerOperation>> result;
     auto BH = blockShape.Height();
@@ -671,7 +671,7 @@ DecomposeBlocks(Architecture *arch, std::unique_ptr<SchedulerOperation> op, Shap
 
                 if ( subOp->Output(TensorUsage::OFM)->SliceShape().Elements() )
                 {
-                    auto subOps = doDecompose(arch, std::move(subOp));
+                    auto subOps = doDecompose(ctx, std::move(subOp));
                     result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
                 }
             }
@@ -686,7 +686,7 @@ DecomposeBlocks(Architecture *arch, std::unique_ptr<SchedulerOperation> op, Shap
 
 // Handle large strides by decomposing to suboperations with saved accumulators
 static std::vector<std::unique_ptr<SchedulerOperation>>
-DecomposeForStrides(Architecture *arch, std::unique_ptr<SchedulerOperation> op, DecomposeFunc doDecompose)
+DecomposeForStrides(DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op, DecomposeFunc doDecompose)
 {
     std::vector<std::unique_ptr<SchedulerOperation>> result;
 
@@ -803,7 +803,7 @@ DecomposeForStrides(Architecture *arch, std::unique_ptr<SchedulerOperation> op, 
                 subWeightsConn->shape = weightSlice.shape;
             }
             subOp->SetAccumulatorMode(accMode);
-            auto subOps = doDecompose(arch, std::move(subOp));
+            auto subOps = doDecompose(ctx, std::move(subOp));
             result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
             didSendOne = true;
         }
@@ -829,7 +829,8 @@ DecomposeForStrides(Architecture *arch, std::unique_ptr<SchedulerOperation> op, 
  * A convolution with a KHxKW kernel is decomposed into KH*KW convolutions with 1x1 kernels which
  * act on one row and one channel at a time.
  */
-static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeNonConstWeights(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
+static std::vector<std::unique_ptr<SchedulerOperation>>
+DecomposeNonConstWeights(DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op)
 {
     std::vector<std::unique_ptr<SchedulerOperation>> result;
 
@@ -842,6 +843,8 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeNonConstWeights
     Shape ofmShape = ofmConn->SliceShape();
     Shape weightsShape = weightsConn->SliceShape();
     Shape biasShape = biasConn->SliceShape();
+    // Reshaped Weights from [OC, KH, KW, IC] -> [1, 1, OC * KH * KW, IC]
+    Shape reshapedWeightsShape = Shape(1, 1, weightsShape[0] * weightsShape[1] * weightsShape[2], weightsShape[3]);
     int ofmHeight = ofmShape.Height();
     int ofmWidth = ofmShape.Width();
     int ofmDepth = ofmShape.Depth();
@@ -857,6 +860,7 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeNonConstWeights
     // Block config query, biasing ofm block towards width as height and depth has to be 1
     regor::ArchitectureConfigQuery qConfig{};
     qConfig.ifmShape[0] = ifmShape.WithHeight(1);
+    qConfig.ifmShape[1] = reshapedWeightsShape;
     qConfig.ofmShape = ofmShape.WithHeight(1);
     qConfig.ifmBits = DataTypeSizeBits(ifmConn->Type());
     qConfig.ofmBits = DataTypeSizeBits(ofmConn->Type());
@@ -866,17 +870,18 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeNonConstWeights
     qConfig.ifmResampling = ArchResampling::None;
     qConfig.transpose = TransposeType::None;
     qConfig.ofmFormat = TensorFormat::NHWC;
-    auto opConfig = arch->GetOpConfig(op->Type(), qConfig);
+    qConfig.accSource = ArchAccumulatorSource::Acc;
+    std::shared_ptr<ArchitectureOpConfig> opConfig = ctx.arch->GetOpConfig(OpType::MatMul, qConfig);
     int ofmBlockWidth = opConfig->OptimalStripeGranule().x;
     int ofmBlockDepth = opConfig->OptimalDepthGranule();
 
     // Broadcast bias tensor to acc block size
-    auto zeroTensor = CreateScalarConstTensor(arch, int32_t(0));
+    auto zeroTensor = CreateScalarConstTensor(ctx.arch, int32_t(0));
     zeroTensor->SetInternalName("const_zero");
     Shape broadcastBiasShape(1, 1, ofmBlockWidth, ofmDepth);
     auto broadcastBiasTensor = std::make_shared<SchedulerTensor>(biasConn->Type(), broadcastBiasShape);
     broadcastBiasTensor->SetInternalName(fmt::format("{}_broadcasted", biasConn->tensor->Name()).c_str());
-    broadcastBiasTensor->memArea = arch->FeatureMapMemory();
+    broadcastBiasTensor->memArea = ctx.arch->FeatureMapMemory();
     auto broadcastBiasOp = std::make_unique<SchedulerOperation>(OpType::Add);
     auto broadcastBiasIfmConn = broadcastBiasOp->ConnectInput(TensorUsage::IFM0, biasConn->tensor);
     broadcastBiasOp->ConnectInput(TensorUsage::IFM1, zeroTensor);
@@ -903,17 +908,17 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeNonConstWeights
         assert(weightsConn->Type() == DataType::Int8);
         assert(weightsQuantization.zeroPoints.size() == 1);
         auto zp = weightsQuantization.zeroPoints[0];
-        auto zeroPointTensor = CreateScalarConstTensor(arch, int8_t(zp));
+        auto zeroPointTensor = CreateScalarConstTensor(ctx.arch, int8_t(zp));
         zeroPointTensor->SetInternalName(fmt::format("const_{}_zp", weightsConn->tensor->Name()).c_str());
         weightsTensor = std::make_shared<SchedulerTensor>(ifmConn->Type(), weightsTensor->storageShape);
         weightsTensor->SetInternalName(fmt::format("{}_zp_adjusted", weightsConn->tensor->Name()).c_str());
-        weightsTensor->memArea = arch->FeatureMapMemory();
+        weightsTensor->memArea = ctx.arch->FeatureMapMemory();
         auto subZpOp = std::make_unique<SchedulerOperation>(OpType::Sub);
         subZpOp->ConnectInput(TensorUsage::IFM0, weightsConn->tensor);
         subZpOp->ConnectInput(TensorUsage::IFM1, zeroPointTensor);
         subZpOp->ConnectOutput(TensorUsage::OFM, weightsTensor);
         weightsQuantization.zeroPoints[0] = 0;
-        auto subOps = DecomposeElementwise(arch, std::move(subZpOp));
+        auto subOps = DecomposeElementwise(ctx, std::move(subZpOp));
         result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
     }
 
@@ -940,6 +945,8 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeNonConstWeights
                 auto *biasOfmConn = biasOp->ConnectOutput(TensorUsage::OFM, ofmConn->tensor);
                 biasOfmConn->slice.shape = biasIfmConn->slice.shape;
                 biasOfmConn->slice.offset = biasIfmConn->slice.shape.WithZeros();
+                // Add op configuration hint
+                ctx.opConfigCompatablility.emplace(*biasOp, opConfig);
                 result.push_back(std::move(biasOp));
 
                 for ( int ky = 0; ky < kernelH; ky++ )
@@ -961,7 +968,7 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeNonConstWeights
                         // Connect Weight tensor as IFM1 with correct slicing
                         auto *subWeightsConn = subOp->ConnectInput(TensorUsage::IFM1, weightsTensor);
                         // Reshape Weights from [OC, KH, KW, IC] -> [1, 1, OC * KH * KW, IC]
-                        subWeightsConn->shape = Shape(1, 1, weightsShape[0] * weightsShape[1] * weightsShape[2], weightsShape[3]);
+                        subWeightsConn->shape = reshapedWeightsShape;
                         // Use `slice.shape.width = validOfmDepth * kernelArea` together with `stepXY.x = kernelArea`
                         // which yields exactly validOfmDepth sampled positions after striding.
                         subWeightsConn->slice.shape = Shape(1, 1, validOfmDepth * kernelArea, kernelC);
@@ -981,8 +988,11 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeNonConstWeights
                         // Set accumulator mode according to these conditions:
                         //  * Always keep accumulators since they were reset during bias preloading
                         //  * Enable output if last kernel element
-                        AccumulatorControl accMode = {AccumulatorSource::Acc, (ky == kernelH - 1) && (kx == kernelW - 1)};
+                        bool enableOutput = (ky == kernelH - 1) && (kx == kernelW - 1);
+                        AccumulatorControl accMode = {AccumulatorSource::Acc, enableOutput};
                         subOp->SetAccumulatorMode(accMode);
+                        // Add op configuration hint
+                        ctx.opConfigCompatablility.emplace(*subOp, opConfig);
                         result.emplace_back(std::move(subOp));
                     }
                 }
@@ -993,7 +1003,7 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeNonConstWeights
     return result;
 }
 
-std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv2D(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
+std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv2D(DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op)
 {
     std::vector<std::unique_ptr<SchedulerOperation>> result;
     auto *ofmConn = op->Output(TensorUsage::OFM);
@@ -1008,33 +1018,33 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv2D(Architecture *a
     ifmSlice.Initialize(ifmShape.WithZeros().WithHW(-padding.Top(), -padding.Left()), ifmShape);
 
     ArchRequirements req{};
-    Flags<QueryResult> qResult = OperatorQuery(arch, op.get(), &req);
+    Flags<QueryResult> qResult = OperatorQuery(ctx.arch, op.get(), &req);
 
     if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::TensorDims) )
     {
-        return DecomposeLeadingDimensions(1, arch, std::move(op), DecomposeConv2D);
+        return DecomposeLeadingDimensions(1, ctx, std::move(op), DecomposeConv2D);
     }
-    if ( !NeedsDecompose(arch, op.get()) )
+    if ( !NeedsDecompose(ctx.arch, op.get()) )
     {
         UpdatePaddingAndIfmOffset(op.get());
         result.emplace_back(std::move(op));
         return result;
     }
-    if ( arch->Constraints()->SupportsAccumulatorSaveRestore() && qResult.Any(QueryResult::HasRequirements) &&
+    if ( ctx.arch->Constraints()->SupportsAccumulatorSaveRestore() && qResult.Any(QueryResult::HasRequirements) &&
          req.decomposeProps.Any(ArchProperty::NonConstantWeights) )
     {
-        return DecomposeNonConstWeights(arch, std::move(op));
+        return DecomposeNonConstWeights(ctx, std::move(op));
     }
     auto &dilation = kernel->Dilation();
     if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::KernelDilation) )
     {
-        return HandleDilation(arch, std::move(op), DecomposeConv2D);
+        return HandleDilation(ctx, std::move(op), DecomposeConv2D);
     }
     try
     {
-        if ( auto newBlockShape = NewOfmBlockShape(arch, op.get()) )
+        if ( auto newBlockShape = NewOfmBlockShape(ctx.arch, op.get()) )
         {
-            return DecomposeBlocks(arch, std::move(op), newBlockShape, DecomposeConv2D);
+            return DecomposeBlocks(ctx, std::move(op), newBlockShape, DecomposeConv2D);
         }
     }
     catch ( const DecompositionFailure & )
@@ -1044,10 +1054,10 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv2D(Architecture *a
         return result;
     }
 
-    if ( arch->Constraints()->SupportsAccumulatorSaveRestore() && req.decomposeProps.Any(ArchProperty::KernelStride) &&
-         op->Input(TensorUsage::Weights)->tensor->IsConstant() )
+    if ( ctx.arch->Constraints()->SupportsAccumulatorSaveRestore() &&
+         req.decomposeProps.Any(ArchProperty::KernelStride) && op->Input(TensorUsage::Weights)->tensor->IsConstant() )
     {
-        return DecomposeForStrides(arch, std::move(op), DecomposeConv2D);
+        return DecomposeForStrides(ctx, std::move(op), DecomposeConv2D);
     }
     // If we get here, decomposition has failed, the resulting operations will be executed on CPU
     UpdatePaddingAndIfmOffset(op.get());
@@ -1055,7 +1065,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv2D(Architecture *a
     return result;
 }
 
-std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv3D(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
+std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv3D(DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op)
 {
     std::vector<std::unique_ptr<SchedulerOperation>> result;
     auto *ofmConn = op->Output(TensorUsage::OFM);
@@ -1071,16 +1081,16 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv3D(Architecture *a
     ifmSlice.Initialize(ifmShape.WithZeros(), ifmShape);
 
     ArchRequirements req{};
-    Flags<QueryResult> qResult = OperatorQuery(arch, op.get(), &req);
+    Flags<QueryResult> qResult = OperatorQuery(ctx.arch, op.get(), &req);
 
     if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::TensorDims) )
     {
-        return DecomposeLeadingDimensions(1, arch, std::move(op), DecomposeConv3D);
+        return DecomposeLeadingDimensions(1, ctx, std::move(op), DecomposeConv3D);
     }
     const int OD = ofmSlice.shape[1];
     const int ID = ifmSlice.shape[1];
     const int KD = kernel->Size3D().z;
-    if ( (arch->Constraints()->SupportsAccumulatorSaveRestore() || KD == 1) && weightsConn->tensor->IsConstant() )
+    if ( (ctx.arch->Constraints()->SupportsAccumulatorSaveRestore() || KD == 1) && weightsConn->tensor->IsConstant() )
     {
         auto InitConnection = [](SchedulerConnection *dst, SchedulerConnection *src, int dOffset, int dSize)
         {
@@ -1146,7 +1156,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv3D(Architecture *a
                     // Setup SchedulerTensor for 0 input
                     ifm0->uid = GenerateUniqueId();
                     ifm0->dataType = subOpIfm->Type();
-                    ifm0->memArea = arch->ReadonlyMemory();
+                    ifm0->memArea = ctx.arch->ReadonlyMemory();
                     ifm0->format = TensorFormat::NHWC;
                     const auto bufSize = ifm0shape.Elements();
                     const auto &zeroPoints = subOpIfm->quantization.zeroPoints;
@@ -1172,7 +1182,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv3D(Architecture *a
                 subOpIfm->slice.offset = ifm0shape.WithZeros();
                 subOpIfm->slice.shape = ifm0shape;
 
-                auto subOps = DecomposeElementwise(arch, std::move(subOp));
+                auto subOps = DecomposeElementwise(ctx, std::move(subOp));
                 result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
             }
             else if ( conv2dSubOps.size() > 1 )
@@ -1215,7 +1225,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv3D(Architecture *a
             auto end = std::make_move_iterator(conv2dSubOps.end());
             for ( auto subOp = std::make_move_iterator(conv2dSubOps.begin()); subOp != end; ++subOp )
             {
-                auto subOps = DecomposeConv2D(arch, *subOp);
+                auto subOps = DecomposeConv2D(ctx, *subOp);
                 result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
             }
         }
@@ -1226,7 +1236,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv3D(Architecture *a
     return result;
 }
 
-std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
+std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op)
 {
     std::vector<std::unique_ptr<SchedulerOperation>> result;
     auto *ofmConn = op->Output(TensorUsage::OFM);
@@ -1245,11 +1255,11 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
     ifmSlice.Initialize(ifmShape.WithZeros().WithHW(-padding.Top(), -padding.Left()), ifmShape);
 
     ArchRequirements req{};
-    Flags<QueryResult> qResult = OperatorQuery(arch, op.get(), &req);
+    Flags<QueryResult> qResult = OperatorQuery(ctx.arch, op.get(), &req);
 
     if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::TensorDims) )
     {
-        return DecomposeLeadingDimensions(1, arch, std::move(op), DecomposeDepthwiseConv2D);
+        return DecomposeLeadingDimensions(1, ctx, std::move(op), DecomposeDepthwiseConv2D);
     }
 
     if ( ifmShape.Depth() < 1 ) throw DecompositionFailure("IFM has no depth");
@@ -1318,7 +1328,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
             subOfmConn->slice.offset = ofmShape.WithZeros().WithBatch(multiplier);
             subOfmConn->slice.shape = ofmShape.WithDepth(subOfmDepth);
             subOfmConn->quantization = SliceQ(subOfmConn->quantization, multiplier, depthMultiplier);
-            auto subOps = DecomposeDepthwiseConv2D(arch, std::move(subOp));
+            auto subOps = DecomposeDepthwiseConv2D(ctx, std::move(subOp));
             result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
         }
         // Need to transpose result [N, H, W, C] -> [H, W, C, N] (and reshape -> [1, H, W, N*C])
@@ -1329,17 +1339,17 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
             transposeOpOfm = transposedOfm->Clone();
         }
         auto transposeOp = MakeTransposeOp(transposedOfm, transposeOpOfm, Shape(1, 2, 3, 0));
-        auto subOps = DecomposeTranspose(arch, std::move(transposeOp));
+        auto subOps = DecomposeTranspose(ctx, std::move(transposeOp));
         result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
         if ( transposeOpOfm != ofmConn->tensor )
         {  // Insert memory copy of transposed ofm with slice offset
-            auto copyOp = DecomposeElementwise(arch, MakeMemCopy(transposeOpOfm, ofmConn->tensor, &ofmSlice));
+            auto copyOp = DecomposeElementwise(ctx, MakeMemCopy(transposeOpOfm, ofmConn->tensor, &ofmSlice));
             result.insert(result.end(), std::make_move_iterator(copyOp.begin()), std::make_move_iterator(copyOp.end()));
         }
         return result;
     }
 
-    if ( !NeedsDecompose(arch, op.get()) )
+    if ( !NeedsDecompose(ctx.arch, op.get()) )
     {
         UpdatePaddingAndIfmOffset(op.get());
         result.emplace_back(std::move(op));
@@ -1349,13 +1359,13 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
     auto &dilation = kernel->Dilation();
     if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::KernelDilation) )
     {
-        return HandleDilation(arch, std::move(op), DecomposeDepthwiseConv2D);
+        return HandleDilation(ctx, std::move(op), DecomposeDepthwiseConv2D);
     }
     try
     {
-        if ( auto newBlockShape = NewOfmBlockShape(arch, op.get()) )
+        if ( auto newBlockShape = NewOfmBlockShape(ctx.arch, op.get()) )
         {
-            return DecomposeBlocks(arch, std::move(op), newBlockShape, DecomposeDepthwiseConv2D);
+            return DecomposeBlocks(ctx, std::move(op), newBlockShape, DecomposeDepthwiseConv2D);
         }
     }
     catch ( const DecompositionFailure & )
@@ -1365,10 +1375,10 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Archit
         return result;
     }
 
-    if ( arch->Constraints()->SupportsAccumulatorSaveRestore() && req.decomposeProps.Any(ArchProperty::KernelStride) &&
-         op->Input(TensorUsage::Weights)->tensor->IsConstant() )
+    if ( ctx.arch->Constraints()->SupportsAccumulatorSaveRestore() &&
+         req.decomposeProps.Any(ArchProperty::KernelStride) && op->Input(TensorUsage::Weights)->tensor->IsConstant() )
     {
-        return DecomposeForStrides(arch, std::move(op), DecomposeDepthwiseConv2D);
+        return DecomposeForStrides(ctx, std::move(op), DecomposeDepthwiseConv2D);
     }
     // If we get here, decomposition has failed, the resulting operations will be executed on CPU
     UpdatePaddingAndIfmOffset(op.get());
@@ -1459,7 +1469,8 @@ static std::shared_ptr<SchedulerTensor> ReverseHW(SchedulerTensor *tensor)
 // 5. Rewrite padding - Calculate how to attribute and rewrite the original padding to each sub-op
 // 6. Strided write - Set each sub-op’s OFM write step to (strideX, strideY) with offset (ox, oy) to fill only its group
 // 7. Combine results - Sub-ops write disjoint OFM positions; together they reconstruct the full output
-std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTransposeConv2DLargeStride(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
+std::vector<std::unique_ptr<SchedulerOperation>>
+DecomposeTransposeConv2DLargeStride(DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op)
 {
     std::vector<std::unique_ptr<SchedulerOperation>> result;
     auto ifmConn = op->Input(TensorUsage::IFM);
@@ -1611,7 +1622,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTransposeConv2DLargeSt
 }
 
 // Decompose Transpose Conv2D into Conv2D
-std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTransposeConv2D(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
+std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTransposeConv2D(DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op)
 {
     std::vector<std::unique_ptr<SchedulerOperation>> result;
     auto ifmConn = op->Input(TensorUsage::IFM);
@@ -1628,26 +1639,26 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTransposeConv2D(Archit
     assert(stride.y > 0);
     assert(kernelSize.x > 0);
     assert(kernelSize.y > 0);
-    assert(arch->Constraints()->SupportsAccumulatorSaveRestore() && "Accumulator Save/Restore required for TransposeConv2D decomposition");
+    assert(ctx.arch->Constraints()->SupportsAccumulatorSaveRestore() && "Accumulator Save/Restore required for TransposeConv2D decomposition");
 
     ofmSlice.Initialize(ofmShape.WithZeros(), ofmShape);
     ifmSlice.Initialize(ifmShape.WithZeros(), ifmShape);
 
     ArchRequirements req{};
-    Flags<QueryResult> qResult = OperatorQuery(arch, op.get(), &req);
+    Flags<QueryResult> qResult = OperatorQuery(ctx.arch, op.get(), &req);
     if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::TensorDims) )
     {
-        return DecomposeLeadingDimensions(1, arch, std::move(op), DecomposeTransposeConv2D);
+        return DecomposeLeadingDimensions(1, ctx, std::move(op), DecomposeTransposeConv2D);
     }
     if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::KernelStride) )
     {
         // Convert TransposeConv2D to Conv2D by reversing weights in X/Y and decomposing strides
         // by splitting into stride_x*stride_y kernels
-        auto conv2dSubOps = DecomposeTransposeConv2DLargeStride(arch, std::move(op));
+        auto conv2dSubOps = DecomposeTransposeConv2DLargeStride(ctx, std::move(op));
         auto end = std::make_move_iterator(conv2dSubOps.end());
         for ( auto subOp = std::make_move_iterator(conv2dSubOps.begin()); subOp != end; ++subOp )
         {
-            auto subOps = DecomposeConv2D(arch, *subOp);
+            auto subOps = DecomposeConv2D(ctx, *subOp);
             result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
         }
         return result;
@@ -1658,7 +1669,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTransposeConv2D(Archit
 }
 
 // Legalise TransposeConv2D into Conv2D with IFM resampling - only applicable for strides <= 2
-std::vector<std::unique_ptr<SchedulerOperation>> LegaliseTransposeConv2D(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
+std::vector<std::unique_ptr<SchedulerOperation>> LegaliseTransposeConv2D(DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op)
 {
     std::vector<std::unique_ptr<SchedulerOperation>> result;
     auto ifmConn = op->Input(TensorUsage::IFM);
@@ -1833,7 +1844,7 @@ ConvertResizeBilinearHPCToDepthwise(Architecture *arch, std::unique_ptr<Schedule
     return result;
 }
 
-std::vector<std::unique_ptr<SchedulerOperation>> LegaliseResize(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
+std::vector<std::unique_ptr<SchedulerOperation>> LegaliseResize(DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op)
 {
     // Convert Resize (Bilinear or Nearest) into a sequence of 1×1 AvgPool ops followed by a final
     // larger AvgPool or DepthwiseConv2D with kernel up to 8x8.
@@ -1851,7 +1862,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> LegaliseResize(Architecture *ar
     bool canLegalise = true;
 
     ArchRequirements req{};
-    OperatorQuery(arch, op.get(), &req);
+    OperatorQuery(ctx.arch, op.get(), &req);
 
     auto ofmShape = ofmConn->shape;
     auto ifmShape = ifmConn->shape;
@@ -1893,7 +1904,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> LegaliseResize(Architecture *ar
             // Only 2x upscale supported for half pixel centers Resize Bilinear
             if ( isHalfPixelCenter && attr->scaleX.n == 4 && attr->scaleY.n == 4 )
             {
-                return ConvertResizeBilinearHPCToDepthwise(arch, std::move(op));
+                return ConvertResizeBilinearHPCToDepthwise(ctx.arch, std::move(op));
             }
             else if ( attr->offset.x != 0 || attr->offset.y != 0 || attr->scaleX.d != 1 || attr->scaleY.d != 1 )
             {
@@ -1930,7 +1941,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> LegaliseResize(Architecture *ar
         // Create a new intermediate tensor
         auto shape = ofmShape.WithHW(ifmConn->shape.Height() * std::min(2, upscaleH), ifmConn->shape.Width() * std::min(2, upscaleW));
         auto intermediate = std::make_shared<SchedulerTensor>(ofmConn->tensor->dataType, shape);
-        intermediate->memArea = arch->FeatureMapMemory();
+        intermediate->memArea = ctx.arch->FeatureMapMemory();
 
         // Create a new op that outputs to the intermediate tensor
         auto newOp = std::make_unique<SchedulerOperation>(OpType::AvgPool);
@@ -1980,7 +1991,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> LegaliseResize(Architecture *ar
             {
                 bufferValues[{0, h, w, i}] = 1;
             };
-            wTensor->memArea = arch->ReadonlyMemory();
+            wTensor->memArea = ctx.arch->ReadonlyMemory();
             wTensor->bufferView = std::move(bufferView);
             auto *weightConn = newOp->ConnectInput(TensorUsage::Weights, wTensor);
             wTensor->storageShape = wShape;
@@ -1988,7 +1999,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> LegaliseResize(Architecture *ar
             // Zero bias
             auto biasTensor = std::make_shared<SchedulerTensor>(DataType::Int32, Shape(1));
             auto bufBias = std::make_shared<Buffer>(Buffer::ConstValue<int32_t>(0));
-            biasTensor->memArea = arch->ReadonlyMemory();
+            biasTensor->memArea = ctx.arch->ReadonlyMemory();
             biasTensor->bufferView = BufferView(bufBias, 0, DataTypeStorageSizeBits(biasTensor->dataType), {1}, {});
             biasTensor->storageShape = biasTensor->bufferView.ViewShape();
             newOp->ConnectInput(TensorUsage::Scales, biasTensor);
@@ -2064,7 +2075,7 @@ static void ReshapeElementwise(SchedulerOperation *op)
     }
 }
 
-std::vector<std::unique_ptr<SchedulerOperation>> DecomposeElementwise(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
+std::vector<std::unique_ptr<SchedulerOperation>> DecomposeElementwise(DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op)
 {
     ReshapeElementwise(op.get());
     std::vector<std::unique_ptr<SchedulerOperation>> result;
@@ -2086,21 +2097,21 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeElementwise(Architectu
     }
 
     ArchRequirements req{};
-    Flags<QueryResult> qResult = OperatorQuery(arch, op.get(), &req);
+    Flags<QueryResult> qResult = OperatorQuery(ctx.arch, op.get(), &req);
 
     if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::TensorDims) )
     {
-        return DecomposeLeadingDimensions(ofmShape.Size() - 3, arch, std::move(op), DecomposeElementwise);
+        return DecomposeLeadingDimensions(ofmShape.Size() - 3, ctx, std::move(op), DecomposeElementwise);
     }
     if ( auto maxShape = Shape::Min(Shape(nullptr, ofmShape.Size(), MAX_DIM), ofmShape); maxShape != ofmShape )
     {
-        return DecomposeBlocksElementwise(arch, std::move(op), maxShape, DecomposeElementwise);
+        return DecomposeBlocksElementwise(ctx, std::move(op), maxShape, DecomposeElementwise);
     }
     result.emplace_back(std::move(op));
     return result;
 }
 
-std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMatmul(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
+std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMatmul(DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op)
 {
     std::vector<std::unique_ptr<SchedulerOperation>> result;
     auto ofmConn = op->Output(TensorUsage::OFM);
@@ -2118,12 +2129,12 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMatmul(Architecture *a
     ifm2Slice.Initialize(ifm2Shape.WithZeros(), ifm2Shape);
 
     ArchRequirements req{};
-    Flags<QueryResult> qResult = OperatorQuery(arch, op.get(), &req);
+    Flags<QueryResult> qResult = OperatorQuery(ctx.arch, op.get(), &req);
 
     // Decompose Batching
     if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::TensorDims) )
     {
-        return DecomposeLeadingDimensions(ofmShape.Size() - 2, arch, std::move(op), DecomposeMatmul);
+        return DecomposeLeadingDimensions(ofmShape.Size() - 2, ctx, std::move(op), DecomposeMatmul);
     }
 
     // Define total dimensions of input and output matrices
@@ -2137,12 +2148,12 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMatmul(Architecture *a
         int BH = std::min(OH, MAX_DIM);  // Num rows in output block
         int BW = std::min(OW, MAX_DIM);  // Num columns in output block
         int BC = std::min(IC, MAX_DIM);  // Num channels in input blocks
-        if ( IC > MAX_DIM && arch->Constraints()->SupportsAccumulatorSaveRestore() )
+        if ( IC > MAX_DIM && ctx.arch->Constraints()->SupportsAccumulatorSaveRestore() )
         {
             // Splitting the op into sup-ops constrained by the block height/width ensures
             // that the accumulators are not overwritten before the vector product completes along
             // the contracted axis.
-            auto blockConfigHW = GetOpConfig(arch, op.get())->OptimalStripeGranule();
+            auto blockConfigHW = GetOpConfig(ctx.arch, op.get())->OptimalStripeGranule();
             BH = std::min(BH, blockConfigHW.y);
             BW = std::min(BW, blockConfigHW.x);
         }
@@ -2193,7 +2204,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMatmul(Architecture *a
     return result;
 }
 
-std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
+std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op)
 {
     // The block size used when decomposing into blocks for large dimensions in the
     // reduce axis. For ArgMax this is half the maximum tensor dimension to avoid negative
@@ -2222,7 +2233,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(Architecture *a
 
     // Figure out what we need to decompose
     ArchRequirements req{};
-    auto qResult = OperatorQuery(arch, op.get(), &req);
+    auto qResult = OperatorQuery(ctx.arch, op.get(), &req);
     bool decomposeReshape = false;
     if ( qResult.Any(QueryResult::HasRequirements) && req.req.Any(ArchRequirement::Decompose) )
     {
@@ -2263,7 +2274,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(Architecture *a
             attr->axis = 1;  // W
         }
 
-        return DecomposeReduce(arch, std::move(op));
+        return DecomposeReduce(ctx, std::move(op));
     }
 
     // Handle reduced axis
@@ -2309,7 +2320,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(Architecture *a
                 subOpOfmConn->quantization = ofmConn->quantization;
                 LOG_TRACE1("DecomposeReduce: Block, IFM {} from ({}), OFM {} from ({})\n", subOpIfmConn->slice.ToString(),
                     subOpIfmConn->shape.ToString(), subOpOfmConn->slice.ToString(), subOpOfmConn->shape.ToString());
-                auto subOps = DecomposeReduce(arch, std::move(subOp));
+                auto subOps = DecomposeReduce(ctx, std::move(subOp));
                 result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
             }
 
@@ -2328,7 +2339,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(Architecture *a
             subOpOfmConn->quantization = Quantization::Unit();
             LOG_TRACE1("DecomposeReduce: Final block, IFM {} from ({}), OFM {} from ({})\n", subOpIfmConn->slice.ToString(),
                 subOpIfmConn->shape.ToString(), subOpOfmConn->slice.ToString(), subOpOfmConn->shape.ToString());
-            auto subOps = DecomposeReduce(arch, std::move(subOp));
+            auto subOps = DecomposeReduce(ctx, std::move(subOp));
             result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
 
             return result;
@@ -2387,7 +2398,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(Architecture *a
                 maxPoolOfmConn->SetType(DataType::None);
                 LOG_TRACE1("DecomposeReduce: MaxPool block, IFM {} from ({}), OFM {} from ({})\n", maxPoolIfmConn->slice.ToString(),
                     maxPoolIfmConn->shape.ToString(), maxPoolOfmConn->slice.ToString(), maxPoolOfmConn->shape.ToString());
-                auto subOps1 = DecomposeMaxPool(arch, std::move(maxPoolOp));
+                auto subOps1 = DecomposeMaxPool(ctx, std::move(maxPoolOp));
                 result.insert(result.end(), std::make_move_iterator(subOps1.begin()), std::make_move_iterator(subOps1.end()));
 
                 auto indexBlockTensor = ofmConn->tensor->Clone();
@@ -2411,11 +2422,11 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(Architecture *a
                 argMaxOfmConn->quantization = ofmConn->quantization;
                 LOG_TRACE1("DecomposeReduce: ArgMax block, IFM {} from ({}), OFM {} from ({})\n", argMaxIfmConn->slice.ToString(),
                     argMaxIfmConn->shape.ToString(), argMaxOfmConn->slice.ToString(), argMaxOfmConn->shape.ToString());
-                auto subOps2 = DecomposeReduce(arch, std::move(argMaxOp));
+                auto subOps2 = DecomposeReduce(ctx, std::move(argMaxOp));
                 result.insert(result.end(), std::make_move_iterator(subOps2.begin()), std::make_move_iterator(subOps2.end()));
 
                 // Create a scalar tensor that contains the block offset
-                auto offsetTensor = CreateScalarConstTensor(arch, int32_t(blockOffset));
+                auto offsetTensor = CreateScalarConstTensor(ctx.arch, int32_t(blockOffset));
 
                 // Create one new Add op for each block
                 auto addOp = std::make_unique<SchedulerOperation>(OpType::Add);
@@ -2433,7 +2444,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(Architecture *a
                 LOG_TRACE1("DecomposeReduce: Add block, IFM {} from ({}), IFM2 {} from ({}), OFM {} from ({})\n",
                     addIfmConn0->slice.ToString(), addIfmConn0->shape.ToString(), addIfmConn1->slice.ToString(),
                     addIfmConn1->shape.ToString(), addOfmConn->slice.ToString(), addOfmConn->shape.ToString());
-                auto subOps3 = DecomposeElementwise(arch, std::move(addOp));
+                auto subOps3 = DecomposeElementwise(ctx, std::move(addOp));
                 result.insert(result.end(), std::make_move_iterator(subOps3.begin()), std::make_move_iterator(subOps3.end()));
             }
 
@@ -2453,7 +2464,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(Architecture *a
             tp1OfmConn->transpose = mask;
             LOG_TRACE1("DecomposeReduce: Transpose, IFM {} from ({}), OFM {} from ({})\n", tp1IfmConn0->slice.ToString(),
                 tp1IfmConn0->shape.ToString(), tp1OfmConn->slice.ToString(), tp1OfmConn->shape.ToString());
-            auto subOps4 = DecomposeTranspose(arch, std::move(tp1Op));
+            auto subOps4 = DecomposeTranspose(ctx, std::move(tp1Op));
             result.insert(result.end(), std::make_move_iterator(subOps4.begin()), std::make_move_iterator(subOps4.end()));
 
             auto valueTensor2 = valueTensor->Clone();
@@ -2470,7 +2481,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(Architecture *a
             tp2OfmConn0->transpose = mask;
             LOG_TRACE1("DecomposeReduce: Transpose, IFM {} from ({}), OFM {} from ({})\n", tp2IfmConn0->slice.ToString(),
                 tp2IfmConn0->shape.ToString(), tp2OfmConn0->slice.offset.ToString(), tp2OfmConn0->shape.ToString());
-            auto subOps5 = DecomposeTranspose(arch, std::move(tp2Op));
+            auto subOps5 = DecomposeTranspose(ctx, std::move(tp2Op));
             result.insert(result.end(), std::make_move_iterator(subOps5.begin()), std::make_move_iterator(subOps5.end()));
 
             // Create intermediate tensor (this will contain the block that contains the largest value)
@@ -2494,7 +2505,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(Architecture *a
             argMaxOfmConn->quantization = ofmConn->quantization;
             LOG_TRACE1("DecomposeReduce: ArgMax, IFM {} from ({}), {} from ({})\n", argMaxIfmConn->slice.ToString(),
                 argMaxIfmConn->shape.ToString(), argMaxOfmConn->slice.ToString(), argMaxOfmConn->shape.ToString());
-            auto subOps6 = DecomposeReduce(arch, std::move(argMaxOp));
+            auto subOps6 = DecomposeReduce(ctx, std::move(argMaxOp));
             result.insert(result.end(), std::make_move_iterator(subOps6.begin()), std::make_move_iterator(subOps6.end()));
 
             // Create one new Gather op
@@ -2512,7 +2523,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(Architecture *a
             LOG_TRACE1("DecomposeReduce: Gather, IFM {} from ({}), IFM2 {} from ({}), OFM {} from ({})\n",
                 gatherIfmConn0->slice.ToString(), gatherIfmConn0->shape.ToString(), gatherIfmConn1->slice.ToString(),
                 gatherIfmConn1->shape.ToString(), gatherOfmConn->slice.ToString(), gatherOfmConn->shape.ToString());
-            auto subOps7 = DecomposeTranspose(arch, std::move(gatherOp));
+            auto subOps7 = DecomposeTranspose(ctx, std::move(gatherOp));
             result.insert(result.end(), std::make_move_iterator(subOps7.begin()), std::make_move_iterator(subOps7.end()));
 
             return result;
@@ -2527,7 +2538,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(Architecture *a
 
         if ( ifmShape[axis] > MAX_DIM )
         {
-            return DecomposeLargeAxis(axis, MAX_DIM, arch, std::move(op), DecomposeReduce);
+            return DecomposeLargeAxis(axis, MAX_DIM, ctx, std::move(op), DecomposeReduce);
         }
     }
 
@@ -2535,7 +2546,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(Architecture *a
     return result;
 }
 
-std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReverse(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
+std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReverse(DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op)
 {
     std::vector<std::unique_ptr<SchedulerOperation>> result;
     auto ofmConn = op->Output(TensorUsage::OFM);
@@ -2564,7 +2575,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReverse(Architecture *
     {
         if ( ofmShape[axis] > MAX_DIM )
         {
-            auto subOps = DecomposeLargeAxis(axis, MAX_DIM, arch, std::move(op), DecomposeReverse);
+            auto subOps = DecomposeLargeAxis(axis, MAX_DIM, ctx, std::move(op), DecomposeReverse);
             if ( axis == reversedAxis )
             {
                 // For the reversed axis, we need to invert
@@ -2584,7 +2595,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReverse(Architecture *
 }
 
 static std::vector<std::unique_ptr<SchedulerOperation>>
-SwapAxesIn3D(Architecture *arch, Shape &shape, SchedulerConnection *tail, int a, int b)
+SwapAxesIn3D(DecompositionContext &ctx, Shape &shape, SchedulerConnection *tail, int a, int b)
 {
     std::vector<std::unique_ptr<SchedulerOperation>> result;
 
@@ -2634,7 +2645,7 @@ SwapAxesIn3D(Architecture *arch, Shape &shape, SchedulerConnection *tail, int a,
 
     // Check architecture support for this swap; if unsupported, substitute by supported swaps (W<->C and H<->W)
     ArchRequirements req{};
-    auto qResult = OperatorQuery(arch, op.get(), &req);
+    auto qResult = OperatorQuery(ctx.arch, op.get(), &req);
     if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::TransposeMask) )
     {
         std::vector<std::unique_ptr<SchedulerOperation>> ops;
@@ -2643,15 +2654,15 @@ SwapAxesIn3D(Architecture *arch, Shape &shape, SchedulerConnection *tail, int a,
         // Compose unsupported swap using adjacent supported swaps:
         // swap(H,C) = swap(W,C) -> swap(H,W) -> swap(W,C)
         // Step 1: swap W <-> C (NHCW)
-        ops = SwapAxesIn3D(arch, shape, tail, s - 2, s - 1);
+        ops = SwapAxesIn3D(ctx, shape, tail, s - 2, s - 1);
         result.insert(result.end(), std::make_move_iterator(ops.begin()), std::make_move_iterator(ops.end()));
 
         // Step 2: swap H <-> W (NWHC)
-        ops = SwapAxesIn3D(arch, shape, result.back()->OFM(), s - 3, s - 2);
+        ops = SwapAxesIn3D(ctx, shape, result.back()->OFM(), s - 3, s - 2);
         result.insert(result.end(), std::make_move_iterator(ops.begin()), std::make_move_iterator(ops.end()));
 
         // Step 3: swap W <-> C (NHCW)
-        ops = SwapAxesIn3D(arch, shape, result.back()->OFM(), s - 2, s - 1);
+        ops = SwapAxesIn3D(ctx, shape, result.back()->OFM(), s - 2, s - 1);
         result.insert(result.end(), std::make_move_iterator(ops.begin()), std::make_move_iterator(ops.end()));
 
         return result;
@@ -2659,12 +2670,13 @@ SwapAxesIn3D(Architecture *arch, Shape &shape, SchedulerConnection *tail, int a,
     else
     {
         std::swap(shape[a], shape[b]);
-        return DecomposeTranspose(arch, std::move(op));
+        return DecomposeTranspose(ctx, std::move(op));
     }
 }
 
 // Swap two axes of a shape by adding one or more transpose ops to a scheduler connection
-static std::vector<std::unique_ptr<SchedulerOperation>> SwapAxes(Architecture *arch, Shape &shape, SchedulerConnection *tail, int a, int b)
+static std::vector<std::unique_ptr<SchedulerOperation>>
+SwapAxes(DecompositionContext &ctx, Shape &shape, SchedulerConnection *tail, int a, int b)
 {
     std::vector<std::unique_ptr<SchedulerOperation>> result;
 
@@ -2690,7 +2702,7 @@ static std::vector<std::unique_ptr<SchedulerOperation>> SwapAxes(Architecture *a
     if ( shape.Size() <= 3 || (a >= shape.Size() - 3 && b >= shape.Size() - 3 && shape.AxisProduct(0, -3) == 1) )
     {
         // Both axes are in the three innermost axes (H/W/C) and can be swapped directly
-        return SwapAxesIn3D(arch, shape, tail, a, b);
+        return SwapAxesIn3D(ctx, shape, tail, a, b);
     }
 
     if ( a == 0 && b == 1 )
@@ -2698,7 +2710,7 @@ static std::vector<std::unique_ptr<SchedulerOperation>> SwapAxes(Architecture *a
         // Swap of index 0 and 1 can always be done with 1 op
         LOG_TRACE2("SwapAxes: Left-anchored swap\n");
         auto tmp = ReshapeTo3D(shape, {1, 1, shape.Size() - 2});
-        auto ops = SwapAxes(arch, tmp, tail, 0, 1);
+        auto ops = SwapAxes(ctx, tmp, tail, 0, 1);
         result.insert(result.end(), std::make_move_iterator(ops.begin()), std::make_move_iterator(ops.end()));
         std::swap(shape[a], shape[b]);
         LOG_TRACE2("SwapAxes: Current shape ({})\n", shape.ToString());
@@ -2711,7 +2723,7 @@ static std::vector<std::unique_ptr<SchedulerOperation>> SwapAxes(Architecture *a
         // Swap of index N-2 and N-1 can always be done with 1 op
         LOG_TRACE2("SwapAxes: Right-anchored swap\n");
         auto tmp = ReshapeTo3D(shape, {shape.Size() - 2, 1, 1});
-        auto ops = SwapAxes(arch, tmp, tail, 1, 2);
+        auto ops = SwapAxes(ctx, tmp, tail, 1, 2);
         result.insert(result.end(), std::make_move_iterator(ops.begin()), std::make_move_iterator(ops.end()));
         std::swap(shape[a], shape[b]);
         LOG_TRACE2("SwapAxes: Current shape ({})\n", shape.ToString());
@@ -2724,19 +2736,19 @@ static std::vector<std::unique_ptr<SchedulerOperation>> SwapAxes(Architecture *a
         // Move A left
         LOG_TRACE2("SwapAxes: Move index {} ({}) leftmost\n", a, shape[a]);
         auto tmp1 = ReshapeTo3DAroundAxis(shape, a);
-        auto ops1 = SwapAxes(arch, tmp1, tail, 0, 1);
+        auto ops1 = SwapAxes(ctx, tmp1, tail, 0, 1);
         result.insert(result.end(), std::make_move_iterator(ops1.begin()), std::make_move_iterator(ops1.end()));
         shape = shape.Erase(a).Insert(0, shape[a]);
         LOG_TRACE2("SwapAxes: Current shape ({})\n", shape.ToString());
 
         // Swap (A is now leftmost)
-        auto ops = SwapAxes(arch, shape, result.back()->OFM(), 0, b);
+        auto ops = SwapAxes(ctx, shape, result.back()->OFM(), 0, b);
         result.insert(result.end(), std::make_move_iterator(ops.begin()), std::make_move_iterator(ops.end()));
 
         // Move A back to where it was
         LOG_TRACE2("SwapAxes: Move leftmost ({}) back to index {}\n", shape[0], a);
         auto tmp2 = ReshapeTo3D(shape, {1, a, shape.Size() - a - 1});
-        auto ops2 = SwapAxes(arch, tmp2, result.back()->OFM(), 0, 1);
+        auto ops2 = SwapAxes(ctx, tmp2, result.back()->OFM(), 0, 1);
         result.insert(result.end(), std::make_move_iterator(ops2.begin()), std::make_move_iterator(ops2.end()));
         shape = shape.Erase(0).Insert(a, shape[0]);
         LOG_TRACE2("SwapAxes: Current shape ({})\n", shape.ToString());
@@ -2749,19 +2761,19 @@ static std::vector<std::unique_ptr<SchedulerOperation>> SwapAxes(Architecture *a
         // Move B right
         LOG_TRACE2("SwapAxes: Move index {} ({}) rightmost\n", b, shape[b]);
         auto tmp1 = ReshapeTo3DAroundAxis(shape, b);
-        auto ops1 = SwapAxes(arch, tmp1, tail, 1, 2);
+        auto ops1 = SwapAxes(ctx, tmp1, tail, 1, 2);
         result.insert(result.end(), std::make_move_iterator(ops1.begin()), std::make_move_iterator(ops1.end()));
         shape = shape.Erase(b).Insert(-1, shape[b]);
         LOG_TRACE2("SwapAxes: Current shape ({})\n", shape.ToString());
 
         // Swap (A is leftmost and B is rightmost)
-        auto ops = SwapAxes(arch, shape, result.back()->OFM(), 0, shape.Size() - 1);
+        auto ops = SwapAxes(ctx, shape, result.back()->OFM(), 0, shape.Size() - 1);
         result.insert(result.end(), std::make_move_iterator(ops.begin()), std::make_move_iterator(ops.end()));
 
         // Move B back to where it was
         LOG_TRACE2("SwapAxes: Move rightmost ({}) back to index {}\n", shape[-1], b);
         auto tmp2 = ReshapeTo3D(shape, {b, shape.Size() - b - 1, 1});
-        auto ops2 = SwapAxes(arch, tmp2, result.back()->OFM(), 1, 2);
+        auto ops2 = SwapAxes(ctx, tmp2, result.back()->OFM(), 1, 2);
         result.insert(result.end(), std::make_move_iterator(ops2.begin()), std::make_move_iterator(ops2.end()));
         shape = shape.Erase(-1).Insert(b, shape[-1]);
         LOG_TRACE2("SwapAxes: Current shape ({})\n", shape.ToString());
@@ -2774,7 +2786,7 @@ static std::vector<std::unique_ptr<SchedulerOperation>> SwapAxes(Architecture *a
     assert(b == shape.Size() - 1);
     LOG_TRACE2("SwapAxes: Swap leftmost and rightmost\n");
     auto tmp = ReshapeTo3DAroundEdges(shape);
-    auto ops = SwapAxes(arch, tmp, tail, 0, 2);
+    auto ops = SwapAxes(ctx, tmp, tail, 0, 2);
     result.insert(result.end(), std::make_move_iterator(ops.begin()), std::make_move_iterator(ops.end()));
     std::swap(shape[a], shape[b]);
     LOG_TRACE2("SwapAxes: Current shape ({})\n", shape.ToString());
@@ -2782,7 +2794,7 @@ static std::vector<std::unique_ptr<SchedulerOperation>> SwapAxes(Architecture *a
     return result;
 }
 
-std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTranspose(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
+std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTranspose(DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op)
 {
     std::vector<std::unique_ptr<SchedulerOperation>> result;
     auto ifmConn = op->Input(TensorUsage::IFM);
@@ -2791,7 +2803,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTranspose(Architecture
     const auto axes = ifmShape.Size();
 
     ArchRequirements req{};
-    auto qResult = OperatorQuery(arch, op.get(), &req);
+    auto qResult = OperatorQuery(ctx.arch, op.get(), &req);
     bool decomposeMask = false;
     bool decomposeAxes = false;
     bool decomposeLeadingDims = false;
@@ -2812,7 +2824,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTranspose(Architecture
         if ( ofmConn->transpose == TransposeType::None )
         {
             LOG_TRACE1("DecomposeTranspose: Decomposing as elementwise\n");
-            return DecomposeElementwise(arch, std::move(op));
+            return DecomposeElementwise(ctx, std::move(op));
         }
 
         assert(ifmConn->slice.offset.IsEmpty() && ifmConn->slice.shape.IsEmpty());
@@ -2863,7 +2875,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTranspose(Architecture
             // Move axis to right place
             LOG_TRACE1("DecomposeTranspose: Swap {} <-> {}\n", axis, i);
             auto tail = !result.empty() ? result.back()->OFM() : ifmConn;
-            auto subOps = SwapAxes(arch, shape, tail, axis, i);
+            auto subOps = SwapAxes(ctx, shape, tail, axis, i);
             result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
             std::swap(order[axis], order[i]);
             LOG_TRACE1("DecomposeTranspose: Shape is now ({})\n", shape.ToString());
@@ -2906,7 +2918,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTranspose(Architecture
 
                 // OFM slice will be transposed by DecomposeLargeAxis
                 LOG_TRACE1("DecomposeTranspose: Axis {} is too large ({})\n", axis, ifmShape[axis]);
-                return DecomposeLargeAxis(axis, MAX_DIM, arch, std::move(op), DecomposeTranspose);
+                return DecomposeLargeAxis(axis, MAX_DIM, ctx, std::move(op), DecomposeTranspose);
             }
         }
     }
@@ -2917,7 +2929,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTranspose(Architecture
     return result;
 }
 
-std::vector<std::unique_ptr<SchedulerOperation>> DecomposeAvgPool(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
+std::vector<std::unique_ptr<SchedulerOperation>> DecomposeAvgPool(DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op)
 {
     std::vector<std::unique_ptr<SchedulerOperation>> result;
     auto *ofmConn = op->Output(TensorUsage::OFM);
@@ -2932,14 +2944,14 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeAvgPool(Architecture *
     ifmSlice.Initialize(ifmShape.WithZeros().WithHW(-padding.Top(), -padding.Left()), ifmShape);
 
     ArchRequirements req{};
-    Flags<QueryResult> qResult = OperatorQuery(arch, op.get(), &req);
+    Flags<QueryResult> qResult = OperatorQuery(ctx.arch, op.get(), &req);
 
     if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::TensorDims) )
     {
-        return DecomposeLeadingDimensions(1, arch, std::move(op), DecomposeAvgPool);
+        return DecomposeLeadingDimensions(1, ctx, std::move(op), DecomposeAvgPool);
     }
 
-    if ( !NeedsDecompose(arch, op.get()) )
+    if ( !NeedsDecompose(ctx.arch, op.get()) )
     {
         UpdatePaddingAndIfmOffset(op.get());
         result.emplace_back(std::move(op));
@@ -2959,7 +2971,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeAvgPool(Architecture *
         auto shape = Shape(1, H, W, C);
         auto scaleTensor = std::make_shared<SchedulerTensor>();
         scaleTensor->uid = GenerateUniqueId();
-        scaleTensor->memArea = arch->ReadonlyMemory();
+        scaleTensor->memArea = ctx.arch->ReadonlyMemory();
         scaleTensor->dataType = DataType::Int32;
         scaleTensor->storageShape = shape;
         auto shiftTensor = scaleTensor->Clone();
@@ -3011,7 +3023,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeAvgPool(Architecture *
         // Setup intermediate tensors for scaling
         auto mulIfm = std::make_shared<SchedulerTensor>();
         mulIfm->uid = GenerateUniqueId();
-        mulIfm->memArea = arch->FeatureMapMemory();
+        mulIfm->memArea = ctx.arch->FeatureMapMemory();
         mulIfm->dataType = DataType::Int32;
         mulIfm->storageShape = ofmShape;
         auto mulOfm = mulIfm->Clone();
@@ -3024,7 +3036,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeAvgPool(Architecture *
         mulOfmConn->shape = mulOfm->storageShape;
         mulOfmConn->quantization.scales.emplace_back(QuantizedScale{1, 30});
         mulOfmConn->rounding = RoundMode::TRUNCATE_TO_LOWER;
-        auto mulOps = DecomposeElementwise(arch, std::move(mul));
+        auto mulOps = DecomposeElementwise(ctx, std::move(mul));
 
         // Apply shift
         auto asr = std::make_unique<SchedulerOperation>(OpType::Asr);
@@ -3032,7 +3044,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeAvgPool(Architecture *
         asr->ConnectInput(TensorUsage::IFM1, shiftTensor)->shape = shiftTensor->storageShape;
         *asr->ConnectOutput(TensorUsage::OFM, ofmConn->tensor) = *ofmConn;
         asr->OFM()->quantization.scales = {QuantizedScale::Unit()};
-        auto asrOps = DecomposeElementwise(arch, std::move(asr));
+        auto asrOps = DecomposeElementwise(ctx, std::move(asr));
 
         // Redirect ofm to perform scaling and set unit scaling
         ofmConn = op->ConnectOutput(TensorUsage::OFM, mulIfm);
@@ -3040,7 +3052,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeAvgPool(Architecture *
         // Remove scales to signal scaling is done elsewhere, i.e. with the MUL and ASR above
         ofmConn->quantization.scales.clear();
         ofmConn->SetType(DataType::None);  // Reset any data type on the connection, since the tensor has been replaced
-        auto subOps = DecomposeAvgPool(arch, std::move(op));
+        auto subOps = DecomposeAvgPool(ctx, std::move(op));
         result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
         result.insert(result.end(), std::make_move_iterator(mulOps.begin()), std::make_move_iterator(mulOps.end()));
         result.insert(result.end(), std::make_move_iterator(asrOps.begin()), std::make_move_iterator(asrOps.end()));
@@ -3050,9 +3062,9 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeAvgPool(Architecture *
     // Decomposition for large dimensions
     try
     {
-        if ( auto newBlockShape = NewOfmBlockShape(arch, op.get()) )
+        if ( auto newBlockShape = NewOfmBlockShape(ctx.arch, op.get()) )
         {
-            return DecomposeBlocks(arch, std::move(op), newBlockShape, DecomposeAvgPool);
+            return DecomposeBlocks(ctx, std::move(op), newBlockShape, DecomposeAvgPool);
         }
     }
     catch ( const DecompositionFailure & )
@@ -3062,9 +3074,9 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeAvgPool(Architecture *
         return result;
     }
     // Decomposition of large stride
-    if ( arch->Constraints()->SupportsAccumulatorSaveRestore() && req.decomposeProps.Any(ArchProperty::KernelStride) )
+    if ( ctx.arch->Constraints()->SupportsAccumulatorSaveRestore() && req.decomposeProps.Any(ArchProperty::KernelStride) )
     {
-        return DecomposeForStrides(arch, std::move(op), DecomposeAvgPool);
+        return DecomposeForStrides(ctx, std::move(op), DecomposeAvgPool);
     }
 
     // If we get here, decomposition has failed, the resulting operations will be executed on CPU
@@ -3073,7 +3085,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeAvgPool(Architecture *
     return result;
 }
 
-std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMaxPool(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
+std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMaxPool(DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op)
 {
     std::vector<std::unique_ptr<SchedulerOperation>> result;
     auto *ofmConn = op->Output(TensorUsage::OFM);
@@ -3088,13 +3100,13 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMaxPool(Architecture *
     ifmSlice.Initialize(ifmShape.WithZeros().WithHW(-padding.Top(), -padding.Left()), ifmShape);
 
     ArchRequirements req{};
-    Flags<QueryResult> qResult = OperatorQuery(arch, op.get(), &req);
+    Flags<QueryResult> qResult = OperatorQuery(ctx.arch, op.get(), &req);
 
     if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::TensorDims) )
     {
-        return DecomposeLeadingDimensions(ofmShape.Size() - 3, arch, std::move(op), DecomposeMaxPool);
+        return DecomposeLeadingDimensions(ofmShape.Size() - 3, ctx, std::move(op), DecomposeMaxPool);
     }
-    if ( !NeedsDecompose(arch, op.get()) )
+    if ( !NeedsDecompose(ctx.arch, op.get()) )
     {
         UpdatePaddingAndIfmOffset(op.get());
         result.emplace_back(std::move(op));
@@ -3102,9 +3114,9 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMaxPool(Architecture *
     }
     try
     {
-        if ( auto newBlockShape = NewOfmBlockShape(arch, op.get()) )
+        if ( auto newBlockShape = NewOfmBlockShape(ctx.arch, op.get()) )
         {
-            return DecomposeBlocks(arch, std::move(op), newBlockShape, DecomposeMaxPool);
+            return DecomposeBlocks(ctx, std::move(op), newBlockShape, DecomposeMaxPool);
         }
     }
     catch ( const DecompositionFailure & )
@@ -3113,9 +3125,9 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMaxPool(Architecture *
         result.emplace_back(std::move(op));
         return result;
     }
-    if ( arch->Constraints()->SupportsAccumulatorSaveRestore() && req.decomposeProps.Any(ArchProperty::KernelStride) )
+    if ( ctx.arch->Constraints()->SupportsAccumulatorSaveRestore() && req.decomposeProps.Any(ArchProperty::KernelStride) )
     {
-        return DecomposeForStrides(arch, std::move(op), DecomposeMaxPool);
+        return DecomposeForStrides(ctx, std::move(op), DecomposeMaxPool);
     }
     // If we get here, decomposition has failed, the resulting operations will be executed on CPU
     UpdatePaddingAndIfmOffset(op.get());
@@ -3123,7 +3135,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMaxPool(Architecture *
     return result;
 }
 
-std::vector<std::unique_ptr<SchedulerOperation>> DecomposeResize(Architecture *arch, std::unique_ptr<SchedulerOperation> op)
+std::vector<std::unique_ptr<SchedulerOperation>> DecomposeResize(DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op)
 {
     std::vector<std::unique_ptr<SchedulerOperation>> result;
     auto ofmConn = op->Output(TensorUsage::OFM);
@@ -3137,11 +3149,11 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeResize(Architecture *a
     ifmSlice.Initialize(ifmShape.WithZeros(), ifmShape);
 
     ArchRequirements req{};
-    auto qResult = OperatorQuery(arch, op.get(), &req);
+    auto qResult = OperatorQuery(ctx.arch, op.get(), &req);
 
     if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::TensorDims) )
     {
-        return DecomposeLeadingDimensions(ofmShape.Size() - 3, arch, std::move(op), DecomposeResize);
+        return DecomposeLeadingDimensions(ofmShape.Size() - 3, ctx, std::move(op), DecomposeResize);
     }
     result.emplace_back(std::move(op));
     return result;

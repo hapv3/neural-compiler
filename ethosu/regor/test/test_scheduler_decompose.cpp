@@ -59,13 +59,14 @@ std::unique_ptr<SchedulerOperation> CreateOperation(OpType opType, Shape ifmShap
 TEST_CASE("test_scheduler_decompose")
 {
     auto arch = CreateArchDefault<ArchEthosU85>(1024);
+    auto ctx = DecompositionContext(arch.get());
 
     SECTION("Decompose matmul in height dimension")
     {
         Shape ifmShape(1, 100, 3, 2);  // ifm2 is transposed by graphIR optimiser to same shape as ifm1
         Shape ofmShape(1, 100, 3, 3);
         auto op = CreateOperation(OpType::MatMul, ifmShape, ifmShape, ofmShape);
-        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeMatmul(arch.get(), std::move(op));
+        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeMatmul(ctx, std::move(op));
         REQUIRE(decomposedOps.size() == 100);
         for ( size_t i = 0; i < decomposedOps.size(); i++ )
         {
@@ -93,7 +94,7 @@ TEST_CASE("test_scheduler_decompose")
         op->Input(TensorUsage::IFM0)->slice = {ifmSliceOffset, ifmSliceShape};
         op->Input(TensorUsage::IFM1)->slice = {ifmSliceOffset, ifmSliceShape};
         op->Output(TensorUsage::OFM)->slice = {ofmSliceOffset, ofmSliceShape};
-        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeMatmul(arch.get(), std::move(op));
+        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeMatmul(ctx, std::move(op));
         REQUIRE(decomposedOps.size() == 98);
         for ( size_t i = 0; i < decomposedOps.size(); i++ )
         {
@@ -114,7 +115,7 @@ TEST_CASE("test_scheduler_decompose")
         Shape ifmShape(100, 1, 3, 2);
         Shape ofmShape(100, 1, 3, 3);
         auto op = CreateOperation(OpType::MatMul, ifmShape, ifmShape, ofmShape);
-        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeMatmul(arch.get(), std::move(op));
+        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeMatmul(ctx, std::move(op));
         REQUIRE(decomposedOps.size() == 100);
         for ( size_t i = 0; i < decomposedOps.size(); i++ )
         {
@@ -142,7 +143,7 @@ TEST_CASE("test_scheduler_decompose")
         op->Input(TensorUsage::IFM0)->slice = {ifmSliceOffset, ifmSliceShape};
         op->Input(TensorUsage::IFM1)->slice = {ifmSliceOffset, ifmSliceShape};
         op->Output(TensorUsage::OFM)->slice = {ofmSliceOffset, ofmSliceShape};
-        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeMatmul(arch.get(), std::move(op));
+        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeMatmul(ctx, std::move(op));
         REQUIRE(decomposedOps.size() == 98);
         for ( size_t i = 0; i < decomposedOps.size(); i++ )
         {
@@ -163,7 +164,7 @@ TEST_CASE("test_scheduler_decompose")
         Shape ifmShape(10, 10, 3, 2);
         Shape ofmShape(10, 10, 3, 3);
         auto op = CreateOperation(OpType::MatMul, ifmShape, ifmShape, ofmShape);
-        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeMatmul(arch.get(), std::move(op));
+        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeMatmul(ctx, std::move(op));
         REQUIRE(decomposedOps.size() == 100);
         for ( size_t i = 0; i < decomposedOps.size(); i++ )
         {
@@ -197,7 +198,7 @@ TEST_CASE("test_scheduler_decompose")
         op->Input(TensorUsage::IFM0)->slice = {ifmSliceOffset, ifmSliceShape};
         op->Input(TensorUsage::IFM1)->slice = {ifmSliceOffset, ifmSliceShape};
         op->Output(TensorUsage::OFM)->slice = {ofmSliceOffset, ofmSliceShape};
-        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeMatmul(arch.get(), std::move(op));
+        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeMatmul(ctx, std::move(op));
         REQUIRE(decomposedOps.size() == 64);
         for ( size_t i = 0; i < decomposedOps.size(); i++ )
         {
@@ -226,7 +227,7 @@ TEST_CASE("test_scheduler_decompose")
         Shape ofmShape(1, 1, 3, 3);
         auto op = CreateOperation(OpType::MatMul, ifmShape, ifmShape, ofmShape);
         SchedulerOperation *orig = op.get();
-        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeMatmul(arch.get(), std::move(op));
+        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeMatmul(ctx, std::move(op));
         REQUIRE(decomposedOps.size() == 1);
         REQUIRE(orig == decomposedOps[0].get());
     }
@@ -238,7 +239,7 @@ TEST_CASE("test_scheduler_decompose")
         Shape ofmShape(1, 1, shapeSize, 5);
         auto op = CreateOperation(OpType::ReduceMax, ifmShape, ofmShape);
         op->Attribute<axis_attr_t>()->axis = 1;  // H
-        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeReduce(arch.get(), std::move(op));
+        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeReduce(ctx, std::move(op));
         REQUIRE(decomposedOps.size() == 11);
         for ( size_t i = 0; i < decomposedOps.size(); i++ )
         {
@@ -270,7 +271,7 @@ TEST_CASE("test_scheduler_decompose")
         op->Attribute<axis_attr_t>()->axis = 1;  // H
         op->Input(TensorUsage::IFM0)->slice = {ifmSliceOffset, ifmSliceShape};
         op->Output(TensorUsage::OFM)->slice = {ofmSliceOffset, ofmSliceShape};
-        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeReduce(arch.get(), std::move(op));
+        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeReduce(ctx, std::move(op));
         REQUIRE(decomposedOps.size() == 3);
         for ( size_t i = 0; i < decomposedOps.size(); i++ )
         {
@@ -292,7 +293,7 @@ TEST_CASE("test_scheduler_decompose")
         Shape ofmShape(1, 1, 1, 5);
         auto op = CreateOperation(OpType::ReduceMax, ifmShape, ofmShape);
         op->Attribute<axis_attr_t>()->axis = 2;  // W
-        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeReduce(arch.get(), std::move(op));
+        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeReduce(ctx, std::move(op));
         REQUIRE(decomposedOps.size() == 12);
         for ( int i = 0; i < int(decomposedOps.size()) - 1; i++ )
         {
@@ -322,7 +323,7 @@ TEST_CASE("test_scheduler_decompose")
         Shape ofmShape(3, 7, 11, 1);
         auto op = CreateOperation(OpType::ReduceMax, ifmShape, ofmShape);
         op->Attribute<axis_attr_t>()->axis = 3;  // C
-        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeReduce(arch.get(), std::move(op));
+        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeReduce(ctx, std::move(op));
         REQUIRE(decomposedOps.size() == 1);
         auto &subOp = decomposedOps[0];
         auto &ifmSlice = subOp->Input(TensorUsage::IFM0)->slice;

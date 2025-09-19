@@ -24,6 +24,7 @@
 #include "common/shape.hpp"
 #include "graph.hpp"
 #include "operation.hpp"
+#include "scheduler_decompose.hpp"
 #include "scheduler_operation.hpp"
 #include "tensor.hpp"
 
@@ -45,6 +46,7 @@ class SchedulerPacking
 {
 protected:
     Architecture *_arch = nullptr;
+    DecompositionContext _ctx;
     bool _disableChaining = false;
     std::vector<std::unique_ptr<SchedulerOperation>> _schedList;
     std::unordered_map<Tensor *, std::shared_ptr<SchedulerTensor>> _tensorMap;
@@ -56,6 +58,10 @@ public:
 
 public:
     std::vector<std::unique_ptr<SchedulerOperation>> Process(const Graph *graph);
+    const std::unordered_map<UniqueId, std::shared_ptr<ArchitectureOpConfig>> &OpConfigCompatablility() const
+    {
+        return _ctx.opConfigCompatablility;
+    }
 
 private:
     void ConvertOperation(const Operation *op, std::vector<std::unique_ptr<SchedulerOperation>> &result);

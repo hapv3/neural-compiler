@@ -265,7 +265,7 @@ private:
     int MaxOutstandingKernelOps() { return 2; }
     int MaxOutstandingDMAOps() { return 4; }
     int MaxBlockdep() { return 7; }
-    bool IsUBlockValid(const OpType opType, int ifmBits, const Shape &ofmUBlock, bool hasIfm2, bool depthFirst1x1);
+    bool IsUBlockValid(const OpType opType, int ifmBits, const Shape &ofmUBlock, bool hasIfm2, bool depthFirst1x1, bool outputEnabled);
     Shape FindUBlock(OpType opType, const ArchitectureConfigQuery &query, bool partKernel);
     Shape CalcIfmAUSize(int ifmBlkDepth, int ifmBits, const Shape &ofmUBlk);
     int CalcResizeMaxOfmBlockWidth(int ifmBits, int scaleN, int scaleD);

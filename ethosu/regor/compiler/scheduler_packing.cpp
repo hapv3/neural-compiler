@@ -24,7 +24,6 @@
 #include "common/shape.hpp"
 #include "graph.hpp"
 #include "operation.hpp"
-#include "scheduler_decompose.hpp"
 #include "scheduler_operation.hpp"
 #include "shape_util.hpp"
 #include "tensor.hpp"
@@ -105,7 +104,7 @@ bool IsConnected(const SchedulerOperation &first, const SchedulerOperation &seco
 }  // namespace
 
 SchedulerPacking::SchedulerPacking(Architecture *arch, bool disableChaining) :
-        _arch(arch), _disableChaining(disableChaining)
+        _arch(arch), _ctx(arch), _disableChaining(disableChaining)
 {
 }
 
@@ -797,27 +796,27 @@ std::vector<std::unique_ptr<SchedulerOperation>> SchedulerPacking::DecomposeSche
         case OpType::FullyConnected:
             [[fallthrough]];
         case OpType::Conv2D:
-            result = DecomposeConv2D(_arch, std::move(op));
+            result = DecomposeConv2D(_ctx, std::move(op));
             break;
         case OpType::Conv3D:
-            result = DecomposeConv3D(_arch, std::move(op));
+            result = DecomposeConv3D(_ctx, std::move(op));
             break;
         case OpType::DepthwiseConv2D:
-            result = DecomposeDepthwiseConv2D(_arch, std::move(op));
+            result = DecomposeDepthwiseConv2D(_ctx, std::move(op));
             break;
         case OpType::TransposeConv2D:
             OperatorQuery(_arch, op.get(), &req);
             if ( req.req.Any(ArchRequirement::OpSubstitution) )
             {
-                result = LegaliseTransposeConv2D(_arch, std::move(op));
+                result = LegaliseTransposeConv2D(_ctx, std::move(op));
             }
             else
             {
-                result = DecomposeTransposeConv2D(_arch, std::move(op));
+                result = DecomposeTransposeConv2D(_ctx, std::move(op));
             }
             break;
         case OpType::MatMul:
-            result = DecomposeMatmul(_arch, std::move(op));
+            result = DecomposeMatmul(_ctx, std::move(op));
             break;
         case OpType::ArgMax:
             [[fallthrough]];
@@ -830,35 +829,35 @@ std::vector<std::unique_ptr<SchedulerOperation>> SchedulerPacking::DecomposeSche
         case OpType::ReduceAny:
             [[fallthrough]];
         case OpType::ReduceAll:
-            result = DecomposeReduce(_arch, std::move(op));
+            result = DecomposeReduce(_ctx, std::move(op));
             break;
         case OpType::Reverse:
-            result = DecomposeReverse(_arch, std::move(op));
+            result = DecomposeReverse(_ctx, std::move(op));
             break;
         case OpType::Resize:
             OperatorQuery(_arch, op.get(), &req);
             if ( req.req.Any(ArchRequirement::OpSubstitution) )
             {
-                result = LegaliseResize(_arch, std::move(op));
+                result = LegaliseResize(_ctx, std::move(op));
             }
             else
             {
-                result = DecomposeResize(_arch, std::move(op));
+                result = DecomposeResize(_ctx, std::move(op));
             }
             break;
         case OpType::Transpose:
-            result = DecomposeTranspose(_arch, std::move(op));
+            result = DecomposeTranspose(_ctx, std::move(op));
             break;
         case OpType::AvgPool:
-            result = DecomposeAvgPool(_arch, std::move(op));
+            result = DecomposeAvgPool(_ctx, std::move(op));
             break;
         case OpType::MaxPool:
-            result = DecomposeMaxPool(_arch, std::move(op));
+            result = DecomposeMaxPool(_ctx, std::move(op));
             break;
         default:
             if ( DecomposeAsElementwise(op->Type()) || op->Type() == OpType::MemoryCopy )
             {
-                result = DecomposeElementwise(_arch, std::move(op));
+                result = DecomposeElementwise(_ctx, std::move(op));
             }
             else
             {

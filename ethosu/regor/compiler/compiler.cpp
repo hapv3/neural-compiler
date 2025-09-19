@@ -459,7 +459,7 @@ std::unique_ptr<Graph> Compiler::CompileGraph(std::unique_ptr<Graph> &graph,
     auto scheduleOps = packing.Process(graph.get());
 
     // Schedule the linearised operation sequence
-    Scheduler scheduler(_architecture.get(), _schedulerOptions, "graph", scheduleOps);
+    Scheduler scheduler(_architecture.get(), _schedulerOptions, "graph", scheduleOps, packing.OpConfigCompatablility());
     std::shared_ptr<Schedule> schedule;
     try
     {

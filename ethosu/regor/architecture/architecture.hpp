@@ -209,6 +209,7 @@ enum class ArchAccumulatorSource : uint8_t
 /// </summary>
 struct ArchitectureConfigQuery
 {
+    ArchitectureOpConfig *compatibleWithConfig = nullptr;
     Shape ofmShape;
     Shape ifmShape[2];
     int ifmBits;
@@ -220,7 +221,7 @@ struct ArchitectureConfigQuery
     TransposeType transpose;
     ReverseType reverse;
     TensorFormat ofmFormat;
-    WeightFormat weightFormat;
+    WeightFormat weightFormat = WeightFormat::Default;
     ArchAccumulatorSource accSource = ArchAccumulatorSource::Reset;
     bool accOutputEnabled = true;
     struct Rescale

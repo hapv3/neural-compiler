@@ -69,8 +69,9 @@ int TensorAllocationBytes(const Shape &shape, TensorFormat format, DataType dtyp
 }
 
 Scheduler::Scheduler(Architecture *arch, const SchedulerOptions &options, const std::string &name,
-    std::vector<std::unique_ptr<SchedulerOperation>> &ops) :
-        _ops(ops)
+    std::vector<std::unique_ptr<SchedulerOperation>> &ops, const SchedulerOpConfigMap &opConfigCompatablility) :
+        _ops(ops),
+        _opConfigCompatablility(opConfigCompatablility)
 {
     assert(arch != nullptr);
     _arch = arch;
@@ -472,7 +473,11 @@ ArchAccumulatorSource GetArchAccumulatorSource(const AccumulatorControl &ac)
     }
 }
 
-std::unique_ptr<ArchitectureOpConfig> GetOpConfig(Architecture *arch, SchedulerOperation *op, const Shape &ifmShape,
+
+}  // namespace
+
+
+std::unique_ptr<ArchitectureOpConfig> Scheduler::GetOpConfig(SchedulerOperation *op, const Shape &ifmShape,
     const Shape &ifm2Shape, const Shape &ofmShape, WeightFormat wgtFormat)
 {
     assert(op->IsNpuOp());
@@ -483,6 +488,7 @@ std::unique_ptr<ArchitectureOpConfig> GetOpConfig(Architecture *arch, SchedulerO
     SchedulerConnection *ofm = op->OFM();
 
     ArchitectureConfigQuery query{};
+    query.compatibleWithConfig = _opConfigCompatablility.count(*op) ? _opConfigCompatablility.at(*op).get() : nullptr;
     query.ofmShape = Shape::PadAxes(ofmShape, 3, 1);
     query.ifmShape[0] = ifmShape;
     query.ifmShape[1] = ifm2Shape;
@@ -507,11 +513,11 @@ std::unique_ptr<ArchitectureOpConfig> GetOpConfig(Architecture *arch, SchedulerO
         query.rescaling.scaleY = attr->scaleY;
     }
 
-    return arch->GetOpConfig(op->Type(), query);
+    return _arch->GetOpConfig(op->Type(), query);
 }
 
-WeightScaleEncoding ChooseBestWeightFormat(Architecture *arch, SchedulerOperation *op,
-    OptimizationStrategy optimizationStrategy, std::vector<WeightScaleEncoding> &encodingResults)
+WeightScaleEncoding Scheduler::ChooseBestWeightFormat(SchedulerOperation *op, OptimizationStrategy optimizationStrategy,
+    std::vector<WeightScaleEncoding> &encodingResults)
 {
     WeightScaleEncoding *bestResult = nullptr;
 
@@ -535,7 +541,7 @@ WeightScaleEncoding ChooseBestWeightFormat(Architecture *arch, SchedulerOperatio
             weightStats.distinctWeights = weightTensor->distinctWeights;
             auto query = Scheduler::InitPerfQuery(op, nullptr);
             auto totalCycles =
-                arch->Performance()->WeightDecodeCycles(
+                _arch->Performance()->WeightDecodeCycles(
                     query, weightStats, weightTensor->config->Format(), weightTensor->memArea.memory) +
                 encodingResult.cycleCost.opCycles;
             if ( totalCycles < minCycles )
@@ -548,7 +554,7 @@ WeightScaleEncoding ChooseBestWeightFormat(Architecture *arch, SchedulerOperatio
     return std::move(*bestResult);
 }
 
-bool UseFastDecoder(regor::Architecture *arch, SchedulerOperation *op, OptimizationStrategy optimizationStrategy, NpuWeightTensor *weightTensor)
+bool Scheduler::UseFastDecoder(SchedulerOperation *op, OptimizationStrategy optimizationStrategy, NpuWeightTensor *weightTensor)
 {
     int fastSizeDivisor = 1;
     if ( weightTensor->distinctWeights > 0 && weightTensor->distinctWeights <= 16 )
@@ -566,38 +572,33 @@ bool UseFastDecoder(regor::Architecture *arch, SchedulerOperation *op, Optimizat
     weightStats.zeroCount = weightTensor->zeroCount;
     weightStats.distinctWeights = weightTensor->distinctWeights;
     auto query = Scheduler::InitPerfQuery(op, nullptr);
-    auto defaultCycles = arch->Performance()->WeightDecodeCycles(
+    auto defaultCycles = _arch->Performance()->WeightDecodeCycles(
         query, weightStats, WeightFormat::Default, weightTensor->memArea.memory);
     weightStats.encodedSize = fastWeightSize;
-    auto fastCycles = arch->Performance()->WeightDecodeCycles(
+    auto fastCycles = _arch->Performance()->WeightDecodeCycles(
         query, weightStats, WeightFormat::Fast, weightTensor->memArea.memory);
     return fastCycles < defaultCycles;
 }
 
-std::unique_ptr<ArchitectureOpConfig> MaybeGetSparsityConfig(regor::Architecture *arch, SchedulerOperation *op,
-    Shape &ifmShape, Shape &ifm2Shape, Shape &ofmShape, Flags<WeightFormat> supportedFormat)
+std::unique_ptr<ArchitectureOpConfig> Scheduler::MaybeGetSparsityConfig(
+    SchedulerOperation *op, Shape &ifmShape, Shape &ifm2Shape, Shape &ofmShape, Flags<WeightFormat> supportedFormat)
 {
     using WF = Flags<WeightFormat>;
     std::unique_ptr<ArchitectureOpConfig> blockConfigSparse;
     if ( supportedFormat % WeightFormat::Sparse2_4 )
     {
-        blockConfigSparse = GetOpConfig(arch, op, ifmShape, ifm2Shape, ofmShape, WF(WeightFormat::Default, WeightFormat::Sparse2_4));
+        blockConfigSparse = GetOpConfig(op, ifmShape, ifm2Shape, ofmShape, WF(WeightFormat::Default, WeightFormat::Sparse2_4));
     }
     return blockConfigSparse;
 }
-
-
-}  // namespace
-
 
 WeightScaleEncoding Scheduler::EncodeBestWeightFormat(
     SchedulerOperation *op, Shape &ifmShape, Shape &ifm2Shape, Shape &ofmShape, Flags<WeightFormat> supportedFormats)
 {
     using WF = Flags<WeightFormat>;
     // We assume that block config depends only on the sparsity bit in the weight format.
-    std::unique_ptr<ArchitectureOpConfig> blockConfigDefault = GetOpConfig(
-        _arch, op, ifmShape, ifm2Shape, ofmShape, WF(WeightFormat::Default));
-    std::unique_ptr<ArchitectureOpConfig> blockConfigSparse = MaybeGetSparsityConfig(_arch, op, ifmShape, ifm2Shape, ofmShape, supportedFormats);
+    std::unique_ptr<ArchitectureOpConfig> blockConfigDefault = GetOpConfig(op, ifmShape, ifm2Shape, ofmShape, WF(WeightFormat::Default));
+    std::unique_ptr<ArchitectureOpConfig> blockConfigSparse = MaybeGetSparsityConfig(op, ifmShape, ifm2Shape, ofmShape, supportedFormats);
 
     CycleCost defaultCycleCost;
     CycleCost sparseCycleCost;
@@ -646,7 +647,7 @@ WeightScaleEncoding Scheduler::EncodeBestWeightFormat(
                 weights->tensor.get(), scales->tensor.get(), weights->quantization, op->OFM()->quantization);
 
             if ( checkFastDecoder &&
-                 !UseFastDecoder(_arch, op, _options.optimizationStrategy, encoding.weightScales.npuWeightsTensor.get()) )
+                 !UseFastDecoder(op, _options.optimizationStrategy, encoding.weightScales.npuWeightsTensor.get()) )
             {
                 supportedFormats.Unset(WeightFormat::Fast);
             }
@@ -664,7 +665,7 @@ WeightScaleEncoding Scheduler::EncodeBestWeightFormat(
         }
     }
     assert(!encodingResults.empty());
-    auto bestEncoding = ChooseBestWeightFormat(_arch, op, _options.optimizationStrategy, encodingResults);
+    auto bestEncoding = ChooseBestWeightFormat(op, _options.optimizationStrategy, encodingResults);
     bestEncoding.blockConfig =
         (bestEncoding.weightScales.npuWeightsTensor->config->Format() % WeightFormat::Sparse2_4) ? std::move(blockConfigSparse) : std::move(blockConfigDefault);
 
@@ -754,7 +755,7 @@ std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(
     }
     else
     {
-        blockConfig = parentInfo ? parentInfo->Config()->Clone() : GetOpConfig(_arch, op, ifmShape, ifm2Shape, ofmShape, weightFormat);
+        blockConfig = parentInfo ? parentInfo->Config()->Clone() : GetOpConfig(op, ifmShape, ifm2Shape, ofmShape, weightFormat);
     }
     auto scales = op->TryInput(TensorUsage::Scales);
     if ( !weights && (op->OFM()->quantization.scales.size() > 1 || scales) )

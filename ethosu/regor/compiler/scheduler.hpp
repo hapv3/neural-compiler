@@ -204,6 +204,7 @@ private:
 
 
 using SchedulerCostMap = std::unordered_map<UniqueId, std::unique_ptr<SchedulerOpInfo>>;
+using SchedulerOpConfigMap = std::unordered_map<UniqueId, std::shared_ptr<ArchitectureOpConfig>>;
 
 /// <summary>
 /// Individual schedule
@@ -305,10 +306,11 @@ private:
     bool _spilling = false;
     std::unordered_map<TensorCacheKey, WeightScaleTensors, TensorCacheHash> _tensorCache;
     std::unordered_map<Hash128, UniqueId> _equivalenceIdMap;
+    const SchedulerOpConfigMap &_opConfigCompatablility;
 
 public:
     Scheduler(Architecture *arch, const SchedulerOptions &options, const std::string &name,
-        std::vector<std::unique_ptr<SchedulerOperation>> &ops);
+        std::vector<std::unique_ptr<SchedulerOperation>> &ops, const SchedulerOpConfigMap &opConfigCompatablility);
 
 public:
     std::shared_ptr<Schedule> Process();
@@ -381,6 +383,17 @@ private:
     WeightScaleTensors TryEncodeWeightAndScaleTensor(OpType forOp, IWeightEncodingConfig *encodingParams,
         const std::vector<int> &depthOffsets, const SchedulerTensor *weightTens, const SchedulerTensor *scaleTens,
         const Quantization &weightQuantization, const Quantization &ofmQuantization, bool doWeights, bool doScales);
+
+    std::unique_ptr<ArchitectureOpConfig> GetOpConfig(SchedulerOperation *op, const Shape &ifmShape,
+        const Shape &ifm2Shape, const Shape &ofmShape, WeightFormat wgtFormat);
+
+    WeightScaleEncoding ChooseBestWeightFormat(SchedulerOperation *op, OptimizationStrategy optimizationStrategy,
+        std::vector<WeightScaleEncoding> &encodingResults);
+
+    bool UseFastDecoder(SchedulerOperation *op, OptimizationStrategy optimizationStrategy, NpuWeightTensor *weightTensor);
+
+    std::unique_ptr<ArchitectureOpConfig> MaybeGetSparsityConfig(SchedulerOperation *op, Shape &ifmShape,
+        Shape &ifm2Shape, Shape &ofmShape, Flags<WeightFormat> supportedFormat);
 
     WeightScaleEncoding EncodeBestWeightFormat(SchedulerOperation *op, Shape &ifmShape, Shape &ifm2Shape,
         Shape &ofmShape, Flags<WeightFormat> supportedFormats);
