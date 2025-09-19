@@ -51,10 +51,11 @@ protected:
     std::vector<std::unique_ptr<SchedulerOperation>> _schedList;
     std::unordered_map<Tensor *, std::shared_ptr<SchedulerTensor>> _tensorMap;
     std::unordered_map<Hash128, UniqueId> _bufferEquivalenceIdMap;
+    const std::unordered_map<UniqueId, UniqueId> &_tensorEquivalenceIdMap;
     const Graph *_graph = nullptr;
 
 public:
-    SchedulerPacking(Architecture *arch, bool disableChaining);
+    SchedulerPacking(Architecture *arch, bool disableChaining, const std::unordered_map<UniqueId, UniqueId> &tensorEquivalenceIdMap);
 
 public:
     std::vector<std::unique_ptr<SchedulerOperation>> Process(const Graph *graph);

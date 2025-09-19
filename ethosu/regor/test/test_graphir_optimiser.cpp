@@ -242,7 +242,8 @@ TEST_CASE("test_graphir_optimiser - ReduceSum")
         REQUIRE(!optimiser.empty());
         optimiser.back()->Process(graph.get());
 
-        SchedulerPacking packing(arch.get(), false);
+        const std::unordered_map<UniqueId, UniqueId> emptyTensorEquivalenceIdMap;
+        SchedulerPacking packing(arch.get(), false, emptyTensorEquivalenceIdMap);
         auto scheduleOps = packing.Process(graph.get());
 
         REQUIRE(scheduleOps.size() == 1);

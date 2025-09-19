@@ -27,6 +27,7 @@
 #include "graph.hpp"
 #include "graph_builder.hpp"
 #include "graph_optimiser.hpp"
+#include "graph_packing.hpp"
 #include "include/regor_interface.hpp"
 #include "network_performance.hpp"
 #include "scheduler.hpp"
@@ -67,6 +68,26 @@ struct CompilerOptions
     COPFormat copFormat = COPFormat::COP1;
 };
 
+struct CompiledGraph
+{
+    std::shared_ptr<Schedule> schedule;
+    std::vector<std::pair<Operation *, std::unique_ptr<NPUOperation>>> npuOps;
+    std::unique_ptr<Graph> newGraph;
+    std::unordered_map<const Tensor *, Address> tensorAddressMap;
+    std::vector<std::unique_ptr<CompiledGraph>> compiledSubGraphs;
+
+    CompiledGraph() {}
+
+    CompiledGraph(std::shared_ptr<Schedule> &&s, std::vector<std::pair<Operation *, std::unique_ptr<NPUOperation>>> &&o,
+        std::unique_ptr<Graph> &&g, std::unordered_map<const Tensor *, Address> &&tam, std::vector<std::unique_ptr<CompiledGraph>> &&cc) :
+            schedule(std::move(s)),
+            npuOps(std::move(o)), newGraph(std::move(g)), tensorAddressMap(std::move(tam)), compiledSubGraphs(std::move(cc))
+    {
+    }
+};
+
+using CompiledGraphs = std::unordered_map<SchedulerOperation *, std::vector<CompiledGraph>>;
+
 /// <summary>
 /// Regor top level compiler context (could just become Context)
 /// </summary>
@@ -86,6 +107,11 @@ private:
     Graph *_entryPoint = nullptr;
     std::vector<std::unique_ptr<Graph>> _graphs;
     std::list<GraphBuilder> _builders;
+
+    // Maps tensor UIDs to equivalence ID. This is used to be map WHILE/IF input/output tensors to its subgraphs'
+    // input/output tensors so they are allocated on the same address to be able to pass input/output to/from these
+    // subgraphs without copying.
+    std::unordered_map<UniqueId, UniqueId> _tensorToEquivalenceID;
 
 public:
     void *userApiArg = nullptr;
@@ -136,8 +162,12 @@ private:
     bool BuildNetwork(const char *entryGraph);
     void RecordNPUOp(const NPUOperation &npuOp, const CmdRanges &cmdRanges);
 
-    std::unique_ptr<Graph> CompileGraph(std::unique_ptr<Graph> &graph, IncrementalLinearAllocator &readOnlyAllocator,
-        std::unordered_map<const Tensor *, Address> &tensorAddressMap);
+    std::vector<std::unique_ptr<Graph>> CompileGraphs(IncrementalLinearAllocator &readOnlyAllocator,
+        std::vector<std::unordered_map<const Tensor *, Address>> &tensorAddressMaps);
+    std::unique_ptr<CompiledGraph> CompileGraph(
+        Graph *graph, std::unordered_map<std::string, Graph *> &graphs, IncrementalLinearAllocator &readOnlyAllocator);
+    std::vector<std::unique_ptr<Graph>> LinkGraphs(std::unique_ptr<CompiledGraph> &&result,
+        std::vector<std::unordered_map<const Tensor *, Address>> &tensorAddressMaps);
 
     Compiler &operator=(const Compiler &) = delete;
 };

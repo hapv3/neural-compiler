@@ -186,7 +186,6 @@ private:
 class CustomOperatorBuilder
 {
 private:
-    const Schedule *_schedule;
     uint32_t _archConfigWord;
     uint32_t _archVersion;
     std::shared_ptr<Tensor> _featureMapTensor;
@@ -195,14 +194,13 @@ private:
     std::shared_ptr<Buffer> _readOnlyBuffer;
 
 public:
-    CustomOperatorBuilder(Architecture *architecture, const Schedule *schedule)
+    CustomOperatorBuilder(Architecture *architecture, int featureMapSize, int stagingSize, int readOnlySize)
     {
-        _schedule = schedule;
         _archConfigWord = architecture->ConfigRegisters().front();
         _archVersion = architecture->Version();
         _featureMapTensor = std::make_shared<Tensor>("scratch", DataType::UInt8);
         _readOnlyTensor = std::make_shared<Tensor>("read_only", DataType::UInt8);
-        _featureMapTensor->SetStorageShape(Shape(schedule->memoryUsage.at(architecture->FeatureMapMemory())));
+        _featureMapTensor->SetStorageShape(Shape(featureMapSize));
 
         if ( architecture->StagingMemory() == architecture->FeatureMapMemory() )
         {
@@ -211,17 +209,16 @@ public:
         else
         {
             _stagingTensor = std::make_shared<Tensor>("scratch_fast", DataType::UInt8);
-            _stagingTensor->SetStorageShape(Shape(schedule->memoryUsage.at(architecture->StagingMemory())));
+            _stagingTensor->SetStorageShape(Shape(stagingSize));
         }
 
-        const auto readOnlySize = schedule->memoryUsage.at(architecture->ReadonlyMemory());
         std::vector<uint8_t> readOnlyBuffer(readOnlySize);
         _readOnlyBuffer = std::make_shared<Buffer>(std::move(readOnlyBuffer));
         _readOnlyTensor->SetStorageShape(Shape(readOnlySize));
         _readOnlyTensor->SetBuffer(_readOnlyBuffer);
     }
 
-    void AllocateScratchTensors(std::unordered_map<const Tensor *, Address> &tensorAddressMap)
+    void AllocateScratchTensors(const Schedule *_schedule, std::unordered_map<const Tensor *, Address> &tensorAddressMap)
     {
         tensorAddressMap[_featureMapTensor.get()] = 0;
         if ( _featureMapTensor.get() != _stagingTensor.get() )
@@ -230,7 +227,7 @@ public:
         }
     }
 
-    void Serialise(Operation *operation, const NPUOperation *npuOp, const COPFormat copFormat,
+    void Serialise(const Schedule *schedule, Operation *operation, const NPUOperation *npuOp, const COPFormat copFormat,
         const bool separateIORegions, const std::vector<uint32_t> &registerCommandStream)
     {
         const int stagingUsage = DataTypeStorageSizeBytes(_stagingTensor->Type(), _stagingTensor->StorageShape().Elements());
@@ -243,44 +240,49 @@ public:
 
         for ( const auto &op : npuOp->Operations() )
         {
-            const auto cost = _schedule->Cost(op.get());
-            for ( const auto &input : op->inputs.pairs() )
+            SerialiseSchedOp(schedule, op);
+        }
+    }
+
+    void SerialiseSchedOp(const Schedule *schedule, const std::unique_ptr<SchedulerOperation> &op)
+    {
+        const auto cost = schedule->Cost(op.get());
+        for ( const auto &input : op->inputs.pairs() )
+        {
+            if ( input.second.tensor->IsConstant() )
             {
-                if ( input.second.tensor->IsConstant() )
+                if ( input.first == TensorUsage::Weights )
                 {
-                    if ( input.first == TensorUsage::Weights )
+                    if ( cost ) AddToReadOnly(cost->npuWeightsTensor.get());
+                }
+                else if ( input.first == TensorUsage::Scales )
+                {
+                    if ( cost ) AddToReadOnly(cost->npuScalesTensor.get());
+                }
+                else
+                {
+                    auto tensor = input.second.tensor.get();
+                    if ( tensor->AllocatedAddress() >= 0 )
                     {
-                        AddToReadOnly(cost->npuWeightsTensor.get());
-                    }
-                    else if ( input.first == TensorUsage::Scales )
-                    {
-                        AddToReadOnly(cost->npuScalesTensor.get());
-                    }
-                    else
-                    {
-                        auto tensor = input.second.tensor.get();
-                        if ( tensor->AllocatedAddress() >= 0 )
-                        {
-                            AddToReadOnly(tensor);
-                        }
+                        AddToReadOnly(tensor);
                     }
                 }
             }
-            if ( cost->npuScalesTensor && !op->inputs.contains(TensorUsage::Scales) )
+        }
+        if ( cost && cost->npuScalesTensor && !op->inputs.contains(TensorUsage::Scales) )
+        {
+            AddToReadOnly(cost->npuScalesTensor.get());
+        }
+        for ( const auto &subOp : op->SubOps() )
+        {
+            for ( const auto &input : subOp->inputs.pairs() )
             {
-                AddToReadOnly(cost->npuScalesTensor.get());
-            }
-            for ( const auto &subOp : op->SubOps() )
-            {
-                for ( const auto &input : subOp->inputs.pairs() )
+                if ( input.second.tensor->IsConstant() )
                 {
-                    if ( input.second.tensor->IsConstant() )
+                    auto tensor = input.second.tensor.get();
+                    if ( tensor->AllocatedAddress() >= 0 )
                     {
-                        auto tensor = input.second.tensor.get();
-                        if ( tensor->AllocatedAddress() >= 0 )
-                        {
-                            AddToReadOnly(tensor);
-                        }
+                        AddToReadOnly(tensor);
                     }
                 }
             }

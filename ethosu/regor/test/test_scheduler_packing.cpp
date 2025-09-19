@@ -39,7 +39,8 @@ TEST_CASE("test_scheduler_packing")
     REQUIRE(err == "noerror");
 
     // Create packing
-    auto packing = SchedulerPacking(arch.get(), false);
+    const std::unordered_map<UniqueId, UniqueId> emptyTensorEquivalenceIdMap;
+    auto packing = SchedulerPacking(arch.get(), false, emptyTensorEquivalenceIdMap);
     SECTION("Pack operation (with axis)")
     {
         // Perform packing on an ArgMax operation

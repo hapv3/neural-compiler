@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -20,6 +20,7 @@
 
 #include "cascade_builder.hpp"
 #include "common/vector_span.hpp"
+#include "compiler.hpp"
 #include "high_level_command_stream.hpp"
 #include "scheduler.hpp"
 #include "scheduler_operation.hpp"
@@ -32,6 +33,7 @@ namespace regor
 {
 
 using HLCStream = std::vector<std::unique_ptr<HighLevelCommand>>;
+using SubGraphs = std::vector<std::unique_ptr<CompiledGraph>>;
 
 /// <summary>
 /// High level command stream generator
@@ -39,16 +41,24 @@ using HLCStream = std::vector<std::unique_ptr<HighLevelCommand>>;
 class HLCStreamGenerator
 {
 public:
+    HLCStreamGenerator(Address base, bool verbose) : _base(base), _verbose(verbose) {}
+    HLCStreamGenerator(Address base, bool verbose, std::unordered_map<UniqueId, Address> &addresses) :
+            _base(base), _verbose(verbose), _addresses(addresses)
+    {
+    }
+
     // Generates high level command stream for the scheduled operations in the given NPU op
-    HLCStream GenerateCommandStream(const NPUOperation *npuOp, const Schedule *schedule, bool verbose);
+    HLCStream GenerateCommandStream(const NPUOperation *npuOp, const Schedule *schedule, SubGraphs &subgraphs);
 
 private:
     // Generates one or more HLCStripe commands from a given operation and adds them to the stream
     void GenerateHLCStripeCommands(SchedulerOperation *op, const std::shared_ptr<HLCOperation> &hlcOp, HLCStream &cmds);
     // Generates one or more HLCDMA commands from a given operation and adds them to the stream
     void GenerateHLCDMACommands(SchedulerOperation *op, const std::shared_ptr<HLCOperation> &hlcOp, HLCStream &cmds);
+    // Generates one or more HLCBranch commands from a given operation and adds them to the stream
+    void GenerateHLCBranchCommands(SchedulerOperation *op, const std::shared_ptr<HLCOperation> &hlcOp, SubGraphs &subgraphs, HLCStream &cmds);
     // Generates high level commands for the given operation and adds them to the command stream
-    void GenerateCommands(SchedulerOperation *op, const std::shared_ptr<HLCOperation> &hlcOp, HLCStream &cmds);
+    void GenerateCommands(SchedulerOperation *op, const std::shared_ptr<HLCOperation> &hlcOp, SubGraphs &subgraphs, HLCStream &cmds);
     // Generates high level commands for all operations in the cascade and adds them to the command stream
     void GenerateCommandsForCascade(vector_span<std::unique_ptr<SchedulerOperation>> cascadedOps,
         vector_span<std::shared_ptr<HLCOperation>> hlcOps, const CascadeInfo *cascadeInfo, HLCStream &cmds);
@@ -58,6 +68,10 @@ private:
     std::unordered_map<SchedulerTensor *, std::tuple<UniqueId, int /* start channel */, int /* depth index */>> _filledWeightBuffers;
 
     const Schedule *_schedule = nullptr;
+
+    const Address _base = 0;  // Base address to add to each tensor
+    const bool _verbose = false;
+    std::unordered_map<UniqueId, Address> _addresses;  // Maps seen equivalenceIDs -> to seen Address
 };
 
 }  // namespace regor

@@ -292,6 +292,26 @@ struct unidirectional_sequence_lstm_attr_t
     END_FIELD_TABLE()
 };
 
+struct internal_if_attr_t
+{
+    void *then_graph;
+    void *else_graph;
+    BEGIN_FIELD_TABLE(internal_if_attr_t)
+        ATTR_FIELD(then_graph, 0)
+        ATTR_FIELD(else_graph, 1)
+    END_FIELD_TABLE()
+};
+
+struct internal_while_attr_t
+{
+    void *cond_graph;
+    void *body_graph;
+    BEGIN_FIELD_TABLE(internal_while_attr_t)
+        ATTR_FIELD(cond_graph, 0)
+        ATTR_FIELD(body_graph, 1)
+    END_FIELD_TABLE()
+};
+
 #define REDUCED_HASH(hash) (hash & 0x000FFFFF)
 
 DynamicRef CreateAttribute(uint32_t hash);

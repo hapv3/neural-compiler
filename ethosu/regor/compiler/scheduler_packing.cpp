@@ -103,8 +103,8 @@ bool IsConnected(const SchedulerOperation &first, const SchedulerOperation &seco
 
 }  // namespace
 
-SchedulerPacking::SchedulerPacking(Architecture *arch, bool disableChaining) :
-        _arch(arch), _ctx(arch), _disableChaining(disableChaining)
+SchedulerPacking::SchedulerPacking(Architecture *arch, bool disableChaining, const std::unordered_map<UniqueId, UniqueId> &tensorEquivalenceIdMap) :
+        _arch(arch), _ctx(arch), _disableChaining(disableChaining), _tensorEquivalenceIdMap(tensorEquivalenceIdMap)
 {
 }
 
@@ -724,6 +724,14 @@ void SchedulerPacking::InitSchedulerTensor(SchedulerTensor *schedTensor, Tensor 
             _bufferEquivalenceIdMap.emplace(buffer->Hash(), schedTensor->equivalenceId);
         }
         else
+        {
+            schedTensor->equivalenceId = eqId->second;
+        }
+    }
+    else
+    {
+        auto eqId = _tensorEquivalenceIdMap.find(tensor->Uid());
+        if ( eqId != _tensorEquivalenceIdMap.end() )
         {
             schedTensor->equivalenceId = eqId->second;
         }

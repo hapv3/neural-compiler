@@ -1924,7 +1924,7 @@ void EthosU55RCSGenerator::PrepareCommand(int index, HighLevelCommand *cmd, Temp
 {
     emitted.clear();
 
-    if ( !cmd->IsStripe() )
+    if ( cmd->CommandType() != HighLevelCommandType::STRIPE )
     {
         // Emit original op
         emitted.push_back(cmd);
@@ -1999,7 +1999,7 @@ std::vector<uint32_t> EthosU55RCSGenerator::GenerateCommandStream(
 
         for ( auto hlc : emitted )
         {
-            if ( hlc->IsStripe() )
+            if ( hlc->CommandType() == HighLevelCommandType::STRIPE )
             {
                 auto stripe = static_cast<const HLCStripe *>(hlc);
                 if ( verbose )
@@ -2024,7 +2024,7 @@ std::vector<uint32_t> EthosU55RCSGenerator::GenerateCommandStream(
         }
 
         // Return command mapping information to the caller
-        if ( cmdRanges && cmd->IsStripe() )
+        if ( cmdRanges && cmd->CommandType() == HighLevelCommandType::STRIPE )
         {
             cmdRanges->emplace_back(static_cast<HLCStripe *>(cmd.get())->operation->srcId, emitStart, _emit.Position());
         }

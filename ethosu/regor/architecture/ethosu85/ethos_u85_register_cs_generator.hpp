@@ -39,6 +39,7 @@ public:
     void Clear();
     int Position() const { return int(_stream.size()); }
     const std::vector<uint32_t> &CommandStream() const { return _stream; }
+    void ClearRegisters();
     void ClearChainingRegisters();
 
 private:
@@ -104,6 +105,15 @@ struct LutSlot
     Address address = -1;
     int sizeBytes = -1;
     int lastUsed = 0;
+};
+
+struct Branch
+{
+    int position;              // Byte position in command stream
+    uint8_t cond;              // "cond" register field value (rf_true or always)
+    HighLevelCommand *target;  // Branch target command
+
+    Branch(int pos, uint8_t cnd, HighLevelCommand *tgt) : position(pos), cond(cnd), target(tgt) {}
 };
 
 /// <summary>
@@ -241,6 +251,8 @@ protected:
         std::vector<std::pair<unsigned, std::string>> &debugInfo, CmdRanges *cmdRanges);
     // Generates register commands for DMA operations
     void GenerateDMA(const HLCDMA *dma, MemoryAccesses &memoryAccesses);
+    // Generates register commands for branch operations
+    void GenerateBranch(const HLCBranch *branch);
 
     virtual void GenerateInitialRegisterSetup()
     {
@@ -258,6 +270,8 @@ private:
     ArchEthosU85 *_arch;
     // For operations that use LUT: the LUT slot to be used
     std::unordered_map<UniqueId, int> _opToLutSlot;
+    // All emitted branches
+    std::vector<Branch> _branches;
     EthosU85Emitter _emit;
 };
 

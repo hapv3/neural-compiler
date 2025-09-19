@@ -56,6 +56,11 @@ constexpr uint16_t OpCode(uint64_t cmd)
 }
 }  // namespace
 
+void EthosU85Emitter::ClearRegisters()
+{
+    _registers.clear();
+}
+
 void EthosU85Emitter::ClearChainingRegisters()
 {
     // The following commands need to be reset before and after any chained operation
@@ -845,6 +850,11 @@ int EthosU85RCSGenerator::CalcBlockDep(HLCStripe *prevStripe, HLCStripe *stripe)
     {
         prevOfm = prevOp->subOps.back().ofm;
     }
+    // This is the first op after a IF/WHILE
+    if ( IsControlFlow(prevOp->type) )
+    {
+        return 0;
+    }
     // TODO MLBEDSW-9625: Compute block-dependency for transposed ofms
     if ( !IsNone(prevOfm.transpose) )
     {
@@ -1608,7 +1618,7 @@ EthosU85RCSGenerator::InsertLUTDMACommands(std::vector<std::unique_ptr<HighLevel
     for ( auto &hlc : cmds )
     {
         ++timestamp;
-        if ( hlc->IsStripe() )
+        if ( hlc->CommandType() == HighLevelCommandType::STRIPE )
         {
             auto stripe = static_cast<HLCStripe *>(hlc.get());
             auto op = stripe->operation;
@@ -1665,7 +1675,7 @@ EthosU85RCSGenerator::InsertTileDMACommands(std::vector<std::unique_ptr<HighLeve
     std::vector<std::unique_ptr<HighLevelCommand>> result;
     for ( auto &hlc : cmds )
     {
-        if ( hlc->IsStripe() )
+        if ( hlc->CommandType() == HighLevelCommandType::STRIPE )
         {
             auto stripe = static_cast<HLCStripe *>(hlc.get());
             auto op = stripe->operation;
@@ -2240,6 +2250,26 @@ void EthosU85RCSGenerator::GenerateDMA(const HLCDMA *dma, MemoryAccesses &memory
     }
 }
 
+// Generates register commands for BRANCH operations
+void EthosU85RCSGenerator::GenerateBranch(const HLCBranch *branch)
+{
+    // Clear emitter's register state to ensure that all emits following a branch reach the command stream
+    _emit.ClearRegisters();
+
+    if ( branch->true_target && branch->false_target )
+    {
+        _branches.emplace_back(_emit.Position(), uint8_t(branch_cond::RF_TRUE), branch->true_target);
+        Emit(isa::npu_op_branch_t(branch_cond::RF_TRUE, 0 /* Placeholder target */));
+        _branches.emplace_back(_emit.Position(), uint8_t(branch_cond::ALWAYS), branch->false_target);
+        Emit(isa::npu_op_branch_t(branch_cond::ALWAYS, 0 /* Placeholder target */));
+    }
+    else if ( branch->true_target )
+    {
+        _branches.emplace_back(_emit.Position(), uint8_t(branch_cond::ALWAYS), branch->true_target);
+        Emit(isa::npu_op_branch_t(branch_cond::ALWAYS, 0 /* Placeholder target */));
+    }
+}
+
 std::vector<uint32_t> EthosU85RCSGenerator::GenerateCommandStream(
     std::vector<std::unique_ptr<HighLevelCommand>> &highLevelCommandStream, CmdRanges *cmdRanges, bool verbose)
 {
@@ -2254,15 +2284,16 @@ std::vector<uint32_t> EthosU85RCSGenerator::GenerateCommandStream(
     int maxOutstandingKernelOps = _arch->MaxOutstandingKernelOps();
     HLCStripe *prevOp = nullptr;
     std::vector<std::pair<unsigned, std::string>> debugInfo;
+    // All emitted HLCBranchTarget commands and their positions
+    std::unordered_map<HighLevelCommand *, uint32_t /* position */> commands;
 
     for ( auto &hlc : cmds )
     {
-        if ( hlc->IsStripe() )
+        if ( hlc->CommandType() == HighLevelCommandType::STRIPE )
         {
             MemoryAccesses memoryAccesses;
             auto stripe = static_cast<HLCStripe *>(hlc.get());
             if ( !GenerateOpGroup(stripe, prevOp, memoryAccesses, outstandingDmaAccesses, debugInfo, cmdRanges) )
-
             {
                 return std::vector<uint32_t>();
             }
@@ -2271,7 +2302,7 @@ std::vector<uint32_t> EthosU85RCSGenerator::GenerateCommandStream(
 
             UpdateMemoryAccesses(memoryAccesses, outstandingNpuAccesses, maxOutstandingKernelOps);
         }
-        else
+        else if ( hlc->CommandType() == HighLevelCommandType::DMA )
         {
             MemoryAccesses dmaAccesses;
             auto dma = static_cast<HLCDMA *>(hlc.get());
@@ -2282,13 +2313,47 @@ std::vector<uint32_t> EthosU85RCSGenerator::GenerateCommandStream(
             UpdateMemoryAccesses(dmaAccesses, outstandingDmaAccesses, maxOutstandingDMAOps);
             Emit(isa::npu_op_dma_start_t());
         }
+        else if ( hlc->CommandType() == HighLevelCommandType::BRANCH )
+        {
+            // Wait for all operations to finish before branch
+            Emit(isa::npu_op_kernel_wait_t(0));
+            Emit(isa::npu_op_dma_wait_t(0));
+            outstandingNpuAccesses.clear();
+            outstandingDmaAccesses.clear();
+
+            auto branch = static_cast<HLCBranch *>(hlc.get());
+            auto emitStart = _emit.Position();
+            debugInfo.emplace_back(_emit.Position(), branch->ToString());
+            GenerateBranch(branch);
+        }
+        else if ( hlc->CommandType() == HighLevelCommandType::BRANCH_TARGET )
+        {
+            // Remember position of this emitted command
+            commands[hlc.get()] = _emit.Position();
+
+            // We need to clear registers here since we don't know where we branch from
+            _emit.ClearRegisters();
+        }
     }
     Emit(isa::npu_op_stop_t(0xFFFF));
+
+    // Fixup branch targets
+    auto stream = _emit.CommandStream();
+    for ( auto &branch : _branches )
+    {
+        auto target = 4 * commands.at(branch.target);
+        auto instr = isa::npu_op_branch_t(branch_cond(branch.cond), target);
+        assert(branch.position >= 0 && branch.position < int(stream.size()));
+        stream[branch.position] = uint32_t(instr);
+        assert(branch.position >= 0 && branch.position + 1 < int(stream.size()));
+        stream[branch.position + 1] = uint32_t(instr >> 32);
+    }
+
     if ( verbose )
     {
-        PrintCommandStream(_emit.CommandStream(), debugInfo);
+        PrintCommandStream(stream, debugInfo);
     }
-    return _emit.CommandStream();
+    return stream;
 }
 
 }  // namespace regor

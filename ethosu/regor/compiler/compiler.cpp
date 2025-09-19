@@ -293,6 +293,12 @@ bool Compiler::Compile()
         }
     }
 
+    // Select first graph as entrypoint if none selected
+    if ( !_entryPoint )
+    {
+        _entryPoint = _graphs.front().get();
+    }
+
     // Is used to allocate all constant Npu tensors, in permanent storage
     IncrementalLinearAllocator readOnlyAllocator("read-only NPU tensors");
 
@@ -302,16 +308,10 @@ bool Compiler::Compile()
     // Compile each graph/subgraph separately
     std::vector<std::unique_ptr<Graph>> newGraphs;
     std::vector<std::unordered_map<const Tensor *, Address>> tensorAddressMaps;
-    for ( auto &graph : _graphs )
+    newGraphs = CompileGraphs(readOnlyAllocator, tensorAddressMaps);
+    if ( newGraphs.empty() )
     {
-        std::unordered_map<const Tensor *, Address> tensorAddressMap;
-        auto newGraph = CompileGraph(graph, readOnlyAllocator, tensorAddressMap);
-        if ( !newGraph )
-        {
-            return false;
-        }
-        newGraphs.push_back(std::move(newGraph));
-        tensorAddressMaps.push_back(std::move(tensorAddressMap));
+        return false;
     }
 
     _optDb.reset();
@@ -368,12 +368,6 @@ bool Compiler::BuildNetwork(const char *entryGraph)
         return false;
     }
 
-    // Select first graph as entrypoint if none selected
-    if ( !_entryPoint )
-    {
-        _entryPoint = _graphs.front().get();
-    }
-
     // Clearing the builders will release anything that the client allocated
     // but didn't use. Unconnected operators will get freed.
     _builders.clear();
@@ -417,9 +411,67 @@ void Compiler::RecordNPUOp(const NPUOperation &npuOp, const CmdRanges &cmdRanges
     }
 }
 
-std::unique_ptr<Graph> Compiler::CompileGraph(std::unique_ptr<Graph> &graph,
-    IncrementalLinearAllocator &readOnlyAllocator, std::unordered_map<const Tensor *, Address> &tensorAddressMap)
+std::vector<std::unique_ptr<Graph>> Compiler::CompileGraphs(IncrementalLinearAllocator &readOnlyAllocator,
+    std::vector<std::unordered_map<const Tensor *, Address>> &tensorAddressMaps)
 {
+    // Generated a graph name -> graph mapping
+    std::unordered_map<std::string, Graph *> graphsMap;
+    for ( const auto &graph : _graphs )
+    {
+        graphsMap[graph->Name()] = graph.get();
+    }
+
+    // Compile graphs, starting with the entry point
+    std::vector<std::unique_ptr<Graph>> newGraphs;
+    if ( _entryPoint )
+    {
+        auto compiledGraphTree = CompileGraph(_entryPoint, graphsMap, readOnlyAllocator);
+        if ( !compiledGraphTree )
+        {
+            return {};
+        }
+
+        // Link the compiled graphs
+        newGraphs = LinkGraphs(std::move(compiledGraphTree), tensorAddressMaps);
+        if ( newGraphs.empty() )
+        {
+            return {};
+        }
+    }
+
+    return newGraphs;
+}
+
+static void mapInputs(const Graph *subgraph, const SchedulerOperation *op, std::unordered_map<UniqueId, UniqueId> &tensorToEqId, int offset)
+{
+    // Map graph inputs to caller's inputs
+    int index = offset;
+    for ( const auto &input : subgraph->Inputs() )
+    {
+        auto ifmConn = op->Input(MakeTensorUsage(TensorUsage::IFM, index++));
+        tensorToEqId[input->Uid()] = ifmConn->tensor->equivalenceId;
+        LOG_TRACE1("Mapping graph input {} to {} (eqID {})\n", input->Name(), ifmConn->tensor->Name(), ifmConn->tensor->equivalenceId);
+    }
+}
+
+static void mapOutputs(const Graph *subgraph, const SchedulerOperation *op, std::unordered_map<UniqueId, UniqueId> &tensorToEqId, int offset)
+{
+    // Map graph outputs to caller's outputs
+    int index = offset;
+    for ( const auto &output : subgraph->Outputs() )
+    {
+        auto ofmConn = op->Output(MakeTensorUsage(TensorUsage::OFM, index++));
+        tensorToEqId[output->Uid()] = ofmConn->tensor->equivalenceId;
+        LOG_TRACE1("Mapping graph output {} to {} (eqID {})\n", output->Name(), ofmConn->tensor->Name(), ofmConn->tensor->equivalenceId);
+    }
+}
+
+// Compiled a graph and its subgraphs
+std::unique_ptr<CompiledGraph> Compiler::CompileGraph(
+    Graph *graph, std::unordered_map<std::string, Graph *> &graphs, IncrementalLinearAllocator &readOnlyAllocator)
+{
+    LOG_TRACE1("Compiling graph {}\n", graph->Name());
+
     // Validate the input graph semantics
     if ( graph->Notation() == GraphNotation::GraphAPI )
     {
@@ -429,7 +481,7 @@ std::unique_ptr<Graph> Compiler::CompileGraph(std::unique_ptr<Graph> &graph,
             LOG_WARN("Input graph {0} not validated (required for GraphAPI) syntax={1:X}\n", graph->Name(), graph->SyntaxVersion());
             return nullptr;
         }
-        if ( !validator->Validate(graph.get()) )
+        if ( !validator->Validate(graph) )
         {
             SetLastError(validator->GetErrorMsg());
             return nullptr;
@@ -445,7 +497,7 @@ std::unique_ptr<Graph> Compiler::CompileGraph(std::unique_ptr<Graph> &graph,
         // Run the graph optimisers
         for ( const auto &optimiser : graphOptimisers )
         {
-            optimiser->Process(graph.get());
+            optimiser->Process(graph);
         }
     }
     catch ( const std::runtime_error &e )
@@ -455,9 +507,93 @@ std::unique_ptr<Graph> Compiler::CompileGraph(std::unique_ptr<Graph> &graph,
     }
 
     // Pack/linearise graph Operations into SchedulerOperations
-    SchedulerPacking packing(_architecture.get(), _schedulerOptions.disabled.All(SchedulerFeature::Grouping));
-    auto scheduleOps = packing.Process(graph.get());
+    SchedulerPacking packing(_architecture.get(), _schedulerOptions.disabled.All(SchedulerFeature::Grouping), _tensorToEquivalenceID);
+    auto scheduleOps = packing.Process(graph);
 
+    // List of compiled graphs
+    std::vector<std::unique_ptr<CompiledGraph>> compiledSubgraphs;
+
+    // Iterate over all schedule ops here and recurse if control flow ops found
+    for ( auto &op : scheduleOps )
+    {
+        if ( !op->IsNpuOp() || !IsControlFlow(op->Type()) ) continue;
+
+        int subScratchSize = 0;
+        if ( op->Type() == OpType::If )
+        {
+            auto *attr = op->Attribute<cond_attr_t>();
+            auto *attrInt = op->Attribute<internal_if_attr_t>();
+
+            auto *thenGraph = graphs.at(attr->then_branch);
+
+            // Map subgraph input/output tensor -> eqID
+            mapInputs(thenGraph, op.get(), _tensorToEquivalenceID, 1);
+            mapOutputs(thenGraph, op.get(), _tensorToEquivalenceID, 0);
+
+            // Compile the "then" branch
+            auto thenGraphCompiled = CompileGraph(thenGraph, graphs, readOnlyAllocator);
+            if ( !thenGraphCompiled ) return nullptr;
+            auto thenPeak = thenGraphCompiled->schedule->memoryUsage.at(_architecture->FeatureMapMemory());
+            attrInt->then_graph = thenGraphCompiled.get();
+            compiledSubgraphs.push_back(std::move(thenGraphCompiled));
+
+            auto *elseGraph = graphs.at(attr->else_branch);
+
+            // Map subgraph input/output tensor -> eqID
+            mapInputs(elseGraph, op.get(), _tensorToEquivalenceID, 1);
+            mapOutputs(elseGraph, op.get(), _tensorToEquivalenceID, 0);
+
+            // Compile the "else" branch
+            auto elseGraphCompiled = CompileGraph(elseGraph, graphs, readOnlyAllocator);
+            if ( !elseGraphCompiled ) return nullptr;
+            auto elsePeak = elseGraphCompiled->schedule->memoryUsage.at(_architecture->FeatureMapMemory());
+            attrInt->else_graph = elseGraphCompiled.get();
+            compiledSubgraphs.push_back(std::move(elseGraphCompiled));
+
+            subScratchSize = std::max(thenPeak, elsePeak);
+        }
+        else if ( op->Type() == OpType::While )
+        {
+            auto *attr = op->Attribute<while_attr_t>();
+            auto *attrInt = op->Attribute<internal_while_attr_t>();
+
+            auto *condGraph = graphs.at(attr->cond_branch);
+
+            // Map subgraph input tensor -> eqID
+            mapInputs(condGraph, op.get(), _tensorToEquivalenceID, 0);
+
+            // Compile the "cond" branch
+            auto condGraphCompiled = CompileGraph(condGraph, graphs, readOnlyAllocator);
+            if ( !condGraphCompiled ) return nullptr;
+            auto condPeak = condGraphCompiled->schedule->memoryUsage.at(_architecture->FeatureMapMemory());
+            attrInt->cond_graph = condGraphCompiled.get();
+            compiledSubgraphs.push_back(std::move(condGraphCompiled));
+
+            auto *bodyGraph = graphs.at(attr->body_branch);
+
+            // Map subgraph input/output tensor -> eqID
+            mapInputs(bodyGraph, op.get(), _tensorToEquivalenceID, 0);
+            mapOutputs(bodyGraph, op.get(), _tensorToEquivalenceID, 0);
+
+            // Compile the "body" branch
+            auto bodyGraphCompiled = CompileGraph(bodyGraph, graphs, readOnlyAllocator);
+            if ( !bodyGraphCompiled ) return nullptr;
+            auto bodyPeak = bodyGraphCompiled->schedule->memoryUsage.at(_architecture->FeatureMapMemory());
+            attrInt->body_graph = bodyGraphCompiled.get();
+            compiledSubgraphs.push_back(std::move(bodyGraphCompiled));
+
+            subScratchSize = std::max(condPeak, bodyPeak);
+        }
+
+        // Create a carve-out tensor for the branches
+        auto subScratch = std::make_shared<SchedulerTensor>(DataType::Int8, Shape(1, 1, 1, subScratchSize), TensorFormat::NHWC);
+        subScratch->SetInternalName(fmt::format("carveout-for-op-{}", op->Uid()));
+        subScratch->memArea = _architecture->FeatureMapMemory();
+        op->ConnectInput(TensorUsage::Scratch, subScratch);
+    }
+
+    // TODO: make sure that we don't include graph input/output tensors in memory alloc for subgraphs
+    // TOOD: if subgraph, set separateioregion maybe?
     // Schedule the linearised operation sequence
     Scheduler scheduler(_architecture.get(), _schedulerOptions, "graph", scheduleOps, packing.OpConfigCompatablility());
     std::shared_ptr<Schedule> schedule;
@@ -483,9 +619,10 @@ std::unique_ptr<Graph> Compiler::CompileGraph(std::unique_ptr<Graph> &graph,
     // Get a new graph and NPU operations from the scheduled operations
     std::vector<std::pair<Operation *, std::unique_ptr<NPUOperation>>> npuOps;
     std::unique_ptr<Graph> newGraph;
+    std::unordered_map<const Tensor *, Address> tensorAddressMap;
     try
     {
-        newGraph = PackScheduleToGraph(npuOps, scheduleOps, tensorAddressMap, graph.get());
+        newGraph = PackScheduleToGraph(npuOps, scheduleOps, tensorAddressMap, graph);
     }
     catch ( const std::runtime_error &e )
     {
@@ -493,31 +630,47 @@ std::unique_ptr<Graph> Compiler::CompileGraph(std::unique_ptr<Graph> &graph,
         return nullptr;
     }
 
-    auto customOperatorBuilder = CustomOperatorBuilder(_architecture.get(), schedule.get());
-    customOperatorBuilder.AllocateScratchTensors(tensorAddressMap);
-
     // Work over the NPU ops, generating code
     for ( const auto &pair : npuOps )
     {
-        auto *graphOp = pair.first;
         const auto *npuOp = pair.second.get();
 
         // Allocate addresses for IO tensors with an address space that is local for this sequence of NPU ops
         scheduler.AllocateIOAddresses(schedule.get(), npuOp->Operations());
+    }
+
+    return std::make_unique<CompiledGraph>(std::move(schedule), std::move(npuOps), std::move(newGraph),
+        std::move(tensorAddressMap), std::move(compiledSubgraphs));
+}
+
+std::vector<std::unique_ptr<Graph>> Compiler::LinkGraphs(std::unique_ptr<CompiledGraph> &&result,
+    std::vector<std::unordered_map<const Tensor *, Address>> &tensorAddressMaps)
+{
+    const Schedule *schedule = result->schedule.get();
+    const int featureMapSize = schedule->memoryUsage.at(_architecture->FeatureMapMemory());
+    const int stagingSize = schedule->memoryUsage.at(_architecture->StagingMemory());
+    const int readOnlySize = schedule->memoryUsage.at(_architecture->ReadonlyMemory());
+    CustomOperatorBuilder customOperatorBuilder(_architecture.get(), featureMapSize, stagingSize, readOnlySize);
+    customOperatorBuilder.AllocateScratchTensors(result->schedule.get(), result->tensorAddressMap);
+
+    // Work over the NPU ops, generating code
+    for ( const auto &pair : result->npuOps )
+    {
+        auto *graphOp = pair.first;
+        const auto *npuOp = pair.second.get();
 
         // Generate HLCS
-        auto hlcsGenerator = HLCStreamGenerator();
-        auto highLevelCommandStream = hlcsGenerator.GenerateCommandStream(npuOp, schedule.get(), _compilerOptions.verboseHighLevelCommandStream);
+        HLCStreamGenerator hlcsGenerator(0 /* base */, _compilerOptions.verboseHighLevelCommandStream);
+        auto highLevelCommandStream = hlcsGenerator.GenerateCommandStream(npuOp, schedule, result->compiledSubGraphs);
 
         // Generate LLCS for output
+        auto rcsGen = _architecture->RegisterCommandStreamGenerator();
         CmdRanges cmdRanges;
-        auto registerCommandStream = _architecture->RegisterCommandStreamGenerator()->GenerateCommandStream(
-            highLevelCommandStream, &cmdRanges, _compilerOptions.verboseRegisterCommandStream);
-
+        auto registerCommandStream = rcsGen->GenerateCommandStream(highLevelCommandStream, &cmdRanges, _compilerOptions.verboseRegisterCommandStream);
         if ( registerCommandStream.empty() )
         {
             SetLastError("Failed to generate command stream");
-            return nullptr;
+            return {};
         }
 
         if ( _optDb )
@@ -527,16 +680,45 @@ std::unique_ptr<Graph> Compiler::CompileGraph(std::unique_ptr<Graph> &graph,
 
         try
         {
-            customOperatorBuilder.Serialise(graphOp, npuOp, _compilerOptions.copFormat, _schedulerOptions.separateIORegions, registerCommandStream);
+            customOperatorBuilder.Serialise(schedule, graphOp, npuOp, _compilerOptions.copFormat,
+                _schedulerOptions.separateIORegions, registerCommandStream);
         }
         catch ( const std::runtime_error &e )
         {
             SetLastError(e.what());
-            return nullptr;
+            return {};
         }
     }
 
-    return newGraph;
+    // Collect the packed graphs and return them
+    std::vector<std::unique_ptr<Graph>> newGraphs;
+    std::function<void(const std::unique_ptr<CompiledGraph> &)> collectNewGraphs;
+    collectNewGraphs = [&](const std::unique_ptr<CompiledGraph> &cg) -> void
+    {
+        if ( result == cg )
+        {
+            newGraphs.push_back(std::move(cg->newGraph));
+            tensorAddressMaps.push_back(std::move(cg->tensorAddressMap));
+        }
+
+        for ( const auto &[graphOp, npuOp] : cg->npuOps )
+        {
+            // Collect read-only tensors of each op
+            for ( const auto &op : npuOp->Operations() )
+            {
+                customOperatorBuilder.SerialiseSchedOp(cg->schedule.get(), op);
+            }
+        }
+
+        // Recurse to subgraphs
+        for ( const auto &subcg : cg->compiledSubGraphs )
+        {
+            if ( subcg->newGraph ) collectNewGraphs(subcg);
+        }
+    };
+    collectNewGraphs(result);
+
+    return newGraphs;
 }
 
 GraphApi::IGraphBuilder *Compiler::CreateGraph(const char *name)

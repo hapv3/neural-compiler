@@ -24,6 +24,7 @@
 #include "common/box.hpp"
 #include "common/numeric_util.hpp"
 #include "common/vector_span.hpp"
+#include "compiler/compiler.hpp"
 #include "high_level_command_stream.hpp"
 #include "scheduler.hpp"
 
@@ -236,7 +237,8 @@ static Shape GetStrides(const HLCFeatureMap &fm)
     }
 }
 
-static void MakeFeatureMap(TensorUsage usage, const SchedulerConnection *schedConn, HLCFeatureMap &fm)
+static void MakeFeatureMap(TensorUsage usage, const SchedulerConnection *schedConn, HLCFeatureMap &fm, Address base,
+    std::unordered_map<UniqueId, Address> &addresses)
 {
     auto schedTens = schedConn->tensor.get();
     fm.shape = schedConn->shape;
@@ -245,7 +247,11 @@ static void MakeFeatureMap(TensorUsage usage, const SchedulerConnection *schedCo
     fm.memArea = schedTens->memArea;
     fm.format = schedTens->format;
     fm.usage = usage;
-    fm.address = schedTens->AllocatedAddress();
+    // Calculate address of this FeatureMap
+    auto address = schedTens->AllocatedAddress() + (schedTens->memArea.usage.Any(MemUsage::FeatureMap) ? base : 0);
+    // Look up (or store) address
+    auto item = addresses.emplace(schedTens->equivalenceId, address);
+    fm.address = (*item.first).second;
     fm.quantization = schedConn->quantization;
     if ( schedTens->bufferView.HasBuffer() )
     {
@@ -282,7 +288,8 @@ static std::unique_ptr<HLCWeights> MakeWeights(NpuWeightTensor *srcTensor, Buffe
     return weights;
 }
 
-static HLCSubOperation MakeSubOperation(const std::unique_ptr<SchedulerOperation> &schedOp)
+static HLCSubOperation MakeSubOperation(
+    const std::unique_ptr<SchedulerOperation> &schedOp, Address base, std::unordered_map<UniqueId, Address> &addresses)
 {
     HLCSubOperation hlcSubOp;
     hlcSubOp.type = schedOp->Type();
@@ -311,7 +318,7 @@ static HLCSubOperation MakeSubOperation(const std::unique_ptr<SchedulerOperation
                 // Non-IFM tensors get appended
                 at = hlcSubOp.ifm.emplace(hlcSubOp.ifm.end());
             }
-            MakeFeatureMap(input.first, &input.second, *at);
+            MakeFeatureMap(input.first, &input.second, *at, base, addresses);
             if ( signAttr )
             {
                 // Fixup IFM datatype signedness for rescale ops
@@ -319,7 +326,7 @@ static HLCSubOperation MakeSubOperation(const std::unique_ptr<SchedulerOperation
             }
         }
     }
-    MakeFeatureMap(TensorUsage::OFM, schedOp->OFM(), hlcSubOp.ofm);
+    MakeFeatureMap(TensorUsage::OFM, schedOp->OFM(), hlcSubOp.ofm, base, addresses);
     if ( signAttr )
     {
         // Fixup OFM datatype signedness for rescale ops
@@ -345,7 +352,8 @@ static HLCSubOperation MakeSubOperation(const std::unique_ptr<SchedulerOperation
     return hlcSubOp;
 }
 
-static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, SchedulerOpInfo *opInfo)
+static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, SchedulerOpInfo *opInfo, Address base,
+    std::unordered_map<UniqueId, Address> &addresses)
 {
     assert(opInfo);
     auto op = std::make_shared<HLCOperation>();
@@ -376,7 +384,7 @@ static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, 
                 // Non-IFM tensors get appended
                 at = op->ifm.emplace(op->ifm.end());
             }
-            MakeFeatureMap(input.first, &input.second, *at);
+            MakeFeatureMap(input.first, &input.second, *at, base, addresses);
             if ( signAttr )
             {
                 // Fixup IFM datatype signedness for rescale ops
@@ -384,7 +392,7 @@ static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, 
             }
         }
     }
-    MakeFeatureMap(TensorUsage::OFM, schedOp->OFM(), op->ofm);
+    MakeFeatureMap(TensorUsage::OFM, schedOp->OFM(), op->ofm, base, addresses);
     if ( signAttr )
     {
         // Fixup OFM datatype signedness for rescale ops
@@ -430,7 +438,7 @@ static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, 
 
     for ( auto &subOp : schedOp->SubOps() )
     {
-        HLCSubOperation hlcSubOp = MakeSubOperation(subOp);
+        HLCSubOperation hlcSubOp = MakeSubOperation(subOp, base, addresses);
         op->subOps.push_back(std::move(hlcSubOp));
     }
 
@@ -522,13 +530,212 @@ static HLCStripe *FindNextStripe(HLCStream &cmds, int fromIndex)
     int sz = int(cmds.size());
     for ( int i = fromIndex; i < sz; ++i )
     {
-        if ( cmds[i]->IsStripe() )
+        if ( cmds[i]->CommandType() == HighLevelCommandType::STRIPE )
         {
             return static_cast<HLCStripe *>(cmds[i].get());
         }
     }
     assert(fromIndex != 0);  // Every stream should contain at least one stripe
     return nullptr;
+}
+
+// Generates Branch command for If/While
+void HLCStreamGenerator::GenerateHLCBranchCommands(
+    SchedulerOperation *op, const std::shared_ptr<HLCOperation> &hlcOp, SubGraphs &subgraphs, HLCStream &cmds)
+{
+    const auto opType = hlcOp->type;
+    assert(IsControlFlow(opType));
+
+    // Carveout that all FeatureMap tensors in the subgraphs (except the graph input/outputs) will use
+    auto *carveOut = op->Input(TensorUsage::Scratch);
+    assert(carveOut);
+    auto carveOutBase = carveOut->tensor->AllocatedAddress();
+
+    // Store the addresses of the inputs/outputs so they can be reused by the subgraphs
+    for ( const auto &[ifmUsage, ifmConn] : op->inputs.pairs() )
+    {
+        if ( IsIFM(ifmUsage) && _addresses.count(ifmConn.tensor->equivalenceId) == 0 )
+            _addresses[ifmConn.tensor->equivalenceId] = ifmConn.tensor->AllocatedAddress() + _base;
+    }
+    for ( const auto &[ofmUsage, ofmConn] : op->outputs.pairs() )
+    {
+        if ( IsOFM(ofmUsage) && _addresses.count(ofmConn.tensor->equivalenceId) == 0 )
+            _addresses[ofmConn.tensor->equivalenceId] = ofmConn.tensor->AllocatedAddress() + _base;
+    }
+
+    if ( opType == OpType::If )
+    {
+        // Generate a HLC stream for this IF operation. Basic strategy:
+        //
+        //  BRANCH (to "THEN" or "ELSE")
+        // THEN:
+        //  INLINED "THEN" STREAM
+        //  BRANCH ALWAYS (to "EXIT")
+        // ELSE:
+        //  INLINED "ELSE" STREAM
+        //  BRANCH ALWAYS (to "EXIT")
+        // EXIT:
+
+        const auto attr = op->Attribute<internal_if_attr_t>();
+
+        // Deal with "then" branch
+        assert(attr->then_graph);
+        CompiledGraph *thenGraph = reinterpret_cast<CompiledGraph *>(attr->then_graph);
+        assert(thenGraph->npuOps.size() == 1);  // Subgraph fully mapped to NPU
+        assert(thenGraph->npuOps[0].first->Type() == OpType::CustomNpuOp);
+        HLCStreamGenerator thenGen(_base + carveOutBase, _verbose, _addresses);
+        HLCStream thenStream = thenGen.GenerateCommandStream(
+            thenGraph->npuOps[0].second.get(), thenGraph->schedule.get(), thenGraph->compiledSubGraphs);
+
+        // Deal with "else" branch
+        assert(attr->else_graph);
+        CompiledGraph *elseGraph = reinterpret_cast<CompiledGraph *>(attr->else_graph);
+        assert(elseGraph->npuOps.size() == 1);  // Subgraph fully mapped to NPU
+        assert(elseGraph->npuOps[0].first->Type() == OpType::CustomNpuOp);
+        HLCStreamGenerator elseGen(_base + carveOutBase, _verbose, _addresses);
+        HLCStream elseStream = elseGen.GenerateCommandStream(
+            elseGraph->npuOps[0].second.get(), elseGraph->schedule.get(), elseGraph->compiledSubGraphs);
+
+        // Create branch targets
+        auto exit = std::make_unique<HLCBranchTarget>();
+        auto thenEntry = std::make_unique<HLCBranchTarget>();
+        auto elseEntry = std::make_unique<HLCBranchTarget>();
+
+        // Create HLCBranch for the condition
+        auto condBranch = std::make_unique<HLCBranch>();
+        condBranch->true_target = thenEntry.get();
+        condBranch->false_target = elseEntry.get();
+
+        // Add a branch back to the call site
+        auto branchAfterThen = std::make_unique<HLCBranch>();
+        branchAfterThen->true_target = exit.get();
+
+        // Add a branch back to the call site
+        auto branchAfterElse = std::make_unique<HLCBranch>();
+        branchAfterElse->true_target = exit.get();
+
+        // Assemble the HLC stream for this IF operation
+        cmds.push_back(std::move(condBranch));
+        cmds.push_back(std::move(thenEntry));
+        cmds.insert(cmds.end(), std::make_move_iterator(thenStream.begin()), std::make_move_iterator(thenStream.end()));
+        cmds.push_back(std::move(branchAfterThen));
+        cmds.push_back(std::move(elseEntry));
+        cmds.insert(cmds.end(), std::make_move_iterator(elseStream.begin()), std::make_move_iterator(elseStream.end()));
+        cmds.push_back(std::move(branchAfterElse));
+        cmds.push_back(std::move(exit));
+    }
+    else if ( opType == OpType::While )
+    {
+        // Generate a HLC stream for this WHILE operation. Basic strategy:
+        //
+        //  COPY WHILE IFMs TO WHILE OFMs
+        // COND:
+        //  INLINED "COND" STREAM (this consumes WHILE IFMs)
+        //  BRANCH (to "BODY" or "EXIT")
+        // BODY:
+        //  INLINED "BODY" STREAM (this produces WHILE OFMs)
+        //  COPY WHILE OFMs TO WHILE IFMs
+        //  BRANCH ALWAYS (to "COND")
+        // EXIT:
+
+        const auto attr = op->Attribute<internal_while_attr_t>();
+
+        // Generate HLCDMA to copy IFM -> OFM
+        HLCStream copyAtoB;
+        for ( const auto &[ifmUsage, ifmConn] : op->inputs.pairs() )
+        {
+            if ( !IsIFM(ifmUsage) ) continue;
+
+            // Find IFM and matching OFM
+            const auto &ifm = ifmConn.tensor;
+            assert(!ifm->IsConstant());
+            const auto ofmConn = op->Output(MakeTensorUsage(TensorUsage::OFM, GetUsageIndex(ifmUsage)));
+            assert(ofmConn);
+            const auto &ofm = ofmConn->tensor;
+            assert(!ofm->IsConstant());
+
+            // Create a HLCDMA copy op that copies data in the input tensor to the output tensor
+            assert(ifm->AllocationSizeBytes() == ofm->AllocationSizeBytes());
+            assert(ifm->format == ofm->format);
+            auto dma = std::make_unique<HLCDMA>();
+            dma->length = ifm->AllocationSizeBytes();
+            dma->srcAddress = _addresses.at(ifm->equivalenceId);
+            dma->srcMemArea = ifm->memArea;
+            dma->destAddress = _addresses.at(ofm->equivalenceId);
+            dma->destMemArea = ofm->memArea;
+            copyAtoB.push_back(std::move(dma));
+        }
+
+        // Generate HLCDMA to copy OFM -> IFM
+        HLCStream copyBtoA;
+        for ( const auto &[ifmUsage, ifmConn] : op->inputs.pairs() )
+        {
+            if ( !IsIFM(ifmUsage) ) continue;
+
+            // Find IFM and matching OFM
+            const auto &ifm = ifmConn.tensor;
+            assert(!ifm->IsConstant());
+            const auto ofmConn = op->Output(MakeTensorUsage(TensorUsage::OFM, GetUsageIndex(ifmUsage)));
+            assert(ofmConn);
+            const auto &ofm = ofmConn->tensor;
+            assert(!ofm->IsConstant());
+
+            // Create a HLCDMA copy op that copies data in the output tensor to the input tensor
+            assert(ifm->AllocationSizeBytes() == ofm->AllocationSizeBytes());
+            assert(ifm->format == ofm->format);
+            auto dma = std::make_unique<HLCDMA>();
+            dma->length = ifm->AllocationSizeBytes();
+            dma->srcAddress = _addresses.at(ofm->equivalenceId);
+            dma->srcMemArea = ofm->memArea;
+            dma->destAddress = _addresses.at(ifm->equivalenceId);
+            dma->destMemArea = ifm->memArea;
+            copyBtoA.push_back(std::move(dma));
+        }
+
+        // Deal with "cond" branch
+        assert(attr->cond_graph);
+        CompiledGraph *condGraph = reinterpret_cast<CompiledGraph *>(attr->cond_graph);
+        assert(condGraph->npuOps.size() == 1);  // Subgraph fully mapped to NPU
+        assert(condGraph->npuOps[0].first->Type() == OpType::CustomNpuOp);
+        HLCStreamGenerator condGen(_base + carveOutBase, _verbose, _addresses);
+        HLCStream condStream = condGen.GenerateCommandStream(
+            condGraph->npuOps[0].second.get(), condGraph->schedule.get(), condGraph->compiledSubGraphs);
+
+        // Deal with "body" branch
+        assert(attr->body_graph);
+        CompiledGraph *bodyGraph = reinterpret_cast<CompiledGraph *>(attr->body_graph);
+        assert(bodyGraph->npuOps.size() == 1);  // Subgraph fully mapped to NPU
+        assert(bodyGraph->npuOps[0].first->Type() == OpType::CustomNpuOp);
+        HLCStreamGenerator bodyGen(_base + carveOutBase, _verbose, _addresses);
+        HLCStream bodyStream = bodyGen.GenerateCommandStream(
+            bodyGraph->npuOps[0].second.get(), bodyGraph->schedule.get(), bodyGraph->compiledSubGraphs);
+
+        // Create branch targets
+        auto exit = std::make_unique<HLCBranchTarget>();
+        auto bodyEntry = std::make_unique<HLCBranchTarget>();
+        auto condEntry = std::make_unique<HLCBranchTarget>();
+
+        // Create the branch after COND
+        auto branchAfterCond = std::make_unique<HLCBranch>();
+        branchAfterCond->true_target = bodyEntry.get();
+        branchAfterCond->false_target = exit.get();
+
+        // Create the branch after BODY
+        auto branchAfterBody = std::make_unique<HLCBranch>();
+        branchAfterBody->true_target = condEntry.get();
+        branchAfterBody->false_target = nullptr;
+
+        // Assemble the HLC stream for this WHILE operation
+        cmds.insert(cmds.end(), std::make_move_iterator(copyAtoB.begin()), std::make_move_iterator(copyAtoB.end()));
+        cmds.push_back(std::move(condEntry));
+        cmds.insert(cmds.end(), std::make_move_iterator(condStream.begin()), std::make_move_iterator(condStream.end()));
+        cmds.push_back(std::move(branchAfterCond));
+        cmds.push_back(std::move(bodyEntry));
+        cmds.insert(cmds.end(), std::make_move_iterator(bodyStream.begin()), std::make_move_iterator(bodyStream.end()));
+        cmds.insert(cmds.end(), std::make_move_iterator(copyBtoA.begin()), std::make_move_iterator(copyBtoA.end()));
+        cmds.push_back(std::move(branchAfterBody));
+        cmds.push_back(std::move(exit));
+    }
 }
 
 // Generates DMA command for Scatter/Gather
@@ -773,11 +980,16 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
     }
 }
 
-void HLCStreamGenerator::GenerateCommands(SchedulerOperation *op, const std::shared_ptr<HLCOperation> &hlcOp, HLCStream &cmds)
+void HLCStreamGenerator::GenerateCommands(
+    SchedulerOperation *op, const std::shared_ptr<HLCOperation> &hlcOp, SubGraphs &subgraphs, HLCStream &cmds)
 {
     auto opType = op->Type();
 
-    if ( opType == OpType::Scatter || opType == OpType::Gather )
+    if ( IsControlFlow(opType) )
+    {
+        GenerateHLCBranchCommands(op, hlcOp, subgraphs, cmds);
+    }
+    else if ( opType == OpType::Scatter || opType == OpType::Gather )
     {
         GenerateHLCDMACommands(op, hlcOp, cmds);
     }
@@ -825,10 +1037,12 @@ void HLCStreamGenerator::GenerateCommandsForCascade(vector_span<std::unique_ptr<
     }
     // Generate high level commands for every operation in the cascade;
     // keep the generated streams in separate lists
+    SubGraphs subgraps;
     for ( int i = 0; i < nrOps; ++i )
     {
         HLCStream stream;
-        GenerateCommands(cascadedOps[i].get(), hlcOps[i], stream);
+        GenerateCommands(cascadedOps[i].get(), hlcOps[i], subgraps, stream);
+        assert(subgraps.empty());
         currIndex.push_back(0);
         availableStripe.push_back(nullptr);
         nextStripe.push_back(FindNextStripe(stream, 0));
@@ -849,7 +1063,7 @@ void HLCStreamGenerator::GenerateCommandsForCascade(vector_span<std::unique_ptr<
             HighLevelCommand *hlc = stream[ix].get();
             cmds.push_back(std::move(cmdsForOps[opIndex][ix]));
             ++ix;
-            if ( hlc->IsStripe() )
+            if ( hlc->CommandType() == HighLevelCommandType::STRIPE )
             {
                 availableStripe[opIndex] = nextStripe[opIndex];
                 nextStripe[opIndex] = FindNextStripe(stream, ix);
@@ -876,21 +1090,24 @@ void HLCStreamGenerator::GenerateCommandsForCascade(vector_span<std::unique_ptr<
     }
 }
 
-HLCStream HLCStreamGenerator::GenerateCommandStream(const NPUOperation *npuOp, const Schedule *schedule, bool verbose)
+HLCStream HLCStreamGenerator::GenerateCommandStream(const NPUOperation *npuOp, const Schedule *schedule, SubGraphs &subgraphs)
 {
     HLCStream cmds;
     _schedule = schedule;
-    auto &npuOps = npuOp->Operations();
+    const auto &npuOps = npuOp->Operations();
     // Create HLCOperation for every ScheduledOperation
     std::vector<std::shared_ptr<HLCOperation>> hlcOps;
-    for ( auto &schedOp : npuOps )
+    for ( const auto &schedOp : npuOps )
     {
         auto op = schedOp.get();
-        hlcOps.push_back(MakeOperation(op, schedule->Cost(op)));
+        hlcOps.push_back(MakeOperation(op, schedule->Cost(op), _base, _addresses));
     }
 
+    // Compiled subgraphs
+    std::vector<HLCStream> substreams;
+
     // Generate the command stream
-    int sz = int(npuOps.size());
+    const int sz = int(npuOps.size());
     for ( int i = 0; i < sz; ++i )
     {
         auto op = npuOps[i].get();
@@ -900,7 +1117,7 @@ HLCStream HLCStreamGenerator::GenerateCommandStream(const NPUOperation *npuOp, c
         if ( opInfo->cascade == 0 )
         {
             // Single operation, not in cascade
-            GenerateCommands(op, hlcOp, cmds);
+            GenerateCommands(op, hlcOp, subgraphs, cmds);
         }
         else
         {
@@ -920,7 +1137,7 @@ HLCStream HLCStreamGenerator::GenerateCommandStream(const NPUOperation *npuOp, c
             i += cascadeSize - 1;
         }
     }
-    if ( verbose )
+    if ( _verbose )
     {
         PrintCommandStream(npuOp, hlcOps, cmds);
     }
@@ -955,7 +1172,7 @@ void HLCStreamGenerator::PrintCommandStream(const NPUOperation *npuOp, std::vect
     LOG_PRINT("High level command stream:\n");
     for ( unsigned i = 0; i < cmds.size(); ++i )
     {
-        LOG_PRINT("{} {}\n", i, cmds[i]->ToString());
+        LOG_PRINT("{} {} {}\n", i, fmt::ptr(cmds[i].get()), cmds[i]->ToString());
     }
 }
 

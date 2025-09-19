@@ -208,11 +208,20 @@ struct HLCOperation : HLCSubOperation
     }
 };
 
+enum class HighLevelCommandType : uint8_t
+{
+    NONE = 0,
+    STRIPE = 1,
+    DMA = 2,
+    BRANCH = 3,
+    BRANCH_TARGET = 4
+};
+
 class HighLevelCommand
 {
 public:
     virtual ~HighLevelCommand() = default;
-    virtual bool IsStripe() const { return false; }
+    virtual HighLevelCommandType CommandType() const { return HighLevelCommandType::NONE; }
     virtual std::string ToString() const = 0;
 };
 
@@ -232,7 +241,7 @@ public:
 
 public:
     HLCStripe(const std::shared_ptr<HLCOperation> &operation_) : operation(operation_), opGroup(nullptr) {}
-    bool IsStripe() const override { return true; }
+    HighLevelCommandType CommandType() const override { return HighLevelCommandType::STRIPE; }
 
     std::string ToString() const override
     {
@@ -283,6 +292,8 @@ public:
     int length;
     Shape sizes;  // Only valid for Ethos U85
 
+    HighLevelCommandType CommandType() const override { return HighLevelCommandType::DMA; }
+
     std::string ToString() const override
     {
         return fmt::format("DMA src: {}:{}, address: 0x{:x}, dest: {}:{}, address: 0x{:x}, sizes: ({}), length: {}",
@@ -290,5 +301,36 @@ public:
             destAddress, sizes ? sizes.ToString() : "N/A", std::to_string(length));
     }
 };
+
+/// <summary>
+/// High level command that performs a branch operation.
+/// </summary>
+class HLCBranch : public HighLevelCommand
+{
+public:
+    HighLevelCommand *true_target;
+    HighLevelCommand *false_target;
+
+    HighLevelCommandType CommandType() const override { return HighLevelCommandType::BRANCH; }
+
+    std::string ToString() const override
+    {
+        if ( true_target && false_target )
+            return fmt::format("Branch true: {}, false: {}", fmt::ptr(true_target), fmt::ptr(false_target));
+        else return fmt::format("Branch always: {}", fmt::ptr(true_target));
+    }
+};
+
+/// <summary>
+/// High level command that acts as a branch target. It clears registers, but otherwise is no-op.
+/// </summary>
+class HLCBranchTarget : public HighLevelCommand
+{
+public:
+    HighLevelCommandType CommandType() const override { return HighLevelCommandType::BRANCH_TARGET; }
+
+    std::string ToString() const override { return fmt::format("HLCBranchTarget"); }
+};
+
 
 }  // namespace regor
