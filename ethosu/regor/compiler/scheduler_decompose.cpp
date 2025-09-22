@@ -2461,6 +2461,86 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReverse(Architecture *
     return result;
 }
 
+static std::vector<std::unique_ptr<SchedulerOperation>>
+SwapAxesIn3D(Architecture *arch, Shape &shape, SchedulerConnection *tail, int a, int b)
+{
+    std::vector<std::unique_ptr<SchedulerOperation>> result;
+
+    LOG_TRACE2("SwapAxesIn3D: Swap ({}), {} <-> {}\n", shape.ToString(), a, b);
+    // We can swap any two axes of the three innermost axes (H/W/C) of a shape if any of the following is true:
+    //
+    // A) The shape is 3D or less. I.e. the shape is (H, W, C) or (W, C).
+    // B) The shape is 4D or more and all axes other than the three innermost axes (H/W/C) are ones. I.e. the shape
+    //    is (1, H, W, C), (1, 1, H, W, C) or (1, 1, 1, H, W, C).
+
+    // Build transpose type for this swap
+    Shape perm(nullptr, shape.Size());
+    for ( int i = 0; i < shape.Size(); i++ )
+        perm[i] = i;
+    std::swap(perm[a], perm[b]);
+    const auto transposeType = TransposeTypeFromShape(perm);
+
+    const Shape &ifmShape = shape;
+    const Shape ofmShape = ifmShape.Permute(uint32_t(transposeType));
+    LOG_TRACE2("SwapAxesIn3D: Transpose ({}) -> ({}), 0x{:08x}\n", ifmShape.ToString(), ofmShape.ToString(), transposeType);
+
+    // Create SchedulerOperation
+    auto op = std::make_unique<SchedulerOperation>(OpType::Transpose);
+    op->SetKernel(Kernel::UnitKernel());
+    auto ifmConn = op->AddInput(TensorUsage::IFM);
+    auto ofmConn = op->AddOutput(TensorUsage::OFM);
+
+    // Create SchedulerTensor
+    auto newTensor = std::make_shared<SchedulerTensor>();
+    newTensor->format = tail->tensor->format;
+    newTensor->memArea = tail->tensor->memArea;
+    newTensor->storageShape = ofmShape;
+    newTensor->bufferView = BufferView(nullptr, 0, DataTypeSizeBits(tail->tensor->dataType), ofmShape, Shape());
+    newTensor->dataType = tail->tensor->dataType;
+    newTensor->uid = GenerateUniqueId();
+
+    // Connect input/output
+    ifmConn->SetType(tail->Type());
+    ifmConn->tensor = tail->tensor;
+    ifmConn->tensor->consumers.push_back(op.get());
+    ifmConn->shape = ifmShape;
+    ofmConn->SetType(tail->Type());
+    ofmConn->tensor = std::move(newTensor);
+    ofmConn->tensor->producers.push_back(op.get());
+    ofmConn->shape = ofmShape;
+    ofmConn->transpose = transposeType;
+
+    // Check architecture support for this swap; if unsupported, substitute by supported swaps (W<->C and H<->W)
+    ArchRequirements req{};
+    auto qResult = OperatorQuery(arch, op.get(), &req);
+    if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::TransposeMask) )
+    {
+        std::vector<std::unique_ptr<SchedulerOperation>> ops;
+        int s = shape.Size();
+
+        // Compose unsupported swap using adjacent supported swaps:
+        // swap(H,C) = swap(W,C) -> swap(H,W) -> swap(W,C)
+        // Step 1: swap W <-> C (NHCW)
+        ops = SwapAxesIn3D(arch, shape, tail, s - 2, s - 1);
+        result.insert(result.end(), std::make_move_iterator(ops.begin()), std::make_move_iterator(ops.end()));
+
+        // Step 2: swap H <-> W (NWHC)
+        ops = SwapAxesIn3D(arch, shape, result.back()->OFM(), s - 3, s - 2);
+        result.insert(result.end(), std::make_move_iterator(ops.begin()), std::make_move_iterator(ops.end()));
+
+        // Step 3: swap W <-> C (NHCW)
+        ops = SwapAxesIn3D(arch, shape, result.back()->OFM(), s - 2, s - 1);
+        result.insert(result.end(), std::make_move_iterator(ops.begin()), std::make_move_iterator(ops.end()));
+
+        return result;
+    }
+    else
+    {
+        std::swap(shape[a], shape[b]);
+        return DecomposeTranspose(arch, std::move(op));
+    }
+}
+
 // Swap two axes of a shape by adding one or more transpose ops to a scheduler connection
 static std::vector<std::unique_ptr<SchedulerOperation>> SwapAxes(Architecture *arch, Shape &shape, SchedulerConnection *tail, int a, int b)
 {
@@ -2485,53 +2565,10 @@ static std::vector<std::unique_ptr<SchedulerOperation>> SwapAxes(Architecture *a
     // 4. Swap back axis N-1 to position B, like in step 2.
     // 5. Swap back axis 0 to position A, like in step 1.
 
-    // We can swap any two axes of the three innermost axes (H/W/C) of a shape if any of the following is true:
-    //
-    // A) The shape is 3D or less. I.e. the shape is (H, W, C) or (W, C).
-    // B) The shape is 4D or more and all axes other than the three innermost axes (H/W/C) are ones. I.e. the shape
-    //    is (1, H, W, C), (1, 1, H, W, C) or (1, 1, 1, H, W, C).
     if ( shape.Size() <= 3 || (a >= shape.Size() - 3 && b >= shape.Size() - 3 && shape.AxisProduct(0, -3) == 1) )
     {
-        // Build transpose type for this swap
-        Shape perm(nullptr, shape.Size());
-        for ( int i = 0; i < shape.Size(); i++ )
-            perm[i] = i;
-        std::swap(perm[a], perm[b]);
-        const auto transposeType = TransposeTypeFromShape(perm);
-
-        const Shape &ifmShape = shape;
-        const Shape ofmShape = ifmShape.Permute(uint32_t(transposeType));
-        LOG_TRACE2("SwapAxes: Transpose ({}) -> ({}), 0x{:08x}\n", ifmShape.ToString(), ofmShape.ToString(), transposeType);
-
-        // Create SchedulerOperation
-        auto op = std::make_unique<SchedulerOperation>(OpType::Transpose);
-        op->SetKernel(Kernel::UnitKernel());
-        auto ifmConn = op->AddInput(TensorUsage::IFM);
-        auto ofmConn = op->AddOutput(TensorUsage::OFM);
-
-        // Create SchedulerTensor
-        auto newTensor = std::make_shared<SchedulerTensor>();
-        newTensor->format = tail->tensor->format;
-        newTensor->memArea = tail->tensor->memArea;
-        newTensor->storageShape = ofmShape;
-        newTensor->bufferView = BufferView(nullptr, 0, DataTypeSizeBits(tail->tensor->dataType), ofmShape, Shape());
-        newTensor->dataType = tail->tensor->dataType;
-        newTensor->uid = GenerateUniqueId();
-
-        // Connect input/output
-        ifmConn->SetType(tail->Type());
-        ifmConn->tensor = tail->tensor;
-        ifmConn->tensor->consumers.push_back(op.get());
-        ifmConn->shape = ifmShape;
-        ofmConn->SetType(tail->Type());
-        ofmConn->tensor = std::move(newTensor);
-        ofmConn->tensor->producers.push_back(op.get());
-        ofmConn->shape = ofmShape;
-        ofmConn->transpose = transposeType;
-
-        std::swap(shape[a], shape[b]);
-
-        return DecomposeTranspose(arch, std::move(op));
+        // Both axes are in the three innermost axes (H/W/C) and can be swapped directly
+        return SwapAxesIn3D(arch, shape, tail, a, b);
     }
 
     if ( a == 0 && b == 1 )

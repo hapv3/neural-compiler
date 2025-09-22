@@ -556,6 +556,17 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
             return QueryResult::Unsupported;
         }
         // Validate supported transpose-masks
+        if ( (typeInfo) && (query->ifm[0].type == DataType::Int32) && (query->transposeMask == TransposeType::NCWH) )
+        {
+            // 32-bit NCWH must be constructed using other permutations since custom striding in channel dimension is
+            // not supported
+            if ( req )
+            {
+                req->req.Set(ArchRequirement::Decompose);
+                req->decomposeProps.Set(ArchProperty::TransposeMask);
+            }
+            result.Set(QueryResult::HasRequirements);
+        }
         if ( query->transposeMask != TransposeType::NWHC && query->transposeMask != TransposeType::NHCW && query->transposeMask != TransposeType::NCWH )
         {
             // supported with mask-decomposition requirements
