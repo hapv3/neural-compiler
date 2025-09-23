@@ -724,7 +724,7 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
                     auto inputArea = TransformWithStridesAndSkirt(outputArea, &strides, ifmConn->stepXY, &skirt, ifmConn->shape,
                         opType, ofmConn->slice.offset, ifmConn->slice.offset, ifmConn->slice.shape, dilatedKernelHeight,
                         upscaling, hlcStripe->padding.top, hlcStripe->padding.bottom, ifmLimit, ofmConn->transpose, accIfm);
-                    if ( !accIfm && (ofmConn->stepXY != Point2i{1, 1} || ifmConn->stepXY != Point2i{1, 1}) )
+                    if ( opType != OpType::MatMul && !accIfm && (ofmConn->stepXY != Point2i{1, 1} || ifmConn->stepXY != Point2i{1, 1}) )
                     {
                         std::tie(inputArea, hlcStripe->padding) = TransformWithInputOutputSteps(inputArea,
                             ifmConn->stepXY, outputArea, ofmConn->stepXY, kernel, hlcStripe->padding, ifmConn->shape);

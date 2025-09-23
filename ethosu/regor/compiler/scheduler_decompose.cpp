@@ -840,22 +840,24 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeNonConstWeights
 
     Shape ifmShape = ifmConn->SliceShape();
     Shape ofmShape = ofmConn->SliceShape();
-    Shape kernelShape = weightsConn->SliceShape();
+    Shape weightsShape = weightsConn->SliceShape();
     Shape biasShape = biasConn->SliceShape();
     int ofmHeight = ofmShape.Height();
     int ofmWidth = ofmShape.Width();
     int ofmDepth = ofmShape.Depth();
 
-    int kernelH = kernelShape.Height();
-    int kernelW = kernelShape.Width();
-    int kernelC = kernelShape.Depth();
+    const auto kSize = op->Kernel()->Size3D();
+    int kernelH = kSize.y;
+    int kernelW = kSize.x;
+    int kernelC = kSize.z;
+    const int kernelArea = kernelH * kernelW;
     const Point2i stride = op->Kernel()->Stride();
     const Point2i dilation = op->Kernel()->Dilation();
 
     // Block config query, biasing ofm block towards width as height and depth has to be 1
     regor::ArchitectureConfigQuery qConfig{};
     qConfig.ifmShape[0] = ifmShape.WithHeight(1);
-    qConfig.ofmShape = ofmShape.WithHeight(1).WithDepth(1);
+    qConfig.ofmShape = ofmShape.WithHeight(1);
     qConfig.ifmBits = DataTypeSizeBits(ifmConn->Type());
     qConfig.ofmBits = DataTypeSizeBits(ofmConn->Type());
     qConfig.kernel = &Kernel::UnitKernel();
@@ -866,6 +868,7 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeNonConstWeights
     qConfig.ofmFormat = TensorFormat::NHWC;
     auto opConfig = arch->GetOpConfig(op->Type(), qConfig);
     int ofmBlockWidth = opConfig->OptimalStripeGranule().x;
+    int ofmBlockDepth = opConfig->OptimalDepthGranule();
 
     for ( int ofmY = 0; ofmY < ofmHeight; ofmY++ )
     {
@@ -873,15 +876,16 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeNonConstWeights
         for ( int ofmX = 0; ofmX < ofmWidth; ofmX += ofmBlockWidth )
         {
             int ifmX = ofmX * stride.x;
-            for ( int ofmZ = 0; ofmZ < ofmDepth; ofmZ++ )
+            for ( int ofmZ = 0; ofmZ < ofmDepth; ofmZ += ofmBlockDepth )
             {
+                auto validOfmDepth = std::min(ofmDepth - ofmZ, ofmBlockDepth);
                 // Preload the bias using a NullPool
                 assert(biasConn->Type() == DataType::Int32 || biasConn->Type() == DataType::Int48);
                 auto biasOp = std::make_unique<SchedulerOperation>(OpType::NullPool);
                 biasOp->SetAccumulatorMode({AccumulatorSource::Reset, false});
                 biasOp->SetKernel(Kernel::UnitKernel());
                 auto *biasIfmConn = biasOp->ConnectInput(TensorUsage::IFM, biasConn->tensor);
-                biasIfmConn->slice.shape = Shape(1, 1, std::min(ofmWidth - ofmX, ofmBlockWidth), 1);
+                biasIfmConn->slice.shape = Shape(1, 1, std::min(ofmWidth - ofmX, ofmBlockWidth), validOfmDepth);
                 biasIfmConn->slice.offset = Shape(0, 0, ofmX, ofmZ);
                 // Op must have an output to maintain schedule connectivity, even though
                 // there is no output from NullPool.
@@ -893,7 +897,7 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeNonConstWeights
                 {
                     for ( int kx = 0; kx < kernelW; kx++ )
                     {
-                        auto subOp = std::make_unique<SchedulerOperation>(op->Type());
+                        auto subOp = std::make_unique<SchedulerOperation>(OpType::MatMul);
                         subOp->SetKernel(Kernel::UnitKernel());
 
                         // Connect IFM tensor with correct slicing
@@ -907,13 +911,21 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeNonConstWeights
 
                         // Connect Weight tensor as IFM1 with correct slicing
                         auto *subWeightsConn = subOp->ConnectInput(TensorUsage::IFM1, weightsConn->tensor);
-                        subWeightsConn->slice.shape = Shape(1, 1, 1, kernelC);
-                        subWeightsConn->slice.offset = Shape(ofmZ, ky, kx, 0);
+                        // Reshape Weights from [OC, KH, KW, IC] -> [1, 1, OC * KH * KW, IC]
+                        subWeightsConn->shape = Shape(1, 1, weightsShape[0] * weightsShape[1] * weightsShape[2], weightsShape[3]);
+                        // Use `slice.shape.width = validOfmDepth * kernelArea` together with `stepXY.x = kernelArea`
+                        // which yields exactly validOfmDepth sampled positions after striding.
+                        subWeightsConn->slice.shape = Shape(1, 1, validOfmDepth * kernelArea, kernelC);
+                        // Flattened width index for (oc, ky, kx) is: (oc * KH * KW) + (ky * KW) + kx
+                        subWeightsConn->slice.offset = Shape(0, 0, ofmZ * kernelArea + ky * kernelW + kx, 0);
+                        // Step through the flattened width by kernelArea to jump between consecutive output channels
+                        // while keeping the same (ky, kx)
+                        subWeightsConn->stepXY.x = kernelArea;
                         subWeightsConn->quantization = weightsConn->quantization;
 
                         // Connect OFM tensor with correct slicing
                         auto *subOfmConn = subOp->ConnectOutput(TensorUsage::OFM, ofmConn->tensor);
-                        subOfmConn->slice.shape = Shape(1, 1, std::min(ofmWidth - ofmX, ofmBlockWidth), 1);
+                        subOfmConn->slice.shape = Shape(1, 1, std::min(ofmWidth - ofmX, ofmBlockWidth), validOfmDepth);
                         subOfmConn->slice.offset = Shape(ofmConn->slice.offset.Batch(), ofmY, ofmX, ofmZ);
                         subOfmConn->quantization = ofmConn->quantization;
 
