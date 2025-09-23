@@ -989,7 +989,8 @@ TfLiteSupportedOperators::TfLiteSupportedOperators(int64_t maxWeightSum8Bit, int
     std::set<std::string> dTypes;
     for ( DataType type : supportedDataTypes )
     {
-        dTypes.insert(DataTypeToString(type));
+        auto tflType = TfLiteMapping::DataTypeToTensorType(type);
+        dTypes.insert(TfLiteMapping::BuiltinTensorTypeToString(tflType));
     }
     supportedDTypes = {[&supportedDataTypes](const Operation *op) -> bool
         { return SupportedDTypes(op, supportedDataTypes); },

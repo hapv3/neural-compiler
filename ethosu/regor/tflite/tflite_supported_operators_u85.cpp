@@ -107,7 +107,7 @@ static const std::set<DataType> s_supportedDataTypes = {
     DataType::Int16,
     DataType::Int32,
     DataType::Int64,
-    DataType::Bool,
+    DataType::Bool8,
 };
 
 // zeroPoints are ignored for the following OpTypes to align with reference

@@ -54,6 +54,8 @@ public:
 
     static std::string BuiltinOperatorToString(tflite::BuiltinOperator &type) { return EnumNameBuiltinOperator(type); }
 
+    static std::string BuiltinTensorTypeToString(tflite::TensorType &type) { return EnumNameTensorType(type); }
+
     static tflite::BuiltinOptions BuiltinOperatorToBuiltinOptions(tflite::BuiltinOperator op)
     {
         auto it1 = _builtinOperatorToBuiltinOptions.find(op);

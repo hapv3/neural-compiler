@@ -644,7 +644,7 @@ TEST_CASE("Supported operators EthosU85")
             DataType::Int8,
             DataType::Int16,
             DataType::Int32,
-            DataType::Bool,
+            DataType::Bool8,
             DataType::Int64,
         };
         for ( auto dtype : unsupported )
