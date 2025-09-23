@@ -2714,6 +2714,23 @@ SliceConstTensor(const TensorConnection *conn, const Shape &sliceShape, const Sh
     return std::make_shared<Tensor>(Name, conn->tensor->Type(), sliceShape, std::move(newBuffer));
 }
 
+template<typename TYPE>
+static std::shared_ptr<Tensor> SliceConstTensor1D(
+    const TensorConnection *conn, const Shape &sliceShape, const Shape &sliceOffset, const std::string &name)
+{
+    assert((sliceShape.Size() == 1) && (sliceOffset.Size() == 1));
+
+    // Create a sub-view to read only a slice of the tensor
+    auto subBufferView = conn->tensor->View().SubView(sliceOffset, sliceShape);
+    auto values = subBufferView.Values<TYPE>();
+
+    // Create a new buffer to hold the slice
+    auto newBuffer = std::make_shared<Buffer>(std::vector<TYPE>(values.begin(), values.end()));
+
+    return std::make_shared<Tensor>(name, conn->tensor->Type(), sliceShape, std::move(newBuffer));
+}
+
+
 namespace
 {
 void DisconnectActivation(Operation *const op)
@@ -2843,8 +2860,8 @@ Operation *TFLiteGraphOptimiser::ConvertConvolutionGroup(Graph *const graph, Ope
     Shape biasSlice = biasShape.WithDepth(kernelsPerGroup);
 
     const auto &weightName = weightConn->tensor->Name();
+    const auto &biasName = biasConn->tensor->Name();
     const auto &ofmName = ofmConn->tensor->Name();
-    Operation *finalOp = nullptr;
     for ( int i = 0; i < numGroups; i++ )
     {
         // Create Convolution and connect the IFM sliced and offset
@@ -2869,29 +2886,41 @@ Operation *TFLiteGraphOptimiser::ConvertConvolutionGroup(Graph *const graph, Ope
                 SliceConstTensor<uint8_t>(weightConn, weightSlice, weightOffset, weightName + "weights" + std::to_string(i)) :
                 SliceConstTensor<int8_t>(weightConn, weightSlice, weightOffset, weightName + "weights" + std::to_string(i));
 
+        // Extract a slice out of the bias tensor
+        Shape biasOffset = biasSlice.WithDepth(i * biasSlice.Depth());
+        std::shared_ptr<Tensor> biasSubTensor;
+        if ( biasConn->tensor->Type() == DataType::Int32 )
+        {
+            biasSubTensor = SliceConstTensor1D<int32_t>(biasConn, biasSlice, biasOffset, biasName + "bias" + std::to_string(i));
+        }
+        else
+        {
+            assert(biasConn->tensor->Type() == DataType::Int64);
+            biasSubTensor = SliceConstTensor1D<int64_t>(biasConn, biasSlice, biasOffset, biasName + "bias" + std::to_string(i));
+        }
         // Slice quantization info for weights and bias
         Quantization newWeightQuant = weightConn->quantization;
-        newWeightQuant.scales.clear();
-        newWeightQuant.zeroPoints.clear();
         Quantization newBiasQuant = biasConn->quantization;
-        newBiasQuant.scales.clear();
-        newBiasQuant.zeroPoints.clear();
-        for ( int j = 0; j < kernelsPerGroup; j++ )
+        if ( weightConn->quantization.scales.size() > 1 )
         {
-            newWeightQuant.scales.push_back(weightConn->quantization.scales[j + (i * kernelsPerGroup)]);
-            newWeightQuant.zeroPoints.push_back(weightConn->quantization.zeroPoints[j + (i * kernelsPerGroup)]);
-            newBiasQuant.scales.push_back(biasConn->quantization.scales[j + (i * kernelsPerGroup)]);
-            newBiasQuant.zeroPoints.push_back(biasConn->quantization.zeroPoints[j + (i * kernelsPerGroup)]);
+            // Per-channel quantization
+            newWeightQuant.scales.clear();
+            newWeightQuant.zeroPoints.clear();
+            newBiasQuant.scales.clear();
+            newBiasQuant.zeroPoints.clear();
+            for ( int j = 0; j < kernelsPerGroup; j++ )
+            {
+                newWeightQuant.scales.push_back(weightConn->quantization.scales[j + (i * kernelsPerGroup)]);
+                newWeightQuant.zeroPoints.push_back(weightConn->quantization.zeroPoints[j + (i * kernelsPerGroup)]);
+                newBiasQuant.scales.push_back(biasConn->quantization.scales[j + (i * kernelsPerGroup)]);
+                newBiasQuant.zeroPoints.push_back(biasConn->quantization.zeroPoints[j + (i * kernelsPerGroup)]);
+            }
         }
-
         // Connect weights slice
-        convGroupOp->ConnectInput(TensorUsage::Weights, weightSubTensor).Set(weightShape).Set(newWeightQuant);
+        convGroupOp->ConnectInput(TensorUsage::Weights, weightSubTensor).Set(newWeightQuant);
 
-        // Connect the bias and scales slice
-        convGroupOp->ConnectInput(TensorUsage::Scales, biasConn->tensor)
-            .Set(biasShape)
-            .Set(newBiasQuant)
-            .Set({zeroShape.WithDepth(i * biasSlice.Depth()), biasSlice});
+        // Connect the bias slice
+        convGroupOp->ConnectInput(TensorUsage::Scales, biasSubTensor).Set(newBiasQuant);
 
         // Connect intermediate OFM to Concat op
         concatOp->ConnectInput(MakeTensorUsage(TensorUsage::IFM, i), ofmConvGroup)
