@@ -2399,8 +2399,9 @@ Operation *GraphIrOptimiser::RewriteResize(Graph *const, Operation *const operat
 }
 
 // This function does two things to legalize Convolution-like ops with non-constant weights and/or bias.
-//  1. Replaces kernel padding with zero-point values padded around the IFM tensor.
-//  2. Broadcast the bias values to a tensor with the same width and channels as the OFM.
+//  1. Transposes the IFM to swap height and width if height is significantly larger than width.
+//  2. Replaces kernel padding with zero-point values padded around the IFM tensor.
+//  3. Broadcast the bias values to a tensor with the same width and channels as the OFM.
 //     This is required for consecutively preloading all of the accumulators with bias values
 //     later on in decomposition.
 Operation *GraphIrOptimiser::RewriteNonConstWeightOp(Graph *const, Operation *const operation)
@@ -2419,6 +2420,41 @@ Operation *GraphIrOptimiser::RewriteNonConstWeightOp(Graph *const, Operation *co
 
     auto *ifmConn = operation->Input(TensorUsage::IFM);
     auto *ofmConn = operation->Output(TensorUsage::OFM);
+
+    // Swap height and width if the effective height is more than twice the effective width and the
+    // height is not shallow.
+    static constexpr int HEIGHT_THRESHOLD = 32;
+    auto kernel = operation->Kernel();
+    auto effectiveHeight = ifmConn->shape.Height() / kernel->Stride().y;
+    auto effectiveWidth = ifmConn->shape.Width() / kernel->Stride().x;
+    if ( effectiveHeight > HEIGHT_THRESHOLD && (effectiveHeight > 2 * effectiveWidth) )
+    {
+        // Transpose IFM
+        auto ifmTransposeOp = CreateTranspose(Shape(0, 2, 1, 3), ifmConn->tensor, ifmConn->shape, TensorUsage::IFM);
+        operation->ConnectInput(TensorUsage::IFM, ifmTransposeOp->Output(TensorUsage::OFM)->tensor);
+        RecordOptimisation(*operation, ifmTransposeOp);
+
+        // Transpose Weight tensor
+        auto weightsTransposeOp = CreateTranspose(Shape(0, 2, 1, 3), weightsConn->tensor, weightsConn->shape, TensorUsage::IFM);
+        operation->ConnectInput(TensorUsage::Weights, weightsTransposeOp->Output(TensorUsage::OFM)->tensor);
+        RecordOptimisation(*operation, weightsTransposeOp);
+
+        // Transpose OFM
+        auto ofmTransposeOp = CreateTranspose(Shape(0, 2, 1, 3), ofmConn->tensor, ofmConn->shape, TensorUsage::OFM);
+        operation->ConnectOutput(TensorUsage::OFM, ofmTransposeOp->Input(TensorUsage::IFM)->tensor);
+        RecordOptimisation(*operation, ofmTransposeOp);
+
+        // Swap kernel parameters
+        Point2i newSize(kernel->Size().y, kernel->Size().x);
+        Point2i newStride(kernel->Stride().y, kernel->Stride().x);
+        Point2i newDilation(kernel->Dilation().y, kernel->Dilation().x);
+        auto &pad = operation->Kernel()->Padding();
+        Margin newPadding(pad.Left(), pad.Top(), pad.Right(), pad.Bottom());
+        auto newKernel = std::make_unique<Kernel>(
+            kernel->WithSize(newSize).WithStride(newStride).WithDilation(newDilation).WithPadding(newPadding));
+        operation->SetKernel(std::move(newKernel));
+    }
+
     auto &padding = operation->Kernel()->Padding();
     if ( !padding.IsZero() )
     {

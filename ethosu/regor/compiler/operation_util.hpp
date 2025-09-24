@@ -334,6 +334,32 @@ inline TransposeType CalculateTransposeType(const Operation &operation)
     return TransposeTypeFromShape(perm);
 }
 
+inline Operation *CreateTranspose(const Shape &permutation, const std::shared_ptr<Tensor> &tensor, const Shape &tensorShape, TensorUsage usage)
+{
+    auto transposeOp = std::make_shared<Operation>(OpType::Transpose);
+    auto *attr = transposeOp->Attribute<transpose_attr_t>();
+    attr->perm = permutation;
+
+    Shape transposedShape = tensorShape.Permute(permutation.ToMask());
+    auto transposedTens = std::make_shared<Tensor>(tensor->Name() + "_transpose", tensor->Type(), transposedShape);
+
+    if ( usage == TensorUsage::IFM )
+    {
+        // `tensor` is input to the transpose
+        transposeOp->ConnectInput(TensorUsage::IFM, tensor).Set(tensorShape);
+        transposeOp->ConnectOutput(TensorUsage::OFM, transposedTens);
+    }
+    else
+    {
+        // `tensor` is output from the transpose
+        assert(usage == TensorUsage::OFM && "Usage must be IFM or OFM");
+        transposeOp->ConnectInput(TensorUsage::IFM, transposedTens);
+        transposeOp->ConnectOutput(TensorUsage::OFM, tensor).Set(tensorShape);
+    }
+
+    return transposeOp.get();
+}
+
 // Is the scaling of Tensor connection a and b valid and equal.
 inline bool IsScalingValidAndEqual(const TensorConnection &a, const TensorConnection &b)
 {
