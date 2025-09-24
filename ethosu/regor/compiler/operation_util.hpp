@@ -156,7 +156,7 @@ inline Operation *CreateLUT(const std::shared_ptr<Tensor> &ifm, const std::share
     op->ConnectInput(TensorUsage::LUT, lut);
     if ( ofm == nullptr )
     {
-        ofm = std::make_shared<Tensor>(ifm->Name() + "/lut", dtype);
+        ofm = std::make_shared<Tensor>("LUT#" + ifm->Name() + "/" + lut->Name(), dtype);
         ofm->SetStorageShape(*ifmShape);
     }
     op->ConnectOutput(TensorUsage::OFM, ofm).Set(*ifmShape).Set(ofmQuantization).Set(ofmSlice);
@@ -170,7 +170,7 @@ inline Operation *CreateDepthwiseMaxpool(const std::shared_ptr<Tensor> &ifm, con
     int height = ifmShape.ElementsWH();
     int width = ifmShape.Depth();
     auto kernel = std::make_unique<Kernel>(Point2i(width, 1), Point2i(1, 1), Point2i(1, 1));
-    auto ofm = std::make_shared<Tensor>(ifm->Name() + "/maxpool", ifm->Type());
+    auto ofm = std::make_shared<Tensor>("MaxPool#" + ifm->Name(), ifm->Type());
     ofm->SetStorageShape(Shape(1, ifmShape.Height(), ifmShape.Width(), 1));
     op->SetKernel(std::move(kernel));
 
@@ -187,7 +187,7 @@ inline Operation *CreateReduceSum(const std::shared_ptr<Tensor> &ifm, const Quan
     auto op = std::make_shared<Operation>(OpType::ReduceSum);
     auto attr = op->Attribute<axis_attr_t>();
     attr->axis = ifmShape.Size() - 1;  // Depth dimension
-    auto ofm = std::make_shared<Tensor>(ifm->Name() + "/reducesum", DataType::Int32);
+    auto ofm = std::make_shared<Tensor>("ReduceSum#" + ifm->Name(), DataType::Int32);
     ofm->SetStorageShape(ifmShape.WithDepth(1));
     op->ConnectInput(TensorUsage::IFM, ifm).Set(ifmQuantization);
     op->ConnectOutput(TensorUsage::OFM, ofm).Set(ofmQuantization);
@@ -200,6 +200,7 @@ inline Operation *CreateElementwise(OpType type, const std::shared_ptr<Tensor> &
 {
     assert(IsElementwise(type));
     auto op = std::make_shared<Operation>(type);
+    auto name = OpTypeToString(type) + "#" + ifm->Name();
     op->ConnectInput(TensorUsage::IFM, ifm).Set(ifmQuantization);
     if ( ifmShape ) op->Input(TensorUsage::IFM)->shape = *ifmShape;
     Shape ofmShape;
@@ -216,6 +217,7 @@ inline Operation *CreateElementwise(OpType type, const std::shared_ptr<Tensor> &
         const unsigned mask = (1u << dims) - 1u;
         assert(((a.EqualMask(a.WithOnes()) | b.EqualMask(b.WithOnes()) | a.EqualMask(b)) & mask) == mask);
         ofmShape = Shape::Max(a, b);
+        name += "/" + ifm2->Name();
     }
     else
     {
@@ -223,7 +225,7 @@ inline Operation *CreateElementwise(OpType type, const std::shared_ptr<Tensor> &
     }
 
     if ( dtype == DataType::None ) dtype = ifm->Type();
-    auto ofm = std::make_shared<Tensor>(ifm->Name() + "/" + OpTypeToString(type), dtype);
+    auto ofm = std::make_shared<Tensor>(name, dtype);
     ofm->SetStorageShape(ofmShape);
     op->ConnectOutput(TensorUsage::OFM, ofm).Set(ofmQuantization);
     return op.get();

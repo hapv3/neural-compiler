@@ -403,8 +403,9 @@ TEST_CASE("test_graphir_optimiser - fuse rescale with reshape, before")
     REQUIRE(allOps[0]->Type() == OpType::Abs);
     REQUIRE(allOps[0]->Input(TensorUsage::IFM)->SliceShape() == Shape(1, 4, 4, 1));
     REQUIRE(allOps[0]->Input(TensorUsage::IFM)->quantization.zeroPoints[0] == 0);
-    REQUIRE(allOps[0]->Input(TensorUsage::IFM)->quantization.scales[0].scale == 1073741824);
-    REQUIRE(allOps[0]->Input(TensorUsage::IFM)->quantization.scales[0].shift == 31);
+    // Reduced scale/shift
+    REQUIRE(allOps[0]->Input(TensorUsage::IFM)->quantization.scales[0].scale == 1);
+    REQUIRE(allOps[0]->Input(TensorUsage::IFM)->quantization.scales[0].shift == 1);
     REQUIRE(allOps[0]->Output(TensorUsage::OFM)->SliceShape() == Shape(1, 4, 4, 1));
 }
 
@@ -451,6 +452,7 @@ TEST_CASE("test_graphir_optimiser - fuse rescale with reshape, after")
     REQUIRE(allOps[0]->Input(TensorUsage::IFM)->SliceShape() == Shape(1, 4, 4, 1));
     REQUIRE(allOps[0]->Output(TensorUsage::OFM)->SliceShape() == Shape(1, 4, 4, 1));
     REQUIRE(allOps[0]->Output(TensorUsage::OFM)->quantization.zeroPoints[0] == 0);
-    REQUIRE(allOps[0]->Output(TensorUsage::OFM)->quantization.scales[0].scale == 1073741824);
-    REQUIRE(allOps[0]->Output(TensorUsage::OFM)->quantization.scales[0].shift == 31);
+    // Reduced scale/shift
+    REQUIRE(allOps[0]->Output(TensorUsage::OFM)->quantization.scales[0].scale == 1);
+    REQUIRE(allOps[0]->Output(TensorUsage::OFM)->quantization.scales[0].shift == 1);
 }

@@ -1178,12 +1178,14 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const graph, Operation *const op
         auto producer = ifmConn->tensor->Writers().size() == 1 ? ifmConn->tensor->Writers().front() : nullptr;
 
         // Convert scales to have 0 shift if possible, since this can improve fusing for Ethos-U55/65
-        auto ConvertedScales = [](const TensorConnection *conn)
+        auto ConvertedScales = [&attr](const TensorConnection *conn)
         {
             auto scales = conn->quantization.scales;
             for ( auto &qs : scales )
             {
-                if ( qs.shift > 0 && qs.shift < 31 && (qs.scale % (1 << qs.shift)) == 0 )
+                // Unless double rounding is enabled, we can always try to reduce the scale,
+                // however double rounding comes into play when the shift is > 31.
+                if ( qs.shift <= 31 || !attr->double_round )
                 {
                     qs = QuantizedScale::ReduceScale(qs);
                 }
@@ -1355,10 +1357,82 @@ Operation *GraphIrOptimiser::RewriteTable(Graph *const graph, Operation *const o
             newLutTensor = CreateConstTensor("LUT", newLutTensorType, std::make_shared<Buffer>(std::move(newLut), 1024));
         }
 
-        // Replace TOSA Table op with GraphIR LUT op
-        returnOp = CreateLUT(ifmConn->tensor, newLutTensor, ifmConn->quantization, ofmConn->quantization,
-            newLutTensor->Type(), &ifmConn->shape, ofmConn->tensor, ifmConn->slice, ofmConn->slice);
+        // Check for native support for this Table operation
+        ArchOperatorQuery query;
+        ArchRequirements req;
+        query.ifm[0].type = ifmConn->tensor->Type();
+        query.ofm.type = ofmConn->tensor->Type();
+        auto res = _constraints->OperatorQuery(OpType::LUT, &query, &req);
+
+        if ( newLutTensorType == DataType::Int16 && res.Any(QueryResult::HasRequirements) && req.req.Any(ArchRequirement::OpSubstitution) )
+        {
+            // Need to break down into three different LUTs and combine the results
+            const auto values = newLutTensor->View().Values<int16_t>();
+            auto baseLut = std::make_unique<int16_t[]>(1024);
+            auto slopeLut = std::make_unique<int16_t[]>(1024);
+            auto fractionLut = std::make_unique<int16_t[]>(1024);
+            for ( int i = 0; i < 512; i++ )
+            {
+                baseLut[2 * i] = values[2 * i];       // Base
+                baseLut[2 * i + 1] = 0;               // Slope = 0 to get base
+                slopeLut[2 * i] = values[2 * i + 1];  // Base  = Slope to get slope
+                slopeLut[2 * i + 1] = 0;              // Slope = 0
+                fractionLut[2 * i] = 0;               // Base  = 0
+                fractionLut[2 * i + 1] = (1 << 7);    // Slope = 1 << 7 to get fraction
+            }
+            auto baseLutTensor = CreateConstTensor("BaseLUT", DataType::Int16, std::make_shared<Buffer>(std::move(baseLut), 1024));
+            auto slopeLutTensor = CreateConstTensor("SlopeLUT", DataType::Int16, std::make_shared<Buffer>(std::move(slopeLut), 1024));
+            auto fractionLutTensor = CreateConstTensor(
+                "FractionLUT", DataType::Int16, std::make_shared<Buffer>(std::move(fractionLut), 1024));
+
+            // Get the base value tensor using the LUT created above
+            auto baseLutOp = CreateLUT(ifmConn->tensor, baseLutTensor, ifmConn->quantization, Quantization::Unit(),
+                baseLutTensor->Type(), &ifmConn->shape, nullptr, ifmConn->slice);
+            auto baseTensor = baseLutOp->OFM()->shared_from_this();
+            RecordOptimisation(*operation, baseLutOp);
+
+            // Get the slope value tensor using the LUT created above
+            auto slopeLutOp = CreateLUT(ifmConn->tensor, slopeLutTensor, ifmConn->quantization, Quantization::Unit(),
+                slopeLutTensor->Type(), &ifmConn->shape, nullptr, ifmConn->slice);
+            auto slopeTensor = slopeLutOp->OFM()->shared_from_this();
+            RecordOptimisation(*operation, slopeLutOp);
+
+            // Get the fraction value tensor using the LUT created above
+            auto fractionLutOp = CreateLUT(ifmConn->tensor, fractionLutTensor, ifmConn->quantization,
+                Quantization::Unit(), fractionLutTensor->Type(), &ifmConn->shape, nullptr, ifmConn->slice);
+            auto fractionTensor = fractionLutOp->OFM()->shared_from_this();
+            RecordOptimisation(*operation, fractionLutOp);
+
+            // Multiply slope * fraction
+            auto mulSlopeFractionOp = CreateMul(slopeTensor, fractionTensor, Quantization::Unit(), Quantization::Unit(),
+                Quantization::Unit(), DataType::Int32);
+            RecordOptimisation(*operation, mulSlopeFractionOp);
+
+            // Shift base << 7
+            auto shiftLeftBaseOp = CreateMul(baseTensor, CreateConstTensor("shl_seven", int16_t(1 << 7)),
+                Quantization::Unit(), Quantization::Unit(), Quantization::Unit(), DataType::Int32);
+            RecordOptimisation(*operation, shiftLeftBaseOp);
+
+            // Add (base << 7) + (slope * fraction)
+            auto addOp = std::make_shared<Operation>(OpType::Add);
+            addOp->ConnectInput(TensorUsage::IFM0, shiftLeftBaseOp->OFM()->shared_from_this());
+            addOp->ConnectInput(TensorUsage::IFM1, mulSlopeFractionOp->OFM()->shared_from_this());
+            addOp->CopyOutput(TensorUsage::OFM, *ofmConn);
+            returnOp = addOp.get();
+        }
+        else
+        {
+            // Replace TOSA Table op with GraphIR LUT op
+            assert(ofmConn->quantization.IsUnitScale() ||
+                   (ofmConn->quantization.scales.size() == 1 && ofmConn->quantization.scales.front() == QuantizedScale(1, 7)));
+            returnOp = CreateLUT(ifmConn->tensor, newLutTensor, ifmConn->quantization, Quantization::Unit(),
+                newLutTensor->Type(), &ifmConn->shape, ofmConn->tensor, ifmConn->slice, ofmConn->slice);
+        }
+    }
+    if ( returnOp != operation )
+    {
         returnOp->Output(TensorUsage::OFM)->Set(RoundMode::NATURAL);
+        RecordOptimisation(*operation, returnOp);
         operation->Disconnect();
     }
     return returnOp;
@@ -1684,8 +1758,8 @@ Operation *GraphIrOptimiser::RewriteReduceSum(Graph *const graph, Operation *con
                     // Sub op with zero point
                     auto zpTens = CreateConstTensor("zero_point", DataType::Int32, int(ifmConn->shape.Depth() * zp));
                     auto subOp = std::make_shared<Operation>(OpType::Sub);
-                    subOp->ConnectInput(TensorUsage::IFM, reduceSumTens);
-                    subOp->ConnectInput(TensorUsage::IFM1, zpTens);
+                    subOp->ConnectInput(TensorUsage::IFM, reduceSumTens).Set(Quantization::Unit());
+                    subOp->ConnectInput(TensorUsage::IFM1, zpTens).Set(Quantization::Unit());
                     subOp->CopyOutput(TensorUsage::OFM, *ofmConn);
                     subOp->Output(TensorUsage::OFM)->Set(ofmConn->rounding);
                     RecordOptimisation(*operation, subOp.get());

@@ -223,6 +223,15 @@ bool EthosU85Constraints::SupportsFusedRescale(OpType opType, TensorUsage tensor
         {
             return globalScale;
         }
+        else if ( opType == OpType::Table )
+        {
+            // The hardware natively supports int16 -> int16 tables with an output shift of 7 as one
+            // activation/operation
+            bool scaleSupported = quantization.scales.size() == 1 && quantization.scales.front() == QuantizedScale(1, 7);
+            bool fromSupported = opFromType == DataType::Int16 && rescaleFromType == DataType::Int32;
+            bool toSupported = opToType == DataType::Int16;
+            return fromSupported && toSupported && scaleSupported;
+        }
     }
 
     return false;

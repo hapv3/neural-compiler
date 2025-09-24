@@ -169,6 +169,15 @@ bool EthosU55Constraints::SupportsFusedRescale(OpType opType, TensorUsage tensor
         {
             return globalScale;
         }
+        else if ( opType == OpType::Table )
+        {
+            // The hardware natively supports int16 -> int16 tables with an output shift of 7 as one
+            // activation/operation
+            bool scaleSupported = quantization.scales.size() == 1 && quantization.scales.front() == QuantizedScale(1, 7);
+            bool fromSupported = opFromType == DataType::Int16 && rescaleFromType == DataType::Int32;
+            bool toSupported = opToType == DataType::Int16;
+            return fromSupported && toSupported && scaleSupported;
+        }
     }
 
     return false;
@@ -477,6 +486,18 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
                 req->substitution = OpType::LUT;
             }
             result.Set(QueryResult::HasRequirements);
+        }
+    }
+    else if ( opType == OpType::LUT )
+    {
+        if ( query->ifm[0].type == DataType::Int16 && query->ofm.type == DataType::Int32 )
+        {
+            if ( req )
+            {
+                req->req.Set(ArchRequirement::OpSubstitution);
+                req->substitution = OpType::LUT;
+            }
+            return QueryResult::NativeHasReq;
         }
     }
 
