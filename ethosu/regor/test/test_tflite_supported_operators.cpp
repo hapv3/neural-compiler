@@ -274,7 +274,7 @@ TEST_CASE("Supported operators Common")
             auto ofmConn = op->Output(TensorUsage::OFM);
             auto ifmConn = op->Input(TensorUsage::IFM);
             auto &ofmShape = ofmConn->shape;
-            auto &ifmShape = ofmConn->shape;
+            auto &ifmShape = ifmConn->shape;
             ofmShape = ifmShape.WithWidth(ifmShape.Width() - w).WithHeight(ifmShape.Height() - h);
         };
         SetKernel(8, 8);
@@ -290,7 +290,7 @@ TEST_CASE("Supported operators Common")
 
     SECTION("ConstrainAvgPoolKernel")
     {
-        auto op = CreateOperation(OpType::AvgPool, Shape(1, 100, 100, 1), DataType::Int8, Shape(1, 100, 100, 1), DataType::Int8);
+        auto op = CreateOperation(OpType::AvgPool, Shape(1, 1000, 1000, 1), DataType::Int8, Shape(1, 1000, 1000, 1), DataType::Int8);
 
         auto SetKernel = [&op](int h, int w, int sh = 1, int sw = 1, int ph = 0, int pw = 0)
         {
@@ -303,7 +303,7 @@ TEST_CASE("Supported operators Common")
             auto ofmConn = op->Output(TensorUsage::OFM);
             auto ifmConn = op->Input(TensorUsage::IFM);
             auto &ofmShape = ofmConn->shape;
-            auto &ifmShape = ofmConn->shape;
+            auto &ifmShape = ifmConn->shape;
             ofmShape = ifmShape.WithWidth((ifmShape.Width() - w + pw) / sw).WithHeight((ifmShape.Height() - h + ph) / sh);
         };
         // max size (VALID padding)

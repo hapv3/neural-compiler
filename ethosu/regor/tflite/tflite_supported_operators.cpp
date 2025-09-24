@@ -142,6 +142,27 @@ bool MustHaveOFM(const Operation *op)
     }
     return true;
 }
+// Only the first dimension of tensors can be dynamic.
+bool TensDimMustBeStatic(const Operation *op)
+{
+    for ( const auto *list : {&op->Inputs(), &op->Outputs()} )
+    {
+        for ( const auto &item : list->pairs() )
+        {
+            const auto &shape = item.second.shape;
+            for ( int i = 0; i < shape.Size(); ++i )
+            {
+                if ( shape[i] < 0 )
+                {
+                    Failure(op,
+                        fmt::format("Dynamic non-batch dimension at axis {} on tensor {}", i, item.second.tensor->Name()));
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
 
 // Tensors must have a shape
 bool TensMustHaveShape(const Operation *op)
@@ -999,6 +1020,7 @@ TfLiteSupportedOperators::TfLiteSupportedOperators(int64_t maxWeightSum8Bit, int
     mustHaveIFM = {&MustHaveIFM, "Operations must have at least one IFM."};
     mustHaveOFM = {&MustHaveOFM, "Operations must have at least one OFM."};
     tensMustHaveShape = {&TensMustHaveShape, "Tensors must have constant shape."};
+    tensDimMustBeStatic = {&TensDimMustBeStatic, "Only the first dimension of tensors can be dynamic."};
     tensQuantized = {&TensQuantized, "Input(s), Output and Weight tensors must have quantization parameters."};
     fcWeightShape = {&FCWeightShape, "FullyConnected weights must be on the form O,1,1,..,1,I."};
     perAxisQuant = {&PerAxisQuant, "Per-axis quantization is not supported."};
@@ -1061,6 +1083,7 @@ TfLiteSupportedOperators::TfLiteSupportedOperators(int64_t maxWeightSum8Bit, int
         opConstraints[type].push_back(&mustHaveIFM);
         opConstraints[type].push_back(&mustHaveOFM);
         opConstraints[type].push_back(&tensMustHaveShape);
+        opConstraints[type].push_back(&tensDimMustBeStatic);
         // quantization constraints
         if ( s_noQuant.find(type) == std::end(s_noQuant) )
         {

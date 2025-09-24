@@ -177,7 +177,11 @@ public:
 
     const void *Passthrough() const { return _passthrough; }
     void SetPassthrough(const void *passthrough) { _passthrough = passthrough; }
-    void SetPassthroughOp() { _type = OpType::Passthrough; }
+    void SetPassthroughOp()
+    {
+        _type = OpType::Passthrough;
+        _attr._chain.clear();  // Clears any attributes on the operator
+    }
     void CopyInput(TensorUsage usage, const TensorConnection &tensorConnection);
     TensorConnection &ConnectInput(TensorUsage usage, const std::shared_ptr<Tensor> &tensor);
     int CountInputs(TensorUsage usage) const { return CountUsage(_inputs, usage); }

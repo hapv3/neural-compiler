@@ -377,16 +377,15 @@ std::shared_ptr<Tensor> TfLiteReader::ParseTensor(const tflite::Tensor *tflite_t
     }
     if ( signature && signature->size() )
     {
-        // Signature trumps shape, but default to shape if signature is dynamic
-        if ( std::find(signature->begin(), signature->end(), -1) == signature->end() )
+        // Signature trumps shape
+        shape = Shape(signature->data(), signature->size());
+        // If the first dimension is dynamic, set it to 1.
+        if ( shape[0] == -1 )
         {
-            shape = Shape(signature->data(), signature->size());
-        }
-        else
-        {
+            shape[0] = 1;
             LOG_WARN(
-                "Tensor '{}' has a dynamic shape signature, which is not supported. "
-                "Attempting to proceed with a fixed shape.\n",
+                "Tensor '{}' has a dynamic signature in axis 0. "
+                "Setting shape axis 0 to 1 and proceeding.\n",
                 name);
         }
     }

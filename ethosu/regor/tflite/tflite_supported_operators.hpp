@@ -65,6 +65,7 @@ protected:
     ConstraintCheck mustHaveIFM;
     ConstraintCheck mustHaveOFM;
     ConstraintCheck tensMustHaveShape;
+    ConstraintCheck tensDimMustBeStatic;
     ConstraintCheck supportedDTypes;
     ConstraintCheck tensQuantized;
     ConstraintCheck fcWeightShape;

@@ -212,9 +212,32 @@ Shape ShapeFromTens(const Tensor *tens)
     if ( tens->shape() )
     {
         size_t size = tens->shape()->size();
-        if ( size > 0 ) return Shape(tens->shape()->data(), size);
+        if ( size > 0 )
+        {
+            return Shape(tens->shape()->data(), size);
+        }
+        else
+        {
+            return Shape(1);  // If the shape is empty, return a rank 1 tensor.
+        }
     }
     return Shape();
+}
+
+Shape ShapeSignatureFromTens(const Tensor *tens)
+{
+    if ( tens->shape_signature() && tens->shape_signature()->data() )
+    {
+        size_t size = tens->shape_signature()->size();
+        if ( size ) return Shape(tens->shape_signature()->data(), size);
+    }
+    return ShapeFromTens(tens);
+}
+
+bool IsDynamicShape(const Shape &shape)
+{
+    auto comparisonShape = Shape(nullptr, std::max(shape.Size() - 1, 1), 0);
+    return shape.LessMask(comparisonShape) != 0;
 }
 
 void ConstraintEmptyConstTensors(const Model &m_model)
@@ -522,7 +545,7 @@ void ConstraintAxisValid(const Operator &op, const SubGraph &subgraph, const Bui
 
     int64_t axis = CheckedPtr(op.builtin_options_as_ConcatenationOptions())->axis();
 
-    if ( axis <= -ofmRank || axis > ofmRank || ofmRank < 0 )
+    if ( axis < -ofmRank || axis > ofmRank || ofmRank < 0 )
     {
         std::string constraint = "Axis must be in the interval [-rank(OFM),rank(OFM))";
         std::string extra = fmt::format("OFM rank={}, Attribute axis={}", ofmRank, axis);
@@ -583,7 +606,9 @@ void ConstraintValidDimensions(const Operator &op, const SubGraph &subgraph, con
             }
         }
     }
-    if ( ifmAxisDimAcc != ofmShape[axis] )
+    auto ofmShapeSign = ShapeSignatureFromTens(ofm);
+    // Elements in OFM axis dimensions must be same as sum of IFM axis dimensions unless OFM axis dimension is dynamic
+    if ( ifmAxisDimAcc != ofmShape[axis] && ofmShapeSign[axis] != -1 )
     {
         std::string constraint = "All Input dimensions must match OFM dimension in all axes except the one defined by the axis attribute";
         std::string extra = fmt::format("Found mismatch: sum of IFM dim size in concat axis={}, OFM concat axis dim size={}",
@@ -623,8 +648,14 @@ void ConstraintPadOutputShape(const Operator &op, const SubGraph &subgraph, cons
     auto ofm = TensorFromUsage(regor::TensorUsage::OFM, op, builtinOperator, *subgraph.tensors());
     auto ifmShape = ShapeFromTens(ifm);
     auto ofmShape = ShapeFromTens(ofm);
-
+    auto ofmShapeSign = ShapeSignatureFromTens(ofm);
     auto padTensor = TensorFromUsage(regor::TensorUsage::Params, op, builtinOperator, *subgraph.tensors());
+
+    // Don't do the check if the OFM shape is dynamic
+    if ( IsDynamicShape(ofmShapeSign) )
+    {
+        return;
+    }
 
     for ( unsigned int dim = 0; static_cast<int>(dim) < ifmShape.Size(); dim++ )
     {
@@ -835,8 +866,10 @@ void ConstraintMatchingInOutElements(const Operator &op, const SubGraph &subgrap
     auto ofm = TensorFromUsage(regor::TensorUsage::OFM, op, builtinOperator, *subgraph.tensors());
     auto ifmShape = ShapeFromTens(ifm);
     auto ofmShape = ShapeFromTens(ofm);
-
-    if ( ifmShape.Elements() != ofmShape.Elements() )
+    auto ifmShapeSign = ShapeSignatureFromTens(ifm);
+    auto ofmShapeSign = ShapeSignatureFromTens(ofm);
+    bool isStatic = !IsDynamicShape(ifmShapeSign) && !IsDynamicShape(ofmShapeSign);
+    if ( isStatic && ifmShape.Elements() != ofmShape.Elements() )
     {
         std::string constraint = "Input and output number of elements must match";
         std::string extra = fmt::format("IFM shape={}, OFM shape={}", ifmShape.ToString(), ofmShape.ToString());
