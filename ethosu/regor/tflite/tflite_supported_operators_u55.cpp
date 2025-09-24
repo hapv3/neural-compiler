@@ -260,7 +260,9 @@ bool MatmulOFMDepth(const Operation *op)
 {
     auto opType = op->Type();
     auto ofmConn = op->Output(TensorUsage::OFM);
-    auto ofmShape = ofmConn->shape;
+    assert(ofmConn);
+    assert(ofmConn->shape.IsValid());
+    int ofmDepth = ofmConn->shape.Depth();
     if ( opType == OpType::FullyConnected )
     {
         auto wConn = op->Input(TensorUsage::Weights);
@@ -271,9 +273,9 @@ bool MatmulOFMDepth(const Operation *op)
             return true;
         }
     }
-    if ( ofmShape.Depth() > (1 << 16) )
+    if ( ofmDepth > (1 << 16) )
     {
-        Failure(op, fmt::format("OFM depth is too large: {}", ofmShape.Depth()));
+        Failure(op, fmt::format("OFM depth is too large: {}", ofmDepth));
         return false;
     }
     return true;
