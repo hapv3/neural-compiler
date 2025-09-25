@@ -607,7 +607,7 @@ Operation *GraphIrOptimiser::RewriteIdentityResize(Graph *const graph, Operation
     {
         auto *attr = operation->Attribute<resize_attr_t>();
         const auto ofmConn = operation->Output(TensorUsage::OFM);
-        bool noBorder = attr->border.x == 0 && attr->border.y;
+        bool noBorder = attr->border.x == 0 && attr->border.y == 0;
         bool noOffset = attr->offset.x == 0 && attr->offset.y == 0;
         bool unitUpscale = attr->scaleX.n == 1 && attr->scaleX.d == 1 && attr->scaleY.n == 1 && attr->scaleY.d == 1;
         bool identityUpscaleNoRescaleRequired =
