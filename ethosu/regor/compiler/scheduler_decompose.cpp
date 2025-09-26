@@ -207,8 +207,9 @@ static std::unique_ptr<ArchitectureOpConfig> GetOpConfig(Architecture *arch, con
     auto *ifm = schedOp->IFM(0);
     auto *ifm1 = schedOp->TryIFM(1);
     auto *ofm = schedOp->OFM();
-    regor::ArchitectureConfigQuery qConfig;
+    regor::ArchitectureConfigQuery qConfig{};
     qConfig.ofmShape = Shape::PadAxes(ofm->SliceShape(), 3, 1);
+    qConfig.ofmShape = qConfig.ofmShape.Unpermute(uint32_t(ofm->transpose));
     qConfig.ifmShape[0] = ifm->SliceShape();
     if ( ifm1 )
     {
@@ -220,7 +221,6 @@ static std::unique_ptr<ArchitectureOpConfig> GetOpConfig(Architecture *arch, con
     qConfig.lutBytes = schedOp->TryInput(TensorUsage::LUT) ? 2048 : 0;
     qConfig.scaled = schedOp->HasScaling();
     qConfig.ifmResampling = ifm->resamplingMode;
-    qConfig.ofmShape = qConfig.ofmShape.Unpermute(uint32_t(ofm->transpose));
     qConfig.transpose = ofm->transpose;
     qConfig.ofmFormat = ofm->tensor->format;
     const auto &accMode = schedOp->AccumulatorMode();

@@ -482,7 +482,7 @@ std::unique_ptr<ArchitectureOpConfig> GetOpConfig(Architecture *arch, SchedulerO
     SchedulerConnection *ifm2 = op->TryIFM(1);
     SchedulerConnection *ofm = op->OFM();
 
-    ArchitectureConfigQuery query;
+    ArchitectureConfigQuery query{};
     query.ofmShape = Shape::PadAxes(ofmShape, 3, 1);
     query.ifmShape[0] = ifmShape;
     query.ifmShape[1] = ifm2Shape;
