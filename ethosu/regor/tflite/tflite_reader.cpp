@@ -643,26 +643,7 @@ void TfLiteReader::ParseOperatorOptions(
 
         case tflite::BuiltinOptions::ArgMaxOptions:
         {
-            // Create axis attribute from parameter-tensor
-            auto *ifmConn = operation->Input(TensorUsage::IFM0);
-            auto *params = operation->Input(TensorUsage::Params);
-            assert(ifmConn);
-            assert(params);
-            int axis = 0;
-            if ( params->tensor->Type() == DataType::Int64 )
-            {
-                assert(Scalar<int64_t>(*params->tensor) < std::numeric_limits<int32_t>::max() && "Too large Argmax axis attribute");
-                axis = ClampToType<int32_t>(Scalar<int64_t>(*params->tensor));
-            }
-            else
-            {
-                axis = Scalar<int32_t>(*params->tensor);
-            }
-            if ( axis < 0 )
-            {
-                axis += ifmConn->shape.Size();
-            }
-            operation->Attribute<axis_attr_t>()->axis = axis;
+            CreateAxisAttribute(operation);
         }
         break;
 
@@ -696,6 +677,12 @@ void TfLiteReader::ParseOperatorOptions(
         }
         break;
 
+        case tflite::BuiltinOptions::ReducerOptions:
+        {
+            CreateAxisAttribute(operation);
+        }
+        break;
+
         case tflite::BuiltinOptions::ResizeBilinearOptions:
         case tflite::BuiltinOptions::ResizeNearestNeighborOptions:
             break;
@@ -705,7 +692,6 @@ void TfLiteReader::ParseOperatorOptions(
         case tflite::BuiltinOptions::GatherOptions:
         case tflite::BuiltinOptions::ShapeOptions:
         case tflite::BuiltinOptions::SqueezeOptions:
-        case tflite::BuiltinOptions::ReducerOptions:
         case tflite::BuiltinOptions::CallOnceOptions:
         case tflite::BuiltinOptions::VarHandleOptions:
             break;
@@ -850,6 +836,30 @@ void TfLiteReader::UnFuseActivation(const std::shared_ptr<Operation> &operation,
     {
         optDb->AddOptimised(*operation, activation.get());
     }
+}
+
+void TfLiteReader::CreateAxisAttribute(const std::shared_ptr<Operation> &operation)
+{
+    // Create axis attribute from parameter-tensor
+    auto *ifmConn = operation->Input(TensorUsage::IFM0);
+    auto *params = operation->Input(TensorUsage::Params);
+    assert(ifmConn);
+    assert(params);
+    int axis = 0;
+    if ( params->tensor->Type() == DataType::Int64 )
+    {
+        assert(Scalar<int64_t>(*params->tensor) < std::numeric_limits<int32_t>::max() && ("Too large axis attribute"));
+        axis = ClampToType<int32_t>(Scalar<int64_t>(*params->tensor));
+    }
+    else
+    {
+        axis = Scalar<int32_t>(*params->tensor);
+    }
+    if ( axis < 0 )
+    {
+        axis += ifmConn->shape.Size();
+    }
+    operation->Attribute<axis_attr_t>()->axis = axis;
 }
 
 }  // namespace regor

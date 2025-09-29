@@ -52,6 +52,7 @@ private:
     static void SetOFMRounding(const std::shared_ptr<Operation> &operation);
     static void UnFuseActivation(const std::shared_ptr<Operation> &operation, tflite::ActivationFunctionType type, OptimiserDatabase *optDb);
     static void DefaultOperatorOptions(const std::shared_ptr<Operation> &operation);
+    static void CreateAxisAttribute(const std::shared_ptr<Operation> &operation);
 };
 
 }  // namespace regor
