@@ -50,7 +50,7 @@ std::shared_ptr<Operation> InsertCopyOpAfterTensor(const std::shared_ptr<Tensor>
             {
                 if ( consIfmConn->tensor.get() == ifm.get() )
                 {
-                    cons->ConnectInput(usage, copyTensor).Set(quantization);
+                    cons->ConnectInput(usage, copyTensor);
                 }
                 usage = MakeTensorUsage(TensorUsage::IFM, ++idx);
                 consIfmConn = cons->Input(usage);
