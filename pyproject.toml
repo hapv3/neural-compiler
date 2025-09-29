@@ -92,3 +92,9 @@ max-line-length = 120
 
 [tool.pylint.REPORTS]
 score = "no"
+
+# Configures setuptools scm to pin git describe version hash to 8 characters so that Vela version mismatch is avoided.
+# Note: 'git_describe_command' is deprecated since setuptools version 8.4.0.
+# TODO: Change to use scm.git.describe_command when upgrading to a newer verion of setuptools.
+[tool.setuptools_scm]
+git_describe_command = 'git describe --dirty --tags --long --abbrev=8'
