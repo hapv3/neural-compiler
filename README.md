@@ -66,6 +66,41 @@ this it requires the following:
 The source code is available from [Arm's GitLab Instance](https://gitlab.arm.com/artificial-intelligence/ethos-u/ethos-u-vela),
 see [Building From Source](BUILD.md) for more details.
 
+### Development builds
+
+Development builds are also available as Python wheels in the GitLab Package
+Registry. The development builds reflect the current state of the code and
+are **not of release quality**.
+
+#### Install the latest nightly build
+
+```bash
+pip3 install --pre --only-binary=ethos-u-vela \
+  --index-url=https://gitlab.arm.com/api/v4/projects/10397/packages/pypi/simple \
+  ethos-u-vela
+```
+
+#### Install a specific nightly build
+
+```bash
+pip3 install --only-binary=ethos-u-vela \
+  --index-url=https://gitlab.arm.com/api/v4/projects/10397/packages/pypi/simple \
+  "ethos-u-vela==<exact dev version>"
+```
+
+#### Discover available nightly versions
+
+Use `pip index versions` with pre-releases enabled and restrict to wheels:
+
+```bash
+pip3 index versions --pre --only-binary=ethos-u-vela \
+  --index-url=https://gitlab.arm.com/api/v4/projects/10397/packages/pypi/simple \
+  ethos-u-vela
+```
+
+Or browse the Package Registry on GitLab:
+https://gitlab.arm.com/artificial-intelligence/ethos-u/ethos-u-vela/-/packages
+
 ## Getting Started
 
 Once installed, Vela can be run from the command line by specifying just two
