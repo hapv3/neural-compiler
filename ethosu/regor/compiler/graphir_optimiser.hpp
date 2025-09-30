@@ -102,7 +102,6 @@ private:
             {},
             {
                 &GraphIrOptimiser::RewriteConst,
-                &GraphIrOptimiser::RewriteIdentityResize
             },
         },
         {
@@ -148,6 +147,7 @@ private:
             {
                 &GraphIrOptimiser::ConvertAttributes,
                 &GraphIrOptimiser::RewriteRescale,
+                &GraphIrOptimiser::RewriteIdentityResize,  // Must run after ConvertAttributeTensors and before ConvertResizeOffsets
                 &GraphIrOptimiser::ConvertResizeOffsets,
                 &GraphIrOptimiser::RewriteFullyConnected,
                 &GraphIrOptimiser::FixupPoolStrides,

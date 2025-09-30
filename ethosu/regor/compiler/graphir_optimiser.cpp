@@ -619,7 +619,7 @@ Operation *GraphIrOptimiser::RewriteIdentityResize(Graph *const graph, Operation
         {
             const auto ifmConn = operation->Input(TensorUsage::IFM);
 
-            auto identityOp = std::make_shared<Operation>(OpType::Identity);
+            auto identityOp = std::make_shared<Operation>(OpType::MemoryCopy);
             identityOp->ConnectInput(TensorUsage::IFM, ifmConn->tensor).Set(Quantization::Unit()).Set(ifmConn->tensor->StorageShape());
             identityOp->ConnectOutput(TensorUsage::OFM, ofmConn->tensor).Set(Quantization::Unit()).Set(ofmConn->tensor->StorageShape());
 
