@@ -2272,6 +2272,16 @@ Operation *GraphIrOptimiser::RewriteArgmax(Graph *const graph, Operation *const 
     auto &ifmShape = ifmConn->shape;
     auto &ofmShape = ofmConn->shape;
 
+    // If native support exists for argmax, we return the argmax op without decomposing.
+    ArchOperatorQuery query;
+    ArchRequirements req;
+    query.axis = attr->axis;
+    query.ifm[0].shape = ifmConn->shape;
+    query.ifm[0].type = ifmConn->tensor->Type();
+    query.ofm.type = ofmConn->tensor->Type();
+    query.ofm.shape = ofmShape;
+    auto res = _constraints->OperatorQuery(OpType::ArgMax, &query, &req);
+
     // Extend OfmShape to match ifmRank
     if ( ofmShape.Size() != ifmShape.Size() )
     {
@@ -2279,8 +2289,13 @@ Operation *GraphIrOptimiser::RewriteArgmax(Graph *const graph, Operation *const 
         assert(ofmShape.Size() == ifmShape.Size());
     }
 
-    // If native support exists for argmax, we return the argmax op without decomposing.
-    if ( _constraints->OperatorQuery(OpType::ArgMax).Any(QueryResult::Native) )
+    if ( res.Any(QueryResult::Unsupported) )
+    {
+        // Unsupported argmax, there is nothing we can do here.
+        ofmShape = query.ofm.shape;  // Restore original ofmShape
+        return returnOp;
+    }
+    else if ( res.Any(QueryResult::Native) && !req.req.Any(ArchRequirement::OpSubstitution) )
     {
         // Reshape IFM and OFM to 3D-tensors where W is the reduced axis
         if ( attr->axis != 1 || ifmConn->shape.Size() != 3 )

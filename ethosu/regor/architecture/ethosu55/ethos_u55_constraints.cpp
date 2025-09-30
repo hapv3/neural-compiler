@@ -430,6 +430,21 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
             return QueryResult::Unsupported;
         }
     }
+    else if ( opType == OpType::ArgMax )
+    {
+        assert(query);
+        if ( (query->axis == -1 || query->axis == query->ifm[0].shape.Size() - 1) &&
+             (query->ifm[0].shape.Size() <= 3 || query->ifm[0].shape.AxisProduct(0, -3) == 1) &&
+             (query->ifm[0].type == DataType::Int8 || query->ifm[0].type == DataType::UInt8) && query->ifm[0].shape.Depth() <= 127 )
+        {
+            if ( req )
+            {
+                req->req.Set(ArchRequirement::OpSubstitution);
+            }
+            return QueryResult::NativeHasReq;
+        }
+        return QueryResult::Unsupported;
+    }
 
     // Check direct native support of the opType
     auto npuOp = _arch->GetHWOp(opType);
