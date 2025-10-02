@@ -72,6 +72,8 @@ class Buffer : public std::enable_shared_from_this<Buffer>
 #undef TYPE_FUNC
     };
 
+    static constexpr int BUFFER_SHORT_HASH_LIMIT = 16u * (1u << 20);  // 8 Mb
+
     // Data storage method
     enum Placement : uint8_t
     {
@@ -79,6 +81,14 @@ class Buffer : public std::enable_shared_from_this<Buffer>
         LocalConst,
         LocalAlloc,
         LocalVector
+    };
+
+    enum HashMethod : uint8_t
+    {
+        Invalid = 0,
+        Full = 1,
+        Short = 2,
+        Pointer = 3,
     };
 
     template<typename TYPE>
@@ -119,7 +129,7 @@ private:
     LocalStorage _localStorage;
     DeleteFunc _deleter = nullptr;
     mutable Hash128 _dataHash;
-    mutable bool _invalidHash = true;
+    mutable HashMethod _hashMethod = HashMethod::Invalid;
 
 public:
     Buffer(const Buffer &) = delete;
@@ -329,14 +339,18 @@ public:
 
     const Hash128 &Hash() const
     {
-        if ( _invalidHash )
+        if ( _hashMethod == HashMethod::Invalid )
         {
             Rehash();
         }
         return _dataHash;
     }
 
-    void InvalidateHash() { _invalidHash = true; }
+    void InvalidateHash()
+    {
+        assert(((_hashMethod != HashMethod::Short) && (_hashMethod != HashMethod::Pointer)) && "Short hashed data may not change hash");
+        _hashMethod = HashMethod::Invalid;
+    }
 
     void Rehash() const
     {
@@ -346,9 +360,21 @@ public:
             std::string sizeStr("<");
             sizeStr += std::to_string(Size());
             sizeStr += '>';
+
+            int size = std::min(BUFFER_SHORT_HASH_LIMIT, Size());
+            _hashMethod = HashMethod::Full;
             MD5 hash;
             hash.Combine(reinterpret_cast<uint8_t *>(sizeStr.data()), int(sizeStr.size()));
-            hash.Combine(Data<uint8_t>(), Size());
+            hash.Combine(Data<uint8_t>(), size);
+            // Shortened hash for oversized buffers. The hash is still unique
+            // per allocation, even if two buffers' contents could match.
+            if ( size < Size() )
+            {
+                const uint8_t *data = Data<uint8_t>();
+                uintptr_t ptr = uintptr_t(data);
+                hash.Combine(reinterpret_cast<uint8_t *>(&ptr), sizeof(ptr));
+                _hashMethod = HashMethod::Short;
+            }
             hash.Get(_dataHash);
         }
         else
@@ -359,8 +385,8 @@ public:
             uint64_t ptr64 = static_cast<uint64_t>(ptr);
             _dataHash.v32[0] = _dataHash.v32[1] = static_cast<uint32_t>(ptr64);
             _dataHash.v32[2] = _dataHash.v32[3] = static_cast<uint32_t>(ptr64 >> 32);
+            _hashMethod = HashMethod::Pointer;
         }
-        _invalidHash = false;
     }
 
 private:

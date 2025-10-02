@@ -102,15 +102,18 @@ TEST_CASE("test_tflite_fb - load/store")
         }();
 
         // These integers are output by the call to TfLiteWriter::Serialise below
-        int64_t output_buffer_offset = 0;
         size_t output_buffer_size = 0;
         for ( size_t i = 0; i < 2; i++ )
         {
             // First iteration : FlatBuffer will have a 2GB limit
-            // Second iteration : FlatBuffer will have a previous_size-1 limit to ensure offset buffers are used
-            TfLiteWriter writer(output_buffer_size > 0 ? output_buffer_size - 1 : size_t{1U << 31});
+            // Second iteration : FlatBuffer will have a previous_size / 2 limit to ensure offset buffers are used
+            TfLiteWriter writer(output_buffer_size > 0 ? output_buffer_size / 2 : size_t{1U << 31});
 
+            int64_t output_buffer_offset = 0;
             auto fb = writer.Serialise(graphs, {{}}, output_buffer_offset, output_buffer_size);
+
+            // Expect second pass to displace some (but not all) buffers
+            REQUIRE(((i == 0) || writer.UsedOffsetBuffers()));
 
             TfLiteReader reader;
             std::vector<std::unique_ptr<Graph>> readerGraphs;

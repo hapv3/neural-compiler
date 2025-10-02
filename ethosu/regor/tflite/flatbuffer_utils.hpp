@@ -330,4 +330,143 @@ CopyVectorOfTables(flatbuffers::FlatBufferBuilder &destination, const flatbuffer
     return srcTables;
 }
 
+
+static size_t MeasureType(flatbuffers::ElementaryType type)
+{
+    switch ( type )
+    {
+        case flatbuffers::ET_UTYPE:
+            return 1;
+        case flatbuffers::ET_BOOL:
+            return 1;
+        case flatbuffers::ET_CHAR:
+            return 1;
+        case flatbuffers::ET_UCHAR:
+            return 1;
+        case flatbuffers::ET_SHORT:
+            return 2;
+        case flatbuffers::ET_USHORT:
+            return 2;
+        case flatbuffers::ET_INT:
+            return 4;
+        case flatbuffers::ET_UINT:
+            return 4;
+        case flatbuffers::ET_LONG:
+            return 8;
+        case flatbuffers::ET_ULONG:
+            return 8;
+        case flatbuffers::ET_FLOAT:
+            return 4;
+        case flatbuffers::ET_DOUBLE:
+            return 8;
+        default:
+            return 0;
+    }
+}
+
+static size_t MeasureTable(const flatbuffers::Table *object, const flatbuffers::TypeTable *typeTable);
+
+static size_t MeasureVector(flatbuffers::ElementaryType type, const flatbuffers::Table *object,
+    flatbuffers::voffset_t offset, const flatbuffers::TypeTable *typeTable = nullptr)
+{
+    if ( !object->CheckField(offset) ) return 0;
+
+    size_t sizeBytes = sizeof(flatbuffers::uoffset_t);  // sizeof(length)
+    if ( type == flatbuffers::ET_STRING )
+    {
+        const auto vec = object->GetPointer<flatbuffers::Vector<flatbuffers::Offset<flatbuffers::String>> *>(offset);
+        for ( const auto *str : *vec )
+        {
+            sizeBytes += str->size();
+        }
+    }
+    else if ( type == flatbuffers::ET_SEQUENCE )
+    {
+        const auto vec = object->GetPointer<flatbuffers::Vector<flatbuffers::Offset<flatbuffers::Table>> *>(offset);
+        for ( const auto *table : *vec )
+        {
+            sizeBytes += sizeof(flatbuffers::soffset_t);  // indirection index size
+            sizeBytes += MeasureTable(table, typeTable);
+        }
+    }
+    else
+    {
+        const flatbuffers::Vector<char> *vec = object->GetPointer<const flatbuffers::Vector<char> *>(offset);
+        if ( vec )
+        {
+            sizeBytes += vec->size() * MeasureType(type);
+        }
+    }
+
+    return sizeBytes;
+}
+
+static size_t MeasureTable(const flatbuffers::Table *object, const flatbuffers::TypeTable *typeTable)
+{
+    assert(typeTable);
+    assert(object);
+    // Start with optimistic vtable cost (average prefix + population cost).
+    size_t sizeBytes = (typeTable->num_elems + 1) / 2 * sizeof(flatbuffers::voffset_t);
+
+    // Use the reflection type-table to measure the size of all the fields in the given object,
+    for ( flatbuffers::voffset_t index = 0; index < typeTable->num_elems; index++ )
+    {
+        flatbuffers::TypeCode typeCode = typeTable->type_codes[index];
+        flatbuffers::voffset_t offset = flatbuffers::FieldIndexToOffset(index);
+        assert(typeCode.base_type <= flatbuffers::ET_SEQUENCE);
+        flatbuffers::ElementaryType base_type = flatbuffers::ElementaryType(typeCode.base_type);
+
+        if ( typeCode.is_repeating )
+        {
+            const flatbuffers::TypeTable *sequenceTypeTable = nullptr;
+            if ( typeCode.sequence_ref >= 0 && (typeCode.base_type == flatbuffers::ET_SEQUENCE) )
+            {
+                sequenceTypeTable = typeTable->type_refs[typeCode.sequence_ref]();
+            }
+
+            sizeBytes += MeasureVector(base_type, object, offset, sequenceTypeTable);
+        }
+        else if ( typeCode.sequence_ref >= 0 )
+        {
+            assert(typeTable->type_refs);
+            const flatbuffers::TypeTable *sequenceTypeTable = typeTable->type_refs[typeCode.sequence_ref]();
+            assert(sequenceTypeTable);
+            // Table reference
+            if ( sequenceTypeTable->st == flatbuffers::ST_TABLE )
+            {
+                sizeBytes += sizeof(flatbuffers::soffset_t);  // Table slot size
+                sizeBytes += MeasureTable(object->GetPointer<const flatbuffers::Table *>(offset), sequenceTypeTable);
+            }
+            else if ( sequenceTypeTable->st == flatbuffers::ST_UNION )
+            {
+                if ( base_type == flatbuffers::ET_SEQUENCE && index > 0 )
+                {
+                    // Prefixed union type with table reference
+                    unsigned unionType = object->GetField<uint8_t>(flatbuffers::FieldIndexToOffset(index - 1u), 0);
+                    if ( unionType > 0 )
+                    {
+                        sizeBytes += sizeof(flatbuffers::soffset_t);  // Table slot size
+                        sizeBytes += MeasureTable(object->GetPointer<const flatbuffers::Table *>(offset),
+                            sequenceTypeTable->type_refs[unionType - 1]());
+                    }
+                }
+            }
+        }
+        else if ( object->CheckField(offset) )
+        {
+            if ( base_type == flatbuffers::ET_STRING )
+            {
+                sizeBytes += sizeof(flatbuffers::soffset_t);  // Table slot size
+                sizeBytes += object->GetPointer<const flatbuffers::String *>(offset)->size() + sizeof(flatbuffers::soffset_t);  // strlen + sizeof(len)
+            }
+            else
+            {
+                sizeBytes += MeasureType(base_type);
+            }
+        }
+    }
+
+    return sizeBytes;
+}
+
 }  // namespace FlatbufferUtils

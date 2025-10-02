@@ -48,7 +48,11 @@ public:
         const std::vector<std::unordered_map<const Tensor *, Address>> &tensor_address_maps,
         int64_t &output_buffer_offset, size_t &output_buffer_size);
 
+    bool UsedOffsetBuffers() const { return !_offset_buffers.empty(); }
+
 private:
+    int64_t PrepareGraph(Graph *graph, int64_t &bufferSize, int64_t &operatorSize, int64_t &tensorSize);
+
     std::unique_ptr<const uint8_t[]> SerialiseImpl(const std::vector<std::unique_ptr<Graph>> &graphs,
         const std::vector<std::unordered_map<const Tensor *, Address>> &tensor_address_maps,
         int64_t &output_buffer_offset, size_t &output_buffer_size);
@@ -62,7 +66,11 @@ private:
         bool operator==(const BufferDesc &other) const { return (other.data == data) && (other.size == size); }
         struct hash
         {
-            size_t operator()(const BufferDesc &desc) const { return std::hash<const uint8_t *>{}(desc.data); }
+            size_t operator()(const BufferDesc &desc, size_t limit) const
+            {
+                assert(limit);
+                return std::hash<const uint8_t *>{}(desc.data) % limit;
+            }
         };
     };
 
@@ -98,7 +106,7 @@ private:
     // per-model
     flatbuffers::FlatBufferBuilder _flatbuffer;
     std::unordered_map<OperatorCodeDesc, int, OperatorCodeDesc::hash> _opcodes;
-    std::unordered_map<BufferDesc, int, BufferDesc::hash> _buffers;
+    ordered_map<BufferDesc, int, BufferDesc::hash, int> _buffers;
     std::vector<flatbuffers::Offset<tflite::OperatorCode>> _serialised_opcodes;
     std::vector<flatbuffers::Offset<tflite::SubGraph>> _serialised_subgraphs;
     std::vector<flatbuffers::Offset<tflite::Buffer>> _serialised_buffers;
@@ -114,8 +122,7 @@ private:
     flatbuffers::Offset<tflite::Tensor> SerialiseTensor(const Tensor *tensor, const Graph &graph);
     flatbuffers::Offset<void> SerialiseOptions(const Operation *operation, OpType type);
     flatbuffers::Offset<void> SerialiseOptions2(const Operation *operation, OpType type);
-    flatbuffers::Offset<tflite::Metadata> SerialiseTensorAddresses(int subgraphs);
-    void SerialiseTensorBuffer(const Tensor *tensor);
+    flatbuffers::Offset<tflite::Metadata> SerialiseTensorAddresses(size_t subgraphs);
 
     class ResultBuffer
     {
@@ -232,16 +239,14 @@ private:
     };
 
     std::vector<OffsetBufferDesc> _offset_buffers;
-    bool _useBufferOffset = false;
     const size_t _fbSizeCap;
     const bool _skipOfflineMemoryAllocation;  // Skip writing the OfflineMemoryAllocation TFLite metadata. The purpose
                                               // of this is primarily for unit testing.
 
     static constexpr size_t BUFFER_ALIGNMENT = 16ULL;
 
-    void CheckFlatBufferSize();
-    flatbuffers::Offset<tflite::Buffer> SerialiseBuffer(const Buffer *buffer);
-    flatbuffers::Offset<tflite::Buffer> SerialiseBuffer(const uint8_t *data, size_t size);
+    flatbuffers::Offset<tflite::Buffer> SerialiseBuffer(const Buffer *buffer, bool useOffset);
+    flatbuffers::Offset<tflite::Buffer> SerialiseBuffer(const uint8_t *data, size_t size, bool useOffset);
 
     static std::vector<const Tensor *> SortedInputTensors(const Operation *operation, OpType type);
 };
