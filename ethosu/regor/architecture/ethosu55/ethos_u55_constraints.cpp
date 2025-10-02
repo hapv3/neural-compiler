@@ -679,6 +679,18 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
         }
         result.Set(QueryResult::HasRequirements);
     }
+    else if ( opType == OpType::MemoryCopy )
+    {
+        if ( req && query->ofm.type == DataType::Int64 )
+        {
+            // MemoryCopy Int64 data as Int32 with twice the depth
+            req->req.Set(ArchRequirement::Tensor);
+            auto newShape = query->ofm.shape.WithDepth(2 * query->ofm.shape.Depth());
+            Set(req->tensor, TensorUsage::IFM0, DataType::Int32, TensorFormat::NHWC, newShape);
+            Set(*NextTensor(&req->tensor, usedTensors), TensorUsage::OFM, DataType::Int32, TensorFormat::NHWC, newShape);
+        }
+        result.Set(QueryResult::HasRequirements);
+    }
 
     // kernel constraint-checks
     if ( query->kernel )

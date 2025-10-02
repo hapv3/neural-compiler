@@ -159,7 +159,13 @@ void SchedulerPacking::ConvertOperation(const Operation *op, std::vector<std::un
                 {
                     if ( tr->shape )
                     {
-                        conn->tensor->storageShape = conn->shape = conn->slice.shape = tr->shape;
+                        // If the connection is a slice of the tensor - only update the shape of the slice
+                        // Otherwise update the shape of the tensor and connection as well.
+                        conn->slice.shape = tr->shape;
+                        if ( !conn->slice )
+                        {
+                            conn->tensor->storageShape = conn->shape = tr->shape;
+                        }
                     }
                     if ( tr->format != TensorFormat::Unknown )
                     {
@@ -167,7 +173,16 @@ void SchedulerPacking::ConvertOperation(const Operation *op, std::vector<std::un
                     }
                     if ( tr->type != DataType::None )
                     {
-                        conn->tensor->dataType = tr->type;
+                        // If the connection is a slice of the tensor - only update the data type on the connection
+                        // Otherwise update the data type of the tensor
+                        if ( conn->slice )
+                        {
+                            conn->SetType(tr->type);
+                        }
+                        else
+                        {
+                            conn->tensor->dataType = tr->type;
+                        }
                     }
                 }
                 else
