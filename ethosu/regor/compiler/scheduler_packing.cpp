@@ -434,6 +434,9 @@ void SchedulerPacking::PackOperations()
                     ofmConn->tensor->producers.push_back(lastNonFusedOp);  // Add PRIMARY to T3 producers
                     ofmConn->tensor->RemoveWriter(nextOp);                 // Remove ACTIVATION from T3 producers
                     ofmConn->SetType(nextOp->OFM()->Type());
+                    // Reshape the activation function to the OFM shape of the tensor it's getting fused to
+                    nextOp->IFM(0)->shape = ofmConn->shape;
+                    nextOp->OFM()->shape = ofmConn->shape;
 
                     auto quantMin = ofmConn->quantization.quantMin;
                     auto quantMax = ofmConn->quantization.quantMax;
