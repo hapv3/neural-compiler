@@ -834,9 +834,12 @@ Operation *GraphIrOptimiser::RewriteRescale(Graph *const, Operation *const opera
             for ( auto qscale : quant.scales )
             {
                 int shiftDiff = qscale.shift - shift;
+                // Double-rounding with shift > 31 cannot be reduced as doing so would affect the significance of the
+                // rounding.
+                bool correctRounding = (ofmConn->rounding != RoundMode::DBL || qscale.shift <= 31 || shiftDiff == 0);
                 // try to right-shift scale without precision-loss
-                // This can be done if the scale is evenly divisible by 2^shift
-                if ( (shiftDiff >= 0) && (qscale.scale % (1UL << shiftDiff) == 0) )
+                // This can be done if the scale is evenly divisible by 2^shiftdiff
+                if ( (shiftDiff >= 0) && correctRounding && (qscale.scale % (1ULL << shiftDiff) == 0) )
                 {
                     scales.push_back(qscale.scale >> shiftDiff);
                 }
