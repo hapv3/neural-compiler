@@ -633,6 +633,7 @@ Operation *TFLiteGraphOptimiser::RewritePack(Graph *const graph, Operation *cons
             concatOp->Input(usage)->shape = ifmConn.shape.Insert(axis, 1);
         }
         returnOp = concatOp.get();
+        RecordOptimisation(*operation, returnOp);
         operation->Disconnect();
     }
     return returnOp;
