@@ -25,11 +25,10 @@ default:
     tags:
     -   arm64-shared
     interruptible: true
-    # Cache the virtual Python environment and the cache content to speed up builds
+    # Cache the cache content to speed up builds
     cache:
         paths:
         -   .cache/
-        -   .venv/
     # Initialize a cached virtual Python environment
     before_script:
     -   python3 -m venv .venv
