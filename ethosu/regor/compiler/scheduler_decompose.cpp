@@ -939,7 +939,7 @@ DecomposeNonConstWeights(DecompositionContext &ctx, std::unique_ptr<SchedulerOpe
                 biasOp->SetKernel(Kernel::UnitKernel());
                 auto *biasIfmConn = biasOp->ConnectInput(TensorUsage::IFM, broadcastBiasTensor);
                 biasIfmConn->slice.shape = Shape(1, 1, std::min(ofmWidth - ofmX, ofmBlockWidth), validOfmDepth);
-                biasIfmConn->slice.offset = Shape(0, 0, ofmX, ofmZ);
+                biasIfmConn->slice.offset = Shape(0, 0, 0, ofmZ);
                 // Op must have an output to maintain schedule connectivity, even though
                 // there is no output from NullPool.
                 auto *biasOfmConn = biasOp->ConnectOutput(TensorUsage::OFM, ofmConn->tensor);
