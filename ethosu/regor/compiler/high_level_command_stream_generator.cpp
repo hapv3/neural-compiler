@@ -104,12 +104,6 @@ static Box TransformWithStridesAndSkirt(const Box &outputArea, const Shape *stri
         // TODO MLBEDSW-8660: Striping of resize operations
         return (splitOffset.Size() > 0) ? Box(splitOffset, splitOffset + splitShape) : Box(Shape::PadAxes(ifmShape, 4, 1));
     }
-    else if ( IsBinaryElementwise(opType) && splitOffset.Size() != 0 )
-    {
-        // Elementwise with splitShape. IFM might not cover full OFM and can be broadcasted in that case
-        start = splitOffset;
-        end = start + splitShape;
-    }
 
     if ( accIfm ) return Box(start, end);
 
@@ -122,7 +116,8 @@ static Box TransformWithStridesAndSkirt(const Box &outputArea, const Shape *stri
 
     int strideW = strides->Width();
     Point2i validIfmOffset = splitOffset.IsEmpty() ? Point2i{0, 0} : splitOffset.WH<int>();
-    start = start.WithWidth(std::max(start.Width() * strideW - (skirt->left + validIfmOffset.x), validIfmOffset.x));
+    start = start.WithWidth(
+        std::max((start.Width() - validIfmOffset.x) * strideW - skirt->left + validIfmOffset.x, validIfmOffset.x));
     strideW *= inputStep.x;
     int validIfmWidth = ifmShape.Width();
     if ( splitShape.Size() > 1 && splitOffset.Size() > 1 )
@@ -131,7 +126,7 @@ static Box TransformWithStridesAndSkirt(const Box &outputArea, const Shape *stri
     end = end.WithWidth(std::min(end.Width() * strideW + skirt->right, validIfmWidth));
     int strideH = strides->Height();
     int skirtTopRemainder = skirt->top % upscalingFactor;
-    int startHeight = start.Height() * strideH - (skirt->top + validIfmOffset.y) + skirtTopRemainder;
+    int startHeight = (start.Height() - validIfmOffset.y) * strideH - skirt->top + skirtTopRemainder + validIfmOffset.y;
     strideH *= inputStep.y;
     int totalStride = strideH * (outputAreaEnd.Height() - outputAreaStart.Height() - 1);
     padTop = std::max(0, -startHeight) + skirtTopRemainder;
@@ -161,15 +156,32 @@ static Box TransformWithStridesAndSkirt(const Box &outputArea, const Shape *stri
     start = start.WithHeight(std::max(start.Height() / upscalingFactor, 0));
     int endHeight = end.Height() * strideH + skirt->bottom + skirt->bottom % upscalingFactor;
     end = end.WithHeight(std::min(std::max(endHeight / upscalingFactor, 1), validIfmHeight));
+
+    // Handle broadcasted axes by wrapping start/end coordinates
+    // against the IFM-volume
     if ( limit == TransformLimit::Wrap )
     {
-        Shape ifmWrap = Shape::PadAxes(ifmShape, 4, 1);
+        // use splitShape if it exists, otherwise ifmShape
+        Shape ifmVolume = splitShape.Size() ? splitShape : ifmShape;
+        Shape ifmWrap = Shape::PadAxes(ifmVolume, 4, 1);
         Shape one = start.WithOnes();
+        // remove split-offset as wrapping needs to happen before offseting
+        start -= splitOffset;
+        end -= splitOffset;
+        // mod start-coordinate against the ifmVolume
+        // for non-broadcasted axes, start should be unaffected
+        // for broadcasted axes, (ifmVolume[ax] == 1) start should become 0
         start = Shape::Wrap(start, ifmWrap);
+        // mod end - 1 against the IFM-volume
+        // end - 1 ensures that non-broadcasted axes do not wrap
+        // for non-broadcasted axes, end should be unaffected
+        // for broadcasted axes, end should become 1
         end = Shape::Wrap(end - one, ifmWrap) + one;
+        // re-adjust for split-offset
+        start += splitOffset;
+        end += splitOffset;
         assert((end - start).Elements() > 0);
     }
-
     return Box(start, end);
 }
 
