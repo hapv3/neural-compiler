@@ -229,7 +229,7 @@ bool EthosU85Constraints::SupportsFusedRescale(OpType opType, TensorUsage tensor
             // activation/operation
             bool scaleSupported = quantization.scales.size() == 1 && quantization.scales.front() == QuantizedScale(1, 7);
             bool fromSupported = opFromType == DataType::Int16 && rescaleFromType == DataType::Int32;
-            bool toSupported = opToType == DataType::Int16;
+            bool toSupported = rescaleToType == DataType::Int16;
             return fromSupported && toSupported && scaleSupported;
         }
     }
