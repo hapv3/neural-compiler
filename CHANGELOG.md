@@ -22,6 +22,11 @@ main feature changes, interface changes and reported defects that have been
 fixed.  The version numbering adheres to the
 [semantic versioning](https://semver.org/) scheme.
 
+## Release 4.4.1 - 07/10/2025
+
+* Fixed a bug with using incorrect quantisation when performing reshape removal
+
+
 ## Release 4.4.0 - 01/09/2025
 
 **Main feature changes:**
