@@ -690,6 +690,11 @@ int EthosU55RCSGenerator::CalcBlockDep(const HLCStripe *prevStripe, const HLCStr
     {
         return 0;
     }
+    // TODO MLBEDSW-9626: Compute block-dependency for reversed ofms
+    if ( prevOfm.reverse != ReverseType::None )
+    {
+        return 0;
+    }
 
     if ( _arch->_shram.reservedEndBanks == 0 )
     {
