@@ -19,6 +19,7 @@
 #include "compiler/tosa_graph_optimiser.hpp"
 
 #include "architecture/architecture_constraints.hpp"
+#include "operation_util.hpp"
 #include "optimiser_utils.hpp"
 
 
@@ -39,8 +40,17 @@ Operation *TosaGraphOptimiser::ConvertZeroPointTensors(Graph *const graph, Opera
             const auto targetConn = IsOFM(target) ? operation->Output(target) : operation->Input(target);
             assert(targetConn);
             auto dataType = asUnsigned ? zpConn->tensor->Type() & ~unsigned(DataType::Signed) : zpConn->tensor->Type();
-            auto values = zpConn->tensor->View().Values<int64_t>(dataType);
-            targetConn->quantization.zeroPoints = {values.begin(), values.end()};
+            if ( dataType == DataType::Int4Packed8 )
+            {
+                // Operators with int4 zero points only support a scalar zero point value
+                assert(zpConn->tensor->StorageShape().Elements() == 1);
+                targetConn->quantization.zeroPoints = {Scalar<int64_t>(*zpConn->tensor)};
+            }
+            else
+            {
+                auto values = zpConn->tensor->View().Values<int64_t>(dataType);
+                targetConn->quantization.zeroPoints = {values.begin(), values.end()};
+            }
         }
     };
     switch ( operation->Type() )
