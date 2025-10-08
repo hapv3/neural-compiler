@@ -264,7 +264,7 @@ bool CanDecompose(Architecture *, const SchedulerOperation *schedOp)
     if ( schedOp->Type() == OpType::Conv3D && constantWeights && constantScales ) return true;
     if ( schedOp->Type() == OpType::DepthwiseConv2D ) return true;
     if ( schedOp->Type() == OpType::TransposeConv2D && constantWeights && constantScales ) return true;
-    if ( DecomposeAsElementwise(schedOp->Type()) || schedOp->Type() == OpType::MemoryCopy ) return true;
+    if ( DecomposeAsElementwise(schedOp->Type()) ) return true;
     if ( schedOp->Type() == OpType::MatMul ) return true;
     if ( schedOp->Type() == OpType::Resize ) return true;
     if ( schedOp->Type() == OpType::ReduceSum ) return true;
@@ -2062,6 +2062,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> LegaliseResize(DecompositionCon
 // Additionally, squash any leading dimensions into the height for any operators with >3 dimensions.
 static void ReshapeElementwise(SchedulerOperation *op)
 {
+    assert(DecomposeAsElementwise(op->Type()));
     auto *ofmConn = op->Output(TensorUsage::OFM);
     auto *ifmConn = op->Input(TensorUsage::IFM0);
     auto *ifm2Conn = op->TryInput(TensorUsage::IFM1);

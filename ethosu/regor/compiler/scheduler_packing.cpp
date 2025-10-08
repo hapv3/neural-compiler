@@ -881,7 +881,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> SchedulerPacking::DecomposeSche
             result = DecomposeMaxPool(_ctx, std::move(op));
             break;
         default:
-            if ( DecomposeAsElementwise(op->Type()) || op->Type() == OpType::MemoryCopy )
+            if ( DecomposeAsElementwise(op->Type()) )
             {
                 result = DecomposeElementwise(_ctx, std::move(op));
             }
