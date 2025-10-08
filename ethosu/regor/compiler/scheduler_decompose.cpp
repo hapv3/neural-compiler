@@ -2032,11 +2032,19 @@ static void ReshapeElementwise(SchedulerOperation *op)
     bool broadcast = ifm2Conn && !scalarIfm2 && ifmConn->shape != ifm2Conn->shape;
     bool hasSlices =
         ifmConn->shape != ifmConn->SliceShape() || ofmConn->shape != ofmConn->SliceShape() ||
-        (ifm2Conn && ifm2Conn->shape != ofmConn->SliceShape());
-    if ( broadcast || hasSlices )
+        (ifm2Conn && ifm2Conn->shape != ifm2Conn->SliceShape());
+    bool hasStride = ifmConn->slice.stride || ofmConn->slice.stride || (ifm2Conn && ifm2Conn->slice.stride);
+    if ( broadcast || hasSlices || hasStride )
     {
         return;
     }
+    // If slices exist, they must cover the whole tensor shapes, so they are safe to remove
+    assert((!ifmConn->slice.offset || ifmConn->slice.offset == ifmConn->slice.offset.WithZeros()) && "Full volume IFM slice with unexpected offset");
+    assert((!ofmConn->slice.offset || ofmConn->slice.offset == ofmConn->slice.offset.WithZeros()) && "Full volume OFM slice with unexpected offset");
+    assert((!ifm2Conn || !ifm2Conn->slice.offset || (ifm2Conn->slice.offset == ifm2Conn->slice.offset.WithZeros())) && "Full volume IFM2 slice with unexpected offset");
+    ifmConn->slice = TensorSlice();
+    if ( ifm2Conn ) ifm2Conn->slice = TensorSlice();
+    ofmConn->slice = TensorSlice();
     // Remove all the dimensions from the OFM that are 1.
     auto ofmShape = ofmConn->shape;
     while ( ofmShape.Size() > 3 && (ofmShape.Depth() == 1 || ofmShape.Width() == 1 || ofmShape.Height() == 1) &&
