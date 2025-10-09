@@ -2161,6 +2161,60 @@ Operation *GraphIrOptimiser::RewriteDepthwise(Graph *const graph, Operation *con
     return returnOp;
 }
 
+// This step does 3 things to fixup WHILE/IF operations to simplify scheduling and HLC generation:
+//
+// 1. Connect constant inputs to WHILE through a MemoryCopy op to make sure all input tensors to a WHILE has writable
+//    memory. This is important later when this operator is converted to a loop with HLCBranch ops in HLCS generator.
+//    After each iteration we copy the output back to the input. This wouldn't work if any input is in read-only memory.
+// 2. Connect first input to IF through a MemoryCopy op, if it's constant or a graph input, to make sure this input is
+//    produced by an operation. This is important so that the HW COND_STATUS register is properly written. This register
+//    controls the behavior if OP_BRANCH instruction.
+// 3. Reshape inputs and outputs to 3D to ensure the ops will pass the constraints checks.
+Operation *GraphIrOptimiser::FixupControlFlow(Graph *const graph, Operation *const operation)
+{
+    UNUSED(graph);
+    Operation *returnOp = operation;
+    if ( IsControlFlow(operation->Type()) )
+    {
+        const bool isWhile = operation->Type() == OpType::While;
+        const bool isIf = operation->Type() == OpType::If;
+
+        for ( const auto &[ifmUsage, ifmConn] : operation->Inputs().pairs() )
+        {
+            if ( !IsIFM(ifmUsage) ) continue;
+
+            // Reshape IFM to 3D
+            ifmConn.shape = ReshapeToHWC(ifmConn.shape);
+
+            const bool isConstant = ifmConn.tensor->IsConstant();
+            const bool isGraphInput = graph->IsInput(ifmConn.tensor.get());
+            const bool isIFM0 = ifmUsage == TensorUsage::IFM0;
+            if ( (isWhile && isConstant) || (isIf && isIFM0 && (isConstant || isGraphInput)) )
+            {
+                // Create a MemoryCopy with identity quantization
+                auto tmp = std::make_shared<Tensor>("non-constant", ifmConn.tensor->Type(), ifmConn.tensor->StorageShape());
+                auto copyOp = std::make_shared<Operation>(OpType::MemoryCopy);
+                copyOp->ConnectInput(TensorUsage::IFM, ifmConn.tensor);                // Constant input
+                copyOp->ConnectOutput(TensorUsage::OFM, tmp).Set(RoundMode::NATURAL);  // Non-constant output
+                RecordOptimisation(*operation, copyOp.get());
+
+                // Replace input with the MemoryCopy output
+                operation->ConnectInput(ifmUsage, tmp);
+            }
+        }
+
+        for ( const auto &[ofmUsage, ofmConn] : operation->Outputs().pairs() )
+        {
+            if ( IsOFM(ofmUsage) )
+            {
+                // Reshape OFM to 3D
+                ofmConn.shape = ReshapeToHWC(ofmConn.shape);
+            }
+        }
+    }
+    return returnOp;
+}
+
 // Reshape Reverse with unsupported shape or axis
 // If a Reverse has >4D shape, or unsupported axis-parameter
 // reshape to a 3D-tensor where W is the reversed axis

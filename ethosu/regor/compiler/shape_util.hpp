@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -71,17 +71,18 @@ inline Shape ReshapeTo3DAroundEdges(const Shape &shape, int minAxis = 1)
     return ReshapeTo3D(shape, {1, shape.Size() - 2, 1}, minAxis);
 }
 
-inline Shape ReshapeToNHWC(Shape shape)
+inline Shape ReshapeToNHWC(const Shape &shape)
 {
-    if ( !shape.IsValid() )
-    {
-        shape = {0, 0, 0, 0};
-    }
-    int batch = shape.AxisProduct(0, shape.Size() - 3);
-    shape = Shape::PadAxes(shape, 4, 1).Extract(0, -3, -2, -1);
-    shape[0] = batch;
-    return shape;
+    if ( shape.Size() == 4 ) return shape;
+    else if ( shape.Size() < 4 ) return Shape::PadAxes(shape, 4, 1);
+    else return Shape::MergeAxes(shape, -4, 0xFFFFFFF8, false);
 }
 
+inline Shape ReshapeToHWC(const Shape &shape)
+{
+    if ( shape.Size() == 3 ) return shape;
+    else if ( shape.Size() < 3 ) return Shape::PadAxes(shape, 3, 1);
+    else return Shape::MergeAxes(shape, -3, 0xFFFFFFFC, false);
+}
 
 }  // namespace regor

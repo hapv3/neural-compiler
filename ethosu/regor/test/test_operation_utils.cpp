@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -143,4 +143,36 @@ TEST_CASE("ReshapeTo3DAroundEdges")
     REQUIRE(shape2Da == Shape(3, 1, 7));
     auto shape2Da0 = ReshapeTo3DAroundEdges(shape2D, 0);
     REQUIRE(shape2Da0 == Shape(3, 0, 7));
+}
+
+TEST_CASE("ReshapeToNHWC")
+{
+    Shape shape4D(3, 7, 11, 13);
+    auto shape4Da = ReshapeToNHWC(shape4D);
+    REQUIRE(shape4Da == Shape(3, 7, 11, 13));
+
+    std::vector<int> vector6D = {3, 7, 11, 13, 17, 19};
+    Shape shape6D = Shape::FromVector(vector6D);
+    auto shape6Da = ReshapeToNHWC(shape6D);
+    REQUIRE(shape6Da == Shape(3 * 7 * 11, 13, 17, 19));
+
+    Shape shape2D(3, 7);
+    auto shape2Da = ReshapeToNHWC(shape2D);
+    REQUIRE(shape2Da == Shape(1, 1, 3, 7));
+}
+
+TEST_CASE("ReshapeToHWC")
+{
+    Shape shape3D(3, 7, 11);
+    auto shape3Da = ReshapeToHWC(shape3D);
+    REQUIRE(shape3Da == Shape(3, 7, 11));
+
+    std::vector<int> vector6D = {3, 7, 11, 13, 17, 19};
+    Shape shape6D = Shape::FromVector(vector6D);
+    auto shape6Da = ReshapeToHWC(shape6D);
+    REQUIRE(shape6Da == Shape(3 * 7 * 11 * 13, 17, 19));
+
+    Shape shape2D({3, 7});
+    auto shape2Da = ReshapeToHWC(shape2D);
+    REQUIRE(shape2Da == Shape(1, 3, 7));
 }
