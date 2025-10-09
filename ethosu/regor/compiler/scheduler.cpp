@@ -244,6 +244,11 @@ int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *con
                 tensor->needsLinearFormat = true;
                 continue;
             }
+            else if ( IsControlFlow(producer->Type()) )
+            {
+                tensor->needsLinearFormat = true;
+                continue;
+            }
             else
             {
                 ArchRequirements req;
@@ -295,6 +300,11 @@ int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *con
             }
             // TODO: Tile doesn't support brick format yet (MLBEDSW-9485)
             else if ( consumer->Type() == OpType::Tile )
+            {
+                tensor->needsLinearFormat = true;
+                continue;
+            }
+            else if ( IsControlFlow(consumer->Type()) )
             {
                 tensor->needsLinearFormat = true;
                 continue;
