@@ -44,6 +44,7 @@ class Graph
 {
 private:
     std::string _name;
+    UniqueId _uid = GenerateUniqueId();
     std::vector<std::shared_ptr<Tensor>> _inputs;
     std::vector<std::shared_ptr<Tensor>> _outputs;
     std::vector<std::shared_ptr<Tensor>> _persistent;
@@ -81,6 +82,7 @@ public:
     const std::string &Name() const { return _name; }
     void SetName(const std::string &name) { _name = name; }
     uint32_t SyntaxVersion() const { return _syntaxVersion; }
+    UniqueId Uid() const { return _uid; }
 
     const std::vector<std::shared_ptr<Tensor>> &Inputs() const { return _inputs; }
     const std::vector<std::shared_ptr<Tensor>> &Outputs() const { return _outputs; }

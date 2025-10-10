@@ -439,6 +439,43 @@ std::vector<std::unique_ptr<Graph>> Compiler::CompileGraphs(IncrementalLinearAll
         }
     }
 
+    // Iterate the graphs and look for graphs we haven't reached
+    for ( auto &graph : _graphs )
+    {
+        if ( graph.get() == _entryPoint || graph->Notation() != GraphNotation::TFLite ) continue;
+
+        if ( _compiledGraphs.count(graph->Uid()) == 0 )
+        {
+            std::unordered_map<std::string, Graph *> emptyGraphsMap;
+            auto compiled = CompileGraph(graph.get(), emptyGraphsMap, readOnlyAllocator);
+            if ( !compiled )
+            {
+                return {};
+            }
+
+            // Link the compiled graphs
+            auto linked = LinkGraphs(std::move(compiled), tensorAddressMaps);
+            if ( linked.empty() )
+            {
+                return {};
+            }
+            newGraphs.insert(newGraphs.end(), std::make_move_iterator(linked.begin()), std::make_move_iterator(linked.end()));
+        }
+        else
+        {
+            // Insert a placeholder (empty) graph to preserve the original graph indexing. The ops from this graph were
+            // inlined into the main graph, but TFLite CALL/IF/WHILE ops on CPU still reference other graphs by their
+            // indices, so the index order must remain intact.
+            auto newGraph = std::make_unique<Graph>(graph->Notation());
+            newGraph->SetName(graph->Name());
+            newGraph->SetPassthrough(graph->Passthrough());
+            newGraphs.push_back(std::move(newGraph));
+
+            // Insert a matching empty tensor address map
+            tensorAddressMaps.emplace_back();
+        }
+    }
+
     return newGraphs;
 }
 
@@ -487,6 +524,9 @@ std::unique_ptr<CompiledGraph> Compiler::CompileGraph(
             return nullptr;
         }
     }
+
+    // Remember that we compiled this graph
+    _compiledGraphs.insert(graph->Uid());
 
     try
     {

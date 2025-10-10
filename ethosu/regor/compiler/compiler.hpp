@@ -113,6 +113,10 @@ private:
     // subgraphs without copying.
     std::unordered_map<UniqueId, UniqueId> _tensorToEquivalenceID;
 
+    // Set of compiled graph UIDs. This is used to remember which graph that has been visited so we can know which
+    // graphs should be passed through to CPU.
+    std::unordered_set<UniqueId> _compiledGraphs;
+
 public:
     void *userApiArg = nullptr;
 
