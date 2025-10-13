@@ -435,6 +435,7 @@ static std::vector<T> BroadcastValues(const Tensor *in, const Shape &iShape, con
     return ret;
 }
 
+// Compute the output for a binary elementwise operation with constant inputs
 template<template<typename> typename F, typename T>
 std::shared_ptr<Buffer> ConstPropBinEw(Operation *const operation)
 {
@@ -460,6 +461,7 @@ std::shared_ptr<Buffer> ConstPropBinEw(Operation *const operation)
     return std::make_shared<Buffer>(std::move(c));
 }
 
+// Compute the output for a binary elementwise operation with constant inputs
 template<template<typename> typename F>
 std::shared_ptr<Buffer> ConstPropBinEw(Operation *const operation)
 {
@@ -478,6 +480,7 @@ std::shared_ptr<Buffer> ConstPropBinEw(Operation *const operation)
     }
 }
 
+// Compute the output for a unary elementwise operation with constant input
 template<template<typename> typename F, typename T>
 std::shared_ptr<Buffer> ConstPropUnEw(Operation *const operation)
 {
@@ -499,6 +502,7 @@ std::shared_ptr<Buffer> ConstPropUnEw(Operation *const operation)
     return std::make_shared<Buffer>(std::move(c));
 }
 
+// Compute the output for a unary elementwise operation with constant input
 template<template<typename> typename F>
 std::shared_ptr<Buffer> ConstPropUnEw(Operation *const operation)
 {
@@ -519,7 +523,8 @@ std::shared_ptr<Buffer> ConstPropUnEw(Operation *const operation)
 
 Operation *GraphIrOptimiser::ConstPropagation(Graph *const graph, Operation *const operation)
 {
-    UNUSED(graph);
+    Operation *returnOp = operation;
+
     for ( auto [usage, ifmConn] : operation->Inputs().pairs() )
     {
         if ( !IsIFM(usage) ) continue;
@@ -534,6 +539,12 @@ Operation *GraphIrOptimiser::ConstPropagation(Graph *const graph, Operation *con
     if ( ofmConn->quantization.type != QuantizationType::EXPLICIT )
     {
         // TODO: Remove this restriction when MLBEDSW-10086 is implemented
+        return operation;
+    }
+
+    // Don't try to remove memory copy operations that produce graph output, regardless if it has constant input or not.
+    if ( operation->Type() == OpType::MemoryCopy && graph->IsOutput(ofmConn->tensor.get()) )
+    {
         return operation;
     }
 
@@ -557,18 +568,34 @@ Operation *GraphIrOptimiser::ConstPropagation(Graph *const graph, Operation *con
     if ( ofmBuf )
     {
         auto *ofm = ofmConn->tensor.get();
-        ofm->SetBuffer(ofmBuf);
-
-        // Remove op from ifm readers and ofm writers.
-        // Note the Inputs/Outputs on operation should still be intact to not break the traversal.
-        for ( auto [usage, ifmConn] : operation->Inputs().pairs() )
+        if ( graph->IsOutput(ofm) )
         {
-            ifmConn.tensor->RemoveReader(operation->shared_from_this());
+            // Don't propagate the computed result to the graph output. If we do that and remove this operation, we will
+            // not have any operation left in the graph that writes the graph output. Instead, replace it with a memory
+            // copy.
+            auto constant = std::make_shared<Tensor>("constprop", ofm->Type(), ofm->StorageShape(), ofmBuf);
+            auto copy = std::make_shared<Operation>(OpType::MemoryCopy);
+            copy->ConnectInput(TensorUsage::IFM, constant);
+            copy->CopyOutput(TensorUsage::OFM, *ofmConn);
+            returnOp = copy.get();
+            RecordOptimisation(*operation, copy.get());
+            operation->Disconnect();
         }
-        ofm->RemoveWriter(operation->shared_from_this());
+        else
+        {
+            ofm->SetBuffer(ofmBuf);
+
+            // Remove op from ifm readers and ofm writers.
+            // Note the Inputs/Outputs on operation should still be intact to not break the traversal.
+            for ( auto [usage, ifmConn] : operation->Inputs().pairs() )
+            {
+                ifmConn.tensor->RemoveReader(operation->shared_from_this());
+            }
+            ofm->RemoveWriter(operation->shared_from_this());
+        }
     }
 
-    return operation;
+    return returnOp;
 }
 
 /*

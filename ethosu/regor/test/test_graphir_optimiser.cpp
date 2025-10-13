@@ -168,6 +168,45 @@ TEST_CASE("test_graphir_optimiser - constant propagation")
             REQUIRE(idata[i] == (1 << 2) << 3);
         }
     }
+
+    SECTION("Constant graph")
+    {
+        auto graph = [&]()
+        {
+            std::vector<std::shared_ptr<Operation>> ops;
+            auto cifm = CreateTensor("CIFM1", Shape(1, 1, 10, 1), DataType::Int8, 2);
+            auto cifm1 = CreateTensor("CIFM2", Shape(1, 1, 10, 1), DataType::Int8, 3);
+            auto ofm = CreateTensor("OFM", Shape(1, 1, 10, 10), DataType::Int8);
+            auto cop = CreateOperation(OpType::SHL, TensorUsage::IFM, cifm, TensorUsage::IFM1, cifm1, TensorUsage::OFM, ofm);
+            ops.push_back(std::move(cop));
+
+            // Create graph with ops
+            return CreateGraph(ops);
+        }();
+
+        GraphOptimiserOptions options;
+        const auto &optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
+
+        std::vector<Operation *> allOps;
+
+        graph->GetAllOperations(allOps);
+        REQUIRE(allOps.size() == 1);
+
+        REQUIRE(!optimiser.empty());
+        optimiser.back()->Process(graph.get());
+        allOps.clear();
+
+        graph->GetAllOperations(allOps);
+        REQUIRE(allOps.size() == 1);
+        REQUIRE(allOps[0]->Type() == OpType::MemoryCopy);
+        REQUIRE(allOps[0]->Inputs()[TensorUsage::IFM].tensor->IsConstant());
+        auto iview = allOps[0]->Inputs()[TensorUsage::IFM].tensor->View();
+        auto idata = iview.RawData<int8_t>();
+        for ( int i = 0; i < allOps[0]->Inputs()[TensorUsage::IFM].tensor->StorageShape().Elements(); i++ )
+        {
+            REQUIRE(idata[i] == 2 << 3);
+        }
+    }
 }
 
 TEST_CASE("test_graphir_optimiser - ReduceSum")
