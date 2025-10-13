@@ -880,7 +880,7 @@ DecomposeNonConstWeights(DecompositionContext &ctx, std::unique_ptr<SchedulerOpe
     zeroTensor->SetInternalName("const_zero");
     Shape broadcastBiasShape(1, 1, ofmBlockWidth, ofmDepth);
     auto broadcastBiasTensor = std::make_shared<SchedulerTensor>(biasConn->Type(), broadcastBiasShape);
-    broadcastBiasTensor->SetInternalName(fmt::format("{}_broadcasted", biasConn->tensor->Name()).c_str());
+    broadcastBiasTensor->SetInternalName(fmt::format("{}_broadcasted", biasConn->tensor->Name()));
     broadcastBiasTensor->memArea = ctx.arch->FeatureMapMemory();
     auto broadcastBiasOp = std::make_unique<SchedulerOperation>(OpType::Add);
     auto broadcastBiasIfmConn = broadcastBiasOp->ConnectInput(TensorUsage::IFM0, biasConn->tensor);
@@ -909,9 +909,9 @@ DecomposeNonConstWeights(DecompositionContext &ctx, std::unique_ptr<SchedulerOpe
         assert(weightsQuantization.zeroPoints.size() == 1);
         auto zp = weightsQuantization.zeroPoints[0];
         auto zeroPointTensor = CreateScalarConstTensor(ctx.arch, int8_t(zp));
-        zeroPointTensor->SetInternalName(fmt::format("const_{}_zp", weightsConn->tensor->Name()).c_str());
+        zeroPointTensor->SetInternalName(fmt::format("const_{}_zp", weightsConn->tensor->Name()));
         weightsTensor = std::make_shared<SchedulerTensor>(ifmConn->Type(), weightsTensor->storageShape);
-        weightsTensor->SetInternalName(fmt::format("{}_zp_adjusted", weightsConn->tensor->Name()).c_str());
+        weightsTensor->SetInternalName(fmt::format("{}_zp_adjusted", weightsConn->tensor->Name()));
         weightsTensor->memArea = ctx.arch->FeatureMapMemory();
         auto subZpOp = std::make_unique<SchedulerOperation>(OpType::Sub);
         subZpOp->ConnectInput(TensorUsage::IFM0, weightsConn->tensor);

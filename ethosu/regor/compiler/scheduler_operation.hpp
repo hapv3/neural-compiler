@@ -125,11 +125,7 @@ public:
         return (allocatedSize > 0) ? allocatedSize : TensorAllocationBytes(storageShape, format, dataType);
     }
 
-    void SetInternalName(const char *name)
-    {
-        if ( name ) internalName = name;
-        else internalName.clear();
-    }
+    void SetInternalName(std::string name) { internalName = std::move(name); }
 
     std::string Name() const
     {

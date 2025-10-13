@@ -2054,7 +2054,7 @@ WeightScaleTensors Scheduler::TryEncodeWeightAndScaleTensor(OpType forOp, IWeigh
 
         auto zeroOffsetFunc = (forOp == OpType::DepthwiseConv2D) ? ApplyZeroPointAxisO : ApplyZeroPointAxisI;
         weightSource = _arch->WeightEncoder()->GetWeightSource(encodingParams, weightTens->dataType, zeroOffsetFunc, &param);
-        npuTensor->SetInternalName(weightTens->Name().c_str());
+        npuTensor->SetInternalName(weightTens->Name());
     }
     else
     {
@@ -2069,7 +2069,7 @@ WeightScaleTensors Scheduler::TryEncodeWeightAndScaleTensor(OpType forOp, IWeigh
         if ( !doWeights )
         {
             assert(scaleTens);
-            npuTensor->SetInternalName(scaleTens->Name().c_str());
+            npuTensor->SetInternalName(scaleTens->Name());
         }
     }
 
