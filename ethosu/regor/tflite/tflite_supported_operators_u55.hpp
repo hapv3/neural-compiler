@@ -41,6 +41,7 @@ private:
     ConstraintCheck matmulOFMDepth;
     ConstraintCheck matmulIFMPrecision;
     ConstraintCheck argMaxDepth;
+    ConstraintCheck argMaxAxis;
     ConstraintCheck transpose32Bit;
     ConstraintCheck transpose8And16Bit;
     ConstraintCheck resizeBilinear;

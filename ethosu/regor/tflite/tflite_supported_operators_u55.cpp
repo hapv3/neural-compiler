@@ -318,6 +318,30 @@ bool ArgMaxDepth(const Operation *op)
     return true;
 }
 
+// Operation must be performed along the depth axis
+bool ArgMaxAxis(const Operation *op)
+{
+    // Get the input tensor's shape
+    auto ifmConn = op->Input(TensorUsage::IFM);
+    assert(ifmConn);
+    int inp_dims = ifmConn->shape.Size();
+
+    // Get the axis tensor
+    auto axisConn = op->Input(TensorUsage::Params);
+    assert(axisConn);
+    auto axisTensor = axisConn->tensor.get();
+    auto axisView = axisTensor->View();
+    int axis = axisView.Buffer()->Data<int32_t>()[0];
+
+    // Axis must be last dimension (inp_dims - 1) or -1
+    if ( axis != (inp_dims - 1) && axis != -1 )
+    {
+        Failure(op, fmt::format("Axis is {}, but number of input dimensions is {}. Only last axis or -1 is supported.", axis, inp_dims));
+        return false;
+    }
+    return true;
+}
+
 // Shape constraints for 32-bit transpose
 bool Transpose32Bit(const Operation *op)
 {
@@ -602,6 +626,7 @@ TfLiteSupportedOperatorsU55::TfLiteSupportedOperatorsU55() :
     matmulOFMDepth = {&MatmulOFMDepth, "IF Matmul or (FC with dynamic weights): OFM depth must be less than or equal to 2^16"};
     matmulIFMPrecision = {&MatmulIFMPrecision, "IF Matmul or (FC with dynamic weights): IFM precision must be Int8"};
     argMaxDepth = {&ArgMaxDepth, "IFM depth must be less than or equal to 127."};
+    argMaxAxis = {&ArgMaxAxis, "Operation must be performed along the depth axis."};
     transpose32Bit = {&Transpose32Bit,
         "IF IFM is Int32:\n"
         "  - Rank must be less than or equal to 4\n"
@@ -689,6 +714,7 @@ TfLiteSupportedOperatorsU55::TfLiteSupportedOperatorsU55() :
     opConstraints[OpType::BatchMatMul].push_back(&matmulOFMDepth);
     opConstraints[OpType::BatchMatMul].push_back(&matmulIFMPrecision);
     opConstraints[OpType::ArgMax].push_back(&argMaxDepth);
+    opConstraints[OpType::ArgMax].push_back(&argMaxAxis);
     opConstraints[OpType::Transpose].push_back(&transpose32Bit);
     opConstraints[OpType::Transpose].push_back(&transpose8And16Bit);
     opConstraints[OpType::ResizeBilinear].push_back(&resizeBilinear);
