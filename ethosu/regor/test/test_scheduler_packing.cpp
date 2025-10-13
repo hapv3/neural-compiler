@@ -170,4 +170,36 @@ TEST_CASE("test_scheduler_packing")
         REQUIRE(reluOfmConn->tensor->producers[0] == abs.get());
         REQUIRE(reluOfmConn->tensor->consumers.empty());
     }
+
+    SECTION("Pack operation with resource data type")
+    {
+        std::vector<std::shared_ptr<Operation>> ops;
+        auto ifm = CreateTensor("IFM", Shape(), DataType::Resource);
+        auto ofm = CreateTensor("OFM", Shape(10, 10, 10), DataType::Int8);
+        auto op1 = CreateOperation(OpType::Passthrough, TensorUsage::IFM, ifm, TensorUsage::OFM, ofm);
+        ops.push_back(std::move(op1));
+
+        // Create graph with ops
+        auto graph = CreateGraph(ops);
+
+        // Perform scheduler_packing
+        auto schedOps = packing.Process(graph.get());
+        REQUIRE(schedOps.size() == 1);
+
+        // Validate the op and tensors
+        auto &schedOp1 = schedOps[0];
+        REQUIRE(schedOp1->Type() == OpType::Passthrough);
+        auto *ifmConn = schedOp1->Input(TensorUsage::IFM);
+        auto *ofmConn = schedOp1->Output(TensorUsage::OFM);
+        REQUIRE(ifmConn->tensor->Name() == "IFM");
+        REQUIRE(ifmConn->tensor->dataType == DataType::Resource);
+        REQUIRE(ifmConn->tensor->producers.empty());
+        REQUIRE(ifmConn->tensor->consumers.size() == 1);
+        REQUIRE(ifmConn->tensor->consumers[0] == schedOp1.get());
+        REQUIRE(ofmConn->tensor->Name() == "OFM");
+        REQUIRE(ofmConn->tensor->dataType == DataType::Int8);
+        REQUIRE(ofmConn->tensor->producers.size() == 1);
+        REQUIRE(ofmConn->tensor->producers[0] == schedOp1.get());
+        REQUIRE(ofmConn->tensor->consumers.empty());
+    }
 }

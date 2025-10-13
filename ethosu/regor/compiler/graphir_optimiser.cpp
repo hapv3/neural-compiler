@@ -30,7 +30,7 @@ using namespace GraphOptimisation;
 
 Tensor *GraphIrOptimiser::ConvertInt48Tensors(Graph *, Tensor *tensor)
 {
-    if ( DataTypeSizeBits(tensor->Type()) == 48 )
+    if ( tensor->Type() == DataType::Int48 || tensor->Type() == DataType::UInt48 )
     {
         if ( tensor->IsConstant() )
         {

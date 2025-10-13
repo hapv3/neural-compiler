@@ -496,3 +496,33 @@ TEST_CASE("test_graphir_optimiser - fuse rescale with reshape, after")
     REQUIRE(allOps[0]->Output(TensorUsage::OFM)->quantization.scales[0].scale == 1);
     REQUIRE(allOps[0]->Output(TensorUsage::OFM)->quantization.scales[0].shift == 1);
 }
+
+TEST_CASE("test_graphir_optimiser - resource data type")
+{
+    // Create arch
+    auto arch = CreateArchDefault<ArchEthosU85>();
+    std::string err = "noerror";
+    arch->CheckConfiguration(err);
+    REQUIRE(err == "noerror");
+
+    std::vector<std::shared_ptr<Operation>> ops;
+    auto input = CreateTensor("IFM", Shape(), DataType::Resource);
+    auto output = CreateTensor("OFM", Shape(1, 4, 4, 1), DataType::Int8);
+
+    // Create a graph with something that looks like a READ_VARIABLE op
+    ops.push_back(CreateOperation(OpType::Passthrough, TensorUsage::IFM, input, TensorUsage::OFM, output));
+
+    auto graph = CreateGraph(ops);
+
+    GraphOptimiserOptions options;
+    const auto &optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
+
+    optimiser.back()->Process(graph.get());
+
+    std::vector<Operation *> allOps;
+    graph->GetAllOperations(allOps);
+    REQUIRE(allOps.size() == 1);
+    REQUIRE(allOps[0]->Type() == OpType::Passthrough);
+    REQUIRE(allOps[0]->Input(TensorUsage::IFM)->SliceShape() == Shape());
+    REQUIRE(allOps[0]->Output(TensorUsage::OFM)->SliceShape() == Shape(1, 4, 4, 1));
+}

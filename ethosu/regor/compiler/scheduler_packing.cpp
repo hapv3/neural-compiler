@@ -713,11 +713,11 @@ void SchedulerPacking::InitSchedulerTensor(SchedulerTensor *schedTensor, Tensor 
     schedTensor->isGraphOutput = _graph->IsOutput(tensor);
     schedTensor->isPersistent = _graph->IsPersistent(tensor);
     schedTensor->uid = tensor->Uid();
-    if ( tensor->View().HasBuffer() )
+    if ( schedTensor->bufferView.HasBuffer() )
     {
-        // Assign equivalenceIds based on the underlying buffer of the GraphIR tensor (if present).
+        // Assign equivalenceIds based on the underlying buffer of the SchedIR tensor (if present).
         // This ensures that all tensors sharing a buffer will be allocated to the same memory.
-        auto buffer = tensor->View().Buffer();
+        auto buffer = schedTensor->bufferView.Buffer();
         auto eqId = _bufferEquivalenceIdMap.find(buffer->Hash());
         if ( eqId == _bufferEquivalenceIdMap.end() )
         {
