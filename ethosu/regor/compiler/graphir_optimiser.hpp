@@ -50,7 +50,6 @@ private:
     Tensor *ConvertInt4Tensors(Graph *graph, Tensor *tensor);
     Operation *RewriteFullyConnected(Graph *const graph, Operation *const operation);
     Operation *FixupPoolStrides(Graph *const, Operation *const operation);
-    Operation *RewriteRescaleInputs(Graph *const graph, Operation *const operation);
     Operation *RemoveRescaleUnsignedAttribute(Graph *const graph, Operation *const operation);
     Operation *RewriteRescale(Graph *const graph, Operation *const operation);
     Operation *ReplacePadByExplicitPadding(Graph *const graph, Operation *const operation);
@@ -124,12 +123,6 @@ private:
                 &GraphIrOptimiser::ConstPropagation,
             },
             true,
-        },
-        {
-            {},
-            {
-                &GraphIrOptimiser::RewriteRescaleInputs,  // All rescale inputs must be rewritten before attempting to fuse rescales
-            }
         },
         {
             {},

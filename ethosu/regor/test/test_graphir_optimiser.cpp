@@ -371,15 +371,12 @@ TEST_CASE("test_graphir_optimiser - fuse rescale with reshape, before")
 
     std::vector<std::shared_ptr<Operation>> ops;
     auto input = CreateTensor("INPUT", Shape(1, 8, 2, 1), DataType::Int8);
-    auto mulParam = CreateTensor("MUL_PARAM", Shape(1, 1), DataType::Int32, 1073741824);
-    auto shiftParam = CreateTensor("SHIFT_PARAM", Shape(1, 1), DataType::Int8, 31);
     auto rescaleOfm = CreateTensor("RESCALE_OFM", Shape(1, 8, 2, 1), DataType::Int8);
     auto reshapeOfm = CreateTensor("RESHAPE_OFM", Shape(1, 4, 4, 1), DataType::Int8);
     auto absOfm = CreateTensor("ABS_OFM", Shape(1, 4, 4, 1), DataType::Int8);
 
     // Create a RESCALE-RESHAPE-ABS graph
-    ops.push_back(CreateOperation(OpType::Rescale, TensorUsage::IFM, input, TensorUsage::Params0, mulParam,
-        TensorUsage::Params1, shiftParam, TensorUsage::OFM, rescaleOfm));
+    ops.push_back(CreateOperation(OpType::Rescale, TensorUsage::IFM, input, TensorUsage::OFM, rescaleOfm));
     auto *rescaleAttr = ops.back()->Attribute<rescale_attr_t>();
     rescaleAttr->double_round = false;
     rescaleAttr->per_channel = false;
@@ -387,6 +384,9 @@ TEST_CASE("test_graphir_optimiser - fuse rescale with reshape, before")
     auto *signAttr = ops.back()->Attribute<sign_attr_t>();
     signAttr->input_unsigned = false;
     signAttr->output_unsigned = false;
+    auto &rescaleQuant = ops.back()->Output(TensorUsage::OFM)->quantization;
+    rescaleQuant.scales.clear();
+    rescaleQuant.scales.push_back(QuantizedScale(1073741824, 31));
     ops.push_back(CreateOperation(OpType::Reshape, TensorUsage::IFM, rescaleOfm, TensorUsage::OFM, reshapeOfm));
     ops.push_back(CreateOperation(OpType::Abs, TensorUsage::IFM, reshapeOfm, TensorUsage::OFM, absOfm));
 
@@ -421,19 +421,19 @@ TEST_CASE("test_graphir_optimiser - fuse rescale with reshape, after")
     auto input = CreateTensor("INPUT", Shape(1, 4, 4, 1), DataType::Int8);
     auto absOfm = CreateTensor("ABS_OFM", Shape(1, 4, 4, 1), DataType::Int8);
     auto reshapeOfm = CreateTensor("RESHAPE_OFM", Shape(1, 8, 2, 1), DataType::Int8);
-    auto mulParam = CreateTensor("MUL_PARAM", Shape(1, 1), DataType::Int32, 1073741824);
-    auto shiftParam = CreateTensor("SHIFT_PARAM", Shape(1, 1), DataType::Int8, 31);
     auto rescaleOfm = CreateTensor("RESCALE_OFM", Shape(1, 8, 2, 1), DataType::Int8);
 
     // Create a ABS-RESHAPE-RESCALE graph
     ops.push_back(CreateOperation(OpType::Abs, TensorUsage::IFM, input, TensorUsage::OFM, absOfm));
     ops.push_back(CreateOperation(OpType::Reshape, TensorUsage::IFM, absOfm, TensorUsage::OFM, reshapeOfm));
-    ops.push_back(CreateOperation(OpType::Rescale, TensorUsage::IFM, reshapeOfm, TensorUsage::Params0, mulParam,
-        TensorUsage::Params1, shiftParam, TensorUsage::OFM, rescaleOfm));
+    ops.push_back(CreateOperation(OpType::Rescale, TensorUsage::IFM, reshapeOfm, TensorUsage::OFM, rescaleOfm));
     auto *rescaleAttr = ops.back()->Attribute<rescale_attr_t>();
     rescaleAttr->double_round = false;
     rescaleAttr->per_channel = false;
     rescaleAttr->scale32 = true;
+    auto &rescaleQuant = ops.back()->Output(TensorUsage::OFM)->quantization;
+    rescaleQuant.scales.clear();
+    rescaleQuant.scales.push_back(QuantizedScale(1073741824, 31));
     auto *signAttr = ops.back()->Attribute<sign_attr_t>();
     signAttr->input_unsigned = false;
     signAttr->output_unsigned = false;

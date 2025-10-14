@@ -686,42 +686,6 @@ Operation *GraphIrOptimiser::RewriteFullyConnected(Graph *const graph, Operation
     return returnOp;
 }
 
-Operation *GraphIrOptimiser::RewriteRescaleInputs(Graph *const, Operation *const operation)
-{
-    Operation *returnOp = operation;
-    OpType opType = operation->Type();
-    if ( opType == OpType::Rescale )
-    {
-        auto ofmConn = operation->Output(TensorUsage::OFM);
-        auto ifmConn = operation->Input(TensorUsage::IFM);
-        auto mulConn = operation->Input(TensorUsage::Params);
-        auto shiftConn = operation->Input(TensorUsage::Params1);
-        auto inT = ifmConn->tensor->Type();
-        auto mulT = mulConn->tensor->Type();
-        auto shiftT = shiftConn->tensor->Type();
-        assert(mulT == DataType::Int16 || mulT == DataType::Int32);
-        assert(shiftT == DataType::Int8);
-        std::vector<QuantizedScale> newScale;
-        auto *attr = operation->Attribute<rescale_attr_t>();
-        int channels = attr->per_channel ? ofmConn->shape.Depth() : 1;
-        const auto mulValues = mulConn->tensor->View().Values<int32_t>(mulT);
-        const auto shiftValues = shiftConn->tensor->View().Values<int8_t>();
-        for ( int i = 0; i < channels; i++ )
-        {
-            int32_t scale = mulValues[i];
-            int32_t shift = shiftValues[i];
-            assert(attr->scale32 || static_cast<int16_t>(scale) == scale);
-            assert(static_cast<int8_t>(shift) == shift);
-            newScale.emplace_back(QuantizedScale{attr->scale32 ? scale : static_cast<int16_t>(scale), shift});
-        }
-        ofmConn->quantization.scales = std::move(newScale);
-        auto rescaleOp = operation->shared_from_this();
-        rescaleOp->DisconnectInputInvalidatingInputs(TensorUsage::Params);
-        rescaleOp->DisconnectInputInvalidatingInputs(TensorUsage::Params1);
-    }
-    return returnOp;
-}
-
 /*
  * Lower Rescale into one (or more) 32-bit elementwise MUL operations.
  * Multipliers are moved to a constant-tensor, while the shift value is keps as ofm-quantization

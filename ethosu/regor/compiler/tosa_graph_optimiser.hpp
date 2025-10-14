@@ -45,6 +45,10 @@ private:
     // Rewrites padding by modifying slices and inserting DW Conv operators to write bias
     Operation *RewriteTransposeConvPadding(Graph *const graph, Operation *const operation);
 
+    // Convert scale and shift values from parameter-tensors
+    // into ofmConn->quantization
+    Operation *RewriteRescaleInputs(Graph *const graph, Operation *const operation);
+
 public:
     // The graph optimisation steps.
     // Order matters, array of rewrites processed in order.
@@ -67,7 +71,9 @@ public:
             {},
             {
                 &TosaGraphOptimiser::ConvertZeroPointTensors,
-                &TosaGraphOptimiser::RewriteTransposeConvPadding
+                &TosaGraphOptimiser::RewriteTransposeConvPadding,
+                &TosaGraphOptimiser::RewriteRescaleInputs,
+
             }
         },
         {
