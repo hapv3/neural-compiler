@@ -46,6 +46,28 @@ LSTM::LSTM(Operation *operation, OptimiserDatabase *db, Graph *graph) : _lstmOp(
     _nFeature = ifmShape[-1];
     _nTime = ifmShape[_isTimeMajor ? 0 : 1];
     _nBatch = ifmShape[_isTimeMajor ? 1 : 0];
+
+    // Compute the quantization parameters used to rescale the LSTM cell state before the final tanh activation.
+    //
+    // The int16 tanh kernel expects its input in Q0.15 format — real values in approximately [-1, 1] encoded as
+    // [-32768, 32767]. The cell-state tensor, however, is quantized independently and may use a different scale (i.e. a
+    // different real range). To make the cell state compatible with tanh, it must be rescaled into Q0.15.
+    //
+    // The effective pre-tanh shift is computed as (15 + cellStateScalePower) - 3, where the -3 term aligns with the
+    // scaling used by the reference. If this value is negative, it indicates a right shift is required and the sign is
+    // flipped and compensated for with a multiplier.
+    auto cellStateConn = _lstmOp->Input(MakeTensorUsage(TensorUsage::State, 1));
+    int cellStateScalePower = std::log2(cellStateConn->quantization.scales[0].Dequantize());
+    int leftShift = (15 + cellStateScalePower) - 3;
+    int inputMultiplier = 0;
+    if ( leftShift < 0 )
+    {
+        leftShift = -leftShift;
+        inputMultiplier = 3;
+    }
+
+    _cellStateRescaleQuant = Quantization::Unit();
+    _cellStateRescaleQuant.scales[0] = QuantizedScale(inputMultiplier, leftShift);
 }
 
 void LSTM::RecordOptimisation(Operation *op)
@@ -328,9 +350,9 @@ TensorConnection *LSTM::CalculateOutputState(TensorConnection *outputGateConn, T
 
     // Create tanh(cell state)
     auto tanh = std::make_shared<Operation>(OpType::Tanh);
-    tanh->ConnectInput(TensorUsage::IFM, cellStateConn->tensor).Set(cellStateConn->shape).Set(cellStateConn->quantization);
+    tanh->ConnectInput(TensorUsage::IFM, cellStateConn->tensor).Set(cellStateConn->SliceShape());
 
-    // Tanh reads from the cell state. This may set an ifm slice which the ofm shape needs to honor.
+    // Tanh reads from the cell state. This may set an ifm slice which the ofm shape needs to honour.
     SetStateRead(tanh.get(), batch);
     auto tanhIfmConn = tanh->Input(TensorUsage::IFM);
     Shape tanhOfmShape = tanhIfmConn->SliceShape();
@@ -338,7 +360,9 @@ TensorConnection *LSTM::CalculateOutputState(TensorConnection *outputGateConn, T
     // overwrite the cell state.
     auto ofmName = fmt::format("{0}_tanh_b{1}.t{2}", cellStateConn->tensor->Name(), batch, time);
     auto tanhOfm = std::make_shared<Tensor>(ofmName, cellStateConn->tensor->Type(), tanhOfmShape);
-    tanh->ConnectOutput(TensorUsage::OFM, tanhOfm).Set(tanhQuant);
+    // Ofm scaling occurs before activation function in hardware so the this effectively scales the input to Tanh
+    // rather than the output - which is always Q0.15 format.
+    tanh->ConnectOutput(TensorUsage::OFM, tanhOfm).Set(_cellStateRescaleQuant);
 
     // Create Mul( Tanh, output gate )
     // Ofm quantization is based on the hidden scale.

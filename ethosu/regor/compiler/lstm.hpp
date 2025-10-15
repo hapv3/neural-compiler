@@ -42,6 +42,8 @@ private:
     // Input/Output
     TensorConnection *_ifmConn = nullptr;
     TensorConnection *_ofmConn = nullptr;
+    // Cell state rescaling
+    Quantization _cellStateRescaleQuant;
 
 public:
     LSTM(Operation *operation, OptimiserDatabase *db, Graph *graph);
