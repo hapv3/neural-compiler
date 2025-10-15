@@ -62,6 +62,7 @@ enum class EthosU85NpuOp
     Elementwise,
     Resize,
     Dma,
+    Branch,
 };
 
 /// <summary>

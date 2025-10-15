@@ -919,7 +919,8 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU85::FindBlockConfig(OpType opTyp
 
     EthosU85NpuOp npuOp = GetHWOp(opType);
     assert(npuOp != EthosU85NpuOp::None);
-    if ( npuOp == EthosU85NpuOp::Dma ) return nullptr;  // DMA ops don't use block config
+    if ( npuOp == EthosU85NpuOp::Dma ) return nullptr;     // DMA ops don't use block config
+    if ( npuOp == EthosU85NpuOp::Branch ) return nullptr;  // Branch ops don't use block config
 
     // Elementwise larger-volume correction
     const Shape &ifmShape = (query.ifmShape[1].Elements() > query.ifmShape[0].Elements()) ? query.ifmShape[1] : query.ifmShape[0];
@@ -1374,6 +1375,8 @@ EthosU85NpuOp ArchEthosU85::GetHWOp(OpType type)
         {OpType::Gather, EthosU85NpuOp::Dma},
         {OpType::Scatter, EthosU85NpuOp::Dma},
         {OpType::Tile, EthosU85NpuOp::Dma},
+        {OpType::If, EthosU85NpuOp::Branch},
+        {OpType::While, EthosU85NpuOp::Branch},
     };
 
     auto pos = toNpuOp.find(type);
@@ -1420,7 +1423,7 @@ bool EthosU85OpGroup::CanStartChain(const ArchitectureOpGroupQuery &op)
 {
     OpType opType = op.type;
     EthosU85NpuOp npuOp = ArchEthosU85::GetHWOp(opType);
-    if ( npuOp == EthosU85NpuOp::None || npuOp == EthosU85NpuOp::Resize || npuOp == EthosU85NpuOp::Dma )
+    if ( npuOp == EthosU85NpuOp::None || npuOp == EthosU85NpuOp::Resize || npuOp == EthosU85NpuOp::Dma || npuOp == EthosU85NpuOp::Branch )
     {
         return false;
     }

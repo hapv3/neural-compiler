@@ -44,7 +44,8 @@ static const Point2i s_SubkernelLimits[] = {
 
 static constexpr bool OpUsesMacs(EthosU85NpuOp npuOp)
 {
-    return (npuOp != EthosU85NpuOp::Elementwise && npuOp != EthosU85NpuOp::Resize && npuOp != EthosU85NpuOp::Dma && npuOp != EthosU85NpuOp::None);
+    return (npuOp != EthosU85NpuOp::Elementwise && npuOp != EthosU85NpuOp::Resize && npuOp != EthosU85NpuOp::Dma &&
+            npuOp != EthosU85NpuOp::Branch && npuOp != EthosU85NpuOp::None);
 }
 
 EthosU85Performance::EthosU85Performance(ArchEthosU85 *arch, const EthosU85PerfInfo *perfInfo) : _arch(arch)
@@ -88,6 +89,11 @@ CycleCost EthosU85Performance::MeasureCycleCost(const PerformanceQuery &query, c
 
         auto ofmShape =
             (query.ofmFormat == TensorFormat::NHCWB16) ? Shape::RoundAway(query.ofmShape, Shape(1, 1, 1, 16)) : query.ofmShape;
+        cycles.opCycles = 0;
+    }
+    // Branch cycle calculation
+    else if ( npuOp == EthosU85NpuOp::Branch )
+    {
         cycles.opCycles = 0;
     }
     else
@@ -548,6 +554,9 @@ ElementAccess EthosU85Performance::MeasureElementAccess(const PerformanceQuery &
         {
             LOG_WARN("Missing element access estimation for DMA op {}\n", OpTypeToString(query.type).c_str());
         }
+    }
+    else if ( npuOp == EthosU85NpuOp::Branch )
+    {
     }
     else
     {

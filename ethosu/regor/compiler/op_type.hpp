@@ -293,4 +293,9 @@ constexpr inline bool IsReshape(OpType opType)
            opType == OpType::ExpandDims || opType == OpType::Identity;
 }
 
+constexpr inline bool IsControlFlow(OpType opType)
+{
+    return opType == OpType::If || opType == OpType::While;
+}
+
 }  // namespace regor

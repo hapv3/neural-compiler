@@ -97,6 +97,14 @@ static const std::unordered_map<EthosU85NpuOp, std::unordered_map<DataType, read
             {DataType::Int8, s_defaultIntegerTypes},
             {DataType::Int16, s_defaultIntegerTypes},
         }},
+    {EthosU85NpuOp::Branch,
+        {
+            {DataType::Bool8, s_defaultAllTypes},
+            {DataType::UInt8, s_defaultAllTypes},
+            {DataType::Int8, s_defaultAllTypes},
+            {DataType::Int16, s_defaultAllTypes},
+            {DataType::Int32, s_defaultAllTypes},
+        }},
 };
 
 TransposeSupport EthosU85Constraints::SupportsFusedTranspose(OpType opType, TransposeType transposeType)

@@ -2550,7 +2550,8 @@ Operation *GraphIrOptimiser::MoveSplitSliceToConsumer(Graph *const, Operation *c
 
             // Don't move to CPU, Reshape or Tile operations
             // low-level implementation of TILE requires unsliced inputs
-            if ( cons->Type() == OpType::Passthrough || IsReshape(cons->Type()) || cons->Type() == OpType::Tile )
+            if ( cons->Type() == OpType::Passthrough || IsReshape(cons->Type()) || cons->Type() == OpType::Tile ||
+                 IsControlFlow(cons->Type()) )
             {
                 return operation;
             }
