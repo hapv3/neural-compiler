@@ -184,27 +184,32 @@ void FastStorageAllocator::AllocateFeatureMaps(const std::vector<std::unique_ptr
         }
     }
 
-    // Collect time indices of all CPU operators
-    std::vector<int> cpuTimeIndices;
+    // The whole fast storage is dedicated to each subgraph (if there are control flow ops) or command stream (if there
+    // are CPU ops). CPU ops and control flow ops can be viewed as ops that cause context switches, and after a context
+    // switch the contents of the fast storage are not guaranteed to be preserved. Therefore, we must ensure that any
+    // live range that covers a CPU or control flow op is not allocated in fast storage.
+
+    // Collect time indices of all context switch operators
+    std::vector<int> contextSwitchTimeIndices;
     for ( auto &schedOp : schedOps )
     {
-        if ( !schedOp->IsNpuOp() )
+        if ( !schedOp->IsNpuOp() || IsControlFlow(schedOp->Type()) )
         {
             auto cost = schedule->Cost(schedOp.get());
-            cpuTimeIndices.push_back(cost->timeIndex);
+            contextSwitchTimeIndices.push_back(cost->timeIndex);
         }
     }
-    assert(std::is_sorted(cpuTimeIndices.cbegin(), cpuTimeIndices.cend()));
+    assert(std::is_sorted(contextSwitchTimeIndices.cbegin(), contextSwitchTimeIndices.cend()));
 
-    // Evict live ranges that cross a CPU operator
+    // Evict live ranges that cross a context switch operator
     std::vector<LiveRange *> npuOnlyLrs;
     for ( auto lr : lrs )
     {
-        auto cpuTimeIndex = std::lower_bound(cpuTimeIndices.begin(), cpuTimeIndices.end(), lr->startTime);
-        if ( cpuTimeIndex != cpuTimeIndices.end() && *cpuTimeIndex <= lr->endTime )
+        auto contextSwitchTimeIndex = std::lower_bound(contextSwitchTimeIndices.begin(), contextSwitchTimeIndices.end(), lr->startTime);
+        if ( contextSwitchTimeIndex != contextSwitchTimeIndices.end() && *contextSwitchTimeIndex <= lr->endTime )
         {
-            // Live range crosses CPU operator
-            LOG_TRACE1("Evicting cross-CPU live range {}-{}\n", lr->startTime, lr->endTime);
+            // Live range crosses context switch operator
+            LOG_TRACE1("Evicting live range {}-{} that cross a context switch\n", lr->startTime, lr->endTime);
             Evict(lr);
         }
         else

@@ -35,10 +35,10 @@ static std::shared_ptr<SchedulerTensor> CreateTensor(std::string name, MemArea m
     return schedTensor;
 }
 
-static std::unique_ptr<SchedulerOperation> CreateSchedulerOperation(std::unique_ptr<Architecture> &arch, bool npu,
+static std::unique_ptr<SchedulerOperation> CreateSchedulerOperation(std::unique_ptr<Architecture> &arch, OpType type, bool npu,
     TensorUsage ifmUsage, std::shared_ptr<SchedulerTensor> &ifm, TensorUsage ofmUsage, std::shared_ptr<SchedulerTensor> &ofm)
 {
-    auto schedOp = CreateSchedulerOperation(OpType::AvgPool, ifmUsage, ifm, ofmUsage, ofm);
+    auto schedOp = CreateSchedulerOperation(type, ifmUsage, ifm, ofmUsage, ofm);
     schedOp->SetNpuOp(npu);
     if ( npu )
     {
@@ -82,7 +82,6 @@ static std::unique_ptr<Schedule> CreateSchedule(std::unique_ptr<Architecture> &a
         query.transpose = TransposeType::None;
         query.reverse = ReverseType::None;
         auto opConfig = arch->GetOpConfig(op->Type(), query);
-        assert(opConfig);
         auto schedOpInfo = std::make_unique<SchedulerOpInfo>(std::move(opConfig), ifm->shape, Shape(), ofm->shape);
         schedule->SetCost(*op, std::move(schedOpInfo));
     }
@@ -112,8 +111,8 @@ TEST_CASE("test_fast_storage_allocator")
     SECTION("Sequential network")
     {
         std::vector<std::unique_ptr<SchedulerOperation>> ops;
-        ops.push_back(CreateSchedulerOperation(arch, true, TensorUsage::IFM, tens1, TensorUsage::OFM, tens2));
-        ops.push_back(CreateSchedulerOperation(arch, true, TensorUsage::IFM, tens2, TensorUsage::OFM, tens3));
+        ops.push_back(CreateSchedulerOperation(arch, OpType::AvgPool, true, TensorUsage::IFM, tens1, TensorUsage::OFM, tens2));
+        ops.push_back(CreateSchedulerOperation(arch, OpType::AvgPool, true, TensorUsage::IFM, tens2, TensorUsage::OFM, tens3));
 
         auto schedule = CreateSchedule(arch, ops);
         FastStorageAllocator allocator;
@@ -127,11 +126,11 @@ TEST_CASE("test_fast_storage_allocator")
     SECTION("Mixed NPU/CPU network with a live range covering CPU operation")
     {
         std::vector<std::unique_ptr<SchedulerOperation>> ops;
-        ops.push_back(CreateSchedulerOperation(arch, true, TensorUsage::IFM, tens1, TensorUsage::OFM, tens2));
-        ops.push_back(CreateSchedulerOperation(arch, true, TensorUsage::IFM, tens2, TensorUsage::OFM, tens3));
-        ops.push_back(CreateSchedulerOperation(arch, false, TensorUsage::IFM, tens2, TensorUsage::OFM, tens4));
-        ops.push_back(CreateSchedulerOperation(arch, true, TensorUsage::IFM, tens3, TensorUsage::OFM, tens5));
-        ops.push_back(CreateSchedulerOperation(arch, true, TensorUsage::IFM, tens4, TensorUsage::OFM, tens6));
+        ops.push_back(CreateSchedulerOperation(arch, OpType::AvgPool, true, TensorUsage::IFM, tens1, TensorUsage::OFM, tens2));
+        ops.push_back(CreateSchedulerOperation(arch, OpType::AvgPool, true, TensorUsage::IFM, tens2, TensorUsage::OFM, tens3));
+        ops.push_back(CreateSchedulerOperation(arch, OpType::AvgPool, false, TensorUsage::IFM, tens2, TensorUsage::OFM, tens4));
+        ops.push_back(CreateSchedulerOperation(arch, OpType::AvgPool, true, TensorUsage::IFM, tens3, TensorUsage::OFM, tens5));
+        ops.push_back(CreateSchedulerOperation(arch, OpType::AvgPool, true, TensorUsage::IFM, tens4, TensorUsage::OFM, tens6));
 
         auto schedule = CreateSchedule(arch, ops);
         FastStorageAllocator allocator;
@@ -141,6 +140,27 @@ TEST_CASE("test_fast_storage_allocator")
         REQUIRE(tens2->memArea != fast);  // Because CPU readers
         REQUIRE(tens3->memArea != fast);  // Because live range covers CPU operation
         REQUIRE(tens4->memArea != fast);  // Because CPU writers
+        REQUIRE(tens5->memArea != fast);  // Because no consumers
+        REQUIRE(tens6->memArea != fast);  // Because no consumers
+    }
+
+    SECTION("Network with a live range covering a control flow operation")
+    {
+        std::vector<std::unique_ptr<SchedulerOperation>> ops;
+        ops.push_back(CreateSchedulerOperation(arch, OpType::AvgPool, true, TensorUsage::IFM, tens1, TensorUsage::OFM, tens2));
+        ops.push_back(CreateSchedulerOperation(arch, OpType::AvgPool, true, TensorUsage::IFM, tens2, TensorUsage::OFM, tens3));
+        ops.push_back(CreateSchedulerOperation(arch, OpType::If, true, TensorUsage::IFM, tens2, TensorUsage::OFM, tens4));
+        ops.push_back(CreateSchedulerOperation(arch, OpType::AvgPool, true, TensorUsage::IFM, tens3, TensorUsage::OFM, tens5));
+        ops.push_back(CreateSchedulerOperation(arch, OpType::AvgPool, true, TensorUsage::IFM, tens4, TensorUsage::OFM, tens6));
+
+        auto schedule = CreateSchedule(arch, ops);
+        FastStorageAllocator allocator;
+        allocator.AllocateFeatureMaps(ops, schedule.get(), fast, 32 * 1024);
+
+        REQUIRE(tens1->memArea != fast);  // Because no producers
+        REQUIRE(tens2->memArea != fast);  // Because consumed by control flow operation
+        REQUIRE(tens3->memArea != fast);  // Because live range covers control flow operation
+        REQUIRE(tens4->memArea != fast);  // Because produced by control flow operation
         REQUIRE(tens5->memArea != fast);  // Because no consumers
         REQUIRE(tens6->memArea != fast);  // Because no consumers
     }
