@@ -650,8 +650,12 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeBlocks(
                 Margin newPadding = NewPaddingForBlock(
                     padding, newIfmSlice.offset, ifmConn->shape, blockShape, stride, kernel->Size());
                 // Calculate block IFM size
-                int ifmBlockWidth = ((newOfmWidth - 1) * stride.x) + kernel->Size().x - newPadding.Left() - newPadding.Right();
-                int ifmBlockHeight = ((newOfmHeight - 1) * stride.y) + kernel->Size().y - newPadding.Top() - newPadding.Bottom();
+                int ifmBlockWidth =
+                    ((newOfmWidth - 1) * stride.x * ifmConn->stepXY.x) + kernel->Size().x - newPadding.Left() -
+                    newPadding.Right();
+                int ifmBlockHeight =
+                    ((newOfmHeight - 1) * stride.y * ifmConn->stepXY.y) + kernel->Size().y - newPadding.Top() -
+                    newPadding.Bottom();
                 if ( ofmStep.Width() >= ofmConn->SliceShape().Width() ) ifmBlockWidth = ifmConn->SliceShape().Width();
                 if ( ofmStep.Height() >= ofmConn->SliceShape().Height() )
                     ifmBlockHeight = ifmConn->SliceShape().Height();
@@ -1035,7 +1039,6 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeConv2D(DecompositionCo
     {
         return DecomposeNonConstWeights(ctx, std::move(op));
     }
-    auto &dilation = kernel->Dilation();
     if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::KernelDilation) )
     {
         return HandleDilation(ctx, std::move(op), DecomposeConv2D);
