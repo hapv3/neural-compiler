@@ -1694,8 +1694,8 @@ std::vector<std::unique_ptr<SchedulerOperation>> LegaliseTransposeConv2D(Decompo
     Kernel newKernel = kernel->WithStride({1, 1});
     op->_type = OpType::Conv2D;
     op->SetKernel(newKernel);
-    result.emplace_back(std::move(op));
-    return result;
+    // Decompose the Conv2D for potential batch decomposition
+    return DecomposeConv2D(ctx, std::move(op));
 }
 
 static bool IsHalfPixelCenters(const resize_attr_t &attr)
