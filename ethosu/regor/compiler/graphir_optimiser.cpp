@@ -734,21 +734,23 @@ Operation *GraphIrOptimiser::RewriteRescale(Graph *const, Operation *const opera
             if ( ifmConn->tensor->Type() != DataType::Int32 )
             {
                 auto castOp = std::make_shared<Operation>(OpType::Cast);
-                std::shared_ptr<Tensor> ifm32Tens = ifmConn->tensor->Clone();
-                ifm32Tens->SetBuffer(nullptr);
+                auto ifm32Tens = std::make_shared<Tensor>(ifmConn->tensor->Name() + "_int32", DataType::Int32, ifmConn->shape);
 
-                castOp->ConnectInput(TensorUsage::IFM, ifmConn->tensor).quantization.zeroPoints = ifmConn->quantization.zeroPoints;
+                // move zero point to cast input
+                auto castInQuant = Quantization::Unit();
+                castInQuant.zeroPoints = ifmConn->quantization.zeroPoints;
                 ifmConn->quantization.zeroPoints.clear();
                 ifmConn->quantization.zeroPoints.push_back(0);
 
+                // connect cast before the rescale
+                castOp->ConnectInput(TensorUsage::IFM, ifmConn->tensor).Set(ifmConn->shape).Set(castInQuant);
                 castOp->ConnectOutput(TensorUsage::OFM, ifm32Tens);
-                auto castAttr = castOp->Attribute<sign_attr_t>();
 
                 // move input_unsigned to cast input
+                auto castAttr = castOp->Attribute<sign_attr_t>();
                 castAttr->input_unsigned = signAttr->input_unsigned;
                 signAttr->input_unsigned = false;
 
-                ifm32Tens->ChangeType(DataType::Int32);
                 RecordOptimisation(*operation, castOp.get());
                 operation->ConnectInput(TensorUsage::IFM, ifm32Tens);
                 ifmType = DataType::Int32;
