@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -341,11 +341,6 @@ int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *con
             ArchOperatorQuery query;
             Set(query.ifm[0], consumer->TryIFM(0));
             Set(query.ifm[1], consumer->TryIFM(1));
-            if ( consumer->Type() == OpType::Rescale && consumer->HasAttribute<sign_attr_t>() )
-            {
-                const auto attr = consumer->Attribute<sign_attr_t>();
-                query.ifm[0].type = DataTypeSetSignedness(query.ifm[0].type, !attr->input_unsigned);
-            }
             query.transposeMask = consumer->OFM()->transpose;
             for ( const auto [consumerUsage, connection] : consumer->inputs.pairs() )
             {

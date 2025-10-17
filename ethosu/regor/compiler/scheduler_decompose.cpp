@@ -56,12 +56,6 @@ Flags<QueryResult> OperatorQuery(Architecture *arch, const SchedulerOperation *s
     Set(query.ifm[1], schedOp->TryIFM(1));
     Set(query.weights, schedOp->TryInput(TensorUsage::Weights));
     Set(query.ofm, ofmConn);
-    if ( schedOp->Type() == OpType::Rescale && schedOp->HasAttribute<sign_attr_t>() )
-    {
-        const auto attr = schedOp->Attribute<sign_attr_t>();
-        query.ifm[0].type = DataTypeSetSignedness(query.ifm[0].type, !attr->input_unsigned);
-        query.ofm.type = DataTypeSetSignedness(query.ofm.type, !attr->output_unsigned);
-    }
     const auto weights = schedOp->TryInput(TensorUsage::Weights);
     const auto scales = schedOp->TryInput(TensorUsage::Scales);
     const bool constantWeights = weights && weights->tensor && weights->tensor->IsConstant();

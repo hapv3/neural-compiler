@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -314,11 +314,6 @@ static HLCSubOperation MakeSubOperation(
     hlcSubOp.type = schedOp->Type();
     auto lutConn = schedOp->TryInput(TensorUsage::LUT);
     size_t ifms = 0;
-    sign_attr_t *signAttr = nullptr;
-    if ( schedOp->Type() == OpType::Rescale && schedOp->HasAttribute<sign_attr_t>() )
-    {
-        signAttr = schedOp->Attribute<sign_attr_t>();
-    }
     for ( const auto &input : schedOp->inputs.pairs() )
     {
         if ( IsIFM(input.first) || GetUsageType(input.first) == TensorUsage::Scratch )
@@ -338,19 +333,9 @@ static HLCSubOperation MakeSubOperation(
                 at = hlcSubOp.ifm.emplace(hlcSubOp.ifm.end());
             }
             MakeFeatureMap(input.first, &input.second, *at, base, addresses);
-            if ( signAttr )
-            {
-                // Fixup IFM datatype signedness for rescale ops
-                at->dataType = DataTypeSetSignedness(at->dataType, !signAttr->input_unsigned);
-            }
         }
     }
     MakeFeatureMap(TensorUsage::OFM, schedOp->OFM(), hlcSubOp.ofm, base, addresses);
-    if ( signAttr )
-    {
-        // Fixup OFM datatype signedness for rescale ops
-        hlcSubOp.ofm.dataType = DataTypeSetSignedness(hlcSubOp.ofm.dataType, !signAttr->output_unsigned);
-    }
 
     hlcSubOp.srcId = schedOp->Uid();
 
@@ -381,11 +366,6 @@ static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, 
     op->config = opInfo->Config();
     op->srcId = schedOp->Uid();
     size_t ifms = 0;
-    sign_attr_t *signAttr = nullptr;
-    if ( schedOp->Type() == OpType::Rescale && schedOp->HasAttribute<sign_attr_t>() )
-    {
-        signAttr = schedOp->Attribute<sign_attr_t>();
-    }
     for ( const auto &input : schedOp->inputs.pairs() )
     {
         if ( IsIFM(input.first) || GetUsageType(input.first) == TensorUsage::Scratch )
@@ -404,19 +384,9 @@ static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, 
                 at = op->ifm.emplace(op->ifm.end());
             }
             MakeFeatureMap(input.first, &input.second, *at, base, addresses);
-            if ( signAttr )
-            {
-                // Fixup IFM datatype signedness for rescale ops
-                at->dataType = DataTypeSetSignedness(at->dataType, !signAttr->input_unsigned);
-            }
         }
     }
     MakeFeatureMap(TensorUsage::OFM, schedOp->OFM(), op->ofm, base, addresses);
-    if ( signAttr )
-    {
-        // Fixup OFM datatype signedness for rescale ops
-        op->ofm.dataType = DataTypeSetSignedness(op->ofm.dataType, !signAttr->output_unsigned);
-    }
 
 #ifndef NDEBUG
     op->name = schedOp->OFM()->tensor->Name();
@@ -522,23 +492,6 @@ static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, 
         break;
         default:
             break;
-    }
-
-    if ( schedOp->HasAttribute<sign_attr_t>() )
-    {
-        const auto *attr = schedOp->Attribute<sign_attr_t>();
-        if ( attr->input_unsigned )
-        {
-            op->ifm[0].dataType = op->ifm[0].dataType & ~unsigned(DataType::Signed);
-            if ( op->ifm.size() > 1 )
-            {
-                op->ifm[1].dataType = op->ifm[1].dataType & ~unsigned(DataType::Signed);
-            }
-        }
-        if ( attr->output_unsigned )
-        {
-            op->ofm.dataType = op->ofm.dataType & ~unsigned(DataType::Signed);
-        }
     }
     return op;
 }

@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -201,6 +201,51 @@ Operation *GraphIrOptimiser::ConvertAttributes(Graph *const graph, Operation *co
         const auto *attr = operation->Attribute<rescale_attr_t>();
         auto roundMode = attr->double_round ? RoundMode::DBL : RoundMode::NATURAL;
         operation->Output(TensorUsage::OFM)->Set(roundMode);
+        if ( operation->HasAttribute<sign_attr_t>() )
+        {
+            // Convert sign-attributes to explicit dataTypes
+            // by inserting reinterpret operations
+            auto *signAttr = operation->Attribute<sign_attr_t>();
+            if ( signAttr->input_unsigned )
+            {
+                // Replace
+                // IFM -> Rescale(input_unsigned) -> OFM
+                // With
+                // IFM -> reinterpret -> intermediate -> Rescale -> OFM
+                // Where the intermediate tensor is explicitly unsigned
+                auto *ifmConn = operation->Input(TensorUsage::IFM);
+                auto dataType = DataTypeSetSignedness(ifmConn->tensor->Type(), false);
+                std::shared_ptr<Tensor> intermediate = ifmConn->tensor->Clone();
+                intermediate->ChangeType(dataType);
+                // ReinterpretCast from the original IFM to an intermediate tensor with the correct sign
+                const auto reinterpret = std::make_shared<Operation>(OpType::ReinterpretCast);
+                reinterpret->ConnectInput(TensorUsage::IFM, ifmConn->tensor);
+                reinterpret->ConnectOutput(TensorUsage::OFM, intermediate);
+                operation->ConnectInput(TensorUsage::IFM, intermediate);
+                RecordOptimisation(*operation, reinterpret.get());
+                signAttr->input_unsigned = false;
+            }
+            if ( signAttr->output_unsigned )
+            {
+                // Replace
+                // IFM -> Rescale(output_unsigned) -> OFM
+                // With
+                // IFM -> Rescale -> intermediate -> reinterpret -> OFM
+                // Where the intermediate tensor is explicitly unsigned
+                auto *ofmConn = operation->Output(TensorUsage::OFM);
+                auto dataType = DataTypeSetSignedness(ofmConn->tensor->Type(), false);
+                // create intermediate tensor with the unsigned dataType
+                std::shared_ptr<Tensor> intermediate = ofmConn->tensor->Clone();
+                intermediate->ChangeType(dataType);
+                // ReinterpretCast from intermediate tensor to the original OFM
+                const auto reinterpret = std::make_shared<Operation>(OpType::ReinterpretCast);
+                reinterpret->ConnectInput(TensorUsage::IFM, intermediate);
+                reinterpret->ConnectOutput(TensorUsage::OFM, ofmConn->tensor);
+                operation->ConnectOutput(TensorUsage::OFM, intermediate);
+                RecordOptimisation(*operation, reinterpret.get());
+                signAttr->output_unsigned = false;
+            }
+        }
     }
     else if ( opType == OpType::Clamp )
     {
@@ -802,15 +847,6 @@ Operation *GraphIrOptimiser::RewriteRescale(Graph *const, Operation *const opera
         DataType ifmType = ifmConn->tensor->Type();
         DataType ofmType = ofmConn->tensor->Type();
         const auto rescaleAttr = operation->Attribute<rescale_attr_t>();
-        auto signAttr = operation->Attribute<sign_attr_t>();
-        if ( signAttr->input_unsigned )
-        {
-            ifmType = ifmType & ~unsigned(DataType::Signed);
-        }
-        if ( signAttr->output_unsigned )
-        {
-            ofmType = ofmType & ~unsigned(DataType::Signed);
-        }
         if ( ifmType != DataType::Int32 && !_constraints->SupportsRescale(ifmType, ofmType) )
         {
             // create cast op to convert to 32-bit ifm
@@ -828,11 +864,6 @@ Operation *GraphIrOptimiser::RewriteRescale(Graph *const, Operation *const opera
                 // connect cast before the rescale
                 castOp->ConnectInput(TensorUsage::IFM, ifmConn->tensor).Set(ifmConn->shape).Set(castInQuant);
                 castOp->ConnectOutput(TensorUsage::OFM, ifm32Tens);
-
-                // move input_unsigned to cast input
-                auto castAttr = castOp->Attribute<sign_attr_t>();
-                castAttr->input_unsigned = signAttr->input_unsigned;
-                signAttr->input_unsigned = false;
 
                 RecordOptimisation(*operation, castOp.get());
                 operation->ConnectInput(TensorUsage::IFM, ifm32Tens);
@@ -898,8 +929,6 @@ Operation *GraphIrOptimiser::RewriteRescale(Graph *const, Operation *const opera
                     // Create elementwise mul operation to handle all the previous scales
                     int endChannel = startChannel + scales.size();
                     auto mulOp = CreateRescalingMul(startChannel, endChannel, scales, shift);
-                    auto mulAttr = mulOp->Attribute<sign_attr_t>();
-                    mulAttr->output_unsigned = signAttr->output_unsigned;
                     RecordOptimisation(*operation, mulOp.get());
 
                     // reset scales and startChannel
@@ -915,8 +944,6 @@ Operation *GraphIrOptimiser::RewriteRescale(Graph *const, Operation *const opera
             // Emit the final mul operation (or the only one for global scaling)
             int endChannel = ifmConn->shape.Depth();
             auto mulOp = CreateRescalingMul(startChannel, endChannel, scales, shift);
-            auto mulAttr = mulOp->Attribute<sign_attr_t>();
-            mulAttr->output_unsigned = signAttr->output_unsigned;
             RecordOptimisation(*operation, mulOp.get());
             returnOp = mulOp.get();
             operation->Disconnect();
@@ -1236,11 +1263,6 @@ bool CanBeFused(Graph *const graph, Operation *const operation, bool ontoConsume
     auto fusedTensor = fusedConn->tensor;
     auto *signAttr = operation->Attribute<sign_attr_t>();
 
-    // TODO MLBEDSW-11216: Support fusing of unsigned rescales
-    if ( signAttr && (signAttr->input_unsigned || signAttr->output_unsigned) )
-    {
-        return false;
-    }
     // TODO MLBEDSW-11218: Support fusing onto multiple consumers
     if ( fusedTensor->Readers().size() != 1 )
     {
@@ -1828,14 +1850,6 @@ Operation *GraphIrOptimiser::RewriteCast(Graph *const, Operation *const operatio
             auto copyOpConn = copyOp->Output(TensorUsage::OFM);
             copyOpConn->quantization.quantMin = {std::numeric_limits<int64_t>::min()};
             copyOpConn->quantization.quantMax = {std::numeric_limits<int64_t>::max()};
-        }
-
-        // Copy sign attribute to new operation
-        if ( operation->HasAttribute<sign_attr_t>() )
-        {
-            auto signAttr = operation->Attribute<sign_attr_t>();
-            auto newAttr = returnOp->Attribute<sign_attr_t>();
-            *newAttr = *signAttr;
         }
     }
     return returnOp;
