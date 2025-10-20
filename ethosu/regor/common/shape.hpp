@@ -335,6 +335,14 @@ public:
         return tmp;
     }
 
+    Shape WithHW(const Point2i &hw) const
+    {
+        Shape tmp(*this, std::max(Size(), 3));
+        tmp.At(2) = hw.y;
+        tmp.At(1) = hw.x;
+        return tmp;
+    }
+
     Shape WithZeros() const { return Shape(nullptr, Size()); }
 
     Shape WithOnes() const { return Shape(nullptr, Size(), 1); }

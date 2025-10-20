@@ -78,6 +78,7 @@ private:
     Operation *RewriteNonConstWeightOp(Graph *const, Operation *const operation);
     Operation *RewriteConv3D(Graph *const, Operation *const operation);
     Operation *ReplaceBroadcastWithAdd(Graph *const, Operation *const operation);
+    Operation *RealiseKernelPadding(Graph *const, Operation *const operation);
     // Utility/Helper methods
     Operation *MakeFillOperation(TensorConnection *const ofmConn, const Shape &ofmShape, const TensorSlice &ofmSlice,
         std::shared_ptr<Tensor> padTensor);
@@ -150,6 +151,7 @@ private:
                 &GraphIrOptimiser::ReplacePadByExplicitPadding,
                 &GraphIrOptimiser::RewriteNonConstWeightOp,
                 &GraphIrOptimiser::RewriteConv3D,
+                &GraphIrOptimiser::RealiseKernelPadding,
                 &GraphIrOptimiser::RewritePad,
                 &GraphIrOptimiser::RewriteTable,
                 &GraphIrOptimiser::RewriteCast,

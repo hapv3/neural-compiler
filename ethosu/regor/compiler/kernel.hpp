@@ -54,6 +54,8 @@ public:
     int Right() const { return _right; }
     int Near() const { return _near; }
     int Far() const { return _far; }
+    Point2i TL() const { return Point2i(_left, _top); }
+    Point2i BR() const { return Point2i(_right, _bottom); }
 
     bool IsZero() const { return !(_top | _left | _bottom | _right | _near | _far); }
 

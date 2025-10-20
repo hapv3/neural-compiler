@@ -657,6 +657,9 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeBlocks(
                     ifmConn->SliceShape()
                         .WithWidth(std::min(ifmBlockWidth, ifmConn->shape.Width() - newIfmSlice.offset.Width()))
                         .WithHeight(std::min(ifmBlockHeight, ifmConn->shape.Height() - newIfmSlice.offset.Height()));
+
+                assert(newIfmSlice.shape.Elements() != 0 && "IFM area cannot sit entirely within the padding");
+
                 auto newKernel = kernel->WithPadding(newPadding);
                 std::unique_ptr<SchedulerOperation> subOp = MakeSubOperation(op.get(), &newKernel);
                 auto *subIfmConn = subOp->Input(TensorUsage::IFM);

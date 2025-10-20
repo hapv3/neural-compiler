@@ -2468,6 +2468,46 @@ Operation *GraphIrOptimiser::RewriteResize(Graph *const, Operation *const operat
     return copyOp.get();
 }
 
+
+static std::shared_ptr<Operation> CreatePadForKernelPadding(OpType type, const Margin &padding, const TensorConnection &ifmConn)
+{
+    // Translate the kernel padding into a Pad op parameter tensor
+    std::vector<int> padVec = {0, 0};
+    if ( type == OpType::Conv3D )
+    {
+        padVec.insert(padVec.end(), {padding.Near(), padding.Far()});
+    }
+    padVec.insert(padVec.end(), {padding.Top(), padding.Bottom(), padding.Left(), padding.Right(), 0, 0});
+
+    Shape padParamShape = Shape(padVec.size());
+    auto buffer = std::make_shared<Buffer>(std::move(padVec));
+    auto paddingParams = CreateConstTensor("padding_params", DataType::Int32, buffer, &padParamShape);
+
+    // Create intermediate tensor with the IFM + padding shape
+    const auto &ifmShape = ifmConn.shape;
+    Shape paddedIfmShape = ifmShape.WithHW(ifmShape.WH<int>() + padding.TL() + padding.BR());
+    if ( type == OpType::Conv3D && paddedIfmShape.Size() > 3 )
+    {
+        paddedIfmShape[-4] += padding.Near() + padding.Far();
+    }
+    const auto intermediateTensor = std::make_shared<Tensor>("padded_ifm", ifmConn.tensor->Type(), paddedIfmShape);
+
+    // Create Pad operation
+    auto padOp = std::make_shared<Operation>(OpType::Pad);
+    padOp->CopyInput(TensorUsage::IFM, ifmConn);
+    padOp->ConnectInput(TensorUsage::Params, paddingParams);
+    padOp->ConnectOutput(TensorUsage::OFM, intermediateTensor);
+
+    // Reset to no quantization on the Pad IFM
+    padOp->Input(TensorUsage::IFM)->quantization = Quantization();
+
+    // Pad with the zero point
+    const auto &attr = padOp->Attribute<pad_attr_t>();
+    attr->pad_const = ifmConn.quantization.zeroPoints[0];
+
+    return padOp;
+}
+
 // This function does two things to legalize Convolution-like ops with non-constant weights and/or bias.
 //  1. Transposes the IFM to swap height and width if height is significantly larger than width.
 //  2. Replaces kernel padding with zero-point values padded around the IFM tensor.
@@ -2526,43 +2566,12 @@ Operation *GraphIrOptimiser::RewriteNonConstWeightOp(Graph *const, Operation *co
     auto &padding = operation->Kernel()->Padding();
     if ( !padding.IsZero() )
     {
-        // Translate the kernel padding into a Pad op parameter tensor
-        std::vector<int> padVec = {0, 0, padding.Top(), padding.Bottom(), padding.Left(), padding.Right(), 0, 0};
-        if ( operation->Type() == OpType::Conv3D )
-        {
-            assert(padVec.size() >= 2);
-            padVec.insert(padVec.begin() + 2, {padding.Near(), padding.Far()});
-        }
-        Shape padParamShape = Shape(padVec.size());
-        auto buffer = std::make_shared<Buffer>(std::move(padVec));
-        auto paddingParams = CreateConstTensor("padding_params", DataType::Int32, buffer, &padParamShape);
-
-        // Create intermediate tensor with the IFM + padding shape
-        auto &ifmShape = ifmConn->shape;
-        Shape paddedIfmShape = ifmShape.WithHW((ifmShape.Height() + padding.Top() + padding.Bottom()),
-            (ifmShape.Width() + padding.Left() + padding.Right()));
-        if ( operation->Type() == OpType::Conv3D )
-        {
-            paddedIfmShape[-4] += padding.Near() + padding.Far();
-        }
-        const auto intermediateTensor = std::make_shared<Tensor>("padded_ifm", ifmConn->tensor->Type(), paddedIfmShape);
-
-        // Create Pad operation
-        auto padOp = std::make_shared<Operation>(OpType::Pad);
-        padOp->CopyInput(TensorUsage::IFM, *ifmConn);
-        padOp->ConnectInput(TensorUsage::Params, paddingParams);
-        padOp->ConnectOutput(TensorUsage::OFM, intermediateTensor);
-
-        // Reset to no quantization on the Pad IFM
-        padOp->Input(TensorUsage::IFM)->quantization = Quantization();
-
-        // Pad with the zero point
-        const auto &attr = padOp->Attribute<pad_attr_t>();
-        attr->pad_const = ifmConn->quantization.zeroPoints[0];
+        auto padOp = CreatePadForKernelPadding(operation->Type(), padding, *ifmConn);
+        assert(padOp->OFM());
 
         // Remove kernel padding and replace IFM with the padded intermediate tensor
         operation->SetKernel(std::make_unique<Kernel>(operation->Kernel()->WithPadding({})));
-        operation->ConnectInput(TensorUsage::IFM, intermediateTensor);
+        operation->ConnectInput(TensorUsage::IFM, padOp->OFM()->shared_from_this());
         RecordOptimisation(*operation, padOp.get());
     }
 
@@ -2631,6 +2640,48 @@ Operation *GraphIrOptimiser::ReplaceBroadcastWithAdd(Graph *const, Operation *co
             RecordOptimisation(*operation, broadcastOp.get());
         }
     }
+
+    return operation;
+}
+
+Operation *GraphIrOptimiser::RealiseKernelPadding(Graph *const, Operation *const operation)
+{
+    if ( !IsConvolution(operation->Type()) && operation->Type() != OpType::Conv3D )
+    {
+        return operation;
+    }
+
+    auto *kernel = operation->Kernel();
+    auto *ifmConn = operation->Input(TensorUsage::IFM);
+    const auto &kSize = kernel->DilatedWH();
+    const auto &padding = kernel->Padding();
+    // If the kernel padding places the kernel ENTIRELY in the padded region
+    // then that padding must be realised as actual tensor padding for later
+    // decomposition to succeed.
+    int maxLR = std::max(padding.Left(), padding.Right());
+    int maxTB = std::max(padding.Top(), padding.Bottom());
+    if ( kSize.x <= maxLR || kSize.y <= maxTB )
+    {
+        ArchOperatorQuery query{};
+        ArchRequirements req{};
+        Set(query.ifm[0], operation->Input(TensorUsage::IFM0));
+        Set(query.weights, operation->Input(TensorUsage::Weights));
+        Set(query.ofm, operation->Output(TensorUsage::OFM));
+        if ( _constraints->OperatorQuery(operation->Type(), &query, &req).Any(QueryResult::Native) )
+        {
+            if ( req.decomposeProps.Any(ArchProperty::TensorAxis) )
+            {
+                auto padOp = CreatePadForKernelPadding(operation->Type(), padding, *ifmConn);
+                assert(padOp->OFM());
+
+                // Remove kernel padding and replace IFM with the padded intermediate tensor
+                operation->SetKernel(std::make_unique<Kernel>(operation->Kernel()->WithPadding({})));
+                operation->ConnectInput(TensorUsage::IFM, padOp->OFM()->shared_from_this());
+                RecordOptimisation(*operation, padOp.get());
+            }
+        }
+    }
+
     return operation;
 }
 
