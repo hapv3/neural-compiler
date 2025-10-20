@@ -2489,8 +2489,10 @@ Operation *GraphIrOptimiser::ReplaceBroadcastWithAdd(Graph *const, Operation *co
         auto *ifm0Conn = operation->Input(TensorUsage::IFM0);
         auto *ifm1Conn = operation->Input(TensorUsage::IFM1);
         auto *ofmConn = operation->Output(TensorUsage::OFM);
-        auto ofmShape = ofmConn->shape;
-        if ( ifm0Conn->shape != ofmShape && ifm1Conn->shape != ofmShape )
+        auto &ofmShape = ofmConn->SliceShape();
+        auto ifm0ShapePadded = Shape::PadAxes(ifm0Conn->SliceShape(), ofmShape.Size(), 1);
+        auto ifm1ShapePadded = Shape::PadAxes(ifm1Conn->SliceShape(), ofmShape.Size(), 1);
+        if ( ifm0ShapePadded != ofmShape && ifm1ShapePadded != ofmShape )
         {
             std::shared_ptr<Tensor> newTensor = ofmConn->tensor->Clone();
             newTensor->ChangeType(ifm0Conn->tensor->Type());
@@ -2507,7 +2509,7 @@ Operation *GraphIrOptimiser::ReplaceBroadcastWithAdd(Graph *const, Operation *co
             broadcastOp->ConnectInput(TensorUsage::IFM0, constTensor);
             broadcastOp->ConnectOutput(TensorUsage::OFM, newTensor);
 
-            operation->ConnectInput(TensorUsage::IFM0, newTensor).Set(ofmShape);
+            operation->ConnectInput(TensorUsage::IFM0, newTensor);
             RecordOptimisation(*operation, broadcastOp.get());
         }
     }
