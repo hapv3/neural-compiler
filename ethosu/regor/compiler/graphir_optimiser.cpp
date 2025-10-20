@@ -1504,8 +1504,9 @@ Operation *GraphIrOptimiser::RewriteCast(Graph *const, Operation *const operatio
         {
             // Replace CAST with ADD
             auto copyOp = std::make_shared<Operation>(OpType::Add);
+            auto type = ifmConn->tensor->Type();
             ReplaceOperation(operation, copyOp.get());
-            copyOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_zero", ifmConn->tensor->Type(), 0));
+            copyOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_zero", type, 0));
             RecordOptimisation(*operation, copyOp.get());
             returnOp = copyOp.get();
 
