@@ -72,21 +72,19 @@ void Tensor::ChangeType(DataType newType)
 
 void Tensor::AddReader(std::shared_ptr<Operation> reader)
 {
-    if ( std::find(_readers.begin(), _readers.end(), reader) == _readers.end() )
-    {
-        _readers.push_back(reader);
-    }
+    _readers.push_back(reader);
 }
 void Tensor::AddWriter(std::shared_ptr<Operation> writer)
 {
-    if ( std::find(_writers.begin(), _writers.end(), writer) == _writers.end() )
-    {
-        _writers.push_back(writer);
-    }
+    _writers.push_back(writer);
 }
 void Tensor::RemoveReader(std::shared_ptr<Operation> reader)
 {
-    _readers.erase(std::remove(_readers.begin(), _readers.end(), reader), _readers.end());
+    auto first = std::find(_readers.begin(), _readers.end(), reader);
+    if ( first != _readers.end() )
+    {
+        _readers.erase(first);
+    }
 }
 void Tensor::RemoveWriter(std::shared_ptr<Operation> writer)
 {
