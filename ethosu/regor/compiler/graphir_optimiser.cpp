@@ -26,6 +26,45 @@
 namespace regor
 {
 
+namespace
+{
+// Calculates a new permutation that would result in the same transformation as perm applied on postReshape would have
+// This is done by mapping backwards which indices in the preReshape shape that need to change through the postReshape
+// shape and its permutation.
+Shape RecalculatePermutationForNonUnitAxes(const Shape &preReshape, const Shape &postReshape, const Shape &perm)
+{
+    std::vector<int> preReshapeNonUnitAxes;
+    preReshapeNonUnitAxes.reserve(preReshape.Size());
+    for ( int i = 0; i < preReshape.Size(); ++i )
+    {
+        if ( preReshape[i] != 1 ) preReshapeNonUnitAxes.push_back(i);
+    }
+
+    std::vector<int> postReshapeIndex(postReshape.Size(), -1);
+    for ( int i = 0, r = 0; i < postReshape.Size(); ++i )
+    {
+        if ( postReshape[i] != 1 ) postReshapeIndex[i] = r++;
+    }
+
+    std::vector<int> mappedAxes;
+    mappedAxes.reserve(preReshapeNonUnitAxes.size());
+    for ( int j = 0; j < perm.Size(); ++j )
+    {
+        int r = postReshapeIndex[perm[j]];
+        if ( r >= 0 ) mappedAxes.push_back(preReshapeNonUnitAxes[r]);
+    }
+
+    Shape newPermutation(nullptr, preReshape.Size());
+    int k = 0;
+    for ( int i = 0; i < preReshape.Size(); ++i )
+    {
+        newPermutation[i] = (preReshape[i] == 1) ? i : mappedAxes[k++];
+    }
+
+    return newPermutation;
+}
+}  // namespace
+
 using namespace GraphOptimisation;
 
 Tensor *GraphIrOptimiser::ConvertInt48Tensors(Graph *, Tensor *tensor)
@@ -2234,6 +2273,77 @@ Operation *GraphIrOptimiser::RewriteTile(Graph *const, Operation *const operatio
     }
 
     operation->Disconnect();
+    return returnOp;
+}
+// Propagates metadata reshape->Transpose into Transpose->MetadataReshape
+// This enables easier folding
+Operation *GraphIrOptimiser::CanonicaliseReshapeTransposePattern(Graph *const graph, Operation *const operation)
+{
+    UNUSED(graph);
+    Operation *returnOp = operation;
+    const OpType opType = operation->Type();
+    if ( opType != OpType::Reshape )
+    {
+        return returnOp;
+    }
+
+    auto reshapeOp = operation;
+    auto *ifmConn = reshapeOp->Input(TensorUsage::IFM0);
+    auto *ofmConn = reshapeOp->Output(TensorUsage::OFM);
+    auto *ifm = ifmConn->tensor.get();
+    auto *ofm = ofmConn->tensor.get();
+
+    auto nextOp = ofm->Readers().empty() ? nullptr : ofm->Readers().front();
+
+    if ( !ofm->IsSinglePath() || !nextOp || nextOp->Type() != OpType::Transpose )
+    {
+        return returnOp;
+    }
+
+    auto *nextAttr = nextOp->Attribute<transpose_attr_t>();
+
+    const Shape &preReshapeShape = ifmConn->shape;
+    const Shape &postReshapeShape = ofmConn->shape;
+
+    // Only handle metadata-only reshapes that preserve the non-unit axes.
+    if ( Squeeze(preReshapeShape) != Squeeze(postReshapeShape) )
+    {
+        return returnOp;
+    }
+
+    auto *nextIfmConn = nextOp->Input(TensorUsage::IFM);
+    auto *nextOfmConn = nextOp->Output(TensorUsage::OFM);
+    (void)nextIfmConn;
+
+    const Shape finalOfmShape = nextOfmConn->shape;
+    std::shared_ptr<Tensor> finalOfmTensor = nextOfmConn->tensor;
+
+    // Move reshape past the final transpose.
+    // 1. Update the final transpose permutation so it operates on the pre-reshape shape.
+    Shape updatedPermutation = RecalculatePermutationForNonUnitAxes(preReshapeShape, postReshapeShape, nextAttr->perm);
+    nextAttr->perm = updatedPermutation;
+    auto updatedTranspose = TransposeTypeFromShape(updatedPermutation);
+    Shape newOfmShape = preReshapeShape.Permute(unsigned(updatedTranspose));
+
+    // 2. Make the transpose consume the pre-reshape tensor.
+    auto transposeOfmTensor = std::make_shared<Tensor>("_propagated_reshape", ofmConn->tensor->Type(), newOfmShape);
+    TensorConnection &newNextIfmConn = nextOp->ConnectInput(TensorUsage::IFM, ifmConn->tensor);
+    newNextIfmConn.shape = preReshapeShape;
+
+    TensorConnection &newNextOfmConn = nextOp->ConnectOutput(TensorUsage::OFM, transposeOfmTensor);
+    newNextOfmConn.shape = newOfmShape;
+
+    // 3. Insert a new reshape after the transpose to align to original ofm.
+    auto newReshapeOp = std::make_shared<Operation>(OpType::Reshape);
+    TensorConnection &newReshapeIfmConn = newReshapeOp->ConnectInput(TensorUsage::IFM0, transposeOfmTensor);
+    newReshapeIfmConn.shape = newOfmShape;
+
+    TensorConnection &newReshapeOfmConn = newReshapeOp->ConnectOutput(TensorUsage::OFM, finalOfmTensor);
+    newReshapeOfmConn.shape = finalOfmShape;
+
+    RecordOptimisation(*operation, newReshapeOp.get());
+    operation->Disconnect();
+    returnOp = newReshapeOp.get();
     return returnOp;
 }
 

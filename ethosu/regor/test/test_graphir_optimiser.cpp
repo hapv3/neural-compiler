@@ -399,6 +399,96 @@ TEST_CASE("test_graphir_optimiser - transpose merge")
     REQUIRE(allOps.front()->Output(TensorUsage::OFM)->tensor == allOps.back()->Input(TensorUsage::IFM)->tensor);
 }
 
+TEST_CASE("test_graphir_optimiser - transpose merge with metadata reshape resulting in memory copy")
+{
+    auto arch = CreateArchDefault<ArchEthosU85>();
+    std::string err = "noerror";
+    arch->CheckConfiguration(err);
+    REQUIRE(err == "noerror");
+
+    std::vector<std::shared_ptr<Operation>> ops;
+    auto input = CreateTensor("INPUT", Shape(1, 374, 144), DataType::Int8);
+    auto transposeOfm = CreateTensor("T1_OFM", Shape(1, 144, 374), DataType::Int8);
+    auto reshapeOfm = CreateTensor("RESHAPE_OFM", Shape(1, 144, 374, 1), DataType::Int8);
+    auto output = CreateTensor("OUTPUT", Shape(1, 374, 1, 144), DataType::Int8);
+
+    ops.push_back(CreateOperation(OpType::Transpose, TensorUsage::IFM, input, TensorUsage::OFM, transposeOfm));
+    auto *transposeAttr = ops.back()->Attribute<transpose_attr_t>();
+    transposeAttr->perm = Shape(0, 2, 1);
+
+    ops.push_back(CreateOperation(OpType::Reshape, TensorUsage::IFM, transposeOfm, TensorUsage::OFM, reshapeOfm));
+    auto *reshapeAttr = ops.back()->Attribute<reshape_attr_t>();
+    reshapeAttr->shape = reshapeOfm->StorageShape();
+
+    ops.push_back(CreateOperation(OpType::Transpose, TensorUsage::IFM, reshapeOfm, TensorUsage::OFM, output));
+    transposeAttr = ops.back()->Attribute<transpose_attr_t>();
+    transposeAttr->perm = Shape(0, 2, 3, 1);
+
+    auto graph = CreateGraph(ops);
+
+    GraphOptimiserOptions options;
+    const auto &optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
+
+    optimiser.back()->Process(graph.get());
+
+    std::vector<Operation *> allOps;
+    graph->GetAllOperations(allOps);
+    REQUIRE(allOps.size() == 1);
+    REQUIRE(allOps[0]->Type() == OpType::MemoryCopy);
+
+    auto *ifmConn = allOps[0]->Input(TensorUsage::IFM);
+    REQUIRE(ifmConn->shape == Shape(1, 374, 144));
+
+    auto *ofmConn = allOps[0]->Output(TensorUsage::OFM);
+    REQUIRE(ofmConn->shape == Shape(1, 374, 144));
+}
+
+TEST_CASE("test_graphir_optimiser - transpose merge with metadata reshape resulting in transpose")
+{
+    auto arch = CreateArchDefault<ArchEthosU85>();
+    std::string err = "noerror";
+    arch->CheckConfiguration(err);
+    REQUIRE(err == "noerror");
+
+    std::vector<std::shared_ptr<Operation>> ops;
+    auto input = CreateTensor("INPUT", Shape(4, 374, 144), DataType::Int8);
+    auto transposeOfm = CreateTensor("T1_OFM", Shape(4, 144, 374), DataType::Int8);
+    auto reshapeOfm = CreateTensor("RESHAPE_OFM", Shape(1, 4, 144, 374), DataType::Int8);
+    auto output = CreateTensor("OUTPUT", Shape(1, 374, 144, 4), DataType::Int8);
+
+    ops.push_back(CreateOperation(OpType::Transpose, TensorUsage::IFM, input, TensorUsage::OFM, transposeOfm));
+    auto *transposeAttr = ops.back()->Attribute<transpose_attr_t>();
+    transposeAttr->perm = Shape(0, 2, 1);
+
+    ops.push_back(CreateOperation(OpType::Reshape, TensorUsage::IFM, transposeOfm, TensorUsage::OFM, reshapeOfm));
+    auto *reshapeAttr = ops.back()->Attribute<reshape_attr_t>();
+    reshapeAttr->shape = reshapeOfm->StorageShape();
+
+    ops.push_back(CreateOperation(OpType::Transpose, TensorUsage::IFM, reshapeOfm, TensorUsage::OFM, output));
+    transposeAttr = ops.back()->Attribute<transpose_attr_t>();
+    transposeAttr->perm = Shape(0, 3, 2, 1);
+
+    auto graph = CreateGraph(ops);
+
+    GraphOptimiserOptions options;
+    const auto &optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
+
+    optimiser.back()->Process(graph.get());
+
+    std::vector<Operation *> allOps;
+    graph->GetAllOperations(allOps);
+    REQUIRE(allOps.size() == 1);
+    REQUIRE(allOps[0]->Type() == OpType::Transpose);
+    transposeAttr = allOps[0]->Attribute<transpose_attr_t>();
+    REQUIRE(transposeAttr->perm == Shape(1, 2, 0));
+
+    auto *ifmConn = allOps[0]->Input(TensorUsage::IFM);
+    REQUIRE(ifmConn->shape == Shape(4, 374, 144));
+
+    auto *ofmConn = allOps[0]->Output(TensorUsage::OFM);
+    REQUIRE(ofmConn->shape == Shape(374, 144, 4));
+}
+
 TEST_CASE("test_graphir_optimiser - replace pad by explicit padding")
 {
     // Create arch
