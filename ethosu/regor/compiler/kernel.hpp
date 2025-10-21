@@ -138,6 +138,11 @@ public:
         return tmp;
     }
 
+    Kernel As2D() const
+    {
+        return Kernel(_size, _stride, _dilation, Margin(_padding.Top(), _padding.Left(), _padding.Bottom(), _padding.Right()));
+    }
+
     Point2i DilatedWH() const { return (_dilation * (_size - Point2i(1, 1))) + Point2i(1, 1); }
 
     std::string ToString() const

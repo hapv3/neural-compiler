@@ -2564,6 +2564,37 @@ Operation *GraphIrOptimiser::RewriteNonConstWeightOp(Graph *const, Operation *co
     return operation;
 }
 
+Operation *GraphIrOptimiser::RewriteConv3D(Graph *const, Operation *const operation)
+{
+    if ( operation->Type() == OpType::Conv3D )
+    {
+        const auto kernel = operation->Kernel();
+        // A Conv3D can be rewritten as a Conv2D if:
+        // - the kernel depth dimension is 1
+        // - the stride in the depth dimension is 1
+        // - there is no padding in the depth dimension
+        if ( kernel->Size3D().z == 1 && kernel->Stride3D().z == 1 && kernel->Padding().Near() == 0 && kernel->Padding().Far() == 0 )
+        {
+            auto conv2dOp = std::make_shared<Operation>(OpType::Conv2D);
+            ReplaceOperation(operation, conv2dOp.get());
+            conv2dOp->SetKernel(std::make_unique<Kernel>(kernel->As2D()));
+            auto ifmConn = conv2dOp->Input(TensorUsage::IFM0);
+            auto weightsConn = conv2dOp->Input(TensorUsage::Weights);
+            auto ofmConn = conv2dOp->Output(TensorUsage::OFM);
+            // Move the depth dimension to batch
+            int batch = ifmConn->shape[0] * ifmConn->shape[1];
+            ifmConn->shape = ifmConn->shape.Erase(1).WithBatch(batch);
+            ofmConn->shape = ofmConn->shape.Erase(1).WithBatch(batch);
+            // Reshape weights to remove depth dimension
+            weightsConn->shape = weightsConn->shape.Erase(1);
+            weightsConn->tensor->Reshape(weightsConn->shape);
+            RecordOptimisation(*operation, conv2dOp.get());
+            return conv2dOp.get();
+        }
+    }
+    return operation;
+}
+
 Operation *GraphIrOptimiser::ReplaceBroadcastWithAdd(Graph *const, Operation *const operation)
 {
     if ( IsBinaryElementwise(operation->Type()) && !_constraints->SupportsDoubleBroadcast() )

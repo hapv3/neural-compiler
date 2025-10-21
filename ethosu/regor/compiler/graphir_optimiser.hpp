@@ -76,6 +76,7 @@ private:
     Operation *UnrollKernelStrides(Graph *const, Operation *const operation);
     Operation *RewriteIdentityResize(Graph *const graph, Operation *const operation);
     Operation *RewriteNonConstWeightOp(Graph *const, Operation *const operation);
+    Operation *RewriteConv3D(Graph *const, Operation *const operation);
     Operation *ReplaceBroadcastWithAdd(Graph *const, Operation *const operation);
     // Utility/Helper methods
     Operation *MakeFillOperation(TensorConnection *const ofmConn, const Shape &ofmShape, const TensorSlice &ofmSlice,
@@ -148,6 +149,7 @@ private:
                 &GraphIrOptimiser::FixupPoolStrides,
                 &GraphIrOptimiser::ReplacePadByExplicitPadding,
                 &GraphIrOptimiser::RewriteNonConstWeightOp,
+                &GraphIrOptimiser::RewriteConv3D,
                 &GraphIrOptimiser::RewritePad,
                 &GraphIrOptimiser::RewriteTable,
                 &GraphIrOptimiser::RewriteCast,

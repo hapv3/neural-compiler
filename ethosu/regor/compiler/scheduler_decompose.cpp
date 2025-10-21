@@ -957,17 +957,18 @@ DecomposeNonConstWeights(DecompositionContext &ctx, std::unique_ptr<SchedulerOpe
                 {
                     for ( int kx = 0; kx < kernelW; kx++ )
                     {
-                        auto subOp = std::make_unique<SchedulerOperation>(OpType::MatMul);
-                        subOp->SetKernel(Kernel::UnitKernel());
+                        auto subOp = MakeSubOperation(op.get(), &Kernel::UnitKernel(), OpType::MatMul);
+                        // Remove unused inputs for MatMul
+                        subOp->RemoveInput(TensorUsage::Weights);
+                        subOp->RemoveInput(TensorUsage::Scales);
 
-                        // Connect IFM tensor with correct slicing
-                        auto *subIfmConn = subOp->ConnectInput(TensorUsage::IFM, ifmConn->tensor);
+                        // Setup IFM tensor with correct slicing
+                        auto *subIfmConn = subOp->Input(TensorUsage::IFM);
                         subIfmConn->slice.shape = Shape(1, 1, ofmBlockWidth * stride.x, ifmShape.Depth());
                         subIfmConn->slice.offset = Shape(
                             ifmConn->slice.offset.Batch(), ifmY + ky * dilation.y, ifmX + kx * dilation.x, 0);
                         // This effectively sets the stride for IFM width to kernel stride x.
                         subIfmConn->stepXY = Point2i(stride.x, 1);
-                        subIfmConn->quantization = ifmConn->quantization;
 
                         // Connect Weight tensor as IFM1 with correct slicing
                         auto *subWeightsConn = subOp->ConnectInput(TensorUsage::IFM1, weightsTensor);
@@ -983,11 +984,10 @@ DecomposeNonConstWeights(DecompositionContext &ctx, std::unique_ptr<SchedulerOpe
                         subWeightsConn->stepXY.x = kernelArea;
                         subWeightsConn->quantization = weightsQuantization;
 
-                        // Connect OFM tensor with correct slicing
-                        auto *subOfmConn = subOp->ConnectOutput(TensorUsage::OFM, ofmConn->tensor);
+                        // Setup OFM tensor with correct slicing
+                        auto *subOfmConn = subOp->Output(TensorUsage::OFM);
                         subOfmConn->slice.shape = Shape(1, 1, std::min(ofmWidth - ofmX, ofmBlockWidth), validOfmDepth);
                         subOfmConn->slice.offset = Shape(ofmConn->slice.offset.Batch(), ofmY, ofmX, ofmZ);
-                        subOfmConn->quantization = ofmConn->quantization;
 
                         // Set accumulator mode according to these conditions:
                         //  * Always keep accumulators since they were reset during bias preloading
