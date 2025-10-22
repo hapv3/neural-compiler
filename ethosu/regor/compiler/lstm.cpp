@@ -272,7 +272,6 @@ TensorConnection *LSTM::CalculateCellState(TensorConnection *cellStateConn, Tens
     Quantization mulCFQuant;
     mulCFQuant.type = QuantizationType::TFLITE;
     mulCFQuant.scales = {ElementwiseMulScale(cellStateScale, Q0_15_SCALE, cellStateScale)};
-    mulCFQuant.zeroPoints = {cellStateConn->quantization.zeroPoints[0]};
     // Create Mul(cell_state, forget_gate)
     Operation *mulCF = CreateMul(cellStateConn->tensor, forgetGateConn->tensor, mulCFQuant, mulCFQuant, mulCFQuant,
         DataType::None, &forgetGateConn->shape, &forgetGateConn->shape);
@@ -282,7 +281,6 @@ TensorConnection *LSTM::CalculateCellState(TensorConnection *cellStateConn, Tens
     Quantization mulCIQuant;
     mulCIQuant.type = QuantizationType::TFLITE;
     mulCIQuant.scales = {ElementwiseMulScale(Q0_15_SCALE, Q0_15_SCALE, cellStateScale)};
-    mulCIQuant.zeroPoints = {cellStateConn->quantization.zeroPoints[0]};
     // Create Mul(cell_gate, input_gate)
     Operation *mulCI = CreateMul(cellGateConn->tensor, inputGateConn->tensor, mulCIQuant, mulCIQuant, mulCIQuant);
 
@@ -302,8 +300,10 @@ TensorConnection *LSTM::CalculateCellState(TensorConnection *cellStateConn, Tens
         // If the cell clip attribute is non-zero the output needs to be clamped.
         auto clamp = std::make_shared<Operation>(OpType::Clamp);
         auto *attr = clamp->Attribute<clamp_attr_t>();
-        attr->max = Quantize(static_cast<float>(_cellClip), cellStateQuant);
-        attr->min = Quantize(static_cast<float>(-_cellClip), cellStateQuant);
+        // Quantized clip range is [-cellClip, +cellClip]. If cellClip exceeds int16, it is clamped to INT16_MAX, i.e.
+        // 32767, which gives a lower bound of -32767.
+        attr->max = Quantize(float(_cellClip), cellStateQuant);
+        attr->min = std::max(int64_t(-32767), Quantize(float(-_cellClip), cellStateQuant));
 
         // Copying the input and output of the Add means the Clamp will also write to the cell state.
         clamp->CopyInput(TensorUsage::IFM, *returnConn);
