@@ -399,9 +399,14 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
         }
         if ( req )
         {
+            // Check for batch size > 1 to set decompose property
+            if ( query && query->ifm[0].shape && query->ifm[0].shape[0] > 1 )
+            {
+                req->decomposeProps.Set(ArchProperty::TensorDims);
+            }
             req->req.Set(ArchRequirement::Decompose);
         }
-        return QueryResult::NativeConstrainedHasReq;
+        return query ? QueryResult::NativeHasReq : QueryResult::NativeConstrainedHasReq;
     }
     else if ( opType == OpType::TransposeConv2D )
     {
