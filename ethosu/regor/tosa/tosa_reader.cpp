@@ -104,6 +104,15 @@ const T &SafeDeref(const T *ptr, const char *msg = nullptr)
     return ret;
 }
 
+inline const TensorInfo &SafeGetTensor(const std::unordered_map<std::string, TensorInfo> &tensors,
+    const std::vector<std::string> &inputTensors, size_t index)
+{
+    TosaAssert(index < inputTensors.size(), "Input tensor index out of range");
+    TosaAssert(tensors.find(inputTensors[index]) != tensors.end(),
+        fmt::format("Input tensor not found: {}", inputTensors[index]).c_str());
+    return tensors.at(inputTensors[index]);
+}
+
 template<GraphApi::GraphDataType = GraphApi::GraphDataType::Int32, typename ARG>
 double ToDouble(ARG v)
 {
@@ -194,7 +203,7 @@ double ToDouble<GraphApi::GraphDataType::BFloat16, const ::flatbuffers::Vector<u
 }
 
 // Check that zero points are compile time constants
-inline void CheckConstantZeroPoint(TensorInfo &tensorInfo, const char *tensorRole, const char *opName, int tosaOpIndex)
+inline void CheckConstantZeroPoint(const TensorInfo &tensorInfo, const char *tensorRole, const char *opName, int tosaOpIndex)
 {
     TosaAssert(tensorInfo.constant,
         fmt::format("{} zero point tensor must be a compile time constant on {} operator at index {}.", tensorRole, opName, tosaOpIndex)
@@ -515,7 +524,7 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                     {
                         kernelPtr = &kernel;
                         TosaAssert(inputTensors.size() > 1, "Missing DEPTHWISE_CONV2D input tensor");
-                        const auto &shape = tensors.at(inputTensors[1]).shape;
+                        const auto &shape = SafeGetTensor(tensors, inputTensors, 1).shape;
                         kernel.sizeYXZ[0] = shape.axisNHWC[0];
                         kernel.sizeYXZ[1] = shape.axisNHWC[1];
                         kernel.sizeYXZ[2] = 1;
@@ -542,15 +551,15 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                             fmt::format("Invalid acc_type attribute on DEPTHWISE_CONV2D operator with index {}.", tosaOpIndex)
                                 .c_str());
 
-                        CheckConstantZeroPoint(tensors.at(inputTensors[3]), "Input", "DEPTHWISE_CONV2D", tosaOpIndex);
-                        CheckConstantZeroPoint(tensors.at(inputTensors[4]), "Weight", "DEPTHWISE_CONV2D", tosaOpIndex);
+                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 3), "Input", "DEPTHWISE_CONV2D", tosaOpIndex);
+                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 4), "Weight", "DEPTHWISE_CONV2D", tosaOpIndex);
                     }
                     break;
                     case tosaFb::Op::CONV2D:
                     {
                         kernelPtr = &kernel;
                         TosaAssert(inputTensors.size() > 1, "Missing CONV2D input tensor");
-                        const auto &shape = tensors.at(inputTensors[1]).shape;
+                        const auto &shape = SafeGetTensor(tensors, inputTensors, 1).shape;
                         kernel.sizeYXZ[0] = shape.axisNHWC[1];
                         kernel.sizeYXZ[1] = shape.axisNHWC[2];
                         kernel.sizeYXZ[2] = 1;
@@ -575,15 +584,15 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         auto accType = attr.acc_type();
                         TosaAssert(accType == tosaFb::DType::INT32 || accType == tosaFb::DType::INT48,
                             fmt::format("Invalid acc_type attribute on CONV2D operator with index {}.", tosaOpIndex).c_str());
-                        CheckConstantZeroPoint(tensors.at(inputTensors[3]), "Input", "CONV2D", tosaOpIndex);
-                        CheckConstantZeroPoint(tensors.at(inputTensors[4]), "Weight", "CONV2D", tosaOpIndex);
+                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 3), "Input", "CONV2D", tosaOpIndex);
+                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 4), "Weight", "CONV2D", tosaOpIndex);
                     }
                     break;
                     case tosaFb::Op::CONV3D:
                     {
                         kernelPtr = &kernel;
                         TosaAssert(inputTensors.size() > 1, "Missing CONV3D input tensor");
-                        const auto &shape = tensors.at(inputTensors[1]).shape;
+                        const auto &shape = SafeGetTensor(tensors, inputTensors, 1).shape;
                         TosaAssert(shape.count == 5, "Invalid CONV3D input rank");
                         kernel.sizeYXZ[0] = shape.axisNHWC[2];
                         kernel.sizeYXZ[1] = shape.axisNHWC[3];
@@ -611,15 +620,15 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         auto accType = attr.acc_type();
                         TosaAssert(accType == tosaFb::DType::INT32 || accType == tosaFb::DType::INT48,
                             fmt::format("Invalid acc_type attribute on CONV3D operator with index {}.", tosaOpIndex).c_str());
-                        CheckConstantZeroPoint(tensors.at(inputTensors[3]), "Input", "CONV3D", tosaOpIndex);
-                        CheckConstantZeroPoint(tensors.at(inputTensors[4]), "Weight", "CONV3D", tosaOpIndex);
+                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 3), "Input", "CONV3D", tosaOpIndex);
+                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 4), "Weight", "CONV3D", tosaOpIndex);
                     }
                     break;
                     case tosaFb::Op::TRANSPOSE_CONV2D:
                     {
                         kernelPtr = &kernel;
                         TosaAssert(inputTensors.size() > 1, "Missing TRANSPOSE_CONV2D input tensor");
-                        const auto &shape = tensors.at(inputTensors[1]).shape;
+                        const auto &shape = SafeGetTensor(tensors, inputTensors, 1).shape;
                         kernel.sizeYXZ[0] = shape.axisNHWC[1];
                         kernel.sizeYXZ[1] = shape.axisNHWC[2];
                         kernel.sizeYXZ[2] = 1;
@@ -643,8 +652,8 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         TosaAssert(accType == tosaFb::DType::INT32 || accType == tosaFb::DType::INT48,
                             fmt::format("Invalid acc_type attribute on TRANSPOSE_CONV2D operator with index {}.", tosaOpIndex)
                                 .c_str());
-                        CheckConstantZeroPoint(tensors.at(inputTensors[3]), "Input", "TRANSPOSE_CONV2D", tosaOpIndex);
-                        CheckConstantZeroPoint(tensors.at(inputTensors[4]), "Weight", "TRANSPOSE_CONV2D", tosaOpIndex);
+                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 3), "Input", "TRANSPOSE_CONV2D", tosaOpIndex);
+                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 4), "Weight", "TRANSPOSE_CONV2D", tosaOpIndex);
                     }
                     break;
                     case tosaFb::Op::AVG_POOL2D:
@@ -674,8 +683,8 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         auto accType = attr.acc_type();
                         TosaAssert(accType == tosaFb::DType::INT32,
                             fmt::format("Invalid acc_type attribute on AVG_POOL2D operator with index {}.", tosaOpIndex).c_str());
-                        CheckConstantZeroPoint(tensors.at(inputTensors[1]), "Input", "AVG_POOL2D", tosaOpIndex);
-                        CheckConstantZeroPoint(tensors.at(inputTensors[2]), "Output", "AVG_POOL2D", tosaOpIndex);
+                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 1), "Input", "AVG_POOL2D", tosaOpIndex);
+                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 2), "Output", "AVG_POOL2D", tosaOpIndex);
                     }
                     break;
                     case tosaFb::Op::MAX_POOL2D:
@@ -705,8 +714,8 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                     break;
                     case tosaFb::Op::MATMUL:
                     {
-                        CheckConstantZeroPoint(tensors.at(inputTensors[2]), "InputA", "MATMUL", tosaOpIndex);
-                        CheckConstantZeroPoint(tensors.at(inputTensors[3]), "InputB", "MATMUL", tosaOpIndex);
+                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 2), "InputA", "MATMUL", tosaOpIndex);
+                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 3), "InputB", "MATMUL", tosaOpIndex);
                     }
                     break;
                     default:
@@ -732,7 +741,7 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         double clampMin = 0;
                         double clampMax = 0;
                         TosaAssert(!inputTensors.empty(), "Missing CLAMP input tensor");
-                        auto type = tensors.at(inputTensors[0]).type;
+                        auto type = SafeGetTensor(tensors, inputTensors, 0).type;
                         switch ( type )
                         {
                             case GraphApi::GraphDataType::Int8:
@@ -810,9 +819,9 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
 
                         if ( tosaAttr.per_channel() )
                         {
-                            const auto &rescaleInputTensor = inputTensors[0];
-                            TosaAssert(tensors.at(rescaleInputTensor).shape.count != 0,
-                                fmt::format("RESCALE input tensor {} needs to have rank > 0 when per channel attribute is set.", rescaleInputTensor)
+                            const auto &rescaleInputTensor = SafeGetTensor(tensors, inputTensors, 0);
+                            TosaAssert(rescaleInputTensor.shape.count != 0,
+                                fmt::format("RESCALE input tensor {} needs to have rank > 0 when per channel attribute is set.", inputTensors[0])
                                     .c_str());
                         }
                     }
@@ -846,9 +855,9 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                     break;
                     case tosaFb::Op::MUL:
                     {
-                        const auto &mulShiftTensor = inputTensors[2];
-                        TosaAssert(tensors.at(mulShiftTensor).shape.count == 1,
-                            ("MUL shift tensor " + mulShiftTensor + " needs to have rank 1.").c_str());
+                        const auto &mulShiftTensor = SafeGetTensor(tensors, inputTensors, 2);
+                        TosaAssert(mulShiftTensor.shape.count == 1,
+                            fmt::format("MUL shift tensor {} needs to have rank 1.", inputTensors[2]).c_str());
                     }
                     break;
                     default:
