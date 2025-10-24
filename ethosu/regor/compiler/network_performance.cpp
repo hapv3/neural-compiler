@@ -211,7 +211,7 @@ PerformanceResult NetworkPerformance::Measure(Schedule *schedule, OptimiserDatab
         }
         if ( optDb != nullptr )
         {
-            AddToDatabase(perf, schedOp.get(), cost, perfTable, perfDebugTable, perfDebugConnectivityTable, memories, optDb);
+            AddToDatabase(perf, schedOp.get(), cost, nullptr, perfTable, perfDebugTable, perfDebugConnectivityTable, memories, optDb);
         }
         performance += perf;
         prevOp = schedOp.get();
@@ -223,7 +223,7 @@ PerformanceResult NetworkPerformance::Measure(Schedule *schedule, OptimiserDatab
             perf = ProcessOpPerformance(subOp.get(), cost, schedule, prevOp, prevCost, memories);
             if ( optDb != nullptr )
             {
-                AddToDatabase(perf, subOp.get(), cost, perfTable, perfDebugTable, perfDebugConnectivityTable, memories, optDb);
+                AddToDatabase(perf, subOp.get(), cost, prevOp, perfTable, perfDebugTable, perfDebugConnectivityTable, memories, optDb);
             }
             if ( !IsActivation(subOp->Type()) )
             {
@@ -272,8 +272,9 @@ PerformanceResult NetworkPerformance::ProcessOpPerformance(SchedulerOperation *s
 }
 
 
-void NetworkPerformance::AddToDatabase(const PerformanceResult &perf, SchedulerOperation *schedOp, SchedulerOpInfo *cost, int perfTable,
-    int perfDebugTable, int perfDebugConnectivityTable, const std::unordered_set<ArchitectureMemory *> &memories, OptimiserDatabase *optDb)
+void NetworkPerformance::AddToDatabase(const PerformanceResult &perf, SchedulerOperation *schedOp,
+    SchedulerOpInfo *cost, SchedulerOperation *prevOp, int perfTable, int perfDebugTable,
+    int perfDebugConnectivityTable, const std::unordered_set<ArchitectureMemory *> &memories, OptimiserDatabase *optDb)
 {
     // Per-layer calculations
     assert(optDb != nullptr);
@@ -440,6 +441,11 @@ void NetworkPerformance::AddToDatabase(const PerformanceResult &perf, SchedulerO
             for ( auto &prod : ifmConn.tensor->producers )
             {
                 db->AddRow(perfDebugConnectivityTable, schedOp->Uid(), {std::to_string(prod->Uid()), std::to_string(index)});
+            }
+            if ( ifmConn.tensor->producers.empty() && prevOp )
+            {
+                // Empty producers and a previous operation probably means that this is an activation function
+                db->AddRow(perfDebugConnectivityTable, schedOp->Uid(), {std::to_string(prevOp->Uid()), std::to_string(index)});
             }
         }
 
