@@ -1359,6 +1359,7 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
         // Create a new tensor in fast storage to use as weights buffer
         cost->bufferedWeightTensor.tensor = std::make_shared<SchedulerTensor>();
         cost->bufferedWeightTensor.tensor->SetAllocatedSize(weightBufferSize);
+        cost->bufferedWeightTensor.tensor->uid = GenerateUniqueId();
         cost->bufferedWeightTensor.tensor->memArea = _arch->StagingMemory();
         cost->bufferedWeightTensor.buffering = buffering;
 
@@ -1515,6 +1516,7 @@ std::shared_ptr<Schedule> Scheduler::ProposeScheduleStriping(const Shape &finalS
             assert(cost->npuWeightsTensor);
             auto bufferingTensor = std::make_shared<SchedulerTensor>();
             bufferingTensor->SetAllocatedSize(cost->npuWeightsTensor->AllocationSizeBytes());
+            bufferingTensor->uid = GenerateUniqueId();
             bufferingTensor->memArea = refCost->bufferedWeightTensor.tensor->memArea;
             cost->bufferedWeightTensor.buffering = Buffering::Single;  // Stripes are currently single-buffered
             cost->bufferedWeightTensor.preBuffer = false;
@@ -2192,6 +2194,7 @@ WeightScaleTensors Scheduler::TryEncodeWeightAndScaleTensor(OpType forOp, IWeigh
 
     // Create tensor to hold encoded output
     auto npuTensor = std::make_shared<NpuWeightTensor>();
+    npuTensor->uid = GenerateUniqueId();
     int rangeIndex = 0;
     int maxBufferLen[2] = {};
     std::vector<uint8_t> encodedStream;
