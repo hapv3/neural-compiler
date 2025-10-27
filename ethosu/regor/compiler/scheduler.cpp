@@ -399,13 +399,17 @@ int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *con
         tensor->needsLinearFormat = true;
     }
 
+    // Figure out if a tensor has dynamic shape (any negative axis), i.e. the shape is unknown at compile time
+    const bool unknownShape = tensor->storageShape ? (tensor->storageShape.LessMask(tensor->storageShape.WithZeros()) != 0) : true;
+
     // Initial criteria (may change)
-    bool cpuTensor =
+    const bool cpuTensor =
         tensor->hasCPUWriters || tensor->hasCPUReaders || tensor->isGraphInput || tensor->isGraphOutput || tensor->isPersistent;
     conn->requireFullTensor = conn->requireFullTensor || cpuTensor;
     tensor->needsLinearFormat = tensor->needsLinearFormat || cpuTensor;
 
-    if ( (_options.separateIORegions || tensor->IsConstant()) && cpuTensor && !tensor->hasNPUWriters && !tensor->hasNPUReaders )
+    if ( (_options.separateIORegions || tensor->IsConstant() || unknownShape) && cpuTensor && !tensor->hasNPUWriters &&
+         !tensor->hasNPUReaders )
     {
         tensor->memArea = _arch->CPUMemory();
     }
