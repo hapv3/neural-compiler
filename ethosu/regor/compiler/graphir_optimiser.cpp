@@ -576,7 +576,7 @@ Operation *GraphIrOptimiser::ConstPropagation(Graph *const graph, Operation *con
             auto constant = std::make_shared<Tensor>("constprop", ofm->Type(), ofm->StorageShape(), ofmBuf);
             auto copy = std::make_shared<Operation>(OpType::MemoryCopy);
             copy->ConnectInput(TensorUsage::IFM, constant);
-            copy->CopyOutput(TensorUsage::OFM, *ofmConn);
+            copy->ConnectOutput(TensorUsage::OFM, ofmConn->tensor);
             returnOp = copy.get();
             RecordOptimisation(*operation, copy.get());
             operation->Disconnect();
