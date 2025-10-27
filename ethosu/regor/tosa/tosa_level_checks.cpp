@@ -33,7 +33,7 @@ void LevelCheck_1lz89reckvj8d(const regor::Operation *op, [[maybe_unused]] const
     static constexpr char constraint[] = "LEVEL_CHECK(rank(shape1) <= MAX_RANK)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void LevelCheck_2i1ithnrq06wi(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -42,7 +42,7 @@ void LevelCheck_2i1ithnrq06wi(const regor::Operation *op, [[maybe_unused]] const
     static constexpr char constraint[] = "LEVEL_CHECK(kernel_y <= MAX_KERNEL)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void LevelCheck_1wobi8axf7z2y(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -51,7 +51,7 @@ void LevelCheck_1wobi8axf7z2y(const regor::Operation *op, [[maybe_unused]] const
     static constexpr char constraint[] = "LEVEL_CHECK(kernel_x <= MAX_KERNEL)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void LevelCheck_1xppm0ufw64nq(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -60,7 +60,7 @@ void LevelCheck_1xppm0ufw64nq(const regor::Operation *op, [[maybe_unused]] const
     static constexpr char constraint[] = "LEVEL_CHECK(stride_y <= MAX_STRIDE)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void LevelCheck_as2lzdd5d28b(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -69,7 +69,7 @@ void LevelCheck_as2lzdd5d28b(const regor::Operation *op, [[maybe_unused]] const 
     static constexpr char constraint[] = "LEVEL_CHECK(stride_x <= MAX_STRIDE)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void LevelCheck_2n3xkkz3ip4mz(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -78,7 +78,7 @@ void LevelCheck_2n3xkkz3ip4mz(const regor::Operation *op, [[maybe_unused]] const
     static constexpr char constraint[] = "LEVEL_CHECK(pad_top <= MAX_KERNEL)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void LevelCheck_3o7qpmmd9ga58(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -87,7 +87,7 @@ void LevelCheck_3o7qpmmd9ga58(const regor::Operation *op, [[maybe_unused]] const
     static constexpr char constraint[] = "LEVEL_CHECK(pad_bottom <= MAX_KERNEL)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void LevelCheck_16lxbjk2bszcz(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -96,7 +96,7 @@ void LevelCheck_16lxbjk2bszcz(const regor::Operation *op, [[maybe_unused]] const
     static constexpr char constraint[] = "LEVEL_CHECK(pad_left <= MAX_KERNEL)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void LevelCheck_2kwfb08mbiwpg(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -105,7 +105,7 @@ void LevelCheck_2kwfb08mbiwpg(const regor::Operation *op, [[maybe_unused]] const
     static constexpr char constraint[] = "LEVEL_CHECK(pad_right <= MAX_KERNEL)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void LevelCheck_1l00wczs5w70i(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -114,7 +114,7 @@ void LevelCheck_1l00wczs5w70i(const regor::Operation *op, [[maybe_unused]] const
     static constexpr char constraint[] = "LEVEL_CHECK(dilation_y * KH <= MAX_KERNEL)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void LevelCheck_1hle41fus7cpl(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -123,7 +123,7 @@ void LevelCheck_1hle41fus7cpl(const regor::Operation *op, [[maybe_unused]] const
     static constexpr char constraint[] = "LEVEL_CHECK(dilation_x * KW <= MAX_KERNEL)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void LevelCheck_1npkwxnbypn8z(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -132,7 +132,7 @@ void LevelCheck_1npkwxnbypn8z(const regor::Operation *op, [[maybe_unused]] const
     static constexpr char constraint[] = "LEVEL_CHECK(dilation_d * KD <= MAX_KERNEL)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void LevelCheck_olu6vs8y9f61(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -141,7 +141,7 @@ void LevelCheck_olu6vs8y9f61(const regor::Operation *op, [[maybe_unused]] const 
     static constexpr char constraint[] = "LEVEL_CHECK(pad_d0 <= MAX_KERNEL)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void LevelCheck_3l4no1w1u6sq4(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -150,7 +150,7 @@ void LevelCheck_3l4no1w1u6sq4(const regor::Operation *op, [[maybe_unused]] const
     static constexpr char constraint[] = "LEVEL_CHECK(pad_d1 <= MAX_KERNEL)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void LevelCheck_1416gon2u3sue(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -159,7 +159,7 @@ void LevelCheck_1416gon2u3sue(const regor::Operation *op, [[maybe_unused]] const
     static constexpr char constraint[] = "LEVEL_CHECK(stride_d <= MAX_STRIDE)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void LevelCheck_1wd03gtw7132o(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -168,7 +168,7 @@ void LevelCheck_1wd03gtw7132o(const regor::Operation *op, [[maybe_unused]] const
     static constexpr char constraint[] = "LEVEL_CHECK(H <= MAX_KERNEL)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void LevelCheck_i8zuc5feuxbr(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -177,7 +177,7 @@ void LevelCheck_i8zuc5feuxbr(const regor::Operation *op, [[maybe_unused]] const 
     static constexpr char constraint[] = "LEVEL_CHECK(W <= MAX_KERNEL)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void LevelCheck_17eyg1nicy12g(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -186,7 +186,7 @@ void LevelCheck_17eyg1nicy12g(const regor::Operation *op, [[maybe_unused]] const
     static constexpr char constraint[] = "LEVEL_CHECK(KH <= MAX_KERNEL)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void LevelCheck_6qao6e1mxke0(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -195,7 +195,7 @@ void LevelCheck_6qao6e1mxke0(const regor::Operation *op, [[maybe_unused]] const 
     static constexpr char constraint[] = "LEVEL_CHECK(KW <= MAX_KERNEL)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void LevelCheck_pnaf5n03f8jg(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -204,7 +204,7 @@ void LevelCheck_pnaf5n03f8jg(const regor::Operation *op, [[maybe_unused]] const 
     static constexpr char constraint[] = "LEVEL_CHECK(out_pad_top <= MAX_KERNEL)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void LevelCheck_me421i5r5j13(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -213,7 +213,7 @@ void LevelCheck_me421i5r5j13(const regor::Operation *op, [[maybe_unused]] const 
     static constexpr char constraint[] = "LEVEL_CHECK(out_pad_bottom <= MAX_KERNEL)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void LevelCheck_2ffhdgbz1kvxc(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -222,7 +222,7 @@ void LevelCheck_2ffhdgbz1kvxc(const regor::Operation *op, [[maybe_unused]] const
     static constexpr char constraint[] = "LEVEL_CHECK(out_pad_left <= MAX_KERNEL)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void LevelCheck_a0x2apl3zoz(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -231,7 +231,7 @@ void LevelCheck_a0x2apl3zoz(const regor::Operation *op, [[maybe_unused]] const C
     static constexpr char constraint[] = "LEVEL_CHECK(out_pad_right <= MAX_KERNEL)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void LevelCheck_1flzmpv6hubzc(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -244,7 +244,7 @@ void LevelCheck_1flzmpv6hubzc(const regor::Operation *op, [[maybe_unused]] const
     static constexpr char constraint[] = "LEVEL_CHECK(rank(shape) <= MAX_RANK)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void LevelCheck_3tcyujqdy8gol(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -253,7 +253,7 @@ void LevelCheck_3tcyujqdy8gol(const regor::Operation *op, [[maybe_unused]] const
     static constexpr char constraint[] = "LEVEL_CHECK(tensor_list_shape(input1) <= MAX_TENSOR_LIST_SIZE)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void LevelCheck_1r40jc4ashh6o(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -262,7 +262,7 @@ void LevelCheck_1r40jc4ashh6o(const regor::Operation *op, [[maybe_unused]] const
     static constexpr char constraint[] = "LEVEL_CHECK(scale_y_n/scale_y_d <= MAX_SCALE)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void LevelCheck_1u7rtl141felu(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -271,7 +271,7 @@ void LevelCheck_1u7rtl141felu(const regor::Operation *op, [[maybe_unused]] const
     static constexpr char constraint[] = "LEVEL_CHECK(scale_x_n/scale_x_d <= MAX_SCALE)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void LevelCheck_3ufj7d9b3dpok(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -280,7 +280,7 @@ void LevelCheck_3ufj7d9b3dpok(const regor::Operation *op, [[maybe_unused]] const
     static constexpr char constraint[] = "LEVEL_CHECK(tensor_list_shape(input_list) <= MAX_TENSOR_LIST_SIZE)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void LevelCheck_2b1mift7kqw7v(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -289,7 +289,7 @@ void LevelCheck_2b1mift7kqw7v(const regor::Operation *op, [[maybe_unused]] const
     static constexpr char constraint[] = "LEVEL_CHECK(tensor_list_shape(output_list) <= MAX_TENSOR_LIST_SIZE)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 }  // namespace checks

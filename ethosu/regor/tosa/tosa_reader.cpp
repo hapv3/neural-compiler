@@ -25,6 +25,7 @@
 #include "compiler/attributes.hpp"
 #include "compiler/graph_builder.hpp"
 #include "include/graphapi.hpp"
+#include "tosa_error_messages.hpp"
 #include "tosa_mapping.hpp"
 #include "tosa_schema_generated.hpp"
 
@@ -76,12 +77,32 @@ BitCast(const FROM &src) noexcept
     return dst;
 }
 
-inline void TosaAssert(bool cond, const char *msg = nullptr)
+inline void TosaAssert(bool cond, const char *msg = nullptr, const char *errorDesc = nullptr, tosaFb::Op type = tosaFb::Op::UNKNOWN)
 {
     if ( !cond )
     {
-        throw std::runtime_error("TOSA FB Reader error: " + std::string(msg ? msg : "Failed to load TOSA model. Buffer contents inconsistent with generated schema"));
+        std::string what = "TOSA FB Reader error:\n";
+        if ( type != tosaFb::Op::UNKNOWN )
+        {
+            what += tosaFb::EnumNameOp(type);
+            what += ":\n";
+        }
+        what += " - ";
+        what += msg ? msg : "Failed to load TOSA model. Buffer contents inconsistent with generated schema";
+        what += "\n";
+        if ( errorDesc )
+        {
+            what += " - ";
+            what += errorDesc;
+            what += "\n";
+        }
+        throw std::runtime_error(what);
     }
+}
+
+inline void TosaAssert(bool cond, const char *msg, tosaFb::Op type)
+{
+    TosaAssert(cond, msg, nullptr, type);
 }
 
 inline void BuilderAssert(bool cond, const std::string &msg)
@@ -105,11 +126,11 @@ const T &SafeDeref(const T *ptr, const char *msg = nullptr)
 }
 
 inline const TensorInfo &SafeGetTensor(const std::unordered_map<std::string, TensorInfo> &tensors,
-    const std::vector<std::string> &inputTensors, size_t index)
+    const std::vector<std::string> &inputTensors, size_t index, tosaFb::Op type = tosaFb::Op::UNKNOWN)
 {
-    TosaAssert(index < inputTensors.size(), "Input tensor index out of range");
+    TosaAssert(index < inputTensors.size(), "Input tensor index out of range", ERRORIF_WrongInputList, type);
     TosaAssert(tensors.find(inputTensors[index]) != tensors.end(),
-        fmt::format("Input tensor not found: {}", inputTensors[index]).c_str());
+        fmt::format("Input tensor not found: {}", inputTensors[index]).c_str(), ERRORIF_WrongInputList, type);
     return tensors.at(inputTensors[index]);
 }
 
@@ -203,11 +224,24 @@ double ToDouble<GraphApi::GraphDataType::BFloat16, const ::flatbuffers::Vector<u
 }
 
 // Check that zero points are compile time constants
-inline void CheckConstantZeroPoint(const TensorInfo &tensorInfo, const char *tensorRole, const char *opName, int tosaOpIndex)
+inline void CheckConstantZeroPoint(const TensorInfo &tensorInfo, const char *tensorRole, tosaFb::Op type, int tosaOpIndex)
 {
     TosaAssert(tensorInfo.constant,
-        fmt::format("{} zero point tensor must be a compile time constant on {} operator at index {}.", tensorRole, opName, tosaOpIndex)
-            .c_str());
+        fmt::format("{} zero point tensor must be a compile time constant on operator at index {}.", tensorRole, tosaOpIndex)
+            .c_str(),
+        type);
+}
+
+// Check that accumulator type is valid for the given operator
+inline void CheckAccType(tosaFb::Op type, int index, tosaFb::DType accType, GraphApi::GraphDataType ifmType)
+{
+    // Skip the acc validation test for invalid ifm types, since they will be caught later in the validator
+    bool ok = ifmType != GraphApi::GraphDataType::Int8 && ifmType != GraphApi::GraphDataType::Int16;
+    // The actual valid combinations
+    ok = ok || (accType == tosaFb::DType::INT32 && ifmType == GraphApi::GraphDataType::Int8);
+    ok = ok || (accType == tosaFb::DType::INT32 && ifmType == GraphApi::GraphDataType::Int16 && type == tosaFb::Op::AVG_POOL2D);
+    ok = ok || (accType == tosaFb::DType::INT48 && ifmType == GraphApi::GraphDataType::Int16);
+    TosaAssert(ok, fmt::format("Invalid acc_type attribute on operator at index {}.", index).c_str(), ERRORIF_WrongAccumulatorType, type);
 }
 
 template<typename ALLOC_TYPE = void, typename FB_TYPE>
@@ -402,7 +436,7 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
             tensors.reserve(SafeDeref(tosaBasicBlock->tensors(), "No tensors").size());
 
             // Vector to API shape
-            auto ToApiShape = [](const ::flatbuffers::Vector<int32_t> *in) -> GraphApi::GraphShape
+            static auto ToApiShape = [](const ::flatbuffers::Vector<int32_t> *in) -> GraphApi::GraphShape
             {
                 GraphApi::GraphShape out{};
                 // Interpret a missing shape vector as scalar, rank 0 shape.
@@ -412,7 +446,7 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                     return out;
                 }
                 const auto &buf = SafeDeref(in, "No shape vector");
-                TosaAssert(buf.size() <= std::size(out.axisNHWC), "Shape rank exceeds maximum allowed");
+                TosaAssert(buf.size() <= std::size(out.axisNHWC), "Shape rank exceeds maximum allowed", ERRORIF_WrongRank);
                 for ( int i = 0; i < int(buf.size()); i++ )
                 {
                     out.axisNHWC[i] = buf[i];
@@ -489,7 +523,7 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                     BuilderAssert(tensor, "Failed to create tensor");
 
                     TosaAssert(tensors.count(name) == 0, "Shape and Tensor name collision");
-                    tensors.emplace(name, TensorInfo(tensor, shape, GraphApi::GraphDataType::Int32, buffer != nullptr));
+                    tensors.emplace(name, TensorInfo(tensor, shape, type, buffer != nullptr));
                 }
             }
 
@@ -497,7 +531,8 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
             for ( int tosaOpIndex = 0; tosaOpIndex < int(tosaOperators.size()); tosaOpIndex++ )
             {
                 const auto &tosaOperator = SafeDeref(tosaOperators[tosaOpIndex], "Invalid operator");
-                if ( tosaOperator.op() == tosaFb::Op::CONST_SHAPE ) continue;
+                const auto fbOp = tosaOperator.op();
+                if ( fbOp == tosaFb::Op::CONST_SHAPE ) continue;
                 // Connect operation to its input tensors
                 std::vector<std::string> inputTensors;
                 if ( tosaOperator.inputs() )
@@ -511,124 +546,112 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                 if ( outputTensors.empty() )
                 {
                     auto message = fmt::format("WARNING: Operator: {} at index {} does not output to any tensor.\n",
-                        tosaFb::EnumNameOp(tosaOperator.op()), tosaOpIndex);
+                        tosaFb::EnumNameOp(fbOp), tosaOpIndex);
                     LOG_WARN(message);
                 }
 
                 // Kernel
                 GraphApi::GraphKernel kernel = {};
                 GraphApi::GraphKernel *kernelPtr = nullptr;
-                switch ( tosaOperator.op() )
+                switch ( fbOp )
                 {
                     case tosaFb::Op::DEPTHWISE_CONV2D:
                     {
                         kernelPtr = &kernel;
-                        TosaAssert(inputTensors.size() > 1, "Missing DEPTHWISE_CONV2D input tensor");
-                        const auto &shape = SafeGetTensor(tensors, inputTensors, 1).shape;
+                        const auto &shape = SafeGetTensor(tensors, inputTensors, 1, fbOp).shape;
                         kernel.sizeYXZ[0] = shape.axisNHWC[0];
                         kernel.sizeYXZ[1] = shape.axisNHWC[1];
                         kernel.sizeYXZ[2] = 1;
                         const auto &attr = TosaAttr<tosaFb::Op::DEPTHWISE_CONV2D>::Get(tosaOperator);
-                        TosaAssert(attr.pad(), "Missing DEPTHWISE_CONV2D pad attribute");
-                        TosaAssert(attr.pad()->size() == 4, "Invalid DEPTHWISE_CONV2D pad attribute");
+                        TosaAssert(attr.pad(), "Missing pad attribute", fbOp);
+                        TosaAssert(attr.pad()->size() == 4, "Invalid pad attribute", fbOp);
                         kernel.paddingTBLRNF[0] = (*attr.pad())[0];
                         kernel.paddingTBLRNF[1] = (*attr.pad())[1];
                         kernel.paddingTBLRNF[2] = (*attr.pad())[2];
                         kernel.paddingTBLRNF[3] = (*attr.pad())[3];
-                        TosaAssert(attr.stride(), "Missing DEPTHWISE_CONV2D stride attribute");
-                        TosaAssert(attr.stride()->size() == 2, "Invalid DEPTHWISE_CONV2D stride attribute");
+                        TosaAssert(attr.stride(), "Missing stride attribute", fbOp);
+                        TosaAssert(attr.stride()->size() == 2, "Invalid stride attribute", fbOp);
                         kernel.strideYXZ[0] = (*attr.stride())[0];
                         kernel.strideYXZ[1] = (*attr.stride())[1];
                         kernel.strideYXZ[2] = 1;
-                        TosaAssert(attr.dilation(), "Missing DEPTHWISE_CONV2D dilation attribute");
-                        TosaAssert(attr.dilation()->size() == 2, "Invalid DEPTHWISE_CONV2D dilation attribute");
+                        TosaAssert(attr.dilation(), "Missing dilation attribute", fbOp);
+                        TosaAssert(attr.dilation()->size() == 2, "Invalid dilation attribute", fbOp);
                         kernel.dilationYXZ[0] = (*attr.dilation())[0];
                         kernel.dilationYXZ[1] = (*attr.dilation())[1];
                         kernel.dilationYXZ[2] = 1;
                         // Check for illegal accumulator type
-                        auto accType = attr.acc_type();
-                        TosaAssert(accType == tosaFb::DType::INT32 || accType == tosaFb::DType::INT48,
-                            fmt::format("Invalid acc_type attribute on DEPTHWISE_CONV2D operator with index {}.", tosaOpIndex)
-                                .c_str());
-
-                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 3), "Input", "DEPTHWISE_CONV2D", tosaOpIndex);
-                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 4), "Weight", "DEPTHWISE_CONV2D", tosaOpIndex);
+                        CheckAccType(fbOp, tosaOpIndex, attr.acc_type(), SafeGetTensor(tensors, inputTensors, 0, fbOp).type);
+                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 3, fbOp), "Input", fbOp, tosaOpIndex);
+                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 4, fbOp), "Weight", fbOp, tosaOpIndex);
                     }
                     break;
                     case tosaFb::Op::CONV2D:
                     {
                         kernelPtr = &kernel;
-                        TosaAssert(inputTensors.size() > 1, "Missing CONV2D input tensor");
-                        const auto &shape = SafeGetTensor(tensors, inputTensors, 1).shape;
+                        const auto &shape = SafeGetTensor(tensors, inputTensors, 1, fbOp).shape;
                         kernel.sizeYXZ[0] = shape.axisNHWC[1];
                         kernel.sizeYXZ[1] = shape.axisNHWC[2];
                         kernel.sizeYXZ[2] = 1;
                         const auto &attr = TosaAttr<tosaFb::Op::CONV2D>::Get(tosaOperator);
-                        TosaAssert(attr.pad(), "Missing CONV2D pad attribute");
-                        TosaAssert(attr.pad()->size() == 4, "Invalid CONV2D pad attribute");
+                        TosaAssert(attr.pad(), "Missing pad attribute", fbOp);
+                        TosaAssert(attr.pad()->size() == 4, "Invalid pad attribute", fbOp);
                         kernel.paddingTBLRNF[0] = (*attr.pad())[0];
                         kernel.paddingTBLRNF[1] = (*attr.pad())[1];
                         kernel.paddingTBLRNF[2] = (*attr.pad())[2];
                         kernel.paddingTBLRNF[3] = (*attr.pad())[3];
-                        TosaAssert(attr.stride(), "Missing CONV2D stride attribute");
-                        TosaAssert(attr.stride()->size() == 2, "Invalid CONV2D stride attribute");
+                        TosaAssert(attr.stride(), "Missing stride attribute", fbOp);
+                        TosaAssert(attr.stride()->size() == 2, "Invalid stride attribute", fbOp);
                         kernel.strideYXZ[0] = (*attr.stride())[0];
                         kernel.strideYXZ[1] = (*attr.stride())[1];
                         kernel.strideYXZ[2] = 1;
-                        TosaAssert(attr.dilation(), "Missing CONV2D dilation attribute");
-                        TosaAssert(attr.dilation()->size() == 2, "Invalid CONV2D dilation attribute");
+                        TosaAssert(attr.dilation(), "Missing dilation attribute", fbOp);
+                        TosaAssert(attr.dilation()->size() == 2, "Invalid dilation attribute", fbOp);
                         kernel.dilationYXZ[0] = (*attr.dilation())[0];
                         kernel.dilationYXZ[1] = (*attr.dilation())[1];
                         kernel.dilationYXZ[2] = 1;
                         // Check for illegal accumulator type
-                        auto accType = attr.acc_type();
-                        TosaAssert(accType == tosaFb::DType::INT32 || accType == tosaFb::DType::INT48,
-                            fmt::format("Invalid acc_type attribute on CONV2D operator with index {}.", tosaOpIndex).c_str());
-                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 3), "Input", "CONV2D", tosaOpIndex);
-                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 4), "Weight", "CONV2D", tosaOpIndex);
+                        CheckAccType(fbOp, tosaOpIndex, attr.acc_type(), SafeGetTensor(tensors, inputTensors, 0, fbOp).type);
+                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 3, fbOp), "Input", fbOp, tosaOpIndex);
+                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 4, fbOp), "Weight", fbOp, tosaOpIndex);
                     }
                     break;
                     case tosaFb::Op::CONV3D:
                     {
                         kernelPtr = &kernel;
-                        TosaAssert(inputTensors.size() > 1, "Missing CONV3D input tensor");
-                        const auto &shape = SafeGetTensor(tensors, inputTensors, 1).shape;
-                        TosaAssert(shape.count == 5, "Invalid CONV3D input rank");
+                        const auto &shape = SafeGetTensor(tensors, inputTensors, 1, fbOp).shape;
+                        TosaAssert(shape.count == 5, "Invalid input rank", fbOp);
                         kernel.sizeYXZ[0] = shape.axisNHWC[2];
                         kernel.sizeYXZ[1] = shape.axisNHWC[3];
                         kernel.sizeYXZ[2] = shape.axisNHWC[1];
                         const auto &attr = TosaAttr<tosaFb::Op::CONV3D>::Get(tosaOperator);
-                        TosaAssert(attr.pad(), "Missing CONV3D pad attribute");
-                        TosaAssert(attr.pad()->size() == 6, "Invalid CONV3D pad attribute");
+                        TosaAssert(attr.pad(), "Missing pad attribute", fbOp);
+                        TosaAssert(attr.pad()->size() == 6, "Invalid pad attribute", fbOp);
                         kernel.paddingTBLRNF[0] = (*attr.pad())[2];
                         kernel.paddingTBLRNF[1] = (*attr.pad())[3];
                         kernel.paddingTBLRNF[2] = (*attr.pad())[4];
                         kernel.paddingTBLRNF[3] = (*attr.pad())[5];
                         kernel.paddingTBLRNF[4] = (*attr.pad())[0];
                         kernel.paddingTBLRNF[5] = (*attr.pad())[1];
-                        TosaAssert(attr.stride(), "Missing CONV3D stride attribute");
-                        TosaAssert(attr.stride()->size() == 3, "Invalid CONV3D stride attribute");
+                        TosaAssert(attr.stride(), "Missing stride attribute", fbOp);
+                        TosaAssert(attr.stride()->size() == 3, "Invalid stride attribute", fbOp);
                         kernel.strideYXZ[0] = (*attr.stride())[1];
                         kernel.strideYXZ[1] = (*attr.stride())[2];
                         kernel.strideYXZ[2] = (*attr.stride())[0];
-                        TosaAssert(attr.dilation(), "Missing CONV3D dilation attribute");
-                        TosaAssert(attr.dilation()->size() == 3, "Invalid CONV3D dilation attribute");
+                        TosaAssert(attr.dilation(), "Missing dilation attribute", fbOp);
+                        TosaAssert(attr.dilation()->size() == 3, "Invalid dilation attribute", fbOp);
                         kernel.dilationYXZ[0] = (*attr.dilation())[1];
                         kernel.dilationYXZ[1] = (*attr.dilation())[2];
                         kernel.dilationYXZ[2] = (*attr.dilation())[0];
                         // Check for illegal accumulator type
-                        auto accType = attr.acc_type();
-                        TosaAssert(accType == tosaFb::DType::INT32 || accType == tosaFb::DType::INT48,
-                            fmt::format("Invalid acc_type attribute on CONV3D operator with index {}.", tosaOpIndex).c_str());
-                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 3), "Input", "CONV3D", tosaOpIndex);
-                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 4), "Weight", "CONV3D", tosaOpIndex);
+                        CheckAccType(fbOp, tosaOpIndex, attr.acc_type(), SafeGetTensor(tensors, inputTensors, 0, fbOp).type);
+                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 3, fbOp), "Input", fbOp, tosaOpIndex);
+                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 4, fbOp), "Weight", fbOp, tosaOpIndex);
                     }
                     break;
                     case tosaFb::Op::TRANSPOSE_CONV2D:
                     {
                         kernelPtr = &kernel;
-                        TosaAssert(inputTensors.size() > 1, "Missing TRANSPOSE_CONV2D input tensor");
-                        const auto &shape = SafeGetTensor(tensors, inputTensors, 1).shape;
+                        const auto &shape = SafeGetTensor(tensors, inputTensors, 1, fbOp).shape;
                         kernel.sizeYXZ[0] = shape.axisNHWC[1];
                         kernel.sizeYXZ[1] = shape.axisNHWC[2];
                         kernel.sizeYXZ[2] = 1;
@@ -639,8 +662,8 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         kernel.paddingTBLRNF[0] = kernel.paddingTBLRNF[1] = shape.axisNHWC[1] - 1;
                         kernel.paddingTBLRNF[2] = kernel.paddingTBLRNF[3] = shape.axisNHWC[2] - 1;
 
-                        TosaAssert(attr.stride(), "Missing TRANSPOSE_CONV2D stride attribute");
-                        TosaAssert(attr.stride()->size() == 2, "Invalid TRANSPOSE_CONV2D stride attribute");
+                        TosaAssert(attr.stride(), "Missing stride attribute", fbOp);
+                        TosaAssert(attr.stride()->size() == 2, "Invalid stride attribute", fbOp);
                         kernel.strideYXZ[0] = (*attr.stride())[0];
                         kernel.strideYXZ[1] = (*attr.stride())[1];
                         kernel.strideYXZ[2] = 1;
@@ -648,31 +671,28 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         kernel.dilationYXZ[1] = 1;
                         kernel.dilationYXZ[2] = 1;
                         // Check for illegal accumulator type
-                        auto accType = attr.acc_type();
-                        TosaAssert(accType == tosaFb::DType::INT32 || accType == tosaFb::DType::INT48,
-                            fmt::format("Invalid acc_type attribute on TRANSPOSE_CONV2D operator with index {}.", tosaOpIndex)
-                                .c_str());
-                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 3), "Input", "TRANSPOSE_CONV2D", tosaOpIndex);
-                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 4), "Weight", "TRANSPOSE_CONV2D", tosaOpIndex);
+                        CheckAccType(fbOp, tosaOpIndex, attr.acc_type(), SafeGetTensor(tensors, inputTensors, 0, fbOp).type);
+                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 3, fbOp), "Input", fbOp, tosaOpIndex);
+                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 4, fbOp), "Weight", fbOp, tosaOpIndex);
                     }
                     break;
                     case tosaFb::Op::AVG_POOL2D:
                     {
                         kernelPtr = &kernel;
                         const auto &attr = TosaAttr<tosaFb::Op::AVG_POOL2D>::Get(tosaOperator);
-                        TosaAssert(attr.kernel(), "Missing AVG_POOL2D kernel attribute");
-                        TosaAssert(attr.kernel()->size() == 2, "Invalid AVG_POOL2D kernel attribute");
+                        TosaAssert(attr.kernel(), "Missing kernel attribute", fbOp);
+                        TosaAssert(attr.kernel()->size() == 2, "Invalid kernel attribute", fbOp);
                         kernel.sizeYXZ[0] = (*attr.kernel())[0];
                         kernel.sizeYXZ[1] = (*attr.kernel())[1];
                         kernel.sizeYXZ[2] = 1;
-                        TosaAssert(attr.pad(), "Missing AVG_POOL2D pad attribute");
-                        TosaAssert(attr.pad()->size() == 4, "Invalid AVG_POOL2D pad attribute");
+                        TosaAssert(attr.pad(), "Missing pad attribute", fbOp);
+                        TosaAssert(attr.pad()->size() == 4, "Invalid pad attribute", fbOp);
                         kernel.paddingTBLRNF[0] = (*attr.pad())[0];
                         kernel.paddingTBLRNF[1] = (*attr.pad())[1];
                         kernel.paddingTBLRNF[2] = (*attr.pad())[2];
                         kernel.paddingTBLRNF[3] = (*attr.pad())[3];
-                        TosaAssert(attr.stride(), "Missing AVG_POOL2D stride attribute");
-                        TosaAssert(attr.stride()->size() == 2, "Invalid AVG_POOL2D stride attribute");
+                        TosaAssert(attr.stride(), "Missing stride attribute", fbOp);
+                        TosaAssert(attr.stride()->size() == 2, "Invalid stride attribute", fbOp);
                         kernel.strideYXZ[0] = (*attr.stride())[0];
                         kernel.strideYXZ[1] = (*attr.stride())[1];
                         kernel.strideYXZ[2] = 1;
@@ -680,30 +700,28 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         kernel.dilationYXZ[1] = 1;
                         kernel.dilationYXZ[2] = 1;
                         // Check for illegal accumulator type
-                        auto accType = attr.acc_type();
-                        TosaAssert(accType == tosaFb::DType::INT32,
-                            fmt::format("Invalid acc_type attribute on AVG_POOL2D operator with index {}.", tosaOpIndex).c_str());
-                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 1), "Input", "AVG_POOL2D", tosaOpIndex);
-                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 2), "Output", "AVG_POOL2D", tosaOpIndex);
+                        CheckAccType(fbOp, tosaOpIndex, attr.acc_type(), SafeGetTensor(tensors, inputTensors, 0, fbOp).type);
+                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 1, fbOp), "Input", fbOp, tosaOpIndex);
+                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 2, fbOp), "Output", fbOp, tosaOpIndex);
                     }
                     break;
                     case tosaFb::Op::MAX_POOL2D:
                     {
                         kernelPtr = &kernel;
                         const auto &attr = TosaAttr<tosaFb::Op::MAX_POOL2D>::Get(tosaOperator);
-                        TosaAssert(attr.kernel(), "Missing MAX_POOL2D kernel attribute");
-                        TosaAssert(attr.kernel()->size() == 2, "Invalid MAX_POOL2D kernel attribute");
+                        TosaAssert(attr.kernel(), "Missing kernel attribute", fbOp);
+                        TosaAssert(attr.kernel()->size() == 2, "Invalid kernel attribute", fbOp);
                         kernel.sizeYXZ[0] = (*attr.kernel())[0];
                         kernel.sizeYXZ[1] = (*attr.kernel())[1];
                         kernel.sizeYXZ[2] = 1;
-                        TosaAssert(attr.pad(), "Missing MAX_POOL2D pad attribute");
-                        TosaAssert(attr.pad()->size() == 4, "Invalid MAX_POOL2D pad attribute");
+                        TosaAssert(attr.pad(), "Missing pad attribute", fbOp);
+                        TosaAssert(attr.pad()->size() == 4, "Invalid pad attribute", fbOp);
                         kernel.paddingTBLRNF[0] = (*attr.pad())[0];
                         kernel.paddingTBLRNF[1] = (*attr.pad())[1];
                         kernel.paddingTBLRNF[2] = (*attr.pad())[2];
                         kernel.paddingTBLRNF[3] = (*attr.pad())[3];
-                        TosaAssert(attr.stride(), "Missing MAX_POOL2D stride attribute");
-                        TosaAssert(attr.stride()->size() == 2, "Invalid MAX_POOL2D stride attribute");
+                        TosaAssert(attr.stride(), "Missing stride attribute", fbOp);
+                        TosaAssert(attr.stride()->size() == 2, "Invalid stride attribute", fbOp);
                         kernel.strideYXZ[0] = (*attr.stride())[0];
                         kernel.strideYXZ[1] = (*attr.stride())[1];
                         kernel.strideYXZ[2] = 1;
@@ -714,20 +732,20 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                     break;
                     case tosaFb::Op::MATMUL:
                     {
-                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 2), "InputA", "MATMUL", tosaOpIndex);
-                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 3), "InputB", "MATMUL", tosaOpIndex);
+                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 2, fbOp), "InputA", fbOp, tosaOpIndex);
+                        CheckConstantZeroPoint(SafeGetTensor(tensors, inputTensors, 3, fbOp), "InputB", fbOp, tosaOpIndex);
                     }
                     break;
                     default:
                         break;
                 }
-                auto opType = TosaMapping::FBOpToOp(tosaOperator.op());
-                TosaAssert(opType != tosa::Op::UNKNOWN, "Unknown data type");
+                auto opType = TosaMapping::FBOpToOp(fbOp);
+                TosaAssert(opType != tosa::Op::UNKNOWN, "Unknown operator type");
                 auto op = builder->CreateOp(opType, kernelPtr);
-                BuilderAssert(op, fmt::format("Failed to create {} operation", tosaFb::EnumNameOp(tosaOperator.op())));
+                BuilderAssert(op, fmt::format("Failed to create {} operation", tosaFb::EnumNameOp(fbOp)));
                 builder->SetExternalId(op, tosaOpIndex);
 
-                switch ( tosaOperator.op() )
+                switch ( fbOp )
                 {
                     case tosaFb::Op::ARITHMETIC_RIGHT_SHIFT:
                     {
@@ -740,8 +758,7 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                         const auto &tosaAttr = TosaAttr<tosaFb::Op::CLAMP>::Get(tosaOperator);
                         double clampMin = 0;
                         double clampMax = 0;
-                        TosaAssert(!inputTensors.empty(), "Missing CLAMP input tensor");
-                        auto type = SafeGetTensor(tensors, inputTensors, 0).type;
+                        auto type = SafeGetTensor(tensors, inputTensors, 0, fbOp).type;
                         switch ( type )
                         {
                             case GraphApi::GraphDataType::Int8:
@@ -819,10 +836,11 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
 
                         if ( tosaAttr.per_channel() )
                         {
-                            const auto &rescaleInputTensor = SafeGetTensor(tensors, inputTensors, 0);
+                            const auto &rescaleInputTensor = SafeGetTensor(tensors, inputTensors, 0, fbOp);
                             TosaAssert(rescaleInputTensor.shape.count != 0,
-                                fmt::format("RESCALE input tensor {} needs to have rank > 0 when per channel attribute is set.", inputTensors[0])
-                                    .c_str());
+                                fmt::format("Input tensor {} needs to have rank > 0 when per channel attribute is set.", inputTensors[0])
+                                    .c_str(),
+                                ERRORIF_RescalePerChannelRank0, fbOp);
                         }
                     }
                     break;
@@ -830,7 +848,7 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                     {
                         const auto &tosaAttr = TosaAttr<tosaFb::Op::RESIZE>::Get(tosaOperator);
                         const auto mode = TosaMapping::FBResizeModeToResizeMode(tosaAttr.mode());
-                        TosaAssert(mode != tosa::ResizeMode::UNKNOWN, "Unknown resize mode");
+                        TosaAssert(mode != tosa::ResizeMode::UNKNOWN, "Unknown resize mode", fbOp);
                         BuilderAssert(builder->Set(op, GraphApi::OpAttr::RESIZE_MODE, int(mode)), "Failed to set RESIZE_MODE attribute on RESIZE");
                     }
                     break;
@@ -847,17 +865,17 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                     case tosaFb::Op::TRANSPOSE_CONV2D:
                     {
                         const auto &tosaAttr = TosaAttr<tosaFb::Op::TRANSPOSE_CONV2D>::Get(tosaOperator);
-                        TosaAssert(tosaAttr.out_pad());
-                        TosaAssert(tosaAttr.out_pad()->size() == 4);
+                        TosaAssert(tosaAttr.out_pad(), "Missing out_pad attribute", fbOp);
+                        TosaAssert(tosaAttr.out_pad()->size() == 4, "Invalid out_pad attribute", fbOp);
                         BuilderAssert(builder->Set(op, OpAttr::TRANSPOSE_CONV2D_OUTPAD, ToApiShape(tosaAttr.out_pad())),
                             "Failed to set OUTPAD attribute on TRANSPOSE_CONV2D");
                     }
                     break;
                     case tosaFb::Op::MUL:
                     {
-                        const auto &mulShiftTensor = SafeGetTensor(tensors, inputTensors, 2);
+                        const auto &mulShiftTensor = SafeGetTensor(tensors, inputTensors, 2, fbOp);
                         TosaAssert(mulShiftTensor.shape.count == 1,
-                            fmt::format("MUL shift tensor {} needs to have rank 1.", inputTensors[2]).c_str());
+                            fmt::format("Shift tensor {} needs to have rank 1.", inputTensors[2]).c_str(), ERRORIF_InputRank1WrongRank, fbOp);
                     }
                     break;
                     default:
@@ -884,20 +902,18 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                 for ( int i = 0; i < int(inputTensors.size()); i++ )
                 {
                     const auto &ten = inputTensors[i];
-                    TosaAssert(tensors.count(ten),
-                        fmt::format("{} operator input tensor '{}' not found", tosaFb::EnumNameOp(tosaOperator.op()), ten)
-                            .c_str());
+                    TosaAssert(tensors.count(ten), fmt::format("Input tensor '{}' not found", ten).c_str(), ERRORIF_WrongInputList, fbOp);
                     auto usage = usages[i];
                     auto tensor = tensors.at(ten).tensor;
 
                     // Axis order
                     if ( usage == GraphApi::GraphTensorUsage::Weights )
                     {
-                        if ( tosaOperator.op() == tosaFb::Op::DEPTHWISE_CONV2D )
+                        if ( fbOp == tosaFb::Op::DEPTHWISE_CONV2D )
                         {
                             builder->SetAxisOrder(tensor, GraphApi::AxisOrder::HWCM);
                         }
-                        else if ( tosaOperator.op() == tosaFb::Op::CONV2D )
+                        else if ( fbOp == tosaFb::Op::CONV2D )
                         {
                             builder->SetAxisOrder(tensor, GraphApi::AxisOrder::OHWI);
                         }
@@ -910,9 +926,8 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                 {
                     const auto &ten = SafeDeref(outputTensors[i], "Invalid output tensor name");
                     GraphApi::GraphTensorUsage usage = GraphApi::MakeTensorUsage(GraphApi::GraphTensorUsage::OFM, i);
-                    TosaAssert(tensors.count(ten.str()),
-                        fmt::format("{} operator output tensor '{}' not found", tosaFb::EnumNameOp(tosaOperator.op()), ten.str())
-                            .c_str());
+                    TosaAssert(tensors.count(ten.str()), fmt::format("Output tensor '{}' not found", ten.str()).c_str(),
+                        ERRORIF_WrongOutputList, fbOp);
                     builder->AddOutput(op, usage, tensors.at(ten.str()).tensor);
                 }
             }
@@ -933,7 +948,7 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                     fmt::format("BasicBlock output tensor '{}' not found.", ten->str()).c_str());
                 auto outputTensor = static_cast<Tensor *>(tensors.at(ten->str()).tensor);  // NOLINT(*-pro-type-static-cast-downcast)
                 TosaAssert(!outputTensor->Writers().empty(),
-                    fmt::format("Output tensor {} does not have any writers.", ten->str()).c_str());
+                    fmt::format("Output tensor {} does not have any writers.", ten->str()).c_str(), ERRORIF_WrongOutputList);
                 builder->AddOutput(outputTensor);
             }
         }

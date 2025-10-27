@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -46,7 +46,7 @@ std::string GraphValidator::GetErrorMsg()
     std::string errorMsg = "Validation error:\n";
     for ( auto &error : _validationErrors )
     {
-        errorMsg += OpTypeToString(error.operation) + " " + error.errorMessage + "\n";
+        errorMsg += OpTypeToString(error.operation) + ":\n" + error.errorMessage + "\n";
     }
     return errorMsg;
 }

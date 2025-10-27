@@ -290,7 +290,7 @@ class TosaValidator
       function << indent(1) + "static constexpr char constraint[] = \"%s(%s)\";\n" % [macro_name, check]
       function << indent(1) + "bool checkOk = true;\n"
       function << indent(1) + "checkOk = (op != nullptr);  // TODO: Implement check\n"
-      function << indent(1) + "if ( !checkOk ) throw std::invalid_argument(constraint);\n"
+      function << indent(1) + "if ( !checkOk ) throw tosa::invalid_argument(constraint);\n"
       function << "}\n\n"
     end
   end
@@ -374,7 +374,7 @@ class TosaValidator
       body << "void ValidateArguments(const regor::Operation *, const std::vector<const Argument *> &arguments,\n"
       body << indent(1) + "const std::vector<Typesupport> &typesupports, const Context &)\n"
       body << "{\n"
-      body << indent(1) + "if ( !ArgumentsCanBeResolved(arguments, typesupports) ) throw std::invalid_argument(\"Unsupported operation\");\n"
+      body << indent(1) + "if ( !ArgumentsCanBeResolved(arguments, typesupports) ) throw tosa::invalid_argument(\"Unsupported operation\");\n"
       body << indent(1) + "// TODO: Implement argument validation\n"
       body << "}\n\n"
     end
@@ -418,7 +418,7 @@ class TosaValidator
       end
     end
     validator << indent(2) + "default:\n"
-    validator << indent(3) + "throw std::invalid_argument(\"Unsupported operator\");\n"
+    validator << indent(3) + "throw tosa::invalid_argument(\"Unsupported operator\");\n"
     validator << indent(1) + "}\n"
     validator << "}\n\n"
     validator << "}  // namespace validator\n"
@@ -541,9 +541,9 @@ class TosaValidator
       f.write "namespace validator\n{\n\n"
       f.write "void ValidateOperator(const GraphApi::GraphOperation *graphOp, const Context &context)\n"
       f.write "{\n"
-      f.write indent(1) + "if ( graphOp == nullptr ) throw std::invalid_argument(\"No operation\");\n"
+      f.write indent(1) + "if ( graphOp == nullptr ) throw tosa::invalid_argument(\"No operation\");\n"
       versions.each { |version|  f.write version_validator_checked_call(version)}
-      f.write indent(1) + "throw std::invalid_argument(\"TOSA version or profile not supported\");\n"
+      f.write indent(1) + "throw tosa::invalid_argument(\"TOSA version or profile not supported\");\n"
       f.write "}\n\n"
       f.write "}  // namespace validator\n"
       f.write "}  // namespace tosa\n"

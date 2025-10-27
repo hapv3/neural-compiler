@@ -2590,7 +2590,7 @@ void ValidateOperator_Version_1_0_0_draft_Profile_PRO_INT(const GraphApi::GraphO
             ValidateOperator_WHILE_LOOP(op, context);
             break;
         default:
-            throw std::invalid_argument("Unsupported operator");
+            throw tosa::invalid_argument("Unsupported operator");
     }
 }
 

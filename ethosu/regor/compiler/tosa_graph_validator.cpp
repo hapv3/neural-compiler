@@ -71,10 +71,15 @@ bool TosaGraphValidator::Validate(Graph *graph)
             {
                 tosa::validator::ValidateOperator(op, _context);
             }
-            catch ( const std::invalid_argument &e )
+            catch ( const tosa::invalid_argument &e )
             {
                 graphValid = false;
-                _validationErrors.emplace_back(Error{op->Type(), e.what()});
+                std::string message = " - " + std::string(e.what());
+                if ( e.failure_desc() != nullptr )
+                {
+                    message += std::string("\n - ") + e.failure_desc();
+                }
+                _validationErrors.emplace_back(Error{op->Type(), std::move(message)});
             }
             return true;
         });

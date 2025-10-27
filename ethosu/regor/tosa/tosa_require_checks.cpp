@@ -33,7 +33,7 @@ void RequireCheck_3gogyrefl20gp(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "REQUIRE((is_same<in_out_t,i32_t>() && 0 <= value2 && value2 <= 31) || (is_same<in_out_t,i16_t>() && 0 <= value2 && value2 <= 15) || (is_same<in_out_t,i8_t>() && 0 <= value2 && value2 <= 7))";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void RequireCheck_35z4hcgn21c8p(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -42,7 +42,7 @@ void RequireCheck_35z4hcgn21c8p(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "REQUIRE(value2 != 0)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void RequireCheck_2f51h19mqfhr8(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -51,7 +51,7 @@ void RequireCheck_2f51h19mqfhr8(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "REQUIRE(0 <= shift && shift <= 63)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void RequireCheck_3jqx5d6a2c85r(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -60,7 +60,7 @@ void RequireCheck_3jqx5d6a2c85r(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "REQUIRE(is_same<in_t,int32_t>() || shift == 0)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void RequireCheck_1b64l72fvni7o(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -69,7 +69,7 @@ void RequireCheck_1b64l72fvni7o(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "REQUIRE(product >= minimum_s<i32_t>() && product <= maximum_s<i32_t>())";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void RequireCheck_3otz8rylb4eh1(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -78,7 +78,7 @@ void RequireCheck_3otz8rylb4eh1(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "REQUIRE(value1 >= 0)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void RequireCheck_2p74g4god707n(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -87,7 +87,7 @@ void RequireCheck_2p74g4god707n(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "REQUIRE(value1 > 0 || value2 > 0)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void RequireCheck_61j2lms4vo0v(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -96,7 +96,7 @@ void RequireCheck_61j2lms4vo0v(const regor::Operation *op, [[maybe_unused]] cons
     static constexpr char constraint[] = "REQUIRE(!isNaN(value1) && !isNaN(value2))";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void RequireCheck_3nkub9jwwaf4h(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -105,7 +105,7 @@ void RequireCheck_3nkub9jwwaf4h(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "REQUIRE(is_finite(value1) && is_finite(value2))";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void RequireCheck_3o6eotvyt76cz(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -114,7 +114,7 @@ void RequireCheck_3o6eotvyt76cz(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "REQUIRE(length(table) == TABLE_SIZE)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void RequireCheck_31n0oq4yculbk(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -123,7 +123,7 @@ void RequireCheck_31n0oq4yculbk(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "REQUIRE(0 <= k && k < K)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void RequireCheck_2apk8ly9uthz6(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -132,7 +132,7 @@ void RequireCheck_2apk8ly9uthz6(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "REQUIRE(output_modified[n,k,c] == false)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void RequireCheck_3ah9e1mnk126p(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -141,7 +141,7 @@ void RequireCheck_3ah9e1mnk126p(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "REQUIRE(var_t == in_t)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void RequireCheck_2e13btqfr98am(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -150,7 +150,7 @@ void RequireCheck_2e13btqfr98am(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "REQUIRE(var_shape == shape)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void RequireCheck_lt5trq6bbw9w(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -159,7 +159,7 @@ void RequireCheck_lt5trq6bbw9w(const regor::Operation *op, [[maybe_unused]] cons
     static constexpr char constraint[] = "REQUIRE(!var_tensor.seen)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void RequireCheck_1nuiu459z8num(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -168,7 +168,7 @@ void RequireCheck_1nuiu459z8num(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "REQUIRE(variable_tensor)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void RequireCheck_182ljbxwn59zs(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -177,7 +177,7 @@ void RequireCheck_182ljbxwn59zs(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "REQUIRE(variable_tensor.seen)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void RequireCheck_2pd0619ns6vtd(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -186,7 +186,7 @@ void RequireCheck_2pd0619ns6vtd(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "REQUIRE(variable_tensor.shape == shape)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void RequireCheck_12cwj1gynxopa(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -195,7 +195,7 @@ void RequireCheck_12cwj1gynxopa(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "REQUIRE(is_same<variable_tensor.type,in_t>())";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void RequireCheck_7uvvy4pqp2pj(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -204,7 +204,7 @@ void RequireCheck_7uvvy4pqp2pj(const regor::Operation *op, [[maybe_unused]] cons
     static constexpr char constraint[] = "REQUIRE(variable_tensor != NULL)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void RequireCheck_2wyo0jz6whe2p(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -213,7 +213,7 @@ void RequireCheck_2wyo0jz6whe2p(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "REQUIRE(variable_tensor.is_written)";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 void RequireCheck_2btzv7wkv70o0(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -222,7 +222,7 @@ void RequireCheck_2btzv7wkv70o0(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "REQUIRE(is_same<variable_tensor.type,out_t>())";
     bool checkOk = true;
     checkOk = (op != nullptr);  // TODO: Implement check
-    if ( !checkOk ) throw std::invalid_argument(constraint);
+    if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
 }  // namespace checks

@@ -29,13 +29,13 @@ namespace validator
 
 void ValidateOperator(const GraphApi::GraphOperation *graphOp, const Context &context)
 {
-    if ( graphOp == nullptr ) throw std::invalid_argument("No operation");
+    if ( graphOp == nullptr ) throw tosa::invalid_argument("No operation");
     if ( (context.version & 0xFFFFFF00) == GraphApi::VERSION_TOSA_1_00 && context.profile == GraphApi::PROFILE_BASELINE )
     {
         ValidateOperator_Version_1_0_0_draft_Profile_PRO_INT(graphOp, context);
         return;
     }
-    throw std::invalid_argument("TOSA version or profile not supported");
+    throw tosa::invalid_argument("TOSA version or profile not supported");
 }
 
 }  // namespace validator

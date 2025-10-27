@@ -24,6 +24,7 @@
 #include "compiler/attributes.hpp"
 #include "compiler/operation.hpp"
 #include "compiler/tensor_properties.hpp"
+#include "tosa/tosa_error_messages.hpp"
 
 #include <optional>
 #include <unordered_map>
@@ -201,8 +202,11 @@ std::optional<regor::DataType> GetTypeForArgument(const Operation *op, const Arg
     switch ( argument.category )
     {
         case Category::Input:  // input, weight, bias, input_real, input_imag, A, B, input1, input2, input3
+            throw tosa::invalid_argument(fmt::format("Input {} missing", argument.name).c_str(),
+                op->Type() == OpType::Concat ? ERRORIF_ConcatNoInputList : ERRORIF_WrongInputList);
             break;
         case Category::Output:
+            throw tosa::invalid_argument(fmt::format("Output {} missing", argument.name).c_str(), ERRORIF_WrongOutputList);
             break;
         case Category::Attribute:  // kernel stride pad dilation inverse weight bias out_pad out_shape padding new_shape
                                    // start size multiples perms scale offset border multiplier shift values then_graph
@@ -238,7 +242,7 @@ void ValidateArgumentShape(const regor::Operation *op, const Argument &argument,
     {
         auto rank = GetRankForArgument(op, argument);
         if ( rank && (rank < argument.rank_bounds.first || rank > argument.rank_bounds.second) )
-            throw std::invalid_argument("Tensor rank out of bounds");
+            throw tosa::invalid_argument("Tensor rank out of bounds", ERRORIF_WrongRank);
     }
 }
 
@@ -248,8 +252,8 @@ void ValidateArgumentShapes(const regor::Operation *op, const std::vector<const 
     {
         auto inRank = op->Input(regor::TensorUsage::IFM)->shape.Size();
         auto outRank = op->Output(regor::TensorUsage::OFM)->shape.Size();
-        if ( inRank != outRank ) throw std::invalid_argument("Tensor ranks different");
-        if ( inRank < 1 ) throw std::invalid_argument("Tensor rank < 1");
+        if ( inRank != outRank ) throw tosa::invalid_argument("Tensor ranks different");
+        if ( inRank < 1 ) throw tosa::invalid_argument("Tensor rank < 1");
     }
     for ( const auto &argument : arguments )
         ValidateArgumentShape(op, *argument, context);
@@ -281,24 +285,6 @@ bool ResolveAndValidateArgument(const regor::Operation *op, const Argument *argu
     if ( op->Type() == OpType::Rescale )
     {
         auto *attr = op->Attribute<regor::sign_attr_t>();
-        if ( ((argument->category == Category::Input && argument->name == "input" && attr->input_unsigned) ||
-                 (argument->category == Category::Output && argument->name == "output" && attr->output_unsigned)) )
-        {
-
-            if ( attr->output_unsigned && DataTypeSizeBits(*expectedType) > 16 )
-            {
-                // Error to make unsigned with anything but i8_t and i16_t
-                return false;
-            }
-            // Signedness of IFM/OFM for Rescale depends on the input_unsigned/output_unsigned attributes
-            // Actual input/output type can be either signed or unsigned
-            auto unsignedType = *expectedType & ~unsigned(DataType::Signed);
-
-            // Check unsigned type
-            if ( ValidateArgument(op, argument, unsignedType) ) return true;
-
-            // Unsgined check failed, signed check will be done below
-        }
         if ( argument->category == Category::Input && argument->name == "multiplier" )
         {
             auto *r_attr = op->Attribute<regor::rescale_attr_t>();
@@ -309,12 +295,13 @@ bool ResolveAndValidateArgument(const regor::Operation *op, const Argument *argu
     return ValidateArgument(op, argument, *expectedType);
 }
 
-bool ResolveAndValidateArguments(
-    const regor::Operation *op, const std::vector<const Argument *> arguments, const Typesupport *typesupport = nullptr)
+bool ResolveAndValidateArguments(const regor::Operation *op, const std::vector<const Argument *> arguments,
+    const Typesupport *typesupport = nullptr, int *failedArgumentIndex = nullptr)
 {
     for ( const auto argument : arguments )
     {
         if ( !ResolveAndValidateArgument(op, argument, typesupport) ) return false;
+        if ( failedArgumentIndex ) (*failedArgumentIndex)++;
     }
     return true;
 }
@@ -341,9 +328,27 @@ bool ArgumentsCanBeResolvedAndValidated(const regor::Operation *op, const std::v
         return true;
     }
     if ( ResolveAndValidateArguments(op, arguments) ) return true;
+    int failedArgumentIndex = -1;
     for ( const auto &typesupport : typesupports )
     {
-        if ( ResolveAndValidateArguments(op, arguments, &typesupport) ) return true;
+        int index = 0;
+        if ( ResolveAndValidateArguments(op, arguments, &typesupport, &index) ) return true;
+        failedArgumentIndex = std::max(failedArgumentIndex, index);
+    }
+    // If all supported type combinations failed to resolve for all the arguments,
+    // report the first failing argument, where most previous arguments were resolved
+    const auto failedArgument = arguments[failedArgumentIndex];
+    if ( failedArgument->category == Category::Input || failedArgument->category == Category::Output )
+    {
+        // Is this an input or output argument failing?
+        auto error = failedArgument->category == Category::Output ? ERRORIF_WrongOutputType : ERRORIF_WrongInputType;
+        // Special case for bias input argument
+        if ( failedArgument->category == Category::Input && failedArgument->name == "bias" )
+            error = ERRORIF_WrongBiasType;
+        // Special case for input argument, where the type is determined by the output type
+        else if ( failedArgument->category == Category::Input && failedArgument->element_type == "out_t" )
+            error = ERRORIF_WrongOutputType;
+        throw tosa::invalid_argument(fmt::format("Invalid argument {}", failedArgument->name).c_str(), error);
     }
     return false;
 }
@@ -390,9 +395,9 @@ namespace checks
 void ValidateArguments(const regor::Operation *op, const std::vector<const Argument *> &arguments,
     const std::vector<Typesupport> &typesupports, const Context &context)
 {
-    if ( !ArgumentsCanBeResolved(arguments, typesupports) ) throw std::invalid_argument("Unsupported operation");
+    if ( !ArgumentsCanBeResolved(arguments, typesupports) ) throw tosa::invalid_argument("Unsupported operation");
     if ( !ArgumentsCanBeResolvedAndValidated(op, arguments, typesupports) )
-        throw std::invalid_argument("Invalid arguments");
+        throw tosa::invalid_argument("Invalid arguments");
     ValidateArgumentShapes(op, arguments, context);
 }
 

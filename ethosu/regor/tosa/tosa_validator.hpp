@@ -38,6 +38,20 @@ class Graph;
 
 namespace tosa
 {
+
+class invalid_argument : public std::invalid_argument
+{
+private:
+    const char *_failure_desc;
+
+public:
+    invalid_argument(const char *msg, const char *failure_desc = nullptr) :
+            std::invalid_argument(msg), _failure_desc(failure_desc)
+    {
+    }
+    const char *failure_desc() const { return _failure_desc; }
+};
+
 namespace validator
 {
 
