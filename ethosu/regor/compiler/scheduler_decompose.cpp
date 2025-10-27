@@ -262,7 +262,7 @@ bool CanDecompose(Architecture *, const SchedulerOperation *schedOp)
 
     if ( schedOp->Type() == OpType::Conv2D ) return true;
     if ( schedOp->Type() == OpType::Conv3D && constantWeights && constantScales ) return true;
-    if ( schedOp->Type() == OpType::DepthwiseConv2D && constantWeights && constantScales ) return true;
+    if ( schedOp->Type() == OpType::DepthwiseConv2D ) return true;
     if ( schedOp->Type() == OpType::TransposeConv2D && constantWeights && constantScales ) return true;
     if ( DecomposeAsElementwise(schedOp->Type()) || schedOp->Type() == OpType::MemoryCopy ) return true;
     if ( schedOp->Type() == OpType::MatMul ) return true;
@@ -845,10 +845,7 @@ DecomposeNonConstWeights(DecompositionContext &ctx, std::unique_ptr<SchedulerOpe
 
     Shape ifmShape = ifmConn->SliceShape();
     Shape ofmShape = ofmConn->SliceShape();
-    Shape weightsShape = weightsConn->SliceShape();
     Shape biasShape = biasConn->SliceShape();
-    // Reshaped Weights from [OC, KH, KW, IC] -> [1, 1, OC * KH * KW, IC]
-    Shape reshapedWeightsShape = Shape(1, 1, weightsShape[0] * weightsShape[1] * weightsShape[2], weightsShape[3]);
     int ofmHeight = ofmShape.Height();
     int ofmWidth = ofmShape.Width();
     int ofmDepth = ofmShape.Depth();
@@ -856,16 +853,51 @@ DecomposeNonConstWeights(DecompositionContext &ctx, std::unique_ptr<SchedulerOpe
     const auto kSize = op->Kernel()->Size3D();
     int kernelH = kSize.y;
     int kernelW = kSize.x;
-    int kernelC = kSize.z;
     const int kernelArea = kernelH * kernelW;
     const Point2i stride = op->Kernel()->Stride();
     const Point2i dilation = op->Kernel()->Dilation();
+
+    const bool isDepthwise = op->Type() == OpType::DepthwiseConv2D;
+    const int depthMultiplier = ofmShape.Depth() / ifmShape.Depth();
+
+    Shape reshapedWeightsShape;
+    const Shape &wShape = weightsConn->SliceShape();
+    if ( isDepthwise )
+    {
+        // Reshape and Transpose the weights from [kH, kW, Cin, M] to [1, 1, M*kH*kW, Cin]
+        Quantization weightQuant = weightsConn->quantization;
+
+        // First squish the kernel dimensions into the second dimension to allow the
+        // Transpose to interpret the tensor as 3D instead of 4D, which is more efficient.
+        weightsConn->shape = Shape(1, wShape[0] * wShape[1], wShape[2], wShape[3]);
+
+        // Transpose from [1, kH*kW, Cin, M] to [1, M, kH*kW, Cin]
+        auto transposedWeights = weightsConn->tensor->Clone();
+        auto transposeOp = MakeTransposeOp(weightsConn->tensor, transposedWeights, Shape(0, 3, 1, 2));
+
+        // Replace weights with transposed weights, reshaped to [1, 1, M*kH*kW*Cin, 1]
+        reshapedWeightsShape = Shape(1, 1, wShape[0] * wShape[1] * wShape[2] * wShape[3], 1);
+        auto transposedWeightTens = transposeOp->Output(TensorUsage::OFM)->tensor;
+        transposedWeightTens->storageShape = reshapedWeightsShape;
+        weightsConn = op->ConnectInput(TensorUsage::Weights, transposedWeightTens);
+        weightsConn->quantization = std::move(weightQuant);
+        weightsConn->shape = reshapedWeightsShape;
+
+        auto subOps = DecomposeTranspose(ctx, std::move(transposeOp));
+        result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
+    }
+    else
+    {
+        assert(op->Type() == OpType::Conv2D);
+        // Reshape Weights from [OC, KH, KW, IC] -> [1, 1, OC * KH * KW, IC]
+        reshapedWeightsShape = Shape(1, 1, wShape[0] * wShape[1] * wShape[2], wShape[3]);
+    }
 
     // Block config query, biasing ofm block towards width as height and depth has to be 1
     regor::ArchitectureConfigQuery qConfig{};
     qConfig.ifmShape[0] = ifmShape.WithHeight(1);
     qConfig.ifmShape[1] = reshapedWeightsShape;
-    qConfig.ofmShape = ofmShape.WithHeight(1);
+    qConfig.ofmShape = isDepthwise ? ofmShape.WithHeight(1).WithDepth(1) : ofmShape.WithHeight(1);
     qConfig.ifmBits = DataTypeSizeBits(ifmConn->Type());
     qConfig.ofmBits = DataTypeSizeBits(ofmConn->Type());
     qConfig.kernel = &Kernel::UnitKernel();
@@ -877,7 +909,7 @@ DecomposeNonConstWeights(DecompositionContext &ctx, std::unique_ptr<SchedulerOpe
     qConfig.accSource = ArchAccumulatorSource::Acc;
     std::shared_ptr<ArchitectureOpConfig> opConfig = ctx.arch->GetOpConfig(OpType::MatMul, qConfig);
     int ofmBlockWidth = opConfig->OptimalStripeGranule().x;
-    int ofmBlockDepth = opConfig->OptimalDepthGranule();
+    int ofmBlockDepth = isDepthwise ? 1 : opConfig->OptimalDepthGranule();
 
     // Broadcast bias tensor to acc block size
     auto zeroTensor = CreateScalarConstTensor(ctx.arch, int32_t(0));
@@ -936,6 +968,9 @@ DecomposeNonConstWeights(DecompositionContext &ctx, std::unique_ptr<SchedulerOpe
             for ( int ofmZ = 0; ofmZ < ofmDepth; ofmZ += ofmBlockDepth )
             {
                 auto validOfmDepth = std::min(ofmDepth - ofmZ, ofmBlockDepth);
+                int ifmDepth = isDepthwise ? 1 : ifmShape.Depth();
+                int ifmZ = isDepthwise ? ofmZ / depthMultiplier : 0;
+
                 // Preload the bias using a NullPool
                 assert(broadcastBiasTensor->dataType == DataType::Int32 || broadcastBiasTensor->dataType == DataType::Int64);
                 auto biasOp = std::make_unique<SchedulerOperation>(OpType::NullPool);
@@ -964,21 +999,20 @@ DecomposeNonConstWeights(DecompositionContext &ctx, std::unique_ptr<SchedulerOpe
 
                         // Setup IFM tensor with correct slicing
                         auto *subIfmConn = subOp->Input(TensorUsage::IFM);
-                        subIfmConn->slice.shape = Shape(1, 1, ofmBlockWidth * stride.x, ifmShape.Depth());
+                        subIfmConn->slice.shape = Shape(1, 1, ofmBlockWidth * stride.x, ifmDepth);
                         subIfmConn->slice.offset = Shape(
-                            ifmConn->slice.offset.Batch(), ifmY + ky * dilation.y, ifmX + kx * dilation.x, 0);
+                            ifmConn->slice.offset.Batch(), ifmY + ky * dilation.y, ifmX + kx * dilation.x, ifmZ);
                         // This effectively sets the stride for IFM width to kernel stride x.
                         subIfmConn->stepXY = Point2i(stride.x, 1);
 
                         // Connect Weight tensor as IFM1 with correct slicing
                         auto *subWeightsConn = subOp->ConnectInput(TensorUsage::IFM1, weightsTensor);
-                        // Reshape Weights from [OC, KH, KW, IC] -> [1, 1, OC * KH * KW, IC]
                         subWeightsConn->shape = reshapedWeightsShape;
                         // Use `slice.shape.width = validOfmDepth * kernelArea` together with `stepXY.x = kernelArea`
                         // which yields exactly validOfmDepth sampled positions after striding.
-                        subWeightsConn->slice.shape = Shape(1, 1, validOfmDepth * kernelArea, kernelC);
+                        subWeightsConn->slice.shape = Shape(1, 1, validOfmDepth * kernelArea, ifmDepth);
                         // Flattened width index for (oc, ky, kx) is: (oc * KH * KW) + (ky * KW) + kx
-                        subWeightsConn->slice.offset = Shape(0, 0, ofmZ * kernelArea + ky * kernelW + kx, 0);
+                        subWeightsConn->slice.offset = Shape(0, 0, ofmZ * kernelArea + ky * kernelW + kx, ifmZ);
                         // Step through the flattened width by kernelArea to jump between consecutive output channels
                         // while keeping the same (ky, kx)
                         subWeightsConn->stepXY.x = kernelArea;
@@ -1266,6 +1300,12 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Decomp
     }
 
     if ( ifmShape.Depth() < 1 ) throw DecompositionFailure("IFM has no depth");
+
+    if ( ctx.arch->Constraints()->SupportsAccumulatorSaveRestore() && qResult.Any(QueryResult::HasRequirements) &&
+         req.decomposeProps.Any(ArchProperty::NonConstantWeights) )
+    {
+        return DecomposeNonConstWeights(ctx, std::move(op));
+    }
 
     const int depthMultiplier = weightsShape.Depth() / ifmShape.Depth();
     if ( depthMultiplier > 1 )

@@ -673,8 +673,8 @@ Operation *GraphIrOptimiser::RewriteFullyConnected(Graph *const graph, Operation
              kernel->Stride().AreaXY() == 1 && kernel->DilatedWH().AreaXY() == 1 && kernel->Padding().IsZero()) )
     {
         const auto &weights = operation->Input(TensorUsage::Weights);
-        const auto &bias = operation->Input(TensorUsage::Scales);
-        if ( !weights->tensor->IsConstant() || !bias->tensor->IsConstant() )
+        const auto &scales = operation->Input(TensorUsage::Scales);
+        if ( !weights->tensor->IsConstant() || !scales->tensor->IsConstant() )
         {
             // Do not rewrite if bias or weights are non-constant
             return returnOp;
@@ -2154,16 +2154,23 @@ Operation *GraphIrOptimiser::RewriteMatmul(Graph *const graph, Operation *const 
 
 // Convert depthwise convolutions with a depth multiplier greater than 1 into a single Conv2D if:
 // - the input depth is 1; and
-// - the output depth equals the depth multiplier.
+// - the output depth equals the depth multiplier; and
+// - the weights and bias are constant
 Operation *GraphIrOptimiser::RewriteDepthwise(Graph *const graph, Operation *const operation)
 {
     UNUSED(graph);
     Operation *returnOp = operation;
     if ( operation->Type() == OpType::DepthwiseConv2D )
     {
+        const auto weights = operation->Input(TensorUsage::Weights);
+        const auto scales = operation->Input(TensorUsage::Scales);
+        if ( !weights->tensor->IsConstant() || !scales->tensor->IsConstant() )
+        {
+            // Do not rewrite if bias or weights are non-constant
+            return returnOp;
+        }
         const auto ifm = operation->Input(TensorUsage::IFM0);
         const auto ofm = operation->Output(TensorUsage::OFM);
-        const auto weights = operation->Input(TensorUsage::Weights);
         assert(ifm && ofm && weights && ifm->shape.Depth() > 0);
         const auto wshape = weights->shape;
         const auto multiplier = wshape.Depth() / ifm->shape.Depth();
@@ -2464,19 +2471,17 @@ Operation *GraphIrOptimiser::RewriteResize(Graph *const, Operation *const operat
 // This function does two things to legalize Convolution-like ops with non-constant weights and/or bias.
 //  1. Transposes the IFM to swap height and width if height is significantly larger than width.
 //  2. Replaces kernel padding with zero-point values padded around the IFM tensor.
-//  3. Broadcast the bias values to a tensor with the same width and channels as the OFM.
-//     This is required for consecutively preloading all of the accumulators with bias values
-//     later on in decomposition.
 Operation *GraphIrOptimiser::RewriteNonConstWeightOp(Graph *const, Operation *const operation)
 {
-    if ( !IsConvolution(operation->Type()) && operation->Type() != OpType::Conv3D )
+    OpType opType = operation->Type();
+    if ( !IsConvolution(opType) && (opType != OpType::Conv3D) )
     {
         return operation;
     }
 
     auto *weightsConn = operation->Input(TensorUsage::Weights);
-    auto *biasConn = operation->Input(TensorUsage::Scales);
-    if ( weightsConn->tensor->IsConstant() && biasConn->tensor->IsConstant() )
+    auto *scalesConn = operation->Input(TensorUsage::Scales);
+    if ( weightsConn->tensor->IsConstant() && scalesConn->tensor->IsConstant() )
     {
         return operation;
     }
