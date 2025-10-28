@@ -1067,6 +1067,7 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
     std::vector<int> ofmFullDepthSlicesBeforeTransposition = {depthBase, depthBase + fullDepthBeforeTransposition};
     std::vector<int> ofmFullDepthSlicesAfterTransposition = {0, fullDepthAfterTransposition};
 
+    assert(cost->npuWeightsTensor);
     auto weightFormat = cost->npuWeightsTensor->config->Format();
 
     auto encodingParams = _arch->WeightEncoder()->GetEncodingConfig(cost->Config(), schedOp->Kernel(), ifm->tensor->dataType, weightFormat);
@@ -1386,6 +1387,7 @@ std::shared_ptr<Schedule> Scheduler::ProposeScheduleStriping(const Shape &finalS
         // TODO: Replace with in-loop buffering
         if ( refCost->bufferedWeightTensor.tensor )
         {
+            assert(cost->npuWeightsTensor);
             auto bufferingTensor = std::make_shared<SchedulerTensor>();
             bufferingTensor->SetAllocatedSize(cost->npuWeightsTensor->AllocationSizeBytes());
             bufferingTensor->memArea = refCost->bufferedWeightTensor.tensor->memArea;

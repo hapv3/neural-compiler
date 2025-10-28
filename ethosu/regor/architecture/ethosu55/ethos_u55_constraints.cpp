@@ -419,6 +419,7 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
 
         // TransposeConv2D constrained to only allow strides that work with IFM resampling
         auto k = query->kernel;
+        assert(k);
         auto stride = k->Stride();
         if ( stride == Point2i(1, 1) || stride == Point2i(2, 2) ||
              (stride == Point2i(1, 2) && query->ifm[0].shape.Width() == 1 && k->Size().x == 1) ||

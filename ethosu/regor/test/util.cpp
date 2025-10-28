@@ -231,6 +231,7 @@ std::unique_ptr<SchedulerOperation> CreateSchedulerOperation(OpType opType, Tens
     std::shared_ptr<SchedulerTensor> &ifm, TensorUsage ofmUsage, std::shared_ptr<SchedulerTensor> &ofm)
 {
     // use static vector to keep operation reference alive
+    assert(ifm->srcTensor && ofm->srcTensor);
     auto op = CreateOperation(opType, ifmUsage, ifm->srcTensor, ofmUsage, ofm->srcTensor);
     s_ops.add_op(op);
 

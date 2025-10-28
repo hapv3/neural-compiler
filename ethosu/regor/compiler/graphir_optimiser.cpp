@@ -377,7 +377,7 @@ struct EwShl
     int64_t operator()(T a, T b)
     {
         assert(b >= 0);
-        return int64_t(std::make_unsigned_t<T>(a) << std::make_unsigned_t<T>(b));
+        return int64_t(uint64_t(a) << std::make_unsigned_t<T>(b));
     }
 };
 

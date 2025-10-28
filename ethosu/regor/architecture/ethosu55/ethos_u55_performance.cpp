@@ -438,6 +438,8 @@ int64_t EthosU55Performance::EstimateMinimumMemoryCycles(const PerformanceQuery 
     // Output block HW transfer (only for elements present)
     int ofmBits = DataTypeSizeBits(query.ofmType);
     int ofmBytes = Shape::Min(query.ofmShape, opConfig->OfmBlock()).Elements() * ofmBits / 8;
+
+    assert(query.ofmMemory);
     int64_t cyclesOfm = query.ofmMemory->WriteLatency();
     int64_t tx = EstimateMemoryTransfer(_arch->_cores, false, query.ofmMemory, query.ofmFormat, ofmBits,
         opConfig->OfmBlock(), query.ofmShape, ofmBytes);
