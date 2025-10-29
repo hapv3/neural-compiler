@@ -20,6 +20,7 @@
 
 #include "architecture/ethosu85/ethos_u85.hpp"
 #include "compiler/scheduler_decompose.hpp"
+#include "compiler/shape_util.hpp"
 #include "util.hpp"
 
 #include <catch_all.hpp>
@@ -332,5 +333,45 @@ TEST_CASE("test_scheduler_decompose")
         REQUIRE(ofmSlice.shape == Shape(3 * 7 * 11, 1, 1));
         REQUIRE(ifmSlice.offset == Shape(0, 0, 0));
         REQUIRE(ofmSlice.offset == Shape(0, 0, 0));
+    }
+    SECTION("Decompose 2D Int64 Transpose")
+    {
+        Shape ifmShape(10, 20);
+        Shape ofmShape(20, 10);
+        auto ifm = CreateSchedulerTensor("ifm", ifmShape, DataType::Int64);
+        auto ofm = CreateSchedulerTensor("ofm", ofmShape, DataType::Int64);
+        std::unique_ptr<SchedulerOperation> op = CreateSchedulerOperation(OpType::Transpose, TensorUsage::IFM, ifm, TensorUsage::OFM, ofm);
+        op->Output(TensorUsage::OFM)->transpose = TransposeTypeFromShape(Shape(1, 0));
+
+        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeTranspose(ctx, std::move(op));
+        REQUIRE(decomposedOps.size() == 1);
+        auto &subOp = decomposedOps[0];
+        auto ifmConn = subOp->Input(TensorUsage::IFM);
+        auto ofmConn = subOp->Output(TensorUsage::OFM);
+        REQUIRE(ifmConn->Type() == DataType::Int32);
+        REQUIRE(ifmConn->shape == Shape(10, 20, 2));
+        REQUIRE(ofmConn->Type() == DataType::Int32);
+        REQUIRE(ofmConn->shape == Shape(20, 10, 2));
+    }
+    SECTION("Decompose 3D Int64 Transpose")
+    {
+        Shape ifmShape(2, 3, 16);
+        Shape ofmShape(3, 2, 16);
+        auto ifm = CreateSchedulerTensor("ifm", ifmShape, DataType::Int64);
+        auto ofm = CreateSchedulerTensor("ofm", ofmShape, DataType::Int64);
+        std::unique_ptr<SchedulerOperation> op = CreateSchedulerOperation(OpType::Transpose, TensorUsage::IFM, ifm, TensorUsage::OFM, ofm);
+        op->Output(TensorUsage::OFM)->transpose = TransposeTypeFromShape(Shape(1, 0, 2));
+
+        std::vector<std::unique_ptr<SchedulerOperation>> decomposedOps = DecomposeTranspose(ctx, std::move(op));
+        REQUIRE(decomposedOps.size() == 1);
+        auto &subOp = decomposedOps[0];
+        auto ifmConn = subOp->Input(TensorUsage::IFM);
+        auto ofmConn = subOp->Output(TensorUsage::OFM);
+        // The new shapes should have an extra dimension of size 2 at the end
+        // H and W are also squished into one due to reshaping the tensors as 3D
+        REQUIRE(ifmConn->Type() == DataType::Int32);
+        REQUIRE(ifmConn->shape == Shape(1, 2 * 3, 16, 2));
+        REQUIRE(ofmConn->Type() == DataType::Int32);
+        REQUIRE(ofmConn->shape == Shape(1, 3 * 2, 16, 2));
     }
 }

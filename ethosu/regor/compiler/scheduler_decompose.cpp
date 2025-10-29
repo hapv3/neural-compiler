@@ -135,20 +135,8 @@ static std::unique_ptr<SchedulerOperation> MakeTransposeOp(
     attr->perm = perm;
 
     auto ifmConn = op->ConnectInput(TensorUsage::IFM, source);
-    ifmConn->shape = ifmConn->tensor->storageShape;
-    if ( ifmConn->Type() == DataType::Int64 )
-    {  // Read int64 data as int32 data with dimensions [..., C, 2]
-        ifmConn->SetType(DataType::Int32);
-        ifmConn->shape = ifmConn->shape.Insert(ifmConn->shape.Size(), 2);
-        attr->perm = perm.Insert(perm.Size(), perm.Size());  // Update permutation with added dimension
-    }
-
     auto ofmConn = op->ConnectOutput(TensorUsage::OFM, dest);
     ofmConn->transpose = TransposeTypeFromShape(attr->perm);
-    if ( ofmConn->Type() == DataType::Int64 )
-    {  // Write int64 data as int32, with dimensions from ifm
-        ofmConn->SetType(DataType::Int32);
-    }
     ofmConn->shape = ifmConn->shape.Permute(uint32_t(ofmConn->transpose));
     ofmConn->tensor->producers.push_back(op.get());
 
@@ -2062,7 +2050,6 @@ std::vector<std::unique_ptr<SchedulerOperation>> LegaliseResize(DecompositionCon
 // Additionally, squash any leading dimensions into the height for any operators with >3 dimensions.
 static void ReshapeElementwise(SchedulerOperation *op)
 {
-    assert(DecomposeAsElementwise(op->Type()));
     auto *ofmConn = op->Output(TensorUsage::OFM);
     auto *ifmConn = op->Input(TensorUsage::IFM0);
     auto *ifm2Conn = op->TryInput(TensorUsage::IFM1);
@@ -2855,12 +2842,36 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTranspose(Decompositio
     bool decomposeMask = false;
     bool decomposeAxes = false;
     bool decomposeLeadingDims = false;
+    bool decomposeType = false;
 
     if ( qResult.Any(QueryResult::HasRequirements) && req.req.Any(ArchRequirement::Decompose) )
     {
+        assert(ifmConn->slice.offset.IsEmpty() && ifmConn->slice.shape.IsEmpty());
+        assert(ofmConn->slice.offset.IsEmpty() && ofmConn->slice.shape.IsEmpty());
+
         decomposeMask = req.decomposeProps.Any(ArchProperty::TransposeMask);
         decomposeAxes = req.decomposeProps.Any(ArchProperty::TensorAxis);
         decomposeLeadingDims = req.decomposeProps.Any(ArchProperty::TensorDims);
+        decomposeType = req.decomposeProps.Any(ArchProperty::DataTypeLegalisation);
+    }
+
+    if ( decomposeType )
+    {
+        // Read/write int64 data as int32 data with dimensions [..., C, 2]
+        assert(ifmConn->Type() == DataType::Int64);
+        ifmConn->SetType(DataType::Int32);
+        ifmConn->shape = ifmShape.Insert(ifmShape.Size(), 2);
+
+        assert(ofmConn->Type() == DataType::Int64);
+        ofmConn->SetType(DataType::Int32);
+        ofmConn->shape = ofmConn->shape.Insert(ofmConn->shape.Size(), 2);
+
+        // Add trailing dimension to permutation
+        const auto attr = op->Attribute<transpose_attr_t>();
+        attr->perm = attr->perm.Insert(attr->perm.Size(), attr->perm.Size());
+        ofmConn->transpose = TransposeTypeFromShape(attr->perm);
+
+        return DecomposeTranspose(ctx, std::move(op));
     }
 
     if ( decomposeMask || decomposeLeadingDims )
@@ -2874,9 +2885,6 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTranspose(Decompositio
             LOG_TRACE1("DecomposeTranspose: Decomposing as elementwise\n");
             return DecomposeElementwise(ctx, std::move(op));
         }
-
-        assert(ifmConn->slice.offset.IsEmpty() && ifmConn->slice.shape.IsEmpty());
-        assert(ofmConn->slice.offset.IsEmpty() && ofmConn->slice.shape.IsEmpty());
 
         // Decompose a transpose by peforming a selection sort of the axes. Each swap in the selection sort algorithm
         // expands to one or more transpose ops.
@@ -2970,7 +2978,6 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTranspose(Decompositio
             }
         }
     }
-
 
     // No decomposition required
     result.push_back(std::move(op));

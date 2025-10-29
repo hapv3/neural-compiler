@@ -505,6 +505,16 @@ Flags<QueryResult> EthosU85Constraints::OperatorQuery(OpType opType, const ArchO
                 return QueryResult::Unsupported;
             }
         }
+        if ( query->ofm.type == DataType::Int64 )
+        {
+            // Int64 Transpose requires decomposition
+            if ( req )
+            {
+                req->req.Set(ArchRequirement::Decompose);
+                req->decomposeProps.Set(ArchProperty::DataTypeLegalisation);
+            }
+            result.Set(QueryResult::HasRequirements);
+        }
     }
     if ( query->reverseMask != ReverseType::None )
     {

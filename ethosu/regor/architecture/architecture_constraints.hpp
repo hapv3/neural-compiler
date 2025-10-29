@@ -80,6 +80,7 @@ enum class ArchProperty
     ReduceAxis = 1 << 6,
     Scaling = 1 << 7,
     NonConstantWeights = 1 << 8,
+    DataTypeLegalisation = 1 << 9,
 };
 
 struct ArchTensorRequirement
