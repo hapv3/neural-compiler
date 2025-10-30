@@ -1475,6 +1475,7 @@ Operation *TFLiteGraphOptimiser::RewriteSquaredDifference(Graph *const, Operatio
         castOp->Output(TensorUsage::OFM)->quantization.scales.clear();
         castOp->Output(TensorUsage::OFM)->quantization.scales.push_back(QuantizedScale(1 << leftShift, 0));
         castOp->Output(TensorUsage::OFM)->quantization.type = QuantizationType::EXPLICIT;
+        RecordOptimisation(*operation, castOp);
 
         // Scale/shift ifm (for 32-bit operations, scale is not applied but shift is)
         auto mulOp = CreateMul(castOp->Output(TensorUsage::OFM)->tensor, input1MultiplierConst, noScaleQuant, noScaleQuant, noScaleQuant);
@@ -1486,21 +1487,22 @@ Operation *TFLiteGraphOptimiser::RewriteSquaredDifference(Graph *const, Operatio
         RecordOptimisation(*operation, mulOp);
 
         // Convert ifm2 to 32 bit
-        castOp = CreateCastToInt32(ifm2Conn);
+        auto castOp2 = CreateCastToInt32(ifm2Conn);
         // Use explicit scaling (multiplier) for the left shift
-        castOp->Output(TensorUsage::OFM)->quantization.scales.clear();
-        castOp->Output(TensorUsage::OFM)->quantization.scales.push_back(QuantizedScale(1 << leftShift, 0));
-        castOp->Output(TensorUsage::OFM)->quantization.type = QuantizationType::EXPLICIT;
-        RecordOptimisation(*operation, castOp);
+        castOp2->Output(TensorUsage::OFM)->quantization.scales.clear();
+        castOp2->Output(TensorUsage::OFM)->quantization.scales.push_back(QuantizedScale(1 << leftShift, 0));
+        castOp2->Output(TensorUsage::OFM)->quantization.type = QuantizationType::EXPLICIT;
+        RecordOptimisation(*operation, castOp2);
 
         // Scale/shift ifm2 (for 32-bit operations, scale is not applied but shift is)
-        mulOp = CreateMul(castOp->Output(TensorUsage::OFM)->tensor, input2MultiplierConst, noScaleQuant, noScaleQuant, noScaleQuant);
-        mulOp->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
-        mulOp->Output(TensorUsage::OFM)->quantization.scales.clear();
-        mulOp->Output(TensorUsage::OFM)->quantization.scales.push_back(QuantizedScale(1, quantizedRealInput2.shift));
-        mulOp->Output(TensorUsage::OFM)->quantization.type = QuantizationType::EXPLICIT;
-        auto ifm2Scaled = mulOp->Output(TensorUsage::OFM);
-        RecordOptimisation(*operation, mulOp);
+        auto mulOp2 = CreateMul(castOp2->Output(TensorUsage::OFM)->tensor, input2MultiplierConst, noScaleQuant, noScaleQuant, noScaleQuant);
+        mulOp2->Output(TensorUsage::OFM)->tensor->SetName("mul2");
+        mulOp2->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
+        mulOp2->Output(TensorUsage::OFM)->quantization.scales.clear();
+        mulOp2->Output(TensorUsage::OFM)->quantization.scales.push_back(QuantizedScale(1, quantizedRealInput2.shift));
+        mulOp2->Output(TensorUsage::OFM)->quantization.type = QuantizationType::EXPLICIT;
+        auto ifm2Scaled = mulOp2->Output(TensorUsage::OFM);
+        RecordOptimisation(*operation, mulOp2);
 
         // Calculate the raw diff
         auto subOp = CreateSub(ifmScaled->tensor, ifm2Scaled->tensor, noScaleQuant, noScaleQuant, noScaleQuant);
@@ -1509,12 +1511,12 @@ Operation *TFLiteGraphOptimiser::RewriteSquaredDifference(Graph *const, Operatio
         RecordOptimisation(*operation, subOp);
 
         // Calculate the squared diff
-        mulOp = CreateMul(rawDiff->tensor, rawDiff->tensor, noScaleQuant, noScaleQuant, noScaleQuant);
-        mulOp->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
-        auto squaredRaw = mulOp->Output(TensorUsage::OFM);
-        RecordOptimisation(*operation, mulOp);
+        auto mulOp3 = CreateMul(rawDiff->tensor, rawDiff->tensor, noScaleQuant, noScaleQuant, noScaleQuant);
+        mulOp3->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
+        auto squaredRaw = mulOp3->Output(TensorUsage::OFM);
+        RecordOptimisation(*operation, mulOp3);
 
-        // Scale/shift ofm ((for 32-bit operations, scale is not applied but shift is)
+        // Scale/shift ofm (for 32-bit operations, scale is not applied but shift is)
         returnOp = CreateMul(squaredRaw->tensor, outputMultiplierConst, noScaleQuant, noScaleQuant, ofmConn->quantization);
         returnOp->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
         returnOp->ConnectOutput(TensorUsage::OFM, ofmConn->tensor);
