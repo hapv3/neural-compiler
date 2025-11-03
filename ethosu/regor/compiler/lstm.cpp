@@ -53,9 +53,11 @@ LSTM::LSTM(Operation *operation, OptimiserDatabase *db, Graph *graph) : _lstmOp(
     // [-32768, 32767]. The cell-state tensor, however, is quantized independently and may use a different scale (i.e. a
     // different real range). To make the cell state compatible with tanh, it must be rescaled into Q0.15.
     //
-    // The effective pre-tanh shift is computed as (15 + cellStateScalePower) - 3, where the -3 term aligns with the
-    // scaling used by the reference. If this value is negative, it indicates a right shift is required and the sign is
+    // The effective pre-tanh shift is computed as (15 + cellStateScalePower) - 3 scaling used by the reference.
+    // The 3 term comes from the LUT's required input scale of 1/(3*4096).
+    // If this value is negative, it indicates a right shift is required and the sign is
     // flipped and compensated for with a multiplier.
+    // If the value is non-negative, the left shift can be applied to the multiplier of 3.
     auto cellStateConn = _lstmOp->Input(MakeTensorUsage(TensorUsage::State, 1));
     int cellStateScalePower = std::log2(cellStateConn->quantization.scales[0].Dequantize());
     int leftShift = (15 + cellStateScalePower) - 3;
@@ -64,6 +66,11 @@ LSTM::LSTM(Operation *operation, OptimiserDatabase *db, Graph *graph) : _lstmOp(
     {
         leftShift = -leftShift;
         inputMultiplier = 3;
+    }
+    else
+    {
+        inputMultiplier = 3 << leftShift;
+        leftShift = 0;
     }
 
     _cellStateRescaleQuant = Quantization::Unit();
