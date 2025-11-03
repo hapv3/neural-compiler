@@ -52,7 +52,7 @@ workflow:
 build-python:
     stage: build
     script:
-    -   pip install -v -e .[dev]
+    -   CCACHE_NOHASHDIR=true pip install -v -e .[dev]
 
 build-unit-tests-gcc:
     stage: build
@@ -86,7 +86,7 @@ test-pre-commit-hooks:
     -   build-python
     script:
     # Restore the installation from the cache
-    -   pip install -e .[dev]
+    -   CCACHE_NOHASHDIR=true pip install -e .[dev]
     # Skip pytest since it's run as a separate job below
     -   SKIP=pytest pre-commit run --all-files
 
@@ -114,7 +114,7 @@ test-python:
     -   build-python
     script:
     # Restore the installation from the cache
-    -   pip install -e .[dev]
+    -   CCACHE_NOHASHDIR=true pip install -e .[dev]
     -   pytest --junit-xml=results-python.xml
     artifacts:
         when: always
