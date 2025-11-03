@@ -82,6 +82,15 @@ private:
     // Utility/Helper methods
     Operation *MakeFillOperation(TensorConnection *const ofmConn, const Shape &ofmShape, const TensorSlice &ofmSlice,
         std::shared_ptr<Tensor> padTensor);
+    // Checks for unary IFM-fusing
+    bool CanFuseRescaleOnConsumer(Operation *const consumer, TensorUsage usage, Quantization &newQuant, DataType newType);
+    // Checks for binary IFM-fusing
+    bool CanFuseMultipleRescalesOnConsumer(Operation *const consumer, Operation *const rescale1,
+        Operation *const rescale2, const Quantization &q1, const Quantization &q2);
+    // Checks for OFM-fusing
+    bool CanFuseRescaleOnProducer(Operation *const producer, Quantization &newQuant, DataType newType);
+
+
 
     // The graph optimisation steps.
     // Order matters, array of rewrites processed in order.
