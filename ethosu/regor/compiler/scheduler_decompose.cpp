@@ -286,13 +286,19 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeBlocksElementwi
     const auto N = Shape::DivRoundUp(ofmShape, blockShape);  // Block count per dimension
     auto NewIfmSlice = [&](SchedulerConnection *ifmC, int x, int y, int c)
     {
-        auto newIfmSlice = ifmC->slice;
-
-        newIfmSlice.offset += Shape(y * BH, x * BW, c * BC);
-        auto &newIfmShape = newIfmSlice.shape;
-        newIfmSlice.shape = Shape::Max(
-            Shape::Min(newIfmShape - Shape(y * BH, x * BW, c * BC), Shape(BH, BW, BC)), newIfmShape.WithOnes());
-        return newIfmSlice;
+        const auto &ifmSlice = ifmC->slice;
+        // copy slice to preserve striding
+        auto newSlice = ifmSlice;
+        int ifmRank = ifmSlice.shape.Size();
+        auto step = Shape::PadAxes(Shape(y * BH, x * BW, c * BC), ifmRank, 0);
+        // Truncate step to (shape - 1) if the step is larger than the remaining volume
+        step = Shape::Min(step, ifmSlice.shape - ifmSlice.shape.WithOnes());
+        // increase offset by step
+        newSlice.offset = ifmSlice.offset + step;
+        // slice-volume is BH,BW,BC truncated to the remaining legal volume after stepping
+        auto volume = Shape::PadAxes(Shape(BH, BW, BC), ifmRank, 1);
+        newSlice.shape = Shape::Min(ifmSlice.shape - step, volume);
+        return newSlice;
     };
     for ( auto by = 0; by < N.Height(); by++ )
     {
