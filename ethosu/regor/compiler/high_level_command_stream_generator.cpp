@@ -67,9 +67,16 @@ static Box TransformWithStridesAndSkirt(const Box &outputArea, const Shape *stri
     Shape outputAreaEnd = outputArea.End().Unpermute(uint32_t(transposeType));
     Shape concatOffsetsUntransposed = concatOffsets.Unpermute(uint32_t(transposeType));
     Shape outputAreaSize = outputAreaEnd - outputAreaStart;
-    // Make start/end at least 4 dimensional
-    Shape start = Shape::Max(outputAreaStart - concatOffsetsUntransposed, Shape(0, 0, 0, 0));
-    Shape end = Shape::Max(start + outputAreaSize, Shape(1, 1, 1, 1));
+    Shape start = outputAreaStart - concatOffsetsUntransposed;
+    Shape end = start + outputAreaSize;
+
+    // Make start/end same rank as IFM, but at least 4D
+    // This avoids unexpected promotions of start/end
+    // to higher ranks when adjusting with ifmSlice and ifmShape
+    int ifmRank = std::max(ifmShape.Size(), 4);
+    start = Shape(start, ifmRank, 0);
+    end = Shape(end, ifmRank, 1);
+
     start += splitOffset;
     end += splitOffset;
     if ( (IsConvolution(opType) && !IsDepthwise(opType)) )
@@ -899,7 +906,8 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
     int dilatedKernelHeight = kernel->DilatedWH().y;
 
     // Define Start and End coordinates for the OFM
-    auto ofmStart = Shape(0, 0, 0, depthSlices[0]);
+    // Make sure that they are at least 4D
+    auto ofmStart = Shape::PadAxes(ofmShape, 4, 0).WithZeros().WithDepth(depthSlices[0]);
     auto ofmEnd = Shape::PadAxes(ofmShape, 4, 1);
     if ( ofmConn->slice.offset.Size() > 0 )
     {
@@ -927,8 +935,8 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
                 int endChannel = std::min(ofmEnd.Depth(), ofmStart.Depth() + depthSlices[depthIndex + 1]);
 
                 // Construct the output area for the current stripe
-                auto outputAreaStart = Shape(ofmStart.Batch(), startHeight, startWidth, startChannel);
-                auto outputAreaEnd = Shape(ofmEnd.Batch(), endHeight, endWidth, endChannel);
+                auto outputAreaStart = ofmStart.WithHeight(startHeight).WithWidth(startWidth).WithDepth(startChannel);
+                auto outputAreaEnd = ofmEnd.WithHeight(endHeight).WithWidth(endWidth).WithDepth(endChannel);
                 auto outputArea = Box(outputAreaStart, outputAreaEnd);
                 auto hlcStripe = std::make_unique<HLCStripe>(hlcOp);
                 hlcStripe->padding = padding;
