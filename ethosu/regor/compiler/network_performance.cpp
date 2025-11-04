@@ -442,7 +442,12 @@ void NetworkPerformance::AddToDatabase(const PerformanceResult &perf, SchedulerO
             {
                 db->AddRow(perfDebugConnectivityTable, schedOp->Uid(), {std::to_string(prod->Uid()), std::to_string(index)});
             }
-            if ( ifmConn.tensor->producers.empty() && prevOp )
+
+            if ( ifmConn.tensor->IsConstant() )
+            {
+                db->AddRow(perfDebugConnectivityTable, schedOp->Uid(), {std::to_string(ifmConn.tensor->uid), std::to_string(index)});
+            }
+            else if ( ifmConn.tensor->producers.empty() && prevOp )
             {
                 // Empty producers and a previous operation probably means that this is an activation function
                 db->AddRow(perfDebugConnectivityTable, schedOp->Uid(), {std::to_string(prevOp->Uid()), std::to_string(index)});
