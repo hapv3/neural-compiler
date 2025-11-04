@@ -176,3 +176,30 @@ TEST_CASE("ReshapeToHWC")
     auto shape2Da = ReshapeToHWC(shape2D);
     REQUIRE(shape2Da == Shape(1, 3, 7));
 }
+
+TEST_CASE("Shape: ReshapeForOptimialDepth")
+{
+    Shape suboptimal1(1, 512, 4, 1);
+    Shape optimal1 = ReshapeToIncreaseDepth(suboptimal1, 16);
+    REQUIRE(optimal1 == Shape(1, 16, 8, 16));
+
+    Shape suboptimal2(256, 2);
+    Shape optimal2 = ReshapeToIncreaseDepth(suboptimal2, 16);
+    REQUIRE(optimal2 == Shape(1, 8, 4, 16));
+
+    Shape suboptimal3(3, 7, 11);
+    Shape optimal3 = ReshapeToIncreaseDepth(suboptimal3, 16);
+    REQUIRE(optimal3 == Shape(1, 11, 1, 21));
+
+    Shape suboptimal4(1);
+    Shape optimal4 = ReshapeToIncreaseDepth(suboptimal4, 16);
+    REQUIRE(optimal4 == Shape(1, 1, 1, 1));
+
+    Shape suboptimal5(0);
+    Shape optimal5 = ReshapeToIncreaseDepth(suboptimal5, 16);
+    REQUIRE(optimal5 == Shape(0, 0, 0, 0));
+
+    Shape suboptimal6;
+    Shape optimal6 = ReshapeToIncreaseDepth(suboptimal6, 16);
+    REQUIRE(optimal6 == Shape());
+}

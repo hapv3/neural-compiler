@@ -21,6 +21,9 @@
 #include "common/shape.hpp"
 #include "common/transpose_type.hpp"
 
+#include <assert.h>
+#include <numeric>
+
 namespace regor
 {
 
@@ -127,6 +130,56 @@ inline Shape Squeeze(const Shape &shape)
         }
     }
     return result;
+}
+
+// Reshape a shape so that the depth axis is at least a certain size
+inline Shape ReshapeToIncreaseDepth(const Shape &shape, int minDepth)
+{
+    if ( !shape ) return shape;
+
+    // Factor shape into primes
+    std::array<int, 32> primes;
+    int primesCount = 0;
+    int elements = shape.Elements();
+    if ( elements == 0 ) return {0, 0, 0, 0};
+    for ( ; elements % 2 == 0; elements /= 2 )
+    {
+        // Factor it in 2s
+        primes[primesCount++] = 2;
+    }
+    const int sqrt = int(std::floor(std::sqrt(std::abs(elements))));
+    for ( int factor = 3; std::abs(elements) > 1 && factor <= sqrt; factor += 2 )
+    {
+        // Factor it in 3s, 5s, 7s, ...
+        for ( ; elements % factor == 0; elements /= factor )
+        {
+            primes[primesCount++] = factor;
+        }
+    }
+    if ( elements != 1 ) primes[primesCount++] = elements;
+    assert(primesCount <= 32);
+    assert(std::accumulate(primes.begin(), primes.begin() + primesCount, 1, std::multiplies<int>()) == shape.Elements());
+
+    // Build a depth at least as large as the depth granule
+    int depth = 1;
+    int primesIdx = 0;
+    for ( ; primesIdx < primesCount && depth < minDepth; primesIdx++ )
+    {
+        depth *= primes[primesIdx];
+    }
+
+    // Divide the rest between height and width, but prefer height > width
+    int height = 1;
+    int width = 1;
+    for ( ; primesIdx < primesCount; primesIdx++ )
+    {
+        if ( width < height ) width *= primes[primesIdx];
+        else height *= primes[primesIdx];
+    }
+    if ( height < width ) std::swap(height, width);
+    assert(height * width * depth == shape.Elements());
+
+    return {1, height, width, depth};
 }
 
 }  // namespace regor

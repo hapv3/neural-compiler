@@ -200,6 +200,35 @@ void SchedulerPacking::ConvertOperation(const Operation *op, std::vector<std::un
         }
     }
 
+    // Attempt to reshape elementwise and elementwise-like ops to increase depth
+    if ( DecomposeAsElementwise(schedOp->Type()) )
+    {
+        auto *ifmConn = schedOp->IFM(0);
+        auto *ifm2Conn = schedOp->TryIFM(1);
+        auto *ofmConn = schedOp->OFM();
+        const bool scalarIfm = ifmConn->shape.Elements() == 1;
+        const bool scalarIfm2 = ifm2Conn && ifm2Conn->shape.Elements() == 1;
+        const bool scalarOfm = ofmConn->shape.Elements() == 1;
+        const bool broadcast = ifm2Conn && !scalarIfm && !scalarIfm2 && ifmConn->shape != ifm2Conn->shape;
+        const bool hasSlices =
+            ifmConn->shape != ifmConn->SliceShape() || ofmConn->shape != ofmConn->SliceShape() ||
+            (ifm2Conn && ifm2Conn->shape != ifm2Conn->SliceShape());
+        const bool hasStride = ifmConn->slice.stride || ofmConn->slice.stride || (ifm2Conn && ifm2Conn->slice.stride);
+        if ( !broadcast && !hasSlices && !hasStride )
+        {
+            // Avoid reshape of small tensors or tensors that are already deep enough
+            const int minElements = 16;
+            const int maxDepth = 8;
+            const int minDepth = 16;
+            if ( ofmConn->shape.Elements() > minElements && ofmConn->shape.Depth() < maxDepth )
+            {
+                if ( !scalarIfm ) ifmConn->shape = ReshapeToIncreaseDepth(ifmConn->shape, minDepth);
+                if ( ifm2Conn && !scalarIfm2 ) ifm2Conn->shape = ReshapeToIncreaseDepth(ifm2Conn->shape, minDepth);
+                ofmConn->shape = ReshapeToIncreaseDepth(ofmConn->shape, minDepth);
+            }
+        }
+    }
+
     result.push_back(std::move(schedOp));
 }
 

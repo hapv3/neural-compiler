@@ -2075,7 +2075,7 @@ static void ReshapeElementwise(SchedulerOperation *op)
     // Abort if broadcast (IFM0 and IFM1 exist but have different shapes) or if we have slicing.
     auto scalarIfm1 = ifmConn->shape.Elements() == 1;
     auto scalarIfm2 = ifm2Conn && ifm2Conn->shape.Elements() == 1;
-    bool broadcast = ifm2Conn && !scalarIfm2 && ifmConn->shape != ifm2Conn->shape;
+    bool broadcast = ifm2Conn && !scalarIfm1 && !scalarIfm2 && ifmConn->shape != ifm2Conn->shape;
     bool hasSlices =
         ifmConn->shape != ifmConn->SliceShape() || ofmConn->shape != ofmConn->SliceShape() ||
         (ifm2Conn && ifm2Conn->shape != ifm2Conn->SliceShape());
