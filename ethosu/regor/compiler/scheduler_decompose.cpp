@@ -860,7 +860,9 @@ DecomposeNonConstWeights(DecompositionContext &ctx, std::unique_ptr<SchedulerOpe
         weightsConn->shape = Shape(1, wShape[0] * wShape[1], wShape[2], wShape[3]);
 
         // Transpose from [1, kH*kW, Cin, M] to [1, M, kH*kW, Cin]
-        auto transposedWeights = weightsConn->tensor->Clone();
+        auto transposedWeights = std::make_shared<SchedulerTensor>(
+            weightsConn->tensor->dataType, Shape(1, wShape[3], wShape[0] * wShape[1], wShape[2]));
+        transposedWeights->memArea = ctx.arch->FeatureMapMemory();
         auto transposeOp = MakeTransposeOp(weightsConn->tensor, transposedWeights, Shape(0, 3, 1, 2));
 
         // Replace weights with transposed weights, reshaped to [1, 1, M*kH*kW*Cin, 1]
