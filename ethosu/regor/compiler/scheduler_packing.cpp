@@ -686,7 +686,7 @@ void SchedulerPacking::InitSchedulerConnection(SchedulerConnection *schedConn, T
     schedConn->transpose = TransposeType::None;
     if ( schedConn->slice.stride )
     {
-        schedConn->stepXY = schedConn->slice.stride.WH<int>();
+        schedConn->stepXY = schedConn->slice.stride.WH();
     }
 
     // Shaped and strided weights need an updated buffer view

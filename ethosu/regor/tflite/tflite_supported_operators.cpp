@@ -870,7 +870,7 @@ bool StridedSlice(const Operation *op)
         }
     }
     // TODO MLBEDSW-10165: Handle stride < 0 and other dimensions than H and W
-    if ( sliceStride.WithHeight(1).WithWidth(1).Elements64() != 1 )
+    if ( sliceStride.WithHW(1, 1).Elements64() != 1 )
     {
         Failure(op, "StridedSlice with unsupported stride axis");
         return false;

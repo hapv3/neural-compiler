@@ -528,7 +528,7 @@ ElementAccess EthosU85Performance::MeasureElementAccess(const PerformanceQuery &
     {
         // TODO: Implement for Resize
         access.ifmRead[0] = Shape::RoundAway(query.ifmShape[0], ifmRounding).Elements();
-        access.ofmWrite = Shape::RoundAway(query.ofmShape[0], ofmRounding).Elements();
+        access.ofmWrite = Shape::RoundAway(query.ofmShape, ofmRounding).Elements();
     }
     else if ( npuOp == EthosU85NpuOp::Dma )
     {
@@ -541,14 +541,14 @@ ElementAccess EthosU85Performance::MeasureElementAccess(const PerformanceQuery &
             access.ifmRead[1] = Shape::RoundAway(query.ifmShape[1], ifmRounding).Elements();
 
             // Complete OFM is written
-            access.ofmWrite = Shape::RoundAway(query.ofmShape[0], ofmRounding).Elements();
+            access.ofmWrite = Shape::RoundAway(query.ofmShape, ofmRounding).Elements();
         }
         else if ( query.type == OpType::Tile )
         {
             // IFM0 is read multiple times to cover all elements in ofmShape
-            access.ifmRead[0] = Shape::RoundAway(query.ofmShape[0], ofmRounding).Elements();
+            access.ifmRead[0] = Shape::RoundAway(query.ofmShape, ofmRounding).Elements();
             // Complete OFM is written
-            access.ofmWrite = Shape::RoundAway(query.ofmShape[0], ofmRounding).Elements();
+            access.ofmWrite = Shape::RoundAway(query.ofmShape, ofmRounding).Elements();
         }
         else
         {

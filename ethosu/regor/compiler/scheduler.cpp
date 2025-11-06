@@ -288,7 +288,7 @@ int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *con
             {
                 if ( connection.tensor.get() == tensor && IsIFM(tensorUsage) )
                 {
-                    ifmShapes.insert(connection.SliceShape().WC<int>(1));
+                    ifmShapes.insert(connection.SliceShape().WC(1));
                 }
             }
 
@@ -725,7 +725,7 @@ std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(
         Point2i stripeInput = GetStripeInputRequirement(ofmShape, op->Kernel(), ifm->stepXY, ifm->resamplingMode);
 
         // Ensure stripe input volume is within the full IFM volume
-        stripeInput = Point2i::Min(stripeInput, ifmShape.WH<int>());
+        stripeInput = Point2i::Min(stripeInput, ifmShape.WH());
         if ( !subdivideMask.Any(AxisMask::AxisX) && (stripeInput.x != ifmShape.Width()) )
         {
             assert(stripeInput.x * ifm->stepXY.x >= (ifmShape.Width() - op->Kernel()->Stride().x) && "Unexpected stripe input width");
@@ -736,7 +736,7 @@ std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(
 
         if ( !ifm2Shape.IsEmpty() )
         {
-            Point2i stripeInput2 = Point2i::Min(stripeInput, ifm2Shape.WH<int>());
+            Point2i stripeInput2 = Point2i::Min(stripeInput, ifm2Shape.WH());
             ifm2Shape = ifm2Shape.WithHW(stripeInput2.y, stripeInput2.x);
         }
     }

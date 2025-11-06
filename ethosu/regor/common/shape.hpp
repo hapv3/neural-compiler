@@ -46,22 +46,22 @@ private:
 public:
     Shape() { _storage.ptr = nullptr; }
 
-    Shape(int c)
+    explicit Shape(int c)
     {
-        Init(1);
+        Init<false>(1);
         At(0) = c;
     }
 
     Shape(int w, int c)
     {
-        Init(2);
+        Init<false>(2);
         At(0) = c;
         At(1) = w;
     }
 
     Shape(int h, int w, int c)
     {
-        Init(3);
+        Init<false>(3);
         At(0) = c;
         At(1) = w;
         At(2) = h;
@@ -69,18 +69,44 @@ public:
 
     Shape(int n, int h, int w, int c)
     {
-        Init(4);
+        Init<false>(4);
         At(0) = c;
         At(1) = w;
         At(2) = h;
         At(3) = n;
     }
 
+    explicit Shape(const Point2i &pt, int c = 1)
+    {
+        Init<false>(3);
+        At(0) = c;
+        At(1) = pt.x;
+        At(2) = pt.y;
+    }
+
+    explicit Shape(const Point3i &pt)
+    {
+        Init<false>(3);
+        At(0) = pt.z;
+        At(1) = pt.x;
+        At(2) = pt.y;
+    }
+
+    Shape(std::initializer_list<int> axes)
+    {
+        Init<false>(int(axes.size()));
+        int *p = Storage() + _last;
+        for ( int v : axes )
+        {
+            *p-- = v;
+        }
+    }
+
     template<class Iterator, std::enable_if_t<std::is_integral<typename std::iterator_traits<Iterator>::value_type>::value, bool> = true>
     Shape(Iterator first, size_t length)
     {
         assert(length < size_t(std::numeric_limits<int>::max()));
-        Init(int(length));
+        Init<false>(int(length));
         auto *local = Storage();
         // Reverses input into position
         assert(size_t(_last) == length - 1);
@@ -95,13 +121,13 @@ public:
     {
     }
 
-    Shape(std::nullptr_t, int length, int fillValue = 0) { Init(length, fillValue); }
+    Shape(std::nullptr_t, int length, int fillValue = 0) { Init<true>(length, fillValue); }
 
     Shape(const Shape &other)
     {
-        if ( other.IsValid() )
+        if ( other )
         {
-            Init(other.Size());
+            Init<false>(other.Size());
             std::copy_n(other.Storage(), Size(), Storage());
         }
     }
@@ -117,9 +143,9 @@ public:
 
     Shape(const Shape &other, int length, int padValue = 0)
     {
-        if ( other.IsValid() )
+        if ( other )
         {
-            Init(length, padValue);
+            Init<true>(length, padValue);
             std::copy_n(other.Storage(), std::min(other.Size(), length), Storage());
         }
     }
@@ -146,9 +172,9 @@ public:
         if ( &other != this )
         {
             Free();
-            if ( other.IsValid() )
+            if ( other )
             {
-                Init(other.Size());
+                Init<false>(other.Size());
                 std::copy_n(other.Storage(), Size(), Storage());
             }
         }
@@ -202,7 +228,7 @@ public:
 
     explicit operator uint64_t() const { return uint64_t(uint32_t(*this)); }
 
-    explicit operator bool() const { return IsValid(); }
+    explicit operator bool() const { return _last >= 0; }
 
     bool operator!=(const Shape &other) const { return !((*this) == other); }
 
@@ -335,11 +361,29 @@ public:
         return tmp;
     }
 
-    Shape WithHW(const Point2i &hw) const
+    Shape WithHW(const Point2i &pt) const
     {
         Shape tmp(*this, std::max(Size(), 3));
-        tmp.At(2) = hw.y;
-        tmp.At(1) = hw.x;
+        tmp.At(2) = pt.y;
+        tmp.At(1) = pt.x;
+        return tmp;
+    }
+
+    Shape WithHWC(int h, int w, int c) const
+    {
+        Shape tmp(*this, std::max(Size(), 3));
+        tmp.At(2) = h;
+        tmp.At(1) = w;
+        tmp.At(0) = c;
+        return tmp;
+    }
+
+    Shape WithHWC(const Point3i &pt) const
+    {
+        Shape tmp(*this, std::max(Size(), 3));
+        tmp.At(2) = pt.y;
+        tmp.At(1) = pt.x;
+        tmp.At(0) = pt.z;
         return tmp;
     }
 
@@ -382,7 +426,7 @@ public:
 
     Shape Extract(int a, int b, int c, int d) const { return Extract({a, b, c, d}); }
 
-    Shape Extract(std::initializer_list<int32_t> axes) const
+    Shape Extract(std::initializer_list<signed int> axes) const
     {
         Shape tmp(nullptr, int(axes.size()));
         auto *local = Storage();
@@ -477,31 +521,31 @@ public:
         return At(3);
     }
 
-    template<typename TYPE>
+    template<typename TYPE = int>
     Point2<TYPE> WC() const
     {
         assert(Size() >= 2);
-        return Point2<TYPE>(TYPE(Width()), TYPE(Depth()));
+        return Point2<TYPE>(Width(), Depth());
     }
 
-    template<typename TYPE>
-    Point2<TYPE> WC(TYPE pad) const
+    template<typename TYPE = int>
+    Point2<TYPE> WC(int missingC) const
     {
-        return Point2<TYPE>((_last > 0) ? TYPE(At(1)) : pad, (_last < 0) ? pad : TYPE(At(0)));
+        return Point2<TYPE>((_last > 0) ? At(1) : missingC, (_last < 0) ? missingC : At(0));
     }
 
-    template<typename TYPE>
+    template<typename TYPE = int>
     Point2<TYPE> WH() const
     {
         assert(Size() >= 3);
-        return Point2<TYPE>(TYPE(Width()), TYPE(Height()));
+        return Point2<TYPE>(Width(), Height());
     }
 
-    template<typename TYPE>
+    template<typename TYPE = int>
     Point3<TYPE> HWC() const
     {
         assert(Size() >= 3);
-        return Point3<TYPE>(TYPE(Height()), TYPE(Width()), TYPE(Depth()));
+        return Point3<TYPE>(TYPE(Width()), TYPE(Height()), TYPE(Depth()));
     }
 
     int ElementsHWC() const
@@ -538,7 +582,7 @@ public:
     int64_t Elements64() const
     {
         int64_t result = 0;
-        if ( IsValid() )
+        if ( _last >= 0 )
         {
             auto *local = Storage();
             result = local[0];
@@ -563,9 +607,20 @@ public:
         return ~0u >> shift;
     }
 
-    bool IsValid() const { return _last >= 0; }
-
     bool IsDynamic() const { return _dynamic; }
+
+    bool IsScalar() const
+    {
+        auto *local = Storage();
+        for ( int i = 0; i <= _last; i++ )
+        {
+            if ( local[i] != 1 )
+            {
+                return false;
+            }
+        }
+        return (_last >= 0);
+    }
 
     bool IsEmpty() const
     {
@@ -652,6 +707,7 @@ public:
     }
 
 private:
+    template<bool FILL>
     void Init(int size, int fillValue = 0)
     {
         assert(size > 0);
@@ -659,7 +715,8 @@ private:
         _last = size - 1;
         _dynamic = (size > MAX_STATIC_AXES);
         int32_t *p = _dynamic ? (_storage.ptr = new int32_t[size]) : _storage.axes;
-        std::fill_n(p, size, fillValue);
+        if ( size < MAX_STATIC_AXES ) std::fill_n(p + size, MAX_STATIC_AXES - size, 0);
+        if constexpr ( FILL ) std::fill_n(p, size, fillValue);
     }
 
     void Free()
@@ -884,7 +941,7 @@ public:
     static Shape GetStridesForShape(const Shape &shape, const Shape &granularity)
     {
         Shape tmp(nullptr, shape.Size());
-        if ( shape.IsValid() )
+        if ( shape._last >= 0 )
         {
             auto *gran = granularity.Storage();
             auto *from = shape.Storage();

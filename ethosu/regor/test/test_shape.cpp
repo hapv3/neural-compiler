@@ -36,11 +36,11 @@ TEST_CASE("Static shape allocation")
 
     SECTION("static lengths")
     {
-        REQUIRE((a.Size() == 0 && !a.IsValid() && !a.IsDynamic()));  // Empty shape
-        REQUIRE((b.Size() == 1 && b.IsValid() && !b.IsDynamic()));
-        REQUIRE((c.Size() == 2 && c.IsValid() && !c.IsDynamic()));
-        REQUIRE((d.Size() == 3 && d.IsValid() && !d.IsDynamic()));
-        REQUIRE((e.Size() == 4 && d.IsValid() && !e.IsDynamic()));
+        REQUIRE((a.Size() == 0 && !a && !a.IsDynamic()));  // Empty shape
+        REQUIRE((b.Size() == 1 && b && !b.IsDynamic()));
+        REQUIRE((c.Size() == 2 && c && !c.IsDynamic()));
+        REQUIRE((d.Size() == 3 && d && !d.IsDynamic()));
+        REQUIRE((e.Size() == 4 && d && !e.IsDynamic()));
     }
 
     SECTION("NHWC named indexing")
@@ -323,10 +323,10 @@ TEST_CASE("Copy, Move and Assignment")
     b = c;
     REQUIRE(b.Size() == 4);
     c = invalid;
-    REQUIRE(!c.IsValid());
+    REQUIRE(!c);
     b = std::move(a);
     REQUIRE(b.Size() == 2);
-    REQUIRE(!a.IsValid());
+    REQUIRE(!a);
 }
 
 TEST_CASE("Is Empty")
@@ -488,4 +488,110 @@ TEST_CASE("Shape: From iterator")
     REQUIRE(!a.IsEmpty());
     REQUIRE(a == b);
     REQUIRE(b == c);
+}
+
+TEST_CASE("Shape: Scalar")
+{
+    Shape a(1);
+    REQUIRE(a.IsScalar());
+    Shape b = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+    REQUIRE(b.IsScalar());
+}
+
+TEST_CASE("Shape: Initialiser List")
+{
+    Shape a(1);
+    Shape at = {1};
+    REQUIRE(a == at);
+
+    Shape b(1, 2);
+    Shape bt = {1, 2};
+    REQUIRE(b == bt);
+
+    Shape c(1, 2, 3, 4);
+    Shape ct = {1, 2, 3, 4};
+    REQUIRE(c == ct);
+
+    Shape dt = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+    REQUIRE(dt.Elements() == 3628800);
+}
+
+
+TEST_CASE("Point2: General Operators")
+{
+    Point2<int> a(2, 5);
+    Point2<int> b(4, 3);
+    Point2<int> c(6, 8);  // a + b
+    Point2<int> d(10, 10);
+    Point2<int> e(-2, 2);  // a - b
+    Point2<int> f(8, 15);  // a * b
+    Point2<int> g(0, 1);   // a / b
+    Point2<int> z;
+
+    REQUIRE(d.AreaXY() == 100);
+    REQUIRE(Point2<int>::Max(a, b) == Point2i({4, 5}));
+    REQUIRE(Point2<int>::Min(a, b) == Point2i({2, 3}));
+    REQUIRE(a < b);
+    REQUIRE(!z);
+
+    Point2<int> tmp;
+    tmp = a;
+    tmp += b;
+    REQUIRE((a + b == c));
+    REQUIRE((tmp == c));
+
+    tmp = a;
+    tmp -= b;
+    REQUIRE((a - b == e));
+    REQUIRE((tmp == e));
+
+    tmp = a;
+    tmp *= b;
+    REQUIRE((a * b == f));
+    REQUIRE((tmp == f));
+
+    tmp = a;
+    tmp /= b;
+    REQUIRE((a / b == g));
+    REQUIRE((tmp == g));
+}
+
+TEST_CASE("Point3: General Operators")
+{
+    Point3<int> a(2, 5, 3);
+    Point3<int> b(4, 3, 7);
+    Point3<int> c(6, 8, 10);  // a + b
+    Point3<int> d(10, 10, 10);
+    Point3<int> e(-2, 2, -4);  // a - b
+    Point3<int> f(8, 15, 21);  // a * b
+    Point3<int> g(0, 1, 0);    // a / b
+    Point3<int> z;
+
+    REQUIRE(d.AreaXY() == 100);
+    REQUIRE(d.Volume() == 1000);
+    REQUIRE(Point3<int>::Max(a, b) == Point3i({4, 5, 7}));
+    REQUIRE(Point3<int>::Min(a, b) == Point3i({2, 3, 3}));
+    REQUIRE(a < b);
+    REQUIRE(!z);
+
+    Point3<int> tmp;
+    tmp = a;
+    tmp += b;
+    REQUIRE((a + b == c));
+    REQUIRE((tmp == c));
+
+    tmp = a;
+    tmp -= b;
+    REQUIRE((a - b == e));
+    REQUIRE((tmp == e));
+
+    tmp = a;
+    tmp *= b;
+    REQUIRE((a * b == f));
+    REQUIRE((tmp == f));
+
+    tmp = a;
+    tmp /= b;
+    REQUIRE((a / b == g));
+    REQUIRE((tmp == g));
 }

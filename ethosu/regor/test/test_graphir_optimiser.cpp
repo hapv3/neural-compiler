@@ -252,7 +252,7 @@ TEST_CASE("test_graphir_optimiser - ReduceSum")
         REQUIRE(scheduleOps[0]->SubOps().size() == 1);
         REQUIRE(scheduleOps[0]->SubOps()[0]->IFM(1)->tensor->IsConstant());
         REQUIRE(scheduleOps[0]->SubOps()[0]->IFM(1)->tensor->bufferView.Elements() == 1);
-        REQUIRE(scheduleOps[0]->SubOps()[0]->IFM(1)->tensor->bufferView.StrideBytes() == sizeof(int32_t));
+        REQUIRE(scheduleOps[0]->SubOps()[0]->IFM(1)->tensor->bufferView.StrideBytes().Elements() == sizeof(int32_t));
         auto view = scheduleOps[0]->SubOps()[0]->IFM(1)->tensor->bufferView.Values<int32_t>();
         REQUIRE(view[0] == scheduleOps[0]->IFM(0)->shape.Depth() * ZP);
         if ( scheduleOps[0]->IFM(0)->quantization.zeroPoints.size() > 0 )

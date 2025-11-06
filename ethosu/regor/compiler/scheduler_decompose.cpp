@@ -181,11 +181,9 @@ template<typename T>
 static std::shared_ptr<SchedulerTensor> CreateScalarConstTensor(Architecture *arch, const T value)
 {
     const DataType type = DataTypeOf<T>::value;
-    const Shape shape(1, 1, 1, 1);
-    auto tensor = std::make_unique<SchedulerTensor>(type, shape);
     const Buffer::ConstValue<T> cv(value);
     const auto buf = std::make_shared<Buffer>(cv);
-    tensor->bufferView = BufferView(buf, 0, DataTypeSizeBits(type), shape, Shape());
+    auto tensor = std::make_unique<SchedulerTensor>(type, Shape(1), TensorFormat::NHWC, buf);
     tensor->memArea = arch->ReadonlyMemory();
     return tensor;
 }
@@ -426,10 +424,8 @@ HandleDilation(DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op
                     .WithWidth(newIfmSlice.offset.Width() + dx * GX * newStride.x);
             ifmStrides.y *= DY * GY;
             ifmStrides.x *= DX * GX;
-            newOfmSlice.offset =
-                newOfmSlice.offset.WithHeight(newOfmSlice.offset.Height() + dy).WithWidth(newOfmSlice.offset.Width() + dx);
-            newOfmSlice.shape =
-                newOfmSlice.shape.WithHeight(newOfmSlice.shape.Height() - dy).WithWidth(newOfmSlice.shape.Width() - dx);
+            newOfmSlice.offset = newOfmSlice.offset.WithHW(newOfmSlice.offset.Height() + dy, newOfmSlice.offset.Width() + dx);
+            newOfmSlice.shape = newOfmSlice.shape.WithHW(newOfmSlice.shape.Height() - dy, newOfmSlice.shape.Width() - dx);
             if ( newOfmSlice.shape.Width() > 0 && newOfmSlice.shape.Height() > 0 )
             {
                 ofmStrides.y *= DY;
@@ -481,7 +477,7 @@ static void UpdatePaddingAndIfmOffset(SchedulerOperation *op)
     auto leftPad = std::max(0, -ifmSlice.offset.Width());
     auto newHeight = std::max(0, ifmSlice.offset.Height());
     auto newWidth = std::max(0, ifmSlice.offset.Width());
-    ifmSlice.offset = ifmSlice.offset.WithHeight(newHeight).WithWidth(newWidth);
+    ifmSlice.offset = ifmSlice.offset.WithHW(newHeight, newWidth);
     auto newPadding = Margin(topPad, leftPad, padding.Bottom(), padding.Right());
     auto newKernel = kernel->WithPadding(newPadding);
     op->SetKernel(newKernel);
@@ -601,7 +597,7 @@ static Shape NewOfmBlockShape(Architecture *arch, SchedulerOperation *op)
     assert(config && "No config found.");
     if ( !config ) throw DecompositionFailure("No config found");
     auto HW = config->OptimalStripeGranule();
-    Shape configBlock = ofmShape.WithBatch(1).WithHW(HW.y, HW.x).WithDepth(config->OptimalDepthGranule());
+    Shape configBlock = ofmShape.WithBatch(1).WithHWC(HW.y, HW.x, config->OptimalDepthGranule());
     if ( Shape::Min(ofmShape, configBlock) != ofmShape )
     {
         newBlock = Shape::Min(ofmShape, configBlock);
@@ -631,8 +627,8 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeBlocks(
     auto ifmstepY = stepY * ifmConn->stepXY.y / ofmConn->stepXY.y * stride.y;
     auto ifmstepX = stepX * ifmConn->stepXY.x / ofmConn->stepXY.x * stride.x;
     auto ofmEnd = ofmOffset + ofmShape;
-    auto ofmStep = ofmOffset.WithZeros().WithHeight(stepY).WithWidth(stepX);
-    auto ifmStep = ofmStep.WithHeight(ifmstepY).WithWidth(ifmstepX);
+    auto ofmStep = ofmOffset.WithZeros().WithHW(stepY, stepX);
+    auto ifmStep = ofmStep.WithHW(ifmstepY, ifmstepX);
     auto ifmOffset = ifmConn->slice.offset;
     while ( ofmOffset.Height() < ofmConn->slice.offset.Height() + ofmConn->SliceShape().Height() )
     {
@@ -651,7 +647,7 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeBlocks(
                 auto newOfmWidth = std::min(ofmEnd.Width() - ofmOffset.Width(), BW);
                 auto newOfmDepth = std::min(ofmEnd.Depth() - bc * BC, BC);
 
-                newOfmSlice.shape = newOfmShape.WithHeight(newOfmHeight).WithWidth(newOfmWidth).WithDepth(newOfmDepth);
+                newOfmSlice.shape = newOfmShape.WithHWC(newOfmHeight, newOfmWidth, newOfmDepth);
                 if ( !newOfmSlice.shape.Elements() ) continue;
                 // Calculate block padding
                 Margin newPadding = NewPaddingForBlock(
@@ -692,8 +688,8 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeBlocks(
             ifmOffset = ifmOffset.WithWidth(ifmOffset.Width() + ifmStep.Width());
             ofmOffset = ofmOffset.WithWidth(ofmOffset.Width() + ofmStep.Width());
         }
-        ifmOffset = ifmOffset.WithHeight(ifmOffset.Height() + ifmStep.Height()).WithWidth(ifmOffsetWidth);
-        ofmOffset = ofmOffset.WithHeight(ofmOffset.Height() + ofmStep.Height()).WithWidth(ofmOffsetWidth);
+        ifmOffset = ifmOffset.WithHW(ifmOffset.Height() + ifmStep.Height(), ifmOffsetWidth);
+        ofmOffset = ofmOffset.WithHW(ofmOffset.Height() + ofmStep.Height(), ofmOffsetWidth);
     }
     return result;
 }
@@ -730,7 +726,7 @@ DecomposeForStrides(DecompositionContext &ctx, std::unique_ptr<SchedulerOperatio
                     .WithWidth(newIfmSlice.offset.Width() + kx * ifmConn->stepXY.x);
             // If ifm slice shape was reduced from the block size due to padding,
             // it needs to be increased again as we step past some padding.
-            auto extendMax = Point2i{0, 0} - Point2i::Min(ifmConn->slice.offset.WH<int>(), {0, 0});
+            auto extendMax = Point2i{0, 0} - Point2i::Min(ifmConn->slice.offset.WH(), {0, 0});
             auto extend = Point2i::Min(ifmConn->stepXY * Point2i{kx, ky}, extendMax);
             newIfmSlice.shape =
                 newIfmSlice.shape
@@ -798,9 +794,8 @@ DecomposeForStrides(DecompositionContext &ctx, std::unique_ptr<SchedulerOperatio
             TensorSlice weightSlice;
             if ( weightsConn )
             {
-                weightSlice.offset =
-                    weightsConn->SliceShape().WithZeros().WithHeight(weightOffsetXY.y).WithWidth(weightOffsetXY.x);
-                weightSlice.shape = weightsConn->SliceShape().WithHeight(newHeight).WithWidth(newWidth);
+                weightSlice.offset = weightsConn->SliceShape().WithZeros().WithHW(weightOffsetXY.y, weightOffsetXY.x);
+                weightSlice.shape = weightsConn->SliceShape().WithHW(newHeight, newWidth);
             }
             auto weightStepXY = Point2i{SX, SY};
             auto newKernel = kernel->WithStride({1, 1}).WithSize({newWidth, newHeight});
@@ -809,7 +804,7 @@ DecomposeForStrides(DecompositionContext &ctx, std::unique_ptr<SchedulerOperatio
             auto *subIfmConn = subOp->Input(TensorUsage::IFM);
             subIfmConn->slice = std::move(newIfmSlice);
             subIfmConn->stepXY = ifmStrides;
-            if ( weightsConn && ((weightSlice.offset.WH<int>() != Point2i(0, 0)) || weightSlice.shape < weightsConn->SliceShape()) )
+            if ( weightsConn && (!weightSlice.offset.WH() || weightSlice.shape < weightsConn->SliceShape()) )
             {
                 auto *subWeightsConn = subOp->Input(TensorUsage::Weights);
                 subWeightsConn->tensor = Slice(weightsConn->tensor.get(), weightSlice.offset, weightSlice.shape, {}, weightStepXY);
@@ -1452,7 +1447,7 @@ static std::shared_ptr<SchedulerTensor> ReverseHWStrided(SchedulerTensor *tensor
     const auto inBufferValues = inBufferView.Values<TYPE>();
 
     // Output shape selects a (ny+1)x(nx+1) sub-grid from the reversed+strided kernel
-    Shape weightShape = tensor->storageShape.WithHeight(additionalKernelMappingsY + 1).WithWidth(additionalKernelMappingsX + 1);
+    Shape weightShape = tensor->storageShape.WithHW(additionalKernelMappingsY + 1, additionalKernelMappingsX + 1);
     const auto size = weightShape.Elements();
     auto outBuffer = std::make_shared<Buffer>(std::make_unique<TYPE[]>(size), size);
     auto newWeights = std::make_shared<Tensor>("reversed_weights", DataTypeOf<TYPE>::value, weightShape, outBuffer);
@@ -1811,7 +1806,7 @@ ConvertResizeBilinearHPCToDepthwise(Architecture *arch, std::unique_ptr<Schedule
     auto tens = ifmConn->tensor;
     auto padT = ifmConn->tensor->Clone();
     padT->isGraphInput = false;
-    padT->storageShape = ifmShape.WithHeight(ifmShape.Height() + 2).WithWidth(ifmShape.Width() + 2);
+    padT->storageShape = ifmShape.WithHW(ifmShape.Height() + 2, ifmShape.Width() + 2);
     // Reflect Padding to provide the setup for bilinear half pixel centers interpolation
 
     // Centre
@@ -2739,7 +2734,7 @@ SwapAxes(DecompositionContext &ctx, Shape &shape, SchedulerConnection *tail, int
 {
     std::vector<std::unique_ptr<SchedulerOperation>> result;
 
-    assert(shape.IsValid());
+    assert(shape);
     assert(tail);
     assert(a >= 0 && a < shape.Size());
     assert(b >= 0 && b < shape.Size());

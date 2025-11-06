@@ -83,7 +83,7 @@ struct TensorSlice
         }
     }
 
-    bool IsValid() const { return offset.IsValid() && shape.IsValid(); }
+    bool IsValid() const { return offset && shape; }
     explicit operator bool() const { return IsValid(); }
 
     // Coverity wrongly thinks this function has side-effects and will complain when used in macros

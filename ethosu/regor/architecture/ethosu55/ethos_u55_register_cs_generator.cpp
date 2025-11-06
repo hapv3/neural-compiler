@@ -452,7 +452,7 @@ bool EthosU55RCSGenerator::IsScalar(const HLCFeatureMap &fm, int32_t &scalarValu
 {
     const auto &buffer = fm.constBuffer;
     // A 1-sized feature map in constant memory is a scalar
-    bool isScalar = fm.shape.Elements() == 1 && buffer && IsInteger(fm.dataType) && DataTypeSizeBits(fm.dataType) <= 16;
+    bool isScalar = fm.shape.IsScalar() && buffer && IsInteger(fm.dataType) && DataTypeSizeBits(fm.dataType) <= 16;
     if ( isScalar ) scalarValue = Scalar<int32_t>(*buffer, fm.dataType);
     return isScalar;
 }
@@ -1594,7 +1594,7 @@ void EthosU55RCSGenerator::InsertMatMulCommand(const HLCStripe *stripe, Temporar
     inFM1.shape = Shape::PadAxes(inFM1.shape, 4, 1);
     outFM.shape = Shape::PadAxes(outFM.shape, 4, 1);
 
-    assert((!inFM0.slice.shape || (inFM0.shape.WC<int>() == inFM0.slice.shape.WC<int>())) && "Implementation inFM0 cannot be sliced in width or channels");
+    assert((!inFM0.slice.shape || (inFM0.shape.WC() == inFM0.slice.shape.WC())) && "Implementation inFM0 cannot be sliced in width or channels");
     assert(MatMul::Cols(inFM0.shape) == MatMul::Cols(inFM1.shape) && (MatMul::Rows(inFM1.shape) == MatMul::Cols(outFM.shape)) && "Second ifm must be pre-transposed");
 
     // Minimum required temporary space is one IFM0 W/C slice.

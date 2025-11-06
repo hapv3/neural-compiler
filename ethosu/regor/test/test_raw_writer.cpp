@@ -41,27 +41,27 @@ TEST_CASE("raw_writer")
     REQUIRE(readOnlyTensor->IsConstant());
 
     // Build scratch tensor
-    const auto scratch = std::make_shared<Tensor>("scratch", DataType::Int8, Shape({1, 6}));
+    const auto scratch = std::make_shared<Tensor>("scratch", DataType::Int8, Shape(1, 6));
     REQUIRE_FALSE(scratch->IsConstant());
 
     // Build scratch fast tensor
-    const auto scratchFast = std::make_shared<Tensor>("scratch_fast", DataType::Int8, Shape({1, 7}));
+    const auto scratchFast = std::make_shared<Tensor>("scratch_fast", DataType::Int8, Shape(1, 7));
     REQUIRE_FALSE(scratchFast->IsConstant());
 
     // Build input tensor
-    const auto input = std::make_shared<Tensor>("input_1", DataType::Int8, Shape::FromVector<int>({2, 3, 4, 5, 6, 7}));
+    const auto input = std::make_shared<Tensor>("input_1", DataType::Int8, Shape({2, 3, 4, 5, 6, 7}));
     REQUIRE_FALSE(input->IsConstant());
 
     // Build output tensor
-    const auto output = std::make_shared<Tensor>("output_1", DataType::Int8, Shape::FromVector<int>({3, 4, 5, 6, 7, 8}));
+    const auto output = std::make_shared<Tensor>("output_1", DataType::Int8, Shape({3, 4, 5, 6, 7, 8}));
     REQUIRE_FALSE(output->IsConstant());
 
     // Build variable tensor
-    const auto variable1 = std::make_shared<Tensor>("variable_1", DataType::Int8, Shape::FromVector<int>({4, 5, 6, 7, 8, 9}));
+    const auto variable1 = std::make_shared<Tensor>("variable_1", DataType::Int8, Shape({4, 5, 6, 7, 8, 9}));
     REQUIRE_FALSE(variable1->IsConstant());
 
     // Build another variable tensor
-    const auto variable2 = std::make_shared<Tensor>("variable_2", DataType::Int8, Shape::FromVector<int>({5, 6, 7, 8, 9, 10}));
+    const auto variable2 = std::make_shared<Tensor>("variable_2", DataType::Int8, Shape({5, 6, 7, 8, 9, 10}));
     REQUIRE_FALSE(variable2->IsConstant());
 
     // Create custom op

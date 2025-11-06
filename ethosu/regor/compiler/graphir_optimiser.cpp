@@ -196,7 +196,7 @@ Operation *GraphIrOptimiser::ConvertAttributes(Graph *const graph, Operation *co
         TensorConnection *ofmConn = operation->Output(TensorUsage::OFM);
         int ofmRank = ofmConn->shape.Size();
         const auto *attr = operation->Attribute<axis_attr_t>();
-        auto mask = ToReverseMask(attr->axis, ofmRank);
+        auto mask = ToReverseMask({attr->axis}, ofmRank);
         assert(mask != ReverseType::Dynamic && "Unexpected dynamic reverse axis.");
         assert((mask == ReverseType::None || IsPowerOfTwo(unsigned(mask))) && "Reverse operation can only have one axis");
         ofmConn->reverse = mask;
@@ -1091,8 +1091,8 @@ Operation *GraphIrOptimiser::UnrollKernelStrides(Graph *const, Operation *const 
         const int32_t dilation_w = kernel->Dilation().x;
         assert(dilation_w > 0);
         const bool hasPadding = !kernel->Padding().IsZero();
-        const bool hasIfmSlice = ifmConn->slice.shape.IsValid() || ifmConn->slice.offset.IsValid();
-        const bool hasOfmSlice = ofmConn->slice.shape.IsValid() || ofmConn->slice.offset.IsValid();
+        const bool hasIfmSlice = ifmConn->slice.shape || ifmConn->slice.offset;
+        const bool hasOfmSlice = ofmConn->slice.shape || ofmConn->slice.offset;
 
         // Figure out if op needs to be unrolled
         const bool needUnrollH = stride_h > 3;
@@ -1105,9 +1105,9 @@ Operation *GraphIrOptimiser::UnrollKernelStrides(Graph *const, Operation *const 
 
         if ( (needUnrollH || needUnrollW) && canUnrollH && canUnrollW )
         {
-            const Shape inputGridCell = ifmConn->shape.WithHeight(kernel_h).WithWidth(kernel_w);
-            const Shape outputGridCell = ofmConn->shape.WithHeight(1).WithWidth(1);
-            const Point2i gridSize = ofmConn->shape.WH<int>();
+            const Shape inputGridCell = ifmConn->shape.WithHW(kernel_h, kernel_w);
+            const Shape outputGridCell = ofmConn->shape.WithHW(1, 1);
+            const Point2i gridSize = ofmConn->shape.WH();
 
             for ( int h = 0; h < gridSize.y; h++ )
             {
@@ -1413,7 +1413,7 @@ Operation *GraphIrOptimiser::FixupPoolStrides(Graph *const, Operation *const ope
     {
         auto kernel = operation->Kernel();
         const auto ifm = operation->Input(TensorUsage::IFM);
-        if ( kernel->Size() == kernel->Stride() && ifm->shape.Size() >= 3 && kernel->Stride() == ifm->shape.WH<int>() &&
+        if ( kernel->Size() == kernel->Stride() && ifm->shape.Size() >= 3 && kernel->Stride() == ifm->shape.WH() &&
              kernel->Padding().IsZero() )
         {
             operation->SetKernel(std::make_unique<Kernel>(kernel->WithStride({1, 1})));
@@ -2592,7 +2592,7 @@ static std::shared_ptr<Operation> CreatePadForKernelPadding(OpType type, const M
 
     // Create intermediate tensor with the IFM + padding shape
     const auto &ifmShape = ifmConn.shape;
-    Shape paddedIfmShape = ifmShape.WithHW(ifmShape.WH<int>() + padding.TL() + padding.BR());
+    Shape paddedIfmShape = ifmShape.WithHW(ifmShape.WH() + padding.TL() + padding.BR());
     if ( type == OpType::Conv3D && paddedIfmShape.Size() > 3 )
     {
         paddedIfmShape[-4] += padding.Near() + padding.Far();

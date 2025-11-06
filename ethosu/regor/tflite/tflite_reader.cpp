@@ -472,7 +472,7 @@ void TfLiteReader::ParseOperatorOptions(
             const auto options = GetBuiltinOptions<tflite::DepthwiseConv2DOptions>(tflite_operator);
             auto weight_tensor = operation->Input(TensorUsage::Weights)->tensor;
             Shape weightShape = Shape::PadAxes(weight_tensor->StorageShape(), 4, 1);
-            SetKernel(operation, weightShape.WH<int>(), Point2i(options->stride_w(), options->stride_h()),
+            SetKernel(operation, weightShape.WH(), Point2i(options->stride_w(), options->stride_h()),
                 Point2i(options->dilation_w_factor(), options->dilation_h_factor()), options->padding());
             activation_function = options->fused_activation_function();
         }

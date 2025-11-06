@@ -621,7 +621,7 @@ Shape ArchEthosU85::FindElementwiseConfig(const ArchitectureConfigQuery &query, 
     const Shape ofmShape = Shape::PadAxes(Shape::RoundAway(query.ofmShape, common.granule), 3, 1);
     Shape ofmBlockLimit = Shape::Min(ofmShape, common.ofmBlockMax);
 
-    const bool isScalar = (query.ifmShape[0].Elements() == 1) || (query.ifmShape[1] && query.ifmShape[1].Elements() == 1);
+    const bool isScalar = (query.ifmShape[0].IsScalar()) || (query.ifmShape[1] && query.ifmShape[1].IsScalar());
     const int cbBricks = (_cbRamSizeBytes / CB_SLOTS) / (BRICK_ELEMENTS * (query.ifmBits / 8));
     const int obElements = (_obRamSizeBytes * 8) / query.ifmBits;
     // Width units are still 1-unit wide but represent a proportion of the buffer allocation
@@ -712,7 +712,7 @@ Shape ArchEthosU85::AreaFit(const FindConfigCommon &common, const Shape &ofmShap
     double aspect = double(ofmShape.Height()) / ofmShape.Width();
     bool prioritiseDepth = kernel->DilatedWH() == Point2i(1, 1);
 
-    Point2i granule = common.granule.WH<int>();
+    Point2i granule = common.granule.WH();
     Shape fitShape;
     double bestMetric = std::numeric_limits<double>::max();
     int maxDepth = std::min(std::max(_macs, accElements / ubAccElements), ofmBlockLimit.Depth());
@@ -1063,7 +1063,7 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU85::FindBlockConfig(OpType opTyp
             searchSpaceStep = searchSpaceStep.WithWidth(resizeMaxWidth);
         }
         searchSpaceStep = searchSpaceStep.WithHeight(1);
-        searchSpaceEnd = searchSpaceEnd.WithHeight(1).WithDepth(16).WithWidth(resizeMaxWidth);
+        searchSpaceEnd = searchSpaceEnd.WithHWC(1, resizeMaxWidth, 16);
     }
 
     // At this point, OFM is already configured to NHWC but we need to limit OFM block depth as well.
@@ -1332,7 +1332,7 @@ int EthosU85OpConfig::MaxIFMBuffering()
 
 Point2i EthosU85OpConfig::OptimalStripeGranule()
 {
-    return _ofmBlock.WH<int>();
+    return _ofmBlock.WH();
 }
 
 Point2i EthosU85OpConfig::MinimalStripeGranule()

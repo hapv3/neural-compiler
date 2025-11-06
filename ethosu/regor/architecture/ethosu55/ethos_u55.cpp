@@ -352,12 +352,7 @@ std::unique_ptr<EthosU55OpConfig> ArchEthosU55::FindBlockConfig(OpType opType, c
     ElementwiseUsage ewUsage = ElementwiseUsage::No;
     if ( npuOp == EthosU55NpuOp::Elementwise )
     {
-        bool usesScalar = query.ifmShape[0].Elements() == 1;
-        if ( query.ifmShape[1].IsValid() )
-        {
-            usesScalar = usesScalar || query.ifmShape[1].Elements() == 1;
-        }
-
+        bool usesScalar = query.ifmShape[0].IsScalar() || (query.ifmShape[1] && query.ifmShape[1].IsScalar());
         ewUsage = (usesScalar && (query.ifmBits <= 16)) ? ElementwiseUsage::Scalar : ElementwiseUsage::Full;
     }
 
@@ -657,7 +652,7 @@ int EthosU55OpConfig::MaxIFMBuffering()
 
 Point2i EthosU55OpConfig::OptimalStripeGranule()
 {
-    return _ofmBlock.WH<int>();
+    return _ofmBlock.WH();
 }
 
 Point2i EthosU55OpConfig::MinimalStripeGranule()

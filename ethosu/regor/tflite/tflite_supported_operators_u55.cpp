@@ -140,7 +140,7 @@ bool BroadcastShapes(const Operation *op)
     Shape ifmShape = ifmConn->shape;
     Shape ofmShape = ofmConn->shape;
     Shape ifm2Shape = ifm2Conn ? ifm2Conn->shape : Shape();
-    if ( ifmShape != ofmShape && (ifm2Shape == false || ifm2Shape != ofmShape) )
+    if ( ifmShape != ofmShape && (!ifm2Shape || ifm2Shape != ofmShape) )
     {
         Failure(op, "Operation has unsupported broadcast.");
         return false;
@@ -261,7 +261,7 @@ bool MatmulOFMDepth(const Operation *op)
     auto opType = op->Type();
     auto ofmConn = op->Output(TensorUsage::OFM);
     assert(ofmConn);
-    assert(ofmConn->shape.IsValid());
+    assert(ofmConn->shape);
     int ofmDepth = ofmConn->shape.Depth();
     if ( opType == OpType::FullyConnected )
     {

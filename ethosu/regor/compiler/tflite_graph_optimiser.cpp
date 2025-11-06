@@ -1549,11 +1549,11 @@ Operation *TFLiteGraphOptimiser::RewriteSpaceToBatchConvBatchToSpace(Graph *cons
             auto prevBlockShapeConn = prevOp->Input(TensorUsage::Params0);
             auto prevBlockShape = TensorToShape(
                 prevBlockShapeConn->tensor.get(), prevBlockShapeConn->tensor->StorageShape().Depth());
-            assert(prevBlockShape.IsValid());
+            assert(prevBlockShape);
             auto nextBlockShapeConn = nextOp->Input(TensorUsage::Params0);
             auto nextBlockShape = TensorToShape(
                 nextBlockShapeConn->tensor.get(), nextBlockShapeConn->tensor->StorageShape().Depth());
-            assert(nextBlockShape.IsValid());
+            assert(nextBlockShape);
             auto nextOFMConn = nextOp->Output(TensorUsage::OFM);
 
             // Create a new DepthwiseConv2D/Conv2D op to replace the three ops
@@ -3011,7 +3011,7 @@ Operation *TFLiteGraphOptimiser::RewriteTransposeConvPadding(Graph *const graph,
     {
         Margin pad;
         // Calculate upscaled ifm height/width by multiplying with stride
-        auto ifmWH = inputShape.WH<int>() * stride;
+        auto ifmWH = inputShape.WH() * stride;
         int ypad = NeededTotalPadding(ifmWH.y, outputShape.Height(), 1, size.y);
         int xpad = NeededTotalPadding(ifmWH.x, outputShape.Width(), 1, size.x);
         if ( stride == Point2i(2, 2) || (stride == Point2i(1, 2) && ifmWH.x == 1 && size.x == 1) ||

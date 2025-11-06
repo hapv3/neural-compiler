@@ -122,7 +122,7 @@ static Box TransformWithStridesAndSkirt(const Box &outputArea, const Shape *stri
     assert(strides->Size() == 4);
 
     int strideW = strides->Width();
-    Point2i validIfmOffset = splitOffset.IsEmpty() ? Point2i{0, 0} : splitOffset.WH<int>();
+    Point2i validIfmOffset = splitOffset.IsEmpty() ? Point2i{0, 0} : splitOffset.WH();
     start = start.WithWidth(
         std::max((start.Width() - validIfmOffset.x) * strideW - skirt->left + validIfmOffset.x, validIfmOffset.x));
     strideW *= inputStep.x;

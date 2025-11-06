@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -135,10 +135,41 @@ public:
         return Point2<TYPE>(AssertMul(x, pt.x), AssertMul(y, pt.y));
     }
     Point2<TYPE> operator/(const Point2<TYPE> &pt) const { return Point2<TYPE>(x / pt.x, y / pt.y); }
+    Point2<TYPE> operator%(const Point2<TYPE> &pt) const { return Point2<TYPE>(x % pt.x, y % pt.y); }
+
+    Point2<TYPE> &operator+=(const Point2<TYPE> &pt)
+    {
+        x = AssertAdd(x, pt.x);
+        y = AssertAdd(y, pt.y);
+        return *this;
+    }
+    Point2<TYPE> &operator-=(const Point2<TYPE> &pt)
+    {
+        x = AssertSub(x, pt.x);
+        y = AssertSub(y, pt.y);
+        return *this;
+    }
+    Point2<TYPE> &operator*=(const Point2<TYPE> &pt)
+    {
+        x = AssertMul(x, pt.x);
+        y = AssertMul(y, pt.y);
+        return *this;
+    }
+    Point2<TYPE> &operator/=(const Point2<TYPE> &pt)
+    {
+        assert(pt.x && pt.y);
+        x /= pt.x;
+        y /= pt.y;
+        return *this;
+    }
 
     bool operator==(const Point2<TYPE> &pt) const { return (x == pt.x) && (y == pt.y); }
     bool operator!=(const Point2<TYPE> &pt) const { return !((*this) == pt); }
     bool operator<(const Point2<TYPE> &pt) const { return (x < pt.x) || ((x == pt.x) && (y < pt.y)); }
+
+    bool operator!() const { return (x == 0) && (y == 0); }
+
+    explicit operator uint32_t() const { return (x * 8191u) + y; }
 
     static Point2<TYPE> Min(const Point2<TYPE> &a, const Point2<TYPE> &b)
     {
@@ -149,16 +180,12 @@ public:
     {
         return Point2<TYPE>(std::max(a.x, b.x), std::max(a.y, b.y));
     }
-
-    explicit operator uint32_t() const { return (uint32_t(x) << 16) ^ y; }
-
-    explicit operator uint64_t() const { return (uint64_t(x) << 16) ^ y; }
 };
 
 template<typename TYPE>
 struct Point2Hash
 {
-    size_t operator()(const Point2<TYPE> &pt) const { return (pt.x * 8191) ^ pt.y; }
+    size_t operator()(const Point2<TYPE> &pt) const { return uint32_t(pt); }
 };
 
 using Point2i = Point2<int>;
@@ -170,15 +197,56 @@ public:
     TYPE x = 0, y = 0, z = 0;
 
 public:
+    Point3(const Point2<TYPE> &pt, TYPE zz = 0) : x(pt.x), y(pt.y), z(zz) {}
     Point3(TYPE xx = 0, TYPE yy = 0, TYPE zz = 0) : x(xx), y(yy), z(zz) {}
 
 public:
     TYPE AreaXY() const { return x * y; }
+    TYPE Volume() const { return x * y * z; }
 
-    Point3<TYPE> operator+(const Point3<TYPE> &pt) const { return Point3<TYPE>(x + pt.x, y + pt.y, z + pt.z); }
-    Point3<TYPE> operator-(const Point3<TYPE> &pt) const { return Point3<TYPE>(x - pt.x, y - pt.y, z - pt.z); }
-    Point3<TYPE> operator*(const Point3<TYPE> &pt) const { return Point3<TYPE>(x * pt.x, y * pt.y, z * pt.z); }
+    Point3<TYPE> operator+(const Point3<TYPE> &pt) const
+    {
+        return Point3<TYPE>(AssertAdd(x, pt.x), AssertAdd(y, pt.y), AssertAdd(z, pt.z));
+    }
+    Point3<TYPE> operator-(const Point3<TYPE> &pt) const
+    {
+        return Point3<TYPE>(AssertSub(x, pt.x), AssertSub(y, pt.y), AssertSub(z, pt.z));
+    }
+    Point3<TYPE> operator*(const Point3<TYPE> &pt) const
+    {
+        return Point3<TYPE>(AssertMul(x, pt.x), AssertMul(y, pt.y), AssertMul(z, pt.z));
+    }
     Point3<TYPE> operator/(const Point3<TYPE> &pt) const { return Point3<TYPE>(x / pt.x, y / pt.y, z / pt.z); }
+    Point3<TYPE> operator%(const Point3<TYPE> &pt) const { return Point3<TYPE>(x % pt.x, y % pt.y, z % pt.z); }
+    Point3<TYPE> &operator+=(const Point3<TYPE> &pt)
+    {
+        x = AssertAdd(x, pt.x);
+        y = AssertAdd(y, pt.y);
+        z = AssertAdd(z, pt.z);
+        return *this;
+    }
+    Point3<TYPE> &operator-=(const Point3<TYPE> &pt)
+    {
+        x = AssertSub(x, pt.x);
+        y = AssertSub(y, pt.y);
+        z = AssertSub(z, pt.z);
+        return *this;
+    }
+    Point3<TYPE> &operator*=(const Point3<TYPE> &pt)
+    {
+        x = AssertMul(x, pt.x);
+        y = AssertMul(y, pt.y);
+        z = AssertMul(z, pt.z);
+        return *this;
+    }
+    Point3<TYPE> &operator/=(const Point3<TYPE> &pt)
+    {
+        assert(pt.x && pt.y && pt.z);
+        x /= pt.x;
+        y /= pt.y;
+        z /= pt.z;
+        return *this;
+    }
 
     bool operator==(const Point3<TYPE> &pt) const { return (x == pt.x) && (y == pt.y) && (z == pt.z); }
     bool operator!=(const Point3<TYPE> &pt) const { return !((*this) == pt); }
@@ -186,7 +254,36 @@ public:
     {
         return (x < pt.x) || ((x == pt.x) && (y < pt.y)) || ((x == pt.x) && (y == pt.y) && (z < pt.z));
     }
+
+    bool operator!() const { return (x == 0) && (y == 0) && (z == 0); }
+
+    operator Point2<TYPE>() const { return Point2<TYPE>(x, y); }
+
+    explicit operator uint32_t() const { return (((x * 8191u) + y) * 33u) + z; }
+
+    static Point3<TYPE> Min(const Point3<TYPE> &a, const Point3<TYPE> &b)
+    {
+        return Point3<TYPE>(std::min(a.x, b.x), std::min(a.y, b.y), std::min(a.z, b.z));
+    }
+
+    static Point3<TYPE> Max(const Point3<TYPE> &a, const Point3<TYPE> &b)
+    {
+        return Point3<TYPE>(std::max(a.x, b.x), std::max(a.y, b.y), std::max(a.z, b.z));
+    }
+
+    static Point3<TYPE> DivRoundUp(const Point3<TYPE> &pt, const Point3<TYPE> &div)
+    {
+        return Point3<TYPE>(DivRoundUp(pt.x, div.x), DivRoundUp(pt.y, div.y), DivRoundUp(pt.z, div.z));
+    }
 };
+
+template<typename TYPE>
+struct Point3Hash
+{
+    size_t operator()(const Point3<TYPE> &pt) const { return uint32_t(pt); }
+};
+
+using Point3i = Point3<int>;
 
 template<typename TYPE>
 struct Fraction
@@ -205,6 +302,24 @@ public:
 public:
     operator Point2<TYPE>() { return Point2<TYPE>(n, d); }
 };
+
+template<typename TYPE>
+TYPE DivRoundUp(TYPE a, TYPE b)
+{
+    return TYPE((a + b - 1) / b);
+}
+
+template<typename TYPE>
+Point2<TYPE> DivRoundUp(const Point2<TYPE> &a, const Point2<TYPE> &b)
+{
+    return Point2<TYPE>(DivRoundUp(a.x, b.x), DivRoundUp(a.y, b.y));
+}
+
+template<typename TYPE>
+Point3<TYPE> DivRoundUp(const Point3<TYPE> &a, const Point3<TYPE> &b)
+{
+    return Point3<TYPE>(DivRoundUp(a.x, b.x), DivRoundUp(a.y, b.y), DivRoundUp(a.z, b.z));
+}
 
 template<typename TYPE>
 TYPE RoundAway(TYPE value, TYPE align)
@@ -246,13 +361,6 @@ TYPE RoundZero(TYPE value, TYPE align)
 inline float RoundZero(float value, float align)
 {
     return std::truncf(value / align) * align;
-}
-
-
-template<typename TYPE>
-TYPE DivRoundUp(TYPE a, TYPE b)
-{
-    return TYPE((a + b - 1) / b);
 }
 
 // Checks if the ranges overlap, to0 and to1 are exclusive
