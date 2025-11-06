@@ -1500,6 +1500,11 @@ bool EthosU85OpGroup::Fuse(const ArchitectureOpGroupQuery &op, const std::vector
         return false;
     }
 
+    // Can't fuse downcast with clamp
+    if ( DataTypeSizeBits(prevOp.ifm[0].type) > DataTypeSizeBits(prevOp.ofm.type) && IsActivation(op.type) )
+    {
+        return false;
+    }
     EthosU85Constraints *constraints = static_cast<EthosU85Constraints *>(_arch->_constraints.get());
 
     // Can't fuse a transpose or reverse type that's not supported by primaryOp in opgroup
