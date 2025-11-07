@@ -18,8 +18,10 @@
 
 #include "common/common.hpp"
 
+#include "architecture/ethosu55/ethos_u55.hpp"
 #include "architecture/ethosu85/ethos_u85.hpp"
 #include "compiler/graphir_optimiser.hpp"
+#include "compiler/optimiser_utils.hpp"
 #include "compiler/scheduler_packing.hpp"
 #include "compiler/tensor_properties.hpp"
 #include "util.hpp"
@@ -525,4 +527,116 @@ TEST_CASE("test_graphir_optimiser - resource data type")
     REQUIRE(allOps[0]->Type() == OpType::Passthrough);
     REQUIRE(allOps[0]->Input(TensorUsage::IFM)->SliceShape() == Shape());
     REQUIRE(allOps[0]->Output(TensorUsage::OFM)->SliceShape() == Shape(1, 4, 4, 1));
+}
+
+TEST_CASE("test_graphir_optimiser - duplicated tensor readers")
+{
+    // Create arch
+    auto arch = CreateArchDefault<ArchEthosU55>();
+    std::string err = "noerror";
+    arch->CheckConfiguration(err);
+    REQUIRE(err == "noerror");
+
+    std::vector<std::shared_ptr<Operation>> ops;
+    auto input = CreateTensor("INPUT", Shape(1, 4, 4, 1), DataType::Int8);
+    auto absOfm = CreateTensor("ABS_OFM", Shape(1, 4, 4, 1), DataType::Int8);
+    auto reshapeOfm = CreateTensor("RESHAPE_OFM", Shape(1, 8, 2, 1), DataType::Int8);
+    auto matmulOfm = CreateTensor("MATMUL_OFM", Shape(1, 8, 2, 1), DataType::Int8);
+    auto rescaleOfm = CreateTensor("RESCALE_OFM", Shape(1, 8, 2, 1), DataType::Int8);
+
+    // Create a ABS-RESHAPE-MATMUL-RESCALE graph
+    ops.push_back(CreateOperation(OpType::Abs, TensorUsage::IFM, input, TensorUsage::OFM, absOfm));
+    ops.push_back(CreateOperation(OpType::Reshape, TensorUsage::IFM, absOfm, TensorUsage::OFM, reshapeOfm));
+    // Use reshapeOfm as both inputs to matmul to test multiple readers
+    ops.push_back(CreateOperation(OpType::MatMul, TensorUsage::IFM0, reshapeOfm, TensorUsage::IFM1, reshapeOfm, TensorUsage::OFM, matmulOfm));
+    auto matmulOp = ops.back();
+
+    ops.push_back(CreateOperation(OpType::Rescale, TensorUsage::IFM, matmulOfm, TensorUsage::OFM, rescaleOfm));
+
+    auto &reshapeOp = ops[1];
+    REQUIRE(reshapeOp->Type() == OpType::Reshape);
+
+    auto graph = CreateGraph(ops);
+    std::vector<Operation *> allOps;
+
+    SECTION("Insert copy before reshape")
+    {
+        auto copyOp = regor::GraphOptimisation::InsertCopyOpAfterTensor(
+            reshapeOp->Input(TensorUsage::IFM)->tensor, reshapeOp->Input(TensorUsage::IFM)->quantization);
+
+        graph->GetAllOperations(allOps);
+        REQUIRE(allOps.size() == 5);
+        REQUIRE(copyOp->OFM()->Readers().size() == 1);
+        REQUIRE(copyOp->OFM()->Readers()[0] == reshapeOp);
+    }
+
+    SECTION("Insert copy before matmul ifm0")
+    {
+        auto copyOp = regor::GraphOptimisation::InsertCopyOpAfterTensor(
+            matmulOp->Input(TensorUsage::IFM0)->tensor, matmulOp->Input(TensorUsage::IFM0)->quantization);
+
+        graph->GetAllOperations(allOps);
+        REQUIRE(allOps.size() == 5);
+
+        REQUIRE(copyOp->OFM()->Readers().size() == 2);
+        REQUIRE(copyOp->OFM()->Readers()[0] == matmulOp);
+        REQUIRE(copyOp->OFM()->Readers()[1] == matmulOp);
+        REQUIRE(reshapeOp->OFM()->Readers().size() == 1);
+        REQUIRE(reshapeOp->OFM()->Readers()[0] == copyOp);
+
+        REQUIRE(matmulOp->Input(TensorUsage::IFM0)->tensor.get()->Writers().size() == 1);
+        REQUIRE(matmulOp->Input(TensorUsage::IFM0)->tensor.get()->Name() == "RESHAPE_OFM_copy");
+        REQUIRE(matmulOp->Input(TensorUsage::IFM1)->tensor.get()->Writers().size() == 1);
+        REQUIRE(matmulOp->Input(TensorUsage::IFM1)->tensor.get()->Name() == "RESHAPE_OFM_copy");
+    }
+
+    SECTION("Insert copy before matmul using pointer variable")
+    {
+        auto copyOp = regor::GraphOptimisation::InsertCopyOpAfterTensor(reshapeOfm, matmulOp->Input(TensorUsage::IFM0)->quantization);
+
+        graph->GetAllOperations(allOps);
+        REQUIRE(allOps.size() == 5);
+
+        REQUIRE(copyOp->OFM()->Readers().size() == 2);
+        REQUIRE(copyOp->OFM()->Readers()[0] == matmulOp);
+        REQUIRE(copyOp->OFM()->Readers()[1] == matmulOp);
+        REQUIRE(reshapeOp->OFM()->Readers().size() == 1);
+        REQUIRE(reshapeOp->OFM()->Readers()[0] == copyOp);
+
+        REQUIRE(matmulOp->Input(TensorUsage::IFM0)->tensor.get()->Writers().size() == 1);
+        REQUIRE(matmulOp->Input(TensorUsage::IFM0)->tensor.get()->Name() == "RESHAPE_OFM_copy");
+        REQUIRE(matmulOp->Input(TensorUsage::IFM1)->tensor.get()->Writers().size() == 1);
+        REQUIRE(matmulOp->Input(TensorUsage::IFM1)->tensor.get()->Name() == "RESHAPE_OFM_copy");
+    }
+
+    SECTION("Replace consumer input)")
+    {
+        auto newTensor = CreateTensor("NEW_TENSOR", Shape(1, 8, 2, 1), DataType::Int8);
+        regor::GraphOptimisation::ReplaceConsumerInput(nullptr, reshapeOfm->Readers(), reshapeOfm.get(), newTensor);
+
+        graph->GetAllOperations(allOps);
+        REQUIRE(allOps.size() == 2);
+        REQUIRE(allOps[0]->Type() == OpType::MatMul);  //  Abs and Reshape are disconnected from the graph now
+        REQUIRE(newTensor->Readers().size() == 2);
+        REQUIRE(reshapeOfm->Readers().empty());
+        REQUIRE(matmulOp->Input(TensorUsage::IFM0)->tensor.get()->Name() == "NEW_TENSOR");
+        REQUIRE(matmulOp->Input(TensorUsage::IFM1)->tensor.get()->Name() == "NEW_TENSOR");
+
+        reshapeOp->Disconnect();  // Clean up to avoid memory leaks
+        ops[0]->Disconnect();
+    }
+
+    SECTION("Remove Reshape")
+    {
+        GraphOptimiserOptions options;
+        const auto &optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
+        REQUIRE(!optimiser.empty());
+        optimiser.back()->RemoveReshape(graph.get(), reshapeOp.get());
+
+        graph->GetAllOperations(allOps);
+        REQUIRE(allOps.size() == 3);
+        REQUIRE(absOfm->Readers().size() == 2);
+        REQUIRE(matmulOp->Input(TensorUsage::IFM0)->tensor.get()->Name() == "ABS_OFM");
+        REQUIRE(matmulOp->Input(TensorUsage::IFM1)->tensor.get()->Name() == "ABS_OFM");
+    }
 }

@@ -35,6 +35,7 @@ std::shared_ptr<Operation> InsertCopyOpAfterTensor(const std::shared_ptr<Tensor>
     name.append("_copy");
     copyTensor->SetName(name);
     copyOp->ConnectOutput(TensorUsage::OFM, copyTensor).Set(quantization).Set(ifm->StorageShape());
+    regor::Tensor *const ifmTensor = ifm.get();  // In case ifm is modified in the loop below
 
     std::vector<std::shared_ptr<Operation>> ifmReaders(ifm->Readers());
     for ( const auto &opReader : ifmReaders )
@@ -48,7 +49,7 @@ std::shared_ptr<Operation> InsertCopyOpAfterTensor(const std::shared_ptr<Tensor>
 
             while ( consIfmConn != nullptr )
             {
-                if ( consIfmConn->tensor.get() == ifm.get() )
+                if ( consIfmConn->tensor.get() == ifmTensor )
                 {
                     cons->ConnectInput(usage, copyTensor);
                 }
