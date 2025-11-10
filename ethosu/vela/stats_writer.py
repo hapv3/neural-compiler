@@ -451,13 +451,14 @@ def regor_operations_from_database(opt_database):
 
     # set of optimised_ids that ended up on NPU
     npu_optimised_ids = set()
+    group_ids = set()
     # maps src-id to ofm-shape
     ofm_shapes = dict()
     cpu_operations = []
     npu_operations = []
 
     # prerequisite checks
-    required_tables = ["source", "optimised", "perf", "queue"]
+    required_tables = ["source", "group", "perf", "queue"]
     for table in required_tables:
         if table not in opt_database.tables:
             print("Could not extract CPU operations:")
@@ -491,15 +492,26 @@ def regor_operations_from_database(opt_database):
     for entry in qt.data:
         npu_optimised_ids.add(entry[id_idx])
 
+    # add fused/chained operation ids from group table to group_ids
+    group = opt_database.tables["group"]
+    id_idx = find_in_header(["id"], group.header)[0]
+    if id_idx == -1:
+        print("Could not extract CPU operations:")
+        print("id was not found in group table")
+        return cpu_operations, npu_operations
+    for entry in group.data:
+        group_ids.add(entry[id_idx])
+
     # build cpu/npu operations from perf-table
     perf = opt_database.tables["perf"]
-    fields = ["optimised_id", "source_id", "name", "operator"]
+    fields = ["id", "optimised_id", "source_id", "name", "operator"]
     ids = find_in_header(fields, perf.header)
     if any([x < 0 for x in ids]):
         print("Could not extract CPU operations:")
         print("Could not find all necessary fields in perf database")
-    opt_idx, src_idx, name_idx, operator_idx = ids
+    id_idx, opt_idx, src_idx, name_idx, operator_idx = ids
     for entry in perf.data:
+        op_id = entry[id_idx]
         opt_id = entry[opt_idx]
         src_id = entry[src_idx]
         name = entry[name_idx]
@@ -507,7 +519,7 @@ def regor_operations_from_database(opt_database):
         ofm_shape = ofm_shapes[src_id]
         # TODO add ifm shapes
         op_desc = f"{operator} = {name} (outputs {ofm_shape})"
-        if opt_id in npu_optimised_ids:
+        if opt_id in npu_optimised_ids or op_id in group_ids:
             npu_operations.append(op_desc)
         else:
             cpu_operations.append(op_desc)
