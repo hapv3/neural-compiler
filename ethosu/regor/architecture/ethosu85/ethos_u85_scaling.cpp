@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -178,9 +178,7 @@ void RescalePooling(HLCOperation *op, bool isNoOp)
     assert(ifm1Quant && ofmQuant);
     uint32_t scale = 1;
     int shift = 0;
-    DataType ifmDataType = op->ifm[0].dataType;
     OpType opType = op->type;
-
     if ( ofmQuant->type != QuantizationType::TFLITE )
     {
         // Explicit scaling
@@ -197,7 +195,6 @@ void RescalePooling(HLCOperation *op, bool isNoOp)
         if ( opType == OpType::Sigmoid || opType == OpType::Tanh )
         {
             double ifmScale = ifm1Quant->Scale().Dequantize();
-            assert(ifmDataType == DataType::Int16);
             double rescale = 0x3000 * ifmScale;
             // Calculate scale and shift for the output scale of 1/(3*4096)
             double xLog2 = std::log2(ifmScale);
@@ -222,29 +219,18 @@ void RescalePooling(HLCOperation *op, bool isNoOp)
                 scale = uint32_t(rescale);
             }
         }
-        else if ( opType == OpType::MemoryCopy )
+        else if ( isNoOp && !(opType == OpType::MemoryCopy || opType == OpType::Quantize) )
         {
-            // In the case of concat or other memory operation, rescaling might be needed.
-            // The scale is maximised, to get maximum precision
-            QuantizePoolingScaleMaxPrecision(op->kernel.ElementsWH(), GetScaleFactor(op), scale, shift, 31);
-        }
-        else if ( opType == OpType::Quantize )
-        {
-            // Quantize operations need double-precision scaling
-            QuantizedScale quantScale(GetScaleFactor(op));
-            scale = uint32_t(quantScale.scale);
-            shift = quantScale.shift;
-        }
-        else if ( isNoOp )
-        {
+            // noOp operations use reduced precision scaling
             QuantizedScale quantScale(GetScaleFactor(op, /* reducedPrecision */ true));
             scale = uint32_t(quantScale.scale);
             shift = quantScale.shift;
         }
         else
         {
-            // Normal pooling operation, without need for special scaling
-            QuantizePoolingScale(op->kernel.ElementsWH(), GetScaleFactor(op), 0, scale, shift, 31);
+            auto reScale = QuantizedScale(GetScaleFactor(op));
+            scale = uint32_t(reScale.scale);
+            shift = reScale.shift;
         }
     }
     ofmQuant->scales.clear();

@@ -703,34 +703,41 @@ int EthosU85RCSGenerator::Disassemble(const uint32_t *in, std::string &op, std::
 void EthosU85RCSGenerator::GenerateOFMScalingForPooling(HLCOperation *poolOp, bool useGlobalScale)
 {
     QuantizedScale ofmScale(1, 0);
+    bool isNoOp = _arch->UseAvgPoolNop(poolOp->type);
+    ethosU85Scaling::RescalePooling(poolOp, isNoOp);
 
+    if ( useGlobalScale && !poolOp->ofm.quantization.scales.empty() )
+    {
+        ofmScale = poolOp->ofm.quantization.scales[0];
+        assert(unsigned(ofmScale.shift) < 64);
+    }
     if ( poolOp->type == OpType::AvgPool && GetPoolingMode(poolOp) == pooling_mode::SUM )
     {
         // AvgPool with pooling_mode::SUM needs special ofm-scaling
         // to compensate for the sum of the kernel elements.
-        assert(useGlobalScale);
-        uint32_t scale = 1;
+        assert(useGlobalScale && "AvgPool without global scaling");
+        uint32_t multiplier = 1;
         int shift = 0;
-        QuantizePoolingScale(poolOp->kernel.ElementsWH(), GetScaleFactor(poolOp), 0, scale, shift, 31);
-        ofmScale = QuantizedScale(int32_t(scale), shift);
+        if ( QuantizedScale::ReduceScale(ofmScale) != QuantizedScale::Unit() )
+        {
+            // average-pooling with fused scale
+            // compute OFM-scaling both based on ofmScale and kernel-sum
+            QuantizePoolingScaleMaxPrecision(poolOp->kernel.ElementsWH(), ofmScale.Dequantize(), multiplier, shift, 32);
+        }
+        else
+        {
+            QuantizePoolingScale(poolOp->kernel.ElementsWH(), 1.0, 0, multiplier, shift, 31);
+        }
+        ofmScale = QuantizedScale(int32_t(multiplier), shift);
     }
-    else if ( poolOp->type == OpType::ArgMax && useGlobalScale )
+    else if ( poolOp->type == OpType::ArgMax )
     {
+        assert(useGlobalScale && "argmax without global scaling");
         // Argmax requires custom scaling to separate values and indices
         // We don't use RescalePooling as this is true regardless of QuantizationType
         const auto &unitQuant = Quantization::Unit();
         assert((poolOp->ofm.quantization.scales.empty() || poolOp->ofm.quantization.EqualScales(unitQuant)) && "Argmax without unit scale");
         ofmScale = QuantizedScale(1, 16);
-    }
-    else
-    {
-        bool isNoOp = _arch->UseAvgPoolNop(poolOp->type);
-        ethosU85Scaling::RescalePooling(poolOp, isNoOp);
-        if ( useGlobalScale && !poolOp->ofm.quantization.scales.empty() )
-        {
-            ofmScale = poolOp->ofm.quantization.scales[0];
-            assert(unsigned(ofmScale.shift) < 64);
-        }
     }
     Emit(isa::npu_set_ofm_scale_t(uint32_t(ofmScale.shift), 0, GetOfmRoundingMode(poolOp), ofmScale.scale));
 }

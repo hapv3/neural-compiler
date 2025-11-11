@@ -543,7 +543,7 @@ int EthosU55RCSGenerator::Disassemble(const uint32_t *in, std::string &op, std::
 //----------------------------------------------------------------------
 
 // Generates OFM_SCALE register for pooling operations
-void EthosU55RCSGenerator::GenerateOFMScalingForPooling(HLCOperation *poolOp, bool useGlobalScale)
+void EthosU55RCSGenerator::GenerateOFMScalingForPooling(HLCOperation *poolOp, bool useGlobalScale, int padSum)
 {
     QuantizedScale ofmScale(1, 0);
     bool isNoOp = _arch->UseAvgPoolNop(poolOp->type);
@@ -553,20 +553,30 @@ void EthosU55RCSGenerator::GenerateOFMScalingForPooling(HLCOperation *poolOp, bo
     {
         ofmScale = poolOp->ofm.quantization.scales[0];
     }
-    // For the case of a TOSA average-pool
-    // OFM Quantization should always be unit, as we don't support fusing rescales on avgPool.
-    // OFM-scale compensation for the average-pool sum still needs to happen.
-    // TODO: MLBEDSW-11322 Refactor QuantizePoolingScale out of RescalePooling
-    if ( mode == pooling_mode::AVERAGE && poolOp->type != OpType::SumPool && QuantizedScale::ReduceScale(ofmScale) == QuantizedScale(1, 0) )
+    if ( mode == pooling_mode::AVERAGE && poolOp->type != OpType::SumPool )
     {
-        uint32_t scale;
-        int shift;
-        QuantizePoolingScale(poolOp->kernel.ElementsWH(), 1.0, 0, scale, shift, 32);
-        ofmScale = QuantizedScale(int32_t(scale), shift);
+        uint32_t multiplier = 1;
+        int shift = 0;
+        if ( padSum > 0 )
+        {
+            // padded average-pools use HW-scaling
+            assert(QuantizedScale::ReduceScale(ofmScale) == QuantizedScale::Unit() && "HW-scaled averagePool with non-unit rescale");
+        }
+        else if ( QuantizedScale::ReduceScale(ofmScale) != QuantizedScale::Unit() )
+        {
+            // average-pooling with fused scale
+            // compute OFM-scaling both based on ofmScale and kernel-sum
+            QuantizePoolingScaleMaxPrecision(poolOp->kernel.ElementsWH(), ofmScale.Dequantize(), multiplier, shift, 32);
+        }
+        else
+        {
+            // average-pooling needs to compensate the kernel-sum with the OFM-scale register.
+            QuantizePoolingScale(poolOp->kernel.ElementsWH(), 1.0, 0, multiplier, shift, 32);
+        }
+        ofmScale = {int32_t(multiplier), shift};
     }
     assert(unsigned(ofmScale.shift) < 64);
-
-    Emit(isa::npu_set_ofm_scale_t(uint32_t(ofmScale.shift), ofmScale.scale));
+    Emit(isa::npu_set_ofm_scale_t(ofmScale.shift, uint32_t(ofmScale.scale)));
 }
 
 // Generates OFM/OPA/OPB_SCALE registers for elementwise operators.
@@ -1796,7 +1806,6 @@ void EthosU55RCSGenerator::GeneratePoolingOp(const HLCStripe *stripe, MemoryAcce
     EthosU55OpConfig *config = static_cast<EthosU55OpConfig *>(stripe->operation->config);
     // 32-bit reduce-sum cannot use 40-bit accumulation
     assert(!(op->type == OpType::ReduceSum && ifmType == DataType::Int32 && config->_accumulatorType == EthosU55SHRamElements::SHRAM_Acc40));
-    assert((op->type != OpType::SumPool || padSum == 0) && "SumPool with nonzero padding.");
     if ( _arch->UseAvgPoolNop(op->type) )
     {
         assert(op->kernel.Size() == Point2i(1, 1));
@@ -1833,7 +1842,7 @@ void EthosU55RCSGenerator::GeneratePoolingOp(const HLCStripe *stripe, MemoryAcce
         }
     }
     GenerateCommon(stripe, useGlobalScale, RCSIfmScaleMode::OPA_OPB_16, memoryAccesses);
-    GenerateOFMScalingForPooling(op, useGlobalScale);
+    GenerateOFMScalingForPooling(op, useGlobalScale, padSum);
 }
 
 // Elementwise operations

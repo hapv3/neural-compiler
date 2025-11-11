@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -172,7 +172,7 @@ protected:
     //----------------------------------------------------------------------
 
     // Generates OFM_SCALE register for pooling operations
-    void GenerateOFMScalingForPooling(HLCOperation *poolOp, bool useGlobalScale);
+    void GenerateOFMScalingForPooling(HLCOperation *poolOp, bool useGlobalScale, int padSum);
     // Generates OFM/OPA/OPB_SCALE registers for elementwise operators.
     // Returns the operator to scale
     RCSIfmScaleMode GenerateScalingForElementwise(HLCOperation *op, int ifm0Index);
