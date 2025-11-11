@@ -212,6 +212,19 @@ round_mode MapHLCRoundModeToInterface(HLCRoundMode roundMode)
     }
 }
 
+pooling_mode GetPoolingMode(OpType opType)
+{
+    if ( opType == OpType::MaxPool )
+    {
+        return pooling_mode::MAX;
+    }
+    else if ( opType == OpType::ReduceSum )
+    {
+        return pooling_mode::REDUCE_SUM;
+    }
+    return pooling_mode::AVERAGE;
+}
+
 }  // namespace
 
 uint32_t EthosU55RCSGenerator::IdRegister()
@@ -534,13 +547,24 @@ void EthosU55RCSGenerator::GenerateOFMScalingForPooling(HLCOperation *poolOp, bo
 {
     QuantizedScale ofmScale(1, 0);
     bool isNoOp = _arch->UseAvgPoolNop(poolOp->type);
+    auto mode = GetPoolingMode(poolOp->type);
     ethosU55Scaling::RescalePooling(poolOp, isNoOp);
-
     if ( useGlobalScale && !poolOp->ofm.quantization.scales.empty() )
     {
         ofmScale = poolOp->ofm.quantization.scales[0];
-        assert(unsigned(ofmScale.shift) < 64);
     }
+    // For the case of a TOSA average-pool
+    // OFM Quantization should always be unit, as we don't support fusing rescales on avgPool.
+    // OFM-scale compensation for the average-pool sum still needs to happen.
+    // TODO: MLBEDSW-11322 Refactor QuantizePoolingScale out of RescalePooling
+    if ( mode == pooling_mode::AVERAGE && QuantizedScale::ReduceScale(ofmScale) == QuantizedScale(1, 0) )
+    {
+        uint32_t scale;
+        int shift;
+        QuantizePoolingScale(poolOp->kernel.ElementsWH(), 1.0, 0, scale, shift, 32);
+        ofmScale = QuantizedScale(int32_t(scale), shift);
+    }
+    assert(unsigned(ofmScale.shift) < 64);
 
     Emit(isa::npu_set_ofm_scale_t(uint32_t(ofmScale.shift), ofmScale.scale));
 }
@@ -1668,25 +1692,7 @@ void EthosU55RCSGenerator::InsertMatMulCommand(const HLCStripe *stripe, Temporar
 // Generates NPU_OP_* command
 void EthosU55RCSGenerator::GenerateOperationCode(OpType opType)
 {
-    if ( IsPooling(opType) )
-    {
-        pooling_mode mode;
-        if ( opType == OpType::AvgPool || opType == OpType::ResizeBilinear )
-        {
-            mode = pooling_mode::AVERAGE;
-        }
-        else if ( opType == OpType::MaxPool )
-        {
-            mode = pooling_mode::MAX;
-        }
-        else
-        {
-            assert(opType == OpType::ReduceSum);
-            mode = pooling_mode::REDUCE_SUM;
-        }
-        Emit(isa::npu_op_pool_t(mode));
-    }
-    else if ( IsDepthwise(opType) )
+    if ( IsDepthwise(opType) )
     {
         Emit(isa::npu_op_depthwise_t());
     }
@@ -1706,10 +1712,9 @@ void EthosU55RCSGenerator::GenerateOperationCode(OpType opType)
             Emit(isa::npu_op_elementwise_t(item->second));
         }
     }
-    else if ( _arch->UseAvgPoolNop(opType) || opType == OpType::Rescale )
+    else if ( IsPooling(opType) || _arch->UseAvgPoolNop(opType) || opType == OpType::Rescale )
     {
-        // Implemented using AvgPool
-        Emit(isa::npu_op_pool_t(pooling_mode::AVERAGE));
+        Emit(isa::npu_op_pool_t(GetPoolingMode(opType)));
     }
     else
     {
