@@ -1594,6 +1594,47 @@ Operation *TFLiteGraphOptimiser::RewriteSpaceToBatchConvBatchToSpace(Graph *cons
     return returnOp;
 }
 
+template<typename T>
+void DilateWeights(TensorConnection *weightConn, const Point2i &dilatedKernelSize, const Point2i &manualDilation)
+{
+    assert(weightConn->tensor->IsConstant());
+    const auto &zps = weightConn->quantization.zeroPoints;
+    assert((zps.size() == 1 || std::all_of(zps.begin(), zps.end(), [&](int64_t zp) { return zp == zps[0]; })) && "Per-channel zero points not supported for weight dilation.");
+    auto weights = weightConn->tensor->View().Values<T>();
+    const auto &weightShape = weightConn->shape;
+
+    // Create new weights with dilated size, filled with zero-point value
+    const auto origKernelSize = weightShape.WH<int>();
+    const int newKernelBufferSize = weightShape.Batch() * dilatedKernelSize.AreaXY() * weightShape.Depth();
+
+    // Copy the original kernel values into the new sparse kernel
+    // Width and depth stride same for original and new kernel
+    const auto strideC = 1;
+    const auto strideW = weightShape.Depth();
+    const auto newStrideH = strideW * dilatedKernelSize.x;
+    const auto newStrideO = newStrideH * dilatedKernelSize.y;
+
+    auto newKernelVals = std::vector<T>(newKernelBufferSize, zps[0]);
+    for ( int oc = 0; oc < weightShape.Batch(); oc++ )
+    {
+        for ( int h = 0; h < origKernelSize.y; ++h )
+        {
+            for ( int w = 0; w < origKernelSize.x; ++w )
+            {
+                for ( int c = 0; c < weightShape.Depth(); c++ )
+                {
+                    auto newKernelIdx = c * strideC + w * strideW * manualDilation.x + h * newStrideH * manualDilation.y + oc * newStrideO;
+                    assert(newKernelIdx >= 0 && newKernelIdx < newKernelBufferSize);
+                    newKernelVals[newKernelIdx] = weights[{oc, h, w, c}];
+                }
+            }
+        }
+    }
+    weightConn->tensor->SetBuffer(std::make_shared<Buffer>(std::move(newKernelVals)));
+    weightConn->tensor->SetStorageShape(weightShape.WithHW(dilatedKernelSize));
+    weightConn->Set(weightConn->tensor->StorageShape());
+}
+
 // Fixup Conv2D and DepthwiseConv2D to allow dilation greater than 2.
 // TODO: Replace with kernel decomposition for supported architectures
 Operation *TFLiteGraphOptimiser::FixupDilationGT2(Graph *const, Operation *const operation)
@@ -1607,51 +1648,30 @@ Operation *TFLiteGraphOptimiser::FixupDilationGT2(Graph *const, Operation *const
         {
             // If the dilation is a multiple of 2 then the hardware dilation can be enabled to provide that multiple
             // of 2. This allows the kernel size to be reduced (via the scaled dilation) by half in that dimension.
-            int hwDilationH = (dilation.y % 2 == 0) ? 2 : 1;
-            int hwDilationW = (dilation.x % 2 == 0) ? 2 : 1;
-            int manualDilationH = dilation.y / hwDilationH;
-            int manualDilationW = dilation.x / hwDilationW;
+            auto hwDilation = Point2i((dilation.x % 2 == 0) ? 2 : 1, (dilation.y % 2 == 0) ? 2 : 1);
+            auto manualDilation = Point2i(dilation.x / hwDilation.x, dilation.y / hwDilation.y);
 
-            auto *weightConn = operation->Input(TensorUsage::Weights);
-            assert(weightConn);
-            assert(weightConn->tensor->IsConstant());
-            auto weights = weightConn->tensor->View().Values<int8_t>();
-            const auto &weightShape = weightConn->shape;
-
-            // Create new empty kernel with dilated size
-            auto origKernelSize = operation->Kernel()->Size();
-            auto dilatedKernelSize = operation->Kernel()->WithDilation({manualDilationW, manualDilationH}).DilatedWH();
-            Kernel dilatedKernel = operation->Kernel()->WithDilation({hwDilationW, hwDilationH}).WithSize(dilatedKernelSize);
-            const int newKernelBufferSize = weightShape.Batch() * dilatedKernel.ElementsWH() * weightShape.Depth();
+            // Create new kernel with dilated size
+            auto dilatedKernelSize = operation->Kernel()->WithDilation(manualDilation).DilatedWH();
+            auto dilatedKernel = operation->Kernel()->WithDilation(hwDilation).WithSize(dilatedKernelSize);
             operation->SetKernel(std::make_unique<Kernel>(std::move(dilatedKernel)));
 
-            // Copy the original kernel values into the new sparse kernel
-            // Width and depth stride same for original and new kernel
-            auto strideC = 1;
-            auto strideW = weightShape.Depth();
-            auto newStrideH = strideW * dilatedKernelSize.x;
-            auto newStrideO = newStrideH * dilatedKernelSize.y;
-
-            auto newKernelVals = std::make_unique<int8_t[]>(newKernelBufferSize);
-            for ( int oc = 0; oc < weightShape.Batch(); oc++ )
+            // Manually dilate the weights
+            auto *weightConn = operation->Input(TensorUsage::Weights);
+            assert(weightConn);
+            switch ( weightConn->tensor->Type() )
             {
-                for ( int h = 0; h < origKernelSize.y; ++h )
-                {
-                    for ( int w = 0; w < origKernelSize.x; ++w )
-                    {
-                        for ( int c = 0; c < weightShape.Depth(); c++ )
-                        {
-                            auto newKernelIdx = c * strideC + w * strideW * manualDilationW + h * newStrideH * manualDilationH + oc * newStrideO;
-                            assert(newKernelIdx >= 0 && newKernelIdx < newKernelBufferSize);
-                            newKernelVals[newKernelIdx] = weights[{oc, h, w, c}];
-                        }
-                    }
-                }
+                case DataType::Int8:
+                    DilateWeights<int8_t>(weightConn, dilatedKernelSize, manualDilation);
+                    break;
+                case DataType::UInt8:
+                    DilateWeights<uint8_t>(weightConn, dilatedKernelSize, manualDilation);
+                    break;
+                default:
+                    LOG_ERROR("Unsupported weight data-type {0} for dilation > 2 fixup.\n",
+                        DataTypeToString(weightConn->tensor->Type()));
+                    assert(false);
             }
-            weightConn->tensor->SetBuffer(std::make_shared<Buffer>(std::move(newKernelVals), newKernelBufferSize));
-            Shape newShape = weightShape.WithHW(dilatedKernelSize.y, dilatedKernelSize.x);
-            weightConn->tensor->SetStorageShape(newShape);
-            weightConn->Set(newShape);
         }
     }
     return returnOp;

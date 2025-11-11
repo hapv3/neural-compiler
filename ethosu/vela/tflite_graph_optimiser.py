@@ -2719,7 +2719,8 @@ def fixup_dilation_gt2(op: Operation, arch, nng) -> Operation:
             new_kernel_w = (kernel_w - 1) * scale_dilation_w + 1
 
             new_kernel_shape = [new_kernel_h, new_kernel_w, kernel_ic, kernel_oc]
-            new_kernel_values = np.zeros(new_kernel_shape, dtype=op.weights.values.dtype)
+            zp = op.weights.quantization.zero_point
+            new_kernel_values = np.zeros(new_kernel_shape, dtype=op.weights.values.dtype) + zp
 
             # copy the original kernel values into the new sparse kernel
             for h in range(0, kernel_h):
