@@ -232,13 +232,6 @@ void RescalePooling(HLCOperation *op, bool isNoOp)
             // The scale is maximised, to get maximum precision
             QuantizePoolingScaleMaxPrecision(op->kernel.ElementsWH(), GetScaleFactor(op), scale, shift, 32);
         }
-        else if ( opType == OpType::Quantize )
-        {
-            // Quantize operations need double-precision scaling
-            QuantizedScale quantScale(GetScaleFactor(op));
-            scale = uint32_t(quantScale.scale);
-            shift = quantScale.shift;
-        }
         else if ( isNoOp )
         {
             QuantizedScale quantScale(GetScaleFactor(op, /* reducedPrecision */ true));
