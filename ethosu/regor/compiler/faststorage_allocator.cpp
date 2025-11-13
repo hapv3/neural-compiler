@@ -380,46 +380,113 @@ void FastStorageAllocator::AllocateComponent(FastStorageComponentAllocator &allo
     }
 }
 
+// Enforce that all IFMs are in the same memory in groups that contain EW ops
 void FastStorageAllocator::ElementwiseSanitizer(const std::vector<std::unique_ptr<SchedulerOperation>> &schedOps,
     Schedule *schedule, const MemArea &fastStorage, LiveRangeGraph &lrGraph)
-
 {
-    // For now - enforce that both ifm's should be in the same memory for elementwise
-    for ( auto &schedOp : schedOps )
+    for ( const auto &schedOp : schedOps )
     {
         if ( !schedOp->IsNpuOp() )
-        {
+            // Only NPU ops use fast storage
             continue;
+
+        const auto consCost = schedule->Cost(schedOp.get());
+        if ( !consCost )
+            // Without op info there is nothing to do
+            continue;
+
+        const CascadeInfo *cascadeInfo = consCost->cascade == 0 ? nullptr : &schedule->cascades[consCost->cascade];
+        if ( cascadeInfo && schedOp->Index() > cascadeInfo->start )
+            // Within cascade there is nothing to do, since cascade buffer is in fast storage
+            continue;
+
+        const auto opGroup = schedOp->OpGroup();
+        assert(opGroup);
+
+        const auto *ifm = schedOp->IFM(0);
+        const auto *ifm2 = schedOp->TryIFM(1);
+
+        bool hasExtIFMInFastStorage = false;  // This op (incl. sub ops) has IFMs in StagingMemory
+        bool hasExtIFMInSlowStorage = false;  // This op (incl. sub ops) has IFMs in FeatureMapMemory
+
+        if ( IsElementwise(schedOp->Type()) )
+        {
+            if ( opGroup->NeedsAllocation(ifm->tensor->uid) )
+            {
+                hasExtIFMInFastStorage = ifm->tensor->memArea == fastStorage;
+                hasExtIFMInSlowStorage = ifm->tensor->memArea != fastStorage && !ifm->tensor->IsConstant();
+            }
+
+            if ( ifm2 && opGroup->NeedsAllocation(ifm2->tensor->uid) )
+            {
+                hasExtIFMInFastStorage = hasExtIFMInFastStorage || (ifm2->tensor->memArea == fastStorage);
+                hasExtIFMInSlowStorage =
+                    hasExtIFMInSlowStorage || (ifm2->tensor->memArea != fastStorage && !ifm2->tensor->IsConstant());
+            }
         }
 
-        if ( IsBinaryElementwise(schedOp->_type) )
+        for ( auto &subOp : schedOp->SubOps() )
         {
-            auto *ifm = schedOp->IFM(0);
-            auto *ifm2 = schedOp->TryIFM(1);
-            auto consCost = schedule->Cost(schedOp.get());
-
-            CascadeInfo *cascadeInfo =
-                consCost == nullptr || consCost->cascade == 0 ? nullptr : &schedule->cascades[consCost->cascade];
-
-            if ( cascadeInfo && schedOp->Index() > cascadeInfo->start )
-                // Within cascade there is nothing to do, since cascade buffer is in fast storage
-                continue;
-
-            if ( ifm2 && ifm2->tensor->memArea != ifm->tensor->memArea )
+            if ( IsElementwise(subOp->Type()) )
             {
-                // One ifm not in fast storage
-                if ( ifm->tensor->memArea == fastStorage && !ifm2->tensor->IsConstant() )
+                const auto *sifm = subOp->IFM(0);
+                const auto *sifm2 = subOp->TryIFM(1);
+
+                if ( opGroup->NeedsAllocation(sifm->tensor->uid) )
                 {
-                    // Ifm in fast storage and ifm2 is not a constant
+                    hasExtIFMInFastStorage = hasExtIFMInFastStorage || (sifm->tensor->memArea == fastStorage);
+                    hasExtIFMInSlowStorage =
+                        hasExtIFMInSlowStorage || (sifm->tensor->memArea != fastStorage && !sifm->tensor->IsConstant());
+                }
+
+                if ( sifm2 && opGroup->NeedsAllocation(sifm2->tensor->uid) )
+                {
+                    hasExtIFMInFastStorage = hasExtIFMInFastStorage || (sifm2->tensor->memArea == fastStorage);
+                    hasExtIFMInSlowStorage =
+                        hasExtIFMInSlowStorage || (sifm2->tensor->memArea != fastStorage && !sifm2->tensor->IsConstant());
+                }
+            }
+        }
+
+        // Evict every fast tensor if there are both fast and slow tensors
+        if ( hasExtIFMInFastStorage && hasExtIFMInSlowStorage )
+        {
+            LOG_TRACE1("Evicting IFMs to {} (index {}) that has mixed memory IFMs\n", OpTypeToString(schedOp->Type()),
+                schedOp->Index());
+
+            if ( IsElementwise(schedOp->Type()) )
+            {
+                if ( ifm->tensor->memArea == fastStorage )
+                {
                     auto lr = lrGraph.GetOrCreateRange(ifm->tensor.get());
                     Evict(lr);
                 }
 
-                if ( ifm2->tensor->memArea == fastStorage && !ifm->tensor->IsConstant() )
+                if ( ifm2 && ifm2->tensor->memArea == fastStorage )
                 {
-                    // Ifm2 in fast storage and ifm is not a constant
                     auto lr = lrGraph.GetOrCreateRange(ifm2->tensor.get());
                     Evict(lr);
+                }
+            }
+
+            for ( auto &subOp : schedOp->SubOps() )
+            {
+                if ( IsElementwise(subOp->Type()) )
+                {
+                    const auto *sifm = subOp->IFM(0);
+                    const auto *sifm2 = subOp->TryIFM(1);
+
+                    if ( sifm->tensor->memArea == fastStorage )
+                    {
+                        auto lr = lrGraph.GetOrCreateRange(sifm->tensor.get());
+                        Evict(lr);
+                    }
+
+                    if ( sifm2 && sifm2->tensor->memArea == fastStorage )
+                    {
+                        auto lr = lrGraph.GetOrCreateRange(sifm2->tensor.get());
+                        Evict(lr);
+                    }
                 }
             }
         }
