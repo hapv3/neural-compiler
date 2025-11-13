@@ -29,8 +29,12 @@ private:
 
 public:
     EthosU85Constraints(ArchEthosU85 *arch) : _arch(arch) {}
-    bool SupportsFusedRescale(OpType opType, TensorUsage tensorUsage, DataType rescaleFromType, DataType rescaleToType,
-        DataType opFromType, DataType opToType, const Quantization &quantization) override;
+    bool SupportsQuantization(OpType opType, const Quantization &ifmQuant, DataType ifmType,
+        const Quantization &ifm2Quant, DataType ifm2Type, const Quantization &ofmQuant, DataType ofmType) override;
+    bool SupportsQuantization(OpType opType, const Quantization &ifmQuant, DataType ifmType, const Quantization &ofmQuant, DataType ofmType) override
+    {
+        return SupportsQuantization(opType, ifmQuant, ifmType, Quantization::Unit(), DataType::None, ofmQuant, ofmType);
+    };
     bool SupportsAccumulatorSaveRestore() override { return true; }
     bool SupportsNegativeStrides() override { return false; };
     bool SupportsElementwiseLeakyRelu(bool quantized, DataType type) override { return true; };

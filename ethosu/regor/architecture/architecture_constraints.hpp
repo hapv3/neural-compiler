@@ -133,8 +133,10 @@ class IArchitectureConstraints
 {
 public:
     virtual ~IArchitectureConstraints() = default;
-    virtual bool SupportsFusedRescale(OpType opType, TensorUsage tensorUsage, DataType rescaleFromType,
-        DataType rescaleToType, DataType opFromType, DataType opToType, const Quantization &quantization) = 0;
+    virtual bool SupportsQuantization(OpType opType, const Quantization &ifmQuant, DataType ifmType,
+        const Quantization &ifm2Quant, DataType ifm2Type, const Quantization &ofmQuant, DataType ofmType) = 0;
+    virtual bool SupportsQuantization(OpType opType, const Quantization &ifmQuant, DataType ifmType,
+        const Quantization &ofmQuant, DataType ofmType) = 0;
     virtual bool SupportsAccumulatorSaveRestore() = 0;
     virtual bool SupportsNegativeStrides() = 0;
     virtual bool SupportsElementwiseLeakyRelu(bool quantized, DataType type) = 0;

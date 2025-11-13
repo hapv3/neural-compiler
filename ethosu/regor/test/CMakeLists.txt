@@ -66,6 +66,7 @@ add_catch_test(
         test_passthrough.cpp
         test_box.cpp
         test_tosa_graph_optimiser.cpp
+        test_scaling.cpp
     DEPS
         test_common
 )

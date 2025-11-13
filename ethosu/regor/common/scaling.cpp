@@ -33,6 +33,16 @@ bool QuantizedScale::operator!=(const QuantizedScale &other) const
     return !(*this == other);
 }
 
+bool QuantizedScale::operator<=(const QuantizedScale &other) const
+{
+    return (*this == other || this->Dequantize() <= other.Dequantize());
+}
+
+bool QuantizedScale::operator<(const QuantizedScale &other) const
+{
+    return this->Dequantize() < other.Dequantize();
+}
+
 QuantizedScale::QuantizedScale(double scale_, bool reduced)
 {
     int exponent = 0;

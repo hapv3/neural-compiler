@@ -1172,11 +1172,14 @@ std::vector<QuantizedScale> ReduceScales(const std::vector<QuantizedScale> &scal
 bool CanBeFused(Graph *const graph, Operation *const operation, bool ontoConsumers)
 {
     assert(operation->Type() == OpType::Rescale);
-    TensorConnection *fusedConn = ontoConsumers ? operation->Output(TensorUsage::OFM) : operation->Input(TensorUsage::IFM);
-    assert(fusedConn);
+    auto ifmConn = operation->Input(TensorUsage::IFM);
+    auto ofmConn = operation->Output(TensorUsage::OFM);
+    assert(ifmConn);
+    assert(ofmConn);
+    auto fusedConn = ontoConsumers ? ofmConn : ifmConn;
     auto fusedTensor = fusedConn->tensor;
-
     auto *signAttr = operation->Attribute<sign_attr_t>();
+
     // TODO MLBEDSW-11216: Support fusing of unsigned rescales
     if ( signAttr && (signAttr->input_unsigned || signAttr->output_unsigned) )
     {
@@ -1192,6 +1195,34 @@ bool CanBeFused(Graph *const graph, Operation *const operation, bool ontoConsume
     {
         return false;
     }
+
+    // Validate that the rescale can be performed without clipping
+    auto ifmType = ifmConn->tensor->Type();
+    auto ofmType = ofmConn->tensor->Type();
+    auto &ifmQuant = ifmConn->quantization;
+    auto &ofmQuant = ofmConn->quantization;
+    if ( ontoConsumers )
+    {
+        // Find the most significant scale-factor
+        QuantizedScale qs = QuantizedScale::Unit();
+        auto itr = std::max_element(std::begin(ofmQuant.scales), std::end(ofmQuant.scales));
+        if ( itr != std::end(ofmQuant.scales) )
+        {
+            qs = *itr;
+        }
+        assert(ifmQuant.zeroPoints.size() <= 1 && "Rescale with multiple zeroPoints");
+        int64_t zp = ifmQuant.zeroPoints.size() ? ifmQuant.zeroPoints.front() : 0;
+        int64_t value = (zp < 0 ? int64_t(IntegerMax(ifmType)) : IntegerMin(ifmType));
+        value = value - zp;
+        assert(qs.shift >= 0 && "QuantizedScale with negative shift");
+        assert(qs.shift < 64 && "Shift is out of bounds");
+        value = (value * qs.scale) >> qs.shift;
+        if ( value < IntegerMin(ofmType) || value > int64_t(IntegerMax(ofmType)) )
+        {
+            return false;
+        }
+    }
+
     // Cannot fuse-away non-unit zeroPoint
     if ( fusedConn->quantization.zeroPoints != Quantization::Unit().zeroPoints )
     {
@@ -1216,7 +1247,9 @@ bool GraphIrOptimiser::CanFuseRescaleOnConsumer(Operation *const consumer, Tenso
     // Connection to the fused-away tensor
     auto fusedConn = consumer->Input(usage);
     auto fusedType = fusedConn->tensor->Type();
-    auto ofmType = consumer->Output(TensorUsage::OFM)->tensor->Type();
+    const auto &ofmConn = consumer->Output(TensorUsage::OFM);
+    const auto &ofmQuant = ofmConn->quantization;
+    auto ofmType = ofmConn->tensor->Type();
     assert(consumer->Input(usage));
 
     // Cannot fuse-away non-unit quantization
@@ -1224,17 +1257,15 @@ bool GraphIrOptimiser::CanFuseRescaleOnConsumer(Operation *const consumer, Tenso
     {
         return false;
     }
-    // Binary Elementwise operations require matching data types after fusing.
     if ( IsBinaryElementwise(consumer->Type()) )
     {
-        // Find other inputs type and validate whether it is the same as newType
         TensorUsage otherInputUsage = usage == TensorUsage::IFM0 ? TensorUsage::IFM1 : TensorUsage::IFM0;
-        if ( consumer->Input(otherInputUsage)->tensor->Type() != newType )
-        {
-            return false;
-        }
+        auto otherInputConn = consumer->Input(otherInputUsage);
+        const auto &otherQuant = otherInputConn->quantization;
+        auto otherType = otherInputConn->tensor->Type();
+        return _constraints->SupportsQuantization(consumer->Type(), newQuant, newType, otherQuant, otherType, ofmQuant, ofmType);
     }
-    return _constraints->SupportsFusedRescale(consumer->Type(), TensorUsage::IFM, newType, fusedType, fusedType, ofmType, newQuant);
+    return _constraints->SupportsQuantization(consumer->Type(), newQuant, newType, ofmQuant, ofmType);
 }
 
 // Check if multiple rescales can be fused together onto a specific consumer
@@ -1245,18 +1276,13 @@ bool GraphIrOptimiser::CanFuseMultipleRescalesOnConsumer(Operation *const consum
     assert(rescale2->Type() == OpType::Rescale);
     auto ofmConn1 = rescale1->Output(TensorUsage::OFM);
     auto ofmConn2 = rescale2->Output(TensorUsage::OFM);
+    auto consumerOfmConn = consumer->Output(TensorUsage::OFM);
     assert(ofmConn1->tensor->Writers().size() == 1 && "rescale1 must be the only producer when IFM-fusing");
     assert(ofmConn2->tensor->Writers().size() == 1 && "rescale2 must be the only producer when IFM-fusing");
     assert(consumer->UsageOfTensor(ofmConn1->tensor.get()) != TensorUsage::None && "fused tensor1 is not connected to consumer");
     assert(consumer->UsageOfTensor(ofmConn2->tensor.get()) != TensorUsage::None && "fused tensor2 is not connected to consumer");
     auto newType1 = rescale1->Input(TensorUsage::IFM)->tensor->Type();
     auto newType2 = rescale2->Input(TensorUsage::IFM)->tensor->Type();
-    // First check resulting data-types
-    // Binary Elementwise operations require matching data types after fusing.
-    if ( newType1 != newType2 )
-    {
-        return false;
-    }
     // Cannot fuse-away non-unit quantization
     if ( !consumer->Input(TensorUsage::IFM0)->quantization.EqualScales(Quantization::Unit()) )
     {
@@ -1269,11 +1295,8 @@ bool GraphIrOptimiser::CanFuseMultipleRescalesOnConsumer(Operation *const consum
     auto fusedType1 = rescale1->Output(TensorUsage::OFM)->tensor->Type();
     auto fusedType2 = rescale2->Output(TensorUsage::OFM)->tensor->Type();
     auto consumerOfmType = consumer->Output(TensorUsage::OFM)->tensor->Type();
-    bool canFuse1 = _constraints->SupportsFusedRescale(
-        consumer->Type(), TensorUsage::IFM, newType1, fusedType1, fusedType1, consumerOfmType, q1);
-    bool canFuse2 = _constraints->SupportsFusedRescale(
-        consumer->Type(), TensorUsage::IFM, newType2, fusedType2, fusedType2, consumerOfmType, q2);
-    return canFuse1 && canFuse2;
+    return _constraints->SupportsQuantization(
+        consumer->Type(), q1, newType1, q2, newType2, consumerOfmConn->quantization, consumerOfmConn->tensor->Type());
 }
 
 // Check if a rescale can be fused onto a specific producer
@@ -1283,13 +1306,18 @@ bool GraphIrOptimiser::CanFuseRescaleOnProducer(Operation *const producer, Quant
     auto fusedConn = producer->Output(TensorUsage::OFM);
     auto fusedType = fusedConn->tensor->Type();
     assert(producer->Input(TensorUsage::IFM));
-    auto ifmType = producer->Input(TensorUsage::IFM)->tensor->Type();
     // Cannot fuse-away non-unit quantization
     if ( !fusedConn->quantization.EqualScales(Quantization::Unit()) )
     {
         return false;
     }
-    return _constraints->SupportsFusedRescale(producer->Type(), TensorUsage::OFM, fusedType, newType, ifmType, fusedType, newQuant);
+    auto ifmConn = producer->Input(TensorUsage::IFM);
+    auto ifm2Conn = producer->Input(TensorUsage::IFM1);
+    auto ifmType = ifmConn->tensor->Type();
+    const auto &ifmQuant = ifmConn->quantization;
+    auto ifm2Type = ifm2Conn ? ifm2Conn->tensor->Type() : DataType::None;
+    const auto &ifm2Quant = ifm2Conn ? ifm2Conn->quantization : Quantization::Unit();
+    return _constraints->SupportsQuantization(producer->Type(), ifmQuant, ifmType, ifm2Quant, ifm2Type, newQuant, newType);
 }
 
 /// @brief Moves Rescale operations to the output of the previous operation
@@ -1318,6 +1346,7 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const graph, Operation *const op
         //  ^ we want to keep this              ^ but the multiplier and shift
         //    connection when IFM-fusing        are stored here in GraphIR
         auto quant = ifmConn->quantization;
+        assert(quant.type == QuantizationType::EXPLICIT && "Rescale without explicit scaling");
         quant.scales = ReduceScales(ofmConn->quantization.scales, attr->double_round);
         return quant;
     };
@@ -1391,6 +1420,7 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const graph, Operation *const op
         auto *attr = operation->Attribute<rescale_attr_t>();
         // Normalize scales to shift 0 if possible
         newOFMQuant.scales = ReduceScales(ofmConn->quantization.scales, attr->double_round);
+        assert(newOFMQuant.type == QuantizationType::EXPLICIT && "Rescale without explicit scaling");
         // TODO MLBEDSW-11218: Support fusing onto multiple producers
         assert(ifmConn->tensor->Writers().size() == 1);
         auto producer = ifmConn->tensor->Writers()[0];
@@ -1925,11 +1955,12 @@ Operation *GraphIrOptimiser::RewriteReduceSum(Graph *const graph, Operation *con
             const int64_t zp = ifmConn->quantization.zeroPoints.empty() ? 0 : ifmConn->quantization.zeroPoints[0];
             if ( zp != 0 )
             {
-                if ( _constraints->SupportsFusedRescale(OpType::Sub, TensorUsage::OFM, DataType::Int32, DataType::Int32,
-                         DataType::Int32, DataType::Int32, ofmConn->quantization) )
+                const auto &ofmQuant = ofmConn->quantization;
+                auto ofmType = ofmConn->tensor->Type();
+                if ( _constraints->SupportsQuantization(OpType::Sub, Quantization::Unit(), DataType::Int32,
+                         Quantization::Unit(), DataType::Int32, ofmQuant, ofmType) )
                 {
                     // Replace ReduceSum (zp != 0) with ReduceSum->Sub(zp):
-
                     // Temporary tensor between ReduceSum and Sub
                     std::shared_ptr<Tensor> reduceSumTens = ofmConn->tensor->Clone();
                     reduceSumTens->SetBuffer(nullptr);

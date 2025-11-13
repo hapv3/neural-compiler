@@ -151,98 +151,159 @@ bool EthosU85Constraints::SupportsFusedReverse(OpType opType, ReverseType revers
     return true;
 }
 
-bool EthosU85Constraints::SupportsFusedRescale(OpType opType, TensorUsage tensorUsage, DataType rescaleFromType,
-    DataType rescaleToType, DataType opFromType, DataType opToType, const Quantization &quantization)
+// Helpers for SupportsQuantization
+namespace
 {
-    auto npuOp = ArchEthosU85::GetHWOp(opType);
-    bool globalScale = quantization.scales.size() <= 1;
-    bool isUnitScale = quantization.IsUnitScale();
-    int64_t zp = quantization.zeroPoints.size() ? quantization.zeroPoints.front() : 0;
-
-    if ( tensorUsage == TensorUsage::IFM )
+// Check that IFM-scales are supported
+bool SupportedIFMQuant(OpType opType, EthosU85NpuOp npuOp, const Quantization &ifmQuant, const Quantization &ifm2Quant, DataType ifmType)
+{
+    // Per-channel IFM scaling is not supported
+    if ( ifmQuant.scales.size() > 1 || ifm2Quant.scales.size() > 1 )
     {
-        int fromBits = DataTypeSizeBits(rescaleFromType);
-        int toBits = DataTypeSizeBits(opToType);
-        if ( npuOp == EthosU85NpuOp::Elementwise && globalScale )
-        {
-            bool fromTypeSupported = (IsInteger(rescaleFromType) && fromBits == 8) || rescaleFromType == DataType::Int16;
-            bool toTypeSupported = (IsInteger(opToType) && (toBits == 8 || toBits == 16)) || opToType == DataType::Int32;
-
-            auto &qs = quantization.scales.front();
-            // Make sure shift is valid
-            if ( qs.shift < 0 || qs.shift > 63 ) return false;
-            // Make sure the rescale can be done without clipping
-            int64_t value = (zp < 0 ? int64_t(IntegerMax(rescaleFromType)) : IntegerMin(rescaleFromType));
-            value = value - zp;
-            value = (value * qs.scale) >> qs.shift;
-            bool noClipping = value >= IntegerMin(rescaleToType) && value <= int64_t(IntegerMax(rescaleToType));
-
-            if ( opType == OpType::Div || opType == OpType::Mul )
-            {
-                return fromTypeSupported && toTypeSupported && noClipping && isUnitScale;
-            }
-            return fromTypeSupported && toTypeSupported && noClipping;
-        }
-        else if ( npuOp == EthosU85NpuOp::ReduceSum )
-        {
-            return globalScale && isUnitScale;
-        }
+        return false;
     }
-    else if ( tensorUsage == TensorUsage::OFM )
+    const auto &ifmScale = ifmQuant.Scale();
+    const auto &ifm2Scale = ifm2Quant.Scale();
+    auto ifmBits = DataTypeSizeBits(ifmType);
+    if ( npuOp == EthosU85NpuOp::Elementwise )
     {
-        int fromBits = DataTypeSizeBits(opFromType);
-        int toBits = DataTypeSizeBits(rescaleToType);
-        if ( npuOp == EthosU85NpuOp::Convolution || npuOp == EthosU85NpuOp::Depthwise || npuOp == EthosU85NpuOp::VectorProduct )
+        if ( opType == OpType::Div || opType == OpType::Mul )
         {
+            // Div and Mul don't support input-scaling
+            return ifmScale == QuantizedScale::Unit() && ifm2Scale == QuantizedScale::Unit();
+        }
+        else if ( ifmBits == 8 || ifmType == DataType::Int16 )
+        {
+            // non-unit IFM-scaling is supported for int8, uint8, and int16(signed)
             return true;
         }
-        else if ( npuOp == EthosU85NpuOp::Pooling )
+        else if ( IsBinaryElementwise(opType) )
         {
-            if ( opType == OpType::AvgPool )
-            {
-                return globalScale && isUnitScale;
-            }
-            else
-            {
-                return opType != OpType::Rescale && !IsActivation(opType);
-            }
-        }
-        else if ( npuOp == EthosU85NpuOp::Resize && globalScale )
-        {
-            auto &qs = quantization.scales.front();
-            // Only shift < 48 supported
-            const auto normalized = QuantizedScale::ReduceScale(qs);
-            return normalized.scale == 1 && normalized.shift < 48;
-        }
-        else if ( npuOp == EthosU85NpuOp::Elementwise && globalScale )
-        {
-            bool fromTypeSupported = (IsInteger(opFromType) && (fromBits == 8 || fromBits == 16)) || opFromType == DataType::Int32;
-            if ( opType == OpType::Mul && fromTypeSupported && opFromType == DataType::Int32 )
-            {
-                return quantization.scales.front().scale == 1;  // Only shift supported
-            }
-            if ( opType == OpType::SHR || opType == OpType::SHL || opType == OpType::Asr || opType == OpType::Div )
-            {
-                return fromTypeSupported && isUnitScale;
-            }
-            return fromTypeSupported;
-        }
-        else if ( npuOp == EthosU85NpuOp::ReduceSum )
-        {
-            return globalScale;
-        }
-        else if ( opType == OpType::Table )
-        {
-            // The hardware natively supports int16 -> int16 tables with an output shift of 7 as one
-            // activation/operation
-            bool scaleSupported = quantization.scales.size() == 1 && quantization.scales.front() == QuantizedScale(1, 7);
-            bool fromSupported = opFromType == DataType::Int16 && rescaleFromType == DataType::Int32;
-            bool toSupported = rescaleToType == DataType::Int16;
-            return fromSupported && toSupported && scaleSupported;
+            return ifmScale == QuantizedScale::Unit() && ifm2Scale == QuantizedScale::Unit();
         }
     }
+    return ifmScale == QuantizedScale::Unit();
+}
+// Check that OFM-scales are supported
+bool SupportedOFMQuant(OpType opType, EthosU85NpuOp npuOp, const Quantization &ofmQuant, DataType ifmType)
+{
+    // Reject per-channel scaling for opTypes that do not support it
+    if ( IsElementwise(opType) || opType == OpType::ReduceSum || opType == OpType::AvgPool || opType == OpType::Table || npuOp == EthosU85NpuOp::Resize )
+    {
+        if ( ofmQuant.scales.size() > 1 )
+        {
+            return false;
+        }
+    }
+    const auto &ofmScale = ofmQuant.Scale();
+    // The hardware natively supports tables with an output shift of 7 as one
+    // activation/operation
+    if ( opType == OpType::Table )
+    {
+        return ofmScale == QuantizedScale(1, 7);
+    }
+    // Activations cannot be fused to
+    else if ( IsActivation(opType) )
+    {
+        return false;
+    }
+    if ( npuOp == EthosU85NpuOp::Convolution || npuOp == EthosU85NpuOp::Depthwise || npuOp == EthosU85NpuOp::VectorProduct ||
+         npuOp == EthosU85NpuOp::ReduceSum || (npuOp == EthosU85NpuOp::Pooling && opType != OpType::AvgPool) )
+    {
+        return true;
+    }
+    else if ( npuOp == EthosU85NpuOp::Resize )
+    {
+        // only shift < 48 is supported
+        const auto normalized = ofmScale.ReduceScale(ofmScale);
+        return normalized.scale == 1 && normalized.shift < 48;
+    }
+    else if ( IsElementwise(opType) )
+    {
+        if ( opType == OpType::Mul && ifmType == DataType::Int32 )
+        {
+            // Mul with 32-bit IFM supports shift-only
+            return ofmScale.scale == 1;
+        }
+        if ( opType == OpType::SHR || opType == OpType::SHL || opType == OpType::Asr || opType == OpType::Div )
+        {
+            return ofmScale == QuantizedScale::Unit();
+        }
+        return true;
+    }
+    return ofmScale == QuantizedScale::Unit();
+}
+}  // namespace
 
-    return false;
+
+// Check if explicit quantization is supported by opType
+bool EthosU85Constraints::SupportsQuantization(OpType opType, const Quantization &ifmQuant, DataType ifmType,
+    const Quantization &ifm2Quant, DataType ifm2Type, const Quantization &ofmQuant, DataType ofmType)
+{
+    auto npuOp = ArchEthosU85::GetHWOp(opType);
+    // This function assumes EXPLICIT quantization type
+    // Other QuantizationTypes must be converted before validation
+    assert(ifmQuant.type == QuantizationType::EXPLICIT);
+    assert(ifm2Quant.type == QuantizationType::EXPLICIT);
+    assert(ofmQuant.type == QuantizationType::EXPLICIT);
+    // Validate that quantization is valid
+    if ( !SupportedIFMQuant(opType, npuOp, ifmQuant, ifm2Quant, ifmType) )
+    {
+        return false;
+    }
+    if ( !SupportedOFMQuant(opType, npuOp, ofmQuant, ifmType) )
+    {
+        return false;
+    }
+    // Check that dataTypes are supported
+    if ( npuOp != EthosU85NpuOp::None )
+    {
+        if ( !SupportedDtypes(opType, ifmType, ifm2Type, ofmType) )
+        {
+            return false;
+        }
+    }
+    else
+    {
+        // Explicit Dtype checks for non-optimised opTypes
+        if ( opType == OpType::Table )
+        {
+            // The hardware natively supports tables with an output shift of 7 as one
+            // activation/operation
+            if ( ifmType != DataType::Int16 || ofmType != DataType::Int16 )
+            {
+                return false;
+            }
+        }
+    }
+    // Validate that IFM-zeroPoints are valid
+    for ( int zp : ifmQuant.zeroPoints )
+    {
+        if ( !SupportedZeroPoint(zp, TensorUsage::IFM, ifmType, opType) )
+        {
+            return false;
+        }
+    }
+    // Validate that IFM2-zeroPoints are valid
+    if ( IsBinaryElementwise(opType) )
+    {
+        for ( int zp : ifm2Quant.zeroPoints )
+        {
+            if ( !SupportedZeroPoint(zp, TensorUsage::IFM, ifm2Type, opType) )
+            {
+                return false;
+            }
+        }
+    }
+    // Validate that OFM-zeroPoints are valid
+    for ( int zp : ofmQuant.zeroPoints )
+    {
+        if ( !SupportedZeroPoint(zp, TensorUsage::OFM, ofmType, opType) )
+        {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool EthosU85Constraints::SupportsRescale(DataType fromType, DataType toType)

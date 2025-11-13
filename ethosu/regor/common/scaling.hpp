@@ -42,6 +42,8 @@ public:
     double Dequantize() const;
     bool operator==(const QuantizedScale &other) const;
     bool operator!=(const QuantizedScale &other) const;
+    bool operator<(const QuantizedScale &other) const;
+    bool operator<=(const QuantizedScale &other) const;
     /**
      * Unit scale, i.e. no scaling
      */
