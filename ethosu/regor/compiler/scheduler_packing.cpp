@@ -671,8 +671,13 @@ void SchedulerPacking::InitSchedulerConnection(SchedulerConnection *schedConn, T
 {
     schedConn->tensor = tensor;
     // Convert to (minimum) 4D-shapes in scheduler-IR
-    schedConn->slice = {Shape::PadAxes(conn.slice.offset, 4, 0), Shape::PadAxes(conn.slice.shape, 4, 1),
-        Shape::PadAxes(conn.slice.stride, 4, 1)};
+    if ( conn.slice &&
+         !(conn.slice.offset.IsEmpty() && conn.slice.shape == conn.shape &&
+             (!conn.slice.stride || conn.slice.stride == conn.slice.stride.WithOnes())) )
+    {  // Only set slice if it is different from the full tensor
+        schedConn->slice = {Shape::PadAxes(conn.slice.offset, 4, 0), Shape::PadAxes(conn.slice.shape, 4, 1),
+            Shape::PadAxes(conn.slice.stride, 4, 1)};
+    }
     schedConn->shape = Shape::PadAxes(conn.shape, 4, 1);
     schedConn->quantization = conn.quantization;
     schedConn->reverse = conn.reverse;
