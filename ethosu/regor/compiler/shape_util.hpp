@@ -85,4 +85,16 @@ inline Shape ReshapeToHWC(const Shape &shape)
     else return Shape::MergeAxes(shape, -3, 0xFFFFFFFC, false);
 }
 
+inline bool IsContiguousStrides(const Shape &strides)
+{
+    for ( int i = 0; i < strides.Size() - 1; i++ )
+    {
+        if ( strides[i] % strides[i + 1] != 0 )
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 }  // namespace regor

@@ -493,10 +493,23 @@ static std::shared_ptr<SchedulerTensor>
 SliceT(SchedulerTensor *tensor, const Shape &offset, const Shape &shape, const Shape &readShape, const Point2i &stepXY)
 {
     constexpr int MAX_RANK = 5;
+    assert(readShape);
     assert(shape.Size() <= MAX_RANK);
     assert(offset.Size() <= MAX_RANK);
-    auto paddedInShape = Shape::PadAxes(readShape ? readShape : tensor->bufferView.ViewShape(), shape.Size(), 1);
-    const auto &inBufferView = tensor->bufferView.Reshape(paddedInShape).SubView(offset, shape);
+    auto paddedInShape = Shape::PadAxes(readShape, shape.Size(), 1);
+
+    // If the strides are non-contiguous, it means they were explicitly set to avoid the
+    // the need of permuting the underlying buffer. Therefore they need to be preserved.
+    const auto &viewStrides = tensor->bufferView.StrideBytes();
+    Shape strideBytes = IsContiguousStrides(viewStrides) ? Shape() : Shape::PadAxes(viewStrides, shape.Size(), viewStrides[0]);
+
+    // If `paddedInShape` is smaller than `shape` in any dimension, the requested slice
+    // is in a different format than the tensor's buffer view. This requires reshaping
+    // and the buffer view has to derive new strides (signaled with an empty Shape).
+    // If the strides are being preserved, the slice must fit within the existing buffer view
+    // without reshaping (excluding trivial reshapes like padding axes).
+    assert(paddedInShape >= shape || strideBytes == Shape());
+    const auto &inBufferView = tensor->bufferView.Reshape(paddedInShape, strideBytes).SubView(offset, shape);
     const auto &inBufferValues = inBufferView.Values<SRC_TYPE, DST_TYPE>();
 
     // Create output buffer that will contain the slice
@@ -541,7 +554,7 @@ Slice(SchedulerTensor *tensor, const Shape &offset, const Shape &shape, Shape re
     assert(tensor->IsConstant());
     assert(tensor->producers.size() == 0);
     assert(!readShape || readShape.Elements() == tensor->storageShape.Elements());
-    readShape = readShape ? readShape : tensor->storageShape;
+    readShape = readShape ? readShape : tensor->bufferView.ViewShape();
     assert(Shape(offset + shape, readShape.Size(), 1) <= readShape);
 
     switch ( tensor->dataType )

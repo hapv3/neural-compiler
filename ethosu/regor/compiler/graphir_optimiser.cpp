@@ -2669,7 +2669,7 @@ Operation *GraphIrOptimiser::RealiseKernelPadding(Graph *const, Operation *const
         Set(query.ofm, operation->Output(TensorUsage::OFM));
         if ( _constraints->OperatorQuery(operation->Type(), &query, &req).Any(QueryResult::Native) )
         {
-            if ( req.decomposeProps.Any(ArchProperty::TensorAxis) )
+            if ( req.decomposeProps.Any(ArchProperty::TensorAxis, ArchProperty::KernelStride, ArchProperty::KernelDilation) )
             {
                 auto padOp = CreatePadForKernelPadding(operation->Type(), padding, *ifmConn);
                 assert(padOp->OFM());
