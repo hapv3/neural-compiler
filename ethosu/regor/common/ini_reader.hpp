@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -244,9 +244,14 @@ public:
         }
 
         assert(_parseState == ParseState::Value);
+        bool quoted = Peek() == '"';
         if ( GetString(value, '"', '\\', '\n') )
         {
             if ( !value.empty() && value.back() == '\r' )
+            {
+                value.pop_back();
+            }
+            while ( !quoted && !value.empty() && std::isblank(static_cast<unsigned char>(value.back())) )
             {
                 value.pop_back();
             }

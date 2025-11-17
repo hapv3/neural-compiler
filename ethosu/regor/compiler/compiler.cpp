@@ -140,13 +140,21 @@ bool Compiler::ParseOptions(const char *text, size_t size)
                 else if ( key == "output_format" )
                 {
                     Flags<OutputFormat> flags;
-                    flags.Parse(reader.Get<std::string>());
+                    std::string value = reader.Get<std::string>();
+                    if ( !flags.Parse(value) )
+                    {
+                        LOG_WARN("Unrecognised output_format '{}' not in [{}]\n", std::move(value), AllFlagsToString<OutputFormat>());
+                    }
                     _compilerOptions.outputFormat = flags;
                 }
                 else if ( key == "cop_format" )
                 {
                     Flags<COPFormat> flags;
-                    flags.Parse(reader.Get<std::string>());
+                    std::string value = reader.Get<std::string>();
+                    if ( !flags.Parse(value) )
+                    {
+                        LOG_WARN("Unrecognised cop_format '{}' not in [{}]\n", std::move(value), AllFlagsToString<COPFormat>());
+                    }
                     _compilerOptions.copFormat = flags;
                 }
                 else

@@ -223,6 +223,7 @@ static std::string AllFlagsToString()
         tmp += sz;
         tmp += '|';
     }
+    tmp.pop_back();
     return tmp;
 }
 

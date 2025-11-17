@@ -117,23 +117,19 @@ IniParseResult Architecture::ParseSection(const std::string &section, IniReader 
     else if ( section == "system" )
     {
         std::string key;
-        std::string tmp;
         while ( reader->Begin(key) )
         {
             if ( key == "const" )
             {
-                tmp = reader->Get<std::string>();
-                SetReadonlyMemory(tmp);
+                _readonlyMemory = FindMemory(reader->Get<std::string>());
             }
             else if ( key == "feature_maps" )
             {
-                tmp = reader->Get<std::string>();
-                SetFeatureMapMemory(tmp);
+                _featuremapMemory = FindMemory(reader->Get<std::string>());
             }
             else if ( key == "staging" )
             {
-                tmp = reader->Get<std::string>();
-                SetStagingMemory(tmp);
+                _stagingMemory = FindMemory(reader->Get<std::string>());
             }
             else
             {
@@ -151,6 +147,16 @@ IniParseResult Architecture::ParseSection(const std::string &section, IniReader 
     return IniParseResult::Done;
 }
 
+ArchitectureMemory *Architecture::FindMemory(const std::string &name)
+{
+    auto it = _memories.find(name);
+    if ( it == _memories.end() )
+    {
+        LOG_ERROR("Memory '{}' not found in configured memories.\n", name);
+        return nullptr;
+    }
+    return it->second.get();
+}
 
 bool Architecture::ParseMemory(IniReader *reader, const std::string &section)
 {

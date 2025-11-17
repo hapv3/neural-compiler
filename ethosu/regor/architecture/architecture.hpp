@@ -384,12 +384,9 @@ public:
     MemArea CPUMemory();
 
     IniParseResult ParseSection(const std::string &section, IniReader *reader);
-    // Select named memories
-    void SetReadonlyMemory(const std::string &name) { _readonlyMemory = _memories.at(name).get(); }
-    void SetFeatureMapMemory(const std::string &name) { _featuremapMemory = _memories.at(name).get(); }
-    void SetStagingMemory(const std::string &name) { _stagingMemory = _memories.at(name).get(); }
 
 private:
+    ArchitectureMemory *FindMemory(const std::string &name);
     bool ParseMemory(IniReader *reader, const std::string &section);
 };
 

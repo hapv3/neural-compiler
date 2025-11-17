@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -37,6 +37,7 @@ int3=2199023255552
 values_may_contain=square[brackets]
 but_keys[must]=not
 quoted_string="value"
+quoted_spaced_string="  value  "
 quoted_empty_string=""
 quoted_escaped_string="\"escaped\" value"
 optionally_quoted=value1"value2
@@ -57,7 +58,11 @@ key=value
 
 TEST_CASE("ini_reader")
 {
-    IniReader reader(config.data(), int(config.size()));
+    // Add trailing non-quoted spaced string test here, since code editors sometimes
+    // trim trailing whitespace from the config string above.
+    std::string c(config);
+    c += "non_quoted_spaced_string=\t  value  \t\r\n";
+    IniReader reader(c.data(), int(c.size()));
     std::string section;
     REQUIRE(reader.Begin(section));
     REQUIRE(section == "scheduler");
@@ -136,6 +141,11 @@ TEST_CASE("ini_reader")
     REQUIRE(value == "value");
     reader.End();
     REQUIRE(reader.Begin(key));
+    REQUIRE(key == "quoted_spaced_string");
+    REQUIRE(reader.Read(value));
+    REQUIRE(value == "  value  ");
+    reader.End();
+    REQUIRE(reader.Begin(key));
     REQUIRE(key == "quoted_empty_string");
     REQUIRE(reader.Read(value));
     REQUIRE(value.empty());
@@ -209,7 +219,12 @@ TEST_CASE("ini_reader")
     REQUIRE(reader.Read(value));
     REQUIRE(value == "value");
     reader.End();  // end key
-    reader.End();  // end section
+    REQUIRE(reader.Begin(key));
+    REQUIRE(key == "non_quoted_spaced_string");
+    REQUIRE(reader.Read(value));
+    REQUIRE(value == "value");  // Leading/trailing spaces removed
+    reader.End();               // end key
+    reader.End();               // end section
 
     // Test attempting to read beyond end of file
     section = "should_remain_unchanged";
