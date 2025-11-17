@@ -1,5 +1,5 @@
 
-# SPDX-FileCopyrightText: Copyright 2021, 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2021, 2023-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -53,6 +53,7 @@ add_catch_test(
         test_graph_packing.cpp
         test_ordered_map.cpp
         test_arch_ethos_u85.cpp
+        test_arch_constraints.cpp
         test_hash.cpp
         test_scheduler_decompose.cpp
         test_buffer_view.cpp
