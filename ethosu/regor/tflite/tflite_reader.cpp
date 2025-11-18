@@ -710,6 +710,7 @@ void TfLiteReader::ParseOperatorOptions(
         case tflite::BuiltinOptions::AssignVariableOptions:
         case tflite::BuiltinOptions::SelectOptions:
         case tflite::BuiltinOptions::SelectV2Options:
+        case tflite::BuiltinOptions::ExpandDimsOptions:
             break;
 
         case tflite::BuiltinOptions::ConcatEmbeddingsOptions:
@@ -736,7 +737,6 @@ void TfLiteReader::ParseOperatorOptions(
         case tflite::BuiltinOptions::SliceOptions:
         case tflite::BuiltinOptions::SparseToDenseOptions:
         case tflite::BuiltinOptions::TileOptions:
-        case tflite::BuiltinOptions::ExpandDimsOptions:
         case tflite::BuiltinOptions::EqualOptions:
         case tflite::BuiltinOptions::NotEqualOptions:
         case tflite::BuiltinOptions::PowOptions:

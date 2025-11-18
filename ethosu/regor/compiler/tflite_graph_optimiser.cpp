@@ -1545,6 +1545,18 @@ Operation *TFLiteGraphOptimiser::RewriteSpaceToBatchConvBatchToSpace(Graph *cons
              operation->OFM()->Readers().size() == 1                // No other consumers of BatchToSpaceND input
         )
         {
+            auto prevIFMConn = prevOp->Input(TensorUsage::IFM);
+            auto prevBlockShapeConn = prevOp->Input(TensorUsage::Params0);
+            auto prevBlockShape = TensorToShape(
+                prevBlockShapeConn->tensor.get(), prevBlockShapeConn->tensor->StorageShape().Depth());
+            assert(prevBlockShape.IsValid());
+            auto nextBlockShapeConn = nextOp->Input(TensorUsage::Params0);
+            auto nextBlockShape = TensorToShape(
+                nextBlockShapeConn->tensor.get(), nextBlockShapeConn->tensor->StorageShape().Depth());
+            assert(nextBlockShape.IsValid());
+            auto nextOFMConn = nextOp->Output(TensorUsage::OFM);
+
+            // Create a new DepthwiseConv2D/Conv2D op to replace the three ops
             auto newOp = std::make_shared<Operation>(*operation);
             for ( const auto &[usage, conn] : operation->Inputs().pairs() )
             {
@@ -1554,24 +1566,23 @@ Operation *TFLiteGraphOptimiser::RewriteSpaceToBatchConvBatchToSpace(Graph *cons
             {
                 newOp->CopyOutput(usage, conn);
             }
+
             // Go ahead and short-circuit the SpaceToBatchND and BatchToSpaceND ops
-            newOp->ConnectInput(TensorUsage::IFM0, prevOp->Input(TensorUsage::IFM0)->tensor);
-            newOp->ConnectOutput(TensorUsage::OFM, nextOp->Output(TensorUsage::OFM)->tensor);
-            // Set new kernel dilation
-            auto blockShape = prevOp->Input(TensorUsage::Params);
-            int count = blockShape->shape[0];
-            assert(count == operation->IFM(0)->StorageShape().Size() - 2);
-            assert(blockShape->tensor->IsConstant());
-            auto values = blockShape->tensor->View().Values<int32_t>();
-            Point2i dilation(values[0], values[count > 1 ? 1 : 0]);
-            Kernel dilatedKernel = operation->Kernel()->WithDilation(std::move(dilation));
+            newOp->ConnectInput(TensorUsage::IFM0, prevIFMConn->tensor).Set(prevIFMConn->shape);
+            newOp->ConnectOutput(TensorUsage::OFM, nextOFMConn->tensor).Set(nextOFMConn->shape);
+
             // Calculate padding for new kernel
-            Point2i dilatedWH = dilatedKernel.DilatedWH();
-            auto &stride = dilatedKernel.Stride();
-            auto &inputShape = operation->IFM(0)->StorageShape();
-            int xpad = NeededTotalPadding(inputShape.Width(), stride.x, dilatedWH.x);
-            int ypad = NeededTotalPadding(inputShape.Height(), stride.y, dilatedWH.y);
-            Margin pad = Margin(ypad / 2, xpad / 2, (ypad + 1) / 2, (xpad + 1) / 2);
+            const Shape &inputShape = prevIFMConn->shape;
+            const Shape &outputShape = nextOFMConn->shape;
+            const int dilationH = prevBlockShape[0];
+            const int dilationW = prevBlockShape.Size() > 1 ? prevBlockShape[1] : prevBlockShape[0];
+            const Kernel dilatedKernel = operation->Kernel()->WithDilation({dilationW, dilationH});
+            const Point2i &stride = dilatedKernel.Stride();
+            const Point2i dilatedWH = dilatedKernel.DilatedWH();
+            const int xpad = NeededTotalPadding(inputShape.Width(), outputShape.Width(), stride.x, dilatedWH.x);
+            const int ypad = NeededTotalPadding(inputShape.Height(), outputShape.Height(), stride.y, dilatedWH.y);
+            const Margin pad = Margin(ypad / 2, xpad / 2, (ypad + 1) / 2, (xpad + 1) / 2);
+
             // Set the new kernel with updated dilation and padding
             newOp->SetKernel(std::make_unique<Kernel>(dilatedKernel.WithPadding(pad)));
 
