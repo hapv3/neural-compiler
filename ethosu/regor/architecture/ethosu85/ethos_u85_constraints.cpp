@@ -293,7 +293,6 @@ bool EthosU85Constraints::SupportedDtypes(OpType opType, DataType ifmType, DataT
     else
     {
         readonly_span_t<DataType> ifmTypes = s_defaultAllTypes;
-        readonly_span_t<DataType> ifm2Types = s_defaultAllTypes;
         ofmTypes = s_defaultAllTypes;
 
         if ( !std::any_of(ifmTypes.begin(), ifmTypes.end(), [&](auto t) { return t == ifmType; }) )
@@ -304,10 +303,12 @@ bool EthosU85Constraints::SupportedDtypes(OpType opType, DataType ifmType, DataT
 
         if ( IsBinaryElementwise(opType) )
         {
-            if ( !std::any_of(ifm2Types.begin(), ifm2Types.end(), [&](auto t) { return t == ifm2Type; }) )
+            // ifm1 and ifm2 data types must match
+            if ( ifmType != ifm2Type )
             {
-                // Unsupported ifm2 data type
-                return false;
+                // Bool8 can be combined with Int8 as is treated as signed Int8
+                return ((ifmType == DataType::Bool8) && (ifm2Type == DataType::Int8)) ||
+                       ((ifm2Type == DataType::Bool8) && (ifmType == DataType::Int8));
             }
         }
     }
