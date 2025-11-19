@@ -505,6 +505,19 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
             result.Set(QueryResult::HasRequirements);
         }
     }
+    else if ( opType == OpType::ReduceMax )
+    {
+        // We require axis to be the width, corresponding to (2 - size)
+        if ( query->axis != -2 )
+        {
+            if ( req )
+            {
+                req->req.Set(ArchRequirement::Decompose);
+                req->decomposeProps.Set(ArchProperty::ReduceAxis);
+            }
+            result.Set(QueryResult::HasRequirements);
+        }
+    }
     // Check required substitutions first
     else if ( (opType == OpType::Sigmoid) || (opType == OpType::Tanh) )
     {

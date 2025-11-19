@@ -214,7 +214,7 @@ round_mode MapHLCRoundModeToInterface(HLCRoundMode roundMode)
 
 pooling_mode GetPoolingMode(OpType opType)
 {
-    if ( opType == OpType::MaxPool )
+    if ( opType == OpType::MaxPool || opType == OpType::ReduceMax )
     {
         return pooling_mode::MAX;
     }
