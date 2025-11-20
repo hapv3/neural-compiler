@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -120,7 +120,7 @@ void FastStorageComponentAllocator::UpdateMemUsage(std::vector<int> *memUsage, L
 // FastStorageAllocator
 
 void FastStorageAllocator::AllocateFeatureMaps(const std::vector<std::unique_ptr<SchedulerOperation>> &schedOps,
-    Schedule *schedule, const MemArea &fastStorage, Address stagingLimit)
+    Schedule *schedule, const MemArea &fastStorage, Address stagingLimit, bool reuseIfms)
 {
     _stagingLimit = int(std::min(INT64_C(1) << 30, stagingLimit));
     // Force all OFMs to fast-storage (except final outputs)
@@ -159,7 +159,7 @@ void FastStorageAllocator::AllocateFeatureMaps(const std::vector<std::unique_ptr
         }
     }
 
-    auto lrGraph = LiveRangeGraph();
+    LiveRangeGraph lrGraph{reuseIfms};
     lrGraph.ExtractLiveRangesFromCascades(schedOps, schedule, fastStorage, true);
     // Populate time-array with memory used by live ranges
     int maxUsage;

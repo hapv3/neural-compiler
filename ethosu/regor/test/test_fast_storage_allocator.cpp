@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2025-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -116,7 +116,7 @@ TEST_CASE("test_fast_storage_allocator")
 
         auto schedule = CreateSchedule(arch, ops);
         FastStorageAllocator allocator;
-        allocator.AllocateFeatureMaps(ops, schedule.get(), fast, 32 * 1024);
+        allocator.AllocateFeatureMaps(ops, schedule.get(), fast, 32 * 1024, true);
 
         REQUIRE(tens1->memArea != fast);  // Because no producers
         REQUIRE(tens2->memArea == fast);
@@ -134,7 +134,7 @@ TEST_CASE("test_fast_storage_allocator")
 
         auto schedule = CreateSchedule(arch, ops);
         FastStorageAllocator allocator;
-        allocator.AllocateFeatureMaps(ops, schedule.get(), fast, 32 * 1024);
+        allocator.AllocateFeatureMaps(ops, schedule.get(), fast, 32 * 1024, true);
 
         REQUIRE(tens1->memArea != fast);  // Because no producers
         REQUIRE(tens2->memArea != fast);  // Because CPU readers
@@ -155,7 +155,7 @@ TEST_CASE("test_fast_storage_allocator")
 
         auto schedule = CreateSchedule(arch, ops);
         FastStorageAllocator allocator;
-        allocator.AllocateFeatureMaps(ops, schedule.get(), fast, 32 * 1024);
+        allocator.AllocateFeatureMaps(ops, schedule.get(), fast, 32 * 1024, true);
 
         REQUIRE(tens1->memArea != fast);  // Because no producers
         REQUIRE(tens2->memArea != fast);  // Because consumed by control flow operation
@@ -163,5 +163,42 @@ TEST_CASE("test_fast_storage_allocator")
         REQUIRE(tens4->memArea != fast);  // Because produced by control flow operation
         REQUIRE(tens5->memArea != fast);  // Because no consumers
         REQUIRE(tens6->memArea != fast);  // Because no consumers
+    }
+
+    SECTION("IFM reuse enabled does reuse for a valid network")
+    {
+        tens1->memArea = fast;
+        tens2->memArea = fast;
+
+        std::vector<std::unique_ptr<SchedulerOperation>> ops;
+        ops.push_back(CreateSchedulerOperation(arch, OpType::Abs, true, TensorUsage::IFM, tens1, TensorUsage::OFM, tens2));
+
+        SchedulerOptions opts;
+        opts.optimizationStagingLimit = 32 * 1024;
+        SchedulerOpConfigMap configMap;
+        auto scheduler = Scheduler(arch.get(), opts, "test", ops, configMap);
+
+        auto schedule = scheduler.Process();
+
+        REQUIRE(tens1->AllocatedAddress() == tens2->AllocatedAddress());
+    }
+
+    SECTION("IFM reuse disabled skips reuse for an otherwise valid reusable IFM")
+    {
+        tens1->memArea = fast;
+        tens2->memArea = fast;
+
+        std::vector<std::unique_ptr<SchedulerOperation>> ops;
+        ops.push_back(CreateSchedulerOperation(arch, OpType::Abs, true, TensorUsage::IFM, tens1, TensorUsage::OFM, tens2));
+
+        SchedulerOptions opts;
+        opts.optimizationStagingLimit = 32 * 1024;
+        opts.disabled.Set(SchedulerFeature::ReuseIFM);
+        SchedulerOpConfigMap configMap;
+        auto scheduler = Scheduler(arch.get(), opts, "test", ops, configMap);
+
+        auto schedule = scheduler.Process();
+
+        REQUIRE(tens1->AllocatedAddress() != tens2->AllocatedAddress());
     }
 }

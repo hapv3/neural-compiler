@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -71,7 +71,7 @@ void LiveRangeGraph::ExtractLiveRangesFromCascades(const std::vector<std::unique
         int timeToSet = _currentTime;
         if ( schedOp->IsNpuOp() )
         {
-            if ( cascadeInfo == nullptr )
+            if ( cascadeInfo == nullptr && _reuseIfms )
             {
                 auto opGroup = schedOp->OpGroup();
                 assert(opGroup != nullptr);
@@ -89,7 +89,7 @@ void LiveRangeGraph::ExtractLiveRangesFromCascades(const std::vector<std::unique
                     }
                 }
             }
-            else
+            else if ( cascadeInfo != nullptr )
             {
                 auto entry = cascadeInfo->buffers.find(*schedOp);
                 if ( entry != cascadeInfo->buffers.end() )

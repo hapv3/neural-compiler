@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -92,8 +92,10 @@ private:
     /** Map from equivalence id -> live range */
     std::unordered_map<UniqueId, LiveRange *> _equivalenceIdToLr;
     int _currentTime = 0;
+    bool _reuseIfms = true;
 
 public:
+    LiveRangeGraph(bool reuseIfms) : _reuseIfms(reuseIfms){};
     virtual ~LiveRangeGraph() = default;
     int EndTime() const { return _currentTime + 1; }
 

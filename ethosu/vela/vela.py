@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-# SPDX-FileCopyrightText: Copyright 2020-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2020-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -517,6 +517,7 @@ def get_compiler_config(
     disable_fwd: bool,
     disable_cascading: bool,
     disable_buffering: bool,
+    disable_ifm_reuse: bool,
     cop_format: str,
     separate_io_regions: bool,
     cpu_tensor_alignment: int,
@@ -552,6 +553,8 @@ def get_compiler_config(
         config += "Cascading|"
     if disable_buffering:
         config += "WeightBuffering|"
+    if disable_ifm_reuse:
+        config += "ReuseIFM|"
     config = config.rstrip("|") + "\n"
     if separate_io_regions:
         config += "separate_io_regions=true\n"
@@ -794,6 +797,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--disable-fwd", action="store_true", default=False)
     parser.add_argument("--disable-cascading", action="store_true", default=False)
     parser.add_argument("--disable-buffering", action="store_true", default=False)
+    parser.add_argument("--disable-ifm-reuse", action="store_true", default=False)
 
     args = parser.parse_args(argv)
 
@@ -924,6 +928,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             args.disable_fwd,
             args.disable_cascading,
             args.disable_buffering,
+            args.disable_ifm_reuse,
             args.cop_format,
             args.separate_io_regions,
             args.cpu_tensor_alignment,

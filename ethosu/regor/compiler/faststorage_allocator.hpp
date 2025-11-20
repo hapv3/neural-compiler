@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -84,7 +84,7 @@ private:
 
 public:
     void AllocateFeatureMaps(const std::vector<std::unique_ptr<SchedulerOperation>> &schedOps, Schedule *schedule,
-        const MemArea &fastStorage, Address stagingLimit);
+        const MemArea &fastStorage, Address stagingLimit, bool reuseIfms);
 
 private:
     // Allocates a connected range of live ranges

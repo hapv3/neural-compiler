@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2023-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -48,7 +48,8 @@ private:
 
 // Allocates addresses to the tensors involved in the given operations/mem area(s)
 // using the given tensor allocation algorithm.
-void AllocateTensors(const std::vector<std::unique_ptr<SchedulerOperation>> &schedOps, Schedule *schedule, const MemArea &memArea,
-    TensorAllocator allocator, int alignment, bool verboseAllocation, Address sizeLimit = std::numeric_limits<Address>::max());
+void AllocateTensors(const std::vector<std::unique_ptr<SchedulerOperation>> &schedOps, Schedule *schedule,
+    const MemArea &memArea, TensorAllocator allocator, int alignment, bool verboseAllocation, bool reuseIfms,
+    Address sizeLimit = std::numeric_limits<Address>::max());
 
 }  // namespace regor

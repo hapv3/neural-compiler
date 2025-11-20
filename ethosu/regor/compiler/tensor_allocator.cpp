@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -133,9 +133,9 @@ Address IncrementalLinearAllocator::Allocate(LiveRangeGraph *lrGraph, int alignm
 }
 
 void AllocateTensors(const std::vector<std::unique_ptr<SchedulerOperation>> &schedOps, Schedule *schedule,
-    const MemArea &memArea, TensorAllocator allocator, int alignment, bool verboseAllocation, Address sizeLimit)
+    const MemArea &memArea, TensorAllocator allocator, int alignment, bool verboseAllocation, bool reuseIfms, Address sizeLimit)
 {
-    LiveRangeGraph lrGraph;
+    LiveRangeGraph lrGraph{reuseIfms};
     auto totalSize = Allocate(lrGraph, schedOps, schedule, memArea, allocator, alignment, sizeLimit);
     if ( verboseAllocation )
     {

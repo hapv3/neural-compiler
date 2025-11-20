@@ -44,6 +44,7 @@ BEGIN_ENUM_TABLE(regor::SchedulerFeature)
     ADD_ENUM_NAME(FWD)
     ADD_ENUM_NAME(Sparsity)
     ADD_ENUM_NAME(FMStaging)
+    ADD_ENUM_NAME(ReuseIFM)
 END_ENUM_TABLE()
 
 namespace regor
@@ -136,7 +137,8 @@ std::shared_ptr<Schedule> Scheduler::Process()
     {
         // Use fast storage for feature maps
         FastStorageAllocator allocator;
-        allocator.AllocateFeatureMaps(_ops, chosenSchedule.get(), _arch->StagingMemory(), _options.optimizationStagingLimit);
+        const auto reuseIfms = !_options.disabled.All(SchedulerFeature::ReuseIFM);
+        allocator.AllocateFeatureMaps(_ops, chosenSchedule.get(), _arch->StagingMemory(), _options.optimizationStagingLimit, reuseIfms);
     }
 
     UpdateOpMemorySnapshot(chosenSchedule.get());
@@ -873,13 +875,14 @@ void Scheduler::MoveConstantData(Schedule *refSchedule)
 bool Scheduler::AllocateAddresses(Schedule *schedule)
 {
     const auto verbose = _options.verboseAllocation;
+    const auto reuseIfms = !_options.disabled.All(SchedulerFeature::ReuseIFM);
     // If graph input/outputs tensors are in FeatureMap memory, allocate with user-specified tensor alignment
     AllocateTensors(_ops, schedule, _arch->FeatureMapMemory(), _options.tensorAllocator,
-        _options.separateIORegions ? NPUTensorAlignment : _options.cpuTensorAlignment, verbose);
+        _options.separateIORegions ? NPUTensorAlignment : _options.cpuTensorAlignment, verbose, reuseIfms);
     if ( _spilling )
     {
         const auto limit = _options.optimizationStagingLimit;
-        AllocateTensors(_ops, schedule, _arch->StagingMemory(), _options.tensorAllocator, NPUTensorAlignment, verbose, limit);
+        AllocateTensors(_ops, schedule, _arch->StagingMemory(), _options.tensorAllocator, NPUTensorAlignment, verbose, reuseIfms, limit);
 
         return schedule->memoryUsage[_arch->StagingMemory()] <= limit;
     }
@@ -889,7 +892,7 @@ bool Scheduler::AllocateAddresses(Schedule *schedule)
 
 void Scheduler::AllocateReadOnlyAddresses(Schedule *schedule, IncrementalLinearAllocator &readOnlyAllocator)
 {
-    LiveRangeGraph lrGraph;
+    LiveRangeGraph lrGraph{false};
     lrGraph.ExtractLiveRangesFromCascades(_ops, schedule, _arch->ReadonlyMemory(), false);
     auto totalSize = readOnlyAllocator.Allocate(&lrGraph, NPUTensorAlignment, _options.verboseAllocation);
     schedule->memoryUsage[_arch->ReadonlyMemory()] = int(totalSize);
@@ -900,12 +903,13 @@ void Scheduler::AllocateIOAddresses(Schedule *schedule, const std::vector<std::u
 {
     const auto verbose = _options.verboseAllocation;
     const auto separateIORegions = _options.separateIORegions;
+    const auto reuseIfms = !_options.disabled.All(SchedulerFeature::ReuseIFM);
     if ( separateIORegions )
     {
         assert(_arch->InputFeatureMapMemory() != _arch->OutputFeatureMapMemory());
 
-        AllocateTensors(ops, schedule, _arch->InputFeatureMapMemory(), TensorAllocator::LinearAlloc, NPUTensorAlignment, verbose);
-        AllocateTensors(ops, schedule, _arch->OutputFeatureMapMemory(), TensorAllocator::LinearAlloc, NPUTensorAlignment, verbose);
+        AllocateTensors(ops, schedule, _arch->InputFeatureMapMemory(), TensorAllocator::LinearAlloc, NPUTensorAlignment, verbose, reuseIfms);
+        AllocateTensors(ops, schedule, _arch->OutputFeatureMapMemory(), TensorAllocator::LinearAlloc, NPUTensorAlignment, verbose, reuseIfms);
     }
 }
 
@@ -913,7 +917,8 @@ void Scheduler::AllocateIOAddresses(Schedule *schedule, const std::vector<std::u
 void Scheduler::UpdateOpMemorySnapshot(Schedule *schedule)
 {
     const auto fastStorage = _arch->StagingMemory();
-    auto lrGraph = LiveRangeGraph();
+    const auto reuseIfms = !_options.disabled.All(SchedulerFeature::ReuseIFM);
+    LiveRangeGraph lrGraph{reuseIfms};
     lrGraph.ExtractLiveRangesFromCascades(_ops, schedule, fastStorage, true);
     // Populate time-array with memory used by live ranges
     std::vector<int> temporalUsage = lrGraph.GetTemporalMemoryUsage(schedule->fastStoragePeakUsage);
