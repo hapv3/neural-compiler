@@ -22,6 +22,37 @@ main feature changes, interface changes and reported defects that have been
 fixed.  The version numbering adheres to the
 [semantic versioning](https://semver.org/) scheme.
 
+## Release 4.5.0 - 20/11/2025
+
+**Main feature changes:**
+
+* Upgrade TensorFlow Lite support to version 2.19.1
+* Ethos-U85:
+  * Added support for TOSA extensions EXT-INT16, EXT-INT4 and EXT-DOUBLEROUND
+  * Added support for DepthwiseConv2D with non-constant weights and/or bias
+  * Added decomposition support for TRANSPOSE_CONV2D
+    * Enabling strides, dilation, tensors, and ranks greater than native Ethos-U can support
+  * Improved TFLite supported operator documentation, see [SUPPORTED_OPS.md](SUPPORTED_OPS.md)
+
+**Interface changes:**
+
+* None
+
+**Reported defect fixes:**
+
+* Ethos-U55/Ethos-U65:
+  * Fixed issue with unsupported Transpose permutation introduced during compilation (MLCE-1589)
+* Ethos-U85:
+  * Fixed issue with per-tensor quantization for convolution groups (MLCE-1539, MLCE-1573)
+  * Fixed issue with cascading of elementwise operators (MLCE-1539)
+  * Fixed issues with LSTM implementation (MLCE-1613)
+
+
+## Release 4.4.1 - 07/10/2025
+
+* Fixed a bug with using incorrect quantisation when performing reshape removal
+
+
 ## Release 4.4.0 - 01/09/2025
 
 **Main feature changes:**

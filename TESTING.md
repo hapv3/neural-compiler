@@ -37,7 +37,7 @@ Vela version was tested against.  It also indicates which version of the
 TensorFlow Lite/LiteRT flatbuffer schema was supported.
 
 * Vela 4.5.0 to current supports TensorFlow 2.19.1
-* Vela 4.3.0 to 4.4.0 supports TensorFlow 2.18.1
+* Vela 4.3.0 to 4.4.1 supports TensorFlow 2.18.1
 * Vela 4.0.0 to 4.2.0 supports TensorFlow 2.17
 * Vela 3.12.0 supports TensorFlow 2.16
 * Vela 3.11.0 supports TensorFlow 2.15
@@ -61,7 +61,8 @@ additional testing is also performed across a range of other versions starting
 from a minimum version, indicated in the brackets, and going to the latest
 released version at the time of testing.
 
-* Vela 3.10.0 to current supports Python 3.10 (3.9)
+* Vela 4.5.0 to current supports Python 3.10 (3.10)
+* Vela 3.10.0 to 4.4.1 supports Python 3.10 (3.9)
 * Vela 3.9.0 supports Python 3.10 (3.8)
 * Vela 3.8.0 supports Python 3.9 (3.8)
 * Vela 3.4.0 to 3.7.0 supports Python 3.7 (3.8)
