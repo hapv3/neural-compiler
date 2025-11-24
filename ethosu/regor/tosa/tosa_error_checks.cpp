@@ -1600,7 +1600,7 @@ void ErrorIfCheck_1bm39avugkqqd(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "ERROR_IF(tensor_list_shape(input_list) != tosa_input_shape(then_graph))";
     const auto *then_graph = context.GetGraph(op->Attribute<regor::cond_attr_t>()->then_branch.c_str());
     if ( !ShapeListsMatch(op->Inputs(), then_graph->Inputs(), true) )
-        throw tosa::invalid_argument(constraint, ERRORIF_WrongInputList);
+        throw tosa::invalid_argument(constraint, ERRORIF_CondIfInputListThenGraphMismatch);
 }
 
 void ErrorIfCheck_3tv3oatlz37e2(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -1609,7 +1609,7 @@ void ErrorIfCheck_3tv3oatlz37e2(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "ERROR_IF(tensor_list_shape(input_list) != tosa_input_shape(else_graph))";
     const auto *else_graph = context.GetGraph(op->Attribute<regor::cond_attr_t>()->else_branch.c_str());
     if ( !ShapeListsMatch(op->Inputs(), else_graph->Inputs(), true) )
-        throw tosa::invalid_argument(constraint, ERRORIF_WrongInputList);
+        throw tosa::invalid_argument(constraint, ERRORIF_CondIfInputListElseGraphMismatch);
 }
 
 void ErrorIfCheck_n7biu53x2n6k(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -1618,7 +1618,7 @@ void ErrorIfCheck_n7biu53x2n6k(const regor::Operation *op, [[maybe_unused]] cons
     static constexpr char constraint[] = "ERROR_IF(tensor_list_shape(output_list) != tosa_output_shape(then_graph))";
     const auto *then_graph = context.GetGraph(op->Attribute<regor::cond_attr_t>()->then_branch.c_str());
     if ( !ShapeListsMatch(op->Outputs(), then_graph->Outputs()) )
-        throw tosa::invalid_argument(constraint, ERRORIF_WrongOutputList);
+        throw tosa::invalid_argument(constraint, ERRORIF_CondIfOutputListThenGraphMismatch);
 }
 
 void ErrorIfCheck_2fd4dk1zw032u(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -1627,7 +1627,7 @@ void ErrorIfCheck_2fd4dk1zw032u(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "ERROR_IF(tensor_list_shape(output_list) != tosa_output_shape(else_graph))";
     const auto *else_graph = context.GetGraph(op->Attribute<regor::cond_attr_t>()->else_branch.c_str());
     if ( !ShapeListsMatch(op->Outputs(), else_graph->Outputs()) )
-        throw tosa::invalid_argument(constraint, ERRORIF_WrongOutputList);
+        throw tosa::invalid_argument(constraint, ERRORIF_CondIfOutputListElseGraphMismatch);
 }
 
 void ErrorIfCheck_omgw2xdm6irr(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -1635,7 +1635,7 @@ void ErrorIfCheck_omgw2xdm6irr(const regor::Operation *op, [[maybe_unused]] cons
     // Operators: COND_IF,
     static constexpr char constraint[] = "ERROR_IF(tensor_size(shape) != 1)";
     auto condSize = op->Input(TensorUsage::IFM)->shape.Elements();
-    if ( condSize != 1 ) throw tosa::invalid_argument(constraint, ERRORIF_SizeOutputShapeMismatch);
+    if ( condSize != 1 ) throw tosa::invalid_argument(constraint, ERRORIF_CondIfCondShapeNotSizeOne);
 }
 
 void ErrorIfCheck_2jyu87hs8upt4(const regor::Operation *op, [[maybe_unused]] const Context &context)
