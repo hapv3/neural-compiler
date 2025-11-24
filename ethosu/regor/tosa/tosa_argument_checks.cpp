@@ -314,7 +314,9 @@ bool ArgumentsCanBeResolvedAndValidated(const regor::Operation *op, const std::v
         auto cond = op->Input(TensorUsage::IFM);
         if ( cond == nullptr ) return false;
         auto type = cond->tensor->Type();
-        if ( type != DataType::Bool8 && type != DataType::Bool ) return false;
+        if ( type != DataType::Bool8 && type != DataType::Bool )
+            throw tosa::invalid_argument(fmt::format("Invalid condition data type '{}'", DataTypeToString(type)).c_str(),
+                ERRORIF_CondIfCondNotMatchingBool);
         auto *attr = op->Attribute<regor::cond_attr_t>();
         if ( attr->then_branch.empty() ) return false;
         if ( attr->else_branch.empty() ) return false;
