@@ -309,33 +309,43 @@ void NetworkPerformance::AddToDatabase(const PerformanceResult &perf, SchedulerO
     db->AddRow(perfTable, schedOp->Uid(), std::move(row));
 
     row = {};
-    auto shapeToStrings = [&row](const std::vector<int> &shape)
+    auto shapeToStrings = [&row](const Shape &shape)
     {
-        std::transform(shape.begin(), shape.end(), std::back_inserter(row),
-            [](int n) -> std::string { return n ? std::to_string(n) : ""; });
+        if ( shape )
+        {
+            const auto axes = ReshapeToNHWC(shape).ToList<int>();
+            std::transform(axes.begin(), axes.end(), std::back_inserter(row),
+                [](int n) -> std::string { return std::to_string(n); });
+        }
+        else
+        {
+            row.push_back("0");
+            row.push_back("0");
+            row.push_back("0");
+            row.push_back("0");
+        }
     };
 
     // FM shapes
-    shapeToStrings(ReshapeToNHWC(schedOp->IFM(0)->shape).ToList<int>());
-    shapeToStrings(ReshapeToNHWC(schedOp->TryIFM(1) ? schedOp->IFM(1)->shape : Shape()).ToList<int>());
-    shapeToStrings(ReshapeToNHWC(schedOp->OFM()->shape).ToList<int>());
+    shapeToStrings(schedOp->IFM(0)->shape);
+    shapeToStrings(schedOp->TryIFM(1) ? schedOp->IFM(1)->shape : Shape());
+    shapeToStrings(schedOp->OFM()->shape);
     // Slice shapes
-    shapeToStrings(ReshapeToNHWC(schedOp->IFM(0)->slice.shape).ToList<int>());
-    shapeToStrings(ReshapeToNHWC(schedOp->TryIFM(1) ? schedOp->IFM(1)->slice.shape : Shape()).ToList<int>());
-    shapeToStrings(ReshapeToNHWC(schedOp->OFM()->slice.shape).ToList<int>());
+    shapeToStrings(schedOp->IFM(0)->slice.shape);
+    shapeToStrings(schedOp->TryIFM(1) ? schedOp->IFM(1)->slice.shape : Shape());
+    shapeToStrings(schedOp->OFM()->slice.shape);
     // Slice offset
-    shapeToStrings(ReshapeToNHWC(schedOp->IFM(0)->slice.shape).ToList<int>());
-    shapeToStrings(ReshapeToNHWC(schedOp->TryIFM(1) ? schedOp->IFM(1)->slice.shape : Shape()).ToList<int>());
-    shapeToStrings(ReshapeToNHWC(schedOp->OFM()->slice.shape).ToList<int>());
+    shapeToStrings(schedOp->IFM(0)->slice.offset);
+    shapeToStrings(schedOp->TryIFM(1) ? schedOp->IFM(1)->slice.offset : Shape());
+    shapeToStrings(schedOp->OFM()->slice.offset);
     // Slice strides
-    shapeToStrings(ReshapeToNHWC(Shape(schedOp->IFM(0)->stepXY.y, schedOp->IFM(0)->stepXY.x, 1)).ToList<int>());
-    shapeToStrings(
-        ReshapeToNHWC(schedOp->TryIFM(1) ? Shape(schedOp->IFM(0)->stepXY.y, schedOp->IFM(0)->stepXY.x, 1) : Shape()).ToList<int>());
-    shapeToStrings(ReshapeToNHWC(Shape(schedOp->OFM()->stepXY.y, schedOp->OFM()->stepXY.x, 1)).ToList<int>());
+    shapeToStrings(Shape(schedOp->IFM(0)->stepXY.y, schedOp->IFM(0)->stepXY.x, 1));
+    shapeToStrings(schedOp->TryIFM(1) ? Shape(schedOp->IFM(0)->stepXY.y, schedOp->IFM(0)->stepXY.x, 1) : Shape());
+    shapeToStrings(Shape(schedOp->OFM()->stepXY.y, schedOp->OFM()->stepXY.x, 1));
     // Stripe shapes
-    shapeToStrings(ReshapeToNHWC(cost->stripeInput[0]).ToList<int>());
-    shapeToStrings(ReshapeToNHWC(schedOp->TryIFM(1) ? cost->stripeInput[1] : Shape()).ToList<int>());
-    shapeToStrings(ReshapeToNHWC(cost->stripe).ToList<int>());
+    shapeToStrings(cost->stripeInput[0]);
+    shapeToStrings(schedOp->TryIFM(1) ? cost->stripeInput[1] : Shape());
+    shapeToStrings(cost->stripe);
 
     // clang-format off
     row.insert(row.end(), {
