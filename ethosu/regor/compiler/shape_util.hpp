@@ -97,4 +97,36 @@ inline bool IsContiguousStrides(const Shape &strides)
     return true;
 }
 
+// Return a copy of the shape with all unit (== 1) axes removed.
+// For example:
+//   [1, 3, 1, 4] -> [3, 4]
+//   [1, 1]       -> []
+inline Shape Squeeze(const Shape &shape)
+{
+    int nonUnitAxes = 0;
+    for ( int i = 0; i < shape.Size(); i++ )
+    {
+        if ( shape[i] != 1 )
+        {
+            nonUnitAxes++;
+        }
+    }
+
+    if ( nonUnitAxes == 0 )
+    {
+        return Shape();
+    }
+
+    Shape result(nullptr, nonUnitAxes);
+    int write = 0;
+    for ( int i = 0; i < shape.Size(); i++ )
+    {
+        if ( shape[i] != 1 )
+        {
+            result[write++] = shape[i];
+        }
+    }
+    return result;
+}
+
 }  // namespace regor

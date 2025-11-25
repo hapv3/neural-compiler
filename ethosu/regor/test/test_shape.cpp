@@ -17,6 +17,7 @@
 //
 
 #include "common/shape.hpp"
+#include "compiler/shape_util.hpp"
 #include "randomize.hpp"
 
 #include <catch_all.hpp>
@@ -514,6 +515,42 @@ TEST_CASE("Shape: Initialiser List")
 
     Shape dt = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
     REQUIRE(dt.Elements() == 3628800);
+}
+
+TEST_CASE("Shape: Squeeze")
+{
+    using regor::Squeeze;
+
+    SECTION("No unit axes")
+    {
+        Shape a(2, 3);
+        Shape s = Squeeze(a);
+        REQUIRE(s == a);
+    }
+
+    SECTION("Leading and trailing unit axes")
+    {
+        Shape a = {1, 2, 3, 1};
+        Shape expected = {2, 3};
+        Shape s = Squeeze(a);
+        REQUIRE(s == expected);
+    }
+
+    SECTION("All unit axes")
+    {
+        Shape a = {1, 1, 1};
+        Shape s = Squeeze(a);
+        REQUIRE(s.Size() == 0);
+        REQUIRE(!s);
+    }
+
+    SECTION("Interleaved unit axes")
+    {
+        Shape a = {1, 2, 1, 3, 1};
+        Shape expected = {2, 3};
+        Shape s = Squeeze(a);
+        REQUIRE(s == expected);
+    }
 }
 
 

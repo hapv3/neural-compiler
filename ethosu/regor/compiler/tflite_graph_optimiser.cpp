@@ -30,6 +30,7 @@
 #include "op_type.hpp"
 #include "operation.hpp"
 #include "optimiser_utils.hpp"
+#include "shape_util.hpp"
 #include "softmax.hpp"
 #include "tensor.hpp"
 #include "tflite/tflite_schema_generated.hpp"
@@ -1535,14 +1536,48 @@ Operation *TFLiteGraphOptimiser::RewriteSpaceToBatchConvBatchToSpace(Graph *cons
 {
     auto opType = operation->Type();
     auto returnOp = operation;
+
     if ( opType == OpType::DepthwiseConv2D || opType == OpType::Conv2D )
     {
-        auto prevOp = operation->IFM(0)->Writers().empty() ? nullptr : operation->IFM(0)->Writers().front().get();
-        auto nextOp = operation->OFM()->Readers().empty() ? nullptr : operation->OFM()->Readers().front().get();
+        auto *ifmTensor = operation->IFM(0);
+        auto *ofmTensor = operation->OFM();
+        auto prevOp = ifmTensor->Writers().empty() ? nullptr : ifmTensor->Writers().front().get();
+        auto nextOp = ofmTensor->Readers().empty() ? nullptr : ofmTensor->Readers().front().get();
+
+        Operation *ifmMetadataOp = nullptr;
+        Operation *ofmMetadataOp = nullptr;
+
+        // Allow a single metadata-only reshape/expand-dims before the convolution.
+        // i.e. a reshape that only shuffles 1:s around.
+        if ( prevOp && IsReshape(prevOp->Type()) )
+        {
+            auto *metaIfmConn = prevOp->Input(TensorUsage::IFM0);
+            auto *metaOfmConn = prevOp->Output(TensorUsage::OFM);
+            if ( Squeeze(metaIfmConn->shape) == Squeeze(metaOfmConn->shape) && metaIfmConn->tensor->IsSinglePath() &&
+                 metaOfmConn->tensor->IsSinglePath() )
+            {
+                ifmMetadataOp = prevOp;
+                prevOp = metaIfmConn->tensor->Writers().front().get();
+            }
+        }
+
+        // Allow a single metadata-only reshape/expand-dims after the convolution.
+        if ( nextOp && IsReshape(nextOp->Type()) )
+        {
+            auto *metaIfmConn = nextOp->Input(TensorUsage::IFM0);
+            auto *metaOfmConn = nextOp->Output(TensorUsage::OFM);
+            if ( Squeeze(metaIfmConn->shape) == Squeeze(metaOfmConn->shape) && metaIfmConn->tensor->IsSinglePath() &&
+                 metaOfmConn->tensor->IsSinglePath() )
+            {
+                ofmMetadataOp = nextOp;
+                nextOp = metaOfmConn->tensor->Readers().front().get();
+            }
+        }
+
         if ( prevOp && prevOp->Type() == OpType::SpaceToBatchND &&  // Previous op is SpaceToBatchND
              nextOp && nextOp->Type() == OpType::BatchToSpaceND &&  // Next op is BatchToSpaceND
-             operation->IFM(0)->Readers().size() == 1 &&            // No other consumers of SpaceToBatchND output
-             operation->OFM()->Readers().size() == 1                // No other consumers of BatchToSpaceND input
+             ifmTensor->Readers().size() == 1 &&                    // No other consumers of conv IFM
+             ofmTensor->Readers().size() == 1                       // No other consumers of conv OFM
         )
         {
             auto prevIFMConn = prevOp->Input(TensorUsage::IFM);
@@ -1568,12 +1603,14 @@ Operation *TFLiteGraphOptimiser::RewriteSpaceToBatchConvBatchToSpace(Graph *cons
             }
 
             // Go ahead and short-circuit the SpaceToBatchND and BatchToSpaceND ops
-            newOp->ConnectInput(TensorUsage::IFM0, prevIFMConn->tensor).Set(prevIFMConn->shape);
-            newOp->ConnectOutput(TensorUsage::OFM, nextOFMConn->tensor).Set(nextOFMConn->shape);
+            Shape prevIfmShape4D = Shape::PadAxes(prevIFMConn->shape, 4, 1);
+            Shape nextOfmShape4D = Shape::PadAxes(nextOFMConn->shape, 4, 1);
+            newOp->ConnectInput(TensorUsage::IFM0, prevIFMConn->tensor).Set(prevIfmShape4D);
+            newOp->ConnectOutput(TensorUsage::OFM, nextOFMConn->tensor).Set(nextOfmShape4D);
 
             // Calculate padding for new kernel
-            const Shape &inputShape = prevIFMConn->shape;
-            const Shape &outputShape = nextOFMConn->shape;
+            const Shape &inputShape = prevIfmShape4D;
+            const Shape &outputShape = nextOfmShape4D;
             const int dilationH = prevBlockShape[0];
             const int dilationW = prevBlockShape.Size() > 1 ? prevBlockShape[1] : prevBlockShape[0];
             const Kernel dilatedKernel = operation->Kernel()->WithDilation({dilationW, dilationH});
@@ -1592,6 +1629,14 @@ Operation *TFLiteGraphOptimiser::RewriteSpaceToBatchConvBatchToSpace(Graph *cons
                 returnOp = newOp.get();
                 RecordOptimisation(*operation, returnOp);
                 // Disconnect matched pattern
+                if ( ifmMetadataOp )
+                {
+                    ifmMetadataOp->Disconnect();
+                }
+                if ( ofmMetadataOp )
+                {
+                    ofmMetadataOp->Disconnect();
+                }
                 prevOp->Disconnect();
                 nextOp->Disconnect();
                 operation->Disconnect();
