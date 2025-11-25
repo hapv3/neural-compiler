@@ -1643,7 +1643,7 @@ void ErrorIfCheck_2jyu87hs8upt4(const regor::Operation *op, [[maybe_unused]] con
     // Operators: WHILE_LOOP,
     static constexpr char constraint[] = "ERROR_IF(tensor_list_shape(input_list) != tensor_list_shape(output_list))";
     if ( !ShapeListsMatch(op->Inputs(), op->Outputs()) )
-        throw tosa::invalid_argument(constraint, ERRORIF_WrongOutputList);
+        throw tosa::invalid_argument(constraint, ERRORIF_InputListOutputListMismatch);
 }
 
 void ErrorIfCheck_12uu5ff3t3lv8(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -1652,7 +1652,7 @@ void ErrorIfCheck_12uu5ff3t3lv8(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "ERROR_IF(tensor_list_shape(input_list) != tosa_input_shape(cond_graph))";
     const auto *cond_graph = context.GetGraph(op->Attribute<regor::while_attr_t>()->cond_branch.c_str());
     if ( !ShapeListsMatch(op->Inputs(), cond_graph->Inputs()) )
-        throw tosa::invalid_argument(constraint, ERRORIF_WrongInputList);
+        throw tosa::invalid_argument(constraint, ERRORIF_InputListCondGraphMismatch);
 }
 
 void ErrorIfCheck_3puzf7van5acf(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -1661,7 +1661,7 @@ void ErrorIfCheck_3puzf7van5acf(const regor::Operation *op, [[maybe_unused]] con
     static constexpr char constraint[] = "ERROR_IF(tensor_list_shape(input_list) != tosa_input_shape(body_graph))";
     const auto *body_graph = context.GetGraph(op->Attribute<regor::while_attr_t>()->body_branch.c_str());
     if ( !ShapeListsMatch(op->Inputs(), body_graph->Inputs()) )
-        throw tosa::invalid_argument(constraint, ERRORIF_WrongInputList);
+        throw tosa::invalid_argument(constraint, ERRORIF_InputListBodyGraphInputMismatch);
 }
 
 void ErrorIfCheck_8tihij7a5ep0(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -1670,7 +1670,7 @@ void ErrorIfCheck_8tihij7a5ep0(const regor::Operation *op, [[maybe_unused]] cons
     static constexpr char constraint[] = "ERROR_IF(tensor_list_shape(input_list) != tosa_output_shape(body_graph))";
     const auto *body_graph = context.GetGraph(op->Attribute<regor::while_attr_t>()->body_branch.c_str());
     if ( !ShapeListsMatch(op->Inputs(), body_graph->Outputs()) )
-        throw tosa::invalid_argument(constraint, ERRORIF_WrongOutputList);
+        throw tosa::invalid_argument(constraint, ERRORIF_InputListBodyGraphOutputMismatch);
 }
 
 void ErrorIfCheck_3lu68v2531bjz(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -1680,7 +1680,7 @@ void ErrorIfCheck_3lu68v2531bjz(const regor::Operation *op, [[maybe_unused]] con
     const auto *cond_graph = context.GetGraph(op->Attribute<regor::while_attr_t>()->cond_branch.c_str());
     const auto &condOutputs = cond_graph->Outputs();
     if ( condOutputs.size() != 1 || condOutputs.front()->StorageShape().Elements() != 1 )
-        throw tosa::invalid_argument(constraint, ERRORIF_SizeOutputShapeMismatch);
+        throw tosa::invalid_argument(constraint, ERRORIF_CondGraphOutputShapeNotSizeOne);
 }
 
 void ErrorIfCheck_1fzl0zyxyd88z(const regor::Operation *op, [[maybe_unused]] const Context &context)
@@ -1692,7 +1692,7 @@ void ErrorIfCheck_1fzl0zyxyd88z(const regor::Operation *op, [[maybe_unused]] con
     if ( condOutputs.size() != 1 ) throw tosa::invalid_argument(constraint, ERRORIF_WrongOutputType);
     auto type = condOutputs.front()->Type();
     if ( type != DataType::Bool8 && type != DataType::Bool )
-        throw tosa::invalid_argument(constraint, ERRORIF_WrongOutputType);
+        throw tosa::invalid_argument(constraint, ERRORIF_CondGraphOutputNotMatchingBool);
 }
 
 }  // namespace checks
