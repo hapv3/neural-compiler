@@ -68,6 +68,8 @@ static const std::set<OpType> s_supportedOpTypes = {
     OpType::Tile,
     OpType::ExpandDims,
     OpType::ReduceSum,
+    OpType::ReduceMax,
+    OpType::ReduceMin,
     OpType::ResizeBilinear,
     OpType::ResizeNearestNeighbor,
     OpType::Rsqrt,

@@ -61,6 +61,7 @@ private:
     Operation *RewriteSlice(Graph *const graph, Operation *const operation);
     Operation *RewriteNegate(Graph *const graph, Operation *const operation);
     Operation *RewriteSelect(Graph *const graph, Operation *const operation);
+    Operation *RewriteReduceMin(Graph *const graph, Operation *const operation);
     Operation *RewriteReduceSum(Graph *const graph, Operation *const operation);
     Operation *RewriteResize(Graph *const graph, Operation *const operation);
     Operation *RewriteTile(Graph *const graph, Operation *const operation);
@@ -167,6 +168,7 @@ private:
                 &GraphIrOptimiser::RewriteConcat,
                 &GraphIrOptimiser::RewriteSlice,
                 &GraphIrOptimiser::RewriteNegate,
+                &GraphIrOptimiser::RewriteReduceMin,
                 &GraphIrOptimiser::RewriteReduceSum,
                 &GraphIrOptimiser::RewriteResize,
                 &GraphIrOptimiser::RewriteTile,

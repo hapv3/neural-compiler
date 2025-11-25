@@ -1787,6 +1787,84 @@ Operation *GraphIrOptimiser::RewriteSelect(Graph *const graph, Operation *const 
     return returnOp;
 }
 
+// If ReduceMin is not HW supported, but ReduceMax is, then rewrite the operation.
+// The operation is replaced by [Sub -> ReduceMax -> Sub] that inverts the sign of
+// the input, runs ReduceMax, then inverts it back.
+Operation *GraphIrOptimiser::RewriteReduceMin(Graph *const graph, Operation *const operation)
+{
+    UNUSED(graph);
+    if ( operation->Type() != OpType::ReduceMin )
+    {
+        return operation;
+    }
+
+    // If ReduceMin is HW supported, abort.
+    ArchOperatorQuery hwSupportedQuery{};
+    if ( _constraints->OperatorQuery(OpType::ReduceMin, &hwSupportedQuery, nullptr).Any(QueryResult::Native) )
+    {
+        return operation;
+    }
+
+    auto *ifmConn = operation->Input(TensorUsage::IFM);
+    auto *ofmConn = operation->Output(TensorUsage::OFM);
+    auto *attr = operation->Attribute<axis_attr_t>();
+
+    int axis = attr->axis;
+    if ( axis < 0 )
+    {
+        axis += ifmConn->shape.Size();
+    }
+    assert(axis >= 0);
+    assert(axis < ifmConn->shape.Size());
+
+    // Create a pivot, a single constant value tensor.
+    // The pivot becomes the max value for unsigned values and -1 for signed types.
+    const DataType type = ifmConn->tensor->Type();
+    auto constTensorName = ifmConn->tensor->Name() + "_reducemin_pivot";
+    // Pass an integer with all bits set to CreateConstTensor.
+    // This corresponds to -1 for signed integer types and the integer max value for unsigned integer types.
+    auto pivotConst = CreateConstTensor(constTensorName, type, int(~0u));
+
+    // Create the first sub op that reverses the input
+    auto sub1 = std::make_shared<Operation>(OpType::Sub);
+    sub1->ConnectInput(TensorUsage::IFM0, pivotConst).Set(Quantization::Unit());
+    sub1->ConnectInput(TensorUsage::IFM1, ifmConn->tensor).Set(Quantization::Unit());
+
+    // Create the first intermediate tensor
+    auto reduceMaxInputTensor = std::make_shared<Tensor>(ifmConn->tensor->Name() + "_reducemin_invert", type, ifmConn->shape);
+    sub1->ConnectOutput(TensorUsage::OFM, reduceMaxInputTensor).Set(Quantization::Unit());
+    RecordOptimisation(*operation, sub1.get());
+
+    // Create the ReduceMax operator
+    auto reduceMaxOp = std::make_shared<Operation>(OpType::ReduceMax);
+    auto reduceMaxAttr = reduceMaxOp->Attribute<axis_attr_t>();
+    reduceMaxAttr->axis = attr->axis;
+    reduceMaxOp->SetKernel(std::make_unique<Kernel>(*operation->Kernel()));
+    reduceMaxOp->ConnectInput(TensorUsage::IFM, reduceMaxInputTensor)
+        .Set(ifmConn->shape)
+        .Set(ifmConn->quantization)
+        .Set(ifmConn->rounding);
+
+    // Create the second intermediate tensor
+    auto reduceMaxOutputTensor = std::make_shared<Tensor>(
+        ofmConn->tensor->Name() + "_reducemin_invert_back", ofmConn->tensor->Type(), ofmConn->shape);
+    reduceMaxOp->ConnectOutput(TensorUsage::OFM, reduceMaxOutputTensor)
+        .Set(ofmConn->shape)
+        .Set(ofmConn->quantization)
+        .Set(ofmConn->rounding);
+    RecordOptimisation(*operation, reduceMaxOp.get());
+
+    // Create the last sub op that reverses back the output
+    auto sub2 = std::make_shared<Operation>(OpType::Sub);
+    sub2->ConnectInput(TensorUsage::IFM0, pivotConst).Set(Quantization::Unit());
+    sub2->ConnectInput(TensorUsage::IFM1, reduceMaxOutputTensor).Set(Quantization::Unit());
+    sub2->ConnectOutput(TensorUsage::OFM, ofmConn->tensor).Set(Quantization::Unit());
+    RecordOptimisation(*operation, sub2.get());
+
+    operation->Disconnect();
+    return sub2.get();
+}
+
 // Rewrite REDUCE_SUM with any axis into a REDUCE_SUM with C axis
 Operation *GraphIrOptimiser::RewriteReduceSum(Graph *const graph, Operation *const operation)
 {
