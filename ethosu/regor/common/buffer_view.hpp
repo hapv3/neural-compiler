@@ -656,22 +656,10 @@ public:
         _elementBits = elementBits;
         _baseOffset = firstElement;
         _axisElements = axisElements;
-        if ( strideBytes.IsEmpty() && elementBits > 4 )
+        if ( strideBytes.IsEmpty() && elementBits >= 8 )
         {
             // Calculate byte strides
-            int sz = axisElements.Size();
-            if ( sz > 0 )
-            {
-                std::vector<int> strides(sz);
-                int v = 1;
-                for ( int i = sz - 1; i >= 0; --i )
-                {
-                    strides[i] = (v * elementBits) / 8;
-                    v *= axisElements[i];
-                }
-
-                _strideBytes = Shape(strides.data(), sz);
-            }
+            _strideBytes = Shape::GetStridesForShape(axisElements, elementBits / 8);
         }
         else
         {

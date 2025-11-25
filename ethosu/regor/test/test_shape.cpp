@@ -632,3 +632,14 @@ TEST_CASE("Point3: General Operators")
     REQUIRE((a / b == g));
     REQUIRE((tmp == g));
 }
+
+
+TEST_CASE("Shape: Stride overflow")
+{
+    Shape good(1, 1, 256, 65536);
+    Shape bad(1, 256, 256, 65536);
+
+    REQUIRE_NOTHROW(Shape::GetStridesForShape(good, {1}));   // Fine due to shape
+    REQUIRE_THROWS(Shape::GetStridesForShape(good, {256}));  // Overflow due to granule
+    REQUIRE_THROWS(Shape::GetStridesForShape(bad, {1}));     // Overflow due to shape
+}

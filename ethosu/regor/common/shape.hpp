@@ -24,7 +24,9 @@
 #include <array>
 #include <cassert>
 #include <functional>
+#include <limits>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -948,12 +950,19 @@ public:
             auto *from = shape.Storage();
             auto *result = tmp.Storage();
             int lastGranule = std::min(shape._last, granularity._last);
-            result[0] = gran[0];
+            int64_t stride = result[0] = gran[0];
             int i = 1;
             for ( ; i <= lastGranule; i++ )
-                result[i] = ::RoundAway(result[i - 1] * from[i - 1], gran[i]);
+            {
+                stride = ::RoundAway<int64_t>(stride * from[i - 1], gran[i]);
+                result[i] = int(stride);
+            }
             for ( ; i <= shape._last; i++ )
-                result[i] = result[i - 1] * from[i - 1];
+            {
+                stride = stride * from[i - 1];
+                result[i] = int(stride);
+            }
+            if ( stride > int64_t(std::numeric_limits<int>::max()) ) throw std::out_of_range("Strides exceed storage");
         }
         return tmp;
     }
