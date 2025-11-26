@@ -332,7 +332,7 @@ Operation *GraphIrOptimiser::ConvertResizeOffsets(Graph *const graph, Operation 
 }
 
 template<typename T>
-static T Scale(int64_t v, const Quantization &quant, RoundMode rounding = RoundMode::AUTO, int doubleRound = 0)
+static T Scale(int64_t v, const Quantization &quant, RoundMode rounding = RoundMode::AUTO, int64_t ofmZp = 0, int doubleRound = 0)
 {
     assert(doubleRound >= 0 && doubleRound < 31 && "Illegal double round");
     if ( !quant.IsUnitScale() )
@@ -366,7 +366,9 @@ static T Scale(int64_t v, const Quantization &quant, RoundMode rounding = RoundM
         }
         v *= qs.scale;
         v = (v + round) >> qs.shift;
-        assert(v > std::numeric_limits<T>::min() && v < std::numeric_limits<T>::max() && "Overflow - Unpredictable result");
+        v = v + ofmZp;
+        v = std::max(std::min(v, int64_t(std::numeric_limits<T>::max())), int64_t(std::numeric_limits<T>::min()));
+        assert(v >= std::numeric_limits<T>::min() && v <= std::numeric_limits<T>::max() && "Overflow - Unpredictable result");
     }
     return T(v);
 }
@@ -491,12 +493,16 @@ std::shared_ptr<Buffer> ConstPropUnEw(Operation *const operation)
     auto *ifm0 = ifmConn->tensor.get();
     auto *ofm = ofmConn->tensor.get();
 
+    if ( ofmConn->quantization.zeroPoints.size() > 0 ) assert(ofmConn->quantization.zeroPoints.size() == 1);
+    const auto zpIfm = ifmConn->quantization.zeroPoints.size() ? ifmConn->quantization.zeroPoints[0] : 0;
+    const auto zpOfm = ofmConn->quantization.zeroPoints.size() ? ofmConn->quantization.zeroPoints[0] : 0;
+
     auto v0 = BroadcastValues<T>(ifm0, iShape, oShape);
     std::vector<T> c(oShape.Elements());
 
     for ( int i = 0; i < oShape.Elements(); i++ )
     {
-        c[i] = Scale<T>(F<T>()(v0[i]), ofmConn->quantization, ofmConn->rounding);
+        c[i] = Scale<T>(F<T>()(v0[i] - zpIfm), ofmConn->quantization, ofmConn->rounding, zpOfm);
     }
 
     return std::make_shared<Buffer>(std::move(c));
@@ -559,6 +565,9 @@ Operation *GraphIrOptimiser::ConstPropagation(Graph *const graph, Operation *con
             ofmBuf = ConstPropBinEw<EwMul>(operation);
             break;
         case OpType::MemoryCopy:
+            ofmBuf = ConstPropUnEw<EwMemoryCopy>(operation);
+            break;
+        case OpType::Quantize:
             ofmBuf = ConstPropUnEw<EwMemoryCopy>(operation);
             break;
         default:

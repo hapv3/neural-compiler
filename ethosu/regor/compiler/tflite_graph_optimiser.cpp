@@ -2712,6 +2712,45 @@ Operation *TFLiteGraphOptimiser::LegalizeAsymmetricQuantization(Graph *const gra
     return returnOp;
 }
 
+Operation *TFLiteGraphOptimiser::ConvertQuantizetoExplicit(Graph *const graph, Operation *const operation)
+{
+    UNUSED(graph);
+    auto returnOp = operation;
+    if ( operation->Type() != OpType::Quantize )
+    {
+        return operation;
+    }
+
+    auto ifmConn = operation->Input(TensorUsage::IFM);
+    auto ofmConn = operation->Output(TensorUsage::OFM);
+
+    if ( ofmConn->quantization.type == QuantizationType::EXPLICIT && ifmConn->quantization.IsUnitScale() )
+    {
+        return returnOp;
+    }
+
+    Quantization *ofmQuant = &ofmConn->quantization;
+    Quantization *ifmQuant = &ifmConn->quantization;
+    uint32_t scale = 1;
+    int shift = 0;
+
+    // Quantize operations need double-precision scaling
+    float ifmScale = ifmConn->quantization.Scale().Dequantize();
+    float ofmScale = ofmConn->quantization.Scale().Dequantize();
+    QuantizedScale quantScale = (static_cast<double>(ifmScale) / static_cast<double>(ofmScale));
+    scale = uint32_t(quantScale.scale);
+    shift = quantScale.shift;
+
+    ofmQuant->scales.clear();
+    ofmQuant->scales.push_back({int32_t(scale), shift});
+    ofmQuant->type = QuantizationType::EXPLICIT;
+    ifmQuant->scales.clear();
+    ifmQuant->scales.push_back(QuantizedScale(1, 0));
+    ifmQuant->type = QuantizationType::EXPLICIT;
+
+    return returnOp;
+}
+
 // Return a slice of a tensor
 template<typename TYPE>
 static std::shared_ptr<Tensor>

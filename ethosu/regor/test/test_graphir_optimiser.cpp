@@ -209,6 +209,64 @@ TEST_CASE("test_graphir_optimiser - constant propagation")
             REQUIRE(idata[i] == 2 << 3);
         }
     }
+
+    SECTION("Quantize operation")
+    {
+        auto graph = [&]()
+        {
+            std::vector<std::shared_ptr<Operation>> ops;
+            // Example data sourced from BERT_tiny_static_int8 model
+            std::vector<int8_t> cifmData{-6, 9, 20, -13, 7, -5, 0, 3, -24, -30};
+            auto cifm = CreateTensor("CIFM", Shape(1, 1, 1, 10), DataType::Int8, std::move(cifmData));
+            auto cofm = CreateTensor("COFM", Shape(1, 1, 10, 10), DataType::Int8);
+            auto ifm = CreateTensor("IFM", Shape(1, 1, 10, 10), DataType::Int8);
+            auto ofm = CreateTensor("OFM", Shape(1, 1, 10, 10), DataType::Int8);
+            auto qop = CreateOperation(OpType::Quantize, TensorUsage::IFM, cifm, TensorUsage::OFM, cofm);
+            auto &outQuant = qop->Output(TensorUsage::OFM)->quantization;
+            outQuant.scales.clear();
+            outQuant.scales.push_back(QuantizedScale(static_cast<double>(0.0016390486853197217) / static_cast<double>(0.010346830822527409)));
+            outQuant.zeroPoints.clear();
+            outQuant.zeroPoints.push_back(5);
+            outQuant.type = QuantizationType::EXPLICIT;
+            qop->Output(TensorUsage::OFM)->rounding = RoundMode::DBL;
+
+            auto &inQuant = qop->Input(TensorUsage::IFM)->quantization;
+            inQuant.scales.clear();
+            inQuant.scales.emplace_back(QuantizedScale{1, 0});
+            inQuant.zeroPoints.clear();
+            inQuant.zeroPoints.emplace_back(0);
+            inQuant.type = QuantizationType::EXPLICIT;
+
+            auto op = CreateOperation(OpType::Add, TensorUsage::IFM, ifm, TensorUsage::IFM1, cofm, TensorUsage::OFM, ofm);
+            ops.push_back(std::move(qop));
+            ops.push_back(std::move(op));
+
+            return CreateGraph(ops);
+        }();
+
+        GraphOptimiserOptions options;
+        const auto &optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
+
+        std::vector<Operation *> allOps;
+
+        graph->GetAllOperations(allOps);
+        REQUIRE(allOps.size() == 2);
+
+        REQUIRE(!optimiser.empty());
+        optimiser.back()->Process(graph.get());
+        allOps.clear();
+
+        graph->GetAllOperations(allOps);
+        REQUIRE(allOps.size() == 1);
+        REQUIRE(allOps[0]->Inputs()[TensorUsage::IFM1].tensor->IsConstant());
+        auto iview = allOps[0]->Inputs()[TensorUsage::IFM1].tensor->View();
+        auto idata = iview.RawData<int8_t>();
+        std::vector<int8_t> expectedData{4, 7, 8, 3, 6, 4, 5, 6, 1, 0};
+        for ( int i = 0; i < 10; i++ )
+        {
+            REQUIRE(idata[i] == expectedData[i]);
+        }
+    }
 }
 
 TEST_CASE("test_graphir_optimiser - ReduceSum")
