@@ -1851,6 +1851,7 @@ void EthosU85RCSGenerator::GenerateConvolutionOp(const HLCStripe *stripe, Memory
             useGlobalScale = true;
             Emit(isa::npu_set_weight_format_t(weight_format::SWD, weight_sparsity::NONE));  // Reset weight format
         }
+        memoryAccesses.push_back(ToMemoryAccess(op->ifm[1], stripe->ifmAreas[1], AccessDirection::Read));
     }
 
     if ( !op->ofm.quantization.scales.empty() )
