@@ -48,6 +48,7 @@ private:
     Tensor *ConvertInt48Tensors(Graph *graph, Tensor *tensor);
     Tensor *ConvertBool8Tensors(Graph *graph, Tensor *tensor);
     Tensor *ConvertInt4Tensors(Graph *graph, Tensor *tensor);
+    Operation *RemoveReshape(Graph *const graph, Operation *const operation);
     Operation *RewriteFullyConnected(Graph *const graph, Operation *const operation);
     Operation *FixupPoolStrides(Graph *const, Operation *const operation);
     Operation *RemoveRescaleUnsignedAttribute(Graph *const graph, Operation *const operation);
@@ -125,7 +126,7 @@ private:
             },
             {
                 // RemoveReshape must run as a standalone pass
-                &GraphOptimiser::RemoveReshape,
+                &GraphIrOptimiser::RemoveReshape,
             }
         },
         {

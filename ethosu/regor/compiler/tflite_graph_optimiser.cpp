@@ -1762,19 +1762,6 @@ Operation *TFLiteGraphOptimiser::FixupBias(Graph *const, Operation *const operat
     return operation;
 }
 
-// Check that no reshape like operations remain in graph.
-Operation *TFLiteGraphOptimiser::CheckReshapeOpsRemoved(Graph *const graph, Operation *const operation)
-{
-    UNUSED(graph);
-    OpType opType = operation->Type();
-    if ( IsReshape(opType) )
-    {
-        LOG_ERROR("Reshape-like operation type {0} expected to have been removed, still remains.\n", OpTypeToString(opType));
-        assert(false);
-    }
-    return operation;
-}
-
 Operation *TFLiteGraphOptimiser::ConvertSoftmaxOps(Graph *const graph, Operation *const operation)
 {
     UNUSED(graph);

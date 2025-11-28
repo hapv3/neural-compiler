@@ -126,9 +126,6 @@ private:
     Operation *CreateCastToInt32(const TensorConnection *ifmConn);
     Operation *RewriteSquaredDifference(Graph *const, Operation *const operation);
 
-    // Check that no reshape like operations remain in graph.
-    Operation *CheckReshapeOpsRemoved(Graph *const graph, Operation *const operation);
-
     Operation *ConvertSoftmaxOps(Graph *const graph, Operation *const operation);
 
     Operation *ConvertLstmOps(Graph *const graph, Operation *const operation);
@@ -242,12 +239,6 @@ public:
             }
         },
         {
-             {},
-             {
-                &GraphOptimiser::RemoveReshape,
-            }
-        },
-        {
             {},
             {
                 &TFLiteGraphOptimiser::ConvertTranspose,
@@ -294,7 +285,6 @@ public:
 #endif
             },
             {
-                &TFLiteGraphOptimiser::CheckReshapeOpsRemoved,
 #if LOG_TRACE1_ON
                 &GraphOptimiser::VisitOperatorLog,
 #endif

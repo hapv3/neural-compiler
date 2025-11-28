@@ -686,12 +686,17 @@ TEST_CASE("test_graphir_optimiser - duplicated tensor readers")
         GraphOptimiserOptions options;
         const auto &optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
         REQUIRE(!optimiser.empty());
-        optimiser.back()->RemoveReshape(graph.get(), reshapeOp.get());
+        optimiser.back()->Process(graph.get());
 
         graph->GetAllOperations(allOps);
         REQUIRE(allOps.size() == 3);
+        for ( const auto *op : allOps )
+        {
+            REQUIRE(op->Type() != OpType::Reshape);
+        }
         REQUIRE(absOfm->Readers().size() == 2);
-        REQUIRE(matmulOp->Input(TensorUsage::IFM0)->tensor.get()->Name() == "ABS_OFM");
-        REQUIRE(matmulOp->Input(TensorUsage::IFM1)->tensor.get()->Name() == "ABS_OFM");
+        // Check that tensor name starts with ABS_OFM
+        REQUIRE(matmulOp->Input(TensorUsage::IFM0)->tensor.get()->Name().rfind("ABS_OFM", 0) == 0);
+        REQUIRE(matmulOp->Input(TensorUsage::IFM1)->tensor.get()->Name().rfind("ABS_OFM", 0) == 0);
     }
 }
