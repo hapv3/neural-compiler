@@ -27,18 +27,12 @@ namespace regor
 {
 
 // Table of allowed ifm/ofm data type combinations for each HWOp
-static const std::array<DataType, 6> s_defaultAllTypes = {
-    DataType::Bool8, DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64};
-static const std::array<DataType, 5> s_defaultIntegerTypes = {
-    DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64};
-static const std::array<DataType, 5> s_defaultIntegerTypesExcl64 = {
-    DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32, DataType::Int64};
+static const std::array<DataType, 7> s_defaultAllTypes = {DataType::Bool8, DataType::UInt8, DataType::Int8,
+    DataType::UInt16, DataType::Int16, DataType::Int32, DataType::Int64};
+static const std::array<DataType, 6> s_defaultIntegerTypes = {
+    DataType::UInt8, DataType::Int8, DataType::UInt16, DataType::Int16, DataType::Int32, DataType::Int64};
 static const std::array<DataType, 5> s_reduceMinMaxTypes = {
     DataType::Bool8, DataType::UInt8, DataType::Int8, DataType::Int16, DataType::Int32};
-static const std::array<DataType, 3> s_poolingTypeBool = {DataType::Bool8, DataType::Int32, DataType::Int64};
-static const std::array<DataType, 3> s_poolingTypeUInt8 = {DataType::UInt8, DataType::Int32, DataType::Int64};
-static const std::array<DataType, 3> s_poolingTypeInt8 = {DataType::Int8, DataType::Int32, DataType::Int64};
-static const std::array<DataType, 3> s_poolingTypeInt16 = {DataType::Int16, DataType::Int32, DataType::Int64};
 static const std::array<DataType, 2> s_defaultInt32_64 = {DataType::Int32, DataType::Int64};
 
 // TODO: This table is from the EthosU55/U65 Embedded NPU Interface Specification, it's not completely valid for
@@ -64,10 +58,10 @@ static const std::unordered_map<EthosU85NpuOp, std::unordered_map<DataType, read
         }},
     {EthosU85NpuOp::Pooling,
         {
-            {DataType::Bool8, s_poolingTypeBool},
-            {DataType::UInt8, s_poolingTypeUInt8},
-            {DataType::Int8, s_poolingTypeInt8},
-            {DataType::Int16, s_poolingTypeInt16},
+            {DataType::Bool8, s_defaultAllTypes},
+            {DataType::UInt8, s_defaultAllTypes},
+            {DataType::Int8, s_defaultAllTypes},
+            {DataType::Int16, s_defaultAllTypes},
         }},
     {EthosU85NpuOp::ReduceMinMax,
         {
@@ -79,10 +73,10 @@ static const std::unordered_map<EthosU85NpuOp, std::unordered_map<DataType, read
         }},
     {EthosU85NpuOp::ReduceSum,
         {
-            {DataType::UInt8, s_defaultIntegerTypesExcl64},
-            {DataType::Int8, s_defaultIntegerTypesExcl64},
-            {DataType::Int16, s_defaultIntegerTypesExcl64},
-            {DataType::Int32, s_defaultIntegerTypesExcl64},
+            {DataType::UInt8, s_defaultIntegerTypes},
+            {DataType::Int8, s_defaultIntegerTypes},
+            {DataType::Int16, s_defaultIntegerTypes},
+            {DataType::Int32, s_defaultIntegerTypes},
         }},
     {EthosU85NpuOp::ArgMax,
         {
