@@ -34,199 +34,47 @@
 namespace regor
 {
 
-
-static void CalcPaddingAndSkirt(const Kernel *kernel, const Shape &inputShape, const Shape &outputShape,
-    const Point2i &inputDilation, const int upscaling, HLCPadding &padding, HLCPadding &skirt)
-{
-    auto dilatedWH = kernel->DilatedWH() * inputDilation;
-    int ypad = NeededTotalPadding(inputShape.Height() * upscaling, outputShape.Height(), kernel->Stride().y, dilatedWH.y);
-    int xpad = NeededTotalPadding(inputShape.Width() * upscaling, outputShape.Width(), kernel->Stride().x, dilatedWH.x);
-    const auto &pad = kernel->Padding();
-    padding.left = pad.Left();
-    padding.right = pad.Right();
-    padding.top = pad.Top();
-    padding.bottom = pad.Bottom();
-    skirt.top = padding.top;
-    skirt.left = padding.left;
-    skirt.bottom = std::max(ypad - padding.top, dilatedWH.y - 1);
-    skirt.right = std::max(xpad - padding.left, dilatedWH.x - 1);
-}
-
-enum class TransformLimit
-{
-    None,
-    Wrap,
-};
-
-static Box TransformWithStridesAndSkirt(const Box &outputArea, const Shape *strides, const Point2i &inputStep,
-    const HLCPadding *skirt, const Shape &ifmShape, OpType opType, const Shape &concatOffsets, const Shape &splitOffset,
-    const Shape &splitShape, int dilatedKernelHeight, int upscalingFactor, int &padTop, int &padBottom,
-    TransformLimit limit = TransformLimit::None, TransposeType transposeType = TransposeType::None, bool accIfm = false)
-{
-    Shape outputAreaStart = outputArea.Start().Unpermute(uint32_t(transposeType));
-    Shape outputAreaEnd = outputArea.End().Unpermute(uint32_t(transposeType));
-    Shape concatOffsetsUntransposed = concatOffsets.Unpermute(uint32_t(transposeType));
-    Shape outputAreaSize = outputAreaEnd - outputAreaStart;
-    Shape start = outputAreaStart - concatOffsetsUntransposed;
-    Shape end = start + outputAreaSize;
-
-    // Make start/end same rank as IFM, but at least 4D
-    // This avoids unexpected promotions of start/end
-    // to higher ranks when adjusting with ifmSlice and ifmShape
-    int ifmRank = std::max(ifmShape.Size(), 4);
-    start = Shape(start, ifmRank, 0);
-    end = Shape(end, ifmRank, 1);
-
-    start += splitOffset;
-    end += splitOffset;
-    if ( (IsConvolution(opType) && !IsDepthwise(opType)) )
-    {
-        if ( splitOffset.Size() == 0 )
-        {
-            start = start.WithDepth(0);
-            end = end.WithDepth(ifmShape.Depth());
-        }
-        else
-        {
-            start = start.WithDepth(splitOffset.Depth());
-            end = end.WithDepth(start.Depth() + splitShape.Depth());
-        }
-    }
-    else if ( IsVectorProduct(opType) || opType == OpType::ReduceSum )
-    {
-        // these types of operations do a "dot product" or sum over the entire IFM - full shape needed
-        if ( splitOffset.Size() == 0 )
-        {
-            start = Shape(0, 0, 0, 0);
-            end = Shape::PadAxes(ifmShape, 4, 1);
-        }
-        else
-        {
-            start = splitOffset;
-            end = start + splitShape;
-        }
-    }
-    else if ( opType == OpType::Resize )
-    {
-        // TODO MLBEDSW-8660: Striping of resize operations
-        return (splitOffset.Size() > 0) ? Box(splitOffset, splitOffset + splitShape) : Box(Shape::PadAxes(ifmShape, 4, 1));
-    }
-
-    if ( accIfm ) return Box(start, end);
-
-    end = Shape::Min(end, Shape::Max(ifmShape, Shape(1, 1, 1, 1)).WithHW(ifmShape.Height() * upscalingFactor, ifmShape.Width() * upscalingFactor));
-    padTop = 0;
-    padBottom = 0;
-
-    assert(strides != nullptr && skirt != nullptr);
-    assert(strides->Size() == 4);
-
-    int strideW = strides->Width();
-    Point2i validIfmOffset = splitOffset.IsEmpty() ? Point2i{0, 0} : splitOffset.WH();
-    start = start.WithWidth(
-        std::max((start.Width() - validIfmOffset.x) * strideW - skirt->left + validIfmOffset.x, validIfmOffset.x));
-    strideW *= inputStep.x;
-    int validIfmWidth = ifmShape.Width();
-    if ( splitShape.Size() > 1 && splitOffset.Size() > 1 )
-        validIfmWidth = std::min(validIfmWidth, splitShape.Width() + splitOffset.Width() + skirt->right);
-    else if ( splitShape.Size() > 1 ) validIfmWidth = splitShape.Width();
-    end = end.WithWidth(std::min(end.Width() * strideW + skirt->right, validIfmWidth));
-    int strideH = strides->Height();
-    int skirtTopRemainder = skirt->top % upscalingFactor;
-    int startHeight = (start.Height() - validIfmOffset.y) * strideH - skirt->top + skirtTopRemainder + validIfmOffset.y;
-    strideH *= inputStep.y;
-    int totalStride = strideH * (outputAreaEnd.Height() - outputAreaStart.Height() - 1);
-    padTop = std::max(0, -startHeight) + skirtTopRemainder;
-    start = start.WithHeight(std::max(startHeight, validIfmOffset.y));
-
-    int validIfmHeight = ifmShape.Height();
-    if ( splitShape.Size() > 2 && splitOffset.Size() > 2 )
-        validIfmHeight = std::min(validIfmHeight, splitShape.Height() + splitOffset.Height() + skirt->bottom);
-    else if ( splitShape.Size() > 2 ) validIfmHeight = splitShape.Height();
-
-    if ( end.Height() * strideH + skirt->bottom > validIfmHeight * upscalingFactor )
-    {
-        // padBottom is calculated based the diff between the end position of the weight kernel,
-        // after last stride and the ifm height.
-        if ( upscalingFactor != 1 && outputAreaEnd.Height() > validIfmHeight * upscalingFactor )
-        {
-            // Special case for Transpose Convolution with VALID padding.
-            padBottom = outputAreaEnd.Height() - validIfmHeight * upscalingFactor;
-        }
-        else
-        {
-            int kernelStart = start.Height() - padTop;
-            padBottom = std::max(0, kernelStart + totalStride + dilatedKernelHeight - validIfmHeight * upscalingFactor);
-        }
-    }
-    // Adjust for upscaling
-    start = start.WithHeight(std::max(start.Height() / upscalingFactor, 0));
-    int endHeight = end.Height() * strideH + skirt->bottom + skirt->bottom % upscalingFactor;
-    end = end.WithHeight(std::min(std::max(endHeight / upscalingFactor, 1), validIfmHeight));
-
-    // Handle broadcasted axes by wrapping start/end coordinates
-    // against the IFM-volume
-    if ( limit == TransformLimit::Wrap )
-    {
-        // use splitShape if it exists, otherwise ifmShape
-        Shape ifmVolume = splitShape.Size() ? splitShape : ifmShape;
-        Shape ifmWrap = Shape::PadAxes(ifmVolume, 4, 1);
-        Shape one = start.WithOnes();
-        // remove split-offset as wrapping needs to happen before offseting
-        start -= splitOffset;
-        end -= splitOffset;
-        // mod start-coordinate against the ifmVolume
-        // for non-broadcasted axes, start should be unaffected
-        // for broadcasted axes, (ifmVolume[ax] == 1) start should become 0
-        start = Shape::Wrap(start, ifmWrap);
-        // mod end - 1 against the IFM-volume
-        // end - 1 ensures that non-broadcasted axes do not wrap
-        // for non-broadcasted axes, end should be unaffected
-        // for broadcasted axes, end should become 1
-        end = Shape::Wrap(end - one, ifmWrap) + one;
-        // re-adjust for split-offset
-        start += splitOffset;
-        end += splitOffset;
-        assert((end - start).Elements() > 0);
-    }
-    return Box(start, end);
-}
-
-static std::pair<Box, HLCPadding> TransformWithInputOutputSteps(const Box &inputArea, const Point2i &inputStep,
-    const Box &outputArea, const Point2i &outputStep, const Kernel *kernel, const HLCPadding &padding, const Shape &ifmShape)
+// Update stripe-padding, offset and shape when we use stepping in the IFM or OFM.
+static std::tuple<Shape, Shape, HLCPadding> TransformWithInputOutputSteps(const Shape &stripeOffset,
+    const Shape &stripeShape, const Point2i &inputStep, const Box &outputArea, const Point2i &outputStep,
+    const Kernel *kernel, const HLCPadding &padding, const Shape &ifmOffset, const Shape &ifmShape)
 {
     const auto &stride = kernel->Stride();
     const auto dilatedWH = kernel->DilatedWH();
     HLCPadding newPadding;
+    Shape stripeEnd = stripeOffset + stripeShape;
+    Shape ifmEnd = ifmOffset + ifmShape;
+    // Stride-multipliers (IFM/OFM-step) are not applied in the padded region
+    // Divide padding by input step to simulate stepping
     newPadding.top = std::max(0, DivRoundUp(padding.top, inputStep.y));
     newPadding.left = std::max(0, DivRoundUp(padding.left, inputStep.x));
+    // Adjust stripe start-coordinate as if we were performing stride-multiplier (steps) in the padded-area
     Point2i startAdjustForPadFraction;
-    if ( padding.left > 0 && inputArea.Start().Width() == 0 )
+    if ( padding.left > 0 && stripeOffset.Width() == 0 )
         startAdjustForPadFraction.x = std::max(0, DivRoundUp(padding.left, inputStep.x) * inputStep.x - padding.left);
-    if ( padding.top > 0 && inputArea.Start().Height() == 0 )
+    if ( padding.top > 0 && stripeOffset.Height() == 0 )
         startAdjustForPadFraction.y = std::max(0, DivRoundUp(padding.top, inputStep.y) * inputStep.y - padding.top);
+    // Required input-elements to produce the OFM-area.
     Point2i neededInput;
     neededInput.x =
         (DivRoundUp(outputArea.End().Width() - outputArea.Start().Width(), outputStep.x) - 1) * stride.x + dilatedWH.x;
     neededInput.y =
         (DivRoundUp(outputArea.End().Height() - outputArea.Start().Height(), outputStep.y) - 1) * stride.y + dilatedWH.y;
+    // Adjust start-coordinate based on stepped padding
     Shape newStart =
-        inputArea.Start()
-            .WithWidth(inputArea.Start().Width() + startAdjustForPadFraction.x)
-            .WithHeight(inputArea.Start().Height() + startAdjustForPadFraction.y);
+        stripeOffset.WithWidth(stripeOffset.Width() + startAdjustForPadFraction.x)
+            .WithHeight(stripeOffset.Height() + startAdjustForPadFraction.y);
     Shape newEnd =
-        inputArea.End()
-            .WithWidth(std::min(inputArea.End().Width() + startAdjustForPadFraction.x, ifmShape.Width()))
-            .WithHeight(std::min(inputArea.End().Height() + startAdjustForPadFraction.y, ifmShape.Height()));
-    newPadding.bottom = std::max(0,
-        neededInput.y -
-            (DivRoundUp((ifmShape.Height() - inputArea.Start().Height()) - startAdjustForPadFraction.y, inputStep.y) +
-                newPadding.top));
-    newPadding.right = std::max(0,
-        neededInput.x -
-            (DivRoundUp(ifmShape.Width() - inputArea.Start().Width() - startAdjustForPadFraction.x, inputStep.x) +
-                newPadding.left));
-    return std::make_pair<Box, HLCPadding>(Box(newStart, newEnd), std::move(newPadding));
+        stripeEnd.WithWidth(std::min(stripeEnd.Width() + startAdjustForPadFraction.x, ifmEnd.Width()))
+            .WithHeight(std::min(stripeEnd.Height() + startAdjustForPadFraction.y, ifmEnd.Height()));
+    // Calculate bottom/right padding based on new start/end coordinates
+    newPadding.bottom = std::max(
+        0, neededInput.y - (DivRoundUp((ifmEnd.Height() - newStart.Height()), inputStep.y) + newPadding.top));
+    newPadding.right = std::max(
+        0, neededInput.x - (DivRoundUp((ifmEnd.Width() - newStart.Width()), inputStep.x) + newPadding.left));
+    Shape newShape = newEnd - newStart;
+    assert(newShape.Elements() > 0);
+    return std::make_tuple<Shape, Shape, HLCPadding>(std::move(newStart), std::move(newShape), std::move(newPadding));
 }
 
 // Calculates STRIDE_C/Y/X
@@ -859,118 +707,279 @@ static std::unique_ptr<HLCDMA> GenerateWeightDMA(NpuWeightTensor *weightTens, co
     return dma;
 }
 
+static std::tuple<Shape, Shape, HLCPadding> CalculateStripePadding(const Shape &stripeOffset, const Shape &stripeShape, const Shape &ifmShape,
+    Point2i ifmStep, const Shape &ofmShape, Point2i ofmStep, const Kernel *kernel, const HLCPadding &stripePadding, OpType opType)
+{
+    const Shape stripeEnd = stripeOffset + stripeShape;
+    // Set padding if ifmStripe is outside the IFM shape
+    int left = std::max(0, -stripeOffset.Width());
+    int right = std::max(0, stripeEnd.Width() - ifmShape.Width());
+    int top = std::max(0, -stripeOffset.Height());
+    int bottom = std::max(0, stripeEnd.Height() - ifmShape.Height());
+    // Adjust offset and shape based on padded values
+    Shape newStart = stripeOffset + Shape(top, left, 0);
+    Shape newEnd = stripeEnd - Shape(bottom, right, 0);
+    Shape newShape = newEnd - newStart;
+    assert(newShape.Elements() > 0);
+    HLCPadding newPadding = {top, left, bottom, right};
+    // Re-calculate stripe and padding if we use non-unit stepping in the IFM
+    // TODO MLBEDSW-11383: refactor step-based padding into regular padding calculations.
+    bool stepped = (ofmStep != Point2i{1, 1} || ifmStep != Point2i{1, 1});
+    if ( opType != OpType::MatMul && stepped )
+    {
+        return TransformWithInputOutputSteps(
+            newStart, newShape, ifmStep, ofmShape, ofmStep, kernel, newPadding, ifmShape.WithZeros(), ifmShape);
+    }
+    return std::make_tuple<Shape, Shape, HLCPadding>(std::move(newStart), std::move(newShape), std::move(newPadding));
+}
+
+// Calculate the IFM-shape required to produce the OFM-shape for the stripe.
+// If upscaling is used, this function returns the upscaled shape requirement.
+// (shape needs to be adjusted for padding before it can be downscaled)
+static Shape CalculateUpscaledIfmStripeShape(const Shape &ofmStripeShape, const Point2i &ofmStep,
+    const Point2i &ifmStep, const Kernel *kernel, const TensorSlice &ifmSlice, OpType opType, int upscaling)
+{
+    auto dilatedSize = kernel->DilatedWH();
+    auto effectiveKernelStride = kernel->Stride() * ifmStep;
+    // Amount of written elements in the OfmStripeShape when accounting for ofmStep
+    Point2i writtenElements = DivRoundUp(Point2i(ofmStripeShape.Width(), ofmStripeShape.Height()), ofmStep);
+    // size of IFM covered by the kernel when accounting for ifmStep
+    Point2i kernelBorder = (dilatedSize - Point2i(1, 1)) * ifmStep + Point2i(1, 1);
+    // calculated required width/height in upscaled space
+    int requiredWidth = RequiredInputSize(writtenElements.x, effectiveKernelStride.x, kernelBorder.x, 1, 0);
+    int requiredHeight = RequiredInputSize(writtenElements.y, effectiveKernelStride.y, kernelBorder.y, 1, 0);
+    // Truncate (or promote) to IFM-rank (but at least 4D)
+    int ifmRank = std::max(4, ifmSlice.shape.Size());
+    Shape stripeShape = Shape(ofmStripeShape, ifmRank, 1).WithHW(requiredHeight, requiredWidth);
+    // Handle broadcast for elementwise operations
+    if ( IsElementwise(opType) )
+    {
+        // The shape is converted to the pre-broadcasted shape by truncating against the ifmSlice shape.
+        Shape ifmSliceShapeUpscaled = ifmSlice.shape.WithHW(ifmSlice.shape.Height() * upscaling, ifmSlice.shape.Width() * upscaling);
+        stripeShape = Shape::Min(stripeShape, ifmSliceShapeUpscaled);
+    }
+    // Special-treatments for operators where depth cannot be inferred
+    // use full IFM-depth.
+    else if ( (IsConvolution(opType) && !IsDepthwise(opType)) || opType == OpType::ReduceSum )
+    {
+        stripeShape = stripeShape.WithDepth(ifmSlice.shape.Depth());
+    }
+    return stripeShape;
+}
+
+// Calculate the read-offset for the IFM-stripe relative to the IFM slice.
+// If upscaling is used, this function returns the offset in the upscaled IFM.
+// (offset needs to be adjusted for padding before it can be downscaled)
+static Shape CalculateUpscaledIfmStripeOffset(const Shape &ofmStripeOffset, const Point2i &ofmStep,
+    const Point2i &ifmStep, const Kernel *kernel, const TensorSlice &ifmSlice, OpType opType, int upscaling)
+{
+    const auto &padding = kernel->Padding();
+    assert(ofmStripeOffset.Width() % ofmStep.x == 0);
+    assert(ofmStripeOffset.Height() % ofmStep.y == 0);
+    // Calculate the step-normalised offset in the OFM stripe
+    // This represents how many rows/cols have already been written
+    // (when accounting for ofmStep)
+    int ofmX = ofmStripeOffset.Width() / ofmStep.x;
+    int ofmY = ofmStripeOffset.Height() / ofmStep.y;
+    // Calculate how much the kernel moves between each IFM-element
+    // (accounting for IFM-step)
+    Point2i effectiveKernelStride = kernel->Stride() * ifmStep;
+    // Calculate how far we must have traveled in the IFM to produce ofmX/ofmY
+    // Adjust coordinate based on left/top padding.
+    int ifmStripeOffsetWidth = ofmX * effectiveKernelStride.x - padding.Left();
+    int ifmStripeOffsetHeight = ofmY * effectiveKernelStride.y - padding.Top();
+    // Truncate (or promote) to IFM-rank (but at least 4D)
+    int ifmRank = std::max(4, ifmSlice.shape.Size());
+    Shape stripeOffset = Shape(ofmStripeOffset, ifmRank, 0).WithHW(ifmStripeOffsetHeight, ifmStripeOffsetWidth);
+    // Handle broadcast for elementwise operations
+    if ( IsElementwise(opType) )
+    {
+        // The offset is wrapped (modulo) against the ifm slice shape.
+        Shape ifmShapeUpscaled = ifmSlice.shape.WithHW(ifmSlice.shape.Height() * upscaling, ifmSlice.shape.Width() * upscaling);
+        stripeOffset = Shape::Wrap(stripeOffset, ifmShapeUpscaled);
+    }
+    // Special-treatments for operators where depth cannot be inferred
+    // use depth offset 0 to cover the whole IFM-slice
+    else if ( (IsConvolution(opType) && !IsDepthwise(opType)) || opType == OpType::ReduceSum )
+    {
+        stripeOffset = stripeOffset.WithDepth(0);
+    }
+    return stripeOffset;
+}
+
+// CalculateIfmStripeAndPadding finds the IFM-area and
+// padding required to produce the OFM-stripe.
+//
+// This is performed in 5 steps:
+//     1. Offset (upscaled) calculations for the IFM stripe
+//     2. Shape (upscaled) calculations for the IFM stripe
+//     3. Padding calculations and offset/shape adjustment
+//     4. Downscaling shape & offset (based on upscaling-factor)
+//     5. Offset adjustments (based on IFM slice offset)
+//
+// "Offsets" in this function are defined relative to the tensor-slice.
+// "Coordinates" are defined relative to the whole tensor.
+// i.e. "offset" (0,0,0,0) represents the start of the tensor-slice
+// and "coordinate" (0,0,0,0) represents the start of the whole tensor.
+//
+// The "offset" definition is useful when calculating IFM stripe and padding
+// as the IFM offset can be inferred from the OFM offset (step 1), and padding can
+// be inferred from IFM offset relative to the slice shape (step 3).
+//
+// The IFM offset is later converted into a true tensor coordinate before returning.
+static Box CalculateIfmStripeAndPadding(const Shape &ofmStripeStartOffset, const Shape &ofmStripeEndOffset,
+    const Point2i &ofmStep, const TensorSlice &ifmSlice, const Point2i &ifmStep, const Kernel *kernel, OpType opType,
+    int upscaling, TransposeType transposeType, bool accIfm, HLCPadding &stripePadding)
+{
+    if ( accIfm || IsVectorProduct(opType) || opType == OpType::Resize )
+    {
+        // IFM shape cannot be inferred from the OFM shape for these operations.
+        // use full ifm-slice.
+        return Box(ifmSlice.offset, Box::Size(ifmSlice.shape));
+    }
+    // We infer the IFM stripe from the untransposed OFM stripe
+    Shape untransposedOfmStart = ofmStripeStartOffset.Unpermute(uint32_t(transposeType));
+    Shape untransposedOfmEnd = ofmStripeEndOffset.Unpermute(uint32_t(transposeType));
+    Shape untransposedOfmShape = untransposedOfmEnd - untransposedOfmStart;
+    assert(untransposedOfmShape.Elements() > 0 && "Unexpected OFM volume");
+
+    // 1. Calculate IFM offset
+    Shape stripeOffsetUpscaled = CalculateUpscaledIfmStripeOffset(untransposedOfmStart, ofmStep, ifmStep, kernel, ifmSlice, opType, upscaling);
+
+    // 2. Calculate IFM shape
+    Shape stripeShapeUpscaled = CalculateUpscaledIfmStripeShape(untransposedOfmShape, ofmStep, ifmStep, kernel, ifmSlice, opType, upscaling);
+
+    // 3. Calculate stripe-padding
+    // Upscale IFM shape to calculate padding
+    // Upscaled space is required to perform padding calculations as padding is applied after upscaling in HW
+    Shape ifmShapeUpscaled = Shape(ifmSlice.shape, 4, 1).WithHW(ifmSlice.shape.Height() * upscaling, ifmSlice.shape.Width() * upscaling);
+    std::tie(stripeOffsetUpscaled, stripeShapeUpscaled, stripePadding) = CalculateStripePadding(stripeOffsetUpscaled,
+        stripeShapeUpscaled, ifmShapeUpscaled, ifmStep, untransposedOfmShape, ofmStep, kernel, stripePadding, opType);
+
+    // 4. Adjust to IFM coordinate-system by dividing with upscaling
+    // TODO MLBEDSW-7003: Handle stripe-offsets that start on an upscaled coordinate
+    assert(stripeOffsetUpscaled.Height() % upscaling == 0 && "stripe starts on an upscaled coordinate");
+    assert(stripeOffsetUpscaled.Width() % upscaling == 0 && "stripe starts on an upscaled coordinate");
+    Shape stripeOffset = stripeOffsetUpscaled.WithHW(stripeOffsetUpscaled.Height() / upscaling, stripeOffsetUpscaled.Width() / upscaling);
+    // The downscaled ifm-shape is rounded up so that it produces (at least) stripeShapeUpscaled H/W
+    // note: This cannot be done in step 2, as shape needs to be adjusted for padding before rounding is applied
+    // (padding is not upscaled).
+    Shape stripeShape = stripeShapeUpscaled.WithHW(
+        DivRoundUp(stripeShapeUpscaled.Height(), upscaling), DivRoundUp(stripeShapeUpscaled.Width(), upscaling));
+    assert(stripeShape.Elements() > 0);
+
+    // 5. Convert to true IFM coordinate by adding the IFM slice-offset
+    Shape stripeStart = stripeOffset + ifmSlice.offset;
+    return Box(stripeStart, Box::Size(stripeShape));
+}
+
+// Generate a sequence of HLCStripe commands for a single scheduled operation.
+// This walks the OFM slice in stripes (H, W, C), computes the corresponding IFM
+// area for each input FM, derives padding, and optionally emits weight DMA
+// commands when buffered weights need (re)loading.
+// The end result is a list of HLCStripe commands that fully cover the OFM slice for this op.
 void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const std::shared_ptr<HLCOperation> &hlcOp, HLCStream &cmds)
 {
     auto opInfo = _schedule->Cost(op);
-    HLCPadding skirt;
-    HLCPadding padding;
     auto kernel = op->Kernel();
     assert(kernel != nullptr && "Operators must have a kernel");
-    Shape strides = Shape(1, kernel->Stride().y, kernel->Stride().x, 1);
+
     auto opType = op->Type();
     auto ofmConn = op->OFM();
     auto ifm0Conn = op->IFM(0);
-    auto opGroup = op->OpGroup();
-    const auto &ofmShape = ofmConn->SliceShape();
-    const auto &ifm0Shape = ifm0Conn->SliceShape();
-
     auto *ifm1Conn = op->TryIFM(1);
-    auto maxIfmShape = ifm0Shape;
-    if ( ifm1Conn && IsBinaryElementwise(opType) )
-    {
-        // Use full ifm shape for broadcast elementwise operators
-        maxIfmShape = Shape::Max(ifm0Conn->SliceShape(), ifm1Conn->SliceShape());
-    }
-
-    int upscaling = 1;
-    if ( ifm0Conn->resamplingMode != ArchResampling::None )
-    {
-        upscaling = 2;
-    }
-    CalcPaddingAndSkirt(kernel, maxIfmShape, ofmShape, ofmConn->stepXY, upscaling, padding, skirt);
+    auto opGroup = op->OpGroup();
+    int upscaling = ifm0Conn->resamplingMode == ArchResampling::None ? 1 : 2;
     auto &depthSlices = opInfo->ofmDepthSlices;
-    int dilatedKernelHeight = kernel->DilatedWH().y;
-
-    // Define Start and End coordinates for the OFM
-    // Make sure that they are at least 4D
-    auto ofmStart = Shape::PadAxes(ofmShape, 4, 0).WithZeros().WithDepth(depthSlices[0]);
-    auto ofmEnd = Shape::PadAxes(ofmShape, 4, 1);
+    // Define Start offset and shape for the OFM
+    auto ofmOffset = Shape::PadAxes(ofmConn->shape, 4, 0).WithZeros().WithDepth(depthSlices[0]);
+    auto ofmShape = Shape::PadAxes(ofmConn->shape, 4, 1);
     if ( ofmConn->slice.offset.Size() > 0 )
     {
-        ofmStart = Shape::PadAxes(ofmConn->slice.offset, 4, 0);
-        ofmEnd = Shape::PadAxes(ofmConn->slice.offset + ofmConn->slice.shape, 4, 1);
+        ofmOffset = Shape::PadAxes(ofmConn->slice.offset, 4, 0);
+        ofmShape = Shape::PadAxes(ofmConn->slice.shape, 4, 1);
     }
-    assert(ofmStart.Size() >= 4);
-    assert(ofmEnd.Size() >= 4);
-
-    // Binary elementwise using broadcast to repeat smaller IFMs over larger IFM volumes need their
-    // coordinates to wrap at the limits of the smaller IFM volume.
-    TransformLimit ifmLimit = IsBinaryElementwise(op->Type()) ? TransformLimit::Wrap : TransformLimit::None;
-
-    const auto &ofmStep = opInfo->stripe;
-    for ( int startHeight = ofmStart.Height(); startHeight < ofmEnd.Height(); startHeight += ofmStep.Height() )
+    assert(ofmOffset.Size() >= 4);
+    assert(ofmShape.Size() >= 4);
+    int ofmRank = ofmShape.Size();
+    auto ofmStep = ofmConn->stepXY;
+    const auto &stripeShape = opInfo->stripe;
+    // round H/W steps to multiples of the ofm write-step (stepXY)
+    int stripeHeightIncrement = RoundAway(stripeShape.Height(), ofmStep.y);
+    int stripeWidthIncrement = RoundAway(stripeShape.Width(), ofmStep.x);
+    // Slice OFM shape in stripes based on stripeShape.
+    for ( int height = 0; height < ofmShape.Height(); height += stripeHeightIncrement )
     {
-        int endHeight = std::min(startHeight + ofmStep.Height(), ofmEnd.Height());
-        for ( int startWidth = ofmStart.Width(); startWidth < ofmEnd.Width(); startWidth += ofmStep.Width() )
+        int endHeight = std::min(height + stripeHeightIncrement, ofmShape.Height());
+        for ( int width = 0; width < ofmShape.Width(); width += stripeWidthIncrement )
         {
-            int endWidth = std::min(startWidth + ofmStep.Width(), ofmEnd.Width());
+            int endWidth = std::min(width + stripeWidthIncrement, ofmShape.Width());
             for ( int depthIndex = 0; depthIndex < int(depthSlices.size()) - 1; ++depthIndex )
             {
-                // Depth-slices are computed relative to the offset and sliceShape for a striped or sliced OFM
-                int startChannel = ofmStart.Depth() + depthSlices[depthIndex];
-                int endChannel = std::min(ofmEnd.Depth(), ofmStart.Depth() + depthSlices[depthIndex + 1]);
-
-                // Construct the output area for the current stripe
-                auto outputAreaStart = ofmStart.WithHeight(startHeight).WithWidth(startWidth).WithDepth(startChannel);
-                auto outputAreaEnd = ofmEnd.WithHeight(endHeight).WithWidth(endWidth).WithDepth(endChannel);
-                auto outputArea = Box(outputAreaStart, outputAreaEnd);
+                // "Offsets" in this function are defined relative to the tensor-slice.
+                // "Coordinates" are defined relative to the whole tensor.
+                // i.e. "offset" (0,0,0,0) represents the start of the tensor-slice
+                // and "coordinate" (0,0,0,0) represents the start of the whole tensor.
+                //
+                // The offset definition is useful when calculating IFM stripes (See CalculateIfmStripeAndPadding)
+                // Offsets are later converted into true tensor coordinates before creating the stripe-areas.
+                int depth = depthSlices[depthIndex];
+                int nextDepth = depthSlices[depthIndex + 1];
+                Shape ofmStripeStartOffset = Shape(0, height, width, depth);
+                Shape ofmStripeEndOffset = Shape(1, endHeight, endWidth, nextDepth);
+                // assert that stripe-offsets are inside the OFM slice shape.
+                assert((Shape::Min(ofmStripeStartOffset, ofmShape) == ofmStripeStartOffset) && "OFM-start offset not inside OFM Shape");
+                assert((Shape::Min(ofmStripeEndOffset, ofmShape) == ofmStripeEndOffset) && "OFM-end offset not inside OFM Shape");
                 auto hlcStripe = std::make_unique<HLCStripe>(hlcOp);
                 auto &primaryStripeArea = hlcStripe->stripeAreas.emplace_back();
-                hlcStripe->padding = padding;
-                primaryStripeArea.ofmArea = outputArea;
-                hlcStripe->opGroup = opGroup;
+                hlcStripe->opGroup = op->OpGroup();
+                // Convert from offsets to true OFM coordinates
+                // by converting to ofmRank and adding the OFM slice offset.
+                Shape ofmStripeStart = Shape(ofmStripeStartOffset, ofmRank, 0) + ofmOffset;
+                Shape ofmStripeEnd = Shape(ofmStripeEndOffset, ofmRank, 1) + ofmOffset;
+                primaryStripeArea.ofmArea = Box(ofmStripeStart, ofmStripeEnd);
+                assert(primaryStripeArea.ofmArea.Intersection(Box(ofmOffset, Box::Size(ofmShape))) == primaryStripeArea.ofmArea && "ofmBox not inside the OFM slice");
+                // compute IFM stripes for every input
                 for ( const auto &fm : hlcOp->ifm )
                 {
                     if ( !IsIFM(fm.usage) ) continue;
                     auto ifmConn = op->Input(fm.usage);
+                    // Create at least 4D ifm-slice
+                    Shape sliceShape = Shape::PadAxes(ifmConn->SliceShape(), 4, 1);
+                    Shape sliceOffset = Shape::PadAxes(ifmConn->slice.offset ? ifmConn->slice.offset : sliceShape.WithZeros(), 4, 0);
+                    TensorSlice ifmSlice(sliceOffset, sliceShape);
                     bool accIfm = op->AccumulatorMode().source == AccumulatorSource::Ifm2 && fm.usage == TensorUsage::IFM1;
-                    // Calculate input area based on the output area
-                    auto inputArea = TransformWithStridesAndSkirt(outputArea, &strides, ifmConn->stepXY, &skirt, ifmConn->shape,
-                        opType, ofmConn->slice.offset, ifmConn->slice.offset, ifmConn->slice.shape, dilatedKernelHeight,
-                        upscaling, hlcStripe->padding.top, hlcStripe->padding.bottom, ifmLimit, ofmConn->transpose, accIfm);
-                    if ( opType != OpType::MatMul && !accIfm && (ofmConn->stepXY != Point2i{1, 1} || ifmConn->stepXY != Point2i{1, 1}) )
-                    {
-                        std::tie(inputArea, hlcStripe->padding) = TransformWithInputOutputSteps(inputArea,
-                            ifmConn->stepXY, outputArea, ofmConn->stepXY, kernel, hlcStripe->padding, ifmConn->shape);
-                    }
-                    inputArea = Box(inputArea.Start(), Shape::Max(inputArea.End(), inputArea.Start() + inputArea.Start().WithOnes()));
-                    primaryStripeArea.AddIfm(inputArea);
+                    // Calculate the IFM stripe area and padding
+                    Box ifmBox = CalculateIfmStripeAndPadding(ofmStripeStartOffset, ofmStripeEndOffset, ofmConn->stepXY,
+                        ifmSlice, ifmConn->stepXY, kernel, opType, upscaling, ofmConn->transpose, accIfm, hlcStripe->padding);
+                    assert(ifmBox.Intersection(Box(ifmSlice.offset, Box::Size(ifmSlice.shape))) == ifmBox && "ifmBox not inside the IFM slice");
+                    primaryStripeArea.AddIfm(std::move(ifmBox));
                 }
                 if ( opInfo->npuWeightsTensor != nullptr )
                 {
-                    hlcStripe->weightRangeDepth = startChannel;
+                    hlcStripe->weightRangeDepth = primaryStripeArea.ofmArea.Start().Depth();
                     if ( opInfo->bufferedWeightTensor.parts > 0 &&
-                         (startHeight == ofmStart.Height() || opInfo->bufferedWeightTensor.buffering == Buffering::Double) )
+                         (primaryStripeArea.ofmArea.Start().Height() == ofmOffset.Height() ||
+                             opInfo->bufferedWeightTensor.buffering == Buffering::Double) )
                     {
                         assert(opInfo->bufferedWeightTensor.parts > 0 && opInfo->bufferedWeightTensor.parts <= 2);
                         int bufferIndex = depthIndex % opInfo->bufferedWeightTensor.parts;
                         assert(bufferIndex >= 0 && bufferIndex < 2);
                         // Metadata of new weights to put into the weight buffer tensor
-                        auto newWeights = std::make_tuple(opInfo->npuWeightsTensor->equivalenceId, startChannel, depthIndex);
+                        auto newWeights = std::make_tuple(opInfo->npuWeightsTensor->equivalenceId,
+                            primaryStripeArea.ofmArea.Start().Depth(), depthIndex);
                         if ( _filledWeightBuffers.count(opInfo->bufferedWeightTensor.tensor[bufferIndex].get()) == 0 )
                         {
-                            // There is nothing in the weights buffer tensor yet
                             cmds.push_back(GenerateWeightDMA(opInfo->npuWeightsTensor.get(),
-                                opInfo->bufferedWeightTensor, startChannel, depthIndex));
+                                opInfo->bufferedWeightTensor, primaryStripeArea.ofmArea.Start().Depth(), depthIndex));
                         }
                         else
                         {
                             auto &currentWeights = _filledWeightBuffers[opInfo->bufferedWeightTensor.tensor[bufferIndex].get()];
                             if ( currentWeights != newWeights )
                             {
-                                // There is something in the weights buffer tensor, but it's not correct
                                 cmds.push_back(GenerateWeightDMA(opInfo->npuWeightsTensor.get(),
-                                    opInfo->bufferedWeightTensor, startChannel, depthIndex));
+                                    opInfo->bufferedWeightTensor, primaryStripeArea.ofmArea.Start().Depth(), depthIndex));
                             }
                         }
                         _filledWeightBuffers[opInfo->bufferedWeightTensor.tensor[bufferIndex].get()] = newWeights;
@@ -978,7 +987,7 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
                 }
                 else if ( opInfo->npuScalesTensor != nullptr )
                 {
-                    hlcStripe->weightRangeDepth = startChannel;
+                    hlcStripe->weightRangeDepth = primaryStripeArea.ofmArea.Start().Depth();
                 }
                 else
                 {
@@ -1014,16 +1023,19 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
                             // Calculate the external input area based on the output area
                             auto subOpIfmConn = subOp->Input(subOpIfm.usage);
                             auto subOpOfmConn = subOp->Output(TensorUsage::OFM);
-                            TransformLimit subOpIfmLimit = IsBinaryElementwise(subOp->Type()) ? TransformLimit::Wrap : TransformLimit::None;
-                            // Strides/skirt/padding/upscaling is always unit for sub-operations
-                            Shape subOpStrides(1, 1, 1, 1);
-                            HLCPadding zeroPadding{0, 0, 0, 0};
-
-                            auto subOpInputArea = TransformWithStridesAndSkirt(hlcSubOpArea.ofmArea, &subOpStrides,
-                                subOpIfmConn->stepXY, &zeroPadding, subOpIfmConn->shape, subOp->Type(),
-                                subOpOfmConn->slice.offset, subOpIfmConn->slice.offset, subOpIfmConn->slice.shape, 1, 1,
-                                zeroPadding.top, zeroPadding.bottom, subOpIfmLimit, subOpOfmConn->transpose, false);
-                            hlcSubOpArea.AddIfm(subOpInputArea);
+                            auto subOpKernel = subOp->Kernel();
+                            HLCPadding stripePadding = {0, 0, 0, 0};
+                            Shape sliceShape = Shape::PadAxes(subOpIfmConn->SliceShape(), 4, 1);
+                            Shape sliceOffset = Shape::PadAxes(
+                                subOpIfmConn->slice.offset ? subOpIfmConn->slice.offset : sliceShape.WithZeros(), 4, 0);
+                            TensorSlice ifmSlice(sliceOffset, sliceShape);
+                            Box subOpIfmBox = CalculateIfmStripeAndPadding(ofmStripeStartOffset, ofmStripeEndOffset,
+                                ofmConn->stepXY, ifmSlice, subOpIfmConn->stepXY, subOpKernel, subOp->Type(), 1,
+                                subOpOfmConn->transpose, false, stripePadding);
+                            assert(subOpIfmBox.Intersection(Box(ifmSlice.offset, Box::Size(ifmSlice.shape))) == subOpIfmBox && "subOpIfmBox not inside the IFM slice");
+                            assert(stripePadding.top == 0 && stripePadding.bottom == 0 && stripePadding.left == 0 &&
+                                   stripePadding.right == 0 && "subOp with non-zero stripe padding.");
+                            hlcSubOpArea.AddIfm(subOpIfmBox);
                         }
                     }
                     hlcStripe->stripeAreas.push_back(std::move(hlcSubOpArea));

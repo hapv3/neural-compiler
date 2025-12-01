@@ -407,8 +407,8 @@ bool CascadeBuilder::IsCascadable(const SchedulerOperation *op, SchedulerConnect
         return false;
     }
 
-    // ReduceSum: sum over the entire IFM - full shape needed
-    // TransposeConv: Uses resampling mode which is not supported in cascades
+    // TODO MLBEDSW-11387: Support cascading for ReduceSum
+    // TODO MLBEDSW-7003: Resampling mode is not supported for cascaded convolutions
     return (cost->stripe.Height() < op->OFM()->shape.Height()) &&
            ((IsConvolution(type) && (ifmConn->resamplingMode == ArchResampling::None)) || IsElementwise(type) ||
                (IsPooling(type) && type != OpType::ReduceSum));
