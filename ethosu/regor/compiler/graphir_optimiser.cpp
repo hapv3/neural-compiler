@@ -2415,29 +2415,14 @@ Operation *GraphIrOptimiser::MergeTransposes(Graph *const graph, Operation *cons
 
             Shape axes(nhwcDefault.data(), activeAxes);
             Shape prevMapping = axes.Permute(unsigned(prevTranspose));
-            Shape finalMapping = prevMapping.Permute(unsigned(curTranspose));
-            TransposeType mergedTranspose = TransposeTypeFromShape(finalMapping);
 
-            ArchOperatorQuery query;
-            ArchRequirements req;
-            query.transposeMask = mergedTranspose;
-            Set(query.ifm[0], ifmConn);
-            Set(query.ofm, ofmConn);
-            if ( _constraints->OperatorQuery(OpType::Transpose, &query, &req).Any(QueryResult::Native) )
-            {
-                // only merge the transpose if the new mask is natively supported
-                // without mask-decomp
-                if ( !req.decomposeProps.Any(ArchProperty::TransposeMask) )
-                {
-                    // Change the transpose attribute on the preceding transpose and remove this one
-                    prevAttr->perm = finalMapping;
-                    TensorConnection &newConn = prevOp->ConnectOutput(TensorUsage::OFM, ofm);
-                    newConn.Set(ofmConn->slice).Set(ofmConn->reverse).Set(ofmConn->shape);
-                    if ( !prevHasQuant && opHasQuant ) newConn.Set(ofmConn->quantization);
-                    operation->Disconnect();
-                    return prevOp;
-                }
-            }
+            // Change the transpose attribute on the preceding transpose and remove this one
+            prevAttr->perm = prevMapping.Permute(unsigned(curTranspose));
+            TensorConnection &newConn = prevOp->ConnectOutput(TensorUsage::OFM, ofm);
+            newConn.Set(ofmConn->slice).Set(ofmConn->reverse).Set(ofmConn->shape);
+            if ( !prevHasQuant && opHasQuant ) newConn.Set(ofmConn->quantization);
+            operation->Disconnect();
+            return prevOp;
         }
     }
 
