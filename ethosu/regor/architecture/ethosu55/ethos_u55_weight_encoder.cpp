@@ -417,6 +417,9 @@ std::unique_ptr<IVolumeScaleSource> EthosU55WeightEncoder::GetScaleSource(
 Quantization EthosU55WeightEncoder::MakeExplicit(const Quantization &ifmQ, const Quantization &weightQ,
     const Quantization &ofmQ, DataType scaleType, DataType ifmType, OpType opType)
 {
+    // Fuse IFM/Weights/OFM scales into one OFM scale (global or per channel). This function only does something if we
+    // still have not converted the op to EXPLICIT quantization, meaning it must be a conv-like TFLite op with constant
+    // weights.
     return RescalePerChannel(ifmQ, weightQ, ofmQ, scaleType, ifmType, opType);
 }
 

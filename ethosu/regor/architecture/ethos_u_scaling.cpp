@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -85,10 +85,11 @@ Quantization RescalePerChannel(const Quantization &ifmQuant, const Quantization 
 
     if ( !ifmQuant.scales.empty() && !ofmQuant.scales.empty() && !weightQuant.scales.empty() )
     {
-        bool reducedScale = (scaleDataType == DataType::Int64 && DataTypeSizeBits(ifmDataType) == 16);
+        const bool reducedScale = (scaleDataType == DataType::Int64 && DataTypeSizeBits(ifmDataType) == 16);
+        const bool globalScale = weightQuant.scales.size() == 1;
 
-        int modIfm = (ifmQuant.scales.size()) == 1 ? 0 : -1;
-        int modOfm = (ofmQuant.scales.size()) == 1 ? 0 : -1;
+        const int modIfm = (ifmQuant.scales.size()) == 1 ? 0 : -1;
+        const int modOfm = (ofmQuant.scales.size()) == 1 ? 0 : -1;
 
         quantResult.scales.reserve(weightQuant.scales.size());
 
@@ -98,12 +99,14 @@ Quantization RescalePerChannel(const Quantization &ifmQuant, const Quantization 
             float ifmScale = float(ifmQuant.scales[i & modIfm].Dequantize());
             float ofmScale = float(ofmQuant.scales[i & modOfm].Dequantize());
             float weightScale = float(weightQuant.scales[i].Dequantize());
-            if ( ifmDataType == DataType::UInt8 || opType == OpType::FullyConnected )
+            if ( ifmDataType == DataType::UInt8 || (opType == OpType::FullyConnected && globalScale) )
             {
+                // Fuse the IFM, weight and OFM scales into one scale using single precision
                 v = double(ifmScale * weightScale) / double(ofmScale);
             }
             else if ( ifmDataType == DataType::Int8 || ifmDataType == DataType::Int16 )
             {
+                // Fuse the IFM, weight and OFM scales into one scale using double precision
                 v = (double(ifmScale) * double(weightScale)) / double(ofmScale);
             }
 

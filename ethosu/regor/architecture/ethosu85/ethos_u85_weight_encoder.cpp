@@ -721,6 +721,9 @@ Quantization EthosU85WeightEncoder::MakeExplicit(const Quantization &ifmQ, const
 {
     if ( DataTypeSizeBits(ifmType) == 16 ) ifmType = DataType::Int16;
 
+    // Fuse IFM/Weights/OFM scales into one OFM scale (global or per channel). This function only does something if we
+    // still have not converted the op to EXPLICIT quantization, meaning it must be a conv-like TFLite op with constant
+    // weights.
     return RescalePerChannel(ifmQ, weightQ, ofmQ, scaleType, ifmType, opType);
 }
 

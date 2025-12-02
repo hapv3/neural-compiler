@@ -1838,6 +1838,10 @@ void EthosU85RCSGenerator::GenerateConvolutionOp(const HLCStripe *stripe, Memory
     EthosU85OpConfig *config = static_cast<EthosU85OpConfig *>(op->config);
     QuantizedScale ofmScale(1, 0);
     bool useGlobalScale = false;
+
+    // Fuse IFM/IFM2/Weights/OFM scales into one global OFM scale. This function only does something if we still have
+    // not converted the op to EXPLICIT quantization, meaning it must be a conv-like TFLite op with dynamic weights (for
+    // example CONV2D with dynamic weights) or IFM2 (for example MATMUL).
     ethosU85Scaling::RescaleConvolution(op);
 
     if ( op->ifm.size() == 2 )
