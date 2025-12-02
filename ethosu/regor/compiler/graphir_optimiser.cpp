@@ -493,13 +493,18 @@ std::shared_ptr<Buffer> ConstPropBinEw(Operation *const operation)
     auto *ifm1 = ifmConn1->tensor.get();
     auto *ofm = ofmConn->tensor.get();
 
+    assert(ofmConn->quantization.zeroPoints.size() <= 1);
+    const auto zpIfm0 = ifmConn0->quantization.zeroPoints.size() ? ifmConn0->quantization.zeroPoints[0] : 0;
+    const auto zpIfm1 = ifmConn1->quantization.zeroPoints.size() ? ifmConn1->quantization.zeroPoints[0] : 0;
+    const auto zpOfm = ofmConn->quantization.zeroPoints.size() ? ofmConn->quantization.zeroPoints[0] : 0;
+
     auto v0 = BroadcastValues<T>(ifm0, iShape0, oShape);
     auto v1 = BroadcastValues<T>(ifm1, iShape1, oShape);
     std::vector<T> c(oShape.Elements());
 
     for ( int i = 0; i < oShape.Elements(); i++ )
     {
-        c[i] = Scale<T>(F<T>()(v0[i], v1[i]), ofmConn->quantization, ofmConn->rounding);
+        c[i] = Scale<T>(F<T>()(v0[i] - zpIfm0, v1[i] - zpIfm1), ofmConn->quantization, ofmConn->rounding, zpOfm);
     }
 
     return std::make_shared<Buffer>(std::move(c));

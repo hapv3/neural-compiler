@@ -2745,33 +2745,67 @@ Operation *TFLiteGraphOptimiser::LegalizeAsymmetricQuantization(Graph *const gra
     return returnOp;
 }
 
-Operation *TFLiteGraphOptimiser::ConvertQuantizetoExplicit(Graph *const graph, Operation *const operation)
+Operation *TFLiteGraphOptimiser::ConvertQuantizationToExplicit(Graph *const graph, Operation *const operation)
 {
     UNUSED(graph);
-    if ( operation->Type() != OpType::Quantize )
+    if ( operation->Type() != OpType::Quantize && operation->Type() != OpType::Mul )
     {
         return operation;
     }
 
-    auto ifmConn = operation->Input(TensorUsage::IFM);
     auto ofmConn = operation->Output(TensorUsage::OFM);
+    Quantization &ofmQuant = ofmConn->quantization;
+    QuantizedScale quantScale;
 
     if ( ofmConn->quantization.type == QuantizationType::EXPLICIT )
     {
         return operation;
     }
 
-    Quantization &ofmQuant = ofmConn->quantization;
-    Quantization &ifmQuant = ifmConn->quantization;
+    // TODO MLBEDSW-11392: Support per-channel quantization
+    if ( ofmQuant.scales.size() > 1 ) return operation;
 
-    // TODO: Support per-channel quantization
-    assert(ifmQuant.scales.size() == 1);
-    assert(ofmQuant.scales.size() == 1);
+    switch ( operation->Type() )
+    {
+        case OpType::Quantize:
+        {
+            Quantization &ifmQuant = operation->Input(TensorUsage::IFM)->quantization;
+            double ifmScale = ifmQuant.Scale().Dequantize();
+            double ofmScale = ofmQuant.Scale().Dequantize();
+            // Cast to float and back to double is necessary to match TFLite reference kernel
+            quantScale = double(float(ifmScale)) / double(float(ofmScale));
 
-    double ifmScale = ifmQuant.Scale().Dequantize();
-    double ofmScale = ofmQuant.Scale().Dequantize();
-    // Cast to float and back to double is necessary to match the reference.
-    QuantizedScale quantScale = double(float(ifmScale)) / double(float(ofmScale));
+            ifmQuant.scales.clear();
+            ifmQuant.scales.push_back(QuantizedScale::Unit());
+            ifmQuant.type = QuantizationType::EXPLICIT;
+            break;
+        }
+        case OpType::Mul:
+        {
+            Quantization &ifmQuant0 = operation->Input(TensorUsage::IFM0)->quantization;
+            Quantization &ifmQuant1 = operation->Input(TensorUsage::IFM1)->quantization;
+
+            if ( ifmQuant0.scales.empty() || ofmQuant.scales.empty() || (ifmQuant1.scales.empty()) )
+            {
+                return operation;
+            }
+
+            double ifmScale1 = ifmQuant0.Scale().Dequantize();
+            double ifmScale2 = ifmQuant1.Scale().Dequantize();
+            double ofmScale = ofmQuant.Scale().Dequantize();
+            quantScale = ElementwiseMulScale(ifmScale1, ifmScale2, ofmScale);
+
+            ifmQuant0.scales.clear();
+            ifmQuant0.scales.push_back(QuantizedScale::Unit());
+            ifmQuant0.type = QuantizationType::EXPLICIT;
+            ifmQuant1.scales.clear();
+            ifmQuant1.scales.push_back(QuantizedScale::Unit());
+            ifmQuant1.type = QuantizationType::EXPLICIT;
+            break;
+        }
+        default:
+            break;
+    }
 
     ofmQuant.scales.clear();
     ofmQuant.scales.push_back(quantScale);
@@ -2782,10 +2816,6 @@ Operation *TFLiteGraphOptimiser::ConvertQuantizetoExplicit(Graph *const graph, O
 
     ofmQuant.quantMax = {int64_t(IntegerMax(ofmConn->tensor->Type()))};
     ofmQuant.quantMin = {IntegerMin(ofmConn->tensor->Type())};
-
-    ifmQuant.scales.clear();
-    ifmQuant.scales.push_back(QuantizedScale::Unit());
-    ifmQuant.type = QuantizationType::EXPLICIT;
 
     return operation;
 }

@@ -175,7 +175,7 @@ private:
     Operation *LegalizeAsymmetricQuantization(Graph *const graph, Operation *const operation);
 
     // Converts Quantize operation with TFLite quantization on ifm and ofm to have explicit quantization on ofm only.
-    Operation *ConvertQuantizetoExplicit(Graph *const graph, Operation *const operation);
+    Operation *ConvertQuantizationToExplicit(Graph *const graph, Operation *const operation);
 
     // Converts TFLite SAME/VALID padding to GraphIR format
     Operation *RewriteTransposeConvPadding(Graph *const graph, Operation *const operation);
@@ -275,7 +275,7 @@ public:
             {
                 &TFLiteGraphOptimiser::ConvertZeroPoint,
                 &TFLiteGraphOptimiser::LegalizeAsymmetricQuantization,
-                &TFLiteGraphOptimiser::ConvertQuantizetoExplicit,
+                &TFLiteGraphOptimiser::ConvertQuantizationToExplicit,
             }
         },
         {

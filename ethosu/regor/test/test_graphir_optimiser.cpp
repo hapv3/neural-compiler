@@ -812,10 +812,10 @@ TEST_CASE("test_graphir_optimiser - convert TFLite Quantization to Explicit Quan
         ifmQuant.scales.push_back(QuantizedScale(int32_t(1387686912), 42));
         ifmQuant.type = QuantizationType::TFLITE;
 
-        auto &omfQuant = quantizeOp->Output(TensorUsage::OFM)->quantization;
-        omfQuant.scales.clear();
-        omfQuant.scales.push_back(QuantizedScale(int32_t(1899507328), 45));
-        omfQuant.type = QuantizationType::TFLITE;
+        auto &ofmQuant = quantizeOp->Output(TensorUsage::OFM)->quantization;
+        ofmQuant.scales.clear();
+        ofmQuant.scales.push_back(QuantizedScale(int32_t(1899507328), 45));
+        ofmQuant.type = QuantizationType::TFLITE;
 
         ops.push_back(std::move(quantizeOp));
         auto graph = CreateGraph(ops);
@@ -829,13 +829,60 @@ TEST_CASE("test_graphir_optimiser - convert TFLite Quantization to Explicit Quan
         graph->GetAllOperations(allOps);
         REQUIRE(allOps.size() == 1);
 
-        REQUIRE(omfQuant.type == QuantizationType::EXPLICIT);
+        REQUIRE(ofmQuant.type == QuantizationType::EXPLICIT);
         REQUIRE(ifmQuant.type == QuantizationType::EXPLICIT);
         REQUIRE(ifmQuant.scales[0] == QuantizedScale::Unit());
 
-        REQUIRE(omfQuant.scales.size() == 1);
-        auto quantScale = omfQuant.scales[0];
+        REQUIRE(ofmQuant.scales.size() == 1);
+        auto quantScale = ofmQuant.scales[0];
         REQUIRE(quantScale.scale == 1568846252);
         REQUIRE(quantScale.shift == 28);
+    }
+    SECTION("Mul operation with Data type int8")
+    {
+
+        std::vector<std::shared_ptr<Operation>> ops;
+        auto ifm0 = CreateTensor("IFM0", Shape(1, 1, 1, 10), DataType::Int8);
+        auto ifm1 = CreateTensor("IFM1", Shape(1, 1, 1, 10), DataType::Int8);
+        auto ofm = CreateTensor("OFM", Shape(1, 1, 10, 10), DataType::Int8);
+        auto mulOp = CreateOperation(OpType::Mul, TensorUsage::IFM0, ifm0, TensorUsage::IFM1, ifm1, TensorUsage::OFM, ofm);
+
+        auto &ifmQuant0 = mulOp->Input(TensorUsage::IFM0)->quantization;
+        ifmQuant0.scales.clear();
+        ifmQuant0.scales.push_back(QuantizedScale(int32_t(1888360448), 37));
+        ifmQuant0.type = QuantizationType::TFLITE;
+
+        auto &ifmQuant1 = mulOp->Input(TensorUsage::IFM1)->quantization;
+        ifmQuant1.scales.clear();
+        ifmQuant1.scales.push_back(QuantizedScale(int32_t(1888360448), 37));
+        ifmQuant1.type = QuantizationType::TFLITE;
+
+        auto &ofmQuant = mulOp->Output(TensorUsage::OFM)->quantization;
+        ofmQuant.scales.clear();
+        ofmQuant.scales.push_back(QuantizedScale(int32_t(1578641920), 37));
+        ofmQuant.type = QuantizationType::TFLITE;
+
+        ops.push_back(std::move(mulOp));
+        auto graph = CreateGraph(ops);
+
+        GraphOptimiserOptions options;
+        const auto &optimiser = GraphOptimiser::MakeGraphOptimiser(GraphNotation::TFLite, arch.get(), options, nullptr);
+        REQUIRE(!optimiser.empty());
+        optimiser.front()->Process(graph.get());
+
+        std::vector<Operation *> allOps;
+        graph->GetAllOperations(allOps);
+        REQUIRE(allOps.size() == 1);
+
+        REQUIRE(ofmQuant.type == QuantizationType::EXPLICIT);
+        REQUIRE(ifmQuant0.type == QuantizationType::EXPLICIT);
+        REQUIRE(ifmQuant0.scales[0] == QuantizedScale::Unit());
+        REQUIRE(ifmQuant1.type == QuantizationType::EXPLICIT);
+        REQUIRE(ifmQuant1.scales[0] == QuantizedScale::Unit());
+
+        REQUIRE(ofmQuant.scales.size() == 1);
+        auto quantScale = ofmQuant.scales[0];
+        REQUIRE(quantScale.scale == 1129421696);
+        REQUIRE(quantScale.shift == 36);
     }
 }

@@ -128,14 +128,6 @@ void RescaleElementwise(HLCOperation *op)
     {
         // Div scales should always be Unit
     }
-    else if ( opType == OpType::Mul )
-    {
-        if ( allHaveScale )
-        {
-            ofmScale = effectiveScale ? effectiveScale : ofmScale;
-            outScale = ElementwiseMulScale(ifm1Scale, ifm2Scale, ofmScale);
-        }
-    }
     else if ( opType == OpType::Abs )
     {
         outScale = QuantizedScale(ifm1Scale / ofmScale);
