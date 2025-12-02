@@ -540,14 +540,6 @@ TEST_CASE("Supported operators EthosU55")
         }
     }
 
-    SECTION("ConstraintBroadCastShapes")
-    {
-        auto op = CreateOperation(OpType::Add, Shape(1, 5, 5, 1), DataType::Int8, Shape(1, 2, 2, 1), DataType::Int8,
-            Shape(1, 8, 8, 1), DataType::Int8);
-        REQUIRE(supportedOps->Check(op.get()) == false);
-        op->Disconnect();
-    }
-
     SECTION("ConstraintReverse")
     {
         auto op = CreateOperation(OpType::ReverseV2, Shape(1, 8, 8, 1), DataType::Int8, Shape(1, 8, 8, 1), DataType::Int8);

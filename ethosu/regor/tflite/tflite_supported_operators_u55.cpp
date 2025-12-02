@@ -130,26 +130,6 @@ static const std::unordered_set<OpType> s_ignoreZeroPoints = {
 namespace
 {
 
-// One input-tensor must match the shape of the output-tensor
-bool BroadcastShapes(const Operation *op)
-{
-    assert(IsElementwise(op->Type()));
-    auto ifmConn = op->Input(TensorUsage::IFM);
-    auto ifm2Conn = op->Input(TensorUsage::IFM1);
-    auto ofmConn = op->Output(TensorUsage::OFM);
-    assert(ifmConn);
-    assert(ofmConn);
-    Shape ifmShape = ifmConn->shape;
-    Shape ofmShape = ofmConn->shape;
-    Shape ifm2Shape = ifm2Conn ? ifm2Conn->shape : Shape();
-    if ( ifmShape != ofmShape && (!ifm2Shape || ifm2Shape != ofmShape) )
-    {
-        Failure(op, "Operation has unsupported broadcast.");
-        return false;
-    }
-    return true;
-}
-
 // Axis attributes are not supported
 bool ReverseMask(const Operation *op)
 {
@@ -620,7 +600,6 @@ TfLiteSupportedOperatorsU55::TfLiteSupportedOperatorsU55() :
             s_supportedDataTypes, s_supportedOpTypes)
 {
     // create constraint objects
-    broadcastShapes = {&BroadcastShapes, "One input-tensor must match the shape of the output-tensor"};
     reverseMask = {&ReverseMask, "Axis attribute is not supported."};
     kernelStride = {&KernelStride, "Kernel stride must be in the range (1,3)."};
     unrolledKernelStride = {&UnrolledKernelStride, "Stride>3 is only supported IF (dilation = 1 AND padding = VALID)"};
@@ -691,10 +670,6 @@ TfLiteSupportedOperatorsU55::TfLiteSupportedOperatorsU55() :
         if ( s_supports64Bit.count(type) == 0 )
         {
             opConstraints[type].push_back(&reject64BitPrecision);
-        }
-        if ( IsElementwise(type) )
-        {
-            opConstraints[type].push_back(&broadcastShapes);
         }
         if ( IsConvolution(type) || IsPooling(type) || type == OpType::FullyConnected )
         {
