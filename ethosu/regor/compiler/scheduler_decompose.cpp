@@ -1657,10 +1657,11 @@ DecomposeTransposeConv2DLargeStride(DecompositionContext &ctx, std::unique_ptr<S
             auto subOfmSlice = subOp->Output(TensorUsage::OFM)->slice;
 
             subIfmSlice.offset = ifmSlice.offset.WithHW(ifmOffsetY, ifmOffsetX);
-            // limit slice to actual transposed-kernel window: (ny+1)x(nx+1)
-            subIfmSlice.shape = subIfmSlice.shape.WithHW(std::min(ny + 1, ifmSlice.shape.Height() - subIfmSlice.offset.Height()),
-                std::min(nx + 1, ifmSlice.shape.Width() - subIfmSlice.offset.Width()));
-
+            // calculate effective IFM slice shape
+            auto subIfmSliceWH =
+                (ifmSlice.offset.WH() + ifmSlice.shape.WH()) - Point2i::Max(subIfmSlice.offset.WH(), ifmSlice.offset.WH());
+            assert(subIfmSliceWH.x > 0 && subIfmSliceWH.y > 0 && "Invalid IFM slice extent calculation");
+            subIfmSlice.shape = subIfmSlice.shape.WithHW(subIfmSliceWH);
             subOfmSlice.offset = ofmSlice.offset.WithHW(ofmOffsetY, ofmOffsetX);
             subOfmSlice.shape = subOfmSlice.shape.WithHW(ofmSlice.shape.Height() - subOfmSlice.offset.Height(),
                 ofmSlice.shape.Width() - subOfmSlice.offset.Width());
