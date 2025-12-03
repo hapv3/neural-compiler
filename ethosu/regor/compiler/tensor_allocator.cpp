@@ -144,10 +144,9 @@ Address IncrementalLinearAllocator::Allocate(LiveRangeGraph *lrGraph, int alignm
     return _highestAddress;
 }
 
-void AllocateTensors(const std::vector<std::unique_ptr<SchedulerOperation>> &schedOps, Schedule *schedule,
-    const MemArea &memArea, TensorAllocator allocator, int alignment, bool verboseAllocation, bool reuseIfms, Address sizeLimit)
+void AllocateTensors(const std::vector<std::unique_ptr<SchedulerOperation>> &schedOps, Schedule *schedule, LiveRangeGraph &lrGraph,
+    const MemArea &memArea, TensorAllocator allocator, int alignment, bool verboseAllocation, Address sizeLimit)
 {
-    LiveRangeGraph lrGraph{reuseIfms};
     auto totalSize = Allocate(lrGraph, schedOps, schedule, memArea, allocator, alignment, sizeLimit);
     if ( verboseAllocation )
     {

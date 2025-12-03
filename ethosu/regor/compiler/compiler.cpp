@@ -656,6 +656,12 @@ std::unique_ptr<CompiledGraph> Compiler::CompileGraph(
         return nullptr;
     }
 
+    if ( _optDb )
+    {
+        _optDb->AddAllocations(schedule->featureMapLRGraph.get());
+        _optDb->AddAllocations(schedule->stagingLRGraph.get());
+    }
+
     scheduler.AllocateReadOnlyAddresses(schedule.get(), readOnlyAllocator);
 
     // Calculate full network performance

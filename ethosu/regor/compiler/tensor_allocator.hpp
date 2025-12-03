@@ -49,7 +49,7 @@ private:
 // Allocates addresses to the tensors involved in the given operations/mem area(s)
 // using the given tensor allocation algorithm.
 void AllocateTensors(const std::vector<std::unique_ptr<SchedulerOperation>> &schedOps, Schedule *schedule,
-    const MemArea &memArea, TensorAllocator allocator, int alignment, bool verboseAllocation, bool reuseIfms,
+    LiveRangeGraph &lrGraph, const MemArea &memArea, TensorAllocator allocator, int alignment, bool verboseAllocation,
     Address sizeLimit = std::numeric_limits<Address>::max());
 
 }  // namespace regor

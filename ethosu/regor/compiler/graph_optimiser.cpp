@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -23,6 +23,7 @@
 #include "architecture/architecture.hpp"
 #include "graph.hpp"
 #include "graphir_optimiser.hpp"
+#include "live_range.hpp"
 #include "op_type.hpp"
 #include "operation.hpp"
 #include "optimiser_utils.hpp"
@@ -254,10 +255,13 @@ OptimiserDatabase::OptimiserDatabase(Database *db) : _db(db)
     _groupTable = _db->AddTable("group");
     _cmdTable = _db->AddTable("queue", false);
     _streamTable = _db->AddTable("cmdstream");
+    _tensorsTable = _db->AddTable("tensors");
     _db->AddColumns(_sourceTable, {"operator", "kernel_w", "kernel_h", "ofm_w", "ofm_h", "ofm_d", "ext_key"});
     _db->AddColumns(_optTable, {"source_id", "operator", "kernel_w", "kernel_h", "ofm_w", "ofm_h", "ofm_d"});
     _db->AddColumns(_groupTable, {"group_id"});
     _db->AddColumns(_cmdTable, {"offset", "cmdstream_id", "optimised_id", "scheduled_id"});
+    _db->AddColumns(_tensorsTable,
+        {"data_type", "memory", "usage", "start_time", "end_time", "start_address", "end_address", "size", "format", "name"});
 }
 
 Database *OptimiserDatabase::Get()
@@ -306,8 +310,15 @@ int OptimiserDatabase::SourceOp(const Operation *op, int ext_key)
     auto k = op->Kernel()->Size();
     auto o = Shape::PadAxes(op->OFM()->StorageShape(), 3, 1);
     _db->AddRow(_sourceTable, _sourceId,
-        {OpTypeToString(op->Type()), std::to_string(k.x), std::to_string(k.y), o ? std::to_string(o.Width()) : "",
-            o ? std::to_string(o.Height()) : "", o ? std::to_string(o.Depth()) : "", std::to_string(ext_key)});
+        {
+            OpTypeToString(op->Type()),
+            std::to_string(k.x),
+            std::to_string(k.y),
+            o ? std::to_string(o.Width()) : "",
+            o ? std::to_string(o.Height()) : "",
+            o ? std::to_string(o.Depth()) : "",
+            std::to_string(ext_key),
+        });
     return _sourceId;
 }
 
@@ -342,8 +353,15 @@ void OptimiserDatabase::AddOptimised(UniqueId fromId, const Operation *to)
     auto k = to->Kernel()->Size();
     Shape o = Shape::PadAxes(to->OFM()->StorageShape(), 3, 1);
     _db->AddRow(_optTable, _optId,
-        {std::to_string(sourceId), OpTypeToString(to->Type()), std::to_string(k.x), std::to_string(k.y),
-            o ? std::to_string(o.Width()) : "", o ? std::to_string(o.Height()) : "", o ? std::to_string(o.Depth()) : ""});
+        {
+            std::to_string(sourceId),
+            OpTypeToString(to->Type()),
+            std::to_string(k.x),
+            std::to_string(k.y),
+            o ? std::to_string(o.Width()) : "",
+            o ? std::to_string(o.Height()) : "",
+            o ? std::to_string(o.Depth()) : "",
+        });
 }
 
 void OptimiserDatabase::AddSubOp(UniqueId primaryUid, UniqueId subOpUid)
@@ -364,6 +382,31 @@ int OptimiserDatabase::AddStream()
     _streamId++;
     _db->AddRow(_streamTable, _streamId, {});
     return _streamId;
+}
+
+void OptimiserDatabase::AddAllocations(const LiveRangeGraph *lrGraph)
+{
+    if ( !lrGraph ) return;
+
+    for ( const auto &lr : lrGraph->LiveRanges() )
+    {
+        for ( const auto *tensor : lr->tensors )
+        {
+            _db->AddRow(_tensorsTable, tensor->uid,
+                {
+                    DataTypeToString(tensor->dataType),
+                    tensor->memArea.memory->Name(),
+                    EnumToString(lr->usage),
+                    std::to_string(lr->startTime),
+                    std::to_string(lr->endTime),
+                    fmt::format("0x{:x}", tensor->AllocatedAddress()),
+                    fmt::format("0x{:x}", tensor->AllocatedAddress() + tensor->AllocationSizeBytes()),
+                    fmt::format("0x{:x}", tensor->AllocationSizeBytes()),
+                    EnumToString(tensor->format),
+                    tensor->Name(),
+                });
+        }
+    }
 }
 
 }  // namespace regor

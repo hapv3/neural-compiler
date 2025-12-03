@@ -894,13 +894,16 @@ bool Scheduler::AllocateAddresses(Schedule *schedule)
 {
     const auto verbose = _options.verboseAllocation;
     const auto reuseIfms = !_options.disabled.All(SchedulerFeature::ReuseIFM);
+    schedule->featureMapLRGraph = std::make_unique<LiveRangeGraph>(reuseIfms);
     // If graph input/outputs tensors are in FeatureMap memory, allocate with user-specified tensor alignment
-    AllocateTensors(_ops, schedule, _arch->FeatureMapMemory(), _options.tensorAllocator,
-        _options.separateIORegions ? NPUTensorAlignment : _options.cpuTensorAlignment, verbose, reuseIfms);
+    AllocateTensors(_ops, schedule, *schedule->featureMapLRGraph, _arch->FeatureMapMemory(), _options.tensorAllocator,
+        _options.separateIORegions ? NPUTensorAlignment : _options.cpuTensorAlignment, verbose);
     if ( _spilling )
     {
         const auto limit = _options.optimizationStagingLimit;
-        AllocateTensors(_ops, schedule, _arch->StagingMemory(), _options.tensorAllocator, NPUTensorAlignment, verbose, reuseIfms, limit);
+        schedule->stagingLRGraph = std::make_unique<LiveRangeGraph>(reuseIfms);
+        AllocateTensors(_ops, schedule, *schedule->stagingLRGraph, _arch->StagingMemory(), _options.tensorAllocator,
+            NPUTensorAlignment, verbose, limit);
 
         return schedule->memoryUsage[_arch->StagingMemory()] <= limit;
     }
@@ -926,8 +929,11 @@ void Scheduler::AllocateIOAddresses(Schedule *schedule, const std::vector<std::u
     {
         assert(_arch->InputFeatureMapMemory() != _arch->OutputFeatureMapMemory());
 
-        AllocateTensors(ops, schedule, _arch->InputFeatureMapMemory(), TensorAllocator::LinearAlloc, NPUTensorAlignment, verbose, reuseIfms);
-        AllocateTensors(ops, schedule, _arch->OutputFeatureMapMemory(), TensorAllocator::LinearAlloc, NPUTensorAlignment, verbose, reuseIfms);
+        LiveRangeGraph inputLRGraph(false);
+        AllocateTensors(ops, schedule, inputLRGraph, _arch->InputFeatureMapMemory(), TensorAllocator::LinearAlloc, NPUTensorAlignment, verbose);
+        LiveRangeGraph outputLRGraph{false};
+        AllocateTensors(ops, schedule, outputLRGraph, _arch->OutputFeatureMapMemory(), TensorAllocator::LinearAlloc,
+            NPUTensorAlignment, verbose);
     }
 }
 

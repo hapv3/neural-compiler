@@ -25,6 +25,7 @@
 #include "cascade_builder.hpp"
 #include "common/shape.hpp"
 #include "graph.hpp"
+#include "live_range.hpp"
 #include "quantization.hpp"
 #include "scheduler_operation.hpp"
 
@@ -38,7 +39,6 @@ namespace regor
 {
 
 class IncrementalLinearAllocator;
-class LiveRangeGraph;
 
 enum class OptimizationStrategy
 {
@@ -222,6 +222,8 @@ public:
     MemorySnapshot memorySnapshot;
     int fastStoragePeakUsage = 0;
     std::unordered_map<MemArea, int, MemArea::hash> memoryUsage;
+    std::unique_ptr<LiveRangeGraph> featureMapLRGraph;
+    std::unique_ptr<LiveRangeGraph> stagingLRGraph;
 
 public:
     Schedule(const std::string &name) : _name(name) {}

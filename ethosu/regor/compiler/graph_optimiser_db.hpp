@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -27,6 +27,7 @@
 namespace regor
 {
 
+class LiveRangeGraph;
 class Operation;
 
 /// <summary>
@@ -44,6 +45,7 @@ private:
     int _groupTable = 0;
     int _cmdTable = 0;
     int _streamTable = 0;
+    int _tensorsTable = 0;
     std::unordered_map<UniqueId, int> _source;
     std::unordered_map<UniqueId, std::tuple<int, int>> _optimised;
 
@@ -57,6 +59,7 @@ public:
     void AddSubOp(UniqueId primaryUid, UniqueId subOpUid);
     void AddCommand(UniqueId opId, int stream, int cmdIndex, UniqueId id);
     int AddStream();
+    void AddAllocations(const LiveRangeGraph *lrGraph);
 };
 
 }  // namespace regor

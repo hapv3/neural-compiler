@@ -29,6 +29,13 @@
 #include <unordered_map>
 #include <vector>
 
+BEGIN_ENUM_TABLE(regor::LRUsage)
+    ADD_ENUM_NAME(Unassigned)
+    ADD_ENUM_NAME(OpLocal)
+    ADD_ENUM_NAME(OpCascade)
+    ADD_ENUM_NAME(OpBuffering)
+END_ENUM_TABLE()
+
 namespace regor
 {
 
