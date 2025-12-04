@@ -183,7 +183,7 @@ static std::shared_ptr<SchedulerTensor> CreateScalarConstTensor(Architecture *ar
     const DataType type = DataTypeOf<T>::value;
     const Buffer::ConstValue<T> cv(value);
     const auto buf = std::make_shared<Buffer>(cv);
-    auto tensor = std::make_unique<SchedulerTensor>(type, Shape(1), TensorFormat::NHWC, buf);
+    auto tensor = std::make_unique<SchedulerTensor>(type, Shape(1, 1, 1, 1), TensorFormat::NHWC, buf);
     tensor->memArea = arch->ReadonlyMemory();
     return tensor;
 }
