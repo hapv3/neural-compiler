@@ -293,6 +293,15 @@ constexpr inline bool IsReshape(OpType opType)
            opType == OpType::ExpandDims || opType == OpType::Identity;
 }
 
+constexpr inline bool IsDataLayout(OpType opType)
+{
+    // Data-layout operations that are manipulating the layout of tensor-data.
+    // These opTypes are avoided during rescale-fusing as they are typically not originally associated with
+    // quantization.
+    return IsConcatenation(opType) || IsReshape(opType) || opType == OpType::Pad || opType == OpType::Reverse ||
+           opType == OpType::Slice || opType == OpType::Tile || opType == OpType::Transpose || opType == OpType::MemoryCopy;
+}
+
 constexpr inline bool IsControlFlow(OpType opType)
 {
     return opType == OpType::If || opType == OpType::While;

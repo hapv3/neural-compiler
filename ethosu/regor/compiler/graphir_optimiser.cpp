@@ -1256,6 +1256,15 @@ bool CanBeFused(Graph *const graph, Operation *const operation, bool ontoConsume
 // Check if a rescale can be fused onto a specific consumer
 bool GraphIrOptimiser::CanFuseRescaleOnConsumer(Operation *const consumer, TensorUsage usage, Quantization &newQuant, DataType newType)
 {
+    OpType opType = consumer->Type();
+    // Don't fuse to dataLayout opTypes as those are not typically
+    // associated with quantization
+    // This avoids incorrect propagation of quantization
+    // as dataLayout operations are often fused or removed
+    if ( IsDataLayout(opType) )
+    {
+        return false;
+    }
     // Connection to the fused-away tensor
     auto fusedConn = consumer->Input(usage);
     auto fusedType = fusedConn->tensor->Type();
@@ -1284,6 +1293,15 @@ bool GraphIrOptimiser::CanFuseRescaleOnConsumer(Operation *const consumer, Tenso
 bool GraphIrOptimiser::CanFuseMultipleRescalesOnConsumer(Operation *const consumer, Operation *const rescale1,
     Operation *const rescale2, const Quantization &q1, const Quantization &q2)
 {
+    OpType opType = consumer->Type();
+    // Don't fuse to dataLayout opTypes as those are not typically
+    // associated with quantization
+    // This avoids incorrect propagation of quantization
+    // as dataLayout operations are often fused or removed
+    if ( IsDataLayout(opType) )
+    {
+        return false;
+    }
     assert(rescale1->Type() == OpType::Rescale);
     assert(rescale2->Type() == OpType::Rescale);
     auto ofmConn1 = rescale1->Output(TensorUsage::OFM);
@@ -1314,6 +1332,15 @@ bool GraphIrOptimiser::CanFuseMultipleRescalesOnConsumer(Operation *const consum
 // Check if a rescale can be fused onto a specific producer
 bool GraphIrOptimiser::CanFuseRescaleOnProducer(Operation *const producer, Quantization &newQuant, DataType newType)
 {
+    OpType opType = producer->Type();
+    // Don't fuse to dataLayout opTypes as those are not typically
+    // associated with quantization
+    // This avoids incorrect propagation of quantization
+    // as dataLayout operations are often fused or removed
+    if ( IsDataLayout(opType) )
+    {
+        return false;
+    }
     // Connection to the fused-away tensor
     auto fusedConn = producer->Output(TensorUsage::OFM);
     auto fusedType = fusedConn->tensor->Type();

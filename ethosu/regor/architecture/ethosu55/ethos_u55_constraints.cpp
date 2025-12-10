@@ -179,6 +179,11 @@ bool EthosU55Constraints::SupportsQuantization(OpType opType, const Quantization
     assert(ifmQuant.type == QuantizationType::EXPLICIT);
     assert(ifm2Quant.type == QuantizationType::EXPLICIT);
     assert(ofmQuant.type == QuantizationType::EXPLICIT);
+    // DMA operations do not support quantization
+    if ( npuOp == EthosU55NpuOp::Dma )
+    {
+        return false;
+    }
     // Validate that quantization is valid
     if ( !SupportedIFMQuant(opType, ifmQuant, ifm2Quant) )
     {
