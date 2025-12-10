@@ -714,6 +714,7 @@ private:
         assert(size <= 127);
         _last = size - 1;
         _dynamic = (size > MAX_STATIC_AXES);
+        _storage.ptr = nullptr;
         int32_t *p = _dynamic ? (_storage.ptr = new int32_t[size]) : _storage.axes;
         if ( size < MAX_STATIC_AXES ) std::fill_n(p + size, MAX_STATIC_AXES - size, 0);
         if constexpr ( FILL ) std::fill_n(p, size, fillValue);
