@@ -2452,12 +2452,20 @@ Operation *GraphIrOptimiser::RewriteDepthwise(Graph *const graph, Operation *con
 
 // This step does 3 things to fixup WHILE/IF operations to simplify scheduling and HLC generation:
 //
-// 1. Connect constant inputs to WHILE through a MemoryCopy op to make sure all input tensors to a WHILE has writable
-//    memory. This is important later when this operator is converted to a loop with HLCBranch ops in HLCS generator.
-//    After each iteration we copy the output back to the input. This wouldn't work if any input is in read-only memory.
-// 2. Connect first input to IF through a MemoryCopy op, if it's constant or a graph input, to make sure this input is
-//    produced by an operation. This is important so that the HW COND_STATUS register is properly written. This register
-//    controls the behavior if OP_BRANCH instruction.
+// 1. Connect constant, graph inputs/outputs to WHILE/IF through a MemoryCopy op to make sure all input tensors to a
+//    WHILE/IF use the regular feature map memory.
+//    * For WHILE, this is to make sure this input is not in read-only memory. This is important later when this
+//      operator is converted to a loop with HLCBranch ops in HLCS generator. After each iteration we copy the output
+//      back to the input.
+//    * For first input to IF, this is to make sure this input is produced by an operation. This is important so that
+//      the HW COND_STATUS register is properly written. This register controls the behavior of the OP_BRANCH
+//      instruction.
+//    * For non-first input to IF, this is to make sure this input is not in read-only memory. This is important because
+//      it simplifies the memory allocation of the called subgraphs. The subgraph memory allocation then doesn't have to
+//      care about if the calling op's inputs' memory area.
+// 2. Connect graph outputs to WHILE/IF through a MemoryCopy op to make sure this output tensor is in regular
+//    feature map memory. This is important because it simplifies the memory allocation of the called subgraphs. The
+//    subgraph memory allocation then doesn't have to care about if the calling op's output' memory area.
 // 3. Reshape inputs and outputs to 3D to ensure the ops will pass the constraints checks.
 Operation *GraphIrOptimiser::FixupControlFlow(Graph *const graph, Operation *const operation)
 {
@@ -2465,40 +2473,52 @@ Operation *GraphIrOptimiser::FixupControlFlow(Graph *const graph, Operation *con
     Operation *returnOp = operation;
     if ( IsControlFlow(operation->Type()) )
     {
-        const bool isWhile = operation->Type() == OpType::While;
-        const bool isIf = operation->Type() == OpType::If;
-
         for ( const auto &[ifmUsage, ifmConn] : operation->Inputs().pairs() )
         {
             if ( !IsIFM(ifmUsage) ) continue;
 
-            // Reshape IFM to 3D
-            ifmConn.shape = ReshapeToHWC(ifmConn.shape);
-
             const bool isConstant = ifmConn.tensor->IsConstant();
             const bool isGraphInput = graph->IsInput(ifmConn.tensor.get());
-            const bool isIFM0 = ifmUsage == TensorUsage::IFM0;
-            if ( (isWhile && isConstant) || (isIf && isIFM0 && (isConstant || isGraphInput)) )
+            const bool isGraphOutput = graph->IsOutput(ifmConn.tensor.get());
+            if ( isConstant || isGraphInput || isGraphOutput )
             {
                 // Create a MemoryCopy with identity quantization
-                auto tmp = std::make_shared<Tensor>("non-constant", ifmConn.tensor->Type(), ifmConn.tensor->StorageShape());
+                auto name = ifmConn.tensor->Name() + "_tmp";
+                auto tmp = std::make_shared<Tensor>(name, ifmConn.tensor->Type(), ifmConn.tensor->StorageShape());
                 auto copyOp = std::make_shared<Operation>(OpType::MemoryCopy);
-                copyOp->ConnectInput(TensorUsage::IFM, ifmConn.tensor);                // Constant input
-                copyOp->ConnectOutput(TensorUsage::OFM, tmp).Set(RoundMode::NATURAL);  // Non-constant output
+                copyOp->ConnectInput(TensorUsage::IFM, ifmConn.tensor);  // Constant/graph input
+                copyOp->ConnectOutput(TensorUsage::OFM, tmp).Set(RoundMode::NATURAL);
                 RecordOptimisation(*operation, copyOp.get());
 
                 // Replace input with the MemoryCopy output
                 operation->ConnectInput(ifmUsage, tmp);
             }
+
+            // Reshape IFM to 3D
+            ifmConn.shape = ReshapeToHWC(ifmConn.shape);
         }
 
         for ( const auto &[ofmUsage, ofmConn] : operation->Outputs().pairs() )
         {
-            if ( IsOFM(ofmUsage) )
+            if ( !IsOFM(ofmUsage) ) continue;
+
+            const bool isGraphOutput = graph->IsOutput(ofmConn.tensor.get());
+            if ( isGraphOutput )
             {
-                // Reshape OFM to 3D
-                ofmConn.shape = ReshapeToHWC(ofmConn.shape);
+                // Create a MemoryCopy with identity quantization
+                auto name = ofmConn.tensor->Name() + "_tmp";
+                auto tmp = std::make_shared<Tensor>(name, ofmConn.tensor->Type(), ofmConn.tensor->StorageShape());
+                auto copyOp = std::make_shared<Operation>(OpType::MemoryCopy);
+                copyOp->ConnectInput(TensorUsage::IFM, tmp);
+                copyOp->ConnectOutput(TensorUsage::OFM, ofmConn.tensor).Set(RoundMode::NATURAL);  // Graph output
+                RecordOptimisation(*operation, copyOp.get());
+
+                // Replace input with the MemoryCopy output
+                operation->ConnectOutput(ofmUsage, tmp);
             }
+
+            // Reshape OFM to 3D
+            ofmConn.shape = ReshapeToHWC(ofmConn.shape);
         }
     }
     return returnOp;
