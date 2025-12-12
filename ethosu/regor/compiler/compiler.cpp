@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -641,9 +641,11 @@ std::unique_ptr<CompiledGraph> Compiler::CompileGraph(
     }
 
     // TODO: make sure that we don't include graph input/output tensors in memory alloc for subgraphs
-    // TOOD: if subgraph, set separateioregion maybe?
     // Schedule the linearised operation sequence
-    Scheduler scheduler(_architecture.get(), _schedulerOptions, "graph", scheduleOps, packing.OpConfigCompatablility());
+    auto schedulerOptions = _schedulerOptions;
+    // Only use separate IO regions on the main graph
+    if ( graph != _entryPoint ) schedulerOptions.separateIORegions = false;
+    Scheduler scheduler(_architecture.get(), schedulerOptions, "graph", scheduleOps, packing.OpConfigCompatablility());
     std::shared_ptr<Schedule> schedule;
     try
     {
