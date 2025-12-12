@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -1006,9 +1006,13 @@ DecomposeNonConstWeights(DecompositionContext &ctx, std::unique_ptr<SchedulerOpe
 
                         // Setup IFM tensor with correct slicing
                         auto *subIfmConn = subOp->Input(TensorUsage::IFM);
-                        subIfmConn->slice.shape = Shape(1, 1, ofmBlockWidth * stride.x, ifmDepth);
                         subIfmConn->slice.offset = Shape(
                             ifmConn->slice.offset.Batch(), ifmY + ky * dilation.y, ifmX + kx * dilation.x, ifmZ);
+                        // Width is ofmBlockWidth * stride.x clamped to the remaining valid volume
+                        int newWidth = std::min(
+                            ofmBlockWidth * stride.x, ifmConn->slice.shape.Width() - subIfmConn->slice.offset.Width());
+                        subIfmConn->slice.shape = Shape(1, 1, newWidth, ifmDepth);
+
                         // This effectively sets the stride for IFM width to kernel stride x.
                         subIfmConn->stepXY = Point2i(stride.x, 1);
 
