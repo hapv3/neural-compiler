@@ -68,6 +68,7 @@ protected:
     ConstraintCheck tensDimMustBeStatic;
     ConstraintCheck supportedDTypes;
     ConstraintCheck tensQuantized;
+    ConstraintCheck quantizationScaleShiftPositive;
     ConstraintCheck fcWeightShape;
     ConstraintCheck perAxisQuant;
     ConstraintCheck matchingQuantization;

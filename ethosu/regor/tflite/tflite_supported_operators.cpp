@@ -207,6 +207,22 @@ bool TensQuantized(const Operation *op)
     return true;
 }
 
+// Quantization scale shift must be positive
+bool QuantizationScaleShiftMustBePositive(const Operation *op)
+{
+    for ( const auto *list : {&op->Inputs(), &op->Outputs()} )
+    {
+        for ( const auto &item : list->pairs() )
+        {
+            for ( const auto &scale : item.second.quantization.scales )
+            {
+                if ( scale.shift < 0 ) return false;
+            }
+        }
+    }
+    return true;
+}
+
 // FullyConnected constraint on weight-shape
 bool FCWeightShape(const Operation *op)
 {
@@ -1022,6 +1038,7 @@ TfLiteSupportedOperators::TfLiteSupportedOperators(int64_t maxWeightSum8Bit, int
     tensMustHaveShape = {&TensMustHaveShape, "Tensors must have constant shape."};
     tensDimMustBeStatic = {&TensDimMustBeStatic, "Only the first dimension of tensors can be dynamic."};
     tensQuantized = {&TensQuantized, "Input(s), Output and Weight tensors must have quantization parameters."};
+    quantizationScaleShiftPositive = {&QuantizationScaleShiftMustBePositive, "Quantization scale of any tensor must be positive."};
     fcWeightShape = {&FCWeightShape, "FullyConnected weights must be on the form O,1,1,..,1,I."};
     perAxisQuant = {&PerAxisQuant, "Per-axis quantization is not supported."};
     matchingQuantization = {&MatchingQuantization, "Both Input quantization parameters must match OFM quantization parameters"};
@@ -1088,6 +1105,7 @@ TfLiteSupportedOperators::TfLiteSupportedOperators(int64_t maxWeightSum8Bit, int
         if ( s_noQuant.find(type) == std::end(s_noQuant) )
         {
             opConstraints[type].push_back(&tensQuantized);
+            opConstraints[type].push_back(&quantizationScaleShiftPositive);
         }
         if ( type != OpType::FullyConnected && !IsConvolution(type) )
         {
