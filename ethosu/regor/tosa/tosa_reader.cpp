@@ -947,7 +947,7 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
                 TosaAssert(tensors.count(ten->str()),
                     fmt::format("BasicBlock output tensor '{}' not found.", ten->str()).c_str());
                 auto outputTensor = static_cast<Tensor *>(tensors.at(ten->str()).tensor);  // NOLINT(*-pro-type-static-cast-downcast)
-                TosaAssert(!outputTensor->Writers().empty(),
+                TosaAssert(!outputTensor->Writers().empty() || outputTensor->IsConstant(),
                     fmt::format("Output tensor {} does not have any writers.", ten->str()).c_str(), ERRORIF_WrongOutputList);
                 builder->AddOutput(outputTensor);
             }

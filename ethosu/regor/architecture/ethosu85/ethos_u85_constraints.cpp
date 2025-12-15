@@ -586,7 +586,7 @@ Flags<QueryResult> EthosU85Constraints::OperatorQuery(OpType opType, const ArchO
         }
     }
 
-    if ( npuOp == EthosU85NpuOp::Dma )
+    if ( npuOp == EthosU85NpuOp::Dma || npuOp == EthosU85NpuOp::Branch )
     {
         return result;
     }
