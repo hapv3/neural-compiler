@@ -22,6 +22,7 @@
 
 #include "architecture/architecture.hpp"
 #include "architecture/architecture_constraints.hpp"
+#include "common/data_type.hpp"
 #include "common/scaling.hpp"
 #include "common/transpose_type.hpp"
 #include "graph.hpp"
@@ -2787,6 +2788,12 @@ Operation *TFLiteGraphOptimiser::ConvertQuantizetoExplicit(Graph *const graph, O
     ofmQuant.scales.clear();
     ofmQuant.scales.push_back(quantScale);
     ofmQuant.type = QuantizationType::EXPLICIT;
+
+    assert(ofmQuant.quantMax.empty());
+    assert(ofmQuant.quantMin.empty());
+
+    ofmQuant.quantMax = {int64_t(IntegerMax(ofmConn->tensor->Type()))};
+    ofmQuant.quantMin = {IntegerMin(ofmConn->tensor->Type())};
 
     ifmQuant.scales.clear();
     ifmQuant.scales.push_back(QuantizedScale::Unit());
