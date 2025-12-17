@@ -790,3 +790,52 @@ TEST_CASE("test_graphir_optimiser - duplicated tensor readers")
         REQUIRE(matmulOp->Input(TensorUsage::IFM1)->tensor.get()->Name().rfind("ABS_OFM", 0) == 0);
     }
 }
+
+TEST_CASE("test_graphir_optimiser - convert TFLite Quantization to Explicit Quantization")
+{
+    // Create arch
+    auto arch = CreateArchDefault<ArchEthosU55>();
+    std::string err = "noerror";
+    arch->CheckConfiguration(err);
+    REQUIRE(err == "noerror");
+
+    SECTION("Quantize operation with Data type int16")
+    {
+
+        std::vector<std::shared_ptr<Operation>> ops;
+        auto ifm = CreateTensor("QIFM", Shape(1, 1, 1, 10), DataType::Int16);
+        auto ofm = CreateTensor("QOFM", Shape(1, 1, 10, 10), DataType::Int16);
+        auto quantizeOp = CreateOperation(OpType::Quantize, TensorUsage::IFM0, ifm, TensorUsage::OFM, ofm);
+
+        auto &ifmQuant = quantizeOp->Input(TensorUsage::IFM0)->quantization;
+        ifmQuant.scales.clear();
+        ifmQuant.scales.push_back(QuantizedScale(int32_t(1387686912), 42));
+        ifmQuant.type = QuantizationType::TFLITE;
+
+        auto &omfQuant = quantizeOp->Output(TensorUsage::OFM)->quantization;
+        omfQuant.scales.clear();
+        omfQuant.scales.push_back(QuantizedScale(int32_t(1899507328), 45));
+        omfQuant.type = QuantizationType::TFLITE;
+
+        ops.push_back(std::move(quantizeOp));
+        auto graph = CreateGraph(ops);
+
+        GraphOptimiserOptions options;
+        const auto &optimiser = GraphOptimiser::MakeGraphOptimiser(GraphNotation::TFLite, arch.get(), options, nullptr);
+        REQUIRE(!optimiser.empty());
+        optimiser.front()->Process(graph.get());
+
+        std::vector<Operation *> allOps;
+        graph->GetAllOperations(allOps);
+        REQUIRE(allOps.size() == 1);
+
+        REQUIRE(omfQuant.type == QuantizationType::EXPLICIT);
+        REQUIRE(ifmQuant.type == QuantizationType::EXPLICIT);
+        REQUIRE(ifmQuant.scales[0] == QuantizedScale::Unit());
+
+        REQUIRE(omfQuant.scales.size() == 1);
+        auto quantScale = omfQuant.scales[0];
+        REQUIRE(quantScale.scale == 1568846252);
+        REQUIRE(quantScale.shift == 28);
+    }
+}

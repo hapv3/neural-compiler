@@ -2770,7 +2770,8 @@ Operation *TFLiteGraphOptimiser::ConvertQuantizetoExplicit(Graph *const graph, O
 
     double ifmScale = ifmQuant.Scale().Dequantize();
     double ofmScale = ofmQuant.Scale().Dequantize();
-    QuantizedScale quantScale = double(float(ifmScale) / float(ofmScale));
+    // Cast to float and back to double is necessary to match the reference.
+    QuantizedScale quantScale = double(float(ifmScale)) / double(float(ofmScale));
 
     ofmQuant.scales.clear();
     ofmQuant.scales.push_back(quantScale);
