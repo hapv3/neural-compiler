@@ -1135,7 +1135,15 @@ void HLCStreamGenerator::PrintCommandStream(const NPUOperation *npuOp, std::vect
         {
             LOG_PRINT("  IFM3: {}, {}\n", op->Input(hlcOp->ifm[2].usage)->tensor->Name(), hlcOp->ifm[2].ToString());
         }
-        LOG_PRINT("  OFM: {}, {}\n", op->OFM()->tensor->Name(), hlcOp->ofm.ToString());
+        auto ofm = op->OFM();
+        auto hlcOfm = hlcOp->ofm;
+        if ( !op->SubOps().empty() )
+        {
+            // Print OFM of final sub operation in a group
+            ofm = op->SubOps().back()->OFM();
+            hlcOfm = hlcOp->subOps.back().ofm;
+        }
+        LOG_PRINT("  OFM: {}, {}\n", ofm->tensor->Name(), hlcOfm.ToString());
         if ( hlcOp->weights != nullptr )
         {
             LOG_PRINT("  Weights: {}, {}\n", op->Input(TensorUsage::Weights)->tensor->Name(), hlcOp->weights->ToString());
@@ -1145,7 +1153,7 @@ void HLCStreamGenerator::PrintCommandStream(const NPUOperation *npuOp, std::vect
     LOG_PRINT("High level command stream:\n");
     for ( unsigned i = 0; i < cmds.size(); ++i )
     {
-        LOG_PRINT("{} {} {}\n", i, fmt::ptr(cmds[i].get()), cmds[i]->ToString());
+        LOG_PRINT("{} {}\n", i, cmds[i]->ToString());
     }
 }
 
