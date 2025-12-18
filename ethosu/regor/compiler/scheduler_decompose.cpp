@@ -1391,7 +1391,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Decomp
         result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
         if ( transposeOpOfm != ofmConn->tensor )
         {  // Insert memory copy of transposed ofm with slice offset
-            auto copyOp = DecomposeElementwise(ctx, MakeMemCopy(transposeOpOfm, ofmConn->tensor, &ofmSlice));
+            auto copyOp = DecomposeMemoryCopy(ctx, MakeMemCopy(transposeOpOfm, ofmConn->tensor, &ofmSlice));
             result.insert(result.end(), std::make_move_iterator(copyOp.begin()), std::make_move_iterator(copyOp.end()));
         }
         return result;
@@ -2128,6 +2128,50 @@ static void ReshapeElementwise(SchedulerOperation *op)
     }
 }
 
+std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMemoryCopy(DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op)
+{
+    ReshapeElementwise(op.get());
+    std::vector<std::unique_ptr<SchedulerOperation>> result;
+    auto ofmConn = op->Output(TensorUsage::OFM);
+    auto &ofmShape = ofmConn->SliceShape();
+    auto &ofmSlice = ofmConn->slice;
+    auto ifmConn = op->Input(TensorUsage::IFM);
+    auto &ifmShape = ifmConn->SliceShape();
+    auto &ifmSlice = ifmConn->slice;
+
+    ofmSlice.Initialize(ofmShape.WithZeros(), ofmShape);
+    ifmSlice.Initialize(ifmShape.WithZeros(), ifmShape);
+
+    ArchRequirements req{};
+    Flags<QueryResult> qResult = OperatorQuery(ctx.arch, op.get(), &req);
+
+    if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::TensorDims) )
+    {
+        return DecomposeLeadingDimensions(ofmShape.Size() - 3, ctx, std::move(op), DecomposeMemoryCopy);
+    }
+
+    auto maxShape = Shape::Min(Shape(nullptr, ofmShape.Size(), MAX_DIM), ofmShape);
+    if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::DataTypeLegalisation) )
+    {
+        // 32 and 64-bit MemoryCopy is decomposed with smaller depth due to depth expansion in RCSG
+        const ArchTensorRequirement *tr = &req.tensor;
+        if ( tr->shape )
+        {
+            auto maxDecomposedShape = Shape::PadAxes(tr->shape, ofmShape.Size(), 1);
+            maxShape = Shape::Min(maxShape, maxDecomposedShape);
+        }
+    }
+
+    const bool mustDecompose = qResult.Any(QueryResult::HasRequirements) && req.req.Any(ArchRequirement::Decompose);
+
+    if ( mustDecompose || maxShape != ofmShape )
+    {
+        return DecomposeBlocksElementwise(ctx, std::move(op), maxShape, DecomposeMemoryCopy);
+    }
+    result.emplace_back(std::move(op));
+    return result;
+}
+
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeElementwise(DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op)
 {
     ReshapeElementwise(op.get());
@@ -2156,7 +2200,9 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeElementwise(Decomposit
     {
         return DecomposeLeadingDimensions(ofmShape.Size() - 3, ctx, std::move(op), DecomposeElementwise);
     }
-    if ( auto maxShape = Shape::Min(Shape(nullptr, ofmShape.Size(), MAX_DIM), ofmShape); maxShape != ofmShape )
+
+    auto maxShape = Shape::Min(Shape(nullptr, ofmShape.Size(), MAX_DIM), ofmShape);
+    if ( maxShape != ofmShape )
     {
         return DecomposeBlocksElementwise(ctx, std::move(op), maxShape, DecomposeElementwise);
     }

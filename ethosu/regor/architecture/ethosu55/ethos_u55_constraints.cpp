@@ -792,15 +792,24 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
     }
     else if ( opType == OpType::MemoryCopy )
     {
-        if ( req && query->ofm.type == DataType::Int64 )
+        if ( typeInfo && shapeInfo && DataTypeSizeBits(ofmType) > 16 )
         {
-            // MemoryCopy Int64 data as Int32 with twice the depth
-            req->req.Set(ArchRequirement::Tensor);
-            auto newShape = query->ofm.shape.WithDepth(2 * query->ofm.shape.Depth());
-            Set(req->tensor, TensorUsage::IFM0, DataType::Int32, TensorFormat::NHWC, newShape);
-            Set(*NextTensor(&req->tensor, usedTensors), TensorUsage::OFM, DataType::Int32, TensorFormat::NHWC, newShape);
+            const int ofmBits = DataTypeSizeBits(ofmType);
+            assert(ofmBits == 32 || ofmBits == 64);
+            // Depth has additional constraints for 64-bit and 32-bit copies since they're expanded in RCS generation
+            const int depthMultiplier = ofmBits == 64 ? 4 : 2;
+            const int maxDepth = MAX_AXIS / depthMultiplier;
+            if ( ofmShape.Depth() > maxDepth )
+            {
+                if ( req )
+                {
+                    req->req.Set(ArchRequirement::Decompose);
+                    req->decomposeProps.Set(ArchProperty::DataTypeLegalisation);
+                    Set(req->tensor, TensorUsage::OFM, DataType::None, TensorFormat::Unknown, ofmShape.WithDepth(maxDepth));
+                }
+                result.Set(QueryResult::HasRequirements);
+            }
         }
-        result.Set(QueryResult::HasRequirements);
     }
 
     // kernel constraint-checks

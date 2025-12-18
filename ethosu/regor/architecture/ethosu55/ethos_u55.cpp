@@ -225,6 +225,21 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU55::GetOpConfig(OpType opType, c
 
         return std::unique_ptr<ArchitectureOpConfig>(reduceConfig.release());
     }
+    if ( opType == OpType::MemoryCopy && query.ifmBits > 16 )
+    {
+        // Depth of 32- and 64-bit MemoryCopy operations are treated as 16-bit with multiplied depth
+        ArchitectureConfigQuery tmpQuery = query;
+        tmpQuery.ifmBits = 16;
+        tmpQuery.ofmBits = 16;
+        int depthMultiplier = query.ifmBits == 32 ? 2 : 4;
+        auto ifmShape = query.ifmShape[0];
+        auto ofmShape = query.ofmShape;
+        tmpQuery.ifmShape[0] = ifmShape.WithDepth(ifmShape.Depth() * depthMultiplier);
+        tmpQuery.ofmShape = ofmShape.WithDepth(ofmShape.Depth() * depthMultiplier);
+        auto memCopyConfig = FindBlockConfig(OpType::MemoryCopy, tmpQuery);
+        assert(memCopyConfig.get());
+        return std::unique_ptr<ArchitectureOpConfig>(memCopyConfig.release());
+    }
     // Single op configurations
     auto config = FindBlockConfig(opType, query);
     return config;

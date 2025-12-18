@@ -1795,22 +1795,25 @@ void EthosU55RCSGenerator::GeneratePoolingOp(const HLCStripe *stripe, MemoryAcce
         // Op is being used as a 32-bit unscaled memory copy but
         // we do not support more than 16-bit activations so adjust
         // the tensor types and strides.
-        if ( op->type == OpType::MemoryCopy && (ifmType == ofmType) && DataTypeSizeBits(ofmType) == 32 )
+        if ( op->type == OpType::MemoryCopy && (ifmType == ofmType) && DataTypeSizeBits(ofmType) > 16 )
         {
+            const int ofmBits = DataTypeSizeBits(ofmType);
+            assert(ofmBits == 32 || ofmBits == 64);
             assert(op->ifm[0].format == TensorFormat::NHWC);
             assert(op->ofm.format == TensorFormat::NHWC);
             modifiedStripe = *stripe;
             op->ifm[0].dataType = DataType::Int16;
-            op->ifm[0].shape[-1] *= 2;
-            op->ifm[0].strides[-1] /= 2;
-            modifiedStripe.ifmAreas[0].Start() = modifiedStripe.ifmAreas[0].Start() * Shape(2);
-            modifiedStripe.ifmAreas[0].End() = modifiedStripe.ifmAreas[0].End() * Shape(2);
+            int depthMultiplier = ofmBits == 64 ? 4 : 2;
+            op->ifm[0].shape[-1] *= depthMultiplier;
+            op->ifm[0].strides[-1] /= depthMultiplier;
+            modifiedStripe.ifmAreas[0].Start() = modifiedStripe.ifmAreas[0].Start() * Shape(depthMultiplier);
+            modifiedStripe.ifmAreas[0].End() = modifiedStripe.ifmAreas[0].End() * Shape(depthMultiplier);
 
             op->ofm.dataType = DataType::Int16;
-            op->ofm.shape[-1] *= 2;
-            op->ofm.strides[-1] /= 2;
-            modifiedStripe.ofmArea.Start() = modifiedStripe.ofmArea.Start() * Shape(2);
-            modifiedStripe.ofmArea.End() = modifiedStripe.ofmArea.End() * Shape(2);
+            op->ofm.shape[-1] *= depthMultiplier;
+            op->ofm.strides[-1] /= depthMultiplier;
+            modifiedStripe.ofmArea.Start() = modifiedStripe.ofmArea.Start() * Shape(depthMultiplier);
+            modifiedStripe.ofmArea.End() = modifiedStripe.ofmArea.End() * Shape(depthMultiplier);
             stripe = &modifiedStripe;
         }
     }

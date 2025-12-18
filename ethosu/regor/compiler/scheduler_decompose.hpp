@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -51,6 +51,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeTransposeConv2D(Decomp
 std::vector<std::unique_ptr<SchedulerOperation>>
 DecomposeTransposeConv2DLargeStride(DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op);
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeElementwise(DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op);
+std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMemoryCopy(DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op);
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMatmul(DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op);
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReduce(DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op);
 std::vector<std::unique_ptr<SchedulerOperation>> DecomposeReverse(DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op);
