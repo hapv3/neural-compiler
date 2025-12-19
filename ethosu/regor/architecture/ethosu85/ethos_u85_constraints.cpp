@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -106,7 +106,7 @@ TransposeSupport EthosU85Constraints::SupportsFusedTranspose(OpType opType, Tran
     if ( transposeType == TransposeType::None ) return TransposeSupport::Any;
 
     EthosU85NpuOp npuOp = ArchEthosU85::GetHWOp(opType);
-    if ( npuOp == EthosU85NpuOp::None || npuOp == EthosU85NpuOp::Resize || npuOp == EthosU85NpuOp::Dma )
+    if ( npuOp == EthosU85NpuOp::None || npuOp == EthosU85NpuOp::Resize || npuOp == EthosU85NpuOp::Dma || npuOp == EthosU85NpuOp::Branch )
     {
         return TransposeSupport::None;
     }
@@ -137,7 +137,7 @@ bool EthosU85Constraints::SupportsFusedReverse(OpType opType, ReverseType revers
     if ( reverseMask == ReverseType::None ) return true;
 
     EthosU85NpuOp npuOp = ArchEthosU85::GetHWOp(opType);
-    if ( npuOp == EthosU85NpuOp::None || npuOp == EthosU85NpuOp::Elementwise || npuOp == EthosU85NpuOp::Dma )
+    if ( npuOp == EthosU85NpuOp::None || npuOp == EthosU85NpuOp::Elementwise || npuOp == EthosU85NpuOp::Dma || npuOp == EthosU85NpuOp::Branch )
     {
         return false;
     }

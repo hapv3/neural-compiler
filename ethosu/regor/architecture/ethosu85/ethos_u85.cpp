@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -1612,8 +1612,9 @@ int EthosU85OpGroup::Add(const ArchitectureOpGroupQuery &op, const std::vector<i
 
     if ( _opsCount == 0 )
     {
+        const auto npuOp = ArchEthosU85::GetHWOp(op.type);
         _supportsChaining = CanStartChain(op);
-        _supportsFusing = ArchEthosU85::GetHWOp(op.type) != EthosU85NpuOp::Dma;
+        _supportsFusing = npuOp != EthosU85NpuOp::Dma && npuOp != EthosU85NpuOp::Branch;
         _externalIfms = externalInputs;
         _chainLength = 1;
         _hasFusedTranspose = (op.type == OpType::Transpose && !IsNone(op.ofm.transpose));
