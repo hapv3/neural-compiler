@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2020-2022, 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2020-2022, 2024-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 # SPDX-FileCopyrightText: (c) Meta Platforms, Inc. and affiliates. (http://www.meta.com)
 #
 # SPDX-License-Identifier: Apache-2.0
@@ -566,19 +566,17 @@ def print_regor_performance_metrics(
     bandwidths = [[[0] * BandwidthDirection.Size for i in range(TensorPurpose.Size)] for j in range(MemArea.Size)]
     memory_used = {i: 0 for i in range(MemArea.Size)}
     for mem_name, memory in report.memories.items():
+        mem_name_lower = str(mem_name).lower()
+
+        # skip shram/lutram in performance report
+        if mem_name_lower in ["lutram", "shram"]:
+            continue
+        cycles_idx = cycles_mapping[mem_name_lower]
+        cycles[cycles_idx] += memory.totalAccessCycles
+
         for _, a in memory.accesses.items():
-            mem_name_lower = str(mem_name).lower()
-
-            # skip shram/lutram in performance report
-            if mem_name_lower in ["lutram", "shram"]:
-                continue
-
             mem_area = memory_mapping.get(mem_name_lower, MemArea.Unknown)
             purpose = purpose_mapping.get(str(a.accessType).lower(), TensorPurpose.Unknown)
-
-            if mem_name_lower in cycles_mapping:
-                cycles_idx = cycles_mapping[mem_name_lower]
-                cycles[cycles_idx] += a.accessCycles
 
             bandwidths[mem_area][purpose][BandwidthDirection.Read] = a.bytesRead
             bandwidths[mem_area][purpose][BandwidthDirection.Write] = a.bytesWritten

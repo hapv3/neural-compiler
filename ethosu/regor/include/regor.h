@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -81,6 +81,7 @@ typedef struct regor_peak_memory_usage_t
 {
     char memoryName[REGOR_PERF_NAME_MAX];
     int64_t peakUsage;
+    int64_t totalAccessCycles;
 } regor_peak_memory_usage_t;
 
 typedef struct regor_perf_report_t

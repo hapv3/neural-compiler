@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -76,6 +76,11 @@ struct PerformanceResult
                 access[type] += acc;
             }
             peakUsage = std::max(peakUsage, other.peakUsage);
+            readTransferOverhead += other.readTransferOverhead;
+            writeTransferOverhead += other.writeTransferOverhead;
+            readTransferEff = std::min(readTransferEff, other.readTransferEff);
+            writeTransferEff = std::min(writeTransferEff, other.writeTransferEff);
+            accessCycles += other.accessCycles;
             return *this;
         }
     };

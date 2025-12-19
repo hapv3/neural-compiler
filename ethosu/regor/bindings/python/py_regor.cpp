@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2023-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -55,6 +55,7 @@ struct PyRegorMemoryPerf
 {
     std::string memoryName;
     int64_t peakUsage = 0;
+    int64_t totalAccessCycles = 0;
     std::unordered_map<std::string, PyRegorMemoryAccess> accesses;
 
     std::string ToString() const
@@ -62,6 +63,7 @@ struct PyRegorMemoryPerf
         std::string ret;
         ret += "Memory[" + memoryName + "]\n";
         ret += "\tPeak usage  = " + std::to_string(peakUsage) + "\n";
+        ret += "\tAccess cycles = " + std::to_string(totalAccessCycles) + "\n";
         return ret;
     }
 };
@@ -268,6 +270,7 @@ public:
                 std::string name = report.peakUsages[i].memoryName;
                 pyPerf.memories[name].memoryName = report.peakUsages[i].memoryName;
                 pyPerf.memories[name].peakUsage = report.peakUsages[i].peakUsage;
+                pyPerf.memories[name].totalAccessCycles = report.peakUsages[i].totalAccessCycles;
             }
             for ( const auto &acc : access )
             {
@@ -537,6 +540,7 @@ PYBIND11_MODULE(regor, m)
         .def(py::init<>())
         .def_readwrite("memoryName", &PyRegorMemoryPerf::memoryName, "Memory name")
         .def_readwrite("peakUsage", &PyRegorMemoryPerf::peakUsage, "Peak usage")
+        .def_readwrite("totalAccessCycles", &PyRegorMemoryPerf::totalAccessCycles, "Total access cycles for this memory")
         .def_readwrite("accesses", &PyRegorMemoryPerf::accesses, "Accesses")
         .def("__repr__", &PyRegorMemoryPerf::ToString);
     py::class_<PyRegorPerfReport>(m, "PerfReport", "A Regor performance report")

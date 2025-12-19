@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -564,6 +564,7 @@ DLL_EXPORT int regor_get_perf_report(regor_context_t ctx, regor_perf_report_t *r
                     std::size(report->peakUsages[report->numMemories].memoryName) - 1);
                 report->peakUsages[report->numMemories].memoryName[len] = 0;
                 report->peakUsages[report->numMemories].peakUsage = memoryStat.peakUsage;
+                report->peakUsages[report->numMemories].totalAccessCycles = memoryStat.accessCycles;
                 if ( archMem == compiler->Arch()->StagingMemory().memory )
                 {
                     report->stagingMemory = report->numMemories;
