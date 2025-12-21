@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -226,6 +226,38 @@ void SchedulerPacking::ConvertOperation(const Operation *op, std::vector<std::un
                 if ( ifm2Conn && !scalarIfm2 ) ifm2Conn->shape = ReshapeToIncreaseDepth(ifm2Conn->shape, minDepth);
                 ofmConn->shape = ReshapeToIncreaseDepth(ofmConn->shape, minDepth);
             }
+        }
+    }
+
+    // If the condition input to IF is not produced by the previous op, insert an op that produces it
+    if ( schedOp->Type() == OpType::If )
+    {
+        // Find the op before IF (there must always be at least one op before IF)
+        assert(!_schedList.empty());
+        const auto &prevOp = _schedList.back();
+
+        // Figure out if the op before IF is the one that produces the IF condition input tensor
+        const auto condConn = schedOp->IFM(0);
+        const auto &condTensor = condConn->tensor;
+        assert(condTensor->dataType == DataType::Bool8);
+        assert(condTensor->storageShape.Elements() == 1);
+        const auto &condProducers = condTensor->producers;
+        assert(condProducers.size() == 1);
+        if ( condProducers[0] != prevOp.get() )
+        {
+            // Create a constant scalar 0 tensor (int8)
+            const auto buf = std::make_shared<Buffer>(Buffer::ConstValue<int8_t>(0));
+            auto zero = std::make_shared<SchedulerTensor>(DataType::Int8, Shape(1, 1, 1, 1), TensorFormat::NHWC, buf);
+            zero->memArea = _arch->ReadonlyMemory();
+            zero->SetInternalName("const_zero");
+
+            // Create and insert cond = ADD(cond, 0)
+            auto copyOp = std::make_unique<SchedulerOperation>(OpType::Add);
+            copyOp->_srcKey = schedOp->_srcKey;
+            copyOp->ConnectInput(TensorUsage::IFM0, condTensor);
+            copyOp->ConnectInput(TensorUsage::IFM1, zero);
+            copyOp->ConnectOutput(TensorUsage::OFM, condTensor);
+            result.push_back(std::move(copyOp));
         }
     }
 
