@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2020-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2020-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 # SPDX-FileCopyrightText: Copyright (c) 2016 The Pybind Development Team, All rights reserved.
 #
 # SPDX-License-Identifier: Apache-2.0
@@ -242,5 +242,5 @@ setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     ext_modules=[mlw_module, ethosu_regor],
-    cmdclass={"build_ext": MakeOrCMakeBuild},  # type: ignore[dict-item]
+    cmdclass={"build_ext": MakeOrCMakeBuild},  # type: ignore[dict-item,arg-type]
 )
