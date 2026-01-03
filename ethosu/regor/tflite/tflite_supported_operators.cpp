@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2025-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -193,7 +193,8 @@ bool TensQuantized(const Operation *op)
         {
             auto usage = item.first;
             const auto &conn = item.second;
-            if ( IsIFM(usage) || IsOFM(usage) || usage == TensorUsage::Weights )
+            if ( conn.tensor->Type() != DataType::Int64 &&
+                 (((IsIFM(usage) || IsOFM(usage)) && (conn.tensor->Type() != DataType::Int32 || op->Type() == OpType::Quantize)) || usage == TensorUsage::Weights) )
             {
                 const Quantization &quant = conn.quantization;
                 if ( quant.scales.empty() || quant.zeroPoints.empty() )
