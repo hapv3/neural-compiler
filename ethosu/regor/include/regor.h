@@ -135,7 +135,15 @@ typedef struct regor_raw_tensor_header_t
         RAW_TENSOR_REGION_SCRATCH = 1,
         RAW_TENSOR_REGION_SCRATCH_FAST = 2
     };
-    uint8_t type;  // See enum raw_tensor_type
+
+    // Binary format notes:
+    // - All reserved bytes must be zero.
+    // - For RAW_TENSOR_TYPE_INPUT/OUTPUT/VARIABLE, if (flags & REGOR_RAW_TENSOR_FLAG_HAS_QUANTIZATION) is set, then a
+    //   regor_raw_quantization_t payload starts immediately after this header (i.e. at offset
+    //   sizeof(regor_raw_tensor_header_t)).
+    uint8_t type;   // See enum raw_tensor_type_t
+    uint8_t flags;  // See regor_raw_tensor_flags_t
+    uint8_t reserved0[6];
     union
     {
         struct
@@ -185,6 +193,19 @@ typedef struct regor_raw_tensor_header_t
         } variable;
     } tensor;
 } regor_raw_tensor_header_t;
+
+typedef enum regor_raw_tensor_flags_t
+{
+    REGOR_RAW_TENSOR_FLAG_HAS_QUANTIZATION = 1 << 0,
+} regor_raw_tensor_flags_t;
+
+typedef struct regor_raw_quantization_t
+{
+    uint32_t count;
+    // Followed by payload:
+    //   float  scale[count]
+    //   int32_t zero_point[count]
+} regor_raw_quantization_t;
 
 #define REGOR_ARCH_ETHOSU55 "EthosU55"
 #define REGOR_ARCH_ETHOSU65 "EthosU65"

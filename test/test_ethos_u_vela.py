@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -103,7 +103,7 @@ def test_ethos_u_vela_with_regor_raw_output(tmp_path):
         network_file,
     ]
     subprocess.check_call(cli)
-    raw = np.load(output_file)
+    raw = np.load(output_file, allow_pickle=True)
     assert len(raw["cmd_data"].data.tobytes()) > 0
     assert str.encode("COP1") in raw["cmd_data"].data.tobytes()
     assert len(raw["weight_data"].data.tobytes()) > 0
@@ -127,6 +127,25 @@ def test_ethos_u_vela_with_regor_raw_output(tmp_path):
     assert raw["variable_elem_size"].size == 0
     assert raw["variable_region"].size == 0
     assert raw["variable_offset"].size == 0
+    assert "input_quantization" in raw.files
+    assert "output_quantization" in raw.files
+    assert "variable_quantization" in raw.files
+
+    assert raw["input_quantization"].size == raw["input_shape"].shape[0]
+    assert raw["output_quantization"].size == raw["output_shape"].shape[0]
+    assert raw["variable_quantization"].size == 0
+
+    input_q0 = raw["input_quantization"][0]
+    assert isinstance(input_q0, dict)
+    assert input_q0["quant_type"] in ("per_tensor", "per_channel")
+    assert "scale" in input_q0
+    assert "zero_point" in input_q0
+
+    output_q0 = raw["output_quantization"][0]
+    assert isinstance(output_q0, dict)
+    assert output_q0["quant_type"] in ("per_tensor", "per_channel")
+    assert "scale" in output_q0
+    assert "zero_point" in output_q0
 
 
 def test_regor():

@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright 2020-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+SPDX-FileCopyrightText: Copyright 2020-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 
 SPDX-License-Identifier: Apache-2.0
 
@@ -149,7 +149,8 @@ bytes) for each input, output and variable tensor.
 - **input_region / output_region / variable_region** - Memory region identifiers
 for inputs, outputs and variables.
 - **input_offset / output_offset / variable_offset** - Memory offsets for each
-input, output and variable tensor.  
+input, output and variable tensor.
+- **input_quantization / output_quantization / variable_quantization** - Per-tensor quantization entries with `quant_type` (`per_tensor`, `per_channel`, or `none`), `scale`, and `zero_point`.
 
 For this format, it is not supported to have any operators fall back to the CPU.
 

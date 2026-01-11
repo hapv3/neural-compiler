@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright 2020-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+SPDX-FileCopyrightText: Copyright 2020-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 
 SPDX-License-Identifier: Apache-2.0
 
@@ -152,8 +152,8 @@ vela --list-configs Arm/vela.ini
 ### Output
 
 The result of the compilation is an optimised network in either TFLite or Raw
-format depending upon the input network.  This can be overridden using the
-`--output-format option`.
+format depending upon the input network. This can be overridden using the
+`--output-format` option.
 
 TFLite output contains TensorFlow Lite Custom operators for those parts of
 the network that can be accelerated by the Ethos-U NPU.  Parts of the network
@@ -164,6 +164,8 @@ parts of the optimised network.  This is stored in [`.npz`](https://numpy.org/do
 format.  See the Output format [CLI Option](OPTIONS.md) for more information.
 This does not contain CPU parts of the network and so cannot be used for
 converting TFLite to TOSA.
+
+Raw output includes tensor quantization metadata in the `.npz` output.
 
 #### Warnings
 

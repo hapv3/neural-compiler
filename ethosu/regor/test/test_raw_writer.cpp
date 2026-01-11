@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -18,6 +18,7 @@
 
 #include "common/common.hpp"
 
+#include "compiler/quantization.hpp"
 #include "compiler/raw_writer.hpp"
 
 #include <catch_all.hpp>
@@ -40,29 +41,36 @@ TEST_CASE("raw_writer")
     const auto readOnlyTensor = std::make_shared<Tensor>("read_only", DataType::Int8, Shape(5), readOnlyBuffer);
     REQUIRE(readOnlyTensor->IsConstant());
 
-    // Build scratch tensor
+    // Build scratch tensors
     const auto scratch = std::make_shared<Tensor>("scratch", DataType::Int8, Shape(1, 6));
-    REQUIRE_FALSE(scratch->IsConstant());
-
-    // Build scratch fast tensor
     const auto scratchFast = std::make_shared<Tensor>("scratch_fast", DataType::Int8, Shape(1, 7));
+    REQUIRE_FALSE(scratch->IsConstant());
     REQUIRE_FALSE(scratchFast->IsConstant());
 
-    // Build input tensor
+    // Build tensors with quantization
     const auto input = std::make_shared<Tensor>("input_1", DataType::Int8, Shape({2, 3, 4, 5, 6, 7}));
-    REQUIRE_FALSE(input->IsConstant());
-
-    // Build output tensor
+    const auto inputNoQuant = std::make_shared<Tensor>("input_2", DataType::Int8, Shape({2, 3, 4, 5, 6, 7}));
     const auto output = std::make_shared<Tensor>("output_1", DataType::Int8, Shape({3, 4, 5, 6, 7, 8}));
+    const auto variable = std::make_shared<Tensor>("variable_1", DataType::Int8, Shape({4, 5, 6, 7, 8, 9}));
+    REQUIRE_FALSE(input->IsConstant());
+    REQUIRE_FALSE(inputNoQuant->IsConstant());
     REQUIRE_FALSE(output->IsConstant());
+    REQUIRE_FALSE(variable->IsConstant());
 
-    // Build variable tensor
-    const auto variable1 = std::make_shared<Tensor>("variable_1", DataType::Int8, Shape({4, 5, 6, 7, 8, 9}));
-    REQUIRE_FALSE(variable1->IsConstant());
+    Quantization perTensorQuant;
+    perTensorQuant.scales.push_back(QuantizedScale(2, 0));
+    perTensorQuant.zeroPoints.push_back(3);
 
-    // Build another variable tensor
-    const auto variable2 = std::make_shared<Tensor>("variable_2", DataType::Int8, Shape({5, 6, 7, 8, 9, 10}));
-    REQUIRE_FALSE(variable2->IsConstant());
+    Quantization perChannelQuant;
+    perChannelQuant.scales.push_back(QuantizedScale(1, 0));
+    perChannelQuant.scales.push_back(QuantizedScale(2, 0));
+    perChannelQuant.zeroPoints.push_back(0);
+    perChannelQuant.zeroPoints.push_back(10);
+    perChannelQuant.dimension = 3;
+
+    Quantization variableQuant;
+    variableQuant.scales.push_back(QuantizedScale(5, 0));
+    variableQuant.zeroPoints.push_back(0);
 
     // Create custom op
     auto op = std::make_shared<Operation>(OpType::CustomNpuOp);
@@ -70,18 +78,18 @@ TEST_CASE("raw_writer")
     op->ConnectInput(MakeTensorUsage(TensorUsage::Params, 1), readOnlyTensor);
     op->ConnectInput(MakeTensorUsage(TensorUsage::State, 0), scratch);
     op->ConnectInput(MakeTensorUsage(TensorUsage::State, 1), scratchFast);
-    op->ConnectInput(TensorUsage::IFM0, input);
-    op->ConnectInput(TensorUsage::IFM1, variable1);
-    op->ConnectOutput(TensorUsage::OFM, output);
-    op->ConnectOutput(MakeTensorUsage(TensorUsage::OFM, 1), variable2);
+    op->ConnectInput(TensorUsage::IFM0, input).Set(perTensorQuant);
+    op->ConnectInput(TensorUsage::IFM1, inputNoQuant);
+    op->ConnectOutput(TensorUsage::OFM, output).Set(perChannelQuant);
+    op->ConnectOutput(MakeTensorUsage(TensorUsage::OFM, 1), variable).Set(variableQuant);
 
     // Create graph
     std::vector<std::unique_ptr<Graph>> graphs;
     graphs.push_back(std::make_unique<Graph>(GraphNotation::TFLite));
     graphs[0]->AddInput(input);
-    graphs[0]->AddPersistent(variable1);
-    graphs[0]->AddPersistent(variable2);
+    graphs[0]->AddInput(inputNoQuant);
     graphs[0]->AddOutput(output);
+    graphs[0]->AddPersistent(variable);
 
     // Create tensor address map
     std::vector<std::unordered_map<const Tensor *, Address>> addresses;
@@ -91,31 +99,29 @@ TEST_CASE("raw_writer")
     addresses[0][scratch.get()] = 66;
     addresses[0][scratchFast.get()] = 77;
     addresses[0][input.get()] = 88;
-    addresses[0][variable1.get()] = 11;
+    addresses[0][inputNoQuant.get()] = 89;
     addresses[0][output.get()] = 99;
-    addresses[0][variable2.get()] = 22;
+    addresses[0][variable.get()] = 111;
 
     // Create the raw output blobs
     RawWriter writer;
     auto blobs = writer.Serialise(graphs, addresses);
 
-    // Check number of blobs
+    // Expect one blob per tensor
     REQUIRE(blobs.size() == 8);
 
     // Check command stream
     {
-        // Check blob size
         size_t dataSize = sizeof(regor_raw_tensor_header_t) + 4;
         REQUIRE(blobs[0].second == dataSize);
 
-        // Check header
         auto &data = blobs[0].first;
         regor_raw_tensor_header_t header;
         std::copy_n(data.get(), sizeof(header), reinterpret_cast<uint8_t *>(&header));
         REQUIRE(header.type == regor_raw_tensor_header_t::RAW_TENSOR_TYPE_COMMAND_STREAM);
+        REQUIRE(header.flags == 0);
         REQUIRE(header.tensor.command_stream.size == 4);
 
-        // Check tensor data
         REQUIRE(data[sizeof(regor_raw_tensor_header_t) + 0] == 'C');
         REQUIRE(data[sizeof(regor_raw_tensor_header_t) + 1] == 'O');
         REQUIRE(data[sizeof(regor_raw_tensor_header_t) + 2] == 'P');
@@ -124,19 +130,17 @@ TEST_CASE("raw_writer")
 
     // Check read only
     {
-        // Check blob size
         size_t dataSize = sizeof(regor_raw_tensor_header_t) + 5;
         REQUIRE(blobs[1].second == dataSize);
 
-        // Check header
         auto &data = blobs[1].first;
         regor_raw_tensor_header_t header;
         std::copy_n(data.get(), sizeof(header), reinterpret_cast<uint8_t *>(&header));
         REQUIRE(header.type == regor_raw_tensor_header_t::RAW_TENSOR_TYPE_READ_ONLY);
+        REQUIRE(header.flags == 0);
         REQUIRE(header.tensor.read_only.size == 5);
         REQUIRE(header.tensor.read_only.region == 0);
 
-        // Check tensor data
         REQUIRE(data[sizeof(regor_raw_tensor_header_t) + 0] == 21);
         REQUIRE(data[sizeof(regor_raw_tensor_header_t) + 1] == 22);
         REQUIRE(data[sizeof(regor_raw_tensor_header_t) + 2] == 23);
@@ -146,15 +150,14 @@ TEST_CASE("raw_writer")
 
     // Check scratch
     {
-        // Check blob size
         size_t dataSize = sizeof(regor_raw_tensor_header_t);
         REQUIRE(blobs[2].second == dataSize);
 
-        // Check header
         auto &data = blobs[2].first;
         regor_raw_tensor_header_t header;
         std::copy_n(data.get(), sizeof(header), reinterpret_cast<uint8_t *>(&header));
         REQUIRE(header.type == regor_raw_tensor_header_t::RAW_TENSOR_TYPE_SCRATCH);
+        REQUIRE(header.flags == 0);
         REQUIRE(header.tensor.scratch.size == 6);
         REQUIRE(header.tensor.scratch.region == 1);
         REQUIRE(header.tensor.scratch.address == 66);
@@ -162,30 +165,32 @@ TEST_CASE("raw_writer")
 
     // Check scratch fast
     {
-        // Check blob size
         size_t dataSize = sizeof(regor_raw_tensor_header_t);
         REQUIRE(blobs[3].second == dataSize);
 
-        // Check header
         auto &data = blobs[3].first;
         regor_raw_tensor_header_t header;
         std::copy_n(data.get(), sizeof(header), reinterpret_cast<uint8_t *>(&header));
         REQUIRE(header.type == regor_raw_tensor_header_t::RAW_TENSOR_TYPE_SCRATCH_FAST);
+        REQUIRE(header.flags == 0);
         REQUIRE(header.tensor.scratch_fast.size == 7);
         REQUIRE(header.tensor.scratch_fast.region == 2);
         REQUIRE(header.tensor.scratch_fast.address == 77);
     }
-    // Check input
-    {
-        // Check blob size
-        size_t dataSize = sizeof(regor_raw_tensor_header_t);
-        REQUIRE(blobs[4].second == dataSize);
 
-        // Check header
+    auto readQuant = [](const std::unique_ptr<const uint8_t[]> &buffer, size_t offset) -> const regor_raw_quantization_t *
+    { return reinterpret_cast<const regor_raw_quantization_t *>(buffer.get() + offset); };
+    auto expectedQuantBytes = [](uint32_t count)
+    { return sizeof(regor_raw_quantization_t) + (size_t(count) * sizeof(float)) + (size_t(count) * sizeof(int32_t)); };
+
+    // Input quantization (per-tensor)
+    {
         auto &data = blobs[4].first;
+        REQUIRE(blobs[4].second >= sizeof(regor_raw_tensor_header_t));
         regor_raw_tensor_header_t header;
         std::copy_n(data.get(), sizeof(header), reinterpret_cast<uint8_t *>(&header));
         REQUIRE(header.type == regor_raw_tensor_header_t::RAW_TENSOR_TYPE_INPUT);
+        REQUIRE((header.flags & REGOR_RAW_TENSOR_FLAG_HAS_QUANTIZATION) != 0);
         REQUIRE(header.tensor.input.size == 2 * 3 * 4 * 5 * 6 * 7);
         REQUIRE(header.tensor.input.region == 1);
         REQUIRE(header.tensor.input.address == 88);
@@ -196,19 +201,40 @@ TEST_CASE("raw_writer")
         REQUIRE(header.tensor.input.shape[3] == 5);
         REQUIRE(header.tensor.input.shape[4] == 6);
         REQUIRE(header.tensor.input.shape[5] == 7);
+
+        const auto *quantHeader = readQuant(data, sizeof(regor_raw_tensor_header_t));
+        auto quantSize = blobs[4].second - sizeof(regor_raw_tensor_header_t);
+        const uint32_t count = quantHeader->count;
+        REQUIRE(quantSize >= expectedQuantBytes(count));
+        REQUIRE(count == 1);
+        const auto *scales = reinterpret_cast<const float *>(quantHeader + 1);
+        const auto *zeroPoints = reinterpret_cast<const int32_t *>(scales + count);
+        REQUIRE(scales[0] == Catch::Approx(2.0f));
+        REQUIRE(zeroPoints[0] == 3);
     }
 
-    // Check output
+    // Unquantized input
     {
-        // Check blob size
-        size_t dataSize = sizeof(regor_raw_tensor_header_t);
-        REQUIRE(blobs[5].second == dataSize);
-
-        // Check header
         auto &data = blobs[5].first;
+        REQUIRE(blobs[5].second == sizeof(regor_raw_tensor_header_t));
+        regor_raw_tensor_header_t header;
+        std::copy_n(data.get(), sizeof(header), reinterpret_cast<uint8_t *>(&header));
+        REQUIRE(header.type == regor_raw_tensor_header_t::RAW_TENSOR_TYPE_INPUT);
+        REQUIRE((header.flags & REGOR_RAW_TENSOR_FLAG_HAS_QUANTIZATION) == 0);
+        REQUIRE(header.tensor.input.size == 2 * 3 * 4 * 5 * 6 * 7);
+        REQUIRE(header.tensor.input.region == 1);
+        REQUIRE(header.tensor.input.address == 89);
+        REQUIRE(header.tensor.input.element_size == 1);
+    }
+
+    // Output quantization (per-channel)
+    {
+        auto &data = blobs[6].first;
+        REQUIRE(blobs[6].second >= sizeof(regor_raw_tensor_header_t));
         regor_raw_tensor_header_t header;
         std::copy_n(data.get(), sizeof(header), reinterpret_cast<uint8_t *>(&header));
         REQUIRE(header.type == regor_raw_tensor_header_t::RAW_TENSOR_TYPE_OUTPUT);
+        REQUIRE((header.flags & REGOR_RAW_TENSOR_FLAG_HAS_QUANTIZATION) != 0);
         REQUIRE(header.tensor.output.size == 3 * 4 * 5 * 6 * 7 * 8);
         REQUIRE(header.tensor.output.region == 1);
         REQUIRE(header.tensor.output.address == 99);
@@ -219,51 +245,47 @@ TEST_CASE("raw_writer")
         REQUIRE(header.tensor.output.shape[3] == 6);
         REQUIRE(header.tensor.output.shape[4] == 7);
         REQUIRE(header.tensor.output.shape[5] == 8);
+
+        const auto *quantHeader = readQuant(data, sizeof(regor_raw_tensor_header_t));
+        auto quantSize = blobs[6].second - sizeof(regor_raw_tensor_header_t);
+        const uint32_t count = quantHeader->count;
+        REQUIRE(quantSize >= expectedQuantBytes(count));
+        REQUIRE(count == 2);
+        const auto *scales = reinterpret_cast<const float *>(quantHeader + 1);
+        const auto *zeroPoints = reinterpret_cast<const int32_t *>(scales + count);
+        REQUIRE(scales[0] == Catch::Approx(1.0f));
+        REQUIRE(scales[1] == Catch::Approx(2.0f));
+        REQUIRE(zeroPoints[0] == 0);
+        REQUIRE(zeroPoints[1] == 10);
     }
 
-    // Check (input) variable
+    // Variable quantization (per-tensor)
     {
-        // Check blob size
-        size_t dataSize = sizeof(regor_raw_tensor_header_t);
-        REQUIRE(blobs[6].second == dataSize);
-
-        // Check header
-        auto &data = blobs[6].first;
-        regor_raw_tensor_header_t header;
-        std::copy_n(data.get(), sizeof(header), reinterpret_cast<uint8_t *>(&header));
-        REQUIRE(header.type == regor_raw_tensor_header_t::RAW_TENSOR_TYPE_VARIABLE);
-        REQUIRE(header.tensor.input.size == 4 * 5 * 6 * 7 * 8 * 9);
-        REQUIRE(header.tensor.input.region == 1);
-        REQUIRE(header.tensor.input.address == 11);
-        REQUIRE(header.tensor.input.element_size == 1);
-        REQUIRE(header.tensor.input.shape[0] == 4);
-        REQUIRE(header.tensor.input.shape[1] == 5);
-        REQUIRE(header.tensor.input.shape[2] == 6);
-        REQUIRE(header.tensor.input.shape[3] == 7);
-        REQUIRE(header.tensor.input.shape[4] == 8);
-        REQUIRE(header.tensor.input.shape[5] == 9);
-    }
-
-    // Check (output) variable
-    {
-        // Check blob size
-        size_t dataSize = sizeof(regor_raw_tensor_header_t);
-        REQUIRE(blobs[7].second == dataSize);
-
-        // Check header
         auto &data = blobs[7].first;
+        REQUIRE(blobs[7].second >= sizeof(regor_raw_tensor_header_t));
         regor_raw_tensor_header_t header;
         std::copy_n(data.get(), sizeof(header), reinterpret_cast<uint8_t *>(&header));
         REQUIRE(header.type == regor_raw_tensor_header_t::RAW_TENSOR_TYPE_VARIABLE);
-        REQUIRE(header.tensor.input.size == 5 * 6 * 7 * 8 * 9 * 10);
-        REQUIRE(header.tensor.input.region == 1);
-        REQUIRE(header.tensor.input.address == 22);
-        REQUIRE(header.tensor.input.element_size == 1);
-        REQUIRE(header.tensor.input.shape[0] == 5);
-        REQUIRE(header.tensor.input.shape[1] == 6);
-        REQUIRE(header.tensor.input.shape[2] == 7);
-        REQUIRE(header.tensor.input.shape[3] == 8);
-        REQUIRE(header.tensor.input.shape[4] == 9);
-        REQUIRE(header.tensor.input.shape[5] == 10);
+        REQUIRE((header.flags & REGOR_RAW_TENSOR_FLAG_HAS_QUANTIZATION) != 0);
+        REQUIRE(header.tensor.variable.size == 4 * 5 * 6 * 7 * 8 * 9);
+        REQUIRE(header.tensor.variable.region == 1);
+        REQUIRE(header.tensor.variable.address == 111);
+        REQUIRE(header.tensor.variable.element_size == 1);
+        REQUIRE(header.tensor.variable.shape[0] == 4);
+        REQUIRE(header.tensor.variable.shape[1] == 5);
+        REQUIRE(header.tensor.variable.shape[2] == 6);
+        REQUIRE(header.tensor.variable.shape[3] == 7);
+        REQUIRE(header.tensor.variable.shape[4] == 8);
+        REQUIRE(header.tensor.variable.shape[5] == 9);
+
+        const auto *quantHeader = readQuant(data, sizeof(regor_raw_tensor_header_t));
+        auto quantSize = blobs[7].second - sizeof(regor_raw_tensor_header_t);
+        const uint32_t count = quantHeader->count;
+        REQUIRE(quantSize >= expectedQuantBytes(count));
+        REQUIRE(count == 1);
+        const auto *scales = reinterpret_cast<const float *>(quantHeader + 1);
+        const auto *zeroPoints = reinterpret_cast<const int32_t *>(scales + count);
+        REQUIRE(scales[0] == Catch::Approx(5.0f));
+        REQUIRE(zeroPoints[0] == 0);
     }
 }

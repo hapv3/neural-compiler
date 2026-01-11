@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -21,6 +21,7 @@
 #include "common/logging.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -99,7 +100,8 @@ std::vector<std::pair<std::unique_ptr<const uint8_t[]>, size_t>> RawWriter::Seri
         auto tensorUsage = customNpuOp->UsageOfTensor(tensor);
         if ( IsIFM(tensorUsage) && !tensor->IsConstant() )
         {
-            SerialiseInputTensor(tensor, tensor_address_map.at(tensor));
+            const TensorConnection *conn = customNpuOp->Input(tensorUsage);
+            SerialiseInputTensor(tensor, conn, tensor_address_map.at(tensor));
         }
     }
 
@@ -110,7 +112,8 @@ std::vector<std::pair<std::unique_ptr<const uint8_t[]>, size_t>> RawWriter::Seri
         auto tensorUsage = customNpuOp->UsageOfTensor(tensor);
         if ( IsOFM(tensorUsage) )
         {
-            SerialiseOutputTensor(tensor, tensor_address_map.at(tensor));
+            const TensorConnection *conn = customNpuOp->Output(tensorUsage);
+            SerialiseOutputTensor(tensor, conn, tensor_address_map.at(tensor));
         }
     }
 
@@ -121,7 +124,8 @@ std::vector<std::pair<std::unique_ptr<const uint8_t[]>, size_t>> RawWriter::Seri
         auto tensorUsage = customNpuOp->UsageOfTensor(tensor);
         if ( (tensorUsage != TensorUsage::None) )
         {
-            SerialiseVariableTensor(tensor, tensor_address_map.at(tensor));
+            const TensorConnection *conn = IsOFM(tensorUsage) ? customNpuOp->Output(tensorUsage) : customNpuOp->Input(tensorUsage);
+            SerialiseVariableTensor(tensor, conn, tensor_address_map.at(tensor));
         }
     }
 
@@ -141,7 +145,7 @@ void RawWriter::SerialiseCommandStreamTensor(const Tensor *tensor)
     auto serialisedTensor = std::make_unique<uint8_t[]>(serialisedTensorSize);
 
     // Initialise header
-    regor_raw_tensor_header_t header;
+    regor_raw_tensor_header_t header{};
     header.type = regor_raw_tensor_header_t::RAW_TENSOR_TYPE_COMMAND_STREAM;
     header.tensor.command_stream.size = blobSize;
 
@@ -166,7 +170,7 @@ void RawWriter::SerialiseReadOnlyTensor(const Tensor *tensor)
     auto serialisedTensor = std::make_unique<uint8_t[]>(serialisedTensorSize);
 
     // Initialise read_only header
-    regor_raw_tensor_header_t header;
+    regor_raw_tensor_header_t header{};
     header.type = regor_raw_tensor_header_t::RAW_TENSOR_TYPE_READ_ONLY;
     header.tensor.read_only.region = WEIGHTS_REGION;
     header.tensor.read_only.size = blobSize;
@@ -188,7 +192,7 @@ void RawWriter::SerialiseScratchTensor(const Tensor *tensor, Address address)
     auto serialisedTensor = std::make_unique<uint8_t[]>(serialisedTensorSize);
 
     // Initialise scratch header
-    regor_raw_tensor_header_t header;
+    regor_raw_tensor_header_t header{};
     header.type = regor_raw_tensor_header_t::RAW_TENSOR_TYPE_SCRATCH;
     header.tensor.scratch.region = SCRATCH_REGION;
     header.tensor.scratch.size = DataTypeStorageSizeBytes(tensor->Type(), tensor->StorageShape().Elements());
@@ -208,7 +212,7 @@ void RawWriter::SerialiseScratchFastTensor(const Tensor *tensor, Address address
     auto serialisedTensor = std::make_unique<uint8_t[]>(serialisedTensorSize);
 
     // Initialise scratch_fast tensor header
-    regor_raw_tensor_header_t header;
+    regor_raw_tensor_header_t header{};
     header.type = regor_raw_tensor_header_t::RAW_TENSOR_TYPE_SCRATCH_FAST;
     header.tensor.scratch_fast.region = SCRATCH_FAST_REGION;
     header.tensor.scratch_fast.size = DataTypeStorageSizeBytes(tensor->Type(), tensor->StorageShape().Elements());
@@ -220,16 +224,22 @@ void RawWriter::SerialiseScratchFastTensor(const Tensor *tensor, Address address
     _raw.emplace_back(std::move(serialisedTensor), serialisedTensorSize);
 }
 
-void RawWriter::SerialiseInputTensor(const Tensor *tensor, Address address)
+void RawWriter::SerialiseInputTensor(const Tensor *tensor, const TensorConnection *connection, Address address)
 {
     assert(!tensor->IsConstant());
 
-    const size_t serialisedTensorSize = sizeof(regor_raw_tensor_header_t);
+    const auto quantPayload = SerialiseQuantization(connection->quantization);
+    const bool hasQuantization = !quantPayload.empty();
+    const size_t serialisedTensorSize = sizeof(regor_raw_tensor_header_t) + quantPayload.size();
     auto serialisedTensor = std::make_unique<uint8_t[]>(serialisedTensorSize);
 
     // Initialise input tensor header
-    regor_raw_tensor_header_t header;
+    regor_raw_tensor_header_t header{};
     header.type = regor_raw_tensor_header_t::RAW_TENSOR_TYPE_INPUT;
+    if ( hasQuantization )
+    {
+        header.flags |= REGOR_RAW_TENSOR_FLAG_HAS_QUANTIZATION;
+    }
     header.tensor.input.region = INPUT_REGION;
     header.tensor.input.element_size = DataTypeStorageSizeBytes(tensor->Type(), 1);
     auto shape = Shape::PadAxes(tensor->StorageShape(), 6, 1).ToList<uint32_t>();
@@ -240,19 +250,30 @@ void RawWriter::SerialiseInputTensor(const Tensor *tensor, Address address)
     // Copy header
     std::copy_n(reinterpret_cast<uint8_t *>(&header), sizeof(header), serialisedTensor.get());
 
+    if ( hasQuantization )
+    {
+        std::copy_n(quantPayload.data(), quantPayload.size(), serialisedTensor.get() + sizeof(regor_raw_tensor_header_t));
+    }
+
     _raw.emplace_back(std::move(serialisedTensor), serialisedTensorSize);
 }
 
-void RawWriter::SerialiseOutputTensor(const Tensor *tensor, Address address)
+void RawWriter::SerialiseOutputTensor(const Tensor *tensor, const TensorConnection *connection, Address address)
 {
     assert(!tensor->IsConstant());
 
-    const size_t serialisedTensorSize = sizeof(regor_raw_tensor_header_t);
+    const auto quantPayload = SerialiseQuantization(connection->quantization);
+    const bool hasQuantization = !quantPayload.empty();
+    const size_t serialisedTensorSize = sizeof(regor_raw_tensor_header_t) + quantPayload.size();
     auto serialisedTensor = std::make_unique<uint8_t[]>(serialisedTensorSize);
 
     // Initialise output tensor header
-    regor_raw_tensor_header_t header;
+    regor_raw_tensor_header_t header{};
     header.type = regor_raw_tensor_header_t::RAW_TENSOR_TYPE_OUTPUT;
+    if ( hasQuantization )
+    {
+        header.flags |= REGOR_RAW_TENSOR_FLAG_HAS_QUANTIZATION;
+    }
     header.tensor.output.region = OUTPUT_REGION;
     header.tensor.output.element_size = DataTypeStorageSizeBytes(tensor->Type(), 1);
     auto shape = Shape::PadAxes(tensor->StorageShape(), 6, 1).ToList<uint32_t>();
@@ -263,19 +284,30 @@ void RawWriter::SerialiseOutputTensor(const Tensor *tensor, Address address)
     // Copy header
     std::copy_n(reinterpret_cast<uint8_t *>(&header), sizeof(header), serialisedTensor.get());
 
+    if ( hasQuantization )
+    {
+        std::copy_n(quantPayload.data(), quantPayload.size(), serialisedTensor.get() + sizeof(regor_raw_tensor_header_t));
+    }
+
     _raw.emplace_back(std::move(serialisedTensor), serialisedTensorSize);
 }
 
-void RawWriter::SerialiseVariableTensor(const Tensor *tensor, Address address)
+void RawWriter::SerialiseVariableTensor(const Tensor *tensor, const TensorConnection *connection, Address address)
 {
     assert(!tensor->IsConstant());
 
-    const size_t serialisedTensorSize = sizeof(regor_raw_tensor_header_t);
+    const auto quantPayload = SerialiseQuantization(connection->quantization);
+    const bool hasQuantization = !quantPayload.empty();
+    const size_t serialisedTensorSize = sizeof(regor_raw_tensor_header_t) + quantPayload.size();
     auto serialisedTensor = std::make_unique<uint8_t[]>(serialisedTensorSize);
 
     // Initialise variable tensor header
-    regor_raw_tensor_header_t header;
+    regor_raw_tensor_header_t header{};
     header.type = regor_raw_tensor_header_t::RAW_TENSOR_TYPE_VARIABLE;
+    if ( hasQuantization )
+    {
+        header.flags |= REGOR_RAW_TENSOR_FLAG_HAS_QUANTIZATION;
+    }
     header.tensor.variable.region = VARIABLE_REGION;
     header.tensor.variable.element_size = DataTypeStorageSizeBytes(tensor->Type(), 1);
     auto shape = Shape::PadAxes(tensor->StorageShape(), 6, 1).ToList<uint32_t>();
@@ -286,7 +318,52 @@ void RawWriter::SerialiseVariableTensor(const Tensor *tensor, Address address)
     // Copy header
     std::copy_n(reinterpret_cast<uint8_t *>(&header), sizeof(header), serialisedTensor.get());
 
+    if ( hasQuantization )
+    {
+        std::copy_n(quantPayload.data(), quantPayload.size(), serialisedTensor.get() + sizeof(regor_raw_tensor_header_t));
+    }
+
     _raw.emplace_back(std::move(serialisedTensor), serialisedTensorSize);
+}
+
+std::vector<uint8_t> RawWriter::SerialiseQuantization(const Quantization &quant) const
+{
+    if ( !quant.IsValid() )
+    {
+        return {};
+    }
+
+    const size_t count = quant.scales.size();
+    const size_t zpCount = quant.zeroPoints.size();
+    if ( zpCount != 1 && zpCount != count )
+    {
+        throw std::invalid_argument("Raw output requires zero_points.size() == 1 or zero_points.size() == scales.size()");
+    }
+
+    regor_raw_quantization_t quantHeader{};
+    quantHeader.count = uint32_t(count);
+
+    const size_t scalesBytes = count * sizeof(float);
+    const size_t zeroPointsBytes = count * sizeof(int32_t);
+    const size_t blobSize = sizeof(quantHeader) + scalesBytes + zeroPointsBytes;
+
+    std::vector<uint8_t> buffer(blobSize);
+    std::copy_n(reinterpret_cast<const char *>(&quantHeader), sizeof(quantHeader), reinterpret_cast<char *>(buffer.data()));
+
+    const size_t scalesOffset = sizeof(quantHeader);
+    const size_t zeroPointsOffset = scalesOffset + scalesBytes;
+    for ( size_t i = 0; i < count; ++i )
+    {
+        const auto scale = float(quant.scales[i].Dequantize());
+        const int64_t zeroPoint = (zpCount == 1) ? quant.zeroPoints.front() : quant.zeroPoints[i];
+        const auto zp = ClampToType<int32_t>(zeroPoint);
+        std::copy_n(reinterpret_cast<const char *>(&scale), sizeof(scale),
+            reinterpret_cast<char *>(buffer.data() + scalesOffset + (i * sizeof(float))));
+        std::copy_n(reinterpret_cast<const char *>(&zp), sizeof(zp),
+            reinterpret_cast<char *>(buffer.data() + zeroPointsOffset + (i * sizeof(int32_t))));
+    }
+
+    return buffer;
 }
 
 }  // namespace regor

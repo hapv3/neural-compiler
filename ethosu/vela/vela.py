@@ -654,7 +654,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         type=str,
         default="tflite",
         choices=["tflite", "raw"],
-        help="Output format (default: %(default)s)",
+        help="Output format (default: %(default)s).",
     )
     parser.add_argument(
         "--enable-debug-db",

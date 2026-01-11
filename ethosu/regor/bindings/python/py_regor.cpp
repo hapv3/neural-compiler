@@ -163,6 +163,9 @@ struct PyRegorCompiledRawModelNonConstantTensor
     uint32_t size = 0;
     uint8_t element_size = 0;
     std::vector<uint32_t> shape;
+    std::vector<float> scale;
+    std::vector<int32_t> zero_point;
+    std::string quant_type = "none";
 };
 
 struct PyRegorCompiledRawModel : PyRegorCompiledModel
@@ -447,12 +450,52 @@ private:
                 regor_raw_tensor_header_t header;
                 std::copy_n(buf, sizeof(header), reinterpret_cast<char *>(&header));
 
+                auto parse_quantization = [](PyRegorCompiledRawModelNonConstantTensor &tensor, const char *quantData, size_t quantSize)
+                {
+                    tensor.quant_type = "none";
+                    tensor.scale.clear();
+                    tensor.zero_point.clear();
+
+                    if ( quantSize < sizeof(regor_raw_quantization_t) ) return;
+
+                    regor_raw_quantization_t quantHeader;
+                    std::copy_n(quantData, sizeof(quantHeader), reinterpret_cast<char *>(&quantHeader));
+                    const uint32_t count = quantHeader.count;
+                    if ( count == 0 ) return;
+
+                    const uint64_t expected =
+                        uint64_t(sizeof(regor_raw_quantization_t)) + (uint64_t(count) * sizeof(float)) + (uint64_t(count) * sizeof(int32_t));
+                    if ( expected > quantSize ) return;
+
+                    tensor.quant_type = (count > 1) ? "per_channel" : "per_tensor";
+                    const size_t count_s = size_t(count);
+                    const size_t scalesOffset = sizeof(regor_raw_quantization_t);
+                    const size_t zeroPointsOffset = scalesOffset + (count_s * sizeof(float));
+                    tensor.scale.resize(count_s);
+                    tensor.zero_point.resize(count_s);
+                    for ( size_t i = 0; i < count_s; ++i )
+                    {
+                        float scale;
+                        std::copy_n(quantData + scalesOffset + (i * sizeof(float)), sizeof(scale), reinterpret_cast<char *>(&scale));
+                        int32_t zp;
+                        std::copy_n(quantData + zeroPointsOffset + (i * sizeof(int32_t)), sizeof(zp), reinterpret_cast<char *>(&zp));
+                        tensor.scale[i] = scale;
+                        tensor.zero_point[i] = zp;
+                    }
+                };
+
                 char *data;
                 uint32_t data_size;
                 uint8_t region;
                 uint64_t address;
                 uint8_t element_size;
                 std::vector<uint32_t> shape;
+                size_t quant_size = 0;
+                const char *quant_data = buf + sizeof(header);
+                if ( (header.flags & REGOR_RAW_TENSOR_FLAG_HAS_QUANTIZATION) != 0 )
+                {
+                    quant_size = size_t(size - int64_t(sizeof(header)));
+                }
 
                 switch ( header.type )
                 {
@@ -483,7 +526,8 @@ private:
                         data_size = header.tensor.input.size;
                         element_size = header.tensor.input.element_size;
                         shape.insert(shape.end(), std::begin(header.tensor.input.shape), std::end(header.tensor.input.shape));
-                        raw.inputs.emplace_back(region, address, size, element_size, shape);
+                        raw.inputs.emplace_back(region, address, data_size, element_size, shape);
+                        parse_quantization(raw.inputs.back(), quant_data, quant_size);
                         break;
                     case regor_raw_tensor_header_t::RAW_TENSOR_TYPE_OUTPUT:
                         region = header.tensor.output.region;
@@ -491,7 +535,8 @@ private:
                         data_size = header.tensor.output.size;
                         element_size = header.tensor.output.element_size;
                         shape.insert(shape.end(), std::begin(header.tensor.output.shape), std::end(header.tensor.output.shape));
-                        raw.outputs.emplace_back(region, address, size, element_size, shape);
+                        raw.outputs.emplace_back(region, address, data_size, element_size, shape);
+                        parse_quantization(raw.outputs.back(), quant_data, quant_size);
                         break;
                     case regor_raw_tensor_header_t::RAW_TENSOR_TYPE_VARIABLE:
                         region = header.tensor.variable.region;
@@ -500,7 +545,8 @@ private:
                         element_size = header.tensor.variable.element_size;
                         shape.insert(shape.end(), std::begin(header.tensor.variable.shape),
                             std::end(header.tensor.variable.shape));
-                        raw.variables.emplace_back(region, address, size, element_size, shape);
+                        raw.variables.emplace_back(region, address, data_size, element_size, shape);
+                        parse_quantization(raw.variables.back(), quant_data, quant_size);
                         break;
                     default:
                         break;
@@ -581,7 +627,10 @@ PYBIND11_MODULE(regor, m)
         .def_readwrite("address", &PyRegorCompiledRawModelNonConstantTensor::address, "The tensor's address")
         .def_readwrite("size", &PyRegorCompiledRawModelNonConstantTensor::size, "The tensor's size")
         .def_readwrite("element_size", &PyRegorCompiledRawModelNonConstantTensor::element_size, "The tensor's element size")
-        .def_readwrite("shape", &PyRegorCompiledRawModelNonConstantTensor::shape, "The tensor's shape");
+        .def_readwrite("shape", &PyRegorCompiledRawModelNonConstantTensor::shape, "The tensor's shape")
+        .def_readwrite("scale", &PyRegorCompiledRawModelNonConstantTensor::scale, "The tensor's quantization scale(s)")
+        .def_readwrite("zero_point", &PyRegorCompiledRawModelNonConstantTensor::zero_point, "The tensor's quantization zero point(s)")
+        .def_readwrite("quant_type", &PyRegorCompiledRawModelNonConstantTensor::quant_type, "Quantization type (per_tensor/per_channel/none)");
 
     py::class_<PyRegorCompiledRawModelConstantTensor>(m, "CompiledRawModelConstantTensor", "A constant tensor of a Regor-compiled model in raw format")
         .def(py::init<>())

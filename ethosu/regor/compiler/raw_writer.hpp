@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024, 2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -32,6 +32,7 @@ namespace regor
 class RawWriter
 {
 public:
+    RawWriter() = default;
     std::vector<std::pair<std::unique_ptr<const uint8_t[]>, size_t>> Serialise(const std::vector<std::unique_ptr<Graph>> &graphs,
         const std::vector<std::unordered_map<const Tensor *, Address>> &tensor_address_maps);
 
@@ -46,11 +47,13 @@ private:
 
     void SerialiseScratchFastTensor(const Tensor *tensor, Address address);
 
-    void SerialiseInputTensor(const Tensor *tensor, Address address);
+    void SerialiseInputTensor(const Tensor *tensor, const TensorConnection *connection, Address address);
 
-    void SerialiseOutputTensor(const Tensor *tensor, Address address);
+    void SerialiseOutputTensor(const Tensor *tensor, const TensorConnection *connection, Address address);
 
-    void SerialiseVariableTensor(const Tensor *tensor, Address address);
+    void SerialiseVariableTensor(const Tensor *tensor, const TensorConnection *connection, Address address);
+
+    std::vector<uint8_t> SerialiseQuantization(const Quantization &quant) const;
 };
 
 }  // namespace regor
