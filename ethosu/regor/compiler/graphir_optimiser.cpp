@@ -1331,6 +1331,11 @@ bool GraphIrOptimiser::CanFuseRescaleOnConsumer(Operation *const consumer, Tenso
     {
         return false;
     }
+    // TODO MLBEDSW-11441: Support IFM-fusing on Select operations.
+    if ( opType == OpType::Select )
+    {
+        return false;
+    }
     // Connection to the fused-away tensor
     auto fusedConn = consumer->Input(usage);
     auto fusedType = fusedConn->tensor->Type();
@@ -1365,6 +1370,11 @@ bool GraphIrOptimiser::CanFuseMultipleRescalesOnConsumer(Operation *const consum
     // This avoids incorrect propagation of quantization
     // as dataLayout operations are often fused or removed
     if ( IsDataLayout(opType) )
+    {
+        return false;
+    }
+    // TODO MLBEDSW-11441: Support IFM-fusing on Select operations.
+    if ( opType == OpType::Select )
     {
         return false;
     }
@@ -1404,6 +1414,11 @@ bool GraphIrOptimiser::CanFuseRescaleOnProducer(Operation *const producer, Quant
     // This avoids incorrect propagation of quantization
     // as dataLayout operations are often fused or removed
     if ( IsDataLayout(opType) )
+    {
+        return false;
+    }
+    // TODO MLBEDSW-11441: Support OFM-fusing on Select operations.
+    if ( opType == OpType::Select )
     {
         return false;
     }
