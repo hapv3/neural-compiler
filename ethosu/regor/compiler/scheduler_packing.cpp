@@ -214,7 +214,8 @@ void SchedulerPacking::ConvertOperation(const Operation *op, std::vector<std::un
             ifmConn->shape != ifmConn->SliceShape() || ofmConn->shape != ofmConn->SliceShape() ||
             (ifm2Conn && ifm2Conn->shape != ifm2Conn->SliceShape());
         const bool hasStride = ifmConn->slice.stride || ofmConn->slice.stride || (ifm2Conn && ifm2Conn->slice.stride);
-        if ( !broadcast && !hasSlices && !hasStride )
+        const bool hasChannelScales = ofmConn->quantization.scales.size() > 1;
+        if ( !broadcast && !hasSlices && !hasStride && !hasChannelScales )
         {
             // Avoid reshape of small tensors or tensors that are already deep enough
             const int minElements = 16;
