@@ -1767,7 +1767,7 @@ Operation *GraphIrOptimiser::RewriteCast(Graph *const, Operation *const operatio
     {
         const auto ifmConn = operation->Input(TensorUsage::IFM);
         const auto ofmConn = operation->Output(TensorUsage::OFM);
-
+        auto ifmType = ifmConn->tensor->Type();
         auto ofmType = ofmConn->tensor->Type();
         /* Casting to int32 is hardware supported, but casting to int64 is not. We solve this by converting
          * the int64 cast to a series of operations in the following if statement. This does not work for int32 input.
@@ -1829,7 +1829,7 @@ Operation *GraphIrOptimiser::RewriteCast(Graph *const, Operation *const operatio
             return returnOp;
         }
 
-        if ( IsBool(ifmConn->tensor->Type()) && IsInteger(ofmConn->tensor->Type()) )
+        if ( IsBool(ifmType) && IsInteger(ofmType) )
         {
             // Replace CAST with BITWISE_AND to convert from internal bool representation to integer
             auto newOp = std::make_shared<Operation>(OpType::And);
@@ -1840,7 +1840,7 @@ Operation *GraphIrOptimiser::RewriteCast(Graph *const, Operation *const operatio
             operation->Disconnect();
             returnOp = newOp.get();
         }
-        else if ( IsInteger(ifmConn->tensor->Type()) && IsBool(ofmConn->tensor->Type()) )
+        else if ( IsInteger(ifmType) && IsBool(ofmType) )
         {
             // Replace CAST with CMP_NE to convert from integer to internal bool representation
             auto newOp = std::make_shared<Operation>(OpType::NotEqual);
@@ -1860,11 +1860,14 @@ Operation *GraphIrOptimiser::RewriteCast(Graph *const, Operation *const operatio
             copyOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_zero", type, 0));
             RecordOptimisation(*operation, copyOp.get());
             returnOp = copyOp.get();
-
+        }
+        // If the cast could result in overflow/underflow, set max range to disable clipping
+        if ( (IntegerMin(ifmType) < IntegerMin(ofmType)) || (IntegerMax(ifmType) > IntegerMax(ofmType)) )
+        {
+            auto castOut = returnOp->Output(TensorUsage::OFM);
             // Set max range to disable clipping
-            auto copyOpConn = copyOp->Output(TensorUsage::OFM);
-            copyOpConn->quantization.quantMin = {std::numeric_limits<int64_t>::min()};
-            copyOpConn->quantization.quantMax = {std::numeric_limits<int64_t>::max()};
+            castOut->quantization.quantMin = {std::numeric_limits<int64_t>::min()};
+            castOut->quantization.quantMax = {std::numeric_limits<int64_t>::max()};
         }
     }
     return returnOp;
