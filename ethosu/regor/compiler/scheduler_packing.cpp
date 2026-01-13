@@ -518,12 +518,12 @@ void SchedulerPacking::PackOperations()
 
                     auto quantMin = ofmConn->quantization.quantMin;
                     auto quantMax = ofmConn->quantization.quantMax;
-                    // Clamping is defined as  disabled when quantMin[0] and quantmax[0] are at the int64 limits
+                    // Clamping is defined as disabled when quantMin[0] and quantmax[0] are at the int64 limits
                     bool clampingDisabled =
                         !quantMin.empty() && quantMin[0] == std::numeric_limits<int64_t>::min() && !quantMax.empty() &&
                         quantMax[0] == std::numeric_limits<int64_t>::max();
                     // If clamping has been explicitly unset this if-statement makes sure we don't re-enable it.
-                    if ( !clampingDisabled )
+                    if ( !clampingDisabled && IsClipping(nextOp->Type()) )
                     {
                         ofmConn->quantization.quantMin = nextOp->Output(TensorUsage::OFM)->quantization.quantMin;
                         ofmConn->quantization.quantMax = nextOp->Output(TensorUsage::OFM)->quantization.quantMax;

@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2024-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -223,6 +223,11 @@ constexpr inline bool IsActivation(OpType opType)
     return opType == OpType::Relu || opType == OpType::Relu0To1 || opType == OpType::Relu6 || opType == OpType::ReluN ||
            opType == OpType::ReluN1To1 || opType == OpType::Prelu || opType == OpType::Clamp ||
            opType == OpType::Sigmoid || opType == OpType::Tanh || opType == OpType::LUT;
+}
+
+constexpr inline bool IsClipping(OpType opType)
+{
+    return opType == OpType::Relu || opType == OpType::Clamp || opType == OpType::Relu0To1 || opType == OpType::Relu6 || opType == OpType::ReluN1To1;
 }
 
 constexpr inline bool IsUnaryElementwise(OpType opType)

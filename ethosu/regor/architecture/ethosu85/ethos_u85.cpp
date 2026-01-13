@@ -1500,10 +1500,14 @@ bool EthosU85OpGroup::Fuse(const ArchitectureOpGroupQuery &op, const std::vector
         return false;
     }
 
-    // Can't fuse downcast with clamp
-    if ( DataTypeSizeBits(prevOp.ifm[0].type) > DataTypeSizeBits(prevOp.ofm.type) && IsActivation(op.type) )
+    // Can't fuse a clipping op if previous op could truncate.
+    if ( IsClipping(op.type) )
     {
-        return false;
+        if ( (IntegerMax(prevOp.ifm[0].type) > IntegerMax(prevOp.ofm.type)) ||
+             (IntegerMin(prevOp.ifm[0].type) < IntegerMin(prevOp.ofm.type)) )
+        {
+            return false;
+        }
     }
     EthosU85Constraints *constraints = static_cast<EthosU85Constraints *>(_arch->_constraints.get());
 
