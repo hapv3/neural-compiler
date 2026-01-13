@@ -130,7 +130,7 @@ bool SupportedIFMQuant(OpType opType, const Quantization &ifmQuant, const Quanti
 bool SupportedOFMQuant(OpType opType, EthosU55NpuOp npuOp, const Quantization &ofmQuant, DataType ifmType)
 {
     // Reject per-channel scaling for opTypes that do not support it
-    if ( IsElementwise(opType) || opType == OpType::ReduceSum || opType == OpType::AvgPool || opType == OpType::Table )
+    if ( IsElementwise(opType) || opType == OpType::ReduceSum || opType == OpType::AvgPool || opType == OpType::Table || opType == OpType::MatMul )
     {
         if ( ofmQuant.scales.size() > 1 )
         {
@@ -150,7 +150,7 @@ bool SupportedOFMQuant(OpType opType, EthosU55NpuOp npuOp, const Quantization &o
         return false;
     }
     if ( npuOp == EthosU55NpuOp::Convolution || npuOp == EthosU55NpuOp::Depthwise || npuOp == EthosU55NpuOp::VectorProduct ||
-         npuOp == EthosU55NpuOp::ReduceSum || (npuOp == EthosU55NpuOp::Pooling && opType != OpType::AvgPool) )
+         npuOp == EthosU55NpuOp::ReduceSum || (npuOp == EthosU55NpuOp::Pooling && opType != OpType::AvgPool) || opType == OpType::MatMul )
     {
         return true;
     }

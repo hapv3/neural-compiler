@@ -1626,17 +1626,20 @@ void EthosU55RCSGenerator::InsertMatMulCommand(const HLCStripe *stripe, Temporar
     EthosU55OpConfig *mulConfig = reduceConfig->PrevConfig();
     assert(reduceConfig && mulConfig);
 
-    // Push quantisation on to the last operation
-    QuantizedScale qs0 = inFM0.quantization.scales.empty() ? QuantizedScale::Unit() : inFM0.quantization.scales[0];
-    QuantizedScale qs1 = inFM1.quantization.scales.empty() ? QuantizedScale::Unit() : inFM1.quantization.scales[0];
-    QuantizedScale qOfm = outFM.quantization.scales.empty() ? QuantizedScale::Unit() : outFM.quantization.scales[0];
-    inFM0.quantization.scales.clear();
-    inFM1.quantization.scales.clear();
-    outFM.quantization.scales.clear();
+    // Push quantisation on to the last operation for TFLite (create ethosU55Scaling::RescaleMatmul)
+    if ( inFM0.quantization.type == QuantizationType::TFLITE )
+    {
+        QuantizedScale qs0 = inFM0.quantization.scales.empty() ? QuantizedScale::Unit() : inFM0.quantization.scales[0];
+        QuantizedScale qs1 = inFM1.quantization.scales.empty() ? QuantizedScale::Unit() : inFM1.quantization.scales[0];
+        QuantizedScale qOfm = outFM.quantization.scales.empty() ? QuantizedScale::Unit() : outFM.quantization.scales[0];
+        inFM0.quantization.scales.clear();
+        inFM1.quantization.scales.clear();
+        outFM.quantization.scales.clear();
 
-    double scaling = (qs0.Dequantize() * qs1.Dequantize()) / qOfm.Dequantize();
-    outFM.quantization.type = QuantizationType::EXPLICIT;
-    outFM.quantization.scales.push_back(QuantizedScale(scaling));
+        double scaling = (qs0.Dequantize() * qs1.Dequantize()) / qOfm.Dequantize();
+        outFM.quantization.type = QuantizationType::EXPLICIT;
+        outFM.quantization.scales.push_back(QuantizedScale(scaling));
+    }
 
     Shape ifm0Start(0, inFM0.slice.offset ? inFM0.slice.offset.Height() : 0, 0, 0);
 
