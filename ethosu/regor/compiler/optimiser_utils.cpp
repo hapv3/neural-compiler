@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -51,7 +51,8 @@ std::shared_ptr<Operation> InsertCopyOpAfterTensor(const std::shared_ptr<Tensor>
             {
                 if ( consIfmConn->tensor.get() == ifmTensor )
                 {
-                    cons->ConnectInput(usage, copyTensor);
+                    auto consIfmShape = consIfmConn->shape;
+                    cons->ConnectInput(usage, copyTensor).Set(consIfmShape);
                 }
                 usage = MakeTensorUsage(TensorUsage::IFM, ++idx);
                 consIfmConn = cons->Input(usage);
