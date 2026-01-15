@@ -16,6 +16,8 @@
 // limitations under the License.
 //
 
+#define EXPERIMENTAL_SCALE_DEPTH_WITH_CORES 0
+
 #include "ethos_u55.hpp"
 
 #include "common/common.hpp"
@@ -370,6 +372,7 @@ std::unique_ptr<EthosU55OpConfig> ArchEthosU55::FindBlockConfig(OpType opType, c
     // Operator configuration to be returned
     auto config = std::make_unique<EthosU55OpConfig>();
     config->_bankSize = _shram.bankSizeBytes;
+#if EXPERIMENTAL_SCALE_DEPTH_WITH_CORES
     // IFM is not broadcasted for pooling and depthwise ops and for elementwise
     // when there's no elementwise-broadcasting in depth
     int ifmDepthBufScaling =
@@ -377,6 +380,9 @@ std::unique_ptr<EthosU55OpConfig> ArchEthosU55::FindBlockConfig(OpType opType, c
                 (IsBinaryElementwise(opType) && (query.ifmShape[0].Depth() == query.ifmShape[1].Depth())) ?
             _cores :
             1;
+#else
+    int ifmDepthBufScaling = 1;
+#endif
     config->_ifmDepthBufScaling = ifmDepthBufScaling;
     config->_traversal = isDepthwise ? EthosUTraversal::Depthwise : (isPartKernel ? EthosUTraversal::PartKernel : EthosUTraversal::DepthFirst);
     config->_minimalStripeGranule = {upscale, upscale};
@@ -422,7 +428,11 @@ std::unique_ptr<EthosU55OpConfig> ArchEthosU55::FindBlockConfig(OpType opType, c
     bool hasWeights = npuOp == EthosU55NpuOp::Convolution || isDepthwise;
     int weightFetchWH = hasWeights ? query.kernel->Size().AreaXY() : 0;
 
+#if EXPERIMENTAL_SCALE_DEPTH_WITH_CORES
     int ofmUBlockDepth = _ofmUBlock.Depth() * _cores;
+#else
+    int ofmUBlockDepth = _ofmUBlock.Depth();
+#endif
     Shape searchSpace = Shape::RoundAway(Shape::Min(query.ofmShape, _ofmBlockMax), _ofmUBlock.WithDepth(ofmUBlockDepth));
 
     // Block WHC search, loops across the search space looking for best efficiency
@@ -556,7 +566,11 @@ bool ArchEthosU55::TryBlockConfig(EthosU55OpConfig::SHRAMLayout &layout, int ewU
 
     // Scale depth with cores
     int ifm_depth = DivRoundUp(ifmBlock.Depth(), ifmDepthBufScaling);
+#if EXPERIMENTAL_SCALE_DEPTH_WITH_CORES
     int ofm_depth = DivRoundUp(ofmBlock.Depth(), _cores);
+#else
+    int ofm_depth = ofmBlock.Depth();
+#endif
 
     // Always need IFM space
     int ifm_bytes = ifmBlock.ElementsWH() * RoundAway(ifm_depth * (ifmBits / 8), 8);
