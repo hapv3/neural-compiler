@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -201,5 +201,39 @@ TEST_CASE("test_scheduler_packing")
         REQUIRE(ofmConn->tensor->producers.size() == 1);
         REQUIRE(ofmConn->tensor->producers[0] == schedOp1.get());
         REQUIRE(ofmConn->tensor->consumers.empty());
+    }
+
+    SECTION("Pack CPU operation with output that is graph output, but also consumed by NPU")
+    {
+        std::vector<std::shared_ptr<Operation>> ops;
+        auto ifm = CreateTensor("IFM", Shape(10, 10, 10), DataType::Int8);
+        auto mid = CreateTensor("MID", Shape(10, 10, 10), DataType::Int8);
+        auto ofm = CreateTensor("OFM", Shape(10, 10, 10), DataType::Int8);
+        auto ofm2 = CreateTensor("OFM2", Shape(10, 10, 10), DataType::Int8);
+
+        auto op1 = CreateOperation(OpType::Abs, TensorUsage::IFM, ifm, TensorUsage::OFM, mid);
+        ops.push_back(std::move(op1));
+        auto op2 = CreateOperation(OpType::Passthrough, TensorUsage::IFM, mid, TensorUsage::OFM, ofm);
+        ops.push_back(std::move(op2));
+        auto op3 = CreateOperation(OpType::Abs, TensorUsage::IFM, ofm, TensorUsage::OFM, ofm2);
+        ops.push_back(std::move(op3));
+
+        // Create graph with ops
+        auto graph = CreateGraph(ops);
+
+        // Mark CPU op OFM as graph output
+        graph->AddOutput(ofm);
+
+        // Perform scheduler_packing
+        auto schedOps = packing.Process(graph.get());
+        REQUIRE(schedOps.size() == 3);
+
+        // Ensure operation order is unchanged
+        REQUIRE(schedOps[0]->Type() == OpType::Abs);
+        REQUIRE(schedOps[0]->SubOps().empty());
+        REQUIRE(schedOps[1]->Type() == OpType::Passthrough);
+        REQUIRE(schedOps[1]->SubOps().empty());
+        REQUIRE(schedOps[2]->Type() == OpType::Abs);
+        REQUIRE(schedOps[2]->SubOps().empty());
     }
 }

@@ -71,9 +71,10 @@ bool AllInputsProducersAreEarlyOps(const SchedulerOperation &op, const std::vect
 // Returns true if no OFMs, or if all OFMs are graph outputs
 bool AllOutputsAreGraphOutputs(const SchedulerOperation &op)
 {
-    for ( const auto &outputSchedConn : op.outputs )
+    for ( const auto &schedConn : op.outputs )
     {
-        if ( !outputSchedConn.tensor->isGraphOutput ) return false;
+        bool isGraphOutput = schedConn.tensor->isGraphOutput && schedConn.tensor->consumers.empty();
+        if ( !isGraphOutput ) return false;
     }
     return true;
 }
