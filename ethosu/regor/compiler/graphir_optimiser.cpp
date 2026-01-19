@@ -3182,13 +3182,16 @@ Operation *GraphIrOptimiser::MoveSplitSliceToConsumer(Graph *const, Operation *c
     auto *ifmConn = operation->Input(TensorUsage::IFM0);
     auto *ofmConn = operation->Output(TensorUsage::OFM);
 
-    if ( operation->Type() == OpType::MemoryCopy && ifmConn->slice.offset.Size() > 0 && (ofmConn->reverse == ReverseType::None) )
+    const bool hasIFMSlice = !!ifmConn->slice.offset;
+    const bool hasOFMSlice = !!ofmConn->slice.offset;
+    const bool hasReverse = ofmConn->reverse != ReverseType::None;
+
+    if ( operation->Type() == OpType::MemoryCopy && hasIFMSlice && !hasOFMSlice && !hasReverse )
     {
         auto *ofm = ofmConn->tensor.get();
-
-        if ( ofm->Readers().size() == 1 )
+        auto readers = ofm->Readers();
+        for ( auto &cons : readers )
         {
-            auto cons = ofm->Readers().front();
             auto *consIfm0 = cons->IFM(0);
             auto *consIfm1 = cons->IFM(1);
 
