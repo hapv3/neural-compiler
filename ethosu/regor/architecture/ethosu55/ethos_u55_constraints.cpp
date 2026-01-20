@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -692,7 +692,8 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
             }
             result.Set(QueryResult::HasRequirements);
         }
-        if ( query->transposeMask != TransposeType::NWHC && query->transposeMask != TransposeType::NHCW && query->transposeMask != TransposeType::NCWH )
+        if ( query->transposeMask != TransposeType::NWHC && query->transposeMask != TransposeType::NHCW &&
+             query->transposeMask != TransposeType::NCWH && query->transposeMask != TransposeType::None )
         {
             // supported with mask-decomposition requirements
             if ( req )

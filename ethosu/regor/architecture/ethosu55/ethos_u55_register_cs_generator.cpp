@@ -1369,7 +1369,6 @@ void EthosU55RCSGenerator::InsertTransposeCommand(const HLCStripe *stripe, Tempo
     bool identity = (swapMask == 0) || (outShape.EqualMask(ofm.shape.WithOnes()) == validMask) || (ifm.shape.ElementsWH() == 1);
     if ( identity )
     {
-        LOG_WARN("RCS: Emitting no-op transpose as a memory copy\n");
         assert(ifm.format == ofm.format);
         assert(op->subOps.empty());
         auto dma = std::make_unique<HLCDMA>();
