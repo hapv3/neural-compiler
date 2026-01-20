@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -92,9 +92,10 @@ public:
     MeasureAccessCycles(const PerformanceQuery &query, const ElementAccess &byteAccess) override;
 
 private:
-    EthosU85Cycles EstimateConvCycles(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);
-    EthosU85ElementCycles EstimateOutputCyclesPerElement(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);
+    EthosU85Cycles EstimateMacOpCycles(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);
     EthosU85Cycles EstimateElementwiseCycles(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);
+    int64_t EstimateMacCyclesPerBlock(const PerformanceQuery &query);
+    double EstimateAOCyclesPerElement(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);
     int64_t EstimateMinimumMemoryCycles(const PerformanceQuery &query);
     float ChannelBW(const ArchitectureMemory *mem, MemChannel channel);
     static MemChannel LookupChannel(OpType type, TensorUsage usage, bool fastWeights);
