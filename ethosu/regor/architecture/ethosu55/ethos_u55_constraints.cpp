@@ -288,6 +288,12 @@ bool EthosU55Constraints::SupportedDtypes(OpType opType, DataType ifmType, DataT
         return true;
     }
 
+    // Matmul must have 8-bit IFM-precision
+    if ( opType == OpType::MatMul && DataTypeSizeBits(ifmType) > 8 )
+    {
+        return false;
+    }
+
     if ( npuOp == EthosU55NpuOp::Compound || npuOp == EthosU55NpuOp::Dma )
     {
         return true;
