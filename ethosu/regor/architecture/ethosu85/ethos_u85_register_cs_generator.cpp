@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2023-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -1873,7 +1873,11 @@ void EthosU85RCSGenerator::GeneratePoolingOp(HLCStripe *stripe, MemoryAccesses &
     auto opType = stripe->operation->type;
     auto op = stripe->operation.get();
     bool useGlobalScale = !op->scales;
-    if ( _arch->UseNullPool(opType, DataTypeSizeBits(op->ifm[0].dataType)) )
+    DataType ifmType = op->ifm[0].dataType;
+    EthosU85OpConfig *config = static_cast<EthosU85OpConfig *>(stripe->operation->config);
+    // 32-bit reduce-sum cannot use 48-bit accumulation
+    assert(!(op->type == OpType::ReduceSum && ifmType == DataType::Int32 && config->_accumulatorType == EthosU85Accumulator::Acc48));
+    if ( _arch->UseNullPool(opType, DataTypeSizeBits(ifmType)) )
     {
         GenerateIFM2Precision(op->ifm[0], false, false);
         GenerateIFM2(op->type, op->ifm[0], stripe->ifmAreas[0], false, 0, -1);

@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -214,6 +214,7 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU55::GetOpConfig(OpType opType, c
         // Block configuration for the Reduced Sum
         tmpQuery.ofmShape = MatMulDependencyFit(Shape(1, batches, query.ifmShape[0].Width(), 1), 4, _ofmBlockMax);
         tmpQuery.ofmBits = query.ofmBits;
+        tmpQuery.ifmBits = 32;
         tmpQuery.ofmFormat = query.ofmFormat;
         auto reduceConfig = FindBlockConfig(OpType::ReduceSum, tmpQuery);
         assert(mulConfig.get());

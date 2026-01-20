@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -1778,7 +1778,11 @@ void EthosU55RCSGenerator::GeneratePoolingOp(const HLCStripe *stripe, MemoryAcce
     auto padSum = pad.top + pad.left + pad.bottom + pad.right;
     bool useGlobalScale = !op->scales;
     HLCStripe modifiedStripe(nullptr);
-
+    DataType ifmType = op->ifm[0].dataType;
+    DataType ofmType = op->ofm.dataType;
+    EthosU55OpConfig *config = static_cast<EthosU55OpConfig *>(stripe->operation->config);
+    // 32-bit reduce-sum cannot use 40-bit accumulation
+    assert(!(op->type == OpType::ReduceSum && ifmType == DataType::Int32 && config->_accumulatorType == EthosU55SHRamElements::SHRAM_Acc40));
     if ( _arch->UseAvgPoolNop(op->type) )
     {
         assert(op->kernel.Size() == Point2i(1, 1));
@@ -1789,7 +1793,7 @@ void EthosU55RCSGenerator::GeneratePoolingOp(const HLCStripe *stripe, MemoryAcce
         // Op is being used as a 32-bit unscaled memory copy but
         // we do not support more than 16-bit activations so adjust
         // the tensor types and strides.
-        if ( op->type == OpType::MemoryCopy && (op->ifm[0].dataType == op->ofm.dataType) && DataTypeSizeBits(op->ofm.dataType) == 32 )
+        if ( op->type == OpType::MemoryCopy && (ifmType == ofmType) && DataTypeSizeBits(ofmType) == 32 )
         {
             assert(op->ifm[0].format == TensorFormat::NHWC);
             assert(op->ofm.format == TensorFormat::NHWC);
