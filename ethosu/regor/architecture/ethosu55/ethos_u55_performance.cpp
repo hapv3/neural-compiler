@@ -141,25 +141,30 @@ int64_t EthosU55Performance::MemToMemCycles(const ArchitectureMemory *dest, cons
     return std::max(fromCycles, toCycles);
 }
 
+static Shape GetOfmMicroBlock(const Shape &archUBlock, const Shape &ofmShape, EthosU55NpuOp npuOp, const Kernel *kernel)
+{
+    // HW Optimisation check
+    if ( (archUBlock.Height() == 2) && (npuOp == EthosU55NpuOp::Convolution || npuOp == EthosU55NpuOp::VectorProduct) &&
+         (ofmShape.Height() == 1) && (ofmShape.Width() % 2 == 0) &&  // Optimisation only applies for even width tensors
+         (kernel->Size().y == 1) )
+    {
+        return Shape(1, 1, 4, archUBlock.Depth());
+    }
+
+    return archUBlock;
+}
+
 int64_t EthosU55Performance::EstimateMacCyclesPerBlock(const PerformanceQuery &query)
 {
     EthosU55OpConfig *opConfig = static_cast<EthosU55OpConfig *>(query.config);
     auto npuOp = _arch->GetHWOp(query.type);
     assert(npuOp != EthosU55NpuOp::None);
 
+    // Clip blocks to FM shapes in case the block boundary exceeds the full FM shape in any dimension.
+    // This prevents estimation of microblocks which are never actually processed.
     Shape ifmBlock = Shape::Min(query.ifmShape[0], opConfig->IfmBlock());
     Shape ofmBlock = Shape::Min(query.ofmShape, opConfig->OfmBlock());
-    Shape ofmUBlock = _arch->OfmUBlock();
-
-    // HW Optimisation check
-    if ( (ofmUBlock.Height() == 2) && (npuOp == EthosU55NpuOp::Convolution || npuOp == EthosU55NpuOp::VectorProduct) &&
-         (query.ofmShape.Height() == 1) && (query.ofmShape.Width() % 2 == 0) &&  // Optimisation only applies for even
-                                                                                 // width tensors
-         (query.kernel->Size().y == 1) )
-    {
-        ofmUBlock = Shape(1, 1, 4, ofmUBlock.Depth());
-        ofmBlock = ofmBlock.WithHeight(1);
-    }
+    Shape ofmUBlock = GetOfmMicroBlock(_arch->OfmUBlock(), query.ofmShape, npuOp, query.kernel);
 
     int ifmBits = DataTypeSizeBits(query.ifmType[0]);
     Shape numUBlocks = Shape::DivRoundUp(ofmBlock, ofmUBlock);
@@ -277,12 +282,12 @@ EthosU55Cycles EthosU55Performance::EstimateMacOpCycles(const PerformanceQuery &
     auto npuOp = _arch->GetHWOp(query.type);
     assert(OpUsesMacs(npuOp));
 
-    Shape ifmBlock = Shape::Min(query.ifmShape[0], opConfig->IfmBlock());
+    // Calculate number of fractional OFM blocks (clipped to OFM shape) and aligned to microblocks
     Shape ofmBlock = Shape::Min(query.ofmShape, opConfig->OfmBlock());
-    Shape ofmUBlock = _arch->OfmUBlock();
-
-    // Calculate number of OFM blocks
-    int numOfmBlks = Shape::DivRoundUp(query.ofmShape, ofmBlock).Elements();
+    Shape ofmUBlock = GetOfmMicroBlock(_arch->OfmUBlock(), query.ofmShape, npuOp, query.kernel);
+    int uBlocksInOfmBlock = Shape::DivRoundUp(ofmBlock, ofmUBlock).Elements();
+    assert(uBlocksInOfmBlock > 0);
+    double numOfmBlks = double(Shape::DivRoundUp(query.ofmShape, ofmUBlock).Elements()) / uBlocksInOfmBlock;
 
     // Estimate AO cycles
     const double aoCyclesPerElem = EstimateAOCyclesPerElement(query);
