@@ -848,6 +848,7 @@ void TfLiteReader::UnFuseActivation(const std::shared_ptr<Operation> &operation,
     }
 
     std::shared_ptr<Tensor> intermediate_tensor = output_tensor->Clone();
+    intermediate_tensor->SetName(intermediate_tensor->Name() + "_act");
     activation->ConnectOutput(TensorUsage::OFM, output_tensor).Set(actQuantization);
     output_tensor->RemoveWriter(operation);
     // Set original output quantization to the non-activation operation's output

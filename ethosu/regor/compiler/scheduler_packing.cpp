@@ -513,6 +513,15 @@ void SchedulerPacking::PackOperations()
                     ofmConn->tensor->producers.push_back(lastNonFusedOp);  // Add PRIMARY to T3 producers
                     ofmConn->tensor->RemoveWriter(nextOp);                 // Remove ACTIVATION from T3 producers
                     ofmConn->SetType(nextOp->OFM()->Type());
+                    if ( nextOp->OFM()->slice )
+                    {
+                        // Inherit the activation function's OFM slice and shape if it has slice
+                        ofmConn->slice = nextOp->OFM()->slice;
+                        ofmConn->shape = nextOp->OFM()->shape;
+
+                        // Clear the sub op slice
+                        nextOp->OFM()->slice = {};
+                    }
                     // Reshape the activation function to the OFM shape of the tensor it's getting fused to
                     nextOp->IFM(0)->shape = ofmConn->shape;
                     nextOp->OFM()->shape = ofmConn->shape;

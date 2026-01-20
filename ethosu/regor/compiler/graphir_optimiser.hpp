@@ -77,6 +77,7 @@ private:
     Operation *ReshapeReverse(Graph *const graph, Operation *const operation);
     void MoveToConsumer(const Operation *const operation, Operation *const cons);
     Operation *MoveSplitSliceToConsumer(Graph *const, Operation *const operation);
+    Operation *MoveConcatSliceToProducer(Graph *const graph, Operation *const operation);
     Operation *UnrollKernelStrides(Graph *const, Operation *const operation);
     Operation *RewriteIdentityResize(Graph *const graph, Operation *const operation);
     Operation *RewriteNonConstWeightOp(Graph *const, Operation *const operation);
@@ -199,7 +200,8 @@ private:
             {},
             {
                 &GraphIrOptimiser::MergeTransposes,
-                &GraphIrOptimiser::MoveSplitSliceToConsumer
+                &GraphIrOptimiser::MoveSplitSliceToConsumer,
+                &GraphIrOptimiser::MoveConcatSliceToProducer
             }
         },
         {

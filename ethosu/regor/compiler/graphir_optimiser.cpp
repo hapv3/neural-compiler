@@ -3353,4 +3353,91 @@ void GraphIrOptimiser::OptimiseGraph(Graph *graph)
     }
 }
 
+// Remove MemoryCopy with OFM slice by moving the slice to the producer
+Operation *GraphIrOptimiser::MoveConcatSliceToProducer(Graph *const graph, Operation *const operation)
+{
+    // This shows the RewritePack transform (1 -> 2) and this transform (2 -> 3).
+    //
+    //    (1)          (2)          (3)
+    //
+    //  T1   T2      T1   T2      T1   T2
+    //  |    |       |    |       |    |
+    //  O1   O2      O1   O2      O1   O2
+    //  |    |   =>  |    |   =>   \  / (slice offset on OFM conn.)
+    //  T3   T4      T3   T4        T5
+    //   \  /        |    |
+    //   PACK       COPY COPY
+    //    |           \  / (slice offset on OFM conn.)
+    //    T5           T5
+
+    if ( operation->Type() != OpType::MemoryCopy )
+    {
+        return operation;
+    }
+
+    const auto *ifmConn = operation->Input(TensorUsage::IFM0);
+    assert(ifmConn);
+    const auto *ofmConn = operation->Output(TensorUsage::OFM);
+    assert(ofmConn);
+
+    // Only handle pure copy into an output slice with same shape
+    const bool hasIfmSlice = ifmConn->slice.shape && ifmConn->slice.shape != ifmConn->shape;
+    const bool hasIfmStride = ifmConn->slice.stride && ifmConn->slice.stride != ifmConn->slice.stride.WithOnes();
+    const bool hasOfmSlice = ofmConn->slice.shape && ofmConn->slice.shape != ofmConn->shape;
+    const bool hasOfmStride = ofmConn->slice.stride && ofmConn->slice.stride != ofmConn->slice.stride.WithOnes();
+    const bool hasReverse = ofmConn->reverse != ReverseType::None;
+    const bool hasEqualScales = ifmConn->quantization.EqualScales(ofmConn->quantization);
+    if ( hasIfmSlice || hasIfmStride || !hasOfmSlice || hasOfmStride || hasReverse || !hasEqualScales )
+    {
+        return operation;
+    }
+
+    // Require exactly one producer and that this MemoryCopy is the only reader of the intermediate
+    const auto *intermediate = ifmConn->tensor.get();  // T3/T4 in above graph
+    assert(intermediate);
+    if ( graph->IsInput(intermediate) || graph->IsOutput(intermediate) || graph->IsPersistent(intermediate) ||
+         intermediate->IsConstant() || !intermediate->IsSinglePath() )
+    {
+        return operation;
+    }
+
+    // OFM slice not possible on certain ops
+    const auto producer = intermediate->Writers().front();  // O1/O2 in above graph
+    assert(producer);
+    if ( producer->Type() == OpType::Passthrough || IsDataLayout(producer->Type()) || IsControlFlow(producer->Type()) )
+    {
+        return operation;
+    }
+
+    // Require that producer actually produce an OFM
+    const auto prodOfmUsage = producer->UsageOfTensor(intermediate);
+    if ( !IsOFM(prodOfmUsage) )
+    {
+        return operation;
+    }
+
+    // Require that producer doesn't already have slice, stride or reverse, and must have same quantization
+    const auto *prodOfmConn = producer->Output(prodOfmUsage);
+    assert(prodOfmConn);
+    const bool prodHasOfmSlice = prodOfmConn->slice.shape && prodOfmConn->slice.shape != prodOfmConn->shape;
+    const bool prodHasOfmStride = prodOfmConn->slice.stride && prodOfmConn->slice.stride != prodOfmConn->slice.stride.WithOnes();
+    const bool prodHasReverse = prodOfmConn->reverse != ReverseType::None;
+    if ( prodHasOfmSlice || prodHasOfmStride || prodHasReverse )
+    {
+        return operation;
+    }
+    if ( prodOfmConn->shape != ifmConn->shape )
+    {
+        return operation;
+    }
+
+    // Bypass the intermediate tensor and MemoryCopy
+    producer->ConnectOutput(prodOfmUsage, ofmConn->tensor).Set(ofmConn->shape).Set(ofmConn->slice);
+
+    // Remove MemoryCopy
+    operation->Disconnect();
+
+    return producer.get();
+}
+
 }  // namespace regor

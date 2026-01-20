@@ -917,3 +917,87 @@ TEST_CASE("test_graphir_optimiser - convert TFLite Quantization to Explicit Quan
         REQUIRE(quantScale.shift == 36);
     }
 }
+
+TEST_CASE("test_graphir_optimiser - MoveConcatSliceToProducer")
+{
+    // Create arch
+    auto arch = CreateArchDefault<ArchEthosU85>();
+    std::string err = "noerror";
+    arch->CheckConfiguration(err);
+    REQUIRE(err == "noerror");
+
+    // Create a graph like (1) and check that it turns into a graph like (2).
+    //
+    //    (1)          (2)
+    //
+    //  T1   T2      T1   T2
+    //  |    |       |    |
+    //  O1   O2      O1   O2
+    //  |    |   =>   \  / (slice offset on OFM conn.)
+    //  T3   T4        T5
+    //   \  /
+    //   PACK
+    //    |
+    //    T5
+
+    std::vector<std::shared_ptr<Operation>> ops;
+    auto ifm0 = CreateTensor("IFM0", Shape(1, 2, 2, 4), DataType::Int8);
+    auto ifm1 = CreateTensor("IFM1", Shape(1, 2, 2, 4), DataType::Int8);
+    auto abs0 = CreateTensor("ABS0", Shape(1, 2, 2, 4), DataType::Int8);
+    auto abs1 = CreateTensor("ABS1", Shape(1, 2, 2, 4), DataType::Int8);
+    auto packed = CreateTensor("PACKED", Shape(1, 2, 2, 8), DataType::Int8);
+
+    ops.push_back(CreateOperation(OpType::Abs, TensorUsage::IFM, ifm0, TensorUsage::OFM, abs0));
+    ops.push_back(CreateOperation(OpType::Abs, TensorUsage::IFM, ifm1, TensorUsage::OFM, abs1));
+    ops.push_back(CreateOperation(OpType::Concat, TensorUsage::IFM0, abs0, TensorUsage::IFM1, abs1, TensorUsage::OFM, packed));
+    auto *packAttr = ops.back()->Attribute<axis_attr_t>();
+    packAttr->axis = 3;  // C
+
+    auto graph = CreateGraph(ops);
+    GraphOptimiserOptions options;
+    const auto &optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
+    REQUIRE(!optimiser.empty());
+
+    // Run the last optimiser step (where MoveConcatSliceToProducer lives)
+    optimiser.back()->Process(graph.get());
+
+    std::vector<Operation *> allOps;
+    graph->GetAllOperations(allOps);
+    REQUIRE(allOps.size() == 2);
+
+    // Check first ABS
+    Operation *absOp0 = allOps[0];
+    REQUIRE(absOp0);
+    REQUIRE(absOp0->Type() == OpType::Abs);
+    auto *abs0Ifm = absOp0->Input(TensorUsage::IFM);
+    REQUIRE(abs0Ifm->tensor == ifm0);
+    REQUIRE(abs0Ifm->tensor->Readers().size() == 1);
+    REQUIRE(abs0Ifm->tensor->Writers().empty());
+    REQUIRE(abs0Ifm->shape == Shape(1, 2, 2, 4));
+    REQUIRE_FALSE(!!abs0Ifm->slice);  // No slice
+    auto *abs0Ofm = absOp0->Output(TensorUsage::OFM);
+    REQUIRE(abs0Ofm->tensor == packed);
+    REQUIRE(abs0Ofm->tensor->Readers().empty());
+    REQUIRE(abs0Ofm->tensor->Writers().size() == 2);
+    REQUIRE(abs0Ofm->shape == Shape(1, 2, 2, 8));
+    REQUIRE(abs0Ofm->slice.offset == Shape(0, 0, 0, 0));
+    REQUIRE(abs0Ofm->slice.shape == Shape(1, 2, 2, 4));
+
+    // Check second ABS
+    Operation *absOp1 = allOps[1];
+    REQUIRE(absOp1);
+    REQUIRE(absOp1->Type() == OpType::Abs);
+    auto *abs1Ifm = absOp1->Input(TensorUsage::IFM);
+    REQUIRE(abs1Ifm->tensor == ifm1);
+    REQUIRE(abs1Ifm->tensor->Readers().size() == 1);
+    REQUIRE(abs1Ifm->tensor->Writers().empty());
+    REQUIRE(abs1Ifm->shape == Shape(1, 2, 2, 4));
+    REQUIRE_FALSE(!!abs1Ifm->slice);
+    auto *abs1Ofm = absOp1->Output(TensorUsage::OFM);
+    REQUIRE(abs1Ofm->tensor == packed);
+    REQUIRE(abs1Ofm->tensor->Readers().empty());
+    REQUIRE(abs1Ofm->tensor->Writers().size() == 2);
+    REQUIRE(abs1Ofm->shape == Shape(1, 2, 2, 8));
+    REQUIRE(abs1Ofm->slice.offset == Shape(0, 0, 0, 4));
+    REQUIRE(abs1Ofm->slice.shape == Shape(1, 2, 2, 4));
+}
