@@ -325,11 +325,12 @@ EthosU85Cycles EthosU85Performance::EstimateElementwiseCycles(const PerformanceQ
     return cycleComponents;
 }
 
+// Estimate the number of bytes transferred on the bus as a function of the number of bits of data and the burst
+// efficency
 static int64_t EstimateMemoryTransfer(int cores, bool isRead, ArchitectureMemory *memory, TensorFormat format,
-    int elementBits, const Shape &block, const Shape &shape, int toTransfer)
+    int elementBits, const Shape &block, const Shape &shape, int elementsToTransfer)
 {
     int burstLen = 8;
-
     if ( format == TensorFormat::NHCWB16 )
     {
         int zStride = (shape.Width() * elementBits * 16) / 8;
@@ -375,8 +376,8 @@ static int64_t EstimateMemoryTransfer(int cores, bool isRead, ArchitectureMemory
 
     burstLen = std::min(memory->MaxBurstLength(), burstLen / 8);
     assert(burstLen > 0 && "Burst length cannot be zero");
-    int64_t memTransfer = (int64_t(toTransfer) * memory->MaxBurstLength()) / burstLen;
-    return memTransfer;
+    int64_t memTransferCost = (int64_t(elementsToTransfer * elementBits / 8) * memory->MaxBurstLength()) / burstLen;
+    return memTransferCost;
 }
 
 
@@ -390,10 +391,10 @@ int64_t EthosU85Performance::EstimateMinimumMemoryCycles(const PerformanceQuery 
     for ( int i = 0; i < ifmCount; i++ )
     {
         // Input block HW transfer (only for elements present)
-        int ifmBytes = Shape::Min(query.ifmShape[i], opConfig->IfmBlock()).Elements() * ifmBits / 8;
+        int ifmElements = Shape::Min(query.ifmShape[i], opConfig->IfmBlock()).Elements();
         int64_t cyclesIfmBlk = query.ifmMemory[i]->ReadLatency();
         int64_t tx = EstimateMemoryTransfer(_arch->_cores, true, query.ifmMemory[i], query.ifmFormat[i], ifmBits,
-            opConfig->IfmBlock(), query.ifmShape[i], ifmBytes);
+            opConfig->IfmBlock(), query.ifmShape[i], ifmElements);
         cyclesIfmBlk += int64_t(float(tx) / query.ifmMemory[i]->Bandwidth());
 
         cyclesIfm = std::max(cyclesIfm, cyclesIfmBlk);
@@ -401,10 +402,10 @@ int64_t EthosU85Performance::EstimateMinimumMemoryCycles(const PerformanceQuery 
 
     // Output block HW transfer (only for elements present)
     int ofmBits = DataTypeSizeBits(query.ofmType);
-    int ofmBytes = Shape::Min(query.ofmShape, opConfig->OfmBlock()).Elements() * ofmBits / 8;
+    int ofmElements = Shape::Min(query.ofmShape, opConfig->OfmBlock()).Elements();
     int64_t cyclesOfm = query.ofmMemory->WriteLatency();
     int64_t tx = EstimateMemoryTransfer(_arch->_cores, false, query.ofmMemory, query.ofmFormat, ofmBits,
-        opConfig->OfmBlock(), query.ofmShape, ofmBytes);
+        opConfig->OfmBlock(), query.ofmShape, ofmElements);
     cyclesOfm += int64_t(float(tx) / query.ofmMemory->Bandwidth());
 
     return cyclesIfm + cyclesOfm;
@@ -535,19 +536,19 @@ ElementAccess EthosU85Performance::MeasureElementAccess(const PerformanceQuery &
         int ifmFetch =
             (Shape::RoundAway(ifmBlock, ifmRounding).ElementsWH() * Shape::RoundAway(query.ifmShape[0], ifmRounding).Depth());
 
-        int kernelRead = query.kernel->Size().AreaXY();
-        if ( npuOp != EthosU85NpuOp::Depthwise && npuOp != EthosU85NpuOp::Pooling &&
-             npuOp != EthosU85NpuOp::ReduceMinMax && npuOp != EthosU85NpuOp::ArgMax )
-        {
-            kernelRead *= query.ifmShape[0].Depth();
-        }
-
         int ofmBlockCount = ofmBlocks.Elements();
 
         access.ifmRead[0] = ifmFetch * subkernels * ofmBlockCount;
 
-        if ( (npuOp != EthosU85NpuOp::Pooling) && (npuOp != EthosU85NpuOp::ReduceSum) )
+        // Calculate weight and bias/scale reads
+        if ( npuOp == EthosU85NpuOp::Convolution || npuOp == EthosU85NpuOp::Depthwise || npuOp == EthosU85NpuOp::VectorProduct )
         {
+            int kernelRead = query.kernel->Size().AreaXY();
+            if ( npuOp != EthosU85NpuOp::Depthwise )
+            {
+                kernelRead *= query.ifmShape[0].Depth();
+            }
+
             int weightFetch = kernelRead * ofmBlockDepth * ofmBlockCount;
             access.constRead[0] = weightFetch;
             access.constRead[1] = query.ofmShape.Depth();  // Scales & biases
@@ -556,32 +557,17 @@ ElementAccess EthosU85Performance::MeasureElementAccess(const PerformanceQuery &
     }
     else if ( npuOp == EthosU85NpuOp::Elementwise )
     {
-        // IFM1 is scalar
-        if ( query.ifmShape[0].Elements() == 1 )
+        bool encodedScalar = false;
+        for ( size_t i = 0; i < std::size(query.ifmShape); i++ )
         {
-            if ( DataTypeSizeBits(query.ifmType[0]) > 8 )  // IFM1 is a non 8-bit scalar
+            if ( query.ifmShape[i] && (query.ifmShape[i].Elements() > 1 || encodedScalar) )
             {
-                access.ifmRead[0] = Shape::RoundAway(query.ifmShape[0], ifmRounding).Elements();
+                access.ifmRead[i] = Shape::RoundAway(query.ifmShape[i], ifmRounding).Elements();
             }
-            else if ( query.ifmShape[1].Elements() > 0 )
+            else if ( query.ifmShape[i] )
             {
-                access.ifmRead[1] = Shape::RoundAway(query.ofmShape, ifmRounding).Elements();
-            }
-        }
-        else  // IFM1 is not scalar
-        {
-            access.ifmRead[0] = Shape::RoundAway(query.ofmShape, ifmRounding).Elements();
-            if ( query.ifmShape[1].Elements() > 0 )
-            {
-                // IFM2 is not scalar
-                if ( query.ifmShape[1].Elements() > 1 )
-                {
-                    access.ifmRead[1] = access.ifmRead[0];
-                }
-                else if ( DataTypeSizeBits(query.ifmType[1]) > 8 )  // IFM2 is a non 8-bit scalar
-                {
-                    access.ifmRead[1] = Shape::RoundAway(query.ifmShape[1], ifmRounding).Elements();
-                }
+                // Only one scalar can be encoded
+                encodedScalar = encodedScalar || (query.ifmShape[i].Elements() == 1);
             }
         }
     }
@@ -633,8 +619,12 @@ ElementAccess EthosU85Performance::MeasureElementAccess(const PerformanceQuery &
             {
                 int ifmIdx = GetUsageIndex(fmRecord.usage);
                 assert(size_t(ifmIdx) < std::size(fmRecord.access->ifmRead));
-                Shape extIfmRounding = _arch->GetStorageRounding(fmRecord.format);
-                fmRecord.access->ifmRead[ifmIdx] = Shape::RoundAway(fmRecord.shape, extIfmRounding).Elements();
+                // If the feature map is a scalar it will be enocded and won't require any external read
+                if ( fmRecord.shape.Elements() > 1 )
+                {
+                    Shape extIfmRounding = _arch->GetStorageRounding(fmRecord.format);
+                    fmRecord.access->ifmRead[ifmIdx] = Shape::RoundAway(fmRecord.shape, extIfmRounding).Elements();
+                }
             }
             else
             {
