@@ -410,15 +410,17 @@ int64_t EthosU85Performance::EstimateMinimumMemoryCycles(const PerformanceQuery 
     return cyclesIfm + cyclesOfm;
 }
 
-double EthosU85Performance::GetActivationCyclesPerElement(OpType opType)
+double EthosU85Performance::GetActivationCyclesPerElement(ReverseType reverse, TransposeType transpose)
 {
-    size_t activationPerfIndex = 1;
-    if ( opType == OpType::Sigmoid || opType == OpType::Tanh || opType == OpType::LookupTable )
+    size_t activationPerfIndex = 0;
+    if ( transpose == TransposeType::NWHC || transpose == TransposeType::NWCH || transpose == TransposeType::NCWH )
     {
-        activationPerfIndex = 0;
+        // H <-> W transposes has half throughput
+        activationPerfIndex = 1;
     }
-    else if ( opType == OpType::Relu || opType == OpType::Relu0To1 || opType == OpType::Relu6 || opType == OpType::ReluN1To1 )
+    else if ( reverse == ReverseType::W )
     {
+        // Reversing in W-dimension has half throughput
         activationPerfIndex = 1;
     }
 
@@ -426,19 +428,41 @@ double EthosU85Performance::GetActivationCyclesPerElement(OpType opType)
     return _perfInfo->activationCycles[activationPerfIndex];
 }
 
-double EthosU85Performance::GetOutputCyclesPerElement(OpType opType, DataType ifmType, DataType ofmType)
+double EthosU85Performance::GetOutputCyclesPerElement(OpType opType, DataType ifmType, DataType ofmType, bool writesToCB)
 {
+    if ( opType == OpType::Div )
+    {
+        return 33.0f;
+    }
+
     int ifmBits = DataTypeSizeBits(ifmType);
     int ofmBits = DataTypeSizeBits(ofmType);
     size_t outputPerfIndex = 0;
 
-    if ( ifmBits == 32 )
+    if ( writesToCB && (ofmBits == 32 || ifmBits == 32) )
     {
-        outputPerfIndex = 0;
+        outputPerfIndex = 4;
     }
-    else if ( opType == OpType::Mul && ofmBits == 32 )
+    else if ( ofmBits == 64 )
+    {
+        outputPerfIndex = 3;
+    }
+    else if ( IsBinaryElementwise(opType) && ifmBits == 32 )
+    {
+        outputPerfIndex = ofmBits == 32 ? 5 : 4;
+    }
+    else if ( ofmBits == 32 )
+    {
+        outputPerfIndex = 2;
+    }
+    else if ( ofmBits == 16 )
     {
         outputPerfIndex = 1;
+    }
+    else
+    {
+        assert(ofmBits == 8);
+        outputPerfIndex = 0;
     }
 
     assert(outputPerfIndex < std::size(_perfInfo->outputCycles));
@@ -454,10 +478,11 @@ double EthosU85Performance::EstimateAOCyclesPerElement(const PerformanceQuery &q
     for ( const auto &opInfo : *opGroup )
     {
         OpType opType = opInfo.type;
+        auto ofm = opInfo.ofm;
         if ( IsActivation(opType) || opType == OpType::Reverse || opType == OpType::Transpose )
         {
             // Activations are done through the same pass of the AO, push the cycles to the list
-            cyclesPerOp.push_back(GetActivationCyclesPerElement(opType));
+            cyclesPerOp.push_back(GetActivationCyclesPerElement(ofm.reverse, ofm.transpose));
         }
         else
         {
@@ -465,7 +490,9 @@ double EthosU85Performance::EstimateAOCyclesPerElement(const PerformanceQuery &q
             // It can contain 0 or 1 output ops and 0 or more activations
             cyclesPerElement += cyclesPerOp.empty() ? 0.0 : *std::max_element(cyclesPerOp.begin(), cyclesPerOp.end());
             cyclesPerOp.clear();
-            cyclesPerOp.push_back(GetOutputCyclesPerElement(opType, opInfo.ifm[0].type, opInfo.ofm.type));
+            // If the OFM does not require allocation it means this op writes to a chaining buffer
+            bool writesToCB = !opGroup->NeedsAllocation(ofm.key);
+            cyclesPerOp.push_back(GetOutputCyclesPerElement(opType, opInfo.ifm[0].type, ofm.type, writesToCB));
         }
     }
 

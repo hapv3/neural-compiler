@@ -549,7 +549,7 @@ double EthosU55Performance::EstimateAOCyclesPerElement(const PerformanceQuery &q
     if ( activation != opGroup->end() )
     {
         OpType activationType = activation->type;
-        if ( activationType == OpType::Sigmoid || activationType == OpType::Tanh || activationType == OpType::LookupTable )
+        if ( activationType == OpType::Sigmoid || activationType == OpType::Tanh || activationType == OpType::LUT )
         {
             activationPerfIndex = 0;
         }

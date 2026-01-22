@@ -29,7 +29,7 @@ class ArchEthosU85;
 
 struct EthosU85PerfInfo
 {
-    float outputCycles[2];
+    float outputCycles[6];
     float activationCycles[2];
 };
 
@@ -95,8 +95,8 @@ private:
     EthosU85Cycles EstimateMacOpCycles(const PerformanceQuery &query);
     EthosU85Cycles EstimateElementwiseCycles(const PerformanceQuery &query);
     int64_t EstimateMacCyclesPerBlock(const PerformanceQuery &query);
-    double GetOutputCyclesPerElement(OpType opType, DataType ifmType, DataType ofmType);
-    double GetActivationCyclesPerElement(OpType opType);
+    double GetOutputCyclesPerElement(OpType opType, DataType ifmType, DataType ofmType, bool writesToCB);
+    double GetActivationCyclesPerElement(ReverseType reverse, TransposeType transpose);
     double EstimateAOCyclesPerElement(const PerformanceQuery &query);
     int64_t EstimateMinimumMemoryCycles(const PerformanceQuery &query);
     float ChannelBW(const ArchitectureMemory *mem, MemChannel channel);
