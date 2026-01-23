@@ -892,8 +892,9 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
                 auto outputAreaEnd = ofmEnd.WithHeight(endHeight).WithWidth(endWidth).WithDepth(endChannel);
                 auto outputArea = Box(outputAreaStart, outputAreaEnd);
                 auto hlcStripe = std::make_unique<HLCStripe>(hlcOp);
+                auto &primaryStripeArea = hlcStripe->stripeAreas.emplace_back();
                 hlcStripe->padding = padding;
-                hlcStripe->ofmArea = outputArea;
+                primaryStripeArea.ofmArea = outputArea;
                 hlcStripe->opGroup = opGroup;
                 for ( const auto &fm : hlcOp->ifm )
                 {
@@ -910,7 +911,7 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
                             ifmConn->stepXY, outputArea, ofmConn->stepXY, kernel, hlcStripe->padding, ifmConn->shape);
                     }
                     inputArea = Box(inputArea.Start(), Shape::Max(inputArea.End(), inputArea.Start() + inputArea.Start().WithOnes()));
-                    hlcStripe->ifmAreas.push_back(inputArea);
+                    primaryStripeArea.AddIfm(inputArea);
                 }
                 if ( opInfo->npuWeightsTensor != nullptr )
                 {
@@ -947,6 +948,46 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
                 {
                     hlcStripe->weightRangeDepth = -1;
                 }
+
+                // Generate FM areas for sub-operations
+                assert(hlcOp->subOps.size() == op->SubOps().size());
+                for ( size_t i = 0; i < hlcOp->subOps.size(); ++i )
+                {
+                    const auto &subOp = op->SubOps()[i];
+                    HLCSubOperation &hlcSubOp = hlcOp->subOps[i];
+
+                    StripeArea hlcSubOpArea;
+                    assert(!hlcStripe->stripeAreas.empty());
+                    hlcSubOpArea.ofmArea = hlcStripe->stripeAreas[0].ofmArea;
+                    for ( const auto &subOpIfm : hlcSubOp.ifm )
+                    {
+                        if ( !IsIFM(subOpIfm.usage) ) continue;
+                        if ( subOpIfm.address == hlcOp->ofm.address )
+                        {
+                            assert(subOpIfm.address == -1);  // Address -1 signifies that the FM is in an internal
+                                                             // buffer
+                            hlcSubOpArea.AddIfm(hlcStripe->stripeAreas[0].ofmArea);
+                        }
+                        else
+                        {
+                            // Calculate the external input area based on the output area
+                            auto subOpIfmConn = subOp->Input(subOpIfm.usage);
+                            auto subOpOfmConn = subOp->Output(TensorUsage::OFM);
+                            TransformLimit subOpIfmLimit = IsBinaryElementwise(subOp->Type()) ? TransformLimit::Wrap : TransformLimit::None;
+                            // Strides/skirt/padding/upscaling is always unit for sub-operations
+                            Shape subOpStrides(1, 1, 1, 1);
+                            HLCPadding zeroPadding{0, 0, 0, 0};
+
+                            auto subOpInputArea = TransformWithStridesAndSkirt(hlcSubOpArea.ofmArea, &subOpStrides,
+                                subOpIfmConn->stepXY, &zeroPadding, subOpIfmConn->shape, subOp->Type(),
+                                subOpOfmConn->slice.offset, subOpIfmConn->slice.offset, subOpIfmConn->slice.shape, 1, 1,
+                                zeroPadding.top, zeroPadding.bottom, subOpIfmLimit, subOpOfmConn->transpose, false);
+                            hlcSubOpArea.AddIfm(subOpInputArea);
+                        }
+                    }
+                    hlcStripe->stripeAreas.push_back(std::move(hlcSubOpArea));
+                }
+
                 cmds.push_back(std::move(hlcStripe));
             }
         }
@@ -1027,9 +1068,13 @@ void HLCStreamGenerator::GenerateCommandsForCascade(vector_span<std::unique_ptr<
     while ( true )
     {
         int &ix = currIndex[opIndex];
+        assert(!nextStripe[opIndex]->stripeAreas.empty());
         if ( opIndex == 0 ||
-             nextStripe[opIndex]->ifmAreas[cascadedOps[opIndex]->PrimaryIfmIndex()].End().IsSubShapeOf(
-                 availableStripe[opIndex - 1]->ofmArea.End()) )
+             nextStripe[opIndex]
+                 ->stripeAreas[0]
+                 .ifmAreas.at(cascadedOps[opIndex]->PrimaryIfmIndex())
+                 .End()
+                 .IsSubShapeOf(availableStripe[opIndex - 1]->stripeAreas[0].ofmArea.End()) )
         {
             auto &stream = cmdsForOps[opIndex];
             assert(ix < int(stream.size()));
@@ -1041,8 +1086,11 @@ void HLCStreamGenerator::GenerateCommandsForCascade(vector_span<std::unique_ptr<
                 availableStripe[opIndex] = nextStripe[opIndex];
                 nextStripe[opIndex] = FindNextStripe(stream, ix);
                 if ( opIndex < nrOps - 1 &&
-                     nextStripe[opIndex + 1]->ifmAreas[cascadedOps[opIndex + 1]->PrimaryIfmIndex()].End().IsSubShapeOf(
-                         availableStripe[opIndex]->ofmArea.End()) )
+                     nextStripe[opIndex + 1]
+                         ->stripeAreas[0]
+                         .ifmAreas.at(cascadedOps[opIndex + 1]->PrimaryIfmIndex())
+                         .End()
+                         .IsSubShapeOf(availableStripe[opIndex]->stripeAreas[0].ofmArea.End()) )
                 {
                     // Enough output has been produced to continue at next level
                     ++opIndex;

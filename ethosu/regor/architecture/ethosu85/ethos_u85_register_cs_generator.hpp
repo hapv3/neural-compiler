@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -246,7 +246,7 @@ protected:
     // Resize operations
     void GenerateResizeOp(HLCStripe *stripe, MemoryAccesses &memoryAccesses);
     bool GenerateStripe(HLCStripe *stripe, MemoryAccesses &memoryAccesses);
-    std::shared_ptr<HLCStripe> MakeStripeForSubOp(HLCStripe *stripe, HLCSubOperation &subOp);
+    std::shared_ptr<HLCStripe> MakeStripeForSubOp(HLCStripe *stripe, int subOpIdx);
     bool GenerateOpGroup(HLCStripe *stripe, HLCStripe *prevOp, MemoryAccesses &memoryAccesses, std::deque<MemoryAccesses> &outstandingDmaAccesses,
         std::vector<std::pair<unsigned, std::string>> &debugInfo, CmdRanges *cmdRanges);
     // Generates register commands for DMA operations

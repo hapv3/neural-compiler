@@ -1058,10 +1058,6 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
     bool needsDMA = weightTens->memArea.memory != _arch->StagingMemory().memory;
 
     const auto &subOps = schedOp->SubOps();
-    const bool isChained =
-        schedOp->Parent() != nullptr ||
-        subOps.end() !=
-            std::find_if(subOps.begin(), subOps.end(), [](const auto &subOp) { return IsElementwise(subOp->Type()); });
 
     assert(ofm->transpose == TransposeType::None || (ofm->transpose & TransposeType::MaskC) == TransposeType::C || refCost->stripe == ofm->shape);
     const int fullDepthBeforeTransposition =
@@ -1126,9 +1122,8 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
 
     int weightBufferSize = 0;
 
-    // Force full depth for cascaded and chained ops
-    // TODO MLBEDSW-9145: support depth-slicing for chains
-    if ( cost->cascade != 0 || isChained || forceFullDepthSlice )
+    // Force full depth for cascaded ops
+    if ( cost->cascade != 0 || forceFullDepthSlice )
     {
         weightBufferSize = fullWeightsBytes;
         // Update the memory snapshot to reflect the added size of the weights

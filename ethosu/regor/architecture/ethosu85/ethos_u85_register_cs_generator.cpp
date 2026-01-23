@@ -910,11 +910,13 @@ int EthosU85RCSGenerator::CalcBlockDep(HLCStripe *prevStripe, HLCStripe *stripe)
     // Get the last few jobs from the previous operation (each job produces a part of the current op's IFM)
     std::vector<Box> lastPrevJobs;
     Shape prevOfmJobShape = CalcOFMJobShape(prevBlock, prevOfm.stepXY);
-    GetJobs(prevStripe->ofmArea, prevOfmJobShape, maxJobs, false, lastPrevJobs);
+    assert(!prevStripe->stripeAreas.empty());
+    GetJobs(prevStripe->stripeAreas[0].ofmArea, prevOfmJobShape, maxJobs, false, lastPrevJobs);
     // Get the first few jobs from the current operation (each job consumes a part of the current op's IFM)
     std::vector<Box> firstCurrJobs;
     Shape ifmJobShape = CalcIFMJobShape(config->OfmBlock(), &op->kernel, config->IfmBlock().Depth(), ifm.stepXY);
-    GetJobs(stripe->ifmAreas[ifmIndex], ifmJobShape, maxJobs, true, firstCurrJobs);
+    assert(!stripe->stripeAreas.empty());
+    GetJobs(stripe->stripeAreas[0].ifmAreas.at(ifmIndex), ifmJobShape, maxJobs, true, firstCurrJobs);
     // Find the highest blockdep such that there is no overlap between
     // any job from the previous op with any job from the current op during blockdep jobs
     int sz = int(std::min(lastPrevJobs.size(), firstCurrJobs.size()));
@@ -1805,10 +1807,12 @@ void EthosU85RCSGenerator::GenerateCommon(const HLCStripe *stripe, bool useGloba
     DataType
         dataType = _arch->UseNullPool(op->type, DataTypeSizeBits(op->ifm[0].dataType)) ? DataType::Int8 : op->ifm[0].dataType;
     GenerateIFMPrecision(op->ifm[0], ifmChained, isScalar, dataType);
-    GenerateIFM(op->type, op->ifm[0], stripe->ifmAreas[0], isScalar, scalarValue, ifmCb, ifm2Chained);
+    assert(!stripe->stripeAreas.empty());
+    auto &ifmArea = stripe->stripeAreas[0].ifmAreas.at(0);
+    GenerateIFM(op->type, op->ifm[0], ifmArea, isScalar, scalarValue, ifmCb, ifm2Chained);
     if ( !isScalar && !ifmChained )
     {
-        memoryAccesses.push_back(ToMemoryAccess(op->ifm[0], stripe->ifmAreas[0], AccessDirection::Read));
+        memoryAccesses.push_back(ToMemoryAccess(op->ifm[0], ifmArea, AccessDirection::Read));
     }
     ifm_upscale_mode upscaleMode = ToIfmUpscaleMode(op->ifm[0].resamplingMode);
     Emit(isa::npu_set_ifm_upscale_t(upscaleMode));
@@ -1817,10 +1821,11 @@ void EthosU85RCSGenerator::GenerateCommon(const HLCStripe *stripe, bool useGloba
         GeneratePadding(stripe->padding);
     }
     GenerateOFMPrecision(op->ofm, ofmChained, useGlobalScale, config->AccOutputEnabled());
-    GenerateOFM(op->type, op->ofm, stripe->ofmArea, ofmCb);
+    auto ofmArea = stripe->stripeAreas[0].ofmArea;
+    GenerateOFM(op->type, op->ofm, ofmArea, ofmCb);
     if ( !ofmChained )
     {
-        memoryAccesses.push_back(ToMemoryAccess(op->ofm, stripe->ofmArea, AccessDirection::Write));
+        memoryAccesses.push_back(ToMemoryAccess(op->ofm, ofmArea, AccessDirection::Write));
     }
     if ( !IsElementwise(op->type) && op->type != OpType::Resize )
     {
@@ -1847,7 +1852,9 @@ void EthosU85RCSGenerator::GenerateConvolutionOp(const HLCStripe *stripe, Memory
     if ( op->ifm.size() == 2 )
     {
         GenerateIFM2Precision(op->ifm[1], false, false);
-        GenerateIFM2(op->type, op->ifm[1], stripe->ifmAreas[1], false, 0, -1);
+        assert(!stripe->stripeAreas.empty());
+        auto &ifm2Area = stripe->stripeAreas[0].ifmAreas.at(1);
+        GenerateIFM2(op->type, op->ifm[1], ifm2Area, false, 0, -1);
         if ( config->AccSource() != ArchAccumulatorSource::Ifm2 )
         {
             // Dynamic weights
@@ -1855,7 +1862,7 @@ void EthosU85RCSGenerator::GenerateConvolutionOp(const HLCStripe *stripe, Memory
             useGlobalScale = true;
             Emit(isa::npu_set_weight_format_t(weight_format::SWD, weight_sparsity::NONE));  // Reset weight format
         }
-        memoryAccesses.push_back(ToMemoryAccess(op->ifm[1], stripe->ifmAreas[1], AccessDirection::Read));
+        memoryAccesses.push_back(ToMemoryAccess(op->ifm[1], ifm2Area, AccessDirection::Read));
     }
 
     if ( !op->ofm.quantization.scales.empty() )
@@ -1879,8 +1886,9 @@ void EthosU85RCSGenerator::GeneratePoolingOp(HLCStripe *stripe, MemoryAccesses &
     assert(!(op->type == OpType::ReduceSum && ifmType == DataType::Int32 && config->_accumulatorType == EthosU85Accumulator::Acc48));
     if ( _arch->UseNullPool(opType, DataTypeSizeBits(ifmType)) )
     {
+        assert(!stripe->stripeAreas.empty());
         GenerateIFM2Precision(op->ifm[0], false, false);
-        GenerateIFM2(op->type, op->ifm[0], stripe->ifmAreas[0], false, 0, -1);
+        GenerateIFM2(op->type, op->ifm[0], stripe->stripeAreas[0].ifmAreas.at(0), false, 0, -1);
     }
     else if ( _arch->UseAvgPoolNop(op->type) )
     {
@@ -1898,7 +1906,8 @@ void EthosU85RCSGenerator::GenerateElementwiseOp(HLCStripe *stripe, MemoryAccess
     auto op = stripe->operation.get();
     auto opType = op->type;
     constexpr bool useGlobalScale = true;
-    auto ofmShape = stripe->ofmArea.SizeShape();
+    assert(!stripe->stripeAreas.empty());
+    auto ofmShape = stripe->stripeAreas[0].ofmArea.SizeShape();
     if ( IsUnaryElementwise(opType) )
     {
         assert(op->ifm.size() == 1);
@@ -1906,7 +1915,7 @@ void EthosU85RCSGenerator::GenerateElementwiseOp(HLCStripe *stripe, MemoryAccess
         GenerateCommon(stripe, useGlobalScale, memoryAccesses);
         int32_t scalarValue = 0;
         bool ifmIsScalar = IsScalar(op->ifm[0], scalarValue);
-        auto ifmShape = stripe->ifmAreas[0].SizeShape();
+        auto ifmShape = stripe->stripeAreas[0].ifmAreas.at(0).SizeShape();
         GenerateInputBroadcast(ifmShape, Shape(), ifmIsScalar, false, ofmShape);
     }
     else
@@ -1914,23 +1923,24 @@ void EthosU85RCSGenerator::GenerateElementwiseOp(HLCStripe *stripe, MemoryAccess
         // Binary operation: generate IFM2 registers
         assert(op->ifm.size() == 2);
         assert(ToActivationPrecision(op->ifm[0].dataType) == ToActivationPrecision(op->ifm[1].dataType));
-        assert(stripe->ifmAreas.size() == 2);
+        auto &ifmAreas = stripe->stripeAreas[0].ifmAreas;
+        assert(stripe->stripeAreas[0].ifmCount == 2);
         assert(stripe->opGroup != nullptr);
         EthosU85OpGroup *opGroup = static_cast<EthosU85OpGroup *>(stripe->opGroup);
         int ifm2Cb = opGroup->ChainingBuffer(op->ifm[1].uid);
         bool ifm2Chained = (ifm2Cb >= 0);
         int32_t scalarValue = 0;
-        auto ifmShape = stripe->ifmAreas[0].SizeShape();
-        auto ifm2Shape = stripe->ifmAreas[1].SizeShape();
+        auto ifmShape = ifmAreas.at(0).SizeShape();
+        auto ifm2Shape = ifmAreas.at(1).SizeShape();
         GenerateScalingForElementwise(op);
         GenerateCommon(stripe, useGlobalScale, memoryAccesses);
         bool ifmIsScalar = IsScalar(op->ifm[0], scalarValue);
         bool ifm2IsScalar = !ifmIsScalar && IsScalar(op->ifm[1], scalarValue);
         GenerateIFM2Precision(op->ifm[1], ifm2Chained, ifm2IsScalar);
-        GenerateIFM2(opType, op->ifm[1], stripe->ifmAreas[1], ifm2IsScalar, scalarValue, ifm2Cb);
+        GenerateIFM2(opType, op->ifm[1], ifmAreas.at(1), ifm2IsScalar, scalarValue, ifm2Cb);
         if ( !ifm2IsScalar && !ifm2Chained )
         {
-            memoryAccesses.push_back(ToMemoryAccess(op->ifm[1], stripe->ifmAreas[1], AccessDirection::Read));
+            memoryAccesses.push_back(ToMemoryAccess(op->ifm[1], ifmAreas.at(1), AccessDirection::Read));
         }
         GenerateInputBroadcast(ifmShape, ifm2Shape, ifmIsScalar, ifm2IsScalar, ofmShape);
     }
@@ -1945,8 +1955,9 @@ void EthosU85RCSGenerator::GenerateResizeOp(HLCStripe *stripe, MemoryAccesses &m
     auto *config = static_cast<EthosU85OpConfig *>(op->config);
     Shape ofmBlock = config->_ofmBlock;
 
-    auto ifmShape = stripe->ifmAreas[0].SizeShape();
-    auto ofmShape = stripe->ofmArea.SizeShape();
+    assert(!stripe->stripeAreas.empty());
+    auto ifmShape = stripe->stripeAreas[0].ifmAreas.at(0).SizeShape();
+    auto ofmShape = stripe->stripeAreas[0].ofmArea.SizeShape();
 
     // operator-parameters
     const HLCParameters *params = &op->parameters;
@@ -2043,8 +2054,9 @@ bool EthosU85RCSGenerator::GenerateStripe(HLCStripe *stripe, MemoryAccesses &mem
 }
 
 
-std::shared_ptr<HLCStripe> EthosU85RCSGenerator::MakeStripeForSubOp(HLCStripe *stripe, HLCSubOperation &subOp)
+std::shared_ptr<HLCStripe> EthosU85RCSGenerator::MakeStripeForSubOp(HLCStripe *stripe, int subOpIdx)
 {
+    HLCSubOperation subOp = stripe->operation->subOps.at(subOpIdx);
     auto op = std::make_shared<HLCOperation>();
     op->type = subOp.type;
     op->ifm = subOp.ifm;
@@ -2060,26 +2072,9 @@ std::shared_ptr<HLCStripe> EthosU85RCSGenerator::MakeStripeForSubOp(HLCStripe *s
     }
     op->config = stripe->operation->config;
     std::shared_ptr<HLCStripe> newStripe = std::make_shared<HLCStripe>(op);
-    for ( int i = 0; i < int(subOp.ifm.size()); i++ )
-    {
-        // TODO MLBEDSW-9143 cascading + chaining requires striping area information for suboperations
-        if ( subOp.ifm[i].slice.IsValid() )
-        {
-            newStripe->ifmAreas.emplace_back(subOp.ifm[i].slice.offset, Box::Size(subOp.ifm[i].slice.shape));
-        }
-        else
-        {
-            newStripe->ifmAreas.emplace_back(subOp.ifm[i].shape);
-        }
-    }
-    if ( subOp.ofm.slice.IsValid() )
-    {
-        newStripe->ofmArea = Box(subOp.ofm.slice.offset, Box::Size(subOp.ofm.slice.shape));
-    }
-    else
-    {
-        newStripe->ofmArea = Box(subOp.ofm.shape);
-    }
+
+    newStripe->stripeAreas.push_back(stripe->stripeAreas[subOpIdx + 1]);  // +1 because first stripeArea is for primary
+                                                                          // op
     newStripe->padding = stripe->padding;
     newStripe->opGroup = stripe->opGroup;
     return newStripe;
@@ -2111,6 +2106,7 @@ bool EthosU85RCSGenerator::GenerateOpGroup(HLCStripe *stripe, HLCStripe *prevOp,
 
     // Unroll Opgroup into stripes and generate commands for each subOp separately
     int idx = -1;
+    HLCStripe *primaryStripe = stripe;
     std::shared_ptr<HLCStripe> subStripe = nullptr;
     while ( idx < int(subOps.size()) )
     {
@@ -2118,8 +2114,7 @@ bool EthosU85RCSGenerator::GenerateOpGroup(HLCStripe *stripe, HLCStripe *prevOp,
         if ( idx >= 0 && opGroup->IsChained(stripe->operation->ofm.uid) )
         {
             // chained sub operation
-            HLCSubOperation subOp = subOps[idx];
-            subStripe = MakeStripeForSubOp(stripe, subOp);
+            subStripe = MakeStripeForSubOp(primaryStripe, idx);
             stripe = subStripe.get();
         }
         // fuse next subOp if it's an activation, transpose or reverse
@@ -2144,7 +2139,6 @@ bool EthosU85RCSGenerator::GenerateOpGroup(HLCStripe *stripe, HLCStripe *prevOp,
 
         GenerateWaits(false, memoryAccesses, outstandingDmaAccesses);
         GenerateOperationCode(stripe->operation.get());
-
         // Return command mapping information to the caller
         if ( cmdRanges )
         {

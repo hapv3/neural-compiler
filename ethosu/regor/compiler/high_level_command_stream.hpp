@@ -150,6 +150,15 @@ union HLCParameters
     } tile;
 };
 
+struct StripeArea
+{
+    int ifmCount = 0;
+    std::array<Box, 2> ifmAreas;
+    Box ofmArea;
+
+    void AddIfm(Box ifm) { ifmAreas.at(ifmCount++) = ifm; }
+};
+
 /// <summary>
 /// Sub operation
 /// </summary>
@@ -234,8 +243,7 @@ class HLCStripe : public HighLevelCommand
 public:
     std::shared_ptr<HLCOperation> operation;
     ArchitectureOpGroup *opGroup;
-    std::vector<Box> ifmAreas;
-    Box ofmArea;
+    std::vector<StripeArea> stripeAreas;
     int weightRangeDepth = 0;  // Identifies depth slice
     HLCPadding padding;
 
@@ -250,9 +258,11 @@ public:
         ofm = " -> " + operation->name;
 #endif
         std::string extra = "";
+        assert(!stripeAreas.empty());
+        const auto &ifmAreas = stripeAreas.front().ifmAreas;
         if ( ifmAreas.size() > 1 )
         {
-            extra = fmt::format(", IFM2 {}", ifmAreas[1].ToString());
+            extra = fmt::format(", IFM2 {}", ifmAreas.at(1).ToString());
         }
         else if ( operation->weights != nullptr && operation->weights->buffering != Buffering::None )
         {
@@ -262,12 +272,13 @@ public:
         {
             extra += fmt::format(", padding: {}", padding.ToString());
         }
+        const auto &ofmArea = stripeAreas.front().ofmArea;
         if ( ofmArea.SizeShape().Elements() != operation->ofm.shape.Elements() )
         {
             extra += (ofmArea.SizeShape().ElementsWH() == operation->ofm.shape.ElementsWH()) ? ", buffered" : ", cascaded";
         }
         return fmt::format("{}{} OFM area {}, IFM {}{}", OpTypeToString(operation->type), ofm, ofmArea.ToString(),
-            ifmAreas[0].ToString(), extra);
+            ifmAreas.at(0).ToString(), extra);
     }
 };
 

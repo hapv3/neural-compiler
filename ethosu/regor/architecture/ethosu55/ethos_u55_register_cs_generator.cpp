@@ -765,11 +765,13 @@ int EthosU55RCSGenerator::CalcBlockDep(const HLCStripe *prevStripe, const HLCStr
     // Get the last few jobs from the previous operation (each job produces a part of the current op's IFM)
     std::vector<Box> lastPrevJobs;
     Shape prevOfmJobShape = CalcOFMJobShape(prevBlock, prevOfm.stepXY);
-    GetJobs(prevStripe->ofmArea, prevOfmJobShape, maxJobs, false, lastPrevJobs);
+    assert(!prevStripe->stripeAreas.empty());
+    GetJobs(prevStripe->stripeAreas[0].ofmArea, prevOfmJobShape, maxJobs, false, lastPrevJobs);
     // Get the first few jobs from the current operation (each job consumes a part of the current op's IFM)
     std::vector<Box> firstCurrJobs;
     Shape ifmJobShape = CalcIFMJobShape(config->OfmBlock(), &op->kernel, config->IfmBlock().Depth(), ifm.stepXY);
-    GetJobs(stripe->ifmAreas[ifmIndex], ifmJobShape, maxJobs, true, firstCurrJobs);
+    assert(!stripe->stripeAreas.empty());
+    GetJobs(stripe->stripeAreas[0].ifmAreas.at(ifmIndex), ifmJobShape, maxJobs, true, firstCurrJobs);
     // Find the highest block dependency such that there is no overlap between
     // any job from the previous op with any job from the current op during block dependency jobs
     int sz = int(std::min(lastPrevJobs.size(), firstCurrJobs.size()));
@@ -1514,8 +1516,10 @@ void EthosU55RCSGenerator::InsertTransposeCommand(const HLCStripe *stripe, Tempo
                 cmd->opGroup = stripe->opGroup;
                 cmd->operation->ifm.push_back(inFM);
                 cmd->operation->ofm = outFM;
-                cmd->ofmArea = outFM.shape;
-                cmd->ifmAreas[0] = inFM.shape;
+                StripeArea stripeArea;
+                stripeArea.ofmArea = outFM.shape;
+                stripeArea.AddIfm(inFM.shape);
+                cmd->stripeAreas[0] = std::move(stripeArea);
 
                 // Find a common block configuration
                 if ( i == 0 )
@@ -1658,9 +1662,11 @@ void EthosU55RCSGenerator::InsertMatMulCommand(const HLCStripe *stripe, Temporar
             mul->operation->ifm.push_back(inFM1);
             mul->operation->ofm = tempFM;
             mul->operation->config = mulConfig;
-            mul->ofmArea = ifm0Shape;
-            mul->ifmAreas.emplace_back(ifm0Start, Box::Size(ifm0Shape));
-            mul->ifmAreas.emplace_back(ifm1Start, Box::Size(ifm1Shape));
+            StripeArea mulStripeArea;
+            mulStripeArea.ofmArea = ifm0Shape;
+            mulStripeArea.AddIfm(Box(ifm0Start, Box::Size(ifm0Shape)));
+            mulStripeArea.AddIfm(Box(ifm1Start, Box::Size(ifm1Shape)));
+            mul->stripeAreas.push_back(std::move(mulStripeArea));
             mul->opGroup = nullptr;
             emitted.push_back(mul.get());
             temps.cmds.push_back(std::move(mul));
@@ -1674,8 +1680,10 @@ void EthosU55RCSGenerator::InsertMatMulCommand(const HLCStripe *stripe, Temporar
             sum->operation->ifm.push_back(tempFM);
             sum->operation->ofm = outFM;
             sum->operation->config = reduceConfig;
-            sum->ofmArea = Box(ofmStart, Box::Size(ofmShape));
-            sum->ifmAreas.emplace_back(tempFM.slice.shape);
+            StripeArea sumStripeArea;
+            sumStripeArea.ofmArea = Box(ofmStart, Box::Size(ofmShape));
+            sumStripeArea.AddIfm(tempFM.slice.shape);
+            sum->stripeAreas.push_back(std::move(sumStripeArea));
             sum->opGroup = nullptr;
             emitted.push_back(sum.get());
             temps.cmds.push_back(std::move(sum));
@@ -1728,8 +1736,10 @@ void EthosU55RCSGenerator::GenerateCommon(const HLCStripe *stripe, bool useGloba
     MemoryAccesses &memoryAccesses, int ifm0Index)
 {
     auto op = stripe->operation.get();
-    GenerateIFM(op->ifm[ifm0Index], stripe->ifmAreas[ifm0Index]);
-    memoryAccesses.push_back(ToMemoryAccess(op->ifm[ifm0Index], stripe->ifmAreas[ifm0Index], AccessDirection::Read));
+    assert(!stripe->stripeAreas.empty());
+    auto &ifmArea = stripe->stripeAreas[0].ifmAreas.at(ifm0Index);
+    GenerateIFM(op->ifm[ifm0Index], ifmArea);
+    memoryAccesses.push_back(ToMemoryAccess(op->ifm[ifm0Index], ifmArea, AccessDirection::Read));
 
     // Select rounding based on RCSIfmScaleMode
     // rounding doesn't matter for RcsIfmScaleMode::OPA_OPB_16
@@ -1747,8 +1757,9 @@ void EthosU55RCSGenerator::GenerateCommon(const HLCStripe *stripe, bool useGloba
     {
         GeneratePadding(stripe->padding);
     }
-    GenerateOFM(op->ofm, stripe->ofmArea);
-    memoryAccesses.push_back(ToMemoryAccess(op->ofm, stripe->ofmArea, AccessDirection::Write));
+    auto &ofmArea = stripe->stripeAreas[0].ofmArea;
+    GenerateOFM(op->ofm, ofmArea);
+    memoryAccesses.push_back(ToMemoryAccess(op->ofm, ofmArea, AccessDirection::Write));
     GenerateOFMPrecision(op->ofm, useGlobalScale);
     EthosU55OpConfig *config = static_cast<EthosU55OpConfig *>(stripe->operation->config);
     if ( !IsElementwise(op->type) )
@@ -1806,14 +1817,17 @@ void EthosU55RCSGenerator::GeneratePoolingOp(const HLCStripe *stripe, MemoryAcce
             int depthMultiplier = ofmBits == 64 ? 4 : 2;
             op->ifm[0].shape[-1] *= depthMultiplier;
             op->ifm[0].strides[-1] /= depthMultiplier;
-            modifiedStripe.ifmAreas[0].Start() = modifiedStripe.ifmAreas[0].Start() * Shape(depthMultiplier);
-            modifiedStripe.ifmAreas[0].End() = modifiedStripe.ifmAreas[0].End() * Shape(depthMultiplier);
+            assert(!modifiedStripe.stripeAreas.empty());
+            auto &ifmArea = modifiedStripe.stripeAreas[0].ifmAreas.at(0);
+            ifmArea.Start() = ifmArea.Start() * Shape(depthMultiplier);
+            ifmArea.End() = ifmArea.End() * Shape(depthMultiplier);
 
             op->ofm.dataType = DataType::Int16;
             op->ofm.shape[-1] *= depthMultiplier;
             op->ofm.strides[-1] /= depthMultiplier;
-            modifiedStripe.ofmArea.Start() = modifiedStripe.ofmArea.Start() * Shape(depthMultiplier);
-            modifiedStripe.ofmArea.End() = modifiedStripe.ofmArea.End() * Shape(depthMultiplier);
+            auto &ofmArea = modifiedStripe.stripeAreas[0].ofmArea;
+            ofmArea.Start() = ofmArea.Start() * Shape(depthMultiplier);
+            ofmArea.End() = ofmArea.End() * Shape(depthMultiplier);
             stripe = &modifiedStripe;
         }
     }
@@ -1838,10 +1852,10 @@ void EthosU55RCSGenerator::GenerateElementwiseOp(const HLCStripe *stripe, Memory
         // Binary operation: generate IFM2 registers
         assert(op->ifm.size() == 2);
         assert(ToActivationPrecision(op->ifm[0].dataType) == ToActivationPrecision(op->ifm[1].dataType));
-        assert(stripe->ifmAreas.size() == 2);
+        assert(!stripe->stripeAreas.empty());
         int32_t scalarValue = 0;
-        auto ifmShape = stripe->ifmAreas[0].SizeShape();
-        auto ifm2Shape = stripe->ifmAreas[1].SizeShape();
+        auto ifmShape = stripe->stripeAreas[0].ifmAreas.at(0).SizeShape();
+        auto ifm2Shape = stripe->stripeAreas[0].ifmAreas.at(1).SizeShape();
         bool reversedOperands = IsScalar(op->ifm[0], scalarValue) || (ifmShape != ifm2Shape && ifmShape.IsSubShapeOf(ifm2Shape));
         int ifmIndex = 0;
         if ( reversedOperands )
@@ -1854,13 +1868,13 @@ void EthosU55RCSGenerator::GenerateElementwiseOp(const HLCStripe *stripe, Memory
         auto opToScale = GenerateScalingForElementwise(op, ifmIndex);
         GenerateCommon(stripe, useGlobalScale, opToScale, memoryAccesses, ifmIndex);
         int ifm2Index = 1 - ifmIndex;
-        assert(size_t(ifm2Index) < stripe->ifmAreas.size());
+        assert(!stripe->stripeAreas.empty());
         const HLCFeatureMap &ifm2 = op->ifm.at(ifm2Index);
         bool isScalar = IsScalar(ifm2, scalarValue);
-        GenerateIFM2(ifm2, stripe->ifmAreas[ifm2Index], isScalar, scalarValue);
+        GenerateIFM2(ifm2, stripe->stripeAreas[0].ifmAreas.at(ifm2Index), isScalar, scalarValue);
         if ( !isScalar )
         {
-            memoryAccesses.push_back(ToMemoryAccess(ifm2, stripe->ifmAreas[ifm2Index], AccessDirection::Read));
+            memoryAccesses.push_back(ToMemoryAccess(ifm2, stripe->stripeAreas[0].ifmAreas.at(ifm2Index), AccessDirection::Read));
         }
         GenerateIFM2Precision(ifm2);
         GenerateIFM2Broadcast(ifmShape, ifm2Shape, reversedOperands, isScalar);
