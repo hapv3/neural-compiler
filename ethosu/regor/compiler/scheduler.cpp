@@ -101,7 +101,9 @@ std::shared_ptr<Schedule> Scheduler::Process()
     Address initialStagingLimit = _options.optimizationStagingLimit;
     if ( _options.optimizationStrategy == OptimizationStrategy::Size )
     {
-        initialStagingLimit = peakMemoryUsage;
+        auto &memorySnapShot = _maxSchedule->memorySnapshot;
+        assert(!memorySnapShot.empty());
+        initialStagingLimit = *std::min_element(memorySnapShot.begin(), memorySnapShot.end());
     }
 
     std::shared_ptr<Schedule> chosenSchedule = _maxSchedule;
