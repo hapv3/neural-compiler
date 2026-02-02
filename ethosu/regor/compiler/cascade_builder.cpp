@@ -169,12 +169,8 @@ void CascadeBuilder::BuildCascades(Schedule *refSchedule, Schedule *fallbackSche
         std::vector<SchedulerOperation *> opsInBestCascade = {op};
 
         // Get the size of the weight buffer
-        int weightBufferSize = 0;
-        auto refCost = refSchedule->Cost(op);
-        if ( refCost->bufferedWeightTensor.parts > 0 )
-        {
-            weightBufferSize = refCost->bufferedWeightTensor.AllocatedSize();
-        }
+        auto *refCost = refSchedule->Cost(op);
+        int weightBufferSize = refCost->bufferedWeightTensor.AllocatedSize();
 
         // The first IFM is stored in full unless spilling disables it.
         const int ifmStoredSize = _spilling ? 0 : ifm->tensor->AllocationSizeBytes();
@@ -267,11 +263,7 @@ void CascadeBuilder::BuildCascades(Schedule *refSchedule, Schedule *fallbackSche
             int ifmBufferSize = bufferInfo.sizeBytes;
 
             // Get the size of the weight buffer
-            int opWeightBuffer = 0;
-            if ( refCost->bufferedWeightTensor.parts > 0 )
-            {
-                opWeightBuffer = refCost->bufferedWeightTensor.AllocatedSize();
-            }
+            int opWeightBuffer = refCost->bufferedWeightTensor.AllocatedSize();
 
             // Add current Op to cascade
             opsInCascade.push_back(currentOp);
@@ -355,6 +347,7 @@ void CascadeBuilder::BuildCascades(Schedule *refSchedule, Schedule *fallbackSche
                 assert(cascadedOp->Index() <= cascadeEnd);
                 auto cascadedCost = std::make_unique<SchedulerOpInfo>(*refSchedule->Cost(cascadedOp));
                 cascadedCost->cascade = cascadeEnd;
+                cascadedCost->firstInCascade = (*cascadedOp == *opsInBestCascade[0]);
                 costs.emplace(*cascadedOp, std::move(cascadedCost));
 
                 if ( prevOp )

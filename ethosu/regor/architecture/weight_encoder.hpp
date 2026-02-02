@@ -102,8 +102,11 @@ public:
     int subStreams = 0;
     int distinctWeights = 0;
     int zeroCount = 0;
+    std::vector<int> rangeSizes;
     std::unordered_map<int, WeightRange> encodedRanges;
     std::unique_ptr<IWeightEncodingConfig> config;
+
+    NpuWeightTensor() : SchedulerTensor(DataType::UInt8, Shape()) {}
 };
 
 struct WeightScaleTensors
