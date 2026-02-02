@@ -96,6 +96,7 @@ typedef struct regor_perf_report_t
     int64_t cascades;
     int64_t originalWeights;
     int64_t encodedWeights;
+    int readOnlyPeakUsage;
     int accessCount;
     int memory;
     int numMemories;

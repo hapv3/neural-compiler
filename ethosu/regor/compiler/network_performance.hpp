@@ -96,6 +96,7 @@ struct PerformanceResult
     int64_t cascades = 0;
     int64_t originalWeights = 0;
     int64_t encodedWeights = 0;
+    int readOnlyPeakUsage = 0;
 
     int Accesses() const
     {
@@ -124,6 +125,7 @@ struct PerformanceResult
         this->cascades += other.cascades;
         this->originalWeights += other.originalWeights;
         this->encodedWeights += other.encodedWeights;
+        this->readOnlyPeakUsage = std::max(this->readOnlyPeakUsage, other.readOnlyPeakUsage);
         return *this;
     }
 };

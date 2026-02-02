@@ -276,6 +276,9 @@ def print_performance_metrics_common(
     mem_area_labels = [
         (mem_area, label) for mem_area, label in orig_mem_areas_labels if np.sum(bandwidths[mem_area]) > 0
     ]
+    mem_area_usage_labels = [
+        (mem_area, label) for mem_area, label in orig_mem_areas_labels if memory_used.get(mem_area, 0) > 0
+    ]
 
     print("", file=f)
     if name:
@@ -292,13 +295,10 @@ def print_performance_metrics_common(
             file=f,
         )
     print(file=f)
-    for mem_area, label in mem_area_labels:
-        if mem_area not in memory_used:
-            continue
-
+    for mem_area, label in mem_area_usage_labels:
         aug_label = label + " used"
 
-        print(f"Total {aug_label:25}          {memory_used[mem_area] / 1024.0:12.2f} KiB", file=f)
+        print(f"Total {aug_label:25}          {memory_used.get(mem_area, 0) / 1024.0:12.2f} KiB", file=f)
 
     print(file=f)
 
@@ -565,23 +565,37 @@ def print_regor_performance_metrics(
     cycles = [0] * PassCycles.Size
     bandwidths = [[[0] * BandwidthDirection.Size for i in range(TensorPurpose.Size)] for j in range(MemArea.Size)]
     memory_used = {i: 0 for i in range(MemArea.Size)}
+
+    mem_areas_present = set()
     for mem_name, memory in report.memories.items():
         mem_name_lower = str(mem_name).lower()
 
         # skip shram/lutram in performance report
         if mem_name_lower in ["lutram", "shram"]:
             continue
+
         cycles_idx = cycles_mapping[mem_name_lower]
         cycles[cycles_idx] += memory.totalAccessCycles
 
+        mem_area = memory_mapping.get(mem_name_lower, MemArea.Unknown)
+        mem_areas_present.add(mem_area)
+        memory_used[mem_area] = memory.peakUsage
+
         for _, a in memory.accesses.items():
-            mem_area = memory_mapping.get(mem_name_lower, MemArea.Unknown)
             purpose = purpose_mapping.get(str(a.accessType).lower(), TensorPurpose.Unknown)
 
             bandwidths[mem_area][purpose][BandwidthDirection.Read] = a.bytesRead
             bandwidths[mem_area][purpose][BandwidthDirection.Write] = a.bytesWritten
 
-            memory_used[mem_area] = memory.peakUsage
+    read_only_area = arch.tensor_storage_mem_area[TensorPurpose.Weights]
+    # Split read-only and staging/feature-map usage when const shares SRAM (OnChipFlash alias).
+    if (
+        report.readOnlyPeakUsage > 0
+        and read_only_area == MemArea.OnChipFlash
+        and MemArea.OnChipFlash not in mem_areas_present
+    ):
+        memory_used[read_only_area] = report.readOnlyPeakUsage
+        memory_used[MemArea.Sram] = memory_used.get(MemArea.Sram, 0) - report.readOnlyPeakUsage
 
     cycles[PassCycles.Npu] = report.npuCycles
     cycles[PassCycles.Total] = report.totalCycles

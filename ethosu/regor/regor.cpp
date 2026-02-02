@@ -548,6 +548,7 @@ DLL_EXPORT int regor_get_perf_report(regor_context_t ctx, regor_perf_report_t *r
     report->cascades = result.cascades;
     report->originalWeights = result.originalWeights;
     report->encodedWeights = result.encodedWeights;
+    report->readOnlyPeakUsage = result.readOnlyPeakUsage;
     report->accessCount = result.Accesses();
     report->numMemories = 0;
     report->stagingMemory = -1;

@@ -232,6 +232,12 @@ PerformanceResult NetworkPerformance::Measure(Schedule *schedule, OptimiserDatab
         performance.memory[region.memory].peakUsage += schedule->memoryUsage[region];
     }
 
+    const auto readOnlyPos = schedule->memoryUsage.find(_arch->ReadonlyMemory());
+    if ( readOnlyPos != schedule->memoryUsage.end() )
+    {
+        performance.readOnlyPeakUsage = readOnlyPos->second;
+    }
+
     performance.cascades = schedule->cascades.size();
 
     return performance;

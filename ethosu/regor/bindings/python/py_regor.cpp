@@ -80,6 +80,7 @@ struct PyRegorPerfReport
     int64_t cascades = 0;
     int64_t originalWeights = 0;
     int64_t encodedWeights = 0;
+    int readOnlyPeakUsage = 0;
     std::string stagingMemoryArea = "";
 
     std::unordered_map<std::string, PyRegorMemoryPerf> memories;
@@ -263,6 +264,7 @@ public:
         pyPerf.cascades = report.cascades;
         pyPerf.originalWeights = report.originalWeights;
         pyPerf.encodedWeights = report.encodedWeights;
+        pyPerf.readOnlyPeakUsage = report.readOnlyPeakUsage;
         if ( report.npuOps > 0 )
         {
             assert(report.numMemories <= int(std::size(report.peakUsages)));
@@ -601,6 +603,7 @@ PYBIND11_MODULE(regor, m)
         .def_readwrite("cascades", &PyRegorPerfReport::cascades, "Number of cascades")
         .def_readwrite("originalWeights", &PyRegorPerfReport::originalWeights, "Weights size (uncompressed)")
         .def_readwrite("encodedWeights", &PyRegorPerfReport::encodedWeights, "Weights size (compressed)")
+        .def_readwrite("readOnlyPeakUsage", &PyRegorPerfReport::readOnlyPeakUsage, "Peak allocation of read-only/const area")
         .def_readwrite("stagingMemoryArea", &PyRegorPerfReport::stagingMemoryArea, "Staging memory area")
         .def_readwrite("memories", &PyRegorPerfReport::memories, "Memory performance report")
         .def("__repr__", &PyRegorPerfReport::ToString);
