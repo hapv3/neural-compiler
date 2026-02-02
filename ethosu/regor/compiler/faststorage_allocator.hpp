@@ -40,9 +40,9 @@ class FastStorageComponentAllocator
 {
 private:
     // Memory usage per timestamp when no lrs are kept
-    std::vector<int> *_baseMemUsage = nullptr;
+    MemorySnapshot &_baseMemUsage;
     // Memory usage per timestamp when all lrs are kept
-    std::vector<int> *_maxMemUsage = nullptr;
+    MemorySnapshot &_maxMemUsage;
 
     Address _stagingLimit;
     vector_span<LiveRange *> _lrs;
@@ -51,22 +51,22 @@ private:
     // Indices of evicted lrs in current solution
     std::vector<bool> _currEvicted;
     int _bestScore = 0;
-    std::unordered_map<LiveRange *, int64_t> *_elementAccessLrs = nullptr;
+    std::unordered_map<LiveRange *, int64_t> &_elementAccessLrs;
     // Use default seed (which is well-defined) to guarantee reproducible results
     std::mt19937 _rng;
 
 public:
     static constexpr int MAX_ACCESS_SIZE = std::numeric_limits<int>::max();
 
-    FastStorageComponentAllocator(std::vector<int> *baseMemUsage, std::vector<int> *maxMemUsage, int stagingLimit,
-        std::unordered_map<LiveRange *, int64_t> *elementAccessLrs);
+    FastStorageComponentAllocator(MemorySnapshot &baseMemUsage, MemorySnapshot &maxMemUsage, int stagingLimit,
+        std::unordered_map<LiveRange *, int64_t> &elementAccessLrs);
     // Allocates live ranges. Outputs a vector that gives for each live range if it should be evicted or kept
     void Allocate(vector_span<LiveRange *> &lrs, std::vector<bool> &evicted);
 
 private:
     // Exhaustive, recursive search, starting at the given index
     void AllocateExhaustive(int ix, int score);
-    void UpdateMemUsage(std::vector<int> *memUsage, LiveRange *lr, bool increase);
+    void UpdateMemUsage(MemorySnapshot &memUsage, LiveRange *lr, bool increase);
 };
 
 // Allocates feature maps to fast storage
@@ -77,9 +77,9 @@ private:
     // Remembers feature map's memory before it was allocated to fast storage
     std::unordered_map<SchedulerTensor *, MemArea> _scratchedFms;
     // Memory usage with all feature maps in fast storage
-    std::vector<int> _maxMemUsage;
+    MemorySnapshot _maxMemUsage;
     // Memory usage without feature maps that still need to be allocated
-    std::vector<int> _baseMemUsage;
+    MemorySnapshot _baseMemUsage;
     int _stagingLimit = 0;
 
 public:

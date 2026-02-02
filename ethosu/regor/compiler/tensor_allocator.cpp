@@ -49,14 +49,23 @@ void PrintAllocation(LiveRangeGraph &lrGraph, Address totalSize)
 {
     LOG_PRINT("{0:10} - {1:10}: {2:>10} - {3:>10}: {4:11}: {5:12}: {6:14} : {7}\n", "Start Time", "End Time",
         "Start Addr", "End Addr", "Tensor Size", "Memory Usage", "Format", "Name");
-    auto lrs = lrGraph.LiveRanges();
-    // Sort LiveRanges
+    const auto &ref_lrs = lrGraph.LiveRanges();
+
+    std::vector<const LiveRange *> lrs;
+    lrs.reserve(ref_lrs.size());
+    for ( const auto &p : ref_lrs )
+    {
+        lrs.push_back(p.get());
+    }
+
+    // LiveRanges must be sorted
     std::sort(lrs.begin(), lrs.end(),
-        [](const std::shared_ptr<LiveRange> &a, const std::shared_ptr<LiveRange> &b)
+        [](const auto &a, const auto &b)
         {
             if ( a->startTime != b->startTime ) return a->startTime < b->startTime;
             return a->endTime < b->endTime;
         });
+
     // Create memory histogram to track usage over time
     std::vector<int> memHist(lrGraph.EndTime(), 0);
     for ( const auto &lr : lrs )

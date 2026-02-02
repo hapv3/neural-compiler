@@ -19,7 +19,6 @@
 
 #include "live_range.hpp"
 
-#include "architecture/architecture.hpp"
 #include "scheduler.hpp"
 #include "scheduler_operation.hpp"
 
@@ -33,22 +32,68 @@
 namespace regor
 {
 
-std::vector<int> LiveRangeGraph::GetTemporalMemoryUsage(int &maxUsage, int granularity)
+LiveRange::LiveRange(SchedulerTensor *tensor)
+{
+    size = tensor->AllocationSizeBytes();
+    memArea = tensor->memArea;
+    name = tensor->Name();
+    AddTensor(tensor);
+}
+
+void LiveRange::SetAddress(Address address)
+{
+    for ( auto &tensor : tensors )
+    {
+        tensor->SetAddress(address);
+    }
+}
+
+void LiveRange::Adjust(LRMemory &mem, int time, const LiveRange &lr, int amount)
+{
+    // LR contributes directly to the op if time matches delayed start
+    if ( time == (lr.startTime + lr.opDelay) )
+    {
+        if ( lr.usage == LRUsage::OpLocal ) mem.op += amount;
+        else if ( lr.usage == LRUsage::OpCascade ) mem.cascade += amount;
+        else if ( lr.usage == LRUsage::OpBuffering ) mem.buffering += amount;
+        else
+        {
+            assert(false && "Memory at op timepoint must be classified");
+            mem.nonlocal += amount;
+        }
+    }
+    // LR is not for the op at the current time point
+    else
+    {
+        mem.nonlocal += amount;
+    }
+    assert(mem.Used() >= 0);
+}
+
+MemorySnapshot LiveRangeGraph::GetTemporalMemoryUsage(int granularity)
 {
     assert(granularity > 0);
-    std::vector<int> usage(_currentTime + 1);
-    maxUsage = 0;
+    MemorySnapshot usage(_currentTime + 1);
+    usage.maxMemory = 0;
     for ( const auto &lr : _lrs )
     {
         assert(lr->endTime <= _currentTime);
-        for ( int i = lr->startTime; i <= lr->endTime; ++i )
-        {
-            assert((i >= 0) && (i < int(usage.size())));
-            usage[i] += RoundAway(lr->size, granularity);
-            maxUsage = std::max(maxUsage, usage[i]);
-        }
+        int maxMemory = AdjustMemoryUsage(usage.memory, *lr, RoundAway(lr->size, granularity));
+        usage.maxMemory = std::max(usage.maxMemory, maxMemory);
     }
     return usage;
+}
+
+int LiveRangeGraph::AdjustMemoryUsage(std::vector<LRMemory> &usage, const LiveRange &lr, int adjust)
+{
+    int maxMemory = 0;
+    for ( int i = lr.startTime; i <= lr.endTime; i++ )
+    {
+        LRMemory &mem = usage.at(i);
+        LiveRange::Adjust(mem, i, lr, adjust);
+        maxMemory = std::max(maxMemory, mem.Used());
+    }
+    return maxMemory;
 }
 
 void LiveRangeGraph::ExtractLiveRangesFromCascades(const std::vector<std::unique_ptr<SchedulerOperation>> &schedOps,
@@ -81,7 +126,7 @@ void LiveRangeGraph::ExtractLiveRangesFromCascades(const std::vector<std::unique
                 if ( opGroup->NeedsAllocation(opGroupOfm->tensor->uid) )
                 {
                     // Check if op have an ifm tensor that can be reused for the ofm
-                    auto ifmTens = ReusableIFM(schedOp, opGroupOfm, targetMemory);
+                    auto ifmTens = ReusableIFM(schedOp, opGroupOfm->tensor.get(), targetMemory);
                     if ( ifmTens != nullptr )
                     {
                         // ifm can be reused
@@ -107,22 +152,17 @@ void LiveRangeGraph::ExtractLiveRangesFromCascades(const std::vector<std::unique
             auto weightTens = opInfo->bufferedWeightTensor.tensor.get();
             if ( !ShouldBeIgnored(weightTens, targetMemory) )
             {
-                auto lr = GetOrCreateRange(weightTens);
-                if ( opInfo->bufferedWeightTensor.preBuffer )
-                {
-                    lr->MarkUsage(timeToSet - 1, 2);
-                }
-                else
-                {
-                    lr->MarkUsage(timeToSet);
-                }
+                auto lr = GetOrCreateRange(weightTens, LRUsage::OpBuffering);
+                // Prebuffered tensors start one step early
+                lr->opDelay = opInfo->bufferedWeightTensor.preBuffer ? 1 : 0;
+                lr->MarkUsage(timeToSet - lr->opDelay, 1 + lr->opDelay);
             }
             // Read-only weight/scale tensors
             for ( auto tens : {opInfo->npuWeightsTensor, opInfo->npuScalesTensor} )
             {
                 if ( !ShouldBeIgnored(tens.get(), targetMemory) )
                 {
-                    auto lr = GetOrCreateRange(tens.get());
+                    auto lr = GetOrCreateRange(tens.get(), LRUsage::OpLocal);
                     lr->MarkUsage(timeToSet);
                 }
             }
@@ -137,16 +177,22 @@ void LiveRangeGraph::ExtractLiveRangesFromCascades(const std::vector<std::unique
         }
 
         // Mark usage for all relevant tensors related to this operation
-        for ( auto &liveTensor : schedOp->LiveRangeTensors() )
+        auto liveRangeTensors = schedOp->LiveRangeTensors();
+        for ( const auto &liveTensor : liveRangeTensors )
         {
             auto usage = liveTensor.first;
             auto tens = liveTensor.second;
-            bool isRollingBuffer = cascadeBuffer != nullptr && usage == MakeTensorUsage(TensorUsage::IFM, schedOp->PrimaryIfmIndex());
+
+            // This creates rolling-buffer live-range entries only for mid-cascade IFMs
+            bool isRollingBuffer = (cascadeBuffer != nullptr) && (usage == MakeTensorUsage(TensorUsage::IFM, schedOp->PrimaryIfmIndex()));
             if ( ShouldBeIgnored(tens, targetMemory) && !(addRollingBuffers && isRollingBuffer) )
             {
                 continue;
             }
-            auto lr = GetOrCreateRange(tens);
+
+            // This identifies whether the OFM contributes to the cascade at this time point (classification only)
+            bool isOfmRollingBuffer = (usage == TensorUsage::OFM) && (cascade != 0) && (schedOp->Index() < cascadeInfo->end);
+            auto lr = GetOrCreateRange(tens, isOfmRollingBuffer ? LRUsage::OpCascade : LRUsage::OpLocal);
             if ( tens->isGraphInput )
             {
                 // Graph input must not be overwritten by preceding schedOps
@@ -188,7 +234,7 @@ void LiveRangeGraph::ExtractLiveRangesFromCascades(const std::vector<std::unique
     ++_currentTime;
 }
 
-LiveRange *LiveRangeGraph::GetOrCreateRange(SchedulerTensor *tens)
+LiveRange *LiveRangeGraph::GetOrCreateRange(SchedulerTensor *tens, LRUsage usage)
 {
     // Return the live range of the tensor (or any of its clones)
     const auto entry = _equivalenceIdToLr.find(tens->equivalenceId);
@@ -198,16 +244,18 @@ LiveRange *LiveRangeGraph::GetOrCreateRange(SchedulerTensor *tens)
         return entry->second;
     }
     // No live range found for the tensor, create a new one
-    auto lr = std::make_shared<LiveRange>(tens);
-    _lrs.push_back(lr);
-    _equivalenceIdToLr[tens->equivalenceId] = lr.get();
-    return lr.get();
+    auto lr = std::make_unique<LiveRange>(tens);
+    auto *plr = lr.get();
+    _lrs.push_back(std::move(lr));
+    plr->usage = usage;
+    _equivalenceIdToLr[tens->equivalenceId] = plr;
+    return plr;
 }
 
 LiveRange *LiveRangeGraph::FuseRanges(SchedulerTensor *inTens, SchedulerTensor *outTens)
 {
     assert(outTens->AllocationSizeBytes() <= inTens->AllocationSizeBytes());
-    auto lr = GetOrCreateRange(inTens);
+    auto lr = GetOrCreateRange(inTens, LRUsage::OpLocal);  // Assumes we only fuse op local IFM/OFM
     lr->AddTensor(outTens);
     const auto entry = _equivalenceIdToLr.find(outTens->equivalenceId);
     if ( entry != _equivalenceIdToLr.end() )
@@ -227,14 +275,12 @@ LiveRange *LiveRangeGraph::FuseRanges(SchedulerTensor *inTens, SchedulerTensor *
 // Requires the first operator to be an elementwise operator and is also applicaple to stand-alone
 // elementwise operators (which are just opgroups of length 1).
 SchedulerTensor *LiveRangeGraph::ReusableIFM(
-    const std::unique_ptr<SchedulerOperation> &schedOp, const SchedulerConnection *ofmConn, const MemArea &targetMemory)
+    const std::unique_ptr<SchedulerOperation> &schedOp, const SchedulerTensor *ofmTens, const MemArea &targetMemory)
 {
     SchedulerTensor *reusableIfm = nullptr;
     const auto *ofm = schedOp->Output(TensorUsage::OFM);
     if ( IsElementwise(schedOp->Type()) && ofm->reverse == ReverseType::None && IsNone(ofm->transpose) )
     {
-        const auto ofmTens = ofmConn->tensor.get();
-
         if ( !ShouldBeIgnored(ofmTens, targetMemory) )
         {
             for ( const auto &[usage, ifmConn] : schedOp->inputs.pairs() )
@@ -255,7 +301,7 @@ SchedulerTensor *LiveRangeGraph::ReusableIFM(
     return reusableIfm;
 }
 
-bool LiveRangeGraph::ShouldBeIgnored(SchedulerTensor *tens, const MemArea &targetMemory)
+bool LiveRangeGraph::ShouldBeIgnored(const SchedulerTensor *tens, const MemArea &targetMemory)
 {
     if ( tens == nullptr )
     {

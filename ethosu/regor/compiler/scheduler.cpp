@@ -102,8 +102,8 @@ std::shared_ptr<Schedule> Scheduler::Process()
     if ( _options.optimizationStrategy == OptimizationStrategy::Size )
     {
         auto &memorySnapShot = _maxSchedule->memorySnapshot;
-        assert(!memorySnapShot.empty());
-        initialStagingLimit = *std::min_element(memorySnapShot.begin(), memorySnapShot.end());
+        assert(!memorySnapShot.memory.empty());
+        initialStagingLimit = std::min_element(memorySnapShot.memory.begin(), memorySnapShot.memory.end())->Used();
     }
 
     std::shared_ptr<Schedule> chosenSchedule = _maxSchedule;
@@ -134,6 +134,8 @@ std::shared_ptr<Schedule> Scheduler::Process()
     UpdateOpMemorySnapshot(chosenSchedule.get());
 
     ApplySchedule(chosenSchedule.get());
+
+    UpdateOpMemorySnapshot(chosenSchedule.get());
 
     if ( _spilling && !_options.disabled.All(SchedulerFeature::FMStaging) )
     {
@@ -923,8 +925,8 @@ void Scheduler::UpdateOpMemorySnapshot(Schedule *schedule)
     LiveRangeGraph lrGraph{reuseIfms};
     lrGraph.ExtractLiveRangesFromCascades(_ops, schedule, fastStorage, true);
     // Populate time-array with memory used by live ranges
-    std::vector<int> temporalUsage = lrGraph.GetTemporalMemoryUsage(schedule->fastStoragePeakUsage);
-    schedule->memorySnapshot = std::move(temporalUsage);
+    schedule->memorySnapshot = lrGraph.GetTemporalMemoryUsage();
+    schedule->fastStoragePeakUsage = schedule->memorySnapshot.maxMemory;
 }
 
 
@@ -1129,7 +1131,7 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
     {
         weightBufferSize = fullWeightsBytes;
         // Update the memory snapshot to reflect the added size of the weights
-        refSchedule->memorySnapshot[cost->timeIndex] += weightBufferSize;
+        refSchedule->memorySnapshot[cost->timeIndex].buffering += weightBufferSize;  // TODO: Update via liverange
     }
     else
     {
@@ -1826,14 +1828,15 @@ void Scheduler::PrintSchedule(Schedule *schedule)
             LOG_PRINT("\t\tsub-operations: -\n");
         }
 
-        int mem_usage = 0;
+        LRMemory mem;
         if ( cost->timeIndex >= 0 && cost->timeIndex < int(schedule->memorySnapshot.size()) )
         {
-            mem_usage = schedule->memorySnapshot[cost->timeIndex];
+            mem = schedule->memorySnapshot[cost->timeIndex];
         }
 
         LOG_PRINT("\t\tEstimated Perf: Macs={0} Cycles={1}\n", cost->cycles.macs, cost->cycles.opCycles);
-        LOG_PRINT("\t\tMemory Used: {0} bytes\n", mem_usage);
+        LOG_PRINT("\t\tMemory Used: {0} bytes (op={1}, buf={2}, ccd={3}, nl={4})\n", mem.Used(), mem.op, mem.buffering,
+            mem.cascade, mem.nonlocal);
     }
 
     LOG_PRINT("\tCascades:\n");

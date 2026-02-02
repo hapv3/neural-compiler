@@ -35,8 +35,8 @@ namespace regor
 {
 
 // FastStorageComponentAllocator
-FastStorageComponentAllocator::FastStorageComponentAllocator(std::vector<int> *baseMemUsage,
-    std::vector<int> *maxMemUsage, int stagingLimit, std::unordered_map<LiveRange *, int64_t> *elementAccessLrs) :
+FastStorageComponentAllocator::FastStorageComponentAllocator(MemorySnapshot &baseMemUsage, MemorySnapshot &maxMemUsage,
+    int stagingLimit, std::unordered_map<LiveRange *, int64_t> &elementAccessLrs) :
         _baseMemUsage(baseMemUsage),
         _maxMemUsage(maxMemUsage), _stagingLimit(stagingLimit), _elementAccessLrs(elementAccessLrs)
 {
@@ -73,27 +73,26 @@ void FastStorageComponentAllocator::AllocateExhaustive(int ix, int score)
     auto lr = _lrs[ix];
     for ( int t = lr->startTime; t <= lr->endTime; ++t )
     {
-        assert((*_baseMemUsage)[t] <= (*_maxMemUsage)[t]);
+        assert(_baseMemUsage[t] <= _maxMemUsage[t]);
     }
     // Current peak usage during this live range
-    int baseUsage = *std::max_element(&(*_baseMemUsage)[lr->startTime], &(*_baseMemUsage)[lr->endTime + 1]);
-    bool canFit = baseUsage + lr->size <= _stagingLimit;
+    LRMemory *baseUsage = _baseMemUsage.Max(lr->startTime, lr->endTime + 1);
+    bool canFit = baseUsage->Used() + lr->size <= _stagingLimit;
     bool alwaysFits = canFit;
     if ( canFit )
     {
         // Keep current lr
-        int maxUsage = *std::max_element(&(*_maxMemUsage)[lr->startTime], &(*_maxMemUsage)[lr->endTime + 1]);
+        LRMemory *maxUsage = _maxMemUsage.Max(lr->startTime, lr->endTime + 1);
         // If alwaysFits is true, lr can be kept regardless of the allocation of the other lrs
-        alwaysFits = maxUsage <= _stagingLimit;
+        alwaysFits = maxUsage->Used() <= _stagingLimit;
         _currEvicted[ix] = false;
         int lrScore = 0;
-        auto entry = _elementAccessLrs->find(lr);
-        if ( entry != _elementAccessLrs->end() )
+        auto entry = _elementAccessLrs.find(lr);
+        if ( entry != _elementAccessLrs.end() )
         {
             lrScore = int(entry->second);
         }
         UpdateMemUsage(_baseMemUsage, lr, true);
-
         AllocateExhaustive(ix + 1, score + lrScore);
         UpdateMemUsage(_baseMemUsage, lr, false);
     }
@@ -107,15 +106,14 @@ void FastStorageComponentAllocator::AllocateExhaustive(int ix, int score)
     }
 }
 
-void FastStorageComponentAllocator::UpdateMemUsage(std::vector<int> *memUsage, LiveRange *lr, bool increase)
+void FastStorageComponentAllocator::UpdateMemUsage(MemorySnapshot &memUsage, LiveRange *lr, bool increase)
 {
+    int adjust = increase ? lr->size : -lr->size;
     for ( int t = lr->startTime; t <= lr->endTime; ++t )
     {
-        (*memUsage)[t] += increase ? lr->size : -lr->size;
-        assert((*memUsage)[t] >= 0);
+        LiveRange::Adjust(memUsage[t], t, *lr, adjust);
     }
 }
-
 
 // FastStorageAllocator
 
@@ -162,13 +160,13 @@ void FastStorageAllocator::AllocateFeatureMaps(const std::vector<std::unique_ptr
     LiveRangeGraph lrGraph{reuseIfms};
     lrGraph.ExtractLiveRangesFromCascades(schedOps, schedule, fastStorage, true);
     // Populate time-array with memory used by live ranges
-    int maxUsage;
-    _maxMemUsage = lrGraph.GetTemporalMemoryUsage(maxUsage);
+    _maxMemUsage = lrGraph.GetTemporalMemoryUsage();
+    int maxMemoryUsage = _maxMemUsage.maxMemory;
 
     // Collect all live ranges that can potentially be in fast storage
     _baseMemUsage = _maxMemUsage;
     std::vector<LiveRange *> lrs;
-    for ( auto lr : lrGraph.LiveRanges() )
+    for ( const auto &lr : lrGraph.LiveRanges() )
     {
         for ( auto &tens : lr->tensors )
         {
@@ -177,7 +175,7 @@ void FastStorageAllocator::AllocateFeatureMaps(const std::vector<std::unique_ptr
                 lrs.push_back(lr.get());
                 for ( int t = lr->startTime; t <= lr->endTime; ++t )
                 {
-                    _baseMemUsage[t] -= lr->size;
+                    LiveRange::Adjust(_baseMemUsage[t], t, *lr, -lr->size);
                 }
                 break;
             }
@@ -218,7 +216,7 @@ void FastStorageAllocator::AllocateFeatureMaps(const std::vector<std::unique_ptr
         }
     }
 
-    if ( maxUsage <= _stagingLimit )
+    if ( maxMemoryUsage <= _stagingLimit )
     {
         // All feature maps fit in fast storage
         ElementwiseSanitizer(schedOps, schedule, fastStorage, lrGraph);
@@ -230,9 +228,8 @@ void FastStorageAllocator::AllocateFeatureMaps(const std::vector<std::unique_ptr
     for ( auto lr : npuOnlyLrs )
     {
         // Highest memory usage in this live range
-        int baseUsage = *std::max_element(&_baseMemUsage[lr->startTime], &_baseMemUsage[lr->endTime + 1]);
-
-        if ( baseUsage + lr->size > _stagingLimit )
+        const LRMemory *baseUsage = _baseMemUsage.Max(lr->startTime, lr->endTime + 1);
+        if ( baseUsage->Used() + lr->size > _stagingLimit )
         {
             // Cannot possibly fit
             Evict(lr);
@@ -245,8 +242,8 @@ void FastStorageAllocator::AllocateFeatureMaps(const std::vector<std::unique_ptr
     std::vector<LiveRange *> competingLrs;
     for ( auto lr : canFitLrs )
     {
-        maxUsage = *std::max_element(&_maxMemUsage[lr->startTime], &_maxMemUsage[lr->endTime + 1]);
-        if ( maxUsage <= _stagingLimit )
+        const LRMemory *maxUsage = _maxMemUsage.Max(lr->startTime, lr->endTime + 1);
+        if ( maxUsage->Used() <= _stagingLimit )
         {
             // Definitively fits without impacting other feature maps
             Keep(lr);
@@ -332,7 +329,7 @@ void FastStorageAllocator::AllocateFeatureMaps(const std::vector<std::unique_ptr
     int start = 0;
     int startTime = competingLrs[0]->startTime;
     int endTime = competingLrs[0]->endTime;
-    FastStorageComponentAllocator componentAllocator(&_baseMemUsage, &_maxMemUsage, _stagingLimit, &elementAccessLrs);
+    FastStorageComponentAllocator componentAllocator(_baseMemUsage, _maxMemUsage, _stagingLimit, elementAccessLrs);
 
     // Calculate and allocate connected components
     for ( int i = 1; i < sz; ++i )
@@ -458,13 +455,13 @@ void FastStorageAllocator::ElementwiseSanitizer(const std::vector<std::unique_pt
             {
                 if ( ifm->tensor->memArea == fastStorage )
                 {
-                    auto lr = lrGraph.GetOrCreateRange(ifm->tensor.get());
+                    auto lr = lrGraph.GetOrCreateRange(ifm->tensor.get(), LRUsage::OpLocal);
                     Evict(lr);
                 }
 
                 if ( ifm2 && ifm2->tensor->memArea == fastStorage )
                 {
-                    auto lr = lrGraph.GetOrCreateRange(ifm2->tensor.get());
+                    auto lr = lrGraph.GetOrCreateRange(ifm2->tensor.get(), LRUsage::OpLocal);
                     Evict(lr);
                 }
             }
@@ -478,13 +475,13 @@ void FastStorageAllocator::ElementwiseSanitizer(const std::vector<std::unique_pt
 
                     if ( sifm->tensor->memArea == fastStorage )
                     {
-                        auto lr = lrGraph.GetOrCreateRange(sifm->tensor.get());
+                        auto lr = lrGraph.GetOrCreateRange(sifm->tensor.get(), LRUsage::OpLocal);
                         Evict(lr);
                     }
 
                     if ( sifm2 && sifm2->tensor->memArea == fastStorage )
                     {
-                        auto lr = lrGraph.GetOrCreateRange(sifm2->tensor.get());
+                        auto lr = lrGraph.GetOrCreateRange(sifm2->tensor.get(), LRUsage::OpLocal);
                         Evict(lr);
                     }
                 }
@@ -495,9 +492,12 @@ void FastStorageAllocator::ElementwiseSanitizer(const std::vector<std::unique_pt
 
 void FastStorageAllocator::Evict(LiveRange *lr)
 {
+    assert(lr->usage != LRUsage::OpBuffering);  // Evicting buffering is probably an error
+    assert(lr->usage != LRUsage::OpCascade);    // Evicting cascade rolling buffer is probably an error
+
     for ( int t = lr->startTime; t <= lr->endTime; ++t )
     {
-        _maxMemUsage[t] -= lr->size;
+        LiveRange::Adjust(_maxMemUsage[t], t, *lr, -lr->size);
     }
     for ( auto &tens : lr->tensors )
     {
@@ -513,8 +513,8 @@ void FastStorageAllocator::Keep(LiveRange *lr)
 {
     for ( int t = lr->startTime; t <= lr->endTime; ++t )
     {
-        _baseMemUsage[t] += lr->size;
-        assert(_baseMemUsage[t] <= _stagingLimit);
+        LiveRange::Adjust(_baseMemUsage[t], t, *lr, lr->size);
+        assert(_baseMemUsage[t].Used() <= _stagingLimit);
     }
 }
 

@@ -218,7 +218,7 @@ private:
 
 public:
     std::unordered_map<int, CascadeInfo> cascades;
-    std::vector<int> memorySnapshot;
+    MemorySnapshot memorySnapshot;
     int fastStoragePeakUsage = 0;
     std::unordered_map<MemArea, int, MemArea::hash> memoryUsage;
 
@@ -240,7 +240,7 @@ public:
 
     int MemoryUsageAt(int timeIndex) const
     {
-        return (timeIndex >= 0 && timeIndex < int(memorySnapshot.size())) ? memorySnapshot[timeIndex] : 0;
+        return (timeIndex >= 0 && timeIndex < int(memorySnapshot.size())) ? memorySnapshot[timeIndex].Used() : 0;
     }
 
     void DetachCosts(SchedulerCostMap &costs) { costs = std::move(_costMap); }

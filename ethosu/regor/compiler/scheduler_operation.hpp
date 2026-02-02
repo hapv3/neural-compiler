@@ -36,6 +36,56 @@ class SchedulerOperation;
 
 int TensorAllocationBytes(const Shape &shape, TensorFormat format, DataType dtype);
 
+// Live Range memory detail
+struct LRMemory
+{
+    int op = 0;         // Memory specific to only the op at this time point
+    int buffering = 0;  // Memory reserved for weight buffering this op at this time point
+    int cascade = 0;    // Memory reserved for cascade buffers for this op at this time point
+    int nonlocal = 0;   // Memory related to other ops still live across this time point
+    int Used() const { return op + cascade + buffering + nonlocal; }
+    bool operator<(const LRMemory &b) const { return Used() < b.Used(); }
+    bool operator<=(const LRMemory &b) const { return Used() <= b.Used(); }
+};
+
+// Schedule memory snapshot
+struct MemorySnapshot
+{
+    std::vector<LRMemory> memory;
+    int maxMemory = 0;
+
+public:
+    MemorySnapshot(size_t reserve = 0) : memory(reserve) {}
+    MemorySnapshot(MemorySnapshot &&other) noexcept { (*this) = std::move(other); }
+
+    size_t size() const { return memory.size(); }
+
+    LRMemory &operator[](size_t index) { return memory[index]; }
+    const LRMemory &operator[](size_t index) const { return memory[index]; }
+    LRMemory &at(size_t index) { return memory.at(index); }
+    const LRMemory &at(size_t index) const { return memory.at(index); }
+
+    MemorySnapshot &operator=(MemorySnapshot &&other) noexcept
+    {
+        memory = std::move(other.memory);
+        maxMemory = other.maxMemory;
+        return *this;
+    }
+
+    MemorySnapshot &operator=(const MemorySnapshot &other)
+    {
+        memory = other.memory;
+        maxMemory = other.maxMemory;
+        return *this;
+    }
+
+    LRMemory *Max(int start, int end)
+    {
+        assert(start < end && end <= int(memory.size()));
+        return std::max_element(&memory[start], &memory[end]);
+    }
+};
+
 /// <summary>
 /// Scheduler's metadata for graph tensors.
 /// </summary>

@@ -109,13 +109,13 @@ public:
     // Implementation note: the algorithm produces reproducible results by using
     // a well-defined random number generator with well-defined default seed,
     // and using a fixed number of iterations.
-    Address Allocate(const std::vector<std::shared_ptr<LiveRange>> &lrs, int alignment, Address sizeLimit);
+    Address Allocate(const std::vector<std::unique_ptr<LiveRange>> &lrs, int alignment, Address sizeLimit);
 
     Address MinimumRequiredSize() const { return minRequiredSize; }
     int Iterations() const { return iterations; }
 
 private:
-    void SetLiveRanges(const std::vector<std::shared_ptr<LiveRange>> &liveRanges, int alignment);
+    void SetLiveRanges(const std::vector<std::unique_ptr<LiveRange>> &liveRanges, int alignment);
 
     // Allocates the given live range at the smallest possible address
     void AllocateLr(HillClimbLiveRange &lr) const;

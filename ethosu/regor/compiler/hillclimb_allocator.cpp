@@ -33,7 +33,7 @@ namespace regor
 constexpr Address MAX_ADDRESS = std::numeric_limits<Address>::max();
 constexpr Address NOT_ALLOCATED = -1;
 
-void HillClimbAllocator::SetLiveRanges(const std::vector<std::shared_ptr<LiveRange>> &liveRanges, int alignment)
+void HillClimbAllocator::SetLiveRanges(const std::vector<std::unique_ptr<LiveRange>> &liveRanges, int alignment)
 {
     int maxEndTime = 0;
     int id = 0;
@@ -106,7 +106,7 @@ void HillClimbAllocator::SetLiveRanges(const std::vector<std::shared_ptr<LiveRan
     }
 }
 
-Address HillClimbAllocator::Allocate(const std::vector<std::shared_ptr<LiveRange>> &liveRanges, int alignment, Address sizeLimit)
+Address HillClimbAllocator::Allocate(const std::vector<std::unique_ptr<LiveRange>> &liveRanges, int alignment, Address sizeLimit)
 {
     SetLiveRanges(liveRanges, alignment);
     maxAllowedSize = sizeLimit;

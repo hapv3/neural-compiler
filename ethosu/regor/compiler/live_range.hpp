@@ -18,20 +18,29 @@
 
 #pragma once
 
-#include "architecture/architecture.hpp"
-#include "scheduler.hpp"
 #include "scheduler_operation.hpp"
-#include "tensor.hpp"
 
 #include <algorithm>
 #include <cassert>
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace regor
 {
+
+enum class LRUsage : uint8_t
+{
+    Unassigned = 0x00,   // Liverange represents unclassified data
+    OpLocal = 0x01,      // Liverange represents op IFM/OFM
+    OpCascade = 0x02,    // Liverange represents cascaded data
+    OpBuffering = 0x04,  // Liverange weight buffering
+};
+
+struct SchedulerTensor;
+class Schedule;
 
 /// <summary>
 /// Live range
@@ -46,15 +55,11 @@ struct LiveRange
     int endTime = -1;
     int size = 0;
     MemArea memArea;
-    std::string name = "";
+    LRUsage usage = LRUsage::Unassigned;
+    int8_t opDelay = 0;
+    std::string name;
 
-    LiveRange(SchedulerTensor *tensor)
-    {
-        size = tensor->AllocationSizeBytes();
-        memArea = tensor->memArea;
-        name = tensor->Name();
-        AddTensor(tensor);
-    }
+    LiveRange(SchedulerTensor *tensor);
 
     void AddTensor(SchedulerTensor *tensor) { tensors.insert(tensor); }
 
@@ -70,25 +75,22 @@ struct LiveRange
         }
     }
 
-    void SetAddress(Address address)
-    {
-        for ( auto &tensor : tensors )
-        {
-            tensor->SetAddress(address);
-        }
-    }
+    void SetAddress(Address address);
 
     std::string ToString() const
     {
         return fmt::format("<LiveRange {}, time: {}-{}, size: {}>", name, startTime, endTime, size);
     }
+
+    static void Adjust(LRMemory &mem, int time, const LiveRange &lr, int amount);
 };
+
 
 class LiveRangeGraph
 {
 private:
     /** All allocated live ranges */
-    std::vector<std::shared_ptr<LiveRange>> _lrs;
+    std::vector<std::unique_ptr<LiveRange>> _lrs;
     /** Map from equivalence id -> live range */
     std::unordered_map<UniqueId, LiveRange *> _equivalenceIdToLr;
     int _currentTime = 0;
@@ -99,17 +101,20 @@ public:
     virtual ~LiveRangeGraph() = default;
     int EndTime() const { return _currentTime + 1; }
 
-    std::vector<std::shared_ptr<LiveRange>> LiveRanges() const { return _lrs; };
+    const std::vector<std::unique_ptr<LiveRange>> &LiveRanges() const { return _lrs; };
 
     /** usage[t] will be set to the memory usage at time t, for each timestamp t in the live graph */
-    std::vector<int> GetTemporalMemoryUsage(int &maxUsage, int granularity = 16);
+    MemorySnapshot GetTemporalMemoryUsage(int granularity = 16);
+    int AdjustMemoryUsage(std::vector<LRMemory> &usage, const LiveRange &lr, int adjust);
     void ExtractLiveRangesFromCascades(const std::vector<std::unique_ptr<SchedulerOperation>> &schedOps,
         Schedule *schedule, const MemArea &targetMemory, bool addRollingBuffers);
-    LiveRange *GetOrCreateRange(SchedulerTensor *tens);
+    LiveRange *GetOrCreateRange(SchedulerTensor *tens, LRUsage usage);
+
+private:
     LiveRange *FuseRanges(SchedulerTensor *inTens, SchedulerTensor *outTens);
-    SchedulerTensor *ReusableIFM(const std::unique_ptr<SchedulerOperation> &schedOp, const SchedulerConnection *ofmConn,
+    SchedulerTensor *ReusableIFM(const std::unique_ptr<SchedulerOperation> &schedOp, const SchedulerTensor *ofmTensor,
         const MemArea &targetMemory);
-    virtual bool ShouldBeIgnored(SchedulerTensor *tens, const MemArea &targetMemory);
+    bool ShouldBeIgnored(const SchedulerTensor *tens, const MemArea &targetMemory);
 };
 
 }  // namespace regor
