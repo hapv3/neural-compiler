@@ -254,7 +254,10 @@ void EthosU55RCSGenerator::Emit(uint64_t instr)
     _emit.Emit(instr);
 }
 
-unsigned int EthosU55RCSGenerator::GetDoubleBufferIndex(HLCWeights *weights, int rangeIndex)
+namespace
+{
+
+unsigned GetDoubleBufferIndex(HLCWeights *weights, int rangeIndex)
 {
     if ( weights->buffering == Buffering::Double )
     {
@@ -265,6 +268,8 @@ unsigned int EthosU55RCSGenerator::GetDoubleBufferIndex(HLCWeights *weights, int
     }
     return 0;
 }
+
+}  // namespace
 
 void EthosU55RCSGenerator::CheckAddressRange(ArchitectureMemory *memory, Address address, int size)
 {

@@ -107,7 +107,6 @@ CycleCost EthosU85Performance::MeasureCycleCost(const PerformanceQuery &query)
                 [](int n) -> std::string { return n ? std::to_string(n) : ""; });
         };
 
-
         shapeToStrings(ReshapeToNHWC(opConfig ? opConfig->IfmBlock() : Shape()).ToList<int>());
         shapeToStrings(ReshapeToNHWC(opConfig ? opConfig->OfmBlock() : Shape()).ToList<int>());
         shapeToStrings(ReshapeToNHWC(opConfig ? opConfig->OfmUBlock() : Shape()).ToList<int>());
@@ -129,6 +128,101 @@ int64_t EthosU85Performance::MemToMemCycles(const ArchitectureMemory *dest, cons
     return std::max(fromCycles, toCycles);
 }
 
+namespace
+{
+
+int64_t EstimateMemoryTransfer(int cores, bool isRead, ArchitectureMemory *memory, TensorFormat format, int elementBits,
+    const Shape &block, const Shape &shape, int toTransfer)
+{
+    int burstLen = 8;
+
+    if ( format == TensorFormat::NHCWB16 )
+    {
+        int zStride = (shape.Width() * elementBits * 16) / 8;
+        if ( zStride == block.Depth() )
+        {
+            burstLen = elementBits * block.ElementsWC();
+        }
+        else if ( isRead )
+        {
+            burstLen = 16 * elementBits * block.Width();
+        }
+        else
+        {
+            burstLen = 16 * elementBits * block.Width() * cores;
+        }
+    }
+    else if ( format == TensorFormat::NHWC )
+    {
+        int xStride = (shape.Depth() * elementBits) / 8;
+        if ( isRead )
+        {
+            if ( xStride == block.Depth() )
+            {
+                burstLen = elementBits * block.ElementsWC();
+            }
+            else
+            {
+                burstLen = elementBits * block.Depth();
+            }
+        }
+        else
+        {
+            if ( (block.Depth() <= 16) && xStride == block.Depth() )
+            {
+                burstLen = elementBits * block.ElementsWC();
+            }
+            else
+            {
+                burstLen = std::min(std::min(64 * 8, 16 * elementBits * cores), block.Depth() * elementBits);
+            }
+        }
+    }
+
+    burstLen = std::min(memory->MaxBurstLength(), burstLen / 8);
+    assert(burstLen > 0 && "Burst length cannot be zero");
+    int64_t memTransfer = (int64_t(toTransfer) * memory->MaxBurstLength()) / burstLen;
+    return memTransfer;
+}
+
+int64_t MinimumIfmCycles(const PerformanceQuery &query, int cores)
+{
+    EthosU85OpConfig *opConfig = static_cast<EthosU85OpConfig *>(query.config);
+
+    int ifmBits = DataTypeSizeBits(query.ifmType[0]);  // All inputs expect same bit width
+    const int ifmCount = query.ifmShape[1].Elements() > 0 ? int(std::size(query.ifmShape)) : 1;
+    int64_t cyclesIfm = 0;
+    for ( int i = 0; i < ifmCount; i++ )
+    {
+        // Input block HW transfer (only for elements present)
+        int ifmBytes = Shape::Min(query.ifmShape[i], opConfig->IfmBlock()).Elements() * ifmBits / 8;
+        int64_t cyclesIfmBlk = query.ifmMemory[i]->ReadLatency();
+        int64_t tx = EstimateMemoryTransfer(cores, true, query.ifmMemory[i], query.ifmFormat[i], ifmBits,
+            opConfig->IfmBlock(), query.ifmShape[i], ifmBytes);
+        cyclesIfmBlk += int64_t(float(tx) / query.ifmMemory[i]->Bandwidth());
+
+        cyclesIfm = std::max(cyclesIfm, cyclesIfmBlk);
+    }
+    return cyclesIfm;
+}
+
+int64_t MinimumOfmCycles(const PerformanceQuery &query, int cores)
+{
+    EthosU85OpConfig *opConfig = static_cast<EthosU85OpConfig *>(query.config);
+
+    // Output block HW transfer (only for elements present)
+    int ofmBits = DataTypeSizeBits(query.ofmType);
+    int ofmBytes = Shape::Min(query.ofmShape, opConfig->OfmBlock()).Elements() * ofmBits / 8;
+    int64_t cyclesOfm = query.ofmMemory->WriteLatency();
+    int64_t tx = EstimateMemoryTransfer(
+        cores, false, query.ofmMemory, query.ofmFormat, ofmBits, opConfig->OfmBlock(), query.ofmShape, ofmBytes);
+    cyclesOfm += int64_t(float(tx) / query.ofmMemory->Bandwidth());
+
+    return cyclesOfm;
+}
+
+}  // namespace
+
 int64_t EthosU85Performance::EstimateMacCyclesPerBlock(const PerformanceQuery &query)
 {
     EthosU85OpConfig *opConfig = static_cast<EthosU85OpConfig *>(query.config);
@@ -146,7 +240,8 @@ int64_t EthosU85Performance::EstimateMacCyclesPerBlock(const PerformanceQuery &q
     bool use48BitAcc = opConfig->Acc() == EthosU85Accumulator::Acc48;
 
     int64_t cyclesDpuBlk = 0;
-    int cyclesWb = 32 * ofmUBlock.Depth() / 8;
+    // Ideal weight decode estimate
+    int cyclesWb = 32 * ofmUBlock.Depth() / (8 * _arch->_cores);
 
     int subKernelWidth = s_SubkernelLimits[int(npuOp)].x;
     int subKernelHeight = s_SubkernelLimits[int(npuOp)].y;
@@ -249,7 +344,8 @@ EthosU85Cycles EthosU85Performance::EstimateMacOpCycles(const PerformanceQuery &
     if ( (npuOp == EthosU85NpuOp::Convolution || npuOp == EthosU85NpuOp::Depthwise || npuOp == EthosU85NpuOp::VectorProduct) &&
          query.constShape.Size() > 0 && query.constShape.Depth() > 0 )
     {
-        biasCyclesPerBlock = double(10) * ofmBlock.Depth() * query.constMemory->ReadLatency() / 256;
+        auto *fromMem = query.weightStagingMemory ? query.weightStagingMemory : query.constMemory;
+        biasCyclesPerBlock = double(10) * ofmBlock.Depth() * fromMem->ReadLatency() / 256;
     }
     const double aoCyclesPerBlock = std::max(aoComputeCyclesPerBlock, biasCyclesPerBlock);
 
@@ -257,7 +353,9 @@ EthosU85Cycles EthosU85Performance::EstimateMacOpCycles(const PerformanceQuery &
     const double macCyclesPerBlock = EstimateMacCyclesPerBlock(query);
 
     // Estimate the command issuing limit cycles
-    const double minMemCycles = EstimateMinimumMemoryCycles(query);
+    int64_t ifmBlockCycles = MinimumIfmCycles(query, _arch->_cores);
+    int64_t ofmBlockCycles = MinimumOfmCycles(query, _arch->_cores);
+    int64_t minMemCycles = (numOfmBlks > 1) ? std::abs(ofmBlockCycles - ifmBlockCycles) : 0;
     const double cmdIssueLimitCycles = (minMemCycles + macCyclesPerBlock + aoCyclesPerBlock) / 4;  // Per DPU
 
     // Estimate full Op cycles
@@ -267,12 +365,16 @@ EthosU85Cycles EthosU85Performance::EstimateMacOpCycles(const PerformanceQuery &
     int64_t totalCycles = 0;
     if ( balancedMacCyclesPerBlock > balancedAoCyclesPerBlock )
     {
-        totalCycles = balancedMacCyclesPerBlock * numOfmBlks + balancedAoCyclesPerBlock;
+        totalCycles = int64_t(balancedMacCyclesPerBlock * numOfmBlks);
+        if ( query.scheduling & OpScheduling::Last ) totalCycles += balancedAoCyclesPerBlock;
     }
     else
     {
         totalCycles = balancedAoCyclesPerBlock * numOfmBlks + balancedMacCyclesPerBlock;
     }
+
+    if ( query.scheduling & OpScheduling::Last ) totalCycles += ofmBlockCycles;
+    if ( query.scheduling & OpScheduling::First ) totalCycles += ifmBlockCycles;
 
     // Estimate total number of MACs
     int64_t totalMacs = int64_t(query.kernel->ElementsWH()) * query.ofmShape.Elements();
@@ -311,7 +413,9 @@ EthosU85Cycles EthosU85Performance::EstimateElementwiseCycles(const PerformanceQ
     // Estimate the command issuing limit cycles
     const int ofmBlockElements = opConfig->OfmBlock().Elements();
     assert(ofmBlockElements > 0);
-    const double cmdCyclesPerElem = (EstimateMinimumMemoryCycles(query) / double(ofmBlockElements) + aoCyclesPerElem) / 4.0;  // per DPU
+    // Assumes overlapped I/O
+    const double blockCycles = std::max(MinimumOfmCycles(query, _arch->_cores), MinimumIfmCycles(query, _arch->_cores));
+    const double cmdCyclesPerElem = (blockCycles / ofmBlockElements + aoCyclesPerElem) / 4.0;  // per DPU
     const double cmdIssueLimitCycles = std::ceil(cmdCyclesPerElem * elements);
 
     const int64_t totalCycles = std::max(cmdIssueLimitCycles, aoCycles);
@@ -325,91 +429,6 @@ EthosU85Cycles EthosU85Performance::EstimateElementwiseCycles(const PerformanceQ
     return cycleComponents;
 }
 
-// Estimate the number of bytes transferred on the bus as a function of the number of bits of data and the burst
-// efficency
-static int64_t EstimateMemoryTransfer(int cores, bool isRead, ArchitectureMemory *memory, TensorFormat format,
-    int elementBits, const Shape &block, const Shape &shape, int elementsToTransfer)
-{
-    int burstLen = 8;
-    if ( format == TensorFormat::NHCWB16 )
-    {
-        int zStride = (shape.Width() * elementBits * 16) / 8;
-        if ( zStride == block.Depth() )
-        {
-            burstLen = elementBits * block.ElementsWC();
-        }
-        else if ( isRead )
-        {
-            burstLen = 16 * elementBits * block.Width();
-        }
-        else
-        {
-            burstLen = 16 * elementBits * block.Width() * cores;
-        }
-    }
-    else if ( format == TensorFormat::NHWC )
-    {
-        int xStride = (shape.Depth() * elementBits) / 8;
-        if ( isRead )
-        {
-            if ( xStride == block.Depth() )
-            {
-                burstLen = elementBits * block.ElementsWC();
-            }
-            else
-            {
-                burstLen = elementBits * block.Depth();
-            }
-        }
-        else
-        {
-            if ( (block.Depth() <= 16) && xStride == block.Depth() )
-            {
-                burstLen = elementBits * block.ElementsWC();
-            }
-            else
-            {
-                burstLen = std::min(std::min(64 * 8, 16 * elementBits * cores), block.Depth() * elementBits);
-            }
-        }
-    }
-
-    burstLen = std::min(memory->MaxBurstLength(), burstLen / 8);
-    assert(burstLen > 0 && "Burst length cannot be zero");
-    int64_t memTransferCost = (int64_t(elementsToTransfer * elementBits / 8) * memory->MaxBurstLength()) / burstLen;
-    return memTransferCost;
-}
-
-
-int64_t EthosU85Performance::EstimateMinimumMemoryCycles(const PerformanceQuery &query)
-{
-    EthosU85OpConfig *opConfig = static_cast<EthosU85OpConfig *>(query.config);
-
-    int ifmBits = DataTypeSizeBits(query.ifmType[0]);  // All inputs expect same bit width
-    const int ifmCount = query.ifmShape[1].Elements() > 0 ? int(std::size(query.ifmShape)) : 1;
-    int64_t cyclesIfm = 0;
-    for ( int i = 0; i < ifmCount; i++ )
-    {
-        // Input block HW transfer (only for elements present)
-        int ifmElements = Shape::Min(query.ifmShape[i], opConfig->IfmBlock()).Elements();
-        int64_t cyclesIfmBlk = query.ifmMemory[i]->ReadLatency();
-        int64_t tx = EstimateMemoryTransfer(_arch->_cores, true, query.ifmMemory[i], query.ifmFormat[i], ifmBits,
-            opConfig->IfmBlock(), query.ifmShape[i], ifmElements);
-        cyclesIfmBlk += int64_t(float(tx) / query.ifmMemory[i]->Bandwidth());
-
-        cyclesIfm = std::max(cyclesIfm, cyclesIfmBlk);
-    }
-
-    // Output block HW transfer (only for elements present)
-    int ofmBits = DataTypeSizeBits(query.ofmType);
-    int ofmElements = Shape::Min(query.ofmShape, opConfig->OfmBlock()).Elements();
-    int64_t cyclesOfm = query.ofmMemory->WriteLatency();
-    int64_t tx = EstimateMemoryTransfer(_arch->_cores, false, query.ofmMemory, query.ofmFormat, ofmBits,
-        opConfig->OfmBlock(), query.ofmShape, ofmElements);
-    cyclesOfm += int64_t(float(tx) / query.ofmMemory->Bandwidth());
-
-    return cyclesIfm + cyclesOfm;
-}
 
 double EthosU85Performance::GetActivationCyclesPerElement(ReverseType reverse, TransposeType transpose)
 {
@@ -609,7 +628,9 @@ ElementAccess EthosU85Performance::MeasureElementAccess(const PerformanceQuery &
         if ( it != query.featureMapRecords.end() )
         {
             const FeatureMapRecord &fmRecord = *it;
-            assert(fmRecord.access);
+            if ( !fmRecord.access )  // Let the caller control whether it wants results
+                continue;
+
             if ( IsIFM(fmRecord.usage) )
             {
                 int ifmIdx = GetUsageIndex(fmRecord.usage);
@@ -680,7 +701,7 @@ ElementAccess EthosU85Performance::ElementTransferToBytes(const PerformanceQuery
         if ( it != query.featureMapRecords.end() )
         {
             const FeatureMapRecord &fmRecord = *it;
-            assert(fmRecord.access);
+            if ( !fmRecord.access ) continue;
             ElementAccess &extAccess = *fmRecord.access;
             if ( IsIFM(fmRecord.usage) )
             {
@@ -733,6 +754,8 @@ int64_t EthosU85Performance::WeightDecodeCycles(
 
 float EthosU85Performance::ChannelBW(const ArchitectureMemory *mem, const MemChannel channel)
 {
+    assert(mem->PortsUsed() && mem->MaxBurstLength() && mem->Bandwidth() > 0 && mem->MaxReads() > 0);
+
     int burstLenWords = std::max(mem->MaxBurstLength() / 16, 1);
 
     float read_rb_lim;
@@ -841,7 +864,7 @@ MemChannel EthosU85Performance::LookupChannel(OpType type, TensorUsage usage, bo
     }
 }
 
-int64_t EthosU85Performance::MinReadCycles(ArchitectureMemory *mem, int size, TensorUsage usage, OpType type, bool fastWeights)
+int64_t EthosU85Performance::MinReadCycles(ArchitectureMemory *mem, int64_t size, TensorUsage usage, OpType type, bool fastWeights)
 {
     auto channel = LookupChannel(type, usage, fastWeights);
     auto transferCycles = size / double(ChannelBW(mem, channel));
@@ -850,7 +873,7 @@ int64_t EthosU85Performance::MinReadCycles(ArchitectureMemory *mem, int size, Te
     return transferCycles + mem->ReadLatency();
 }
 
-int64_t EthosU85Performance::MinWriteCycles(ArchitectureMemory *mem, int size)
+int64_t EthosU85Performance::MinWriteCycles(ArchitectureMemory *mem, int64_t size)
 {
     auto channel = MemChannel::Write;
     auto transferCycles = size / double(ChannelBW(mem, channel));

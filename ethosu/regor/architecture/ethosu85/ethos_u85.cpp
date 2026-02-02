@@ -1345,6 +1345,11 @@ int EthosU85OpConfig::OptimalDepthGranule()
     return _ofmBlock.Depth();
 }
 
+int EthosU85OpConfig::MinimumDepthGranule()
+{
+    return std::max(16, _ofmUBlock.Depth());
+}
+
 std::string EthosU85OpConfig::ToString(bool full)
 {
     std::string tmp = fmt::format("OFM Block=[{}], IFM Block=[{}], OFM UBlock=[{}] Traversal={}, AccType={}", _ofmBlock.ToString(),

@@ -392,7 +392,8 @@ private:
     void CoalesceWeightBufferTensors(Schedule *schedule);
 
     CycleCost EstimateOpPerformance(SchedulerOperation *op, ArchitectureOpConfig *config, int ofm_depth,
-        WeightFormat wgtFormat = WeightFormat::Default);
+        WeightFormat wgtFormat = WeightFormat::Default, ArchitectureMemory *wgtStaging = nullptr,
+        OpScheduling scheduling = OpScheduling::Single);
 
     void PrintSchedule(Schedule *schedule);
 

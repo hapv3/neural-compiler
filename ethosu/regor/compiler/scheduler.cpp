@@ -1276,7 +1276,8 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
             prebufferDepth = int(std::max(16, RoundZero(prebufferDepth, OFMSplitDepth)));
 
             // Calculate cycles executed during the pre-buffer
-            auto preOpCycles = EstimateOpPerformance(schedOp, cost->Config(), prebufferDepth);
+            auto preOpCycles = EstimateOpPerformance(schedOp, cost->Config(), prebufferDepth, weightFormat,
+                _arch->StagingMemory().memory, OpScheduling::First);
             int bufferingDepth = int((refCost->stripe.Depth() * preOpCycles.opCycles) / fullTransferCycles);
 
             // Choose initial buffering depth and clamp to the double buffering limit
@@ -1342,7 +1343,8 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
             assert(cost->ofmDepthSlices.size() >= 2);
             int lastDepth = cost->ofmDepthSlices.back();
             lastDepth -= *(cost->ofmDepthSlices.rbegin() + 1);
-            auto tailCycles = EstimateOpPerformance(schedOp, cost->Config(), lastDepth);
+            auto tailCycles = EstimateOpPerformance(
+                schedOp, cost->Config(), lastDepth, weightFormat, _arch->StagingMemory().memory, OpScheduling::Last);
             cost->slackBufferingCycles = tailCycles.opCycles;
         }
     }
@@ -1959,7 +1961,8 @@ PerformanceQuery Scheduler::InitPerfQuery(SchedulerOperation *op, ArchitectureOp
 }
 
 
-CycleCost Scheduler::EstimateOpPerformance(SchedulerOperation *op, ArchitectureOpConfig *config, int ofm_depth, WeightFormat wgtFormat)
+CycleCost Scheduler::EstimateOpPerformance(SchedulerOperation *op, ArchitectureOpConfig *config, int ofm_depth,
+    WeightFormat wgtFormat, ArchitectureMemory *wgtStaging, OpScheduling scheduling)
 {
     CycleCost cycleCost;
     if ( !op->IsNpuOp() )
@@ -1969,6 +1972,11 @@ CycleCost Scheduler::EstimateOpPerformance(SchedulerOperation *op, ArchitectureO
     }
 
     PerformanceQuery query = InitPerfQuery(op, config, ofm_depth, wgtFormat);
+    query.scheduling = scheduling;
+    if ( !query.weightStagingMemory && wgtStaging )
+    {
+        query.weightStagingMemory = wgtStaging;
+    }
     cycleCost = _arch->Performance()->MeasureCycleCost(query);
     return cycleCost;
 }

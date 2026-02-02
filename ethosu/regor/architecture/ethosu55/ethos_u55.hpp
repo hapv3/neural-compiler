@@ -109,6 +109,7 @@ public:
     Point2i OptimalStripeGranule() override;
     Point2i MinimalStripeGranule() override;
     int OptimalDepthGranule() override;
+    int MinimumDepthGranule() override;
     std::string ToString(bool full) override;
 
     void AttachPrevConfig(std::unique_ptr<EthosU55OpConfig> prev);

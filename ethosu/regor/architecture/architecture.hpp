@@ -105,6 +105,7 @@ struct MemArea
     MemArea() = default;
     MemArea(ArchitectureMemory *architectureMemory, MemUsage memUsage) : memory(architectureMemory), usage(memUsage) {}
 
+    bool Compatible(const MemArea &other) const { return memory == other.memory && usage.Any(other.usage); }
     bool operator==(const MemArea &other) const { return memory == other.memory && usage == other.usage; }
     bool operator!=(const MemArea &other) const { return !operator==(other); }
     explicit operator bool() const { return (memory != nullptr) && (usage != MemUsage::None); }
@@ -127,6 +128,7 @@ public:
     virtual Point2i OptimalStripeGranule() = 0;
     virtual Point2i MinimalStripeGranule() = 0;
     virtual int OptimalDepthGranule() = 0;
+    virtual int MinimumDepthGranule() = 0;
     virtual std::string ToString(bool full) = 0;
 };
 
@@ -220,6 +222,15 @@ struct ArchitectureConfigQuery
     } rescaling;
 };
 
+enum OpScheduling
+{
+    BackToBack = 0,
+    First = 1,
+    Last = 2,
+    Single = First | Last,
+};
+
+
 /// <summary>
 /// How elements are accessed during an operation
 /// </summary>
@@ -271,6 +282,7 @@ struct PerformanceQuery
     unsigned firstWeightDMASize;
     ArchitectureOpGroup *opGroup;
     std::vector<FeatureMapRecord> featureMapRecords;
+    OpScheduling scheduling = OpScheduling::Single;
 };
 
 struct WeightStats
@@ -314,8 +326,8 @@ public:
         Flags<WeightFormat> format, ArchitectureMemory *weightsMemory) = 0;
     virtual void InitDatabase(Database *db) = 0;
     virtual void RecordToDB(int opId) = 0;
-    virtual int64_t MinReadCycles(ArchitectureMemory *mem, int size, TensorUsage usage, OpType type, bool fastWeights) = 0;
-    virtual int64_t MinWriteCycles(ArchitectureMemory *mem, int size) = 0;
+    virtual int64_t MinReadCycles(ArchitectureMemory *mem, int64_t size, TensorUsage usage, OpType type, bool fastWeights) = 0;
+    virtual int64_t MinWriteCycles(ArchitectureMemory *mem, int64_t size) = 0;
     virtual std::unordered_map<const ArchitectureMemory *, AccessCycles>
     MeasureAccessCycles(const PerformanceQuery &query, const ElementAccess &byteAccess) = 0;
 };

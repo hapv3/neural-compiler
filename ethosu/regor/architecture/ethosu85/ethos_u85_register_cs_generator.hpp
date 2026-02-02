@@ -139,7 +139,6 @@ protected:
     void Emit(uint32_t instr);
     void Emit(uint64_t instr);
 
-    static unsigned int GetDoubleBufferIndex(HLCWeights *weights, int rangeIndex);
     static void CheckAddressRange(ArchitectureMemory *memory, Address address, int size);
     static void CheckAddresses(const HLCFeatureMap &fm);
     // Calculates the rolling buffer address of the given coordinate.

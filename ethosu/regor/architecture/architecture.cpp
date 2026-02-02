@@ -156,9 +156,9 @@ bool Architecture::ParseMemory(IniReader *reader, const std::string &section)
     int readLatency = 0;
     int writeLatency = 0;
     int burstLength = 1;
-    int ports_used = 0;
-    int max_reads = 0;
-    int max_writes = 0;
+    int ports_used = 1;
+    int max_reads = 1;
+    int max_writes = 1;
     // Parse memory definition
     std::string key;
     while ( reader->Begin(key) )

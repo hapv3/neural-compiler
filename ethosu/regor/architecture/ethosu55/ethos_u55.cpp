@@ -695,6 +695,11 @@ int EthosU55OpConfig::OptimalDepthGranule()
     return _ofmBlock.Depth();
 }
 
+int EthosU55OpConfig::MinimumDepthGranule()
+{
+    return 16;  // OFM split depth for U55/65
+}
+
 std::string EthosU55OpConfig::ToString(bool full)
 {
     std::string tmp = fmt::format("OFM Block=[{}], IFM Block=[{}], Traversal={}, AccType={}", _ofmBlock.ToString(),

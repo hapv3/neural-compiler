@@ -416,8 +416,10 @@ void EthosU85RCSGenerator::Emit(uint64_t instr)
     _emit.Emit(instr);
 }
 
+namespace
+{
 
-unsigned int EthosU85RCSGenerator::GetDoubleBufferIndex(HLCWeights *weights, int rangeIndex)
+unsigned GetDoubleBufferIndex(HLCWeights *weights, int rangeIndex)
 {
     if ( weights->buffering == Buffering::Double )
     {
@@ -429,6 +431,7 @@ unsigned int EthosU85RCSGenerator::GetDoubleBufferIndex(HLCWeights *weights, int
     return 0;
 }
 
+}  // namespace
 
 void EthosU85RCSGenerator::CheckAddressRange(ArchitectureMemory *memory, Address address, int size)
 {
@@ -1393,7 +1396,7 @@ void EthosU85RCSGenerator::GenerateWeights(const HLCStripe *stripe, MemoryAccess
             memoryAccesses.emplace_back(AccessDirection::Read, weights->memArea, address, address + length);
             offset += RoundAway(range.TotalBytes(), 16);
         }
-
+        assert(address % 16 == 0);
         switch ( i )
         {
             case 0:
