@@ -3197,6 +3197,7 @@ Operation *GraphIrOptimiser::MoveSplitSliceToConsumer(Graph *const, Operation *c
 
             bool ifmShapeEqual = false;
             bool bothHaveIfmStride = false;
+            bool hasIfmSlice = false;
 
             // Don't move to CPU, Reshape or Tile operations
             // low-level implementation of TILE requires unsliced inputs
@@ -3217,6 +3218,9 @@ Operation *GraphIrOptimiser::MoveSplitSliceToConsumer(Graph *const, Operation *c
                 const auto &conIfmStride = consIfm0Conn->slice.stride;
                 bothHaveIfmStride =
                     ifmStride && ifmStride != ifmStride.WithOnes() && conIfmStride && conIfmStride != conIfmStride.WithOnes();
+
+                // Check if ifm0 consumer already has IFM slice
+                hasIfmSlice = !!consIfm0Conn->slice.offset;
             }
             else if ( consIfm1 != nullptr && consIfm1 == ofm )
             {
@@ -3229,6 +3233,9 @@ Operation *GraphIrOptimiser::MoveSplitSliceToConsumer(Graph *const, Operation *c
                 const auto &conIfmStride = consIfm1Conn->slice.stride;
                 bothHaveIfmStride =
                     ifmStride && ifmStride != ifmStride.WithOnes() && conIfmStride && conIfmStride != conIfmStride.WithOnes();
+
+                // Check if ifm1 consumer already has IFM slice
+                hasIfmSlice = !!consIfm1Conn->slice.offset;
             }
 
             // Calculate the consumer transpose type
@@ -3240,7 +3247,8 @@ Operation *GraphIrOptimiser::MoveSplitSliceToConsumer(Graph *const, Operation *c
 
             // We can only move to consumer if there is no transpose on the op that we move to,
             // otherwise the IFM shape may change and transposition will be wrong.
-            if ( Shape::IsReducedEqual(ofmConn->shape, ofm->StorageShape()) && IsNone(consumerTranspose) && ifmShapeEqual && !bothHaveIfmStride )
+            if ( Shape::IsReducedEqual(ofmConn->shape, ofm->StorageShape()) && IsNone(consumerTranspose) &&
+                 ifmShapeEqual && !bothHaveIfmStride && !hasIfmSlice )
             {
                 // Split/Slice can be performed by tensor consumer
                 MoveToConsumer(operation, cons.get());
