@@ -319,7 +319,7 @@ EthosU85Cycles EthosU85Performance::EstimateElementwiseCycles(const PerformanceQ
     // Estimate the command issuing limit cycles
     const int ofmBlockElements = opConfig->OfmBlock().Elements();
     assert(ofmBlockElements > 0);
-    const double cmdCyclesPerElem = (EstimateMinimumMemoryCycles(query) / ofmBlockElements + aoCyclesPerElem) / 4.0;  // per DPU
+    const double cmdCyclesPerElem = (EstimateMinimumMemoryCycles(query) / double(ofmBlockElements) + aoCyclesPerElem) / 4.0;  // per DPU
     const double cmdIssueLimitCycles = std::ceil(cmdCyclesPerElem * elements);
 
     const int64_t totalCycles = std::max(cmdIssueLimitCycles, aoCycles);

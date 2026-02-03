@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -21,6 +21,7 @@
 #include "common/common.hpp"
 
 #include "architecture/architecture.hpp"
+
 
 namespace regor
 {
@@ -81,10 +82,11 @@ public:
 
 
 private:
-    EthosU55Cycles EstimateConvCycles(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);
+    EthosU55Cycles EstimateMacOpCycles(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);
     EthosU55Cycles EstimateElementwiseCycles(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);
     EthosU55Cycles EstimateMatMulCycles(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);
-    EthosU55ElementCycles EstimateOutputCyclesPerElement(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);
+    int64_t EstimateMacCyclesPerBlock(const PerformanceQuery &query);
+    double EstimateAOCyclesPerElement(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);
     int64_t EstimateMinimumMemoryCycles(const PerformanceQuery &query);
 };
 
