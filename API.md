@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright 2020, 2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+SPDX-FileCopyrightText: Copyright 2020, 2023, 2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 
 SPDX-License-Identifier: Apache-2.0
 
@@ -15,6 +15,10 @@ WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 -->
+# Deprecation notice
+
+**The low-level API is deprecated and will be removed in next major release.**
+
 # Vela External APIs
 
 Vela provides a low-level external API to enable Ethos-U code generation from

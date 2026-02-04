@@ -31,6 +31,7 @@ def test_ethos_u_vela_with_vela(tmp_path):
     network_file.write_bytes(TEST_NETWORK)
     cli = [
         "vela",
+        "--debug-force-legacy-core",
         "--accelerator-config",
         "ethos-u55-256",
         "--output-dir",

@@ -58,6 +58,9 @@ vela --version
 
 ### API version
 
+**Deprecation notice:**
+This option will be removed in next major release.
+
 Displays the version of the external API.  
 This option can be used without the required Network argument.  
 **Type: N/A**  
@@ -191,6 +194,9 @@ vela network.tflite --config DirectoryName/my_vela_cfg1.ini --config absolute/pa
 
 ### Timing
 
+**Deprecation notice:**
+This option will be removed in next major release.
+
 Measure time taken for different compiler steps, e.g. model reading and
 scheduling.  Prints the results to standard out.
 
@@ -255,6 +261,9 @@ vela network.tflite --config my_vela_cfg.ini --memory-mode My_Mem_Mode
 
 ### Tensor Allocator
 
+**Deprecation notice:**
+The `Greedy` allocator choice will be removed in next major release.
+
 Specify which allocator algorithm to use for non-constant NPU and CPU tensor
 allocation.  
 **Type: String**  
@@ -266,6 +275,9 @@ vela network.tflite --tensor-allocator=LinearAlloc
 ```
 
 ### Max Block Dependency
+
+**Deprecation notice:**
+This option will be removed in next major release.
 
 Set the maximum value that can be used for the block dependency delay between
 NPU kernel operations.  A lower value may result in longer execution time.  
@@ -322,6 +334,9 @@ vela network.tflite --cpu-tensor-alignment 128
 
 ### Recursion Limit
 
+**Deprecation notice:**
+This option will be removed in next major release.
+
 Sets the Python internal limit to depth of recursion. It may be
 necessary to increase this from the default for very large networks
 due to the recursive nature of the graph traversal algorithm.
@@ -337,6 +352,9 @@ vela network.tflite --recursion-limit 2000
 ```
 
 ### HillClimb Max Iterations
+
+**Deprecation notice:**
+This option will be removed in next major release.
 
 Sets the maximum number of iterations the Hill Climb tensor allocator will run.
 This is a hard limit on the total number of iterations of the algorithm.
@@ -392,6 +410,9 @@ vela network.tflite --show-cpu-operations
 ```
 
 ### Show Subgraph IO Summary
+
+**Deprecation notice:**
+This option will be removed in next major release.
 
 Prints a summary of all the subgraphs and their inputs and outputs.  
 
@@ -455,6 +476,9 @@ vela network.tflite --verbose-quantization
 
 ### Verbose Packing
 
+**Deprecation notice:**
+This option will be removed in next major release.
+
 Displays a list of passes where a pass represents one or more Graph IR operators
 that are run together as one hardware operation e.g. a pass could be a
 convolution operator fused with a hardswish activation.  Each line of the list
@@ -478,6 +502,9 @@ vela network.tflite --verbose-performance
 ```
 
 ### Verbose Tensor Purpose
+
+**Deprecation notice:**
+This option will be removed in next major release.
 
 Displays a list of all operators and the tensors that are connected to them.
 Additional information is shown about the tensors. The format is:
@@ -601,6 +628,9 @@ vela network.tflite --verbose-register-command-stream
 
 ### Verbose Operators
 
+**Deprecation notice:**
+This option will be removed in next major release.
+
 Display a list of all operators in the neural network graph along with their
 attributes before any optimization is made by Vela.  
 
@@ -634,6 +664,9 @@ vela network.tflite --verbose-cycle-estimate
 
 ### Verbose Progress
 
+**Deprecation notice:**
+This option will be removed in next major release.
+
 This option displays progress information of the most time consuming parts of
 the compiler driver and scheduler.  
 
@@ -641,10 +674,26 @@ the compiler driver and scheduler.
 vela network.tflite --verbose-progress
 ```
 
+### Debug force legacy core
+
+**Deprecation notice:**
+This option will be removed in next major release.
+
+Force Ethos-U55 or Ethos-U65 to use the deprecated legacy compilation path
+(TFLite only).
+
+```bash
+vela network.tflite --debug-force-legacy-core
+```
+
 ### Debug force regor
 
-Force Ethos-U55 and Ethos-U65 to use the Regor compilation path (Experimental).
-This path is the default for Ethos-U85.
+**Deprecation notice:**
+This option will be removed in next major release.
+
+Regor is the default for all targets, and this option no longer has any effect.
+Use `--debug-force-legacy-core` to force the legacy compilation path
+(Ethos-U55 or Ethos-U65 and TFLite only).
 
 ```bash
 vela network.tflite --debug-force-regor

@@ -607,15 +607,39 @@ def list_configs(config_filename):
         print(f"   {section}")
 
 
+class DeprecatedStoreAction(argparse.Action):
+    def __init__(self, option_strings, dest, **kwargs):
+        super().__init__(option_strings, dest, **kwargs)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        print(f"Warning: Option {option_string} is deprecated and will be removed in a future release.")
+        setattr(namespace, self.dest, values)
+
+
+class DeprecatedStoreTrueAction(argparse.Action):
+    def __init__(self, option_strings, dest, **kwargs):
+        super().__init__(option_strings, dest, nargs=0, **kwargs)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        print(f"Warning: Option {option_string} is deprecated and will be removed in a future release.")
+        setattr(namespace, self.dest, True)
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     """Run the main entry point."""
     if argv is None:
         argv = sys.argv[1:]
 
     parser = argparse.ArgumentParser(prog="vela", description="Neural network model compiler for Arm Ethos-U NPUs")
+    parser.register("action", "deprecated_store", DeprecatedStoreAction)
+    parser.register("action", "deprecated_store_true", DeprecatedStoreTrueAction)
     parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument(
-        "--api-version", action="version", version=API_VERSION, help="Displays the version of the external API."
+        "--api-version",
+        action="version",
+        version="Warning: Option --api-version is deprecated and will be removed in a future release."
+        f" Version: {API_VERSION}",
+        help="[DEPRECATED] Displays the version of the external API.",
     )
     parser.add_argument(
         "--supported-ops-report",
@@ -674,8 +698,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     parser.add_argument("--verbose-graph", action="store_true", help="Enable graph optimizer debug")
     parser.add_argument("--verbose-quantization", action="store_true", help="Enable quantization debug")
-    parser.add_argument("--verbose-packing", action="store_true", help="Enable pass packing debug")
-    parser.add_argument("--verbose-tensor-purpose", action="store_true", help="Enable tensor purpose debug")
+    parser.add_argument(
+        "--verbose-packing", action="deprecated_store_true", help="[DEPRECATED] Enable pass packing debug"
+    )
+    parser.add_argument(
+        "--verbose-tensor-purpose", action="deprecated_store_true", help="[DEPRECATED] Enable tensor purpose debug"
+    )
     parser.add_argument("--verbose-tensor-format", action="store_true", help="Enable tensor format debug")
     parser.add_argument("--verbose-schedule", action="store_true", help="Enable schedule debug")
     parser.add_argument("--verbose-allocation", action="store_true", help="Enable tensor allocation debug")
@@ -685,15 +713,21 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--verbose-register-command-stream", action="store_true", help="Enable register command stream debug"
     )
-    parser.add_argument("--verbose-operators", action="store_true", help="Enable operator list debug")
+    parser.add_argument(
+        "--verbose-operators", action="deprecated_store_true", help="[DEPRECATED] Enable operator list debug"
+    )
     parser.add_argument("--verbose-weights", action="store_true", help="Enable weights information debug")
     parser.add_argument("--verbose-cycle-estimate", action="store_true", help="Enable cycle estimate information debug")
     parser.add_argument("--verbose-performance", action="store_true", help="Enable performance information debug")
-    parser.add_argument("--verbose-progress", action="store_true", help="Enable progress information debug")
+    parser.add_argument(
+        "--verbose-progress", action="deprecated_store_true", help="[DEPRECATED] Enable progress information debug"
+    )
     parser.add_argument(
         "--show-cpu-operations", action="store_true", help="Show the operations that fall back to the CPU"
     )
-    parser.add_argument("--timing", action="store_true", help="Time the compiler doing operations")
+    parser.add_argument(
+        "--timing", action="deprecated_store_true", help="[DEPRECATED] Time the compiler doing operations"
+    )
     parser.add_argument(
         "--force-symmetric-int-weights",
         action="store_true",
@@ -727,16 +761,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     parser.add_argument(
         "--show-subgraph-io-summary",
-        action="store_true",
-        help="Shows a summary of all the subgraphs and their inputs and outputs",
+        action="deprecated_store_true",
+        help="[DEPRECATED] Shows a summary of all the subgraphs and their inputs and outputs",
     )
     parser.add_argument(
         "--max-block-dependency",
+        action="deprecated_store",
         type=int,
         default=architecture_features.ArchitectureFeatures.MAX_BLOCKDEP,
         choices=range(0, architecture_features.ArchitectureFeatures.MAX_BLOCKDEP + 1),
         help=(
-            "Set the maximum value that can be used for the block dependency between npu kernel operations"
+            "[DEPRECATED] Set the maximum value that can be used for the block dependency between npu kernel operations"
             " (default: %(default)s)"
         ),
     )
@@ -770,15 +805,23 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     parser.add_argument(
         "--recursion-limit",
+        action="deprecated_store",
         type=int,
         default=1000,
-        help="Set the recursion depth limit, may result in RecursionError if too low (default: %(default)s)",
+        help=(
+            "[DEPRECATED] Set the recursion depth limit, may result in RecursionError"
+            " if too low (default: %(default)s)"
+        ),
     )
     parser.add_argument(
         "--hillclimb-max-iterations",
+        action="deprecated_store",
         type=int,
         default=HillClimbAllocator.MAX_ITERATIONS,
-        help="Set the maximum number of iterations the Hill Climb tensor allocator will run (default: %(default)s)",
+        help=(
+            "[DEPRECATED] Set the maximum number of iterations the Hill Climb tensor allocator"
+            " will run (default: %(default)s)"
+        ),
     )
     parser.add_argument(
         "--cop-format",
@@ -792,13 +835,19 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
 
     # debug options
-    parser.add_argument("--debug-force-regor", action="store_true", help="Debug: Force the use of the regor")
-    parser.add_argument("--disable-chaining", action="store_true", default=False)
-    parser.add_argument("--disable-fwd", action="store_true", default=False)
-    parser.add_argument("--disable-cascading", action="store_true", default=False)
-    parser.add_argument("--disable-buffering", action="store_true", default=False)
-    parser.add_argument("--disable-ifm-reuse", action="store_true", default=False)
-
+    parser.add_argument(
+        "--debug-force-legacy-core",
+        action="deprecated_store_true",
+        help="Debug: Use the deprecated legacy Python compilation core",
+    )
+    parser.add_argument(
+        "--debug-force-regor", action="deprecated_store_true", help="[DEPRECATED] Debug: Force the use of the regor"
+    )
+    parser.add_argument("--disable-chaining", action="deprecated_store_true", default=False, help="[DEPRECATED]")
+    parser.add_argument("--disable-fwd", action="deprecated_store_true", default=False, help="[DEPRECATED]")
+    parser.add_argument("--disable-cascading", action="deprecated_store_true", default=False, help="[DEPRECATED]")
+    parser.add_argument("--disable-buffering", action="deprecated_store_true", default=False, help="[DEPRECATED]")
+    parser.add_argument("--disable-ifm-reuse", action="deprecated_store_true", default=False, help="[DEPRECATED]")
     args = parser.parse_args(argv)
 
     # Generate the supported ops report and exit
@@ -865,6 +914,12 @@ def main(argv: Optional[List[str]] = None) -> int:
             "".format(args.cpu_tensor_alignment)
         )
 
+    if args.debug_force_legacy_core and args.debug_force_regor:
+        parser.error(
+            "Cannot force the use of both the deprecated legacy Python compilation core and the Regor C++ compilation"
+            " core at the same time. Please choose only one of these options."
+        )
+
     if args.verbose_all:
         for v in vars(args):
             if v.startswith("verbose") and v != "verbose_all":
@@ -884,10 +939,17 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     model_reader_options = model_reader.ModelReaderOptions()
 
-    # The default behaviour to compile TFLite networks on Ethos-U55/U65 is to use Vela's Python compiler core (no name).
-    # However, this can be overridden to use Vela's C++ compiler core (Regor) by using the --debug-force-regor option.
-    # All Ethos-U85 or all TOSA network compilations use Vela's C++ compiler core (Regor).
-    if arch.is_ethos_u85_system or args.network.lower().endswith(".tosa") or args.debug_force_regor:
+    # Vela's legacy Python compilation core has been deprecated.
+    # However, this can be overridden to still be used for TFLite and Ethos-U55 or Ethos-U65 by using the
+    # `--debug-force-legacy-core` option, until fully removed.
+    # All Ethos-U85 or TOSA network compilations always use Vela's C++ compilation core (Regor).
+    if arch.is_ethos_u85_system or args.network.lower().endswith(".tosa") or not args.debug_force_legacy_core:
+        if args.debug_force_legacy_core:
+            parser.error(
+                "Forcing the use of the deprecated legacy Python compilation core is not possible for this target"
+                " system or input network. \nThe legacy core only supports Ethos-U55 and Ethos-U65 systems and TFLite"
+                " input networks. Please remove the --debug-force-legacy-core option and try again."
+            )
         system_config = "[architecture]\n"
         system_config += f"macs={arch.num_macs_per_cycle}\n"
         system_config += f"cores={arch.ncores}\n"

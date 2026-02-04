@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright 2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+SPDX-FileCopyrightText: Copyright 2025-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 
 SPDX-License-Identifier: Apache-2.0
 
@@ -68,8 +68,8 @@ pre-commit run clang-format --all-files
 # Outputs are stored under ./out by default
 # Basic usage
 vela --config ethos-u-vela/ethosu/config_files/Arm/vela.ini --accelerator-config ethos-u85-2048 --system-config Ethos_U85_SYS_DRAM_High --memory-mode Dedicated_Sram_384KB  mynetwork.tflite
-# Ethos-U55 base example ( needs --debug-force-regor ) 
-vela --config /ethos-u-vela/ethosu/config_files/Arm/vela.ini --accelerator-config ethos-u55-128 --system-config Ethos_U55_High_End_Embedded --memory-mode Shared_Sram mynetwork.tflite --debug-force-regor
+# Ethos-U55 base example
+vela --config /ethos-u-vela/ethosu/config_files/Arm/vela.ini --accelerator-config ethos-u55-128 --system-config Ethos_U55_High_End_Embedded --memory-mode Shared_Sram mynetwork.tflite
 # Flag to optimise for size ( otherwise performance is default ) 
 --optimise=Size
 
