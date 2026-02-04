@@ -110,6 +110,7 @@ public:
         Schedule *schedule, const MemArea &targetMemory, bool addRollingBuffers);
     LiveRange *GetOrCreateRange(SchedulerTensor *tens, LRUsage usage);
     bool AreInSameRange(const SchedulerTensor *lhs, const SchedulerTensor *rhs) const;
+    LiveRange *SplitFromRange(SchedulerTensor *tens);
 
 private:
     LiveRange *FuseRanges(SchedulerTensor *inTens, SchedulerTensor *outTens);

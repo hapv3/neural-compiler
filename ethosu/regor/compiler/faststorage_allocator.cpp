@@ -29,6 +29,7 @@
 #include <memory>
 #include <random>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace regor
@@ -377,7 +378,7 @@ void FastStorageAllocator::AllocateComponent(FastStorageComponentAllocator &allo
     }
 }
 
-// Enforce that all IFMs are in the same memory in groups that contain EW ops
+// Enforce that all IFMs are in the same memory for opgroups that contains elementwise operators
 void FastStorageAllocator::ElementwiseSanitizer(const std::vector<std::unique_ptr<SchedulerOperation>> &schedOps,
     Schedule *schedule, const MemArea &fastStorage, LiveRangeGraph &lrGraph)
 {
@@ -399,92 +400,43 @@ void FastStorageAllocator::ElementwiseSanitizer(const std::vector<std::unique_pt
 
         const auto opGroup = schedOp->OpGroup();
         assert(opGroup);
-
-        const auto *ifm = schedOp->IFM(0);
-        const auto *ifm2 = schedOp->TryIFM(1);
-
-        bool hasExtIFMInFastStorage = false;  // This op (incl. sub ops) has IFMs in StagingMemory
-        bool hasExtIFMInSlowStorage = false;  // This op (incl. sub ops) has IFMs in FeatureMapMemory
-
-        if ( IsElementwise(schedOp->Type()) )
+        // create set of external inputs
+        std::unordered_set<SchedulerTensor *> externalInputs;
+        for ( const auto &[usage, tens] : schedOp->LiveRangeTensors() )
         {
-            if ( opGroup->NeedsAllocation(ifm->tensor->uid) )
+            if ( IsIFM(usage) && opGroup->NeedsAllocation(tens->uid) )
             {
-                hasExtIFMInFastStorage = ifm->tensor->memArea == fastStorage;
-                hasExtIFMInSlowStorage = ifm->tensor->memArea != fastStorage && !ifm->tensor->IsConstant();
-            }
-
-            if ( ifm2 && opGroup->NeedsAllocation(ifm2->tensor->uid) )
-            {
-                hasExtIFMInFastStorage = hasExtIFMInFastStorage || (ifm2->tensor->memArea == fastStorage);
-                hasExtIFMInSlowStorage =
-                    hasExtIFMInSlowStorage || (ifm2->tensor->memArea != fastStorage && !ifm2->tensor->IsConstant());
+                externalInputs.insert(tens);
             }
         }
-
-        for ( auto &subOp : schedOp->SubOps() )
+        // Evict all external tensors if any of them are in slow memory
+        for ( auto input : externalInputs )
         {
-            if ( IsElementwise(subOp->Type()) )
+            if ( input->memArea != fastStorage && !input->IsConstant() )
             {
-                const auto *sifm = subOp->IFM(0);
-                const auto *sifm2 = subOp->TryIFM(1);
-
-                if ( opGroup->NeedsAllocation(sifm->tensor->uid) )
+                // non-fastStorage external input found
+                // evict external tensors
+                for ( auto tensor : externalInputs )
                 {
-                    hasExtIFMInFastStorage = hasExtIFMInFastStorage || (sifm->tensor->memArea == fastStorage);
-                    hasExtIFMInSlowStorage =
-                        hasExtIFMInSlowStorage || (sifm->tensor->memArea != fastStorage && !sifm->tensor->IsConstant());
-                }
-
-                if ( sifm2 && opGroup->NeedsAllocation(sifm2->tensor->uid) )
-                {
-                    hasExtIFMInFastStorage = hasExtIFMInFastStorage || (sifm2->tensor->memArea == fastStorage);
-                    hasExtIFMInSlowStorage =
-                        hasExtIFMInSlowStorage || (sifm2->tensor->memArea != fastStorage && !sifm2->tensor->IsConstant());
-                }
-            }
-        }
-
-        // Evict every fast tensor if there are both fast and slow tensors
-        if ( hasExtIFMInFastStorage && hasExtIFMInSlowStorage )
-        {
-            LOG_TRACE1("Evicting IFMs to {} (index {}) that has mixed memory IFMs\n", OpTypeToString(schedOp->Type()),
-                schedOp->Index());
-
-            if ( IsElementwise(schedOp->Type()) )
-            {
-                if ( ifm->tensor->memArea == fastStorage )
-                {
-                    auto lr = lrGraph.GetOrCreateRange(ifm->tensor.get(), LRUsage::OpLocal);
-                    Evict(lr);
-                }
-
-                if ( ifm2 && ifm2->tensor->memArea == fastStorage )
-                {
-                    auto lr = lrGraph.GetOrCreateRange(ifm2->tensor.get(), LRUsage::OpLocal);
-                    Evict(lr);
-                }
-            }
-
-            for ( auto &subOp : schedOp->SubOps() )
-            {
-                if ( IsElementwise(subOp->Type()) )
-                {
-                    const auto *sifm = subOp->IFM(0);
-                    const auto *sifm2 = subOp->TryIFM(1);
-
-                    if ( sifm->tensor->memArea == fastStorage )
+                    if ( tensor->memArea == fastStorage )
                     {
-                        auto lr = lrGraph.GetOrCreateRange(sifm->tensor.get(), LRUsage::OpLocal);
-                        Evict(lr);
-                    }
-
-                    if ( sifm2 && sifm2->tensor->memArea == fastStorage )
-                    {
-                        auto lr = lrGraph.GetOrCreateRange(sifm2->tensor.get(), LRUsage::OpLocal);
-                        Evict(lr);
+                        bool evict = true;
+                        for ( auto &cons : tensor->consumers )
+                        {
+                            if ( !IsElementwise(cons->Type()) )
+                            {
+                                // don't evict tensors that are consumed by non-elementwise
+                                evict = false;
+                            }
+                        }
+                        if ( evict )
+                        {
+                            auto lr = lrGraph.SplitFromRange(tensor);
+                            Evict(lr);
+                        }
                     }
                 }
+                break;
             }
         }
     }

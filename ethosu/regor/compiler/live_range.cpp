@@ -301,6 +301,28 @@ LiveRange *LiveRangeGraph::FuseRanges(SchedulerTensor *inTens, SchedulerTensor *
     return lr;
 }
 
+// Undo FuseRanges by creating a unique live-range for tens
+LiveRange *LiveRangeGraph::SplitFromRange(SchedulerTensor *tens)
+{
+    const auto entry = _equivalenceIdToLr.find(tens->equivalenceId);
+    if ( entry != _equivalenceIdToLr.end() )
+    {
+        auto &lr = entry->second;
+        if ( lr->tensors.size() == 1 )
+        {
+            return lr;
+        }
+        else
+        {
+            // If lr contains more than one tensor
+            // Split tensor lr and create a new entry
+            lr->tensors.erase(tens);
+            _equivalenceIdToLr.erase(tens->equivalenceId);
+        }
+    }
+    return GetOrCreateRange(tens, LRUsage::OpLocal);  // Assumes we only fuse op local IFM/OFM
+}
+
 // Check if any of the IFMs consumed by the first operator in an opgroup can be reused for the OFM
 // tensor of the last operator in the opgroup.
 // Requires the first operator to be an elementwise operator and is also applicaple to stand-alone
