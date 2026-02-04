@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -108,8 +108,11 @@ public:
 };
 
 
-CascadeBuilder::CascadeBuilder(vector_span<std::unique_ptr<SchedulerOperation>> ops, const std::unordered_map<UniqueId, int> &nonLocalMemUsage, bool spilling) :
-        _ops(ops), _nonLocalMemUsage(nonLocalMemUsage)
+CascadeBuilder::CascadeBuilder(vector_span<std::unique_ptr<SchedulerOperation>> ops,
+    const std::unordered_map<UniqueId, int> &nonLocalMemUsage, const std::unordered_map<UniqueId, int> &opLocalMemUsage,
+    const std::unordered_map<UniqueId, LiveRangeSummary> &tensorLiveRanges, bool spilling) :
+        _ops(ops),
+        _nonLocalMemUsage(nonLocalMemUsage), _opLocalMemUsage(opLocalMemUsage), _tensorLiveRanges(tensorLiveRanges)
 
 {
     _spilling = spilling;
@@ -153,7 +156,7 @@ void CascadeBuilder::BuildCascades(Schedule *refSchedule, Schedule *fallbackSche
             costs[*op] = std::make_unique<SchedulerOpInfo>(*fallbackCost);
             if ( !_spilling )
             {
-                peakStagingUsage = std::max(EstimateBufferUsage(op, fallbackCost), peakStagingUsage);
+                peakStagingUsage = std::max(EstimateUncascadedBufferUsage(op, fallbackCost), peakStagingUsage);
             }
             pos++;
             continue;
@@ -173,17 +176,56 @@ void CascadeBuilder::BuildCascades(Schedule *refSchedule, Schedule *fallbackSche
             weightBufferSize = refCost->bufferedWeightTensor.tensor->AllocationSizeBytes();
         }
 
-        // The first IFM needs to be stored in full
-        int cascadeIFMSize = _spilling ? 0 : ifm->tensor->AllocationSizeBytes();
-
-        // Add non-local memory usage
-        cascadeIFMSize += NonLocalUsage(*op);
+        // The first IFM is stored in full unless spilling disables it.
+        const int ifmStoredSize = _spilling ? 0 : ifm->tensor->AllocationSizeBytes();
 
         // Sum of all intermediate cascade buffers (including weight buffers)
         int cascadeBuffersSize = weightBufferSize;
 
         // Best cascade size - Initially it's the fallback cost of the first Op in the cascade
-        int bestCascadeSize = EstimateBufferUsage(op, fallbackCost);
+        int bestCascadeSize = EstimateUncascadedBufferUsage(op, fallbackCost);
+        int bestCascadeLocalSize = 0;
+
+        int rangeStart = 1;
+        int rangeEnd = 0;
+        int rangeSize = 0;
+        UniqueId startIfmRangeId = INVALID_UID;
+        auto liveRangeIt = _tensorLiveRanges.find(ifm->tensor->equivalenceId);
+        if ( liveRangeIt != _tensorLiveRanges.end() )
+        {
+            rangeStart = liveRangeIt->second.startTime;
+            rangeEnd = liveRangeIt->second.endTime;
+            rangeSize = liveRangeIt->second.size;
+            startIfmRangeId = liveRangeIt->second.rangeId;
+        }
+
+        // Start op keeps its IFM local, so preserve its non-local usage separately.
+        const int startNonLocal = std::max(0, NonLocalUsage(*op));
+        int activeAdjustedMax = 0;
+        int inactiveMax = 0;
+        int segmentNonLocalMax = 0;
+        auto updateSegmentNonLocal = [&](SchedulerOpInfo *cost, int nonLocalBytes, bool isStartOp, bool startIfmRangeAlreadyLocal)
+        {
+            int clampedNonLocal = std::max(0, nonLocalBytes);
+            bool inRange = rangeSize > 0 && cost && cost->timeIndex >= rangeStart && cost->timeIndex <= rangeEnd;
+            if ( inRange )
+            {
+                if ( !isStartOp )
+                {
+                    // Subtract the start-IFM live range only if it is actually part of this op's non-local usage.
+                    // When ReuseIFM has fused the start-IFM live range with this op's local buffers, NonLocalUsage
+                    // already excludes it.
+                    int adjustedNonLocal = startIfmRangeAlreadyLocal ? clampedNonLocal : std::max(0, clampedNonLocal - rangeSize);
+                    activeAdjustedMax = std::max(activeAdjustedMax, adjustedNonLocal);
+                }
+            }
+            else
+            {
+                inactiveMax = std::max(inactiveMax, clampedNonLocal);
+            }
+            segmentNonLocalMax = std::max(inactiveMax, std::max(startNonLocal, activeAdjustedMax));
+        };
+        updateSegmentNonLocal(refCost, startNonLocal, true, false);
 
         // Op is the producer of the OFM consumed by the next Op to consider
         auto producer = op;
@@ -231,15 +273,26 @@ void CascadeBuilder::BuildCascades(Schedule *refSchedule, Schedule *fallbackSche
                 opWeightBuffer = refCost->bufferedWeightTensor.tensor->AllocationSizeBytes();
             }
 
-            // Calculate the uncascaded memory requirement for current Op
-            int uncascadedStagingUsage = opFullIfmSize + opFullOfmSize + NonLocalUsage(*currentOp);
-
             // Add current Op to cascade
             opsInCascade.push_back(currentOp);
 
             // Increase the accumulated intermediate buffers in the cascade
             cascadeBuffersSize += ifmBufferSize + opWeightBuffer;
 
+            bool startIfmRangeAlreadyLocal = false;
+            if ( rangeSize > 0 && startIfmRangeId != INVALID_UID )
+            {
+                for ( const auto *tensor : {currentIfm->tensor.get(), currentOp->OFM()->tensor.get()} )
+                {
+                    auto tensorLrIt = _tensorLiveRanges.find(tensor->equivalenceId);
+                    if ( tensorLrIt != _tensorLiveRanges.end() && tensorLrIt->second.rangeId == startIfmRangeId )
+                    {
+                        startIfmRangeAlreadyLocal = true;
+                        break;
+                    }
+                }
+            }
+            updateSegmentNonLocal(refCost, NonLocalUsage(*currentOp), false, startIfmRangeAlreadyLocal);
             LOG_TRACE1("\tAppend '{0}:{1}' to cascade\n", currentOp->Index(), OpTypeToString(currentOp->Type()));
             LOG_TRACE1("\t\tFull Primary IFM [{0}] bytes = {1}, Full OFM bytes [{2}] = {3}\n",
                 currentIfm->shape.ToString(), opFullIfmSize, currentOp->OFM()->shape.ToString(), opFullOfmSize);
@@ -247,7 +300,11 @@ void CascadeBuilder::BuildCascades(Schedule *refSchedule, Schedule *fallbackSche
 
             if ( _spilling )
             {
-                if ( (uncascadedStagingUsage < peakStagingUsage) || (cascadeBuffersSize > peakStagingUsage) )
+                // Set uncascadedStagingUsage to usage if the op where to be run fully in staging
+                int uncascadedStagingUsage = opFullIfmSize + opFullOfmSize + NonLocalUsage(*currentOp);
+                bool uncascadedFits = uncascadedStagingUsage < peakStagingUsage;
+                bool buffersExceedPeak = cascadeBuffersSize > peakStagingUsage;
+                if ( uncascadedFits || buffersExceedPeak )
                 {
                     // Cascade until an Op fits in its entirety or the accumulated buffers no longer fit
                     break;
@@ -256,24 +313,29 @@ void CascadeBuilder::BuildCascades(Schedule *refSchedule, Schedule *fallbackSche
                 {
                     opsInBestCascade = opsInCascade;
                     bestCascadeSize = cascadeBuffersSize;
+                    bestCascadeLocalSize = cascadeBuffersSize;
                 }
             }
             else
             {
+                int uncascadedStagingUsage = EstimateUncascadedBufferUsage(currentOp, fallbackSchedule->Cost(currentOp));
                 // Calculate the total size of the current cascade
-                int cascadeSize = cascadeIFMSize + cascadeBuffersSize + opFullOfmSize;
+                int cascadeLocalSize = ifmStoredSize + cascadeBuffersSize + opFullOfmSize;
+                int cascadeSize = cascadeLocalSize + segmentNonLocalMax;
 
                 // Determine if current cascade is the best so far
-                if ( cascadeSize < bestCascadeSize )
+                // Allow larger cascades if they reduce total staging usage versus uncascaded ops.
+                if ( cascadeSize < bestCascadeSize || cascadeSize < uncascadedStagingUsage )
                 {
                     bestCascadeSize = cascadeSize;
+                    bestCascadeLocalSize = cascadeLocalSize;
                     opsInBestCascade = opsInCascade;
                 }
                 // Determine if cascading search should stop
-                if ( ((uncascadedStagingUsage < peakStagingUsage) && (bestCascadeSize < peakStagingUsage)) ||
-                     (cascadeIFMSize + cascadeBuffersSize) > bestCascadeSize )
+                int cascadePrefix = ifmStoredSize + segmentNonLocalMax + cascadeBuffersSize;
+                if ( ((uncascadedStagingUsage < peakStagingUsage) && (bestCascadeSize < peakStagingUsage)) || (cascadePrefix > bestCascadeSize) )
                 {
-                    // Both the existing cascade and current Op fits
+                    // Both the existing cascade and current Op fits, or the cascade cannot shrink further.
                     break;
                 }
             }
@@ -305,7 +367,8 @@ void CascadeBuilder::BuildCascades(Schedule *refSchedule, Schedule *fallbackSche
             }
 
             // Create a CascadeInfo for the cascade
-            cascadeMap.emplace(cascadeEnd, CascadeInfo(cascadeStart, cascadeEnd, bestCascadeSize, std::move(buffersInCascade)));
+            cascadeMap.emplace(cascadeEnd,
+                CascadeInfo(cascadeStart, cascadeEnd, bestCascadeSize, bestCascadeLocalSize, std::move(buffersInCascade)));
             if ( !_spilling )
             {
                 // Update peak memory usage
@@ -318,7 +381,7 @@ void CascadeBuilder::BuildCascades(Schedule *refSchedule, Schedule *fallbackSche
             costs.emplace(*op, std::make_unique<SchedulerOpInfo>(*fallbackCost));
             if ( !_spilling )
             {
-                peakStagingUsage = std::max(EstimateBufferUsage(op, fallbackCost), peakStagingUsage);
+                peakStagingUsage = std::max(EstimateUncascadedBufferUsage(op, fallbackCost), peakStagingUsage);
             }
         }
     }
@@ -352,31 +415,10 @@ bool CascadeBuilder::IsCascadable(const SchedulerOperation *op, SchedulerConnect
 }
 
 
-int CascadeBuilder::EstimateBufferUsage(SchedulerOperation *op, SchedulerOpInfo *) const
+int CascadeBuilder::EstimateUncascadedBufferUsage(SchedulerOperation *op, SchedulerOpInfo *) const
 {
-    // Estimate the RAM required for the Op if all FeatureMaps are in RAM
-    int size = NonLocalUsage(*op);
-
-    for ( auto usage : {TensorUsage::IFM, TensorUsage::IFM1, TensorUsage::OFM} )
-    {
-        SchedulerConnection *fm = IsOFM(usage) ? op->Output(usage) : op->TryInput(usage);
-        if ( !fm )
-        {
-            continue;
-        }
-
-        if ( fm->requireFullTensor )
-        {
-            size += fm->tensor->AllocationSizeBytes();
-        }
-        else
-        {
-            size += fm->PartialAllocationSizeBytes();
-            size = RoundAway(size, 16);
-        }
-    }
-
-    return size;
+    // Use the exact local-op memory captured alongside non-local usage.
+    return OpLocalUsage(*op) + NonLocalUsage(*op);
 }
 
 
@@ -388,6 +430,16 @@ int CascadeBuilder::NonLocalUsage(UniqueId uid) const
         return opPos->second;
     }
 
+    return 0;
+}
+
+int CascadeBuilder::OpLocalUsage(UniqueId uid) const
+{
+    auto opPos = _opLocalMemUsage.find(uid);
+    if ( opPos != _opLocalMemUsage.end() )
+    {
+        return opPos->second;
+    }
     return 0;
 }
 

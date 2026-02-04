@@ -38,6 +38,7 @@ namespace regor
 {
 
 class IncrementalLinearAllocator;
+class LiveRangeGraph;
 
 enum class OptimizationStrategy
 {
@@ -342,7 +343,15 @@ private:
 
     bool AllocateAddresses(Schedule *schedule);
 
-    void UpdateOpMemorySnapshot(Schedule *schedule);
+    void UpdateOpMemorySnapshot(Schedule *schedule, LiveRangeGraph *liveRanges = nullptr);
+
+    void PopulateLiveRanges(const LiveRangeGraph &lrGraph, std::unordered_map<UniqueId, LiveRangeSummary> *liveRanges) const;
+
+    int ComputeLocalMemUsage(const SchedulerOperation &schedOp, const SchedulerOpInfo &cost,
+        const LiveRangeGraph &lrGraph, const MemArea &stagingMemory) const;
+
+    std::unordered_map<UniqueId, int> ComputeNonLocalUsage(Schedule *schedule,
+        std::unordered_map<UniqueId, LiveRangeSummary> *liveRanges = nullptr, std::unordered_map<UniqueId, int> *opLocalMemUsage = nullptr);
 
     std::shared_ptr<Schedule> ProposeScheduleBuffering(Schedule *refSchedule, Address stagingLimitBytes);
 

@@ -109,6 +109,7 @@ public:
     void ExtractLiveRangesFromCascades(const std::vector<std::unique_ptr<SchedulerOperation>> &schedOps,
         Schedule *schedule, const MemArea &targetMemory, bool addRollingBuffers);
     LiveRange *GetOrCreateRange(SchedulerTensor *tens, LRUsage usage);
+    bool AreInSameRange(const SchedulerTensor *lhs, const SchedulerTensor *rhs) const;
 
 private:
     LiveRange *FuseRanges(SchedulerTensor *inTens, SchedulerTensor *outTens);

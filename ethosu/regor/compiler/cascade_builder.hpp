@@ -1,5 +1,6 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2023-2024, 2026 Arm Limited and/or its affiliates
+// <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -55,7 +56,11 @@ struct CascadeInfo
 {
     int start = 0;
     int end = 0;
+    // Total memory footprint when running the cascade. Includes any non-local bytes
+    // that are live in parallel with the cascade.
     int memUsage = 0;
+    // Cascade-local memory footprint, excluding any non-local/parallel bytes.
+    int localMemUsage = 0;
     std::unordered_map<UniqueId, CascadeBuffer> buffers;
 
     CascadeInfo() = default;
@@ -65,11 +70,28 @@ struct CascadeInfo
         this->start = start_;
         this->end = end_;
         this->memUsage = memUsage_;
+        this->localMemUsage = memUsage_;
+        this->buffers = std::move(buffers_);
+    }
+    CascadeInfo(int start_, int end_, int memUsage_, int localMemUsage_, std::unordered_map<UniqueId, CascadeBuffer> buffers_)
+    {
+        this->start = start_;
+        this->end = end_;
+        this->memUsage = memUsage_;
+        this->localMemUsage = localMemUsage_;
         this->buffers = std::move(buffers_);
     }
     CascadeInfo &operator=(const CascadeInfo &) = default;
 };
 
+struct LiveRangeSummary
+{
+    int startTime = 0;
+    int endTime = 0;
+    int size = 0;
+    // Representative id for the live range, shared by all tensors in the range.
+    UniqueId rangeId = INVALID_UID;
+};
 
 class SchedulerOpInfo;
 
@@ -81,19 +103,23 @@ class CascadeBuilder
 private:
     vector_span<std::unique_ptr<SchedulerOperation>> _ops;
     const std::unordered_map<UniqueId, int> &_nonLocalMemUsage;
+    const std::unordered_map<UniqueId, int> &_opLocalMemUsage;
+    const std::unordered_map<UniqueId, LiveRangeSummary> &_tensorLiveRanges;
     bool _spilling = false;
 
 public:
     CascadeBuilder(vector_span<std::unique_ptr<SchedulerOperation>> ops,
-        const std::unordered_map<UniqueId, int> &nonLocalMemUsage, bool spilling);
+        const std::unordered_map<UniqueId, int> &nonLocalMemUsage, const std::unordered_map<UniqueId, int> &opLocalMemUsage,
+        const std::unordered_map<UniqueId, LiveRangeSummary> &tensorLiveRanges, bool spilling);
 
 public:
     void BuildCascades(Schedule *refSchedule, Schedule *fallbackSchedule, Address guidingStagingLimit);
 
 private:
     bool IsCascadable(const SchedulerOperation *op, SchedulerConnection *ifmConn, SchedulerOpInfo *cost) const;
-    int EstimateBufferUsage(SchedulerOperation *op, SchedulerOpInfo *cost) const;
+    int EstimateUncascadedBufferUsage(SchedulerOperation *op, SchedulerOpInfo *cost) const;
     int NonLocalUsage(UniqueId uid) const;
+    int OpLocalUsage(UniqueId uid) const;
 };
 
 }  // namespace regor

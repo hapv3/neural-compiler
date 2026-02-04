@@ -301,6 +301,22 @@ SchedulerTensor *LiveRangeGraph::ReusableIFM(
     return reusableIfm;
 }
 
+bool LiveRangeGraph::AreInSameRange(const SchedulerTensor *lhs, const SchedulerTensor *rhs) const
+{
+    if ( lhs == nullptr || rhs == nullptr )
+    {
+        return false;
+    }
+    const auto lhsIt = _equivalenceIdToLr.find(lhs->equivalenceId);
+    if ( lhsIt == _equivalenceIdToLr.end() )
+    {
+        return false;
+    }
+    const auto rhsIt = _equivalenceIdToLr.find(rhs->equivalenceId);
+    return rhsIt != _equivalenceIdToLr.end() && lhsIt->second == rhsIt->second;
+}
+
+
 bool LiveRangeGraph::ShouldBeIgnored(const SchedulerTensor *tens, const MemArea &targetMemory)
 {
     if ( tens == nullptr )

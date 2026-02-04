@@ -111,8 +111,11 @@ std::shared_ptr<Schedule> Scheduler::Process()
     if ( !_options.disabled.All(SchedulerFeature::Cascading) )
     {
         // Build cascades from min schedule
-        std::unordered_map<UniqueId, int> nonLocal;
-        CascadeBuilder cascadeBuilder(_ops, nonLocal, _spilling);
+        std::unordered_map<UniqueId, LiveRangeSummary> liveRanges;
+        std::unordered_map<UniqueId, int> opLocalMemUsage;
+        auto nonLocal = ComputeNonLocalUsage(minSchedule.get(), &liveRanges, &opLocalMemUsage);
+
+        CascadeBuilder cascadeBuilder(_ops, nonLocal, opLocalMemUsage, liveRanges, _spilling);
         cascadeBuilder.BuildCascades(minSchedule.get(), _maxSchedule.get(), initialStagingLimit);
         UpdateOpMemorySnapshot(minSchedule.get());
 
@@ -919,15 +922,106 @@ void Scheduler::AllocateIOAddresses(Schedule *schedule, const std::vector<std::u
 }
 
 
-void Scheduler::UpdateOpMemorySnapshot(Schedule *schedule)
+void Scheduler::UpdateOpMemorySnapshot(Schedule *schedule, LiveRangeGraph *liveRanges)
 {
     const auto fastStorage = _arch->StagingMemory();
     const auto reuseIfms = !_options.disabled.All(SchedulerFeature::ReuseIFM);
-    LiveRangeGraph lrGraph{reuseIfms};
+    LiveRangeGraph localGraph{reuseIfms};
+    LiveRangeGraph &lrGraph = liveRanges ? *liveRanges : localGraph;
     lrGraph.ExtractLiveRangesFromCascades(_ops, schedule, fastStorage, true);
     // Populate time-array with memory used by live ranges
     schedule->memorySnapshot = lrGraph.GetTemporalMemoryUsage();
     schedule->fastStoragePeakUsage = schedule->memorySnapshot.maxMemory;
+}
+
+// Summarize live ranges so callers can query per-tensor timing information.
+void Scheduler::PopulateLiveRanges(const LiveRangeGraph &lrGraph, std::unordered_map<UniqueId, LiveRangeSummary> *liveRanges) const
+{
+    if ( !liveRanges )
+    {
+        return;
+    }
+
+    liveRanges->clear();
+    liveRanges->reserve(_ops.size());
+    for ( const auto &lr : lrGraph.LiveRanges() )
+    {
+        LiveRangeSummary summary;
+        summary.startTime = lr->startTime;
+        summary.endTime = lr->endTime;
+        summary.size = RoundAway(lr->size, AllocationQuantum);
+        UniqueId rangeId = INVALID_UID;
+        for ( const auto *tensor : lr->tensors )
+        {
+            rangeId = std::min(rangeId, tensor->equivalenceId);
+        }
+        summary.rangeId = rangeId;
+        for ( auto *tensor : lr->tensors )
+        {
+            (*liveRanges)[tensor->equivalenceId] = summary;
+        }
+    }
+}
+
+// Compute the staging-memory footprint local to a single op.
+int Scheduler::ComputeLocalMemUsage(const SchedulerOperation &schedOp, const SchedulerOpInfo &cost,
+    const LiveRangeGraph &lrGraph, const MemArea &stagingMemory) const
+{
+    int opMemUsage = 0;
+    auto *ifmConn = schedOp.TryIFM(schedOp.PrimaryIfmIndex());
+    assert(ifmConn);
+    auto *ofmConn = schedOp.SubOps().empty() ? schedOp.OFM() : schedOp.SubOps().back()->OFM();
+
+    if ( ifmConn->tensor->memArea == stagingMemory )
+    {
+        opMemUsage += ifmConn->tensor->AllocationSizeBytes();
+    }
+
+    const bool reuseOfmFlag = lrGraph.AreInSameRange(ifmConn->tensor.get(), ofmConn->tensor.get());
+    if ( ofmConn->tensor->memArea == stagingMemory && !reuseOfmFlag )
+    {
+        opMemUsage += ofmConn->tensor->AllocationSizeBytes();
+    }
+
+    if ( cost.bufferedWeightTensor.tensor && cost.bufferedWeightTensor.tensor->memArea == stagingMemory )
+    {
+        opMemUsage += cost.bufferedWeightTensor.tensor->AllocationSizeBytes();
+    }
+
+    return opMemUsage;
+}
+
+std::unordered_map<UniqueId, int> Scheduler::ComputeNonLocalUsage(Schedule *schedule,
+    std::unordered_map<UniqueId, LiveRangeSummary> *liveRanges, std::unordered_map<UniqueId, int> *opLocalMemUsage)
+{
+    std::unordered_map<UniqueId, int> nonLocal;
+    nonLocal.reserve(_ops.size());
+    const auto reuseIfms = !_options.disabled.All(SchedulerFeature::ReuseIFM);
+    const auto stagingMemory = _arch->StagingMemory();
+    LiveRangeGraph lrGraph{reuseIfms};
+    UpdateOpMemorySnapshot(schedule, &lrGraph);
+    PopulateLiveRanges(lrGraph, liveRanges);
+    if ( opLocalMemUsage )
+    {
+        opLocalMemUsage->clear();
+        opLocalMemUsage->reserve(_ops.size());
+    }
+    for ( auto const &schedOp : _ops )
+    {
+        auto *cost = schedule->Cost(schedOp.get());
+        assert(cost);
+
+        int opMemUsage = ComputeLocalMemUsage(*schedOp, *cost, lrGraph, stagingMemory);
+        if ( opLocalMemUsage )
+        {
+            (*opLocalMemUsage)[*schedOp] = opMemUsage;
+        }
+
+        int snapshotUsage = schedule->MemoryUsageAt(cost->timeIndex);
+        int nonLocalBytes = snapshotUsage - opMemUsage;
+        nonLocal[*schedOp] = nonLocalBytes;
+    }
+    return nonLocal;
 }
 
 
@@ -1384,11 +1478,17 @@ std::shared_ptr<Schedule> Scheduler::ProposeScheduleStriping(const Shape &finalS
 
         // Create a cost entry with the new stripe
         auto cost = CreateSchedulerOpInfo(schedOp, stripe);
+        cost->timeIndex = refCost->timeIndex;
         for ( auto &subOp : schedOp->SubOps() )
         {
             const auto subOfm = subOp->OFM();
             const auto &subOfmShape = subOfm->SliceShape();
             auto subCost = CreateSchedulerOpInfo(subOp.get(), stripe, cost);
+            auto subRefCost = refSchedule->Cost(subOp.get());
+            if ( subRefCost )
+            {
+                subCost->timeIndex = subRefCost->timeIndex;
+            }
             stripedSchedule->SetCost(*subOp, std::move(subCost));
         }
 
@@ -1504,7 +1604,8 @@ std::shared_ptr<Schedule> Scheduler::OptimizeSubSchedule(const CascadeInfo &casc
     // Calculate memory usage that is live during the sub-schedule but not part of it
     int timeForCascade = refSchedule->Cost(firstOp)->timeIndex;
 
-    int memUsageParallelToSubSchedule = refSchedule->MemoryUsageAt(timeForCascade) - cascadeInfo.memUsage;
+    int memUsageParallelToSubSchedule = refSchedule->MemoryUsageAt(timeForCascade) - cascadeInfo.localMemUsage;
+    memUsageParallelToSubSchedule = std::max(0, memUsageParallelToSubSchedule);
 
     // If the first Op's IFM has other consumers it has to live throughout the whole sub-schedule whether it's
     // included in a cascade or not. Not valid if spilling enabled
@@ -1523,7 +1624,10 @@ std::shared_ptr<Schedule> Scheduler::OptimizeSubSchedule(const CascadeInfo &casc
         nonLocalMemUsage[*subOps[i]] = memUsageParallelToSubSchedule + persistentInitialIFM;
     }
 
-    CascadeBuilder cascadeBuilder(subOps, nonLocalMemUsage, _spilling);
+    std::unordered_map<UniqueId, LiveRangeSummary> liveRanges;
+    std::unordered_map<UniqueId, int> opLocalMemUsage;
+    ComputeNonLocalUsage(refSchedule, &liveRanges, &opLocalMemUsage);
+    CascadeBuilder cascadeBuilder(subOps, nonLocalMemUsage, opLocalMemUsage, liveRanges, _spilling);
 
     // Start by adding buffering
     auto bufferedSubSchedule = ProposeScheduleBuffering(subSchedule.get(), _options.optimizationStagingLimit);
