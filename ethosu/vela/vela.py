@@ -42,18 +42,10 @@ from .debug_database import DebugDatabase
 from .errors import InputFileError
 from .errors import VelaError
 from .hillclimb_allocation import HillClimbAllocator
-from .nn_graph import NetworkType
 from .nn_graph import TensorAllocator
 from .tensor import MemArea
 from .tensor import Tensor
 from .tflite.Model import Model
-from .tflite_mapping import builtin_operator_map
-from .tflite_mapping import builtin_operator_name_map
-from .tflite_mapping import optype_to_builtintype
-from .tflite_model_semantic import TFLiteSemantic
-from .tflite_supported_operators import TFLiteSupportedOperators
-from .tosa_model_semantic import TosaSemantic
-from .tosa_supported_operators import TosaSupportedOperators
 from ethosu import regor
 
 TFLITE_MAGIC = 0x334C4654
@@ -245,16 +237,6 @@ def print_subgraph_io_summary(nng):
 
 
 def generate_supported_ops():
-    # Exclude network type from generation by adding value to exclude list.
-    # To easily exclude NetworkType from generated documentation.
-    exclude_generation_network_type_value = [NetworkType.TOSA.value]
-
-    def _exclude_list_names(constraint, exclude_list):
-        constraints_excluded_names = [
-            optype_to_builtintype(op) for op, exclude_constraint in exclude_list if constraint in exclude_constraint
-        ]
-        return f" - [{', '.join(sorted(constraints_excluded_names))}]" if constraints_excluded_names else ""
-
     def _regor_generic_constraints(supported_ops):
         # extract generic constraints from Regor supported-ops
         # A generic constraint applies to all opTypes except a list of exceptions
@@ -283,6 +265,10 @@ def generate_supported_ops():
             specific_constraints[op] = sorted(filter(lambda c: c not in generic_constraints, constraints))
         return specific_constraints
 
+    supported_ops_u55_u65 = regor.tflite_operator_constraints("EthosU55")
+    u55_u65_generic = _regor_generic_constraints(supported_ops_u55_u65)
+    u55_u65_specific = _regor_specific_constraints(supported_ops_u55_u65, u55_u65_generic)
+
     supported_ops_u85 = regor.tflite_operator_constraints("EthosU85")
     u85_generic = _regor_generic_constraints(supported_ops_u85)
     u85_specific = _regor_specific_constraints(supported_ops_u85, u85_generic)
@@ -290,7 +276,7 @@ def generate_supported_ops():
     # Add license for supported ops
     lines = [
         "<!--",
-        "SPDX-FileCopyrightText: Copyright 2020-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>",
+        "SPDX-FileCopyrightText: Copyright 2020-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>",
         "",
         "SPDX-License-Identifier: Apache-2.0",
         "",
@@ -321,138 +307,86 @@ def generate_supported_ops():
         "Summary table of constraints for:",
     ]
 
-    # Ethos-U55 and Ethos-U65 TFLite and TOSA summary links
-    for network_type in NetworkType:
-        if network_type.value in exclude_generation_network_type_value:
-            continue
-
-        lines += [
-            f"- [Ethos-U55 and Ethos-U65 {network_type.name}]"
-            f"(#ethos-u55-and-ethos-u65-{network_type.name.lower()}-summary-table)",
-        ]
-
-    # Ethos-U85 TFLite summary link
+    # Ethos-U55, Ethos-U65 and Ethos-U85 TFLite summary links
     lines += [
+        "- [Ethos-U55 and Ethos-U65 TFLite](#ethos-u55-and-ethos-u65-tflite-summary-table)",
         "- [Ethos-U85 TFLite](#ethos-u85-tflite-summary-table)",
     ]
 
-    # Ethos-U55 and Ethos-U65 TFLite and TOSA Summary Table
-    for network_type in NetworkType:
-        if network_type.value in exclude_generation_network_type_value:
+    # Ethos-U55 and Ethos-U65 TFLite Summary Table
+    lines += [
+        "",
+        "## Ethos-U55 and Ethos-U65 TFLite Summary Table",
+        "",
+    ]
+    lines += [
+        "The table below contains TFLite operators that can be placed on the Ethos-U55 and Ethos-U65.  ",
+        "If the constraints are not met, then that operator will be scheduled on the CPU instead.  ",
+        "For any other TFLite operator not listed, will be left untouched and scheduled on the CPU.  ",
+        "Please check the supported operator list for your chosen runtime for further information.",
+        "",
+        "| Operator | TFLite Constraints |",
+        "| --- | --- |",
+    ]
+    for op in u55_u65_specific:
+        sconstraints = u55_u65_specific[op]
+        links = "[Generic](#ethos-u55-and-ethos-u65-tflite-generic-constraints)"
+        if len(sconstraints):
+            links += f", [Specific](#ethos-u55-and-ethos-u65-tflite-{op.lower()}-constraints)"
+        lines.append(f"| {op.upper()} | {links} |")
+
+    # Ethos-U85 TFLite Summary Table
+    lines += [
+        "",
+        "## Ethos-U85 TFLite Summary Table",
+        "",
+    ]
+    lines += [
+        "The table below contains TFLite operators that can be placed on the Ethos-U85.  ",
+        "If the constraints are not met, then that operator will be scheduled on the CPU instead.  ",
+        "For any other TFLite operator not listed, will be left untouched and scheduled on the CPU.  ",
+        "Please check the supported operator list for your chosen runtime for further information.  ",
+        "",
+        "| Operator | TFLite Constraints |",
+        "| --- | --- |",
+    ]
+    for op in u85_specific:
+        sconstraints = u85_specific[op]
+        links = "[Generic](#ethos-u85-tflite-generic-constraints)"
+        if len(sconstraints):
+            links += f", [Specific](#ethos-u85-tflite-{op.lower()}-constraints)"
+        lines.append(f"| {op.upper()} | {links} |")
+
+    # Ethos-U55 and Ethos-U65 generic constraints
+    lines += [
+        "",
+        "## Ethos-U55 and Ethos-U65 TFLite Generic Constraints",
+        "",
+        "This is a list of constraints that most operators must satisfy in order to be scheduled on the NPU.  ",
+        "(Operators excluded from certain constraints are listed as exceptions )\n" "",
+    ]
+    for constraint in u55_u65_generic:
+        exceptions = u55_u65_generic[constraint]
+        lines.append(f"- {constraint}")
+        if len(exceptions):
+            lines.append(f"  - Exceptions: [{', '.join(sorted(exceptions))}]")
+
+    lines += ["", "## Ethos-U55 and Ethos-U65 Specific Operator constraints"]
+    for name in u55_u65_specific:
+        constraints = u55_u65_specific[name]
+        if not len(constraints):
             continue
-
         lines += [
             "",
-            f"## Ethos-U55 and Ethos-U65 {network_type.name} Summary Table",
+            f"### Ethos-U55 and Ethos-U65 TFLite {name.upper()} Constraints",
+            "",
+            f"This is a list of constraints that the {name.upper()} operator "
+            "must satisfy in order to be scheduled on the"
+            " NPU.",
             "",
         ]
-        if network_type == NetworkType.TFLite:
-            lines += [
-                "The table below contains TFLite operators that can be placed on the Ethos-U55 and Ethos-U65.  ",
-                "If the constraints are not met, then that operator will be scheduled on the CPU instead.  ",
-                "For any other TFLite operator not listed, will be left untouched and scheduled on the CPU.  ",
-                "Please check the supported operator list for your chosen runtime for further information.",
-                "",
-                "| Operator | TFLite Constraints |",
-                "| --- | --- |",
-            ]
-            semantic_checker = TFLiteSemantic()
-            supported = TFLiteSupportedOperators()
-        elif network_type == NetworkType.TOSA:
-            lines += [
-                "The table below contains TOSA operators that can be placed on the Ethos-U NPU.  ",
-                "Note: There is limited support for compiling a TOSA neural network (EXPERIMENTAL).  ",
-                "The related constraints have not yet been populated in the list.",
-                "",
-                "| Operator | TOSA Constraints |",
-                "| --- | --- |",
-            ]
-            semantic_checker = TosaSemantic()
-            supported = TosaSupportedOperators()
-        else:
-            raise ValueError
-
-        op_constraint_links = []
-        op_list = sorted(((op, builtin_operator_name_map[op]) for op in builtin_operator_map), key=lambda x: x[1])
-        for op, name in op_list:
-            internal_op = builtin_operator_map[op][0]
-            if internal_op in TFLiteSupportedOperators.supported_operators:
-                links = f"[Generic](#ethos-u55-and-ethos-u65-{network_type.name.lower()}-generic-constraints)"
-                if (
-                    internal_op in supported.specific_constraints
-                    or internal_op in semantic_checker.specific_constraints
-                ):
-                    links += (
-                        f", [Specific](#ethos-u55-and-ethos-u65-{network_type.name.lower()}-{name.lower()}-constraints)"
-                    )
-                    op_constraint_links.append((internal_op, name))
-                lines.append(f"| {name} | {links} |")
-
-        if network_type == NetworkType.TFLite:
-            # Ethos-U85 TFLite Summary Table
-            lines += [
-                "",
-                "## Ethos-U85 TFLite Summary Table",
-                "",
-            ]
-            lines += [
-                "The table below contains TFLite operators that can be placed on the Ethos-U85.  ",
-                "If the constraints are not met, then that operator will be scheduled on the CPU instead.  ",
-                "For any other TFLite operator not listed, will be left untouched and scheduled on the CPU.  ",
-                "Please check the supported operator list for your chosen runtime for further information.  ",
-                "",
-                "| Operator | TFLite Constraints |",
-                "| --- | --- |",
-            ]
-            for op in u85_specific:
-                sconstraints = u85_specific[op]
-                links = "[Generic](#ethos-u85-tflite-generic-constraints)"
-                if len(sconstraints):
-                    links += f", [Specific](#ethos-u85-tflite-{op.lower()}-constraints)"
-                lines.append(f"| {op.upper()} | {links} |")
-
-        # Ethos-U55 and Ethos-U65 generic constraints
-        lines += [
-            "",
-            f"## Ethos-U55 and Ethos-U65 {network_type.name} Generic Constraints",
-            "",
-            "This is a list of constraints that most operators must satisfy in order to be scheduled on the NPU.  ",
-            "(Operators excluded from certain constraints are listed as exceptions )\n" "",
-        ]
-        for constraint in semantic_checker.generic_constraints:
-            # Markdown needs two spaces at the end of a line to render it as a separate line
-            reason = constraint.__doc__.replace("\n", "  \n")
-            exclude_list = TFLiteSemantic.get_generic_constraint_exclude_list().items()
-            lines.append(f"- {reason}")
-            excluded_ops = _exclude_list_names(constraint, exclude_list)
-            if excluded_ops:
-                lines.append(f"  - Exceptions: {excluded_ops}")
-        for constraint in supported.generic_constraints:
-            # Markdown needs two spaces at the end of a line to render it as a separate line
-            reason = constraint.__doc__.replace("\n", "  \n")
-            exclude_list = supported.generic_constraints_exceptions.items()
-            lines.append(f"- {reason}")
-            excluded_ops = _exclude_list_names(constraint, exclude_list)
-            if excluded_ops:
-                lines.append(f"  - Exceptions: {excluded_ops}")
-        lines += ["", "## Ethos-U55 and Ethos-U65 Specific Operator constraints"]
-        for op, name in op_constraint_links:
-            lines += [
-                "",
-                f"### Ethos-U55 and Ethos-U65 {network_type.name} {name} Constraints",
-                "",
-                f"This is a list of constraints that the {name} operator must satisfy in order to be scheduled on the"
-                " NPU.",
-                "",
-            ]
-            for constraint in semantic_checker.specific_constraints[op]:
-                # Markdown needs two spaces at the end of a line to render it as a separate line
-                reason = constraint.__doc__.replace("\n", "  \n")
-                lines.append(f"- {reason}")
-            for constraint in supported.specific_constraints[op]:
-                # Markdown needs two spaces at the end of a line to render it as a separate line
-                reason = constraint.__doc__.replace("\n", "  \n")
-                lines.append(f"- {reason}")
+        for constraint in constraints:
+            lines.append(f"- {constraint}")
 
     # Generic TFLite constraints for Ethos-U85
     lines += [
@@ -467,7 +401,7 @@ def generate_supported_ops():
         exceptions = u85_generic[constraint]
         lines.append(f"- {constraint}")
         if len(exceptions):
-            lines.append(f"  - Exceptions: [{', '.join(exceptions)}]")
+            lines.append(f"  - Exceptions: [{', '.join(sorted(exceptions))}]")
 
     # Op-specific TFLite constraints for Ethos-U85
     lines += [
