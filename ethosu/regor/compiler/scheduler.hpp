@@ -363,7 +363,7 @@ private:
 
     std::shared_ptr<Schedule> ProposeMinimalSchedule();
 
-    std::shared_ptr<Schedule> OptimizeSchedule(Schedule *schedule, const std::shared_ptr<Schedule> &maxSchedule);
+    std::shared_ptr<Schedule> OptimizeSchedule(Schedule *schedule, const std::shared_ptr<Schedule> &maxSchedule, Address stagingLimitBytes);
 
     std::shared_ptr<Schedule> ProposeScheduleStriping(const Shape &finalStripe, const std::string &label, Schedule *refSchedule);
 

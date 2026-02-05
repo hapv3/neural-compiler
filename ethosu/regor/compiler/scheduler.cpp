@@ -121,10 +121,20 @@ std::shared_ptr<Schedule> Scheduler::Process()
 
         chosenSchedule = minSchedule;
 
+        Address stagingLimit = _options.optimizationStagingLimit;
+
         if ( _options.optimizationStrategy == OptimizationStrategy::Performance )
         {
             // Create an optimized schedule
-            auto optSchedule = OptimizeSchedule(minSchedule.get(), optMaxSchedule);
+            auto optSchedule = OptimizeSchedule(minSchedule.get(), optMaxSchedule, _options.optimizationStagingLimit);
+            chosenSchedule = std::move(optSchedule);
+        }
+        else
+        {
+            // Run optimizer with a cap derived from the current peak usage
+            auto &memorySnapShot = chosenSchedule->memorySnapshot;
+            stagingLimit = memorySnapShot.maxMemory != 0 ? memorySnapShot.maxMemory : _options.optimizationStagingLimit;
+            auto optSchedule = OptimizeSchedule(minSchedule.get(), optMaxSchedule, stagingLimit);
             chosenSchedule = std::move(optSchedule);
         }
     }
@@ -1421,10 +1431,10 @@ std::shared_ptr<Schedule> Scheduler::ProposeMinimalSchedule()
 }
 
 
-std::shared_ptr<Schedule> Scheduler::OptimizeSchedule(Schedule *schedule, const std::shared_ptr<Schedule> &maxSchedule)
+std::shared_ptr<Schedule> Scheduler::OptimizeSchedule(Schedule *schedule, const std::shared_ptr<Schedule> &maxSchedule, Address stagingLimitBytes)
 {
     // Extracts sub-schedules based on the cascades and optimizes them and applies them to the final schedule
-    if ( maxSchedule->fastStoragePeakUsage < _options.optimizationStagingLimit && !_spilling )
+    if ( maxSchedule->fastStoragePeakUsage < stagingLimitBytes && !_spilling )
     {
         return maxSchedule;
     }
@@ -1436,7 +1446,7 @@ std::shared_ptr<Schedule> Scheduler::OptimizeSchedule(Schedule *schedule, const 
     {
         const CascadeInfo &cascadeInfo = pos.second;
 
-        auto optSubSchedule = OptimizeSubSchedule(cascadeInfo, schedule, _options.optimizationStagingLimit);
+        auto optSubSchedule = OptimizeSubSchedule(cascadeInfo, schedule, stagingLimitBytes);
         if ( optSubSchedule != nullptr )
         {
             // Remove the existing cascade
@@ -1453,7 +1463,7 @@ std::shared_ptr<Schedule> Scheduler::OptimizeSchedule(Schedule *schedule, const 
     UpdateOpMemorySnapshot(schedule);
 
     // Propose schedule buffering to the optimized schedule
-    auto optSchedule = ProposeScheduleBuffering(schedule, _options.optimizationStagingLimit);
+    auto optSchedule = ProposeScheduleBuffering(schedule, stagingLimitBytes);
     optSchedule->cascades = std::move(schedule->cascades);  // TODO: Check this is okay
     // Copy the cascade's metadata from the unbuffered schedule
     return optSchedule;
@@ -1630,7 +1640,7 @@ std::shared_ptr<Schedule> Scheduler::OptimizeSubSchedule(const CascadeInfo &casc
     CascadeBuilder cascadeBuilder(subOps, nonLocalMemUsage, opLocalMemUsage, liveRanges, _spilling);
 
     // Start by adding buffering
-    auto bufferedSubSchedule = ProposeScheduleBuffering(subSchedule.get(), _options.optimizationStagingLimit);
+    auto bufferedSubSchedule = ProposeScheduleBuffering(subSchedule.get(), stagingLimitBytes);
 
     // Copy the cascades over from the unbuffered-schedule
     bufferedSubSchedule->cascades = subSchedule->cascades;
