@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -113,7 +113,7 @@ int64_t TfLiteWriter::PrepareGraph(Graph *graph, int64_t &bufferSize, int64_t &o
 }
 
 std::unique_ptr<const uint8_t[]> TfLiteWriter::Serialise(const std::vector<std::unique_ptr<Graph>> &graphs,
-    const std::vector<std::unordered_map<const Tensor *, Address>> &tensor_address_maps, int64_t &output_buffer_offset, size_t &output_buffer_size)
+    const std::vector<TensorAddressMap> &tensor_address_maps, int64_t &output_buffer_offset, size_t &output_buffer_size)
 {
     const size_t STATIC_STRUCTURAL_ESTIMATE = 16;
 
@@ -156,7 +156,7 @@ std::unique_ptr<const uint8_t[]> TfLiteWriter::Serialise(const std::vector<std::
 }
 
 std::unique_ptr<const uint8_t[]> TfLiteWriter::SerialiseImpl(const std::vector<std::unique_ptr<Graph>> &graphs,
-    const std::vector<std::unordered_map<const Tensor *, Address>> &tensor_address_maps, int64_t &output_buffer_offset, size_t &output_buffer_size)
+    const std::vector<TensorAddressMap> &tensor_address_maps, int64_t &output_buffer_offset, size_t &output_buffer_size)
 {
     std::vector<flatbuffers::Offset<tflite::Metadata>> serialised_metadata;
 
@@ -460,7 +460,7 @@ std::vector<const Tensor *> TfLiteWriter::SortedInputTensors(const Operation *op
 }
 
 
-int TfLiteWriter::SerialisedTensorIndex(const Tensor *tensor, const std::unordered_map<const Tensor *, Address> &addresses, const Graph &graph)
+int TfLiteWriter::SerialisedTensorIndex(const Tensor *tensor, const TensorAddressMap &addresses, const Graph &graph)
 {
     if ( !tensor )  // Optional tensor not present
     {
@@ -474,15 +474,16 @@ int TfLiteWriter::SerialisedTensorIndex(const Tensor *tensor, const std::unorder
         inserted.first->second = index = int(_serialised_tensors.size());
         _serialised_tensors.push_back(SerialiseTensor(tensor, graph));
 
-        auto address = addresses.find(tensor);
+        auto address = addresses.find(tensor->Uid());
         if ( address == addresses.end() )
         {
             _tensor_addresses.push_back(-1);
         }
         else
         {
-            assert(std::abs(address->second) <= Address(std::numeric_limits<int32_t>::max()) && "Tensor address overflow");
-            _tensor_addresses.push_back(int32_t(address->second));
+            Address x = address->second.address;
+            assert(std::abs(x) <= Address(std::numeric_limits<int32_t>::max()) && "Tensor address overflow");
+            _tensor_addresses.push_back(int32_t(x));
         }
     }
 

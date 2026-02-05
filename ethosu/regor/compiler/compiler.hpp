@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -73,13 +73,13 @@ struct CompiledGraph
     std::shared_ptr<Schedule> schedule;
     std::vector<std::pair<Operation *, std::unique_ptr<NPUOperation>>> npuOps;
     std::unique_ptr<Graph> newGraph;
-    std::unordered_map<const Tensor *, Address> tensorAddressMap;
+    TensorAddressMap tensorAddressMap;
     std::vector<std::unique_ptr<CompiledGraph>> compiledSubGraphs;
 
     CompiledGraph() {}
 
     CompiledGraph(std::shared_ptr<Schedule> &&s, std::vector<std::pair<Operation *, std::unique_ptr<NPUOperation>>> &&o,
-        std::unique_ptr<Graph> &&g, std::unordered_map<const Tensor *, Address> &&tam, std::vector<std::unique_ptr<CompiledGraph>> &&cc) :
+        std::unique_ptr<Graph> &&g, TensorAddressMap &&tam, std::vector<std::unique_ptr<CompiledGraph>> &&cc) :
             schedule(std::move(s)),
             npuOps(std::move(o)), newGraph(std::move(g)), tensorAddressMap(std::move(tam)), compiledSubGraphs(std::move(cc))
     {
@@ -132,8 +132,7 @@ public:
 
     bool LoadTosa(const void *input, size_t size);
     bool LoadTflite(const void *input, size_t size);
-    void Store(const std::vector<std::unique_ptr<Graph>> &graphs,
-        const std::vector<std::unordered_map<const Tensor *, Address>> &tensorAddressMaps);
+    void Store(const std::vector<std::unique_ptr<Graph>> &graphs, const std::vector<TensorAddressMap> &tensorAddressMaps);
 
     bool Compile();
 
@@ -166,12 +165,11 @@ private:
     bool BuildNetwork(const char *entryGraph);
     void RecordNPUOp(const NPUOperation &npuOp, const CmdRanges &cmdRanges);
 
-    std::vector<std::unique_ptr<Graph>> CompileGraphs(IncrementalLinearAllocator &readOnlyAllocator,
-        std::vector<std::unordered_map<const Tensor *, Address>> &tensorAddressMaps);
+    std::vector<std::unique_ptr<Graph>>
+    CompileGraphs(IncrementalLinearAllocator &readOnlyAllocator, std::vector<TensorAddressMap> &tensorAddressMaps);
     std::unique_ptr<CompiledGraph> CompileGraph(
         Graph *graph, std::unordered_map<std::string, Graph *> &graphs, IncrementalLinearAllocator &readOnlyAllocator);
-    std::vector<std::unique_ptr<Graph>> LinkGraphs(std::unique_ptr<CompiledGraph> &&result,
-        std::vector<std::unordered_map<const Tensor *, Address>> &tensorAddressMaps);
+    std::vector<std::unique_ptr<Graph>> LinkGraphs(std::unique_ptr<CompiledGraph> &&result, std::vector<TensorAddressMap> &tensorAddressMaps);
 
     Compiler &operator=(const Compiler &) = delete;
 };

@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -26,9 +26,7 @@
 
 #include "regor.h"
 
-using AddressMap = std::unordered_map<const Tensor *, Address>;
-
-static std::shared_ptr<SchedulerTensor> CreateTensor(std::string name, Address tensorAddress, AddressMap &tensorAddressMap)
+static std::shared_ptr<SchedulerTensor> CreateTensor(std::string name, Address tensorAddress, TensorAddressMap &tensorAddressMap)
 {
     auto schedTensor = CreateSchedulerTensor(name, Shape(10, 10, 10), DataType::Int8);
     schedTensor->SetAddress(tensorAddress);
@@ -53,7 +51,7 @@ static std::unique_ptr<SchedulerOperation> CreateSchedulerOperation(bool npu, Te
 
 TEST_CASE("test_graph_packing")
 {
-    AddressMap tensorAddressMap;
+    TensorAddressMap tensorAddressMap;
 
     // Create some tensors
     auto tens1 = CreateTensor("t1", 0x04, tensorAddressMap);

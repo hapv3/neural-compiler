@@ -29,6 +29,8 @@ using namespace regor;
 
 TEST_CASE("raw_writer")
 {
+    const bool separateIORegions = GENERATE(false, true);
+
     // Build command stream tensor
     std::vector<uint8_t> commandStreamData = {'C', 'O', 'P', '1'};
     const auto commandStreamBuffer = std::make_shared<Buffer>(std::move(commandStreamData));
@@ -92,16 +94,25 @@ TEST_CASE("raw_writer")
     graphs[0]->AddPersistent(variable);
 
     // Create tensor address map
-    std::vector<std::unordered_map<const Tensor *, Address>> addresses;
+    std::vector<TensorAddressMap> addresses;
     addresses.push_back({});
-    addresses[0][commandStreamTensor.get()] = 44;
-    addresses[0][readOnlyTensor.get()] = 55;
-    addresses[0][scratch.get()] = 66;
-    addresses[0][scratchFast.get()] = 77;
-    addresses[0][input.get()] = 88;
-    addresses[0][inputNoQuant.get()] = 89;
-    addresses[0][output.get()] = 99;
-    addresses[0][variable.get()] = 111;
+    addresses[0][commandStreamTensor->Uid()] = {{MemUsage::None}, 44};
+    addresses[0][readOnlyTensor->Uid()] = {{MemUsage::ReadOnly}, 55};
+    addresses[0][scratch->Uid()] = {{MemUsage::FeatureMap}, 66};
+    addresses[0][scratchFast->Uid()] = {{MemUsage::Staging}, 77};
+    if ( separateIORegions )
+    {
+        addresses[0][input->Uid()] = {{MemUsage::FeatureMap, MemUsage::Input}, 88};
+        addresses[0][inputNoQuant->Uid()] = {{MemUsage::FeatureMap, MemUsage::Input}, 89};
+        addresses[0][output->Uid()] = {{MemUsage::FeatureMap, MemUsage::Output}, 99};
+    }
+    else
+    {
+        addresses[0][input->Uid()] = {{MemUsage::FeatureMap}, 88};
+        addresses[0][inputNoQuant->Uid()] = {{MemUsage::FeatureMap}, 89};
+        addresses[0][output->Uid()] = {{MemUsage::FeatureMap}, 99};
+    }
+    addresses[0][variable->Uid()] = {{MemUsage::FeatureMap}, 111};
 
     // Create the raw output blobs
     RawWriter writer;
@@ -192,7 +203,7 @@ TEST_CASE("raw_writer")
         REQUIRE(header.type == regor_raw_tensor_header_t::RAW_TENSOR_TYPE_INPUT);
         REQUIRE((header.flags & REGOR_RAW_TENSOR_FLAG_HAS_QUANTIZATION) != 0);
         REQUIRE(header.tensor.input.size == 2 * 3 * 4 * 5 * 6 * 7);
-        REQUIRE(header.tensor.input.region == 1);
+        REQUIRE(header.tensor.input.region == (separateIORegions ? 3 : 1));
         REQUIRE(header.tensor.input.address == 88);
         REQUIRE(header.tensor.input.element_size == 1);
         REQUIRE(header.tensor.input.shape[0] == 2);
@@ -222,7 +233,7 @@ TEST_CASE("raw_writer")
         REQUIRE(header.type == regor_raw_tensor_header_t::RAW_TENSOR_TYPE_INPUT);
         REQUIRE((header.flags & REGOR_RAW_TENSOR_FLAG_HAS_QUANTIZATION) == 0);
         REQUIRE(header.tensor.input.size == 2 * 3 * 4 * 5 * 6 * 7);
-        REQUIRE(header.tensor.input.region == 1);
+        REQUIRE(header.tensor.input.region == (separateIORegions ? 3 : 1));
         REQUIRE(header.tensor.input.address == 89);
         REQUIRE(header.tensor.input.element_size == 1);
     }
@@ -236,7 +247,7 @@ TEST_CASE("raw_writer")
         REQUIRE(header.type == regor_raw_tensor_header_t::RAW_TENSOR_TYPE_OUTPUT);
         REQUIRE((header.flags & REGOR_RAW_TENSOR_FLAG_HAS_QUANTIZATION) != 0);
         REQUIRE(header.tensor.output.size == 3 * 4 * 5 * 6 * 7 * 8);
-        REQUIRE(header.tensor.output.region == 1);
+        REQUIRE(header.tensor.output.region == (separateIORegions ? 4 : 1));
         REQUIRE(header.tensor.output.address == 99);
         REQUIRE(header.tensor.output.element_size == 1);
         REQUIRE(header.tensor.output.shape[0] == 3);

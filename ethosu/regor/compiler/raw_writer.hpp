@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include "architecture/address.hpp"
 #include "architecture/architecture.hpp"
 #include "compiler/graph.hpp"
 #include "compiler/tensor.hpp"
@@ -33,8 +34,8 @@ class RawWriter
 {
 public:
     RawWriter() = default;
-    std::vector<std::pair<std::unique_ptr<const uint8_t[]>, size_t>> Serialise(const std::vector<std::unique_ptr<Graph>> &graphs,
-        const std::vector<std::unordered_map<const Tensor *, Address>> &tensor_address_maps);
+    std::vector<std::pair<std::unique_ptr<const uint8_t[]>, size_t>> Serialise(
+        const std::vector<std::unique_ptr<Graph>> &graphs, const std::vector<TensorAddressMap> &tensor_address_maps);
 
 private:
     std::vector<std::pair<std::unique_ptr<const uint8_t[]>, size_t>> _raw;
@@ -43,15 +44,15 @@ private:
 
     void SerialiseReadOnlyTensor(const Tensor *tensor);
 
-    void SerialiseScratchTensor(const Tensor *tensor, Address address);
+    void SerialiseScratchTensor(const Tensor *tensor, const MemUsageAddress &address);
 
-    void SerialiseScratchFastTensor(const Tensor *tensor, Address address);
+    void SerialiseScratchFastTensor(const Tensor *tensor, const MemUsageAddress &address);
 
-    void SerialiseInputTensor(const Tensor *tensor, const TensorConnection *connection, Address address);
+    void SerialiseInputTensor(const Tensor *tensor, const TensorConnection *connection, const MemUsageAddress &address);
 
-    void SerialiseOutputTensor(const Tensor *tensor, const TensorConnection *connection, Address address);
+    void SerialiseOutputTensor(const Tensor *tensor, const TensorConnection *connection, const MemUsageAddress &address);
 
-    void SerialiseVariableTensor(const Tensor *tensor, const TensorConnection *connection, Address address);
+    void SerialiseVariableTensor(const Tensor *tensor, const TensorConnection *connection, const MemUsageAddress &address);
 
     std::vector<uint8_t> SerialiseQuantization(const Quantization &quant) const;
 };

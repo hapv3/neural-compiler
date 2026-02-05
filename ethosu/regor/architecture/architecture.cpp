@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2023-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -21,16 +21,6 @@
 #include "common/logging.hpp"
 
 #include "common/bit_flags.hpp"
-
-BEGIN_ENUM_TABLE(regor::MemUsage)
-    ADD_ENUM_NAME(None)
-    ADD_ENUM_NAME(ReadOnly)
-    ADD_ENUM_NAME(FeatureMap)
-    ADD_ENUM_NAME(LUT)
-    ADD_ENUM_NAME(Staging)
-    ADD_ENUM_NAME(Input)
-    ADD_ENUM_NAME(Output)
-END_ENUM_TABLE()
 
 BEGIN_ENUM_TABLE(regor::TensorFormat)
     ADD_ENUM_NAME(Unknown)

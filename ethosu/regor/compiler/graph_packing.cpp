@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2023-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -38,7 +38,7 @@ GraphPacking::GraphPacking()
 }
 
 std::unique_ptr<Graph> GraphPacking::Process(std::vector<std::pair<Operation *, std::unique_ptr<NPUOperation>>> &npuOps,
-    std::vector<std::unique_ptr<SchedulerOperation>> &ops, std::unordered_map<const Tensor *, Address> &tensorAddressMap, const Graph *srcGraph)
+    std::vector<std::unique_ptr<SchedulerOperation>> &ops, TensorAddressMap &tensorAddressMap, const Graph *srcGraph)
 {
     // Build a new graph where consecutive operations running on NPU are collapsed into a Ethos-U op
     // (OpType::CustomNpuOp). CPU operations are left unchanged. The algorithm makes two passes over the scheduled
@@ -100,7 +100,8 @@ std::unique_ptr<Graph> GraphPacking::Process(std::vector<std::pair<Operation *, 
                 // Connect input tensor to new CPU operation
                 const auto oldTensor = schedTensor->srcTensor.get();
                 assert(oldTensor && "Missing source graph tensor");
-                const auto newTensor = LookupNewTensor(oldTensor, tensorAddressMap, schedTensor->AllocatedAddress());
+                const auto newTensor = LookupNewTensor(
+                    oldTensor, tensorAddressMap, schedTensor->memArea.usage, schedTensor->AllocatedAddress());
                 currentOp->ConnectInput(usage, newTensor).Set(schedConn.shape).Set(schedConn.quantization);
             }
 
@@ -111,7 +112,8 @@ std::unique_ptr<Graph> GraphPacking::Process(std::vector<std::pair<Operation *, 
                 // Connect output tensor to new CPU operation
                 const auto oldTensor = schedTensor->srcTensor.get();
                 assert(oldTensor && "Missing source graph tensor");
-                const auto newTensor = LookupNewTensor(oldTensor, tensorAddressMap, schedTensor->AllocatedAddress());
+                const auto newTensor = LookupNewTensor(
+                    oldTensor, tensorAddressMap, schedTensor->memArea.usage, schedTensor->AllocatedAddress());
                 currentOp->ConnectOutput(usage, newTensor).Set(schedConn.shape).Set(schedConn.quantization);
             }
         }
@@ -188,7 +190,7 @@ std::unique_ptr<Graph> GraphPacking::Process(std::vector<std::pair<Operation *, 
 }
 
 void GraphPacking::ConnectTensors(Operation *op, const std::unique_ptr<SchedulerOperation> &schedOp,
-    std::unordered_map<const Tensor *, Address> &tensorAddressMap, std::unordered_set<Tensor *> &npuOnly)
+    TensorAddressMap &tensorAddressMap, std::unordered_set<Tensor *> &npuOnly)
 {
     auto isCurrentOp = [&map = _oldOpToNewOp, op](SchedulerOperation *sop) { return map[sop].get() == op; };
     auto isNpuOp = [](SchedulerOperation *sop) { return sop->IsNpuOp(); };
@@ -222,7 +224,7 @@ void GraphPacking::ConnectTensors(Operation *op, const std::unique_ptr<Scheduler
                 npuOnly.insert(oldTensor);
             }
 
-            const auto newTensor = LookupNewTensor(oldTensor, tensorAddressMap, schedTensor->AllocatedAddress());
+            const auto newTensor = LookupNewTensor(oldTensor, tensorAddressMap, schedTensor->memArea.usage, schedTensor->AllocatedAddress());
             if ( op->UsageOfTensor(newTensor.get()) == TensorUsage::None )
             {
                 const auto usage = MakeTensorUsage(TensorUsage::IFM, op->Inputs().size());
@@ -255,7 +257,7 @@ void GraphPacking::ConnectTensors(Operation *op, const std::unique_ptr<Scheduler
                 npuOnly.insert(oldTensor);
             }
 
-            const auto newTensor = LookupNewTensor(oldTensor, tensorAddressMap, schedTensor->AllocatedAddress());
+            const auto newTensor = LookupNewTensor(oldTensor, tensorAddressMap, schedTensor->memArea.usage, schedTensor->AllocatedAddress());
             if ( op->UsageOfTensor(newTensor.get()) == TensorUsage::None )
             {
                 const auto usage = MakeTensorUsage(TensorUsage::OFM, op->Outputs().size());
@@ -284,18 +286,18 @@ std::shared_ptr<Tensor> GraphPacking::LookupNewTensor(Tensor *oldTensor)
 }
 
 std::shared_ptr<Tensor> GraphPacking::LookupNewTensor(
-    Tensor *oldTensor, std::unordered_map<const Tensor *, Address> &tensorAddressMap, Address allocatedAddress)
+    Tensor *oldTensor, TensorAddressMap &tensorAddressMap, Flags<MemUsage> &usage, Address allocatedAddress)
 {
     const auto newTensor = LookupNewTensor(oldTensor);
 
     // This cloned tensor will use same address as the original tensor
-    tensorAddressMap[newTensor.get()] = allocatedAddress;
+    tensorAddressMap[newTensor->Uid()] = {usage, allocatedAddress};
 
     return newTensor;
 }
 
 std::unique_ptr<Graph> PackScheduleToGraph(std::vector<std::pair<Operation *, std::unique_ptr<NPUOperation>>> &npuOps,
-    std::vector<std::unique_ptr<SchedulerOperation>> &ops, std::unordered_map<const Tensor *, Address> &tensorAddressMap, const Graph *srcGraph)
+    std::vector<std::unique_ptr<SchedulerOperation>> &ops, TensorAddressMap &tensorAddressMap, const Graph *srcGraph)
 {
     GraphPacking p;
 

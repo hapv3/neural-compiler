@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2023-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -218,12 +218,12 @@ public:
         _readOnlyTensor->SetBuffer(_readOnlyBuffer);
     }
 
-    void AllocateScratchTensors(const Schedule *_schedule, std::unordered_map<const Tensor *, Address> &tensorAddressMap)
+    void AllocateScratchTensors(const Schedule *_schedule, TensorAddressMap &tensorAddressMap)
     {
-        tensorAddressMap[_featureMapTensor.get()] = 0;
+        tensorAddressMap[_featureMapTensor->Uid()] = {MemUsage::FeatureMap, 0};
         if ( _featureMapTensor.get() != _stagingTensor.get() )
         {
-            tensorAddressMap[_stagingTensor.get()] = 0;
+            tensorAddressMap[_stagingTensor->Uid()] = {MemUsage::Staging, 0};
         }
     }
 

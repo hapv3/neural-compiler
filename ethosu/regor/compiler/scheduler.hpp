@@ -317,7 +317,7 @@ public:
     std::shared_ptr<Schedule> Process();
 
     static std::unique_ptr<Graph> ToGraph(std::vector<std::unique_ptr<SchedulerOperation>> &ops,
-        std::unordered_map<const Tensor *, Address> &tensorAddressMap, const Graph *srcGraph);
+        TensorAddressMap &tensorAddressMap, const Graph *srcGraph);
 
     void AllocateReadOnlyAddresses(Schedule *schedule, IncrementalLinearAllocator &readOnlyAllocator);
 

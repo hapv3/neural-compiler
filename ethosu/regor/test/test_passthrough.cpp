@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2025-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -608,7 +608,7 @@ TEST_CASE("passthrough")
     REQUIRE(ops1[0]->Type() == OpType::Passthrough);
 
     // Write GraphIR as TFLite flatbuffer
-    std::vector<std::unordered_map<const Tensor *, Address>> maps{{}};
+    std::vector<TensorAddressMap> maps{{}};
     int64_t offset = 0;
     size_t size = 0;
     TfLiteWriter writer(1 << 31, true /* skip OfflineMemoryAllocation */);

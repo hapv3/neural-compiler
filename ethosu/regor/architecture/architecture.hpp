@@ -20,6 +20,7 @@
 
 #include "common/common.hpp"
 
+#include "address.hpp"
 #include "common/bit_flags.hpp"
 #include "common/data_type.hpp"
 #include "common/ini_reader.hpp"
@@ -45,8 +46,6 @@ namespace regor
 class WeightEncoder;
 class IRegisterCommandStreamGenerator;
 class IArchitectureConstraints;
-
-using Address = int64_t;
 
 enum class TensorFormat : uint16_t
 {
@@ -96,17 +95,6 @@ public:
     int MaxReads() const { return _maxReads; }
     int MaxWrites() const { return _maxWrites; }
     std::string Name() const { return _name; }
-};
-
-enum class MemUsage : uint16_t
-{
-    None = 0,
-    ReadOnly = 0x1,
-    FeatureMap = 0x2,
-    LUT = 0x4,
-    Staging = 0x8,
-    Input = 0x10,
-    Output = 0x20,
 };
 
 struct MemArea

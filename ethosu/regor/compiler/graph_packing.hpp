@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2023-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -40,24 +40,21 @@ public:
 
 public:
     std::unique_ptr<Graph> Process(std::vector<std::pair<Operation *, std::unique_ptr<NPUOperation>>> &npuOps,
-        std::vector<std::unique_ptr<SchedulerOperation>> &ops,
-        std::unordered_map<const Tensor *, Address> &tensorAddressMap, const Graph *srcGraph);
+        std::vector<std::unique_ptr<SchedulerOperation>> &ops, TensorAddressMap &tensorAddressMap, const Graph *srcGraph);
 
 private:
     std::unordered_map<SchedulerOperation *, std::shared_ptr<Operation>> _oldOpToNewOp;
     std::unordered_map<Tensor *, std::shared_ptr<Tensor>> _oldTensorToNewTensor;
 
     void ConnectTensors(Operation *op, const std::unique_ptr<SchedulerOperation> &schedOp,
-        std::unordered_map<const Tensor *, Address> &tensorAddressMap, std::unordered_set<Tensor *> &npuOnly);
+        TensorAddressMap &tensorAddressMap, std::unordered_set<Tensor *> &npuOnly);
 
     std::shared_ptr<Tensor> LookupNewTensor(Tensor *oldTensor);
-    std::shared_ptr<Tensor> LookupNewTensor(
-        Tensor *oldTensor, std::unordered_map<const Tensor *, Address> &tensorAddressMap, Address allocatedAddress);
+    std::shared_ptr<Tensor> LookupNewTensor(Tensor *oldTensor, TensorAddressMap &tensorAddressMap, Flags<MemUsage> &usage, Address allocatedAddress);
 };
 
 // Pack list of scheduler operations into one or more graphs
 std::unique_ptr<Graph> PackScheduleToGraph(std::vector<std::pair<Operation *, std::unique_ptr<NPUOperation>>> &npuOps,
-    std::vector<std::unique_ptr<SchedulerOperation>> &ops,
-    std::unordered_map<const Tensor *, Address> &tensorAddressMap, const Graph *srcGraph);
+    std::vector<std::unique_ptr<SchedulerOperation>> &ops, TensorAddressMap &tensorAddressMap, const Graph *srcGraph);
 
 }  // namespace regor

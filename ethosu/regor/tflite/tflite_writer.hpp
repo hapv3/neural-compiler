@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 // SPDX-FileCopyrightText: Copyright 2024 Meta Platforms, Inc. and affiliates.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -45,8 +45,7 @@ public:
     }
 
     std::unique_ptr<const uint8_t[]> Serialise(const std::vector<std::unique_ptr<Graph>> &graphs,
-        const std::vector<std::unordered_map<const Tensor *, Address>> &tensor_address_maps,
-        int64_t &output_buffer_offset, size_t &output_buffer_size);
+        const std::vector<TensorAddressMap> &tensor_address_maps, int64_t &output_buffer_offset, size_t &output_buffer_size);
 
     bool UsedOffsetBuffers() const { return !_offset_buffers.empty(); }
 
@@ -54,8 +53,7 @@ private:
     int64_t PrepareGraph(Graph *graph, int64_t &bufferSize, int64_t &operatorSize, int64_t &tensorSize);
 
     std::unique_ptr<const uint8_t[]> SerialiseImpl(const std::vector<std::unique_ptr<Graph>> &graphs,
-        const std::vector<std::unordered_map<const Tensor *, Address>> &tensor_address_maps,
-        int64_t &output_buffer_offset, size_t &output_buffer_size);
+        const std::vector<TensorAddressMap> &tensor_address_maps, int64_t &output_buffer_offset, size_t &output_buffer_size);
 
     struct BufferDesc
     {
@@ -117,7 +115,7 @@ private:
     std::vector<flatbuffers::Offset<tflite::Tensor>> _serialised_tensors;
     std::vector<int32_t> _tensor_addresses;  // Keep as 32 bits - required by runtime
 
-    int SerialisedTensorIndex(const Tensor *tensor, const std::unordered_map<const Tensor *, Address> &addresses, const Graph &graph);
+    int SerialisedTensorIndex(const Tensor *tensor, const TensorAddressMap &addresses, const Graph &graph);
 
     flatbuffers::Offset<tflite::Tensor> SerialiseTensor(const Tensor *tensor, const Graph &graph);
     flatbuffers::Offset<void> SerialiseOptions(const Operation *operation, OpType type);

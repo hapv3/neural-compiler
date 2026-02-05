@@ -34,12 +34,11 @@ namespace regor
 static constexpr int WEIGHTS_REGION = 0;
 static constexpr int SCRATCH_REGION = 1;
 static constexpr int SCRATCH_FAST_REGION = 2;
-static constexpr int INPUT_REGION = SCRATCH_REGION;
-static constexpr int OUTPUT_REGION = SCRATCH_REGION;
-static constexpr int VARIABLE_REGION = SCRATCH_REGION;
+static constexpr int INPUT_REGION = 3;
+static constexpr int OUTPUT_REGION = 4;
 
 std::vector<std::pair<std::unique_ptr<const uint8_t[]>, size_t>> RawWriter::Serialise(
-    const std::vector<std::unique_ptr<Graph>> &graphs, const std::vector<std::unordered_map<const Tensor *, Address>> &tensor_address_maps)
+    const std::vector<std::unique_ptr<Graph>> &graphs, const std::vector<TensorAddressMap> &tensor_address_maps)
 {
     if ( graphs.size() != 1 )
     {
@@ -79,18 +78,18 @@ std::vector<std::pair<std::unique_ptr<const uint8_t[]>, size_t>> RawWriter::Seri
     // scratch in TFLite format
     auto featureMapTensorConnection = customNpuOp->Input(MakeTensorUsage(TensorUsage::State, 0));
     auto featureMapTensor = featureMapTensorConnection->tensor.get();
-    SerialiseScratchTensor(featureMapTensor, tensor_address_map.at(featureMapTensor));
+    SerialiseScratchTensor(featureMapTensor, tensor_address_map.at(featureMapTensor->Uid()));
 
     // scratch/scratch_fast TFLite format
     auto stagingTensorConnection = customNpuOp->Input(MakeTensorUsage(TensorUsage::State, 1));
     auto stagingTensor = stagingTensorConnection->tensor.get();
     if ( stagingTensor == featureMapTensor )
     {
-        SerialiseScratchTensor(stagingTensor, tensor_address_map.at(stagingTensor));
+        SerialiseScratchTensor(stagingTensor, tensor_address_map.at(stagingTensor->Uid()));
     }
     else
     {
-        SerialiseScratchFastTensor(stagingTensor, tensor_address_map.at(stagingTensor));
+        SerialiseScratchFastTensor(stagingTensor, tensor_address_map.at(stagingTensor->Uid()));
     }
 
     // Serialise input tensors
@@ -101,7 +100,7 @@ std::vector<std::pair<std::unique_ptr<const uint8_t[]>, size_t>> RawWriter::Seri
         if ( IsIFM(tensorUsage) && !tensor->IsConstant() )
         {
             const TensorConnection *conn = customNpuOp->Input(tensorUsage);
-            SerialiseInputTensor(tensor, conn, tensor_address_map.at(tensor));
+            SerialiseInputTensor(tensor, conn, tensor_address_map.at(tensor->Uid()));
         }
     }
 
@@ -113,7 +112,7 @@ std::vector<std::pair<std::unique_ptr<const uint8_t[]>, size_t>> RawWriter::Seri
         if ( IsOFM(tensorUsage) )
         {
             const TensorConnection *conn = customNpuOp->Output(tensorUsage);
-            SerialiseOutputTensor(tensor, conn, tensor_address_map.at(tensor));
+            SerialiseOutputTensor(tensor, conn, tensor_address_map.at(tensor->Uid()));
         }
     }
 
@@ -125,10 +124,9 @@ std::vector<std::pair<std::unique_ptr<const uint8_t[]>, size_t>> RawWriter::Seri
         if ( (tensorUsage != TensorUsage::None) )
         {
             const TensorConnection *conn = IsOFM(tensorUsage) ? customNpuOp->Output(tensorUsage) : customNpuOp->Input(tensorUsage);
-            SerialiseVariableTensor(tensor, conn, tensor_address_map.at(tensor));
+            SerialiseVariableTensor(tensor, conn, tensor_address_map.at(tensor->Uid()));
         }
     }
-
 
     return std::move(_raw);
 }
@@ -184,7 +182,7 @@ void RawWriter::SerialiseReadOnlyTensor(const Tensor *tensor)
     _raw.emplace_back(std::move(serialisedTensor), serialisedTensorSize);
 }
 
-void RawWriter::SerialiseScratchTensor(const Tensor *tensor, Address address)
+void RawWriter::SerialiseScratchTensor(const Tensor *tensor, const MemUsageAddress &address)
 {
     assert(!tensor->IsConstant());
 
@@ -196,7 +194,7 @@ void RawWriter::SerialiseScratchTensor(const Tensor *tensor, Address address)
     header.type = regor_raw_tensor_header_t::RAW_TENSOR_TYPE_SCRATCH;
     header.tensor.scratch.region = SCRATCH_REGION;
     header.tensor.scratch.size = DataTypeStorageSizeBytes(tensor->Type(), tensor->StorageShape().Elements());
-    header.tensor.scratch.address = address;
+    header.tensor.scratch.address = address.address;
 
     // Copy header
     std::copy_n(reinterpret_cast<uint8_t *>(&header), sizeof(header), serialisedTensor.get());
@@ -204,7 +202,7 @@ void RawWriter::SerialiseScratchTensor(const Tensor *tensor, Address address)
     _raw.emplace_back(std::move(serialisedTensor), serialisedTensorSize);
 }
 
-void RawWriter::SerialiseScratchFastTensor(const Tensor *tensor, Address address)
+void RawWriter::SerialiseScratchFastTensor(const Tensor *tensor, const MemUsageAddress &address)
 {
     assert(!tensor->IsConstant());
 
@@ -216,7 +214,7 @@ void RawWriter::SerialiseScratchFastTensor(const Tensor *tensor, Address address
     header.type = regor_raw_tensor_header_t::RAW_TENSOR_TYPE_SCRATCH_FAST;
     header.tensor.scratch_fast.region = SCRATCH_FAST_REGION;
     header.tensor.scratch_fast.size = DataTypeStorageSizeBytes(tensor->Type(), tensor->StorageShape().Elements());
-    header.tensor.scratch_fast.address = address;
+    header.tensor.scratch_fast.address = address.address;
 
     // Copy header
     std::copy_n(reinterpret_cast<uint8_t *>(&header), sizeof(header), serialisedTensor.get());
@@ -224,7 +222,7 @@ void RawWriter::SerialiseScratchFastTensor(const Tensor *tensor, Address address
     _raw.emplace_back(std::move(serialisedTensor), serialisedTensorSize);
 }
 
-void RawWriter::SerialiseInputTensor(const Tensor *tensor, const TensorConnection *connection, Address address)
+void RawWriter::SerialiseInputTensor(const Tensor *tensor, const TensorConnection *connection, const MemUsageAddress &address)
 {
     assert(!tensor->IsConstant());
 
@@ -232,6 +230,8 @@ void RawWriter::SerialiseInputTensor(const Tensor *tensor, const TensorConnectio
     const bool hasQuantization = !quantPayload.empty();
     const size_t serialisedTensorSize = sizeof(regor_raw_tensor_header_t) + quantPayload.size();
     auto serialisedTensor = std::make_unique<uint8_t[]>(serialisedTensorSize);
+
+    const int region = address.usage.All(MemUsage::FeatureMap, MemUsage::Input) ? INPUT_REGION : SCRATCH_REGION;
 
     // Initialise input tensor header
     regor_raw_tensor_header_t header{};
@@ -240,12 +240,12 @@ void RawWriter::SerialiseInputTensor(const Tensor *tensor, const TensorConnectio
     {
         header.flags |= REGOR_RAW_TENSOR_FLAG_HAS_QUANTIZATION;
     }
-    header.tensor.input.region = INPUT_REGION;
+    header.tensor.input.region = region;
     header.tensor.input.element_size = DataTypeStorageSizeBytes(tensor->Type(), 1);
     auto shape = Shape::PadAxes(tensor->StorageShape(), 6, 1).ToList<uint32_t>();
     std::copy_n(shape.begin(), 6, header.tensor.input.shape);
     header.tensor.input.size = DataTypeStorageSizeBytes(tensor->Type(), tensor->StorageShape().Elements());
-    header.tensor.input.address = address;
+    header.tensor.input.address = address.address;
 
     // Copy header
     std::copy_n(reinterpret_cast<uint8_t *>(&header), sizeof(header), serialisedTensor.get());
@@ -258,7 +258,7 @@ void RawWriter::SerialiseInputTensor(const Tensor *tensor, const TensorConnectio
     _raw.emplace_back(std::move(serialisedTensor), serialisedTensorSize);
 }
 
-void RawWriter::SerialiseOutputTensor(const Tensor *tensor, const TensorConnection *connection, Address address)
+void RawWriter::SerialiseOutputTensor(const Tensor *tensor, const TensorConnection *connection, const MemUsageAddress &address)
 {
     assert(!tensor->IsConstant());
 
@@ -267,6 +267,8 @@ void RawWriter::SerialiseOutputTensor(const Tensor *tensor, const TensorConnecti
     const size_t serialisedTensorSize = sizeof(regor_raw_tensor_header_t) + quantPayload.size();
     auto serialisedTensor = std::make_unique<uint8_t[]>(serialisedTensorSize);
 
+    const int region = address.usage.All(MemUsage::FeatureMap, MemUsage::Output) ? OUTPUT_REGION : SCRATCH_REGION;
+
     // Initialise output tensor header
     regor_raw_tensor_header_t header{};
     header.type = regor_raw_tensor_header_t::RAW_TENSOR_TYPE_OUTPUT;
@@ -274,12 +276,12 @@ void RawWriter::SerialiseOutputTensor(const Tensor *tensor, const TensorConnecti
     {
         header.flags |= REGOR_RAW_TENSOR_FLAG_HAS_QUANTIZATION;
     }
-    header.tensor.output.region = OUTPUT_REGION;
+    header.tensor.output.region = region;
     header.tensor.output.element_size = DataTypeStorageSizeBytes(tensor->Type(), 1);
     auto shape = Shape::PadAxes(tensor->StorageShape(), 6, 1).ToList<uint32_t>();
     std::copy_n(shape.begin(), 6, header.tensor.output.shape);
     header.tensor.output.size = DataTypeStorageSizeBytes(tensor->Type(), tensor->StorageShape().Elements());
-    header.tensor.output.address = address;
+    header.tensor.output.address = address.address;
 
     // Copy header
     std::copy_n(reinterpret_cast<uint8_t *>(&header), sizeof(header), serialisedTensor.get());
@@ -292,7 +294,7 @@ void RawWriter::SerialiseOutputTensor(const Tensor *tensor, const TensorConnecti
     _raw.emplace_back(std::move(serialisedTensor), serialisedTensorSize);
 }
 
-void RawWriter::SerialiseVariableTensor(const Tensor *tensor, const TensorConnection *connection, Address address)
+void RawWriter::SerialiseVariableTensor(const Tensor *tensor, const TensorConnection *connection, const MemUsageAddress &address)
 {
     assert(!tensor->IsConstant());
 
@@ -308,12 +310,12 @@ void RawWriter::SerialiseVariableTensor(const Tensor *tensor, const TensorConnec
     {
         header.flags |= REGOR_RAW_TENSOR_FLAG_HAS_QUANTIZATION;
     }
-    header.tensor.variable.region = VARIABLE_REGION;
+    header.tensor.variable.region = SCRATCH_REGION;
     header.tensor.variable.element_size = DataTypeStorageSizeBytes(tensor->Type(), 1);
     auto shape = Shape::PadAxes(tensor->StorageShape(), 6, 1).ToList<uint32_t>();
     std::copy_n(shape.begin(), 6, header.tensor.variable.shape);
     header.tensor.variable.size = DataTypeStorageSizeBytes(tensor->Type(), tensor->StorageShape().Elements());
-    header.tensor.variable.address = address;
+    header.tensor.variable.address = address.address;
 
     // Copy header
     std::copy_n(reinterpret_cast<uint8_t *>(&header), sizeof(header), serialisedTensor.get());

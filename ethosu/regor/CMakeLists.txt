@@ -1,5 +1,5 @@
 #
-# SPDX-FileCopyrightText: Copyright 2021, 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2021, 2023-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -272,6 +272,7 @@ regor_lib(
         "architecture/ethosu85/ethos_u85_scaling.cpp"
         "architecture/ethosu85/ethos_u85_weight_encoder.cpp"
         "architecture/ethosu85/ethos_u85_performance.cpp"
+        "architecture/address.cpp"
         "compiler/attributes.cpp"
         "compiler/compiler.cpp"
         "compiler/faststorage_allocator.cpp"

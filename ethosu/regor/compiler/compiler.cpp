@@ -242,8 +242,7 @@ public:
 };
 
 
-void Compiler::Store(const std::vector<std::unique_ptr<Graph>> &graphs,
-    const std::vector<std::unordered_map<const Tensor *, Address>> &tensorAddressMaps)
+void Compiler::Store(const std::vector<std::unique_ptr<Graph>> &graphs, const std::vector<TensorAddressMap> &tensorAddressMaps)
 {
     if ( _compilerOptions.outputFormat == OutputFormat::Raw )
     {
@@ -315,7 +314,7 @@ bool Compiler::Compile()
 
     // Compile each graph/subgraph separately
     std::vector<std::unique_ptr<Graph>> newGraphs;
-    std::vector<std::unordered_map<const Tensor *, Address>> tensorAddressMaps;
+    std::vector<TensorAddressMap> tensorAddressMaps;
     newGraphs = CompileGraphs(readOnlyAllocator, tensorAddressMaps);
     if ( newGraphs.empty() )
     {
@@ -419,8 +418,8 @@ void Compiler::RecordNPUOp(const NPUOperation &npuOp, const CmdRanges &cmdRanges
     }
 }
 
-std::vector<std::unique_ptr<Graph>> Compiler::CompileGraphs(IncrementalLinearAllocator &readOnlyAllocator,
-    std::vector<std::unordered_map<const Tensor *, Address>> &tensorAddressMaps)
+std::vector<std::unique_ptr<Graph>>
+Compiler::CompileGraphs(IncrementalLinearAllocator &readOnlyAllocator, std::vector<TensorAddressMap> &tensorAddressMaps)
 {
     // Generated a graph name -> graph mapping
     std::unordered_map<std::string, Graph *> graphsMap;
@@ -669,7 +668,7 @@ std::unique_ptr<CompiledGraph> Compiler::CompileGraph(
     // Get a new graph and NPU operations from the scheduled operations
     std::vector<std::pair<Operation *, std::unique_ptr<NPUOperation>>> npuOps;
     std::unique_ptr<Graph> newGraph;
-    std::unordered_map<const Tensor *, Address> tensorAddressMap;
+    TensorAddressMap tensorAddressMap;
     try
     {
         newGraph = PackScheduleToGraph(npuOps, scheduleOps, tensorAddressMap, graph);
@@ -680,21 +679,84 @@ std::unique_ptr<CompiledGraph> Compiler::CompileGraph(
         return nullptr;
     }
 
-    // Work over the NPU ops, generating code
-    for ( const auto &pair : npuOps )
+    if ( _schedulerOptions.separateIORegions )
     {
-        const auto *npuOp = pair.second.get();
+        // Work over the NPU ops and allocate
+        for ( const auto &pair : npuOps )
+        {
+            const auto *newOp = pair.first;
+            const auto *npuOp = pair.second.get();
 
-        // Allocate addresses for IO tensors with an address space that is local for this sequence of NPU ops
-        scheduler.AllocateIOAddresses(schedule.get(), npuOp->Operations());
+            // Allocate addresses for IO tensors with an address space that is local for this sequence of NPU ops
+            scheduler.AllocateIOAddresses(schedule.get(), npuOp->Operations());
+
+            // Set of collected tensors so far
+            std::unordered_set<UniqueId> collected;
+            int inputIndex = 0;
+            int outputIndex = 0;
+
+            auto collectInput = [&](const SchedulerConnection &schedConn)
+            {
+                const auto &schedTensor = schedConn.tensor;
+                if ( schedTensor->memArea == _architecture->InputFeatureMapMemory() )
+                {
+                    if ( collected.count(schedTensor->uid) ) return;  // Already collected this tensor
+                    collected.insert(schedTensor->uid);
+
+                    auto newIfmConn = newOp->Input(MakeTensorUsage(TensorUsage::IFM, inputIndex++));
+                    auto &newTensor = newIfmConn->tensor;
+                    tensorAddressMap[newTensor->Uid()] = {schedTensor->memArea.usage, schedTensor->AllocatedAddress()};
+                }
+            };
+
+            auto collectOutput = [&](const SchedulerConnection &schedConn)
+            {
+                const auto &schedTensor = schedConn.tensor;
+                if ( schedTensor->memArea == _architecture->OutputFeatureMapMemory() )
+                {
+                    if ( collected.count(schedTensor->uid) ) return;  // Already collected this tensor
+                    collected.insert(schedTensor->uid);
+
+                    auto newOfmConn = newOp->Output(MakeTensorUsage(TensorUsage::OFM, outputIndex++));
+                    auto &newTensor = newOfmConn->tensor;
+                    tensorAddressMap[newTensor->Uid()] = {schedTensor->memArea.usage, schedTensor->AllocatedAddress()};
+                }
+            };
+
+            // Update tensor address map
+            for ( auto &schedOp : npuOp->Operations() )
+            {
+                for ( auto [usage, schedConn] : schedOp->inputs.pairs() )
+                {
+                    if ( IsIFM(usage) ) collectInput(schedConn);
+                }
+
+                for ( auto [usage, schedConn] : schedOp->outputs.pairs() )
+                {
+                    if ( IsOFM(usage) ) collectOutput(schedConn);
+                }
+
+                for ( auto &subOp : schedOp->SubOps() )
+                {
+                    for ( auto [usage, schedConn] : subOp->inputs.pairs() )
+                    {
+                        if ( IsIFM(usage) ) collectInput(schedConn);
+                    }
+
+                    for ( auto [usage, schedConn] : subOp->outputs.pairs() )
+                    {
+                        if ( IsOFM(usage) ) collectOutput(schedConn);
+                    }
+                }
+            }
+        }
     }
 
     return std::make_unique<CompiledGraph>(std::move(schedule), std::move(npuOps), std::move(newGraph),
         std::move(tensorAddressMap), std::move(compiledSubgraphs));
 }
 
-std::vector<std::unique_ptr<Graph>> Compiler::LinkGraphs(std::unique_ptr<CompiledGraph> &&result,
-    std::vector<std::unordered_map<const Tensor *, Address>> &tensorAddressMaps)
+std::vector<std::unique_ptr<Graph>> Compiler::LinkGraphs(std::unique_ptr<CompiledGraph> &&result, std::vector<TensorAddressMap> &tensorAddressMaps)
 {
     const Schedule *schedule = result->schedule.get();
     const int featureMapSize = schedule->memoryUsage.at(_architecture->FeatureMapMemory());
