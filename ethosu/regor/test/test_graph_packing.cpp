@@ -26,7 +26,7 @@
 
 #include "regor.h"
 
-static std::shared_ptr<SchedulerTensor> CreateTensor(std::string name, Address tensorAddress, TensorAddressMap &tensorAddressMap)
+static std::shared_ptr<SchedulerTensor> CreateTensor(const std::string &name, Address tensorAddress, TensorAddressMap &tensorAddressMap)
 {
     auto schedTensor = CreateSchedulerTensor(name, Shape(10, 10, 10), DataType::Int8);
     schedTensor->SetAddress(tensorAddress);

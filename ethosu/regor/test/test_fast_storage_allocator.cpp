@@ -29,7 +29,7 @@
 
 #include "regor.h"
 
-static std::shared_ptr<SchedulerTensor> CreateTensor(std::string name, MemArea memArea)
+static std::shared_ptr<SchedulerTensor> CreateTensor(const std::string &name, MemArea memArea)
 {
     auto schedTensor = CreateSchedulerTensor(name, Shape(10, 10, 10), DataType::Int8);
     schedTensor->memArea = memArea;

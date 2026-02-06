@@ -295,7 +295,7 @@ bool ResolveAndValidateArgument(const regor::Operation *op, const Argument *argu
     return ValidateArgument(op, argument, *expectedType);
 }
 
-bool ResolveAndValidateArguments(const regor::Operation *op, const std::vector<const Argument *> arguments,
+bool ResolveAndValidateArguments(const regor::Operation *op, const std::vector<const Argument *> &arguments,
     const Typesupport *typesupport = nullptr, int *failedArgumentIndex = nullptr)
 {
     for ( const auto argument : arguments )

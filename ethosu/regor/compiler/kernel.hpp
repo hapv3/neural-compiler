@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -92,7 +92,7 @@ public:
             kernel->paddingTBLRNF[3], kernel->paddingTBLRNF[4], kernel->paddingTBLRNF[5]);
     }
 
-    Kernel(Point2i size, Point2i stride, Point2i dilation, Margin padding = Margin(0, 0, 0, 0))
+    Kernel(Point2i size, Point2i stride, Point2i dilation, const Margin &padding = Margin(0, 0, 0, 0))
     {
         assert(size.x > 0 && size.y > 0);
         assert(stride.x > 0 && stride.y > 0);
@@ -133,7 +133,7 @@ public:
         return tmp;
     }
 
-    Kernel WithPadding(Margin padding) const
+    Kernel WithPadding(const Margin &padding) const
     {
         Kernel tmp(*this);
         tmp._padding = padding;
