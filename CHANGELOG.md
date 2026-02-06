@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright 2020-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+SPDX-FileCopyrightText: Copyright 2020-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 
 SPDX-License-Identifier: Apache-2.0
 
@@ -21,6 +21,53 @@ These are the release notes for all Vela releases.  They document all of the
 main feature changes, interface changes and reported defects that have been
 fixed.  The version numbering adheres to the
 [semantic versioning](https://semver.org/) scheme.
+
+## Release 5.0.0 - 26/02/2026
+
+**Main feature changes:**
+
+* Ethos-U85:
+  * Added support for the experimental EXT-CONTROLFLOW TOSA extensions
+* Ethos-U55/Ethos-U65 now use the Regor (C++) compilation core by default; the Python compilation core is deprecated.
+  * Enabling additional TFLite operator support for Ethos-U55/Ethos-U65:
+    * BATCH_MATMUL with Int8 inputs
+    * LOG with Int8 or Int16 input
+    * PADV2
+    * REDUCE_MAX
+    * REDUCE_MIN
+    * REVERSE_V2
+    * SUM
+    * TILE
+  * Partial TOSA v1.0 support for Ethos-U55/Ethos-U65:
+    * Includes native handling for key operators (convolution, pooling, elementwise), with additional TOSA operators enabled through legalization/decomposition.
+    * Support for decomposition of large tensors, kernels and strides is limited on Ethos-U55/Ethos-U65 compared to Ethos-U85.
+    * Unsupported operators and operator configurations are rejected and result in a compiler error since CPU fallback is not supported for TOSA operators.
+
+**Interface changes:**
+
+* The External API is deprecated.
+* New debug flag `--debug-force-legacy-core` to use the deprecated Python backend for Ethos-U55/Ethos-U65.
+* Deprecated CLI options:
+  * `--debug-force-regor` (Regor is now the default backend).
+  * `--api-version`
+  * `--hillclimb-max-iterations`
+  * `--max-block-dependency`
+  * `--recursion-limit`
+  * `--show-subgraph-io-summary`
+  * `--timing`
+  * `--verbose-operators`
+  * `--verbose-packing`
+  * `--verbose-progress`
+  * `--verbose-tensor-purpose`
+* Partially deprecated CLI options:
+  * `--tensor-allocator=Greedy`
+
+**Reported defect fixes:**
+
+* Improved pattern matching for kernel dilation rewrite (MLCE-1641)
+* Fixed incorrect parsing of semantically invalid empty buffers (MLCE-1722)
+* Fixed issue with FULLY_CONNECTED per-channel scales being calculated in too low precision (MLCE-1654)
+* Fixed incorrect aggregation of estimated memory access cycles (GitLab #14)
 
 ## Release 4.5.0 - 20/11/2025
 

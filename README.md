@@ -185,7 +185,7 @@ For approximate performance numbers the network can be run on a Fixed
 Virtual Platform (FVP) Model.
 
 ## Additional Vela Information
-* [External APIs](API.md)
+* [External APIs (Deprecated)](API.md)
 * [Bug Reporting](BUGS.md)
 * [Building From Source](BUILD.md)
 * [Contributing](CONTRIBUTING.md)

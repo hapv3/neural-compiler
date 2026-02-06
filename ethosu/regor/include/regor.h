@@ -66,7 +66,7 @@ struct IGraphBuilder;
 
 const size_t REGOR_PERF_NAME_MAX = 32;
 const size_t REGOR_MAX_CONSTRAINTS = 32;
-const size_t REGOR_CONSTRAINT_MAX_LENGTH = 256;
+const size_t REGOR_CONSTRAINT_MAX_LENGTH = 512;
 
 typedef struct regor_memory_access_perf_t
 {
