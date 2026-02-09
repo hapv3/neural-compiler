@@ -1741,7 +1741,7 @@ void EthosU85RCSGenerator::GenerateCommon(const HLCStripe *stripe, bool useGloba
         dataType = _arch->UseNullPool(op->type, DataTypeSizeBits(op->ifm[0].dataType)) ? DataType::Int8 : op->ifm[0].dataType;
     GenerateIFMPrecision(op->ifm[0], ifmChained, isScalar, dataType);
     assert(!stripe->stripeAreas.empty());
-    auto &ifmArea = stripe->stripeAreas[0].ifmAreas.at(0);
+    const auto &ifmArea = stripe->stripeAreas[0].ifmAreas.at(0);
     GenerateIFM(op->type, op->ifm[0], ifmArea, isScalar, scalarValue, ifmCb, ifm2Chained);
     if ( !isScalar && !ifmChained )
     {

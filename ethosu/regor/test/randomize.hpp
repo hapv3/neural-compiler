@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2023-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -148,7 +148,7 @@ void randomize(T (&values)[N], T2 min_value, T2 max_value)
 template<typename T, typename... Ts>
 T random_of(T first, Ts... rest)
 {
-    T arr[] = {first, rest...};
+    const T arr[] = {first, rest...};
     unsigned index;
     randomize(index, 0U, unsigned(sizeof...(rest)));
     assert(index < 1 + sizeof...(rest));

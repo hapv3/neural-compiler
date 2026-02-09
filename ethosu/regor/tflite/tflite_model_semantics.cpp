@@ -263,7 +263,7 @@ bool IsDynamicShape(const Shape &shape)
 void ConstraintEmptyConstTensors(const Model &m_model)
 {
     std::unordered_set<int> writtenTensors;
-    auto &buffers = *CheckedPtr(m_model.buffers());
+    const auto &buffers = *CheckedPtr(m_model.buffers());
     for ( const auto subgraph : *m_model.subgraphs() )
     {
         auto &tensors = *CheckedPtr(subgraph->tensors());
