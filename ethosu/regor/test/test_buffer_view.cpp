@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024, 2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -83,28 +83,18 @@ TEST_CASE("Linear buffer read/write")
 
     SECTION("Polymorphic indexed access with same reader")
     {
-        BufferReader<float> values;
+        BufferReader<float> values = view_int8_linear.Values<int8_t, float>();
+        REQUIRE(values[0] == 1);
+        REQUIRE(values[1] == 2);
+        REQUIRE(values[6] == -1);
+        REQUIRE(values[8] == -3);
+        REQUIRE(values[25] == -2);
+        REQUIRE(values[26] == -3);
 
-        for ( int i = 0; i <= 1; i++ )
-        {
-            values = (i == 0) ? view_int8_linear.Values<int8_t, float>() : view_int32_linear.Values<int, float>();
-
-            if ( i == 0 )
-            {
-                REQUIRE(values[0] == 1);
-                REQUIRE(values[1] == 2);
-                REQUIRE(values[6] == -1);
-                REQUIRE(values[8] == -3);
-                REQUIRE(values[25] == -2);
-                REQUIRE(values[26] == -3);
-            }
-            else if ( i == 1 )
-            {
-                REQUIRE(values[0] == -1000);
-                REQUIRE(values[10] == 0);
-                REQUIRE(values[21] == 1000);
-            }
-        }
+        values = view_int32_linear.Values<int, float>();
+        REQUIRE(values[0] == -1000);
+        REQUIRE(values[10] == 0);
+        REQUIRE(values[21] == 1000);
     }
 }
 
