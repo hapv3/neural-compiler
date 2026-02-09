@@ -112,7 +112,7 @@ TransposeSupport EthosU85Constraints::SupportsFusedTranspose(OpType opType, Tran
     }
     else if ( npuOp == EthosU85NpuOp::Elementwise )
     {
-        if ( transposeType == TransposeType::None || transposeType == TransposeType::NHCW || transposeType == TransposeType::NCHW )
+        if ( transposeType == TransposeType::NHCW || transposeType == TransposeType::NCHW )
         {
             return TransposeSupport::Any;
         }
@@ -120,7 +120,7 @@ TransposeSupport EthosU85Constraints::SupportsFusedTranspose(OpType opType, Tran
         return TransposeSupport::None;
     }
 
-    if ( transposeType == TransposeType::None || transposeType == TransposeType::NWHC || transposeType == TransposeType::NHCW ||
+    if ( transposeType == TransposeType::NWHC || transposeType == TransposeType::NHCW ||
          transposeType == TransposeType::NWCH || transposeType == TransposeType::NCHW || transposeType == TransposeType::NCWH )
         return TransposeSupport::Any;
 
