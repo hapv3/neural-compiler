@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024, 2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -124,6 +124,7 @@ static void HashStep(uint32_t hash[4], uint32_t block[16])
 
 MD5::MD5()
 {
+    _block[0] = 0;
     Reset();
 }
 
