@@ -154,7 +154,7 @@ public:
     const std::string &LastError() const { return _lastError; }
     const PerformanceResult &LastPerfResult() const { return _perfResult; }
     // From IRegorReporting
-    IDatabase *OptimiserDatabase() { return &_Db; }
+    IDatabase *OptimiserDatabase() override { return &_Db; }
 
     GraphApi::IGraphBuilder *CreateGraph(const char *name);
     Graph *GetGraph(const char *name);
