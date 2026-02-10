@@ -978,6 +978,7 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU85::FindBlockConfig(OpType opTyp
 
     // Common search variables
     FindConfigCommon common;
+    common.ifmBlockDepth = 0;
     common.ofmBlockMax = _ofmBlockMax.Unpermute(uint32_t(query.transpose));
     common.ublock = ofmUBlock;
     common.granule = ofmBlockGranule;
@@ -999,7 +1000,6 @@ std::unique_ptr<ArchitectureOpConfig> ArchEthosU85::FindBlockConfig(OpType opTyp
 
     if ( isDepthwise )
     {
-        common.ifmBlockDepth = 0;
         config->_ofmBlock = FindDepthwiseConfig(query, common, config->_ifmBlock);
         assert(config->_ofmBlock.Width() % ofmBlockGranule[-2] == 0);
         config->_traversal = EthosU85Traversal::Depthwise;
