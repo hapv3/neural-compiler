@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -129,13 +129,20 @@ void TfLiteReader::LoadGraphs(const uint8_t *input, const tflite::Model *model,
             const uint8_t *data = &input[tflite_buffer->offset()];
             buffers.push_back(std::make_shared<Buffer>(tflite_buffer->size(), data, true));
         }
-        else if ( tflite_buffer->data() )
+        else if ( tflite_buffer->data() && tflite_buffer->data()->size() > 0 )
         {
             const uint8_t *data = tflite_buffer->data()->data();
             buffers.push_back(std::make_shared<Buffer>(tflite_buffer->data()->size(), data, true));
         }
         else
         {
+            if ( tflite_buffer->data() && tflite_buffer->data()->size() == 0 )
+            {
+                LOG_PRINT(
+                    "Warning: Input TensorFlow Lite network contains a zero length buffer (index = {})"
+                    " which is semantically not empty. However, it will be treated as an empty buffer.\n",
+                    buffers.size());
+            }
             buffers.push_back(nullptr);  // Preserves indexing
         }
     }
