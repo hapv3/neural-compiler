@@ -611,7 +611,7 @@ TEST_CASE("passthrough")
     std::vector<TensorAddressMap> maps{{}};
     int64_t offset = 0;
     size_t size = 0;
-    TfLiteWriter writer(1 << 31, true /* skip OfflineMemoryAllocation */);
+    TfLiteWriter writer(1U << 31, true /* skip OfflineMemoryAllocation */);
     graphs1[0]->SetScheduledOrder(std::move(ops1));
     const auto bufActual = writer.Serialise(graphs1, maps, offset, size);
     LOG_TRACE1("Wrote network ({}, offset {}, size {})\n", fmt::ptr(bufActual.get()), offset, size);
