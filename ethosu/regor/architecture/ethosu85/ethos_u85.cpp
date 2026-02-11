@@ -54,15 +54,15 @@ unsigned MaskForNpuOp(const EthosU85NpuOp npuOp, bool hasIfm2);
 
 static const EthosU85PerfInfo s_EthosU85PerfInfo[] = {
     // Accelerator.Ethos_U85_128
-    {{0.5, 0.5}, {0.5, 0.5, 0.0}},
+    {{0.5, 0.5}, {0.5, 0.5}},
     // Accelerator.Ethos_U85_256
-    {{0.25, 0.25}, {0.25, 0.25, 0.0}},
+    {{0.25, 0.25}, {0.25, 0.25}},
     // Accelerator.Ethos_U85_512
-    {{0.125, 0.125}, {0.125, 0.125, 0.0}},
+    {{0.125, 0.125}, {0.125, 0.125}},
     // Accelerator.Ethos_U85_1024
-    {{0.0625, 0.125}, {0.0625, 0.0625, 0.0}},
+    {{0.0625, 0.125}, {0.0625, 0.0625}},
     // Accelerator.Ethos_U85_2048
-    {{0.03125, 0.0625}, {0.0625, 0.03125, 0.0}},
+    {{0.03125, 0.0625}, {0.0625, 0.03125}},
 };
 
 static const ArchEthosU85::AcceleratorConfig s_EthosU85Configs[] = {

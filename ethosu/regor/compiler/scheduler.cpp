@@ -791,34 +791,35 @@ std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(
     return opInfo;
 }
 
-
 std::unique_ptr<Schedule> Scheduler::CreateInitialSchedule()
 {
     auto schedule = std::make_unique<Schedule>(_name + "_MAX");
-
     for ( auto &op : _ops )
     {
         const auto ofm = op->OFM();
         const auto &ofmShape = ofm->SliceShape();
         auto cost = CreateSchedulerOpInfo(op.get(), ofmShape);
-        if ( ofmShape )
-        {
-            cost->cycles = EstimateOpPerformance(op.get(), cost->Config(), ofmShape.Depth());
-            cost->elementAccess = EstimateOpElementAccess(op.get(), cost->Config(), ofmShape.Depth());
-        }
-        // sub-operations
         for ( auto &subOp : op->SubOps() )
         {
             const auto subOfm = subOp->OFM();
             const auto &subOfmShape = subOfm->SliceShape();
             auto subCost = CreateSchedulerOpInfo(subOp.get(), subOfmShape, cost);
-            if ( subOfmShape )
-            {
-                subCost->cycles = EstimateOpPerformance(subOp.get(), subCost->Config(), subOfmShape.Depth());
-                subCost->elementAccess = EstimateOpElementAccess(subOp.get(), subCost->Config(), subOfmShape.Depth());
-            }
             schedule->SetCost(*subOp, std::move(subCost));
         }
+
+        if ( ofmShape && op->IsNpuOp() )
+        {
+
+            auto query = InitPerfQuery(
+                op.get(), cost->Config(), ofmShape.Depth(), WeightFormat::Default, cost.get(), schedule.get());
+            cost->cycles = _arch->Performance()->MeasureCycleCost(query);
+            cost->elementAccess = _arch->Performance()->MeasureElementAccess(query);
+        }
+        else
+        {
+            LOG_WARN("CPU performance estimation for \"{}\" not implemented\n", OpTypeToString(op->Type()));
+        }
+
         schedule->SetCost(*op, std::move(cost));
     }
     return schedule;
@@ -1302,25 +1303,27 @@ std::shared_ptr<Schedule> Scheduler::ProposeMinimalSchedule()
         }
         Shape minStripe = Shape::PadAxes(ofmShape, 3, 1).WithHeight(minStripeHeight);
         auto cost = CreateSchedulerOpInfo(schedOp.get(), minStripe);
-        if ( ofmShape )
-        {
-            cost->cycles = EstimateOpPerformance(schedOp.get(), cost->Config(), ofmShape.Depth());
-            cost->elementAccess = EstimateOpElementAccess(schedOp.get(), cost->Config(), ofmShape.Depth());
-        }
-
-        // sub-operations use the same stripe as their parent
         for ( auto &subOp : schedOp->SubOps() )
         {
             const auto subOfm = subOp->OFM();
             const auto &subOfmShape = subOfm->SliceShape();
             auto subCost = CreateSchedulerOpInfo(subOp.get(), minStripe, cost);
-            if ( subOfmShape )
-            {
-                subCost->cycles = EstimateOpPerformance(subOp.get(), subCost->Config(), subOfmShape.Depth());
-                subCost->elementAccess = EstimateOpElementAccess(subOp.get(), subCost->Config(), subOfmShape.Depth());
-            }
             minSchedule->SetCost(*subOp, std::move(subCost));
         }
+
+        if ( !schedOp->IsNpuOp() )
+        {
+            LOG_WARN("CPU performance estimation for \"{}\" not implemented\n", OpTypeToString(schedOp->Type()));
+        }
+        else if ( ofmShape )
+        {
+
+            auto query = InitPerfQuery(
+                schedOp.get(), cost->Config(), ofmShape.Depth(), WeightFormat::Default, cost.get(), minSchedule.get());
+            cost->cycles = _arch->Performance()->MeasureCycleCost(query);
+            cost->elementAccess = _arch->Performance()->MeasureElementAccess(query);
+        }
+
         minSchedule->SetCost(*schedOp, std::move(cost));
         prevOp = schedOp.get();
     }
@@ -1386,6 +1389,13 @@ std::shared_ptr<Schedule> Scheduler::ProposeScheduleStriping(const Shape &finalS
 
         // Create a cost entry with the new stripe
         auto cost = CreateSchedulerOpInfo(schedOp, stripe);
+        for ( auto &subOp : schedOp->SubOps() )
+        {
+            const auto subOfm = subOp->OFM();
+            const auto &subOfmShape = subOfm->SliceShape();
+            auto subCost = CreateSchedulerOpInfo(subOp.get(), stripe, cost);
+            stripedSchedule->SetCost(*subOp, std::move(subCost));
+        }
 
         // Take buffering choice from the reference schedule for this striping proposal.
         // TODO: Replace with in-loop buffering
@@ -1401,19 +1411,13 @@ std::shared_ptr<Schedule> Scheduler::ProposeScheduleStriping(const Shape &finalS
         }
 
         // Estimate performance
-        cost->cycles = EstimateOpPerformance(schedOp, cost->Config(), schedOp->OFM()->SliceShape().Depth());
-        cost->elementAccess = EstimateOpElementAccess(schedOp, cost->Config(), schedOp->OFM()->SliceShape().Depth());
-
-        // sub-operations use the same stripe as their parent
-        for ( auto &subOp : schedOp->SubOps() )
-        {
-            auto subCost = CreateSchedulerOpInfo(subOp.get(), stripe, cost);
-            subCost->cycles = EstimateOpPerformance(subOp.get(), subCost->Config(), subOp->OFM()->SliceShape().Depth());
-            subCost->elementAccess = EstimateOpElementAccess(subOp.get(), subCost->Config(), subOp->OFM()->SliceShape().Depth());
-            stripedSchedule->SetCost(*subOp, std::move(subCost));
-        }
+        auto query = InitPerfQuery(schedOp, cost->Config(), schedOp->OFM()->SliceShape().Depth(), WeightFormat::Default,
+            cost.get(), stripedSchedule.get());
+        cost->cycles = _arch->Performance()->MeasureCycleCost(query);
+        cost->elementAccess = _arch->Performance()->MeasureElementAccess(query);
 
         stripedSchedule->SetCost(*schedOp, std::move(cost));
+
         // Calculate the preceeding Op's stripe
         stripe = schedOp->IFM(schedOp->PrimaryIfmIndex())->shape.With(-3, stripe.Height() * schedOp->Kernel()->Stride().y);
     }
@@ -1665,8 +1669,8 @@ void Scheduler::CoalesceWeightBufferTensors(Schedule *schedule)
 }
 
 
-PerformanceQuery Scheduler::InitPerfQuery(
-    SchedulerOperation *op, ArchitectureOpConfig *config, int ofmDepth, WeightFormat wgtFormat, SchedulerOpInfo *cost)
+PerformanceQuery Scheduler::InitPerfQuery(SchedulerOperation *op, ArchitectureOpConfig *config, int ofmDepth,
+    WeightFormat wgtFormat, SchedulerOpInfo *cost, Schedule *schedule)
 {
     PerformanceQuery query = {};
     query.type = op->Type();
@@ -1730,34 +1734,71 @@ PerformanceQuery Scheduler::InitPerfQuery(
         }
     }
 
+    // Record information regarding external feature maps for sub-operations
     query.weightFormat = wgtFormat;
-
-    return query;
-}
-
-
-std::vector<FusionQuery> Scheduler::InitFusionQuery(SchedulerOperation *op)
-{
-    std::vector<FusionQuery> fused;
-    if ( op->SubOps().size() && IsActivation(op->SubOps().front()->Type()) )
+    auto opGroup = op->OpGroup();
+    query.opGroup = opGroup;
+    for ( auto &subOp : op->SubOps() )
     {
-        auto &subOp = op->SubOps().front();
-        fused.emplace_back();
+        assert(opGroup);
+        UniqueId subOpUId = subOp->Uid();
 
-        FusionQuery &fusedOp = fused.back();
-        fusedOp.type = subOp->Type();
-        fusedOp.kernel = subOp->Kernel();
-        auto ifm2 = subOp->TryIFM(1);
-        if ( ifm2 )
+        SchedulerConnection *subIfm0 = subOp->IFM(0);
+        if ( opGroup->NeedsAllocation(subIfm0->tensor->uid) )
         {
-            fusedOp.ifm2Shape = ifm2->shape;
-            fusedOp.ifm2Memory = ifm2->tensor->memArea.memory;
-            fusedOp.ifm2Type = ifm2->Type();
-            fusedOp.ifm2Format = ifm2->tensor->format;
+            FeatureMapRecord ifm0Record = {};
+            ifm0Record.opId = subOpUId;
+            ifm0Record.usage = TensorUsage::IFM0;
+            ifm0Record.shape = subIfm0->SliceShape();
+            ifm0Record.memory = subIfm0->tensor->memArea.memory;
+            ifm0Record.format = subIfm0->tensor->format;
+            if ( schedule )
+            {
+                // Attach a pointer to the sub-ops element access which will be updated by the performance estimator
+                auto subCost = schedule->Cost(subOp.get());
+                ifm0Record.access = &subCost->elementAccess;
+            }
+            query.featureMapRecords.push_back(ifm0Record);
+        }
+
+        SchedulerConnection *subIfm1 = subOp->TryIFM(1);
+        if ( subIfm1 && opGroup->NeedsAllocation(subIfm1->tensor->uid) )
+        {
+            FeatureMapRecord ifm1Record = {};
+            ifm1Record.opId = subOpUId;
+            ifm1Record.usage = TensorUsage::IFM1;
+            ifm1Record.shape = subIfm1->SliceShape();
+            ifm1Record.memory = subIfm1->tensor->memArea.memory;
+            ifm1Record.format = subIfm1->tensor->format;
+            if ( schedule )
+            {
+                // Attach a pointer to the sub-ops element access which will be updated by the performance estimator
+                auto subCost = schedule->Cost(subOp.get());
+                ifm1Record.access = &subCost->elementAccess;
+            }
+            query.featureMapRecords.push_back(ifm1Record);
+        }
+
+        SchedulerConnection *subOfm = subOp->OFM();
+        if ( opGroup->NeedsAllocation(subOfm->tensor->uid) )
+        {
+            FeatureMapRecord ofmRecord = {};
+            ofmRecord.opId = subOpUId;
+            ofmRecord.usage = TensorUsage::OFM;
+            ofmRecord.shape = subOfm->SliceShape();
+            ofmRecord.memory = subOfm->tensor->memArea.memory;
+            ofmRecord.format = subOfm->tensor->format;
+            if ( schedule )
+            {
+                // Attach a pointer to the sub-ops element access which will be updated by the performance estimator
+                auto subCost = schedule->Cost(subOp.get());
+                ofmRecord.access = &subCost->elementAccess;
+            }
+            query.featureMapRecords.push_back(ofmRecord);
         }
     }
 
-    return fused;
+    return query;
 }
 
 
@@ -1771,25 +1812,10 @@ CycleCost Scheduler::EstimateOpPerformance(SchedulerOperation *op, ArchitectureO
     }
 
     PerformanceQuery query = InitPerfQuery(op, config, ofm_depth, wgtFormat);
-    std::vector<FusionQuery> fused = InitFusionQuery(op);
-    cycleCost = _arch->Performance()->MeasureCycleCost(query, fused);
+    cycleCost = _arch->Performance()->MeasureCycleCost(query);
     return cycleCost;
 }
 
-
-ElementAccess Scheduler::EstimateOpElementAccess(SchedulerOperation *op, ArchitectureOpConfig *config, int ofm_depth)
-{
-    // TODO MLBEDSW-7954: Account for chaining in performance estimation
-    ElementAccess access;
-    if ( !op->IsNpuOp() )
-    {
-        LOG_WARN("CPU performance estimation for \"{}\" not implemented\n", OpTypeToString(op->Type()));
-        return access;
-    }
-    PerformanceQuery query = InitPerfQuery(op, config, ofm_depth);
-    access = _arch->Performance()->MeasureElementAccess(query);
-    return access;
-}
 
 void Scheduler::PrintSchedule(Schedule *schedule)
 {

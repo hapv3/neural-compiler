@@ -146,8 +146,8 @@ public:
 private:
     PerformanceResult ProcessOpPerformance(SchedulerOperation *schedOp, SchedulerOpInfo *cost, Schedule *schedule,
         SchedulerOperation *prevOp, SchedulerOpInfo *prevCost, const std::unordered_set<ArchitectureMemory *> &memories);
-    PerformanceResult EstimateFullOpPerformance(
-        SchedulerOperation *schedOp, SchedulerOpInfo *cost, SchedulerOperation *prevOp, SchedulerOpInfo *prevCost);
+    PerformanceResult EstimateFullOpPerformance(SchedulerOperation *schedOp, SchedulerOpInfo *cost, Schedule *schedule,
+        SchedulerOperation *prevOp, SchedulerOpInfo *prevCost);
     void AddToDatabase(const PerformanceResult &perf, SchedulerOperation *schedOp, SchedulerOpInfo *cost,
         SchedulerOperation *prevOp, int opTable, int perfDebugTable, int perfDebugConnectivityTable,
         const std::unordered_set<ArchitectureMemory *> &memories, OptimiserDatabase *optDb);

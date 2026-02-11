@@ -49,7 +49,7 @@ EthosU55Performance::EthosU55Performance(ArchEthosU55 *arch, const EthosU55PerfI
     _perfInfo = perfInfo;
 }
 
-CycleCost EthosU55Performance::MeasureCycleCost(const PerformanceQuery &query, const std::vector<FusionQuery> &fused)
+CycleCost EthosU55Performance::MeasureCycleCost(const PerformanceQuery &query)
 {
     CycleCost cycles;
     EthosU55Cycles cycleComponents = {};
@@ -66,14 +66,14 @@ CycleCost EthosU55Performance::MeasureCycleCost(const PerformanceQuery &query, c
     else if ( OpUsesMacs(npuOp) )
     {
         // MAC operation cycle calculation
-        cycleComponents = EstimateMacOpCycles(query, fused);
+        cycleComponents = EstimateMacOpCycles(query);
         cycles.opCycles = cycleComponents.cycles;
         cycles.macs = cycleComponents.macs;
     }
     else if ( npuOp == EthosU55NpuOp::Elementwise )
     {
         // Elementwise operation cycle calculation
-        cycleComponents = EstimateElementwiseCycles(query, fused);
+        cycleComponents = EstimateElementwiseCycles(query);
         cycles.opCycles = cycleComponents.cycles;
         cycles.macs = 0;
     }
@@ -82,7 +82,7 @@ CycleCost EthosU55Performance::MeasureCycleCost(const PerformanceQuery &query, c
         assert(query.type == OpType::Transpose || query.type == OpType::MatMul);
         if ( query.type == OpType::MatMul )
         {
-            cycleComponents = EstimateMatMulCycles(query, fused);
+            cycleComponents = EstimateMatMulCycles(query);
             cycles.opCycles = cycleComponents.cycles;
             cycles.macs = cycleComponents.macs;
         }
@@ -271,7 +271,7 @@ int64_t EthosU55Performance::EstimateMacCyclesPerBlock(const PerformanceQuery &q
     return cyclesDpuBlk;
 }
 
-EthosU55Cycles EthosU55Performance::EstimateMacOpCycles(const PerformanceQuery &query, const std::vector<FusionQuery> &fused)
+EthosU55Cycles EthosU55Performance::EstimateMacOpCycles(const PerformanceQuery &query)
 {
     EthosU55OpConfig *opConfig = static_cast<EthosU55OpConfig *>(query.config);
     auto npuOp = _arch->GetHWOp(query.type);
@@ -285,7 +285,7 @@ EthosU55Cycles EthosU55Performance::EstimateMacOpCycles(const PerformanceQuery &
     int numOfmBlks = Shape::DivRoundUp(query.ofmShape, ofmBlock).Elements();
 
     // Estimate AO cycles
-    const double aoCyclesPerElem = EstimateAOCyclesPerElement(query, fused);
+    const double aoCyclesPerElem = EstimateAOCyclesPerElement(query);
     const double aoComputeCyclesPerBlock = std::ceil(aoCyclesPerElem * ofmBlock.Elements());
 
     // Estimate scale and bias read cycles if present
@@ -338,7 +338,7 @@ EthosU55Cycles EthosU55Performance::EstimateMacOpCycles(const PerformanceQuery &
     return cycleComponents;
 }
 
-EthosU55Cycles EthosU55Performance::EstimateElementwiseCycles(const PerformanceQuery &query, const std::vector<FusionQuery> &fused)
+EthosU55Cycles EthosU55Performance::EstimateElementwiseCycles(const PerformanceQuery &query)
 {
     EthosU55OpConfig *opConfig = static_cast<EthosU55OpConfig *>(query.config);
     assert(_arch->GetHWOp(query.type) == EthosU55NpuOp::Elementwise);
@@ -348,7 +348,7 @@ EthosU55Cycles EthosU55Performance::EstimateElementwiseCycles(const PerformanceQ
     const int64_t elements = ofmShape.Elements64();
 
     // Estimate AO cycles
-    const double aoCyclesPerElem = EstimateAOCyclesPerElement(query, fused);
+    const double aoCyclesPerElem = EstimateAOCyclesPerElement(query);
     const double aoCycles = std::ceil(aoCyclesPerElem * elements);
 
     // Estimate the command issuing limit cycles
@@ -368,7 +368,7 @@ EthosU55Cycles EthosU55Performance::EstimateElementwiseCycles(const PerformanceQ
     return cycleComponents;
 }
 
-EthosU55Cycles EthosU55Performance::EstimateMatMulCycles(const PerformanceQuery &query, const std::vector<FusionQuery> &fused)
+EthosU55Cycles EthosU55Performance::EstimateMatMulCycles(const PerformanceQuery &query)
 {
     // Query the cost of individual parts of the matmul implementation
     EthosU55OpConfig *config = static_cast<EthosU55OpConfig *>(query.config);
@@ -381,7 +381,7 @@ EthosU55Cycles EthosU55Performance::EstimateMatMulCycles(const PerformanceQuery 
     subQuery.ifmShape[1] = query.ifmShape[0];
     subQuery.ofmType = DataType::Int32;
     subQuery.ofmMemory = query.tmpMemory;
-    EthosU55Cycles mulCost = EstimateElementwiseCycles(subQuery, fused);
+    EthosU55Cycles mulCost = EstimateElementwiseCycles(subQuery);
 
     // ReduceSum cost
     subQuery.type = OpType::ReduceSum;
@@ -391,7 +391,7 @@ EthosU55Cycles EthosU55Performance::EstimateMatMulCycles(const PerformanceQuery 
     subQuery.ofmShape = subQuery.ofmShape.WithDepth(1);
     subQuery.ofmType = query.ofmType;
     subQuery.ofmMemory = query.ofmMemory;
-    EthosU55Cycles sumCost = EstimateMacOpCycles(subQuery, fused);
+    EthosU55Cycles sumCost = EstimateMacOpCycles(subQuery);
 
     // Repeat for every column of the ofm
     int cols = query.ifmShape[1].Width();
@@ -491,7 +491,7 @@ int64_t EthosU55Performance::EstimateMinimumMemoryCycles(const PerformanceQuery 
     return cyclesIfm + cyclesOfm;
 }
 
-double EthosU55Performance::EstimateAOCyclesPerElement(const PerformanceQuery &query, const std::vector<FusionQuery> &fused)
+double EthosU55Performance::EstimateAOCyclesPerElement(const PerformanceQuery &query)
 {
     EthosU55OpConfig *opConfig = static_cast<EthosU55OpConfig *>(query.config);
     auto npuOp = _arch->GetHWOp(query.type);
@@ -537,14 +537,18 @@ double EthosU55Performance::EstimateAOCyclesPerElement(const PerformanceQuery &q
     }
 
     size_t activationPerfIndex = 0;
-    assert(fused.size() <= 1 && "multiple op performance not available");
-    for ( const FusionQuery &fusedOp : fused )
+
+    EthosU55OpGroup *opGroup = static_cast<EthosU55OpGroup *>(query.opGroup);
+    assert(opGroup);
+    auto activation = opGroup->begin() + 1;
+    if ( activation != opGroup->end() )
     {
-        if ( fusedOp.type == OpType::Sigmoid || fusedOp.type == OpType::Tanh || fusedOp.type == OpType::LookupTable )
+        OpType activationType = activation->type;
+        if ( activationType == OpType::Sigmoid || activationType == OpType::Tanh || activationType == OpType::LookupTable )
         {
             activationPerfIndex = 0;
         }
-        else if ( fusedOp.type == OpType::Relu || fusedOp.type == OpType::Relu0To1 || fusedOp.type == OpType::Relu6 || fusedOp.type == OpType::ReluN1To1 )
+        else if ( activationType == OpType::Relu || activationType == OpType::Relu0To1 || activationType == OpType::Relu6 || activationType == OpType::ReluN1To1 )
         {
             activationPerfIndex = 1;
         }

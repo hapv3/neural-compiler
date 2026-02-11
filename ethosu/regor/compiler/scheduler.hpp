@@ -324,8 +324,7 @@ public:
     void AllocateIOAddresses(Schedule *schedule, const std::vector<std::unique_ptr<SchedulerOperation>> &ops);
 
     static PerformanceQuery InitPerfQuery(SchedulerOperation *op, ArchitectureOpConfig *config, int ofm_depth = -1,
-        WeightFormat wgtFormat = WeightFormat::Default, SchedulerOpInfo *cost = nullptr);
-    static std::vector<FusionQuery> InitFusionQuery(SchedulerOperation *op);
+        WeightFormat wgtFormat = WeightFormat::Default, SchedulerOpInfo *cost = nullptr, Schedule *schedule = nullptr);
 
 private:
     int UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *conn, std::unordered_set<UniqueId> &visited);
@@ -369,8 +368,6 @@ private:
 
     CycleCost EstimateOpPerformance(SchedulerOperation *op, ArchitectureOpConfig *config, int ofm_depth,
         WeightFormat wgtFormat = WeightFormat::Default);
-
-    ElementAccess EstimateOpElementAccess(SchedulerOperation *op, ArchitectureOpConfig *config, int ofm_depth);
 
     void PrintSchedule(Schedule *schedule);
 

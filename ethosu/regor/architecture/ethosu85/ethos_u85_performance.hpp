@@ -30,7 +30,7 @@ class ArchEthosU85;
 struct EthosU85PerfInfo
 {
     float outputCycles[2];
-    float activationCycles[3];
+    float activationCycles[2];
 };
 
 enum class MemChannel
@@ -78,7 +78,7 @@ public:
     EthosU85Performance(ArchEthosU85 *arch, const EthosU85PerfInfo *perfInfo);
 
 public:
-    CycleCost MeasureCycleCost(const PerformanceQuery &query, const std::vector<FusionQuery> &fused) override;
+    CycleCost MeasureCycleCost(const PerformanceQuery &query) override;
     int64_t MemToMemCycles(const ArchitectureMemory *dest, const ArchitectureMemory *source, int sizeBytes) override;
     ElementAccess MeasureElementAccess(const PerformanceQuery &query) override;
     ElementAccess ElementTransferToBytes(const PerformanceQuery &query, const ElementAccess &access) override;
@@ -92,10 +92,12 @@ public:
     MeasureAccessCycles(const PerformanceQuery &query, const ElementAccess &byteAccess) override;
 
 private:
-    EthosU85Cycles EstimateMacOpCycles(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);
-    EthosU85Cycles EstimateElementwiseCycles(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);
+    EthosU85Cycles EstimateMacOpCycles(const PerformanceQuery &query);
+    EthosU85Cycles EstimateElementwiseCycles(const PerformanceQuery &query);
     int64_t EstimateMacCyclesPerBlock(const PerformanceQuery &query);
-    double EstimateAOCyclesPerElement(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);
+    double GetOutputCyclesPerElement(OpType opType, DataType ifmType, DataType ofmType);
+    double GetActivationCyclesPerElement(OpType opType);
+    double EstimateAOCyclesPerElement(const PerformanceQuery &query);
     int64_t EstimateMinimumMemoryCycles(const PerformanceQuery &query);
     float ChannelBW(const ArchitectureMemory *mem, MemChannel channel);
     static MemChannel LookupChannel(OpType type, TensorUsage usage, bool fastWeights);

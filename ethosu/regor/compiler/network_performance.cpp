@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -212,26 +212,16 @@ PerformanceResult NetworkPerformance::Measure(Schedule *schedule, OptimiserDatab
         if ( optDb != nullptr )
         {
             AddToDatabase(perf, schedOp.get(), cost, nullptr, perfTable, perfDebugTable, perfDebugConnectivityTable, memories, optDb);
+            prevOp = schedOp.get();
+            for ( auto const &subOp : schedOp->_subOps )
+            {
+                SchedulerOpInfo *subCost = schedule->Cost(subOp.get());
+                AddToDatabase({}, subOp.get(), subCost, prevOp, perfTable, perfDebugTable, perfDebugConnectivityTable, memories, optDb);
+                prevOp = subOp.get();
+            }
         }
         performance += perf;
-        prevOp = schedOp.get();
         prevCost = cost;
-
-        for ( auto const &subOp : schedOp->_subOps )
-        {
-            cost = schedule->Cost(subOp.get());
-            perf = ProcessOpPerformance(subOp.get(), cost, schedule, prevOp, prevCost, memories);
-            if ( optDb != nullptr )
-            {
-                AddToDatabase(perf, subOp.get(), cost, prevOp, perfTable, perfDebugTable, perfDebugConnectivityTable, memories, optDb);
-            }
-            if ( !IsActivation(subOp->Type()) )
-            {
-                performance += perf;
-            }
-            prevOp = subOp.get();
-            prevCost = cost;
-        }
     }
     // TODO: Remove this line and separate memory allocation from usage.
     performance.memory[_arch->StagingMemory().memory].peakUsage = 0;
@@ -254,7 +244,7 @@ PerformanceResult NetworkPerformance::ProcessOpPerformance(SchedulerOperation *s
     PerformanceResult perf = {};
     if ( schedOp->IsNpuOp() )
     {
-        perf = EstimateFullOpPerformance(schedOp, cost, prevOp, prevCost);
+        perf = EstimateFullOpPerformance(schedOp, cost, schedule, prevOp, prevCost);
         perf.npuOps = 1;
         perf.memory[_arch->StagingMemory().memory].peakUsage = schedule->MemoryUsageAt(cost->timeIndex);
     }
@@ -295,7 +285,7 @@ void NetworkPerformance::AddToDatabase(const PerformanceResult &perf, SchedulerO
         std::to_string(optId),
         OpTypeToString(schedOp->Type()),
         std::move(opName),
-        std::to_string(perf.memory.at(_arch->StagingMemory().memory).peakUsage),
+        perf.memory.count(_arch->StagingMemory().memory) ? std::to_string(perf.memory.at(_arch->StagingMemory().memory).peakUsage) : "0",
         std::to_string(perf.totalCycles),
         std::to_string(perf.npuCycles),
         std::to_string(perf.macCount),
@@ -303,7 +293,14 @@ void NetworkPerformance::AddToDatabase(const PerformanceResult &perf, SchedulerO
 
     for ( const auto mem : memories )
     {
-        row.push_back(std::to_string(perf.memory.at(mem).accessCycles));
+        if ( perf.memory.count(mem) )
+        {
+            row.push_back(std::to_string(perf.memory.at(mem).accessCycles));
+        }
+        else
+        {
+            row.push_back("0");
+        }
     }
 
     db->AddRow(perfTable, schedOp->Uid(), std::move(row));
@@ -414,12 +411,21 @@ void NetworkPerformance::AddToDatabase(const PerformanceResult &perf, SchedulerO
     for ( const auto mem : memories )
     {
         // Add read/write transferEfficiencies for all memories
-        row.push_back(std::to_string(perf.memory.at(mem).readTransferEff));
-        row.push_back(std::to_string(perf.memory.at(mem).writeTransferEff));
+        if ( perf.memory.count(mem) )
+        {
+            row.push_back(std::to_string(perf.memory.at(mem).readTransferEff));
+            row.push_back(std::to_string(perf.memory.at(mem).writeTransferEff));
+        }
+        else
+        {
+            row.push_back("0");
+            row.push_back("0");
+        }
         // For all usages, add access read and access write:
         for ( int i = 0; i < int(AccessType::Last); i++ )
         {
-            if ( perf.memory.at(mem).access.find(static_cast<AccessType>(i)) != perf.memory.at(mem).access.end() )
+            if ( perf.memory.count(mem) &&
+                 (perf.memory.at(mem).access.find(static_cast<AccessType>(i)) != perf.memory.at(mem).access.end()) )
             {
                 row.push_back(std::to_string(perf.memory.at(mem).access.at(static_cast<AccessType>(i)).accessCycles));
                 row.push_back(std::to_string(perf.memory.at(mem).access.at(static_cast<AccessType>(i)).bytesRead));
@@ -477,19 +483,18 @@ void NetworkPerformance::AddToDatabase(const PerformanceResult &perf, SchedulerO
 }
 
 
-PerformanceResult NetworkPerformance::EstimateFullOpPerformance(
-    SchedulerOperation *schedOp, SchedulerOpInfo *cost, SchedulerOperation *prevOp, SchedulerOpInfo *prevCost)
+PerformanceResult NetworkPerformance::EstimateFullOpPerformance(SchedulerOperation *schedOp, SchedulerOpInfo *cost,
+    Schedule *schedule, SchedulerOperation *prevOp, SchedulerOpInfo *prevCost)
 {
     UNUSED(prevOp);
     auto wgtFormat = cost->npuWeightsTensor ? cost->npuWeightsTensor->config->Format() : Flags<WeightFormat>(WeightFormat::Default);
-    PerformanceQuery query = Scheduler::InitPerfQuery(schedOp, cost->Config(), -1, wgtFormat, cost);
-    std::vector<FusionQuery> fused = Scheduler::InitFusionQuery(schedOp);
+    PerformanceQuery query = Scheduler::InitPerfQuery(schedOp, cost->Config(), -1, wgtFormat, cost, schedule);
 
     // Memory that NPU will source weights from for operations
     ArchitectureMemory *weightsMemory = cost->npuWeightsTensor ? cost->npuWeightsTensor->memArea.memory : nullptr;
 
     _arch->Performance()->RecordToDB(schedOp->Uid());
-    CycleCost cycles = _arch->Performance()->MeasureCycleCost(query, fused);
+    CycleCost cycles = _arch->Performance()->MeasureCycleCost(query);
 
     if ( cost->npuWeightsTensor )
     {
@@ -601,6 +606,28 @@ PerformanceResult NetworkPerformance::EstimateFullOpPerformance(
         result.memory[ifm2->tensor->memArea.memory].access[AccessType::FeatureMap].bytesRead += byteAccess.ifmRead[1];
         result.memory[ifm2->tensor->memArea.memory]
             .readTransferOverhead += byteAccess.ifmRead[1] - DataTypeStorageSizeBytes(ifm2->Type(), access.ifmRead[1]);
+    }
+
+    // External FM access for chained operations
+    auto opGroup = schedOp->OpGroup();
+    for ( size_t i = 0; i < schedOp->SubOps().size(); i++ )
+    {
+        auto &subOp = schedOp->SubOps()[i];
+        auto subCost = schedule->Cost(subOp.get());
+
+        auto subIfm = subOp->IFM(0);
+        result.memory[subIfm->tensor->memArea.memory].access[AccessType::FeatureMap].bytesRead += subCost->elementAccess.ifmRead[0];
+
+        auto subIfm2 = subOp->TryIFM(1);
+        if ( subIfm2 )
+        {
+            result.memory[subIfm2->tensor->memArea.memory].access[AccessType::FeatureMap].bytesRead +=
+                subCost->elementAccess.ifmRead[1];
+        }
+
+        auto subOfm = subOp->OFM();
+        result.memory[subOfm->tensor->memArea.memory].access[AccessType::FeatureMap].bytesWritten +=
+            subCost->elementAccess.ofmWrite;
     }
 
     // Reads/writes to temporary or intermediate memories

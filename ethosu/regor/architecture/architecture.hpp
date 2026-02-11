@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -173,6 +173,7 @@ struct ArchitectureOpGroupQuery
     };
 
     OpType type;
+    UniqueId opId;
     const Kernel *kernel;
     std::array<TensorInfo, 2> ifm;
     TensorInfo ofm;
@@ -232,6 +233,31 @@ struct ArchitectureConfigQuery
 };
 
 /// <summary>
+/// How elements are accessed during an operation
+/// </summary>
+struct ElementAccess
+{
+    int ifmRead[2] = {0, 0};
+    int ofmWrite = 0;
+    int weightsRefetch = 0;
+    int constRead[2] = {0, 0};
+    int tmpRead = 0, tmpWrite = 0;
+};
+
+/// <summary>
+/// Information about feature maps which need to be accesses from memory
+/// </summary>
+struct FeatureMapRecord
+{
+    UniqueId opId;
+    TensorUsage usage;
+    Shape shape;
+    TensorFormat format;
+    ArchitectureMemory *memory;
+    ElementAccess *access = nullptr;
+};
+
+/// <summary>
 /// Information for querying operation performance
 /// </summary>
 struct PerformanceQuery
@@ -255,6 +281,8 @@ struct PerformanceQuery
     unsigned encodedScaleSize;
     ArchitectureMemory *weightStagingMemory;
     unsigned firstWeightDMASize;
+    ArchitectureOpGroup *opGroup;
+    std::vector<FeatureMapRecord> featureMapRecords;
 };
 
 struct WeightStats
@@ -265,18 +293,6 @@ struct WeightStats
     int distinctWeights;
 };
 
-/// <summary>
-/// Information for querying performance for HW fused operations
-/// </summary>
-struct FusionQuery
-{
-    OpType type;
-    const Kernel *kernel = nullptr;
-    Shape ifm2Shape;
-    ArchitectureMemory *ifm2Memory = nullptr;
-    DataType ifm2Type;
-    TensorFormat ifm2Format;
-};
 
 /// <summary>
 /// Cycle cost of performing an operation
@@ -285,18 +301,6 @@ struct CycleCost
 {
     int64_t opCycles = 0;
     int64_t macs = 0;
-};
-
-/// <summary>
-/// How elements are accessed during an operation
-/// </summary>
-struct ElementAccess
-{
-    int ifmRead[2] = {0, 0};
-    int ofmWrite = 0;
-    int weightsRefetch = 0;
-    int constRead[2] = {0, 0};
-    int tmpRead = 0, tmpWrite = 0;
 };
 
 struct AccessCycles
@@ -314,7 +318,7 @@ class ArchitecturePerformance
 {
 public:
     virtual ~ArchitecturePerformance() = default;
-    virtual CycleCost MeasureCycleCost(const PerformanceQuery &query, const std::vector<FusionQuery> &fused) = 0;
+    virtual CycleCost MeasureCycleCost(const PerformanceQuery &query) = 0;
     virtual int64_t MemToMemCycles(const ArchitectureMemory *dest, const ArchitectureMemory *source, int sizeBytes) = 0;
     virtual ElementAccess MeasureElementAccess(const PerformanceQuery &query) = 0;
     virtual ElementAccess ElementTransferToBytes(const PerformanceQuery &query, const ElementAccess &access) = 0;

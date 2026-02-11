@@ -67,7 +67,7 @@ public:
     EthosU55Performance(ArchEthosU55 *arch, const EthosU55PerfInfo *perfInfo);
 
 public:
-    CycleCost MeasureCycleCost(const PerformanceQuery &query, const std::vector<FusionQuery> &fused) override;
+    CycleCost MeasureCycleCost(const PerformanceQuery &query) override;
     int64_t MemToMemCycles(const ArchitectureMemory *dest, const ArchitectureMemory *source, int sizeBytes) override;
     ElementAccess MeasureElementAccess(const PerformanceQuery &query) override;
     ElementAccess ElementTransferToBytes(const PerformanceQuery &query, const ElementAccess &access) override;
@@ -82,11 +82,11 @@ public:
 
 
 private:
-    EthosU55Cycles EstimateMacOpCycles(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);
-    EthosU55Cycles EstimateElementwiseCycles(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);
-    EthosU55Cycles EstimateMatMulCycles(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);
+    EthosU55Cycles EstimateMacOpCycles(const PerformanceQuery &query);
+    EthosU55Cycles EstimateElementwiseCycles(const PerformanceQuery &query);
+    EthosU55Cycles EstimateMatMulCycles(const PerformanceQuery &query);
     int64_t EstimateMacCyclesPerBlock(const PerformanceQuery &query);
-    double EstimateAOCyclesPerElement(const PerformanceQuery &query, const std::vector<FusionQuery> &fused);
+    double EstimateAOCyclesPerElement(const PerformanceQuery &query);
     int64_t EstimateMinimumMemoryCycles(const PerformanceQuery &query);
 };
 

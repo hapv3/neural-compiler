@@ -53,7 +53,7 @@ EthosU85Performance::EthosU85Performance(ArchEthosU85 *arch, const EthosU85PerfI
     _perfInfo = perfInfo;
 }
 
-CycleCost EthosU85Performance::MeasureCycleCost(const PerformanceQuery &query, const std::vector<FusionQuery> &fused)
+CycleCost EthosU85Performance::MeasureCycleCost(const PerformanceQuery &query)
 {
     CycleCost cycles;
     EthosU85Cycles cycleComponents;
@@ -73,14 +73,14 @@ CycleCost EthosU85Performance::MeasureCycleCost(const PerformanceQuery &query, c
     else if ( OpUsesMacs(npuOp) )
     {
         // MAC operation cycle calculation
-        cycleComponents = EstimateMacOpCycles(query, fused);
+        cycleComponents = EstimateMacOpCycles(query);
         cycles.opCycles = cycleComponents.cycles;
         cycles.macs = cycleComponents.macs;
     }
     else if ( npuOp == EthosU85NpuOp::Elementwise )
     {
         // Elementwise operation cycle calculation
-        cycleComponents = EstimateElementwiseCycles(query, fused);
+        cycleComponents = EstimateElementwiseCycles(query);
         cycles.opCycles = cycleComponents.cycles;
         cycles.macs = 0;
     }
@@ -233,7 +233,7 @@ int64_t EthosU85Performance::EstimateMacCyclesPerBlock(const PerformanceQuery &q
     return cyclesDpuBlk;
 }
 
-EthosU85Cycles EthosU85Performance::EstimateMacOpCycles(const PerformanceQuery &query, const std::vector<FusionQuery> &fused)
+EthosU85Cycles EthosU85Performance::EstimateMacOpCycles(const PerformanceQuery &query)
 {
     auto npuOp = _arch->GetHWOp(query.type);
     assert(npuOp != EthosU85NpuOp::None);
@@ -249,7 +249,7 @@ EthosU85Cycles EthosU85Performance::EstimateMacOpCycles(const PerformanceQuery &
     }
 
     // Estimate AO cycles
-    const double aoCyclesPerElem = EstimateAOCyclesPerElement(query, fused);
+    const double aoCyclesPerElem = EstimateAOCyclesPerElement(query);
     const double aoComputeCyclesPerBlock = std::ceil(aoCyclesPerElem * ofmBlock.Elements());
 
     // Estimate scale and bias read cycles if present
@@ -303,7 +303,7 @@ EthosU85Cycles EthosU85Performance::EstimateMacOpCycles(const PerformanceQuery &
     return cycleComponents;
 }
 
-EthosU85Cycles EthosU85Performance::EstimateElementwiseCycles(const PerformanceQuery &query, const std::vector<FusionQuery> &fused)
+EthosU85Cycles EthosU85Performance::EstimateElementwiseCycles(const PerformanceQuery &query)
 {
     EthosU85OpConfig *opConfig = static_cast<EthosU85OpConfig *>(query.config);
     assert(_arch->GetHWOp(query.type) == EthosU85NpuOp::Elementwise);
@@ -313,7 +313,7 @@ EthosU85Cycles EthosU85Performance::EstimateElementwiseCycles(const PerformanceQ
     const int64_t elements = ofmShape.Elements64();
 
     // Estimate AO cycles
-    const double aoCyclesPerElem = EstimateAOCyclesPerElement(query, fused);
+    const double aoCyclesPerElem = EstimateAOCyclesPerElement(query);
     const double aoCycles = std::ceil(aoCyclesPerElem * elements);
 
     // Estimate the command issuing limit cycles
@@ -417,42 +417,68 @@ int64_t EthosU85Performance::EstimateMinimumMemoryCycles(const PerformanceQuery 
     return cyclesIfm + cyclesOfm;
 }
 
-
-double EthosU85Performance::EstimateAOCyclesPerElement(const PerformanceQuery &query, const std::vector<FusionQuery> &fused)
+double EthosU85Performance::GetActivationCyclesPerElement(OpType opType)
 {
-    int ifmBits = DataTypeSizeBits(query.ifmType[0]);
-    int ofmBits = DataTypeSizeBits(query.ofmType);
-    int outputPerfIndex = 0;
+    size_t activationPerfIndex = 1;
+    if ( opType == OpType::Sigmoid || opType == OpType::Tanh || opType == OpType::LookupTable )
+    {
+        activationPerfIndex = 0;
+    }
+    else if ( opType == OpType::Relu || opType == OpType::Relu0To1 || opType == OpType::Relu6 || opType == OpType::ReluN1To1 )
+    {
+        activationPerfIndex = 1;
+    }
+
+    assert(activationPerfIndex < std::size(_perfInfo->activationCycles));
+    return _perfInfo->activationCycles[activationPerfIndex];
+}
+
+double EthosU85Performance::GetOutputCyclesPerElement(OpType opType, DataType ifmType, DataType ofmType)
+{
+    int ifmBits = DataTypeSizeBits(ifmType);
+    int ofmBits = DataTypeSizeBits(ofmType);
+    size_t outputPerfIndex = 0;
 
     if ( ifmBits == 32 )
     {
         outputPerfIndex = 0;
     }
-    else if ( query.type == OpType::Mul && ofmBits == 32 )
+    else if ( opType == OpType::Mul && ofmBits == 32 )
     {
         outputPerfIndex = 1;
     }
 
-    int activationPerfIndex = 0;
-    assert(fused.size() <= 1 && "multiple op performance not available");
-    for ( const FusionQuery &fusedOp : fused )
+    assert(outputPerfIndex < std::size(_perfInfo->outputCycles));
+    return _perfInfo->outputCycles[outputPerfIndex];
+}
+
+double EthosU85Performance::EstimateAOCyclesPerElement(const PerformanceQuery &query)
+{
+    double cyclesPerElement = 0.0;
+    std::vector<double> cyclesPerOp;
+    EthosU85OpGroup *opGroup = static_cast<EthosU85OpGroup *>(query.opGroup);
+    assert(opGroup);
+    for ( const auto &opInfo : *opGroup )
     {
-        if ( fusedOp.type == OpType::Sigmoid || fusedOp.type == OpType::Tanh || fusedOp.type == OpType::LookupTable )
+        OpType opType = opInfo.type;
+        if ( IsActivation(opType) || opType == OpType::Reverse || opType == OpType::Transpose )
         {
-            activationPerfIndex = 0;
-        }
-        else if ( fusedOp.type == OpType::Relu || fusedOp.type == OpType::Relu0To1 || fusedOp.type == OpType::Relu6 || fusedOp.type == OpType::ReluN1To1 )
-        {
-            activationPerfIndex = 1;
+            // Activations are done through the same pass of the AO, push the cycles to the list
+            cyclesPerOp.push_back(GetActivationCyclesPerElement(opType));
         }
         else
         {
-            activationPerfIndex = 2;
+            // New chained operation, add the max of the cycles per element for all the previous ops
+            // It can contain 0 or 1 output ops and 0 or more activations
+            cyclesPerElement += cyclesPerOp.empty() ? 0.0 : *std::max_element(cyclesPerOp.begin(), cyclesPerOp.end());
+            cyclesPerOp.clear();
+            cyclesPerOp.push_back(GetOutputCyclesPerElement(opType, opInfo.ifm[0].type, opInfo.ofm.type));
         }
     }
 
-    assert(outputPerfIndex < int(std::size(_perfInfo->outputCycles)) && activationPerfIndex < int(std::size(_perfInfo->activationCycles)));
-    return std::max(_perfInfo->outputCycles[outputPerfIndex], _perfInfo->activationCycles[activationPerfIndex]);
+    // Add the cycles for the last op in the chain (and possibly activations)
+    cyclesPerElement += cyclesPerOp.empty() ? 0.0 : *std::max_element(cyclesPerOp.begin(), cyclesPerOp.end());
+    return cyclesPerElement;
 }
 
 ElementAccess EthosU85Performance::MeasureElementAccess(const PerformanceQuery &query)
@@ -463,7 +489,6 @@ ElementAccess EthosU85Performance::MeasureElementAccess(const PerformanceQuery &
     assert(npuOp != EthosU85NpuOp::None);
 
     Shape ifmRounding = _arch->GetStorageRounding(query.ifmFormat[0]);
-    Shape ofmRounding = _arch->GetStorageRounding(query.ofmFormat);
 
     // Convolution & pooling
     if ( OpUsesMacs(npuOp) )
@@ -544,7 +569,6 @@ ElementAccess EthosU85Performance::MeasureElementAccess(const PerformanceQuery &
     {
         // TODO: Implement for Resize
         access.ifmRead[0] = Shape::RoundAway(query.ifmShape[0], ifmRounding).Elements();
-        access.ofmWrite = Shape::RoundAway(query.ofmShape, ofmRounding).Elements();
     }
     else if ( npuOp == EthosU85NpuOp::Dma )
     {
@@ -555,16 +579,11 @@ ElementAccess EthosU85Performance::MeasureElementAccess(const PerformanceQuery &
 
             // Complete IFM1 (index) is read
             access.ifmRead[1] = Shape::RoundAway(query.ifmShape[1], ifmRounding).Elements();
-
-            // Complete OFM is written
-            access.ofmWrite = Shape::RoundAway(query.ofmShape, ofmRounding).Elements();
         }
         else if ( query.type == OpType::Tile )
         {
             // IFM0 is read multiple times to cover all elements in ofmShape
-            access.ifmRead[0] = Shape::RoundAway(query.ofmShape, ofmRounding).Elements();
-            // Complete OFM is written
-            access.ofmWrite = Shape::RoundAway(query.ofmShape, ofmRounding).Elements();
+            access.ifmRead[0] = Shape::RoundAway(query.ofmShape, ifmRounding).Elements();
         }
         else
         {
@@ -579,7 +598,39 @@ ElementAccess EthosU85Performance::MeasureElementAccess(const PerformanceQuery &
         assert(false);
     }
 
-    access.ofmWrite = Shape::RoundAway(query.ofmShape, ofmRounding).Elements();
+    // Measure acces for external FMs of chained operations
+    EthosU85OpGroup *opGroup = static_cast<EthosU85OpGroup *>(query.opGroup);
+    assert(opGroup);
+    for ( const auto &opInfo : *opGroup )
+    {
+        auto it = std::find_if(query.featureMapRecords.begin(), query.featureMapRecords.end(),
+            [&opInfo](const FeatureMapRecord &record) { return record.opId == opInfo.opId; });
+        if ( it != query.featureMapRecords.end() )
+        {
+            const FeatureMapRecord &fmRecord = *it;
+            assert(fmRecord.access);
+            if ( IsIFM(fmRecord.usage) )
+            {
+                int ifmIdx = GetUsageIndex(fmRecord.usage);
+                assert(size_t(ifmIdx) < std::size(fmRecord.access->ifmRead));
+                Shape extIfmRounding = _arch->GetStorageRounding(fmRecord.format);
+                fmRecord.access->ifmRead[ifmIdx] = Shape::RoundAway(fmRecord.shape, extIfmRounding).Elements();
+            }
+            else
+            {
+                assert(IsOFM(fmRecord.usage) && "Unexpected usage for external FM");
+                Shape extOfmRounding = _arch->GetStorageRounding(fmRecord.format);
+                fmRecord.access->ofmWrite = Shape::RoundAway(fmRecord.shape, extOfmRounding).Elements();
+            }
+        }
+    }
+
+    // Complete OFM is written as long as it needs to be allocated
+    if ( opGroup->NeedsAllocation(opGroup->begin()->ofm.key) )
+    {
+        Shape ofmRounding = _arch->GetStorageRounding(query.ofmFormat);
+        access.ofmWrite = Shape::RoundAway(query.ofmShape, ofmRounding).Elements();
+    }
 
     return access;
 }
@@ -612,6 +663,34 @@ ElementAccess EthosU85Performance::ElementTransferToBytes(const PerformanceQuery
         result.constRead[0] = access.weightsRefetch * query.encodedWeightSize;
         result.constRead[1] = access.weightsRefetch * query.encodedScaleSize;
         result.weightsRefetch = 1;
+    }
+
+    // External FMs of chained operations
+    EthosU85OpGroup *opGroup = static_cast<EthosU85OpGroup *>(query.opGroup);
+    assert(opGroup);
+    for ( const auto &opInfo : *opGroup )
+    {
+        auto it = std::find_if(query.featureMapRecords.begin(), query.featureMapRecords.end(),
+            [&opInfo](const FeatureMapRecord &record) { return record.opId == opInfo.opId; });
+        if ( it != query.featureMapRecords.end() )
+        {
+            const FeatureMapRecord &fmRecord = *it;
+            assert(fmRecord.access);
+            ElementAccess &extAccess = *fmRecord.access;
+            if ( IsIFM(fmRecord.usage) )
+            {
+                int ifmIdx = GetUsageIndex(fmRecord.usage);
+                assert(size_t(ifmIdx) < std::size(extAccess.ifmRead) && size_t(ifmIdx) < std::size(opInfo.ifm));
+                extAccess.ifmRead[ifmIdx] = EstimateMemoryTransfer(_arch->_cores, true, fmRecord.memory, fmRecord.format,
+                    DataTypeSizeBits(opInfo.ifm[ifmIdx].type), ifmBlock, fmRecord.shape, extAccess.ifmRead[ifmIdx]);
+            }
+            else
+            {
+                assert(IsOFM(fmRecord.usage) && "Unexpected usage for external FM");
+                extAccess.ofmWrite = EstimateMemoryTransfer(_arch->_cores, false, fmRecord.memory, fmRecord.format,
+                    DataTypeSizeBits(opInfo.ofm.type), ofmBlock, fmRecord.shape, extAccess.ofmWrite);
+            }
+        }
     }
 
     return result;
@@ -797,6 +876,31 @@ EthosU85Performance::MeasureAccessCycles(const PerformanceQuery &query, const El
     }
     // OFM
     channelTransferBytes[query.ofmMemory][MemChannel::Write][TransferGroup::FeatureMaps] += byteAccess.ofmWrite;
+    // External FMs of chained operations
+    EthosU85OpGroup *opGroup = static_cast<EthosU85OpGroup *>(query.opGroup);
+    assert(opGroup);
+    for ( const auto &opInfo : *opGroup )
+    {
+        auto it = std::find_if(query.featureMapRecords.begin(), query.featureMapRecords.end(),
+            [&opInfo](const FeatureMapRecord &record) { return record.opId == opInfo.opId; });
+        if ( it != query.featureMapRecords.end() )
+        {
+            const FeatureMapRecord &fmRecord = *it;
+            assert(fmRecord.access);
+            if ( IsIFM(fmRecord.usage) )
+            {
+                int ifmIdx = GetUsageIndex(fmRecord.usage);
+                assert(size_t(ifmIdx) < std::size(fmRecord.access->ifmRead));
+                channel = LookupChannel(opInfo.type, MakeTensorUsage(TensorUsage::IFM, ifmIdx), false);
+                channelTransferBytes[fmRecord.memory][channel][TransferGroup::FeatureMaps] += fmRecord.access->ifmRead[ifmIdx];
+            }
+            else
+            {
+                assert(IsOFM(fmRecord.usage) && "Unexpected usage for external FM");
+                channelTransferBytes[fmRecord.memory][MemChannel::Write][TransferGroup::FeatureMaps] += fmRecord.access->ofmWrite;
+            }
+        }
+    }
 
     if ( query.constMemory )
     {

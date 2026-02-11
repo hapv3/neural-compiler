@@ -295,6 +295,7 @@ ArchitectureOpGroupQuery SchedulerPacking::CreateOpGroupQuery(const SchedulerOpe
 {
     ArchitectureOpGroupQuery query{};
     query.type = schedOp->Type();
+    query.opId = schedOp->Uid();
     query.inputs = schedOp->TryIFM(1) ? 2 : 1;
     query.kernel = schedOp->Kernel();
 
