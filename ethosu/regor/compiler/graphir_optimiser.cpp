@@ -3138,8 +3138,13 @@ Operation *GraphIrOptimiser::RealiseKernelPadding(Graph *const, Operation *const
     {
         ArchOperatorQuery query{};
         ArchRequirements req{};
+        auto scalesConn = operation->Input(TensorUsage::Scales);
+        auto weightsConn = operation->Input(TensorUsage::Weights);
+        bool isConstant = scalesConn->tensor->IsConstant() && weightsConn->tensor->IsConstant();
+        query.weightFormat = isConstant ? WeightFormat::Default : WeightFormat::None;
+        query.kernel = kernel;
         Set(query.ifm[0], operation->Input(TensorUsage::IFM0));
-        Set(query.weights, operation->Input(TensorUsage::Weights));
+        Set(query.weights, weightsConn);
         Set(query.ofm, operation->Output(TensorUsage::OFM));
         if ( _constraints->OperatorQuery(operation->Type(), &query, &req).Any(QueryResult::Native) )
         {
