@@ -31,6 +31,7 @@ TEST_CASE("arch_ethos_u85 GetOpConfig")
 {
     auto arch = CreateArchDefault<ArchEthosU85>(1024);
     ArchitectureConfigQuery query{};
+    Kernel kernel({1, 1}, {1, 1}, {0, 0});
     query.ifmBits = 8;
     query.lutBytes = 0;
     query.scaled = false;
@@ -42,7 +43,6 @@ TEST_CASE("arch_ethos_u85 GetOpConfig")
     SECTION("No waste")
     {
         OpType type = OpType::Add;
-        Kernel kernel({1, 1}, {1, 1}, {0, 0});
         query.ofmShape = {1, 8, 8, 32};
         query.ifmShape[0] = query.ofmShape;
         query.kernel = &kernel;
@@ -54,7 +54,6 @@ TEST_CASE("arch_ethos_u85 GetOpConfig")
     SECTION("Waste in H")
     {
         OpType type = OpType::Add;
-        Kernel kernel({1, 1}, {1, 1}, {0, 0});
         query.ofmShape = {1, 1, 8, 32};
         query.ifmShape[0] = query.ofmShape;
         query.kernel = &kernel;
@@ -66,7 +65,6 @@ TEST_CASE("arch_ethos_u85 GetOpConfig")
     SECTION("Waste in W")
     {
         OpType type = OpType::Add;
-        Kernel kernel({1, 1}, {1, 1}, {0, 0});
         query.ofmShape = {1, 8, 1, 16};
         query.ifmShape[0] = query.ofmShape;
         query.kernel = &kernel;
@@ -78,7 +76,6 @@ TEST_CASE("arch_ethos_u85 GetOpConfig")
     SECTION("Waste in C")
     {
         OpType type = OpType::Add;
-        Kernel kernel({1, 1}, {1, 1}, {0, 0});
         query.ofmShape = {1, 8, 8, 1};
         query.ifmShape[0] = query.ofmShape;
         query.kernel = &kernel;
