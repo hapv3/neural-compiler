@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2023-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -395,6 +395,7 @@ private:
     {
         if constexpr ( false )
         {
+            return {};
         }
 #define TYPE_FUNC(x) else if constexpr ( std::is_same<TYPE, x>::value ) return _localStorage.as_##x
         FOR_ALL_INT_TYPES(TYPE_FUNC, ;);
@@ -410,6 +411,7 @@ private:
     {
         if constexpr ( false )
         {
+            return {};
         }
 #define TYPE_FUNC(x) else if constexpr ( std::is_same<TYPE, x>::value ) return _localStorage.as_##x
         FOR_ALL_INT_TYPES(TYPE_FUNC, ;);
