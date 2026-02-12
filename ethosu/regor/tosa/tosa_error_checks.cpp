@@ -679,7 +679,7 @@ void ErrorIfCheck_15y4an3ceern5(const regor::Operation *op, [[maybe_unused]] con
     // Operators: CLAMP,
     static constexpr char constraint[] = "ERROR_IF(isNaN(min_val) || isNaN(max_val))";
     bool checkOk = (context.profile != GraphApi::PROFILE_INT);
-    checkOk = (op != nullptr);  // TODO: Implement check when PRO-FP is supported
+    checkOk = checkOk || (op != nullptr);  // TODO: Implement check when PRO-FP is supported
     if ( !checkOk ) throw tosa::invalid_argument(constraint);
 }
 
