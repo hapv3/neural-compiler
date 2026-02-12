@@ -246,8 +246,9 @@ bool PerAxisQuant(const Operation *op)
 {
     for ( const auto *list : {&op->Inputs(), &op->Outputs()} )
     {
-        for ( const auto &[usage, conn] : list->pairs() )
+        for ( const auto &entry : list->pairs() )
         {
+            const auto &conn = entry.second;
             if ( conn.quantization.scales.size() > 1 || conn.quantization.zeroPoints.size() > 1 )
             {
                 Failure(op, "Operation does not support per-axis quantization");

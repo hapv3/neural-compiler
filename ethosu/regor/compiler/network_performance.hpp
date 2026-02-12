@@ -100,12 +100,12 @@ struct PerformanceResult
 
     int Accesses() const
     {
-        int accesses = 0;
-        for ( const auto &[archMem, stats] : memory )
+        size_t accesses = 0;
+        for ( const auto &archMemoryEntry : memory )
         {
-            accesses += int(stats.access.size());
+            accesses += archMemoryEntry.second.access.size();
         }
-        return accesses;
+        return int(accesses);
     }
 
     PerformanceResult &operator+=(const PerformanceResult &other)

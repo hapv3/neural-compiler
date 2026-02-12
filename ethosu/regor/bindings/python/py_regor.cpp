@@ -108,12 +108,13 @@ struct PyRegorPerfReport
         ret += "Total operations (after cascading) = " + std::to_string(totalOpsBc - cascadedOps + cascades) + "\n";
         ret += "Original Weights = " + std::to_string(originalWeights) + "\n";
         ret += "Encoded Weights = " + std::to_string(encodedWeights) + "\n";
-        for ( const auto &[memName, memory] : memories )
+        for ( const auto &memoryEntry : memories )
         {
+            const auto &memory = memoryEntry.second;
             ret += memory.ToString();
-            for ( const auto &[_memName, access] : memory.accesses )
+            for ( const auto &accessEntry : memory.accesses )
             {
-                ret += access.ToString();
+                ret += accessEntry.second.ToString();
             }
         }
         return ret;

@@ -833,9 +833,9 @@ EthosU55Performance::MeasureAccessCycles(const PerformanceQuery &query, const El
     {
         AccessCycles accessCycles;
         int64_t totalBytes = 0;
-        for ( auto &[group, bytes] : groups )
+        for ( auto &group : groups )
         {
-            totalBytes += bytes;
+            totalBytes += group.second;
         }
 
         accessCycles.fmAccessCycles = groups.count(TransferGroup::FeatureMaps) ? groups[TransferGroup::FeatureMaps] / mem->Bandwidth() : 0;

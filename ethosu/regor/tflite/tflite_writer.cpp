@@ -436,8 +436,9 @@ std::vector<const Tensor *> TfLiteWriter::SortedInputTensors(const Operation *op
     {
         // If we have tensor indices for this op type, use that tensor order
         int ifm = 0;
-        for ( const auto &[type_, usage] : tensorIndices )
+        for ( const auto &tensorIndex : tensorIndices )
         {
+            const auto &usage = tensorIndex.second;
             const auto conn = operation->Input(usage);
             tensors.push_back(conn ? conn->tensor.get() : nullptr);
             ifm += IsIFM(usage);
@@ -451,9 +452,9 @@ std::vector<const Tensor *> TfLiteWriter::SortedInputTensors(const Operation *op
     else
     {
         // If we don't have tensor indices for this op type, use the tensor order we have
-        for ( const auto &[usage, conn] : operation->Inputs().pairs() )
+        for ( const auto &tensorEntry : operation->Inputs().pairs() )
         {
-            tensors.push_back(conn.tensor.get());
+            tensors.push_back(tensorEntry.second.tensor.get());
         }
     }
     return tensors;
