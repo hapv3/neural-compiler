@@ -20,14 +20,16 @@
 
 #include "compiler/quantization.hpp"
 #include "compiler/raw_writer.hpp"
+#include "tflite/tflite_schema_generated.hpp"
 
+#include <flatbuffers/flatbuffers.h>
 #include <catch_all.hpp>
 
 #include "regor.h"
 
 using namespace regor;
 
-TEST_CASE("raw_writer")
+TEST_CASE("raw_writer - metadata")
 {
     const bool separateIORegions = GENERATE(false, true);
 
@@ -298,5 +300,76 @@ TEST_CASE("raw_writer")
         const auto *zeroPoints = reinterpret_cast<const int32_t *>(scales + count);
         REQUIRE(scales[0] == Catch::Approx(5.0f));
         REQUIRE(zeroPoints[0] == 0);
+    }
+}
+
+// Tests that we fail with a meaningful error message when raw writer encounters a passthrough op
+TEST_CASE("raw_writer - passthrough op")
+{
+    const tflite::Model *tfliteModel = nullptr;
+    const tflite::Operator *tfliteOp = nullptr;
+    std::unique_ptr<const uint8_t[]> base;
+
+    {
+        flatbuffers::FlatBufferBuilder builder;
+        std::vector<flatbuffers::Offset<tflite::OperatorCode>> codes;
+        std::vector<flatbuffers::Offset<tflite::Operator>> operators;
+        std::vector<flatbuffers::Offset<tflite::SubGraph>> subgraphs;
+
+        // Create a subgraph with a single ABS operator
+        codes.push_back(tflite::CreateOperatorCodeDirect(builder, 0, nullptr, 1, tflite::BuiltinOperator::ABS));
+        operators.push_back(tflite::CreateOperator(
+            builder, 0, 0, 0, tflite::BuiltinOptions::AbsOptions, tflite::CreateAbsOptions(builder).Union()));
+        subgraphs.push_back(tflite::CreateSubGraphDirect(builder, nullptr, nullptr, nullptr, &operators));
+        const auto model = tflite::CreateModelDirect(builder, 3 /* version */, &codes, &subgraphs);
+        tflite::FinishModelBuffer(builder, model);
+
+        // Get raw flatbuffer buffer
+        size_t passthroughSize = 0;
+        size_t passthroughOffset = 0;
+        const uint8_t *raw = builder.ReleaseRaw(passthroughSize, passthroughOffset);
+
+        // Extract pointers to the model and the ABS operator
+        tfliteModel = tflite::GetModel(&raw[passthroughOffset]);
+        assert(tfliteModel->operator_codes());
+        auto tfliteSubgraphs = tfliteModel->subgraphs();
+        assert(tfliteSubgraphs->size() == 1);
+        auto tfliteOperators = (*tfliteSubgraphs)[0]->operators();
+        assert(tfliteOperators->size() == 1);
+        tfliteOp = (*tfliteOperators)[0];
+
+        // Store the raw flatbuffer buffer so we don't leak it
+        base = std::unique_ptr<const uint8_t[]>(raw);
+    }
+
+    // Create a passthrough op
+    auto op = std::make_shared<Operation>(OpType::Passthrough);
+    auto ifm = std::make_shared<Tensor>("ifm", DataType::Int8, Shape(1));
+    auto ofm = std::make_shared<Tensor>("ofm", DataType::Int8, Shape(1));
+    op->ConnectInput(TensorUsage::IFM, ifm);
+    op->ConnectOutput(TensorUsage::OFM, ofm);
+    op->SetPassthrough(tfliteOp);
+
+    // Create a graph with the above passthrough op
+    std::vector<std::unique_ptr<Graph>> graphs;
+    graphs.push_back(std::make_unique<Graph>(GraphNotation::TFLite));
+    graphs[0]->AddInput(ifm);
+    graphs[0]->AddOutput(ofm);
+    graphs[0]->SetPassthrough(tfliteModel);
+
+    // Create an empty tensor address map - we don't need a complete tensor address map for this test
+    std::vector<TensorAddressMap> addresses;
+    addresses.push_back({});
+
+    RawWriter writer;
+    try
+    {
+        writer.Serialise(graphs, addresses);
+        FAIL("Expected RawWriter to reject passthrough op");
+    }
+    catch ( const std::invalid_argument &ex )
+    {
+        const std::string message = ex.what();
+        REQUIRE(message == "RawWriter expects a graph without passthrough/CPU operations (found ABS)");
     }
 }

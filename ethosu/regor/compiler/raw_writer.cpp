@@ -20,9 +20,12 @@
 
 #include "common/logging.hpp"
 
-#include <algorithm>
+#include "tflite/tflite_schema_generated.hpp"
+
 #include <limits>
 #include <memory>
+#include <set>
+#include <string>
 #include <vector>
 
 #include "include/regor.h"
@@ -42,27 +45,67 @@ std::vector<std::pair<std::unique_ptr<const uint8_t[]>, size_t>> RawWriter::Seri
 {
     if ( graphs.size() != 1 )
     {
-        throw std::invalid_argument("RawWriter expects 1 graph");
+        throw std::invalid_argument(fmt::format("RawWriter expects 1 graph (found {} graphs)", graphs.size()));
     }
     const auto &graph = graphs[0];
 
     std::vector<Operation *> operations;
     graph->GetAllOperations(operations);
+    if ( graph->Notation() == GraphNotation::TFLite )
+    {
+        // Raw output format can not handle passthrough operations
+        std::set<std::string> ops;
+        const auto *tfliteModel = static_cast<const tflite::Model *>(graph->Passthrough());
+        const auto *tfliteOperatorCodes = tfliteModel ? tfliteModel->operator_codes() : nullptr;
+        for ( const auto *op : operations )
+        {
+            if ( op->Type() == OpType::Passthrough && op->Passthrough() )
+            {
+                std::string opName = "UNKNOWN";
+                const auto *tfliteOperator = static_cast<const tflite::Operator *>(op->Passthrough());
+                const auto opcodeIndex = tfliteOperator->opcode_index();
+                if ( tfliteOperatorCodes && opcodeIndex < tfliteOperatorCodes->size() )
+                {
+                    const auto *tfliteOperatorCode = tfliteOperatorCodes->Get(opcodeIndex);
+                    if ( tfliteOperatorCode )
+                    {
+                        auto builtinCode = tfliteOperatorCode->builtin_code();
+                        if ( builtinCode == tflite::BuiltinOperator(0) )
+                        {
+                            const int8_t deprecatedBuiltinCode = tfliteOperatorCode->deprecated_builtin_code();
+                            builtinCode = static_cast<tflite::BuiltinOperator>(deprecatedBuiltinCode);
+                        }
+                        const auto *enumName = EnumNameBuiltinOperator(builtinCode);
+                        if ( enumName ) opName = enumName;
+                    }
+                }
+                ops.insert(std::move(opName));
+            }
+        }
+        if ( !ops.empty() )
+        {
+            throw std::invalid_argument(fmt::format(
+                "RawWriter expects a graph without passthrough/CPU operations (found {})", fmt::join(ops, ", ")));
+        }
+    }
     if ( operations.size() != 1 )
     {
-        throw std::invalid_argument("RawWriter expects graph with 1 operation");
+        throw std::invalid_argument(
+            fmt::format("RawWriter expects graph with 1 operation (found {} operations)", operations.size()));
     }
 
     if ( tensor_address_maps.size() != 1 )
     {
-        throw std::invalid_argument("RawWriter expects 1 tensor address map");
+        throw std::invalid_argument(fmt::format(
+            "RawWriter expects 1 tensor address map (found {} tensor address maps)", tensor_address_maps.size()));
     }
     const auto &tensor_address_map = tensor_address_maps[0];
 
     const Operation *customNpuOp = operations[0];
     if ( customNpuOp->Type() != OpType::CustomNpuOp )
     {
-        throw std::invalid_argument("RawWriter expects graph with 1 CustomNpuOp");
+        throw std::invalid_argument(fmt::format("RawWriter expects 1 graph with 1 CustomNpuOp operation (found {} operation)",
+            OpTypeToString(customNpuOp->Type())));
     }
 
     // ethos_u_command_stream in TFLite format
