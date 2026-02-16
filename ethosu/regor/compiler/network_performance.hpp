@@ -151,8 +151,8 @@ private:
     PerformanceResult EstimateFullOpPerformance(SchedulerOperation *schedOp, SchedulerOpInfo *cost, Schedule *schedule,
         SchedulerOperation *prevOp, SchedulerOpInfo *prevCost);
     void AddToDatabase(const PerformanceResult &perf, SchedulerOperation *schedOp, SchedulerOpInfo *cost,
-        SchedulerOperation *prevOp, int opTable, int perfDebugTable, int perfDebugConnectivityTable,
-        const std::unordered_set<ArchitectureMemory *> &memories, OptimiserDatabase *optDb);
+        SchedulerOperation *prevOp, SchedulerOpInfo *parentCost, int opTable, int perfDebugTable,
+        int perfDebugConnectivityTable, const std::unordered_set<ArchitectureMemory *> &memories, OptimiserDatabase *optDb);
 };
 
 

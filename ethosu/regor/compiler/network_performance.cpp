@@ -211,12 +211,12 @@ PerformanceResult NetworkPerformance::Measure(Schedule *schedule, OptimiserDatab
         }
         if ( optDb != nullptr )
         {
-            AddToDatabase(perf, schedOp.get(), cost, nullptr, perfTable, perfDebugTable, perfDebugConnectivityTable, memories, optDb);
+            AddToDatabase(perf, schedOp.get(), cost, nullptr, nullptr, perfTable, perfDebugTable, perfDebugConnectivityTable, memories, optDb);
             prevOp = schedOp.get();
             for ( auto const &subOp : schedOp->_subOps )
             {
                 SchedulerOpInfo *subCost = schedule->Cost(subOp.get());
-                AddToDatabase({}, subOp.get(), subCost, prevOp, perfTable, perfDebugTable, perfDebugConnectivityTable, memories, optDb);
+                AddToDatabase({}, subOp.get(), subCost, prevOp, cost, perfTable, perfDebugTable, perfDebugConnectivityTable, memories, optDb);
                 prevOp = subOp.get();
             }
         }
@@ -269,7 +269,7 @@ PerformanceResult NetworkPerformance::ProcessOpPerformance(SchedulerOperation *s
 
 
 void NetworkPerformance::AddToDatabase(const PerformanceResult &perf, SchedulerOperation *schedOp,
-    SchedulerOpInfo *cost, SchedulerOperation *prevOp, int perfTable, int perfDebugTable,
+    SchedulerOpInfo *cost, SchedulerOperation *prevOp, SchedulerOpInfo *parentCost, int perfTable, int perfDebugTable,
     int perfDebugConnectivityTable, const std::unordered_set<ArchitectureMemory *> &memories, OptimiserDatabase *optDb)
 {
     // Per-layer calculations
@@ -375,7 +375,7 @@ void NetworkPerformance::AddToDatabase(const PerformanceResult &perf, SchedulerO
         // Timeindex
         std::to_string(cost->timeIndex),
         // Cascade
-        std::to_string(cost->cascade),
+        (cost->cascade == 0 && parentCost) ? std::to_string(parentCost->cascade) : std::to_string(cost->cascade),
         // Weights
         cost->npuWeightsTensor ? cost->npuWeightsTensor->config->Format().ToString() : "",
         cost->npuWeightsTensor ? EnumToString(cost->npuWeightsTensor->dataType) : "",
