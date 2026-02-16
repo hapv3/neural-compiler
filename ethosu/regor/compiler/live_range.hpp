@@ -116,6 +116,7 @@ private:
     SchedulerTensor *ReusableIFM(const std::unique_ptr<SchedulerOperation> &schedOp, const SchedulerTensor *ofmTensor,
         const MemArea &targetMemory);
     bool ShouldBeIgnored(const SchedulerTensor *tens, const MemArea &targetMemory);
+    bool HasReusableIFM(const SchedulerOperation *op);
 };
 
 }  // namespace regor

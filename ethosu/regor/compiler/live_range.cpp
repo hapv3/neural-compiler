@@ -286,7 +286,7 @@ SchedulerTensor *LiveRangeGraph::ReusableIFM(
 {
     SchedulerTensor *reusableIfm = nullptr;
     const auto *ofm = schedOp->Output(TensorUsage::OFM);
-    if ( IsElementwise(schedOp->Type()) && ofm->reverse == ReverseType::None && IsNone(ofm->transpose) )
+    if ( HasReusableIFM(schedOp.get()) )
     {
         if ( !ShouldBeIgnored(ofmTens, targetMemory) )
         {
@@ -331,6 +331,18 @@ bool LiveRangeGraph::ShouldBeIgnored(const SchedulerTensor *tens, const MemArea 
         return true;
     }
     return tens->memArea != targetMemory;
+}
+
+// IFM reuse is possible for any operator that maps a single IFM element to a single OFM element
+bool LiveRangeGraph::HasReusableIFM(const SchedulerOperation *op)
+{
+    const auto *kernel = op->Kernel();
+    const bool unitKernel = kernel && kernel->ElementsWH() == 1;
+    const bool noOpReverse = op->Output(TensorUsage::OFM)->reverse == ReverseType::None;
+    const bool noneTranspose = IsNone(op->Output(TensorUsage::OFM)->transpose);
+    // The caller function ReusableIFM also gates certain conditions. For example, any case where the IFM and OFM type
+    // is different, where the IFM is graph output, etc. We therefore do not need to do these checks explicitly here.
+    return (DecomposeAsElementwise(op->Type()) || (unitKernel && IsPooling(op->Type())) || op->Type() == OpType::Transpose) && noOpReverse && noneTranspose;
 }
 
 }  // namespace regor

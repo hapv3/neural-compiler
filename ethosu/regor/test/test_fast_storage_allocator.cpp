@@ -24,6 +24,7 @@
 #include "util.hpp"
 
 #include <catch_all.hpp>
+#include <functional>
 #include <memory>
 
 #include "regor.h"
@@ -86,6 +87,57 @@ static std::unique_ptr<Schedule> CreateSchedule(std::unique_ptr<Architecture> &a
         schedule->SetCost(*op, std::move(schedOpInfo));
     }
     return schedule;
+}
+
+static void ExpectReusableIfmForOp(std::unique_ptr<Architecture> &arch, OpType opType, const MemArea &fast)
+{
+    auto ifm = CreateTensor("ifm_" + std::to_string(static_cast<int>(opType)), fast);
+    auto ofm = CreateTensor("ofm_" + std::to_string(static_cast<int>(opType)), fast);
+
+    std::vector<std::unique_ptr<SchedulerOperation>> ops;
+    ops.push_back(CreateSchedulerOperation(arch, opType, true, TensorUsage::IFM, ifm, TensorUsage::OFM, ofm));
+
+    SchedulerOptions opts;
+    opts.optimizationStagingLimit = 32 * 1024;
+    SchedulerOpConfigMap configMap;
+    auto scheduler = Scheduler(arch.get(), opts, "test", ops, configMap);
+
+    auto schedule = scheduler.Process();
+    (void)schedule;
+
+    CAPTURE(static_cast<int>(opType));
+    // coverity[cert_exp55_cpp_violation]
+    REQUIRE(ifm->AllocatedAddress() == ofm->AllocatedAddress());
+}
+
+static void ExpectNotReusableIfmForOp(std::unique_ptr<Architecture> &arch, OpType opType, const MemArea &fast, const char *reason,
+    const std::function<void(std::shared_ptr<SchedulerTensor> &, std::shared_ptr<SchedulerTensor> &,
+        std::vector<std::unique_ptr<SchedulerOperation>> &)> &tweak)
+{
+    auto ifm = CreateTensor("ifm_neg_" + std::to_string(static_cast<int>(opType)), fast);
+    auto ofm = CreateTensor("ofm_neg_" + std::to_string(static_cast<int>(opType)), fast);
+
+    std::vector<std::unique_ptr<SchedulerOperation>> ops;
+    ops.push_back(CreateSchedulerOperation(arch, opType, true, TensorUsage::IFM, ifm, TensorUsage::OFM, ofm));
+
+    if ( tweak )
+    {
+        tweak(ifm, ofm, ops);
+    }
+
+    SchedulerOptions opts;
+    opts.optimizationStagingLimit = 32 * 1024;
+    SchedulerOpConfigMap configMap;
+    auto scheduler = Scheduler(arch.get(), opts, "test", ops, configMap);
+
+    auto schedule = scheduler.Process();
+    (void)schedule;
+
+    CAPTURE(static_cast<int>(opType));
+    // coverity[cert_str30_c_violation]
+    CAPTURE(reason);
+    // coverity[cert_exp55_cpp_violation]
+    REQUIRE(ifm->AllocatedAddress() != ofm->AllocatedAddress());
 }
 
 TEST_CASE("test_fast_storage_allocator")
@@ -200,5 +252,43 @@ TEST_CASE("test_fast_storage_allocator")
         auto schedule = scheduler.Process();
 
         REQUIRE(tens1->AllocatedAddress() != tens2->AllocatedAddress());
+    }
+
+    // coverity[parameter_hidden]
+    SECTION("IFM reuse enabled for supported single-input ops")
+    {
+        // Note: Cast is not an NPU op in this flow, so it's not covered here.
+        const std::vector<OpType> opTypes = {
+            OpType::Relu,
+            OpType::Abs,
+            OpType::Rescale,
+            OpType::Quantize,
+            OpType::MemoryCopy,
+            OpType::Transpose,
+            OpType::AvgPool,
+            OpType::MaxPool,
+            OpType::QuantizedAvgPool,
+            OpType::QuantizedMaxPool,
+        };
+
+        for ( auto opType : opTypes )
+        {
+            ExpectReusableIfmForOp(arch, opType, fast);
+        }
+    }
+
+    // coverity[parameter_hidden]
+    SECTION("IFM reuse not applied for non-reusable op types")
+    {
+        const std::vector<OpType> opTypes = {
+            OpType::Conv2D,
+            OpType::DepthwiseConv2D,
+            OpType::FullyConnected,
+        };
+
+        for ( auto opType : opTypes )
+        {
+            ExpectNotReusableIfmForOp(arch, opType, fast, "non-reusable op type", {});
+        }
     }
 }
