@@ -77,7 +77,7 @@ QuantizedScale::QuantizedScale(double scale_, bool reduced)
     }
     else if ( shift < 0 && scale < std::exp2(shift + 32) )
     {
-        scale = scale << (0 - shift);
+        scale = scale << std::abs(shift);
         shift = 0;
     }
 }
