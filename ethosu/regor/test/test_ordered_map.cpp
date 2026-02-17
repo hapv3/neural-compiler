@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2022-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2022-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -415,8 +415,8 @@ TEST_CASE("ordered_map: Resizes (move assignable)")
     {
         ordered_map<Key, Val> uut{capacity};
 
-        const Key lower = -10 * capacity;
         const Key upper = 10 * capacity;
+        const Key lower = -upper;
 
         for ( Key i = lower; i < upper; ++i )
         {
@@ -450,8 +450,8 @@ TEST_CASE("ordered_map: Resizes (trivially copyable)")
     {
         ordered_map<Key, Val> uut{capacity};
 
-        const Key lower = -10 * capacity;
         const Key upper = 10 * capacity;
+        const Key lower = -upper;
 
         for ( Key i = lower; i < upper; ++i )
         {
@@ -486,8 +486,8 @@ TEST_CASE("ordered_map: Resizes (not move assignable, not trivially copyable)")
     {
         ordered_map<Key, Val> uut{capacity};
 
-        const Key lower = -10 * capacity;
         const Key upper = 10 * capacity;
+        const Key lower = -upper;
 
         for ( Key i = lower; i < upper; ++i )
         {

@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -268,7 +268,7 @@ inline constexpr int64_t IntegerMin(DataType type)
     if ( IsSignedInteger(type) || IsBool(type) )
     {
         int size = DataTypeSizeBits(type);
-        return -1 * (1ULL << (size - 1));
+        return int64_t(~0ULL << (size - 1));
     }
     return 0;
 }
