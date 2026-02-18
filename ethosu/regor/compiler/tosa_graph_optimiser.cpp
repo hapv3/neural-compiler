@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2025-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -97,8 +97,6 @@ Operation *TosaGraphOptimiser::RewriteTransposeConvPadding(Graph *const graph, O
     auto *ofmConn = operation->Output(TensorUsage::OFM);
     auto *biasConn = operation->Input(TensorUsage::Scales);
     auto ofmShape = ofmConn->shape;
-    DataType biasType = biasConn->tensor->Type();
-
     ofmConn->slice.Initialize(ofmShape.WithZeros(), ofmShape);
     auto &ofmSlice = ofmConn->slice;
 
@@ -114,45 +112,6 @@ Operation *TosaGraphOptimiser::RewriteTransposeConvPadding(Graph *const graph, O
     const int ofmPadLeft = attr->outPadTBLR[2];
     const int ofmPadRight = attr->outPadTBLR[3];
 
-    // Create DW-convolutions to copy bias values into the padded OFM-region
-    auto CreateDWForOFMPadding = [&](const TensorSlice &padSlice, const std::string &name)
-    {
-        std::shared_ptr<Tensor> inputZero;
-        auto dwOp = std::make_shared<Operation>(OpType::DepthwiseConv2D);
-        int sliceElements = padSlice.shape.Elements();
-
-        // Create zero-input tensor that has same shape as the padded OFM-area
-        std::string inputName = fmt::format("{}_inputZero", name);
-        RoundMode rounding;
-        if ( biasType == DataType::Int48 || biasType == DataType::Int64 )
-        {
-            auto zeroBuf = std::make_shared<Buffer>(std::vector<int16_t>(sliceElements, 0));
-            inputZero = std::make_shared<Tensor>(inputName, DataType::Int16, padSlice.shape, zeroBuf);
-            rounding = RoundMode::NATURAL;
-        }
-        else
-        {
-            auto zeroBuf = std::make_shared<Buffer>(std::vector<int8_t>(sliceElements, 0));
-            inputZero = std::make_shared<Tensor>(inputName, DataType::Int8, padSlice.shape, zeroBuf);
-            rounding = RoundMode::DBL;
-        }
-
-        // Create weights-tensor with 1x1 kernel
-        Shape weightShape(1, 1, 1, ofmShape.Depth());
-        std::vector<int8_t> ones(weightShape.Elements(), 1);
-        auto weightBuf = std::make_shared<Buffer>(std::move(ones));
-        auto weightTensor = std::make_shared<Tensor>(fmt::format("{}_unitWeights", name), DataType::UInt8, weightShape, weightBuf);
-
-        dwOp->SetKernel(std::make_unique<Kernel>(Kernel::UnitKernel()));
-        dwOp->ConnectInput(TensorUsage::IFM, inputZero).Set(Quantization::Unit());
-        dwOp->ConnectInput(TensorUsage::Weights, weightTensor).Set(Quantization::Unit());
-        dwOp->CopyInput(TensorUsage::Scales, *biasConn);
-        dwOp->CopyOutput(TensorUsage::OFM, *ofmConn);
-        dwOp->Output(TensorUsage::OFM)->Set(padSlice).Set(rounding);
-
-        RecordOptimisation(*operation, dwOp.get());
-    };
-
     // Positive output-padding is handled by adjusting the write slice of the OFM
     // Negative output-padding is handled by reducing IFM-padding
     if ( ofmPadTop > 0 )
@@ -164,7 +123,9 @@ Operation *TosaGraphOptimiser::RewriteTransposeConvPadding(Graph *const graph, O
         // pad OFM-area from origo to the slice-offset height
         Shape padOffset = ofmShape.WithZeros();
         Shape padShape = ofmShape.WithHeight(ofmSlice.offset.Height());
-        CreateDWForOFMPadding({padOffset, padShape}, fmt::format("{}_ofmPadTop", ofmConn->tensor->Name()));
+        auto fillOp = CreateBiasFillForPadding(
+            *ofmConn, *biasConn, {padOffset, padShape}, fmt::format("{}_ofmPadTop", ofmConn->tensor->Name()));
+        RecordOptimisation(*operation, fillOp.get());
     }
     else
     {
@@ -181,7 +142,9 @@ Operation *TosaGraphOptimiser::RewriteTransposeConvPadding(Graph *const graph, O
         int writeEndHeight = ofmSlice.offset.Height() + ofmSlice.shape.Height();
         Shape padOffset = ofmShape.WithZeros().WithHeight(writeEndHeight);
         Shape padShape = ofmShape.WithHeight(ofmShape.Height() - writeEndHeight);
-        CreateDWForOFMPadding({padOffset, padShape}, fmt::format("{}_ofmPadBottom", ofmConn->tensor->Name()));
+        auto fillOp = CreateBiasFillForPadding(
+            *ofmConn, *biasConn, {padOffset, padShape}, fmt::format("{}_ofmPadBottom", ofmConn->tensor->Name()));
+        RecordOptimisation(*operation, fillOp.get());
     }
     else
     {
@@ -204,7 +167,9 @@ Operation *TosaGraphOptimiser::RewriteTransposeConvPadding(Graph *const graph, O
         padOffset = padOffset.WithHeight(ofmSlice.offset.Height());
         padShape = padShape.WithHeight(ofmSlice.shape.Height());
 
-        CreateDWForOFMPadding({padOffset, padShape}, fmt::format("{}_ofmPadLeft", ofmConn->tensor->Name()));
+        auto fillOp = CreateBiasFillForPadding(
+            *ofmConn, *biasConn, {padOffset, padShape}, fmt::format("{}_ofmPadLeft", ofmConn->tensor->Name()));
+        RecordOptimisation(*operation, fillOp.get());
     }
     else
     {
@@ -226,7 +191,9 @@ Operation *TosaGraphOptimiser::RewriteTransposeConvPadding(Graph *const graph, O
         // i.e. only pad along the height of the write-shape
         padOffset = padOffset.WithHeight(ofmSlice.offset.Height());
         padShape = padShape.WithHeight(ofmSlice.shape.Height());
-        CreateDWForOFMPadding({padOffset, padShape}, fmt::format("{}_ofmPadRight", ofmConn->tensor->Name()));
+        auto fillOp = CreateBiasFillForPadding(
+            *ofmConn, *biasConn, {padOffset, padShape}, fmt::format("{}_ofmPadRight", ofmConn->tensor->Name()));
+        RecordOptimisation(*operation, fillOp.get());
     }
     else
     {

@@ -27,6 +27,7 @@
 #include "tensor.hpp"
 
 #include <numeric>
+#include <vector>
 
 namespace regor
 {
@@ -318,6 +319,46 @@ inline Operation *CreateFullyConnected(const std::string &name, const std::share
     auto ofm = std::make_shared<Tensor>(name + "_ofm", ofmDtype, Shape(ifmShape[0], numOutputs));
     op->ConnectOutput(TensorUsage::OFM, ofm).Set(ofmQuantization);
     return op.get();
+}
+
+inline std::shared_ptr<Operation> CreateBiasFillForPadding(const TensorConnection &ofmConn,
+    const TensorConnection &biasConn, const TensorSlice &padSlice, const std::string &name)
+{
+    // Implement a bias-only write by running a depthwise 1x1 over a zero input.
+    std::shared_ptr<Tensor> zeroInput;
+    auto fillOp = std::make_shared<Operation>(OpType::DepthwiseConv2D);
+    int sliceElems = padSlice.shape.Elements();
+
+    // Choose input type and rounding to match the bias accumulation width.
+    DataType biasType = biasConn.tensor->Type();
+    RoundMode rounding;
+    if ( biasType == DataType::Int48 || biasType == DataType::Int64 )
+    {
+        auto zeroBuf = std::make_shared<Buffer>(std::vector<int16_t>(sliceElems, 0));
+        zeroInput = std::make_shared<Tensor>(name + "_inputZero", DataType::Int16, padSlice.shape, zeroBuf);
+        rounding = RoundMode::NATURAL;
+    }
+    else
+    {
+        auto zeroBuf = std::make_shared<Buffer>(std::vector<int8_t>(sliceElems, 0));
+        zeroInput = std::make_shared<Tensor>(name + "_inputZero", DataType::Int8, padSlice.shape, zeroBuf);
+        rounding = RoundMode::DBL;
+    }
+
+    // Unit weights make the op act as a bias broadcast.
+    Shape weightShape(1, 1, 1, padSlice.shape.Depth());
+    std::vector<int8_t> ones(weightShape.Elements(), 1);
+    auto weightBuf = std::make_shared<Buffer>(std::move(ones));
+    auto weightTensor = std::make_shared<Tensor>(name + "_unitWeights", DataType::UInt8, weightShape, weightBuf);
+
+    fillOp->SetKernel(std::make_unique<Kernel>(Kernel::UnitKernel()));
+    fillOp->ConnectInput(TensorUsage::IFM, zeroInput).Set(Quantization::Unit());
+    fillOp->ConnectInput(TensorUsage::Weights, weightTensor).Set(Quantization::Unit());
+    fillOp->CopyInput(TensorUsage::Scales, biasConn);
+    fillOp->CopyOutput(TensorUsage::OFM, ofmConn);
+    fillOp->Output(TensorUsage::OFM)->Set(padSlice).Set(rounding);
+
+    return fillOp;
 }
 
 inline TransposeType CalculateTransposeType(const Operation &operation)

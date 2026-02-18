@@ -2942,7 +2942,6 @@ Operation *GraphIrOptimiser::RewriteResize(Graph *const, Operation *const operat
     return copyOp.get();
 }
 
-
 static std::shared_ptr<Operation> CreatePadForKernelPadding(OpType type, const Margin &padding, const TensorConnection &ifmConn)
 {
     // Translate the kernel padding into a Pad op parameter tensor
@@ -3118,6 +3117,22 @@ Operation *GraphIrOptimiser::ReplaceBroadcastWithAdd(Graph *const, Operation *co
     return operation;
 }
 
+// Returns true when every output position along this axis falls entirely in padding.
+static bool IsAllPaddingAxis(int ifmSize, int ofmSize, int stride, int padBefore, int kDilated)
+{
+    // The kernel window for output index o is:
+    // [o * stride - padBefore, o * stride - padBefore + (kDilated - 1)].
+    // Find the first and last o that still overlap the IFM.
+    int64_t firstNumerator = int64_t(padBefore) - (int64_t(kDilated) - 1);
+    int64_t firstOverlapOut = (firstNumerator >= 0) ? (firstNumerator + stride - 1) / stride : firstNumerator / stride;
+    int64_t lastOverlapOut = (int64_t(ifmSize - 1) + padBefore) / stride;
+
+    // Clamp to [0, ofmSize-1] and check if any overlap remains.
+    int64_t firstOut = std::max<int64_t>(0, firstOverlapOut);
+    int64_t lastOut = std::min<int64_t>(ofmSize - 1, lastOverlapOut);
+    return firstOut > lastOut;
+}
+
 Operation *GraphIrOptimiser::RealiseKernelPadding(Graph *const, Operation *const operation)
 {
     if ( !IsConvolution(operation->Type()) && operation->Type() != OpType::Conv3D )
@@ -3127,6 +3142,7 @@ Operation *GraphIrOptimiser::RealiseKernelPadding(Graph *const, Operation *const
 
     auto *kernel = operation->Kernel();
     auto *ifmConn = operation->Input(TensorUsage::IFM);
+    auto *ofmConn = operation->Output(TensorUsage::OFM);
     const auto &kSize = kernel->DilatedWH();
     const auto &padding = kernel->Padding();
     // If the kernel padding places the kernel ENTIRELY in the padded region
@@ -3150,6 +3166,29 @@ Operation *GraphIrOptimiser::RealiseKernelPadding(Graph *const, Operation *const
         {
             if ( req.decomposeProps.Any(ArchProperty::TensorAxis, ArchProperty::KernelStride, ArchProperty::KernelDilation) )
             {
+                if ( operation->Type() != OpType::Conv3D )
+                {
+                    // When the kernel never overlaps the IFM on an axis, the output is bias-only.
+                    const auto &ifmShape = ifmConn->SliceShape();
+                    const auto &ofmShape = ofmConn->SliceShape();
+                    const auto &stride = kernel->Stride();
+                    bool allPaddingH = IsAllPaddingAxis(
+                        ifmShape.Height(), ofmShape.Height(), stride.y, padding.Top(), kSize.y);
+                    bool allPaddingW = IsAllPaddingAxis(
+                        ifmShape.Width(), ofmShape.Width(), stride.x, padding.Left(), kSize.x);
+                    if ( allPaddingH || allPaddingW )
+                    {
+                        // Avoid materialising a padded IFM values that are not required; fill the OFM directly.
+                        TensorSlice padSlice = ofmConn->slice;
+                        padSlice.Initialize(ofmShape.WithZeros(), ofmShape);
+                        auto fillOp = CreateBiasFillForPadding(
+                            *ofmConn, *scalesConn, padSlice, fmt::format("{}_padfill", ofmConn->tensor->Name()));
+                        RecordOptimisation(*operation, fillOp.get());
+                        operation->Disconnect();
+                        return fillOp.get();
+                    }
+                }
+
                 auto padOp = CreatePadForKernelPadding(operation->Type(), padding, *ifmConn);
                 assert(padOp->OFM());
 
