@@ -418,19 +418,16 @@ void EthosU85RCSGenerator::Emit(uint64_t instr)
 }
 
 
-int EthosU85RCSGenerator::GetDoubleBufferOffset(HLCWeights *weights, int rangeIndex)
+unsigned int EthosU85RCSGenerator::GetDoubleBufferIndex(HLCWeights *weights, int rangeIndex)
 {
-    int doubleBufferOffset = 0;
     if ( weights->buffering == Buffering::Double )
     {
         assert(weights->subStreams > 0);
-        int depthIndex = rangeIndex / weights->subStreams;
-        if ( depthIndex % 2 == 1 )
-        {
-            doubleBufferOffset = weights->doubleBufferOffset;
-        }
+        assert(rangeIndex >= 0);
+        unsigned depthIndex = unsigned(rangeIndex / weights->subStreams);
+        return depthIndex % 2;
     }
-    return doubleBufferOffset;
+    return 0;
 }
 
 
@@ -1375,8 +1372,6 @@ void EthosU85RCSGenerator::GenerateWeights(const HLCStripe *stripe, MemoryAccess
         return;
     }
 
-    EthosU85OpConfig *config = static_cast<EthosU85OpConfig *>(stripe->operation->config);
-
     auto wgtFormat = (weights->format % WeightFormat::Fast) ? weight_format::FWD : weight_format::SWD;
     auto wgtSparsity = (weights->format % WeightFormat::Sparse2_4) ? weight_sparsity::SPARSE_2_4 : weight_sparsity::NONE;
     Emit(isa::npu_set_weight_format_t(wgtFormat, wgtSparsity));
@@ -1392,8 +1387,8 @@ void EthosU85RCSGenerator::GenerateWeights(const HLCStripe *stripe, MemoryAccess
         if ( item != weights->encodedRanges.end() )
         {
             const auto &range = item->second;
-            int doubleBufferOffset = GetDoubleBufferOffset(weights, range.index);
-            address = weights->address + offset + range.weightOffset + doubleBufferOffset;
+            unsigned int doubleBufferIndex = GetDoubleBufferIndex(weights, range.index);
+            address = weights->address[doubleBufferIndex] + offset + range.weightOffset;
             length = RoundAway(range.weightBytes, 16);
             CheckAddressRange(weights->memArea.memory, address, length);
             memoryAccesses.emplace_back(AccessDirection::Read, weights->memArea, address, address + length);
@@ -1438,17 +1433,18 @@ void EthosU85RCSGenerator::GenerateScales(const HLCStripe *stripe, MemoryAccesse
     auto item0 = scales->encodedRanges.find(WeightKey(0, depth));
     assert(item0 != scales->encodedRanges.end());
     auto &range0 = item0->second;
-    Address address = scales->address;
+    Address address;
     if ( scales->buffering == Buffering::None )
     {
         // For unbuffered scales, address points to the buffer that contains the encoded weights for all slices
-        address += range0.offset;
+        address = scales->address[0] + range0.offset;
     }
     else
     {
         // For buffered scales, address points to the buffer in fast storage that contains the encoded weights of one
         // (if single buffered) or two (if double buffered) slices
-        address += GetDoubleBufferOffset(scales, range0.index);
+        unsigned int doubleBufferIndex = GetDoubleBufferIndex(scales, range0.index);
+        address = scales->address[doubleBufferIndex];
     }
     int length = RoundAway(range0.scaleBytes, 16);
 

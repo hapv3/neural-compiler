@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2024, 2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -26,6 +26,7 @@
 #include <cassert>
 
 BEGIN_ENUM_TABLE(WeightFormat)
+    ADD_ENUM_NAME(None)
     ADD_ENUM_NAME(Default)
     ADD_ENUM_NAME(Fast)
     ADD_ENUM_NAME(Sparse2_4)

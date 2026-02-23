@@ -68,7 +68,7 @@ struct LiveRange
         assert(opDuration >= 0);
         int opTimeStart = std::max(opTime, 0);
         int opTimeEnd = opTime + opDuration;
-        if ( opTimeEnd > opTimeStart )
+        if ( opTimeEnd >= opTimeStart )
         {
             startTime = std::min(startTime, opTimeStart);
             endTime = std::max(endTime, opTimeEnd);

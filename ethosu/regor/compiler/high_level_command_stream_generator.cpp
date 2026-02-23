@@ -289,7 +289,8 @@ static void MakeFeatureMap(TensorUsage usage, const SchedulerConnection *schedCo
     fm.uid = schedTens->uid;
 }
 
-static std::unique_ptr<HLCWeights> MakeWeights(NpuWeightTensor *srcTensor, Buffering buffering, SchedulerTensor *bufTensor = nullptr)
+static std::unique_ptr<HLCWeights>
+MakeWeights(NpuWeightTensor *srcTensor, Buffering buffering, SchedulerTensor *bufTensor, SchedulerTensor *buf2Tensor)
 {
     auto weights = std::make_unique<HLCWeights>();
     if ( buffering == Buffering::None )
@@ -300,12 +301,12 @@ static std::unique_ptr<HLCWeights> MakeWeights(NpuWeightTensor *srcTensor, Buffe
     {
         bufTensor = srcTensor;
     }
-    weights->address = bufTensor->AllocatedAddress();
+    weights->address[0] = bufTensor->AllocatedAddress();
+    weights->address[1] = buf2Tensor ? buf2Tensor->AllocatedAddress() : -1;
     weights->memArea = bufTensor->memArea;
     weights->buffering = buffering;
     // Same function is used for generating scales - scales have no config or weight format, so set to default
     weights->format = srcTensor->config ? srcTensor->config->Format() : Flags(WeightFormat::Default);
-    weights->doubleBufferOffset = srcTensor->doubleBufferOffset;
     weights->subStreams = srcTensor->subStreams;
     weights->encodedRanges = srcTensor->encodedRanges;
     return weights;
@@ -399,20 +400,20 @@ static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, 
     {
         assert(schedOp->TryInput(TensorUsage::Weights) != nullptr);
         op->weights = MakeWeights(opInfo->npuWeightsTensor.get(), opInfo->bufferedWeightTensor.buffering,
-            opInfo->bufferedWeightTensor.tensor.get());
+            opInfo->bufferedWeightTensor.tensor[0].get(), opInfo->bufferedWeightTensor.tensor[1].get());
     }
 
     if ( opInfo->npuScalesTensor != nullptr )
     {
         // Only scales encoded
-        op->scales = MakeWeights(opInfo->npuScalesTensor.get(), Buffering::None);
+        op->scales = MakeWeights(opInfo->npuScalesTensor.get(), Buffering::None, nullptr, nullptr);
     }
     else if ( schedOp->TryInput(TensorUsage::Scales) != nullptr )
     {
         // Weights and scales encoded together
         assert(!!opInfo->npuWeightsTensor);
         op->scales = MakeWeights(opInfo->npuWeightsTensor.get(), opInfo->bufferedWeightTensor.buffering,
-            opInfo->bufferedWeightTensor.tensor.get());
+            opInfo->bufferedWeightTensor.tensor[0].get(), opInfo->bufferedWeightTensor.tensor[1].get());
     }
 
     // Register command stream generator will allocate the LUT
@@ -821,12 +822,11 @@ static std::unique_ptr<HLCDMA> GenerateWeightDMA(NpuWeightTensor *weightTens, co
             dma->length = RoundAway(item->second.offset + item->second.TotalBytes() - offset0, 16);
         }
     }
-    dma->destMemArea = bufConn.tensor->memArea;
-    dma->destAddress = bufConn.tensor->AllocatedAddress();
-    if ( bufConn.buffering == Buffering::Double && depthIndex % 2 == 1 )
-    {
-        dma->destAddress += weightTens->doubleBufferOffset;
-    }
+    assert(bufConn.parts > 0 && bufConn.parts <= 2);
+    int index = depthIndex % bufConn.parts;
+    assert(index >= 0 && index < 2);
+    dma->destMemArea = bufConn.tensor[index]->memArea;
+    dma->destAddress = bufConn.tensor[index]->AllocatedAddress();
     return dma;
 }
 
@@ -920,12 +920,15 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
                 if ( opInfo->npuWeightsTensor != nullptr )
                 {
                     hlcStripe->weightRangeDepth = startChannel;
-                    if ( opInfo->bufferedWeightTensor.tensor != nullptr &&
+                    if ( opInfo->bufferedWeightTensor.parts > 0 &&
                          (startHeight == ofmStart.Height() || opInfo->bufferedWeightTensor.buffering == Buffering::Double) )
                     {
+                        assert(opInfo->bufferedWeightTensor.parts > 0 && opInfo->bufferedWeightTensor.parts <= 2);
+                        int bufferIndex = depthIndex % opInfo->bufferedWeightTensor.parts;
+                        assert(bufferIndex >= 0 && bufferIndex < 2);
                         // Metadata of new weights to put into the weight buffer tensor
                         auto newWeights = std::make_tuple(opInfo->npuWeightsTensor->equivalenceId, startChannel, depthIndex);
-                        if ( _filledWeightBuffers.count(opInfo->bufferedWeightTensor.tensor.get()) == 0 )
+                        if ( _filledWeightBuffers.count(opInfo->bufferedWeightTensor.tensor[bufferIndex].get()) == 0 )
                         {
                             // There is nothing in the weights buffer tensor yet
                             cmds.push_back(GenerateWeightDMA(opInfo->npuWeightsTensor.get(),
@@ -933,7 +936,7 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
                         }
                         else
                         {
-                            auto &currentWeights = _filledWeightBuffers[opInfo->bufferedWeightTensor.tensor.get()];
+                            auto &currentWeights = _filledWeightBuffers[opInfo->bufferedWeightTensor.tensor[bufferIndex].get()];
                             if ( currentWeights != newWeights )
                             {
                                 // There is something in the weights buffer tensor, but it's not correct
@@ -941,7 +944,7 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
                                     opInfo->bufferedWeightTensor, startChannel, depthIndex));
                             }
                         }
-                        _filledWeightBuffers[opInfo->bufferedWeightTensor.tensor.get()] = newWeights;
+                        _filledWeightBuffers[opInfo->bufferedWeightTensor.tensor[bufferIndex].get()] = newWeights;
                     }
                 }
                 else if ( opInfo->npuScalesTensor != nullptr )

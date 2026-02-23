@@ -904,7 +904,6 @@ bool Scheduler::AllocateAddresses(Schedule *schedule)
         schedule->stagingLRGraph = std::make_unique<LiveRangeGraph>(reuseIfms);
         AllocateTensors(_ops, schedule, *schedule->stagingLRGraph, _arch->StagingMemory(), _options.tensorAllocator,
             NPUTensorAlignment, verbose, limit);
-
         return schedule->memoryUsage[_arch->StagingMemory()] <= limit;
     }
     return true;
@@ -999,9 +998,13 @@ int Scheduler::ComputeLocalMemUsage(const SchedulerOperation &schedOp, const Sch
         opMemUsage += ofmConn->tensor->AllocationSizeBytes();
     }
 
-    if ( cost.bufferedWeightTensor.tensor && cost.bufferedWeightTensor.tensor->memArea == stagingMemory )
+    for ( int i = 0; i < cost.bufferedWeightTensor.parts; ++i )
     {
-        opMemUsage += cost.bufferedWeightTensor.tensor->AllocationSizeBytes();
+        const auto &bufTensor = cost.bufferedWeightTensor.tensor[i];
+        if ( bufTensor && bufTensor->memArea == stagingMemory )
+        {
+            opMemUsage += bufTensor->AllocationSizeBytes();
+        }
     }
 
     return opMemUsage;
@@ -1092,7 +1095,7 @@ void Scheduler::ProposeOperatorBuffering(SchedulerOperation *schedOp, SchedulerO
         return;
     }
     // Snapshot may already contain buffering, which the weight buffering function does not expect
-    int unwantedExistingBuffering = refCost->bufferedWeightTensor.tensor ? refCost->bufferedWeightTensor.tensor->AllocationSizeBytes() : 0;
+    int unwantedExistingBuffering = refCost->bufferedWeightTensor.AllocatedSize();
     int slackBufferingMemory = stagingLimitBytes - (refSchedule->MemoryUsageAt(refCost->timeIndex) - unwantedExistingBuffering);
 
     cost->slackBufferingMemory = slackBufferingMemory;
@@ -1217,7 +1220,9 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
         cost->ofmDepthSlices = std::move(ofmFullDepthSlicesAfterTransposition);
         // Make sure any former buffering cost is cleared
         cost->bufferedWeightTensor.buffering = Buffering::None;
-        cost->bufferedWeightTensor.tensor = nullptr;
+        cost->bufferedWeightTensor.parts = 0;
+        cost->bufferedWeightTensor.tensor[0] = nullptr;
+        cost->bufferedWeightTensor.tensor[1] = nullptr;
         cost->bufferedWeightTensor.preBuffer = false;
         cost->SetWeightScaleTensors(fullWeightScales.npuWeightsTensor, fullWeightScales.npuScalesTensor);
         return;
@@ -1341,7 +1346,8 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
     // Determine whether the weights need to be double buffered
     int encodedWeightsSize = encodedWeightScales.npuWeightsTensor->AllocationSizeBytes();
     weightBufferSize = std::min(encodedWeightsSize, encodedWeightScales.npuWeightsTensor->maxRangeBytes);
-    int doubleBufferSize = encodedWeightScales.npuWeightsTensor->doubleBufferSize;
+    int doubleBufferSize =
+        encodedWeightScales.npuWeightsTensor->doubleBufferSizes[0] + encodedWeightScales.npuWeightsTensor->doubleBufferSizes[1];
 
     // Only buffer weights if there's still space left for the buffer
     if ( weightBufferSize <= bufferLimitBytes )
@@ -1350,33 +1356,46 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
 
         // Determine whether to double buffer or single buffer
         Buffering buffering = Buffering::Single;
+        int partSizes[2] = {weightBufferSize, 0};
         if ( (doubleBufferSize <= bufferLimitBytes) && (weightBufferSize < encodedWeightsSize) )
         {
-            weightBufferSize = doubleBufferSize;
             buffering = Buffering::Double;
+            partSizes[0] = encodedWeightScales.npuWeightsTensor->doubleBufferSizes[0];
+            partSizes[1] = encodedWeightScales.npuWeightsTensor->doubleBufferSizes[1];
         }
 
         // Create a new tensor in fast storage to use as weights buffer
-        cost->bufferedWeightTensor.tensor = std::make_shared<SchedulerTensor>();
-        cost->bufferedWeightTensor.tensor->SetAllocatedSize(weightBufferSize);
-        cost->bufferedWeightTensor.tensor->uid = GenerateUniqueId();
-        cost->bufferedWeightTensor.tensor->memArea = _arch->StagingMemory();
+        cost->bufferedWeightTensor.tensor[0] = std::make_shared<SchedulerTensor>(DataType::UInt8, Shape(partSizes[0]));
+        cost->bufferedWeightTensor.tensor[0]->SetAllocatedSize(partSizes[0]);
+        cost->bufferedWeightTensor.tensor[0]->memArea = _arch->StagingMemory();
         cost->bufferedWeightTensor.buffering = buffering;
+        cost->bufferedWeightTensor.parts = 1;
+
+        if ( buffering == Buffering::Double )
+        {
+            cost->bufferedWeightTensor.tensor[1] = std::make_shared<SchedulerTensor>(DataType::UInt8, Shape(partSizes[1]));
+            cost->bufferedWeightTensor.tensor[1]->SetAllocatedSize(partSizes[1]);
+            cost->bufferedWeightTensor.tensor[1]->memArea = _arch->StagingMemory();
+            cost->bufferedWeightTensor.parts = 2;
+        }
 
         if ( cost->cascade == 0 )
         {
+            int peakBufferSize = partSizes[0] + partSizes[1];
             // Determine if the lifetime can be extended and pre-buffer weights under the previous operation
-            cost->bufferedWeightTensor.preBuffer = (weightBufferSize < slackMemory);
+            cost->bufferedWeightTensor.preBuffer = (peakBufferSize < slackMemory);
         }
 
-        cost->slackBufferingMemory -= weightBufferSize;
+        cost->slackBufferingMemory -= (partSizes[0] + partSizes[1]);
     }
     else
     {
         // Don't slice or buffer - use the whole depth from persistent storage
         cost->ofmDepthSlices = std::move(ofmFullDepthSlicesAfterTransposition);
         cost->bufferedWeightTensor.buffering = Buffering::None;
-        cost->bufferedWeightTensor.tensor = nullptr;
+        cost->bufferedWeightTensor.parts = 0;
+        cost->bufferedWeightTensor.tensor[0] = nullptr;
+        cost->bufferedWeightTensor.tensor[1] = nullptr;
         cost->bufferedWeightTensor.preBuffer = false;
         encodedWeightScales = std::move(fullWeightScales);
     }
@@ -1511,16 +1530,16 @@ std::shared_ptr<Schedule> Scheduler::ProposeScheduleStriping(const Shape &finalS
 
         // Take buffering choice from the reference schedule for this striping proposal.
         // TODO: Replace with in-loop buffering
-        if ( refCost->bufferedWeightTensor.tensor )
+        if ( refCost->bufferedWeightTensor.parts > 0 )
         {
             assert(cost->npuWeightsTensor);
-            auto bufferingTensor = std::make_shared<SchedulerTensor>();
+            auto bufferingTensor = std::make_shared<SchedulerTensor>(DataType::UInt8, Shape(cost->npuWeightsTensor->AllocationSizeBytes()));
             bufferingTensor->SetAllocatedSize(cost->npuWeightsTensor->AllocationSizeBytes());
-            bufferingTensor->uid = GenerateUniqueId();
-            bufferingTensor->memArea = refCost->bufferedWeightTensor.tensor->memArea;
+            bufferingTensor->memArea = refCost->bufferedWeightTensor.tensor[0]->memArea;
             cost->bufferedWeightTensor.buffering = Buffering::Single;  // Stripes are currently single-buffered
             cost->bufferedWeightTensor.preBuffer = false;
-            cost->bufferedWeightTensor.tensor = std::move(bufferingTensor);
+            cost->bufferedWeightTensor.tensor[0] = std::move(bufferingTensor);
+            cost->bufferedWeightTensor.parts = 1;
         }
 
         // Estimate performance
@@ -1563,9 +1582,9 @@ Address Scheduler::EstimateScheduleMemoryUsage(Schedule *schedule, const std::un
         {
             // This Op is not part of a cascade - calculate the memory usage
             int opWeightBuffer = 0;
-            if ( cost->bufferedWeightTensor.tensor )
+            if ( cost->bufferedWeightTensor.tensor[0] )
             {
-                opWeightBuffer = cost->bufferedWeightTensor.tensor->AllocationSizeBytes();
+                opWeightBuffer = cost->bufferedWeightTensor.AllocatedSize();
             }
 
             int opMemUsage = schedOp->IFM(0)->PartialAllocationSizeBytes() + schedOp->OFM()->PartialAllocationSizeBytes() + opWeightBuffer;
@@ -1767,16 +1786,18 @@ void Scheduler::CoalesceWeightBufferTensors(Schedule *schedule)
         {
             auto &prevBufTensor = prevCost->bufferedWeightTensor.tensor;
             auto &bufTensor = cost->bufferedWeightTensor.tensor;
-            if ( prevBufTensor && bufTensor )
+            if ( prevCost->bufferedWeightTensor.parts == cost->bufferedWeightTensor.parts )
             {
                 UniqueId prevWeightsTensorId = prevCost->npuWeightsTensor ? prevCost->npuWeightsTensor->equivalenceId : -1;
                 UniqueId weightsTensorId = cost->npuWeightsTensor ? cost->npuWeightsTensor->equivalenceId : -2;
-                if ( prevWeightsTensorId == weightsTensorId && prevBufTensor->AllocationSizeBytes() == bufTensor->AllocationSizeBytes() &&
+                if ( prevWeightsTensorId == weightsTensorId &&
+                     prevCost->bufferedWeightTensor.AllocatedSize() == cost->bufferedWeightTensor.AllocatedSize() &&
                      prevCost->ofmDepthSlices.size() == 2 && cost->ofmDepthSlices.size() == 2 && prevCost->ofmDepthSlices == cost->ofmDepthSlices )
                 {
                     // Reuse previous weight buffer tensor if both current and previous op use 1 depth slice
                     // This will extend the life range weight buffer tensor
-                    bufTensor = prevBufTensor;
+                    bufTensor[0] = prevBufTensor[0];
+                    bufTensor[1] = prevBufTensor[1];
                 }
             }
         }
@@ -1840,9 +1861,9 @@ PerformanceQuery Scheduler::InitPerfQuery(SchedulerOperation *op, ArchitectureOp
         query.encodedWeightSize = unsigned(weightBytes * ratio);
         query.encodedScaleSize = unsigned(scaleBytes * ratio);
         query.constMemory = cost->npuWeightsTensor->memArea.memory;
-        if ( cost->bufferedWeightTensor.tensor )
+        if ( cost->bufferedWeightTensor.tensor[0] )
         {
-            query.weightStagingMemory = cost->bufferedWeightTensor.tensor->memArea.memory;
+            query.weightStagingMemory = cost->bufferedWeightTensor.tensor[0]->memArea.memory;
             if ( cost->bufferedWeightTensor.preBuffer )
             {
                 auto preBufferRatio = float(cost->ofmDepthSlices[1]) / cost->ofmDepthSlices.back();
@@ -2331,8 +2352,8 @@ WeightScaleTensors Scheduler::TryEncodeWeightAndScaleTensor(OpType forOp, IWeigh
     npuTensor->bufferView = BufferView(buf, 0, 8, storageShape, Shape());
     npuTensor->dataType = DataType::UInt8;
     npuTensor->maxRangeBytes = std::max(maxBufferLen[0], maxBufferLen[1]);
-    npuTensor->doubleBufferSize = maxBufferLen[0] + maxBufferLen[1];
-    npuTensor->doubleBufferOffset = maxBufferLen[0];
+    npuTensor->doubleBufferSizes[0] = maxBufferLen[0];
+    npuTensor->doubleBufferSizes[1] = maxBufferLen[1];
     npuTensor->totalSourceBytes = totalSourceBytes;
     npuTensor->totalWeightBytes = totalWeightBytes;
     npuTensor->subStreams = subStreams;

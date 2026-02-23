@@ -255,19 +255,16 @@ void EthosU55RCSGenerator::Emit(uint64_t instr)
     _emit.Emit(instr);
 }
 
-int EthosU55RCSGenerator::GetDoubleBufferOffset(HLCWeights *weights, int rangeIndex)
+unsigned int EthosU55RCSGenerator::GetDoubleBufferIndex(HLCWeights *weights, int rangeIndex)
 {
-    int doubleBufferOffset = 0;
     if ( weights->buffering == Buffering::Double )
     {
         assert(weights->subStreams > 0);
-        int depthIndex = rangeIndex / weights->subStreams;
-        if ( depthIndex % 2 == 1 )
-        {
-            doubleBufferOffset = weights->doubleBufferOffset;
-        }
+        assert(rangeIndex >= 0);
+        unsigned depthIndex = unsigned(rangeIndex / weights->subStreams);
+        return depthIndex % 2;
     }
-    return doubleBufferOffset;
+    return 0;
 }
 
 void EthosU55RCSGenerator::CheckAddressRange(ArchitectureMemory *memory, Address address, int size)
@@ -1114,8 +1111,8 @@ void EthosU55RCSGenerator::GenerateWeights(const HLCStripe *stripe, MemoryAccess
     auto item0 = weights->encodedRanges.find(WeightKey(0, depth));
     assert(item0 != weights->encodedRanges.end());
     auto &range0 = item0->second;
-    int doubleBufferOffset = GetDoubleBufferOffset(weights, range0.index);
-    Address address = weights->address + range0.weightOffset + doubleBufferOffset;
+    unsigned int doubleBufferIndex = GetDoubleBufferIndex(weights, range0.index);
+    Address address = weights->address[doubleBufferIndex] + range0.weightOffset;
     int length = RoundAway(range0.weightBytes, 16);
     CheckAddressRange(weights->memArea.memory, address, length);
     Emit(isa::npu_set_weight_base_t(address));
@@ -1127,7 +1124,7 @@ void EthosU55RCSGenerator::GenerateWeights(const HLCStripe *stripe, MemoryAccess
     if ( item1 != weights->encodedRanges.end() )
     {
         auto &range1 = item1->second;
-        Address address1 = weights->address + RoundAway(range0.TotalBytes(), 16) + range1.weightOffset + doubleBufferOffset;
+        Address address1 = weights->address[doubleBufferIndex] + RoundAway(range0.TotalBytes(), 16) + range1.weightOffset;
         int length1 = RoundAway(range1.weightBytes, 16);
         CheckAddressRange(weights->memArea.memory, address1, length1);
         Emit(isa::npu_set_weight1_base_t(address1));
@@ -1156,17 +1153,18 @@ void EthosU55RCSGenerator::GenerateScales(const HLCStripe *stripe, MemoryAccesse
     auto item0 = scales->encodedRanges.find(WeightKey(0, depth));
     assert(item0 != scales->encodedRanges.end());
     auto &range0 = item0->second;
-    Address address = scales->address;
+    Address address;
     if ( scales->buffering == Buffering::None )
     {
         // For unbuffered scales, address points to the buffer that contains the encoded weights for all slices
-        address += range0.offset;
+        address = scales->address[0] + range0.offset;
     }
     else
     {
         // For buffered scales, address points to the buffer in fast storage that contains the encoded weights of one
         // (if single buffered) or two (if double buffered) slices
-        address += GetDoubleBufferOffset(scales, range0.index);
+        unsigned int doubleBufferIndex = GetDoubleBufferIndex(scales, range0.index);
+        address = scales->address[doubleBufferIndex];
     }
     int length = RoundAway(range0.scaleBytes, 16);
     CheckAddressRange(scales->memArea.memory, address, length);

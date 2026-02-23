@@ -392,9 +392,9 @@ void NetworkPerformance::AddToDatabase(const PerformanceResult &perf, SchedulerO
         cost->npuScalesTensor ? std::to_string(cost->npuScalesTensor->maxRangeBytes) : "",
         // Weight Buffering
         fmt::format("{}", fmt::join(cost->ofmDepthSlices, "|")),
-        cost->bufferedWeightTensor.tensor ? std::to_string(cost->bufferedWeightTensor.preBuffer) : "",
-        cost->bufferedWeightTensor.tensor ? EnumToString(cost->bufferedWeightTensor.buffering) : "",
-        cost->bufferedWeightTensor.tensor ? std::to_string(cost->fullWeightTransferCycles) : "",
+        cost->bufferedWeightTensor.tensor[0] ? std::to_string(cost->bufferedWeightTensor.preBuffer) : "",
+        cost->bufferedWeightTensor.tensor[0] ? EnumToString(cost->bufferedWeightTensor.buffering) : "",
+        cost->bufferedWeightTensor.tensor[0] ? std::to_string(cost->fullWeightTransferCycles) : "",
         // Kernel
         std::to_string(schedOp->Type() == OpType::DepthwiseConv2D ?
                        schedOp->OFM()->SliceShape().Depth() /  schedOp->IFM(0)->SliceShape().Depth() : 1 ),
@@ -554,7 +554,7 @@ PerformanceResult NetworkPerformance::EstimateFullOpPerformance(SchedulerOperati
         }
     }
 
-    if ( weightsMemory && cost->bufferedWeightTensor.tensor )
+    if ( weightsMemory && cost->bufferedWeightTensor.tensor[0] )
     {
         // DMA Weight Transfer
         int initialSize = 0;
@@ -570,7 +570,7 @@ PerformanceResult NetworkPerformance::EstimateFullOpPerformance(SchedulerOperati
         }
 
         auto srcWeightMem = weightsMemory;
-        auto dstWeightMem = cost->bufferedWeightTensor.tensor->memArea.memory;
+        auto dstWeightMem = cost->bufferedWeightTensor.tensor[0]->memArea.memory;
         assert(srcWeightMem != dstWeightMem);
 
         weightsMemory = dstWeightMem;  // Update source to use buffered weight memory

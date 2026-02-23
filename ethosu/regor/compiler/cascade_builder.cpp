@@ -171,9 +171,9 @@ void CascadeBuilder::BuildCascades(Schedule *refSchedule, Schedule *fallbackSche
         // Get the size of the weight buffer
         int weightBufferSize = 0;
         auto refCost = refSchedule->Cost(op);
-        if ( refCost->bufferedWeightTensor.tensor )
+        if ( refCost->bufferedWeightTensor.parts > 0 )
         {
-            weightBufferSize = refCost->bufferedWeightTensor.tensor->AllocationSizeBytes();
+            weightBufferSize = refCost->bufferedWeightTensor.AllocatedSize();
         }
 
         // The first IFM is stored in full unless spilling disables it.
@@ -268,9 +268,9 @@ void CascadeBuilder::BuildCascades(Schedule *refSchedule, Schedule *fallbackSche
 
             // Get the size of the weight buffer
             int opWeightBuffer = 0;
-            if ( refCost->bufferedWeightTensor.tensor )
+            if ( refCost->bufferedWeightTensor.parts > 0 )
             {
-                opWeightBuffer = refCost->bufferedWeightTensor.tensor->AllocationSizeBytes();
+                opWeightBuffer = refCost->bufferedWeightTensor.AllocatedSize();
             }
 
             // Add current Op to cascade

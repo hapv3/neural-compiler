@@ -156,13 +156,37 @@ void LiveRangeGraph::ExtractLiveRangesFromCascades(const std::vector<std::unique
                 timeForCascade[cascade] = timeToSet;
             }
             // Buffered weight tensor
-            auto weightTens = opInfo->bufferedWeightTensor.tensor.get();
-            if ( !ShouldBeIgnored(weightTens, targetMemory) )
+            const auto &bufferTensor = opInfo->bufferedWeightTensor;
+            assert(
+                (bufferTensor.buffering == Buffering::None && bufferTensor.parts == 0) ||
+                (bufferTensor.buffering == Buffering::Single && bufferTensor.parts == 1) ||
+                (bufferTensor.buffering == Buffering::Double && bufferTensor.parts == 2));
+            assert(!bufferTensor.preBuffer || bufferTensor.buffering != Buffering::None);
+            assert(int(opInfo->ofmDepthSlices.size()) >= bufferTensor.parts);
+            for ( int part = 0; part < bufferTensor.parts; part++ )
             {
-                auto lr = GetOrCreateRange(weightTens, LRUsage::OpBuffering);
-                // Prebuffered tensors start one step early
-                lr->opDelay = opInfo->bufferedWeightTensor.preBuffer ? 1 : 0;
-                lr->MarkUsage(timeToSet - lr->opDelay, 1 + lr->opDelay);
+                const int sliceCount = int(opInfo->ofmDepthSlices.size()) - 1;
+                const int lastSlicePart = (sliceCount - 1) % bufferTensor.parts;
+                auto *partWeightTensor = bufferTensor.tensor[part].get();
+                if ( !ShouldBeIgnored(partWeightTensor, targetMemory) )
+                {
+                    auto *lr = GetOrCreateRange(partWeightTensor, LRUsage::OpBuffering);
+                    int start = timeToSet;
+                    int duration = 1;
+                    if ( part == 0 && bufferTensor.preBuffer )
+                    {
+                        // Move start earlier for the part that is used fo pre-buffering
+                        lr->opDelay = 1;
+                        start--;
+                        duration++;
+                    }
+                    if ( part != lastSlicePart )
+                    {
+                        // Extend the duration for the part that is used for the last slice
+                        duration--;
+                    }
+                    lr->MarkUsage(start, duration);
+                }
             }
             // Read-only weight/scale tensors
             for ( auto tens : {opInfo->npuWeightsTensor, opInfo->npuScalesTensor} )

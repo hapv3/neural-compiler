@@ -91,9 +91,17 @@ struct WeightScaleEncoding
 
 struct SchedulerBufferTensor
 {
-    std::shared_ptr<SchedulerTensor> tensor;
+    std::shared_ptr<SchedulerTensor> tensor[2];
+    int parts = 0;
     bool preBuffer = false;
     Buffering buffering = Buffering::None;
+
+    Address AllocatedSize() const
+    {
+        int size = tensor[0] ? tensor[0]->AllocationSizeBytes() : 0;
+        if ( parts > 1 && tensor[1] ) size += tensor[1]->AllocationSizeBytes();
+        return size;
+    }
 };
 
 /// <summary>
@@ -168,9 +176,10 @@ public:
             temp += fmt::format(
                 "\n\t\tEncoded Weights = {0} bytes\n"
                 "\t\tWeight buffer = {1} bytes\n"
-                "\t\tDepth slices = [{2}]",
-                npuWeightsTensor->AllocationSizeBytes(),
-                bufferedWeightTensor.tensor ? bufferedWeightTensor.tensor->AllocationSizeBytes() : 0, fmt::join(ofmDepthSlices, ", "));
+                "\t\tDepth slices = [{2}]\n"
+                "\t\tBuffering = {3}",
+                npuWeightsTensor->AllocationSizeBytes(), bufferedWeightTensor.parts ? bufferedWeightTensor.AllocatedSize() : 0,
+                fmt::join(ofmDepthSlices, ", "), EnumToString(bufferedWeightTensor.buffering));
         }
 
         return temp;

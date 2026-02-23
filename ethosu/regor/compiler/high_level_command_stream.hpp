@@ -99,15 +99,14 @@ struct HLCWeights
     MemArea memArea;
     Buffering buffering;
     Flags<WeightFormat> format;
-    Address address = -1;
-    int doubleBufferOffset;  // When double buffering: offset to second buffer
+    Address address[2] = {-1, -1};  // Address of both buffers
     int subStreams = 1;
     std::unordered_map<int, WeightRange> encodedRanges;
 
     std::string ToString() const
     {
-        return fmt::format("{} ranges, buffering: {}, {}:{}, address: 0x{:x}, format: {}", encodedRanges.size(),
-            int(buffering), memArea.memory->Name(), memArea.usage, address, format.ToString());
+        return fmt::format("{} ranges, buffering: {}, {}:{}, address: 0x{:x}, 0x{:x}, format: {}", encodedRanges.size(),
+            EnumToString(buffering), memArea.memory->Name(), memArea.usage, address[0], address[1], format.ToString());
     }
 };
 
