@@ -267,7 +267,11 @@ static void MakeFeatureMap(TensorUsage usage, const SchedulerConnection *schedCo
     fm.format = schedTens->format;
     fm.usage = usage;
     // Calculate address of this FeatureMap
-    auto address = schedTens->AllocatedAddress() + (schedTens->memArea.usage.Any(MemUsage::FeatureMap) ? base : 0);
+    auto address = schedTens->AllocatedAddress();
+    if ( address != -1 )
+    {
+        address += (schedTens->memArea.usage.Any(MemUsage::FeatureMap) ? base : 0);
+    }
     // Look up (or store) address
     auto item = addresses.emplace(schedTens->equivalenceId, address);
     fm.address = (*item.first).second;
