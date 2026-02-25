@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2024, 2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -233,6 +233,7 @@ void HillClimbAllocator::AddPredecessorTurns(std::set<int> &turns, const HillCli
 
 void HillClimbAllocator::AttemptBottleneckFix(std::vector<int> &indices, int iterationsStuck)
 {
+    assert(indices.size() <= rng.max());
     // Find the bottleneck
     HillClimbLiveRange *maxLr = &lrs[0];
     for ( auto &lr : lrs )
@@ -268,19 +269,18 @@ void HillClimbAllocator::AttemptBottleneckFix(std::vector<int> &indices, int ite
     }
     // Pick from non-neighbour list with 30% probability (magic number based on tuning)
     int ix1;
-    using dist = std::uniform_int_distribution<size_t>;
-    if ( dist(0, 100)(rng) < 30 && !nonNbTurnList.empty() )
+    if ( (rng() % 100) < 30 && !nonNbTurnList.empty() )
     {
         // Pick a live range from the "non-neighbour list"
-        ix1 = nonNbTurnList[dist(0, nonNbTurnList.size() - 1u)(rng)];
+        ix1 = nonNbTurnList[rng() % nonNbTurnList.size()];
     }
     else
     {
         // Pick any affecting live range.
-        ix1 = turnList[dist(0, turnList.size() - 1u)(rng)];
+        ix1 = turnList[rng() % turnList.size()];
     }
     // Note: turnList has always at least 2 elements for bottlenecks
-    int ix2 = turnList[dist(0, turnList.size() - 1u)(rng)];
+    int ix2 = turnList[rng() % turnList.size()];
     if ( ix1 == ix2 )
     {
         ix2 = turnList[turnList.size() - 1u];
@@ -314,8 +314,8 @@ void HillClimbAllocator::AttemptBottleneckFix(std::vector<int> &indices, int ite
                 pending.push(lr_p->id);
             }
         }
-        ix1 = turnList[dist(0, turnList.size() - 1)(rng)];
-        ix2 = turnList[dist(0, turnList.size() - 1)(rng)];
+        ix1 = turnList[rng() % turnList.size()];
+        ix2 = turnList[rng() % turnList.size()];
         if ( ix1 == ix2 )
         {
             ix2 = turnList[turnList.size() - 1];
