@@ -45,7 +45,11 @@ def _quantization_entry(quant_type, scale, zero_point):
             "zero_point": np.array([], dtype=np.int32),
         }
 
-    return {"quant_type": qt, "scale": np.float32(scale_arr[0]), "zero_point": np.int32(zero_arr[0])}
+    return {
+        "quant_type": qt,
+        "scale": np.array([scale_arr[0]], dtype=np.float32),
+        "zero_point": np.array([zero_arr[0]], dtype=np.int32),
+    }
 
 
 def _quantization_entry_from_tensor(tensor):

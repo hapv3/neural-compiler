@@ -141,12 +141,20 @@ def test_ethos_u_vela_with_regor_raw_output(tmp_path):
     assert input_q0["quant_type"] in ("per_tensor", "per_channel")
     assert "scale" in input_q0
     assert "zero_point" in input_q0
+    assert isinstance(input_q0["scale"], np.ndarray)
+    assert isinstance(input_q0["zero_point"], np.ndarray)
+    assert input_q0["scale"].ndim == 1
+    assert input_q0["zero_point"].ndim == 1
 
     output_q0 = raw["output_quantization"][0]
     assert isinstance(output_q0, dict)
     assert output_q0["quant_type"] in ("per_tensor", "per_channel")
     assert "scale" in output_q0
     assert "zero_point" in output_q0
+    assert isinstance(output_q0["scale"], np.ndarray)
+    assert isinstance(output_q0["zero_point"], np.ndarray)
+    assert output_q0["scale"].ndim == 1
+    assert output_q0["zero_point"].ndim == 1
 
 
 def test_ethos_u_vela_with_regor_raw_output_and_cop2(tmp_path):
