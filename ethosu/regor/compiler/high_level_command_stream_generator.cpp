@@ -963,6 +963,11 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
                     StripeArea hlcSubOpArea;
                     assert(!hlcStripe->stripeAreas.empty());
                     hlcSubOpArea.ofmArea = hlcStripe->stripeAreas[0].ofmArea;
+                    if ( hlcSubOp.ofm.slice.IsValid() )
+                    {
+                        // If the sub-op produces a slice of the ofm, move the area accordingly
+                        hlcSubOpArea.ofmArea.Move(hlcSubOp.ofm.slice.offset);
+                    }
                     for ( const auto &subOpIfm : hlcSubOp.ifm )
                     {
                         if ( !IsIFM(subOpIfm.usage) ) continue;
