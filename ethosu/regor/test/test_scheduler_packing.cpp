@@ -30,7 +30,7 @@
 using namespace regor;
 
 
-TEST_CASE("test_scheduler_packing")
+TEST_CASE("Pack operation with axis attribute")
 {
     // Create arch
     auto arch = CreateArchDefault<ArchEthosU85>();
@@ -41,7 +41,7 @@ TEST_CASE("test_scheduler_packing")
     // Create packing
     const std::unordered_map<UniqueId, UniqueId> emptyTensorEquivalenceIdMap;
     auto packing = SchedulerPacking(arch.get(), false, emptyTensorEquivalenceIdMap);
-    SECTION("Pack operation (with axis)")
+    SECTION("Validate axis after packing")
     {
         // Perform packing on an ArgMax operation
         // Validate that attr_axis still represents the reduced axis.
@@ -74,7 +74,7 @@ TEST_CASE("test_scheduler_packing")
         }
     }
 
-    SECTION("Pack sliced operation (with axis)")
+    SECTION("Pack sliced operation with axis")
     {
         // Perform packing on two sliced ArgMax operations
         // Validate that attr_axis still represent the reduced axes.
@@ -120,23 +120,83 @@ TEST_CASE("test_scheduler_packing")
             REQUIRE(axis == ofmShape.Size() - 2);
         }
     }
+}
 
-    SECTION("Pack operation and activation")
+TEST_CASE("Test activation fusing")
+{
+    // Activations can be fused to previous operation
+    // as long as they don't perform any rescaling.
+    // This is represented by:
+    // TFLITE:
+    //      ifm and ofm quantization must be equal
+    // EXPLICIT:
+    //      ifm and ofm quantization must be unit
+
+    // Create arch
+    auto arch = CreateArchDefault<ArchEthosU85>();
+    std::string err = "noerror";
+    arch->CheckConfiguration(err);
+    REQUIRE(err == "noerror");
+
+    // Create packing
+    const std::unordered_map<UniqueId, UniqueId> emptyTensorEquivalenceIdMap;
+    auto packing = SchedulerPacking(arch.get(), false, emptyTensorEquivalenceIdMap);
+
+    // create ops
+    // ABS: primary operation
+    // Relu: Activation considered for fusing
+    std::vector<std::shared_ptr<Operation>> ops;
+    auto ifm = CreateTensor("IFM", Shape(10, 10, 10), DataType::Int8);
+    auto ofm = CreateTensor("OFM", Shape(10, 10, 10), DataType::Int8);
+    auto actofm = CreateTensor("ACTOFM", Shape(10, 10, 10), DataType::Int8);
+    auto op1 = CreateOperation(OpType::Abs, TensorUsage::IFM, ifm, TensorUsage::OFM, ofm);
+    ops.push_back(std::move(op1));
+    auto op2 = CreateOperation(OpType::Relu, TensorUsage::IFM, ofm, TensorUsage::OFM, actofm);
+    ops.push_back(op2);
+    SECTION("Don't fuse asymmetric TFLite quant")
     {
-        std::vector<std::shared_ptr<Operation>> ops;
-        auto ifm = CreateTensor("IFM", Shape(10, 10, 10), DataType::Int8);
-        auto ofm = CreateTensor("OFM", Shape(10, 10, 10), DataType::Int8);
-        auto actofm = CreateTensor("ACTOFM", Shape(10, 10, 10), DataType::Int8);
-        auto op1 = CreateOperation(OpType::Abs, TensorUsage::IFM, ifm, TensorUsage::OFM, ofm);
-        ops.push_back(std::move(op1));
-        auto op2 = CreateOperation(OpType::Relu, TensorUsage::IFM, ofm, TensorUsage::OFM, actofm);
-        ops.push_back(std::move(op2));
+        // IFM/OFM quantization are not equal
+        // so fusing cannot happen
+        auto *reluIfmConn = op2->Input(TensorUsage::IFM);
+        auto *reluOfmConn = op2->Output(TensorUsage::OFM);
+        Quantization ifmQuant;
+        ifmQuant.scales.push_back({1, 5});
+        ifmQuant.type = QuantizationType::TFLITE;
+        reluIfmConn->quantization = std::move(ifmQuant);
+
+        Quantization ofmQuant;
+        ofmQuant.scales.push_back({1, 0});
+        ofmQuant.type = QuantizationType::TFLITE;
+        reluOfmConn->quantization = std::move(ofmQuant);
 
         // Create graph with ops
         auto graph = CreateGraph(ops);
-
         // Perform scheduler_packing
         auto schedOps = packing.Process(graph.get());
+        // no activation fusing
+        REQUIRE(schedOps.size() == 2);
+    }
+    SECTION("Fuse symmetric TFLite quant")
+    {
+        // IFM and OFM quantization are equal
+        // so fusing is expected to happen
+        auto *reluIfmConn = op2->Input(TensorUsage::IFM);
+        auto *reluOfmConn = op2->Output(TensorUsage::OFM);
+        Quantization ifmQuant;
+        ifmQuant.scales.push_back({1, 5});
+        ifmQuant.type = QuantizationType::TFLITE;
+        reluIfmConn->quantization = std::move(ifmQuant);
+
+        Quantization ofmQuant;
+        ofmQuant.scales.push_back({1, 5});
+        ofmQuant.type = QuantizationType::TFLITE;
+        reluOfmConn->quantization = std::move(ofmQuant);
+
+        // Create graph with ops
+        auto graph = CreateGraph(ops);
+        // Perform scheduler_packing
+        auto schedOps = packing.Process(graph.get());
+        // no activation fusing
         REQUIRE(schedOps.size() == 1);
 
         // Validate that the second op is packed as subop of first
@@ -159,81 +219,146 @@ TEST_CASE("test_scheduler_packing")
         REQUIRE(absOfmConn->tensor->consumers.empty());
 
         // Validate the activation op
-        auto *reluIfmConn = relu->Input(TensorUsage::IFM);
-        auto *reluOfmConn = relu->Output(TensorUsage::OFM);
-        REQUIRE(reluIfmConn->tensor->Name() == "OFM");
-        REQUIRE(reluIfmConn->tensor->producers.empty());
-        REQUIRE(reluIfmConn->tensor->consumers.size() == 1);
-        REQUIRE(reluIfmConn->tensor->consumers[0] == relu.get());
-        REQUIRE(reluOfmConn->tensor->Name() == "ACTOFM");
-        REQUIRE(reluOfmConn->tensor->producers.size() == 1);
-        REQUIRE(reluOfmConn->tensor->producers[0] == abs.get());
-        REQUIRE(reluOfmConn->tensor->consumers.empty());
+        auto *actIfmConn = relu->Input(TensorUsage::IFM);
+        auto *actOfmConn = relu->Output(TensorUsage::OFM);
+        REQUIRE(actIfmConn->tensor->Name() == "OFM");
+        REQUIRE(actIfmConn->tensor->producers.empty());
+        REQUIRE(actIfmConn->tensor->consumers.size() == 1);
+        REQUIRE(actIfmConn->tensor->consumers[0] == relu.get());
+        REQUIRE(actOfmConn->tensor->Name() == "ACTOFM");
+        REQUIRE(actOfmConn->tensor->producers.size() == 1);
+        REQUIRE(actOfmConn->tensor->producers[0] == abs.get());
+        REQUIRE(actOfmConn->tensor->consumers.empty());
     }
-
-    SECTION("Pack operation with resource data type")
+    SECTION("Don't fuse non-unit explicit quant")
     {
-        std::vector<std::shared_ptr<Operation>> ops;
-        auto ifm = CreateTensor("IFM", Shape(), DataType::Resource);
-        auto ofm = CreateTensor("OFM", Shape(10, 10, 10), DataType::Int8);
-        auto op1 = CreateOperation(OpType::Passthrough, TensorUsage::IFM, ifm, TensorUsage::OFM, ofm);
-        ops.push_back(std::move(op1));
+        // EXPLICIT quantization requires unit IFM and OFM quant
+        // validate that we don't fuse symmetric (like we'd do for TFLite)
+        auto *reluIfmConn = op2->Input(TensorUsage::IFM);
+        auto *reluOfmConn = op2->Output(TensorUsage::OFM);
+        Quantization ifmQuant;
+        ifmQuant.scales.push_back({1, 5});
+        ifmQuant.type = QuantizationType::EXPLICIT;
+        reluIfmConn->quantization = std::move(ifmQuant);
+
+        Quantization ofmQuant;
+        ofmQuant.scales.push_back({1, 5});
+        ofmQuant.type = QuantizationType::EXPLICIT;
+        reluOfmConn->quantization = std::move(ofmQuant);
 
         // Create graph with ops
         auto graph = CreateGraph(ops);
-
         // Perform scheduler_packing
         auto schedOps = packing.Process(graph.get());
+        // no activation fusing
+        REQUIRE(schedOps.size() == 2);
+    }
+    SECTION("Fuse unit explicit quant")
+    {
+        // EXPLICIT quantization requires unit IFM and OFM quant
+        // validate that we fuse unit even in the asymmetric case (one can be empty)
+        auto *reluIfmConn = op2->Input(TensorUsage::IFM);
+        auto *reluOfmConn = op2->Output(TensorUsage::OFM);
+        Quantization ifmQuant;
+        ifmQuant.scales.push_back({1, 0});
+        ifmQuant.type = QuantizationType::EXPLICIT;
+        reluIfmConn->quantization = std::move(ifmQuant);
+
+        Quantization ofmQuant;
+        ofmQuant.type = QuantizationType::EXPLICIT;
+        reluOfmConn->quantization = std::move(ofmQuant);
+
+        // Create graph with ops
+        auto graph = CreateGraph(ops);
+        // Perform scheduler_packing
+        auto schedOps = packing.Process(graph.get());
+        // no activation fusing
         REQUIRE(schedOps.size() == 1);
-
-        // Validate the op and tensors
-        auto &schedOp1 = schedOps[0];
-        REQUIRE(schedOp1->Type() == OpType::Passthrough);
-        auto *ifmConn = schedOp1->Input(TensorUsage::IFM);
-        auto *ofmConn = schedOp1->Output(TensorUsage::OFM);
-        REQUIRE(ifmConn->tensor->Name() == "IFM");
-        REQUIRE(ifmConn->tensor->dataType == DataType::Resource);
-        REQUIRE(ifmConn->tensor->producers.empty());
-        REQUIRE(ifmConn->tensor->consumers.size() == 1);
-        REQUIRE(ifmConn->tensor->consumers[0] == schedOp1.get());
-        REQUIRE(ofmConn->tensor->Name() == "OFM");
-        REQUIRE(ofmConn->tensor->dataType == DataType::Int8);
-        REQUIRE(ofmConn->tensor->producers.size() == 1);
-        REQUIRE(ofmConn->tensor->producers[0] == schedOp1.get());
-        REQUIRE(ofmConn->tensor->consumers.empty());
     }
+}
 
-    SECTION("Pack CPU operation with output that is graph output, but also consumed by NPU")
-    {
-        std::vector<std::shared_ptr<Operation>> ops;
-        auto ifm = CreateTensor("IFM", Shape(10, 10, 10), DataType::Int8);
-        auto mid = CreateTensor("MID", Shape(10, 10, 10), DataType::Int8);
-        auto ofm = CreateTensor("OFM", Shape(10, 10, 10), DataType::Int8);
-        auto ofm2 = CreateTensor("OFM2", Shape(10, 10, 10), DataType::Int8);
+TEST_CASE("Pack operation with resource data type")
+{
+    // Create arch
+    auto arch = CreateArchDefault<ArchEthosU85>();
+    std::string err = "noerror";
+    arch->CheckConfiguration(err);
+    REQUIRE(err == "noerror");
 
-        auto op1 = CreateOperation(OpType::Abs, TensorUsage::IFM, ifm, TensorUsage::OFM, mid);
-        ops.push_back(std::move(op1));
-        auto op2 = CreateOperation(OpType::Passthrough, TensorUsage::IFM, mid, TensorUsage::OFM, ofm);
-        ops.push_back(std::move(op2));
-        auto op3 = CreateOperation(OpType::Abs, TensorUsage::IFM, ofm, TensorUsage::OFM, ofm2);
-        ops.push_back(std::move(op3));
+    // Create packing
+    const std::unordered_map<UniqueId, UniqueId> emptyTensorEquivalenceIdMap;
+    auto packing = SchedulerPacking(arch.get(), false, emptyTensorEquivalenceIdMap);
 
-        // Create graph with ops
-        auto graph = CreateGraph(ops);
+    std::vector<std::shared_ptr<Operation>> ops;
+    auto ifm = CreateTensor("IFM", Shape(), DataType::Resource);
+    auto ofm = CreateTensor("OFM", Shape(10, 10, 10), DataType::Int8);
+    auto op1 = CreateOperation(OpType::Passthrough, TensorUsage::IFM, ifm, TensorUsage::OFM, ofm);
+    ops.push_back(std::move(op1));
 
-        // Mark CPU op OFM as graph output
-        graph->AddOutput(ofm);
+    // Create graph with ops
+    auto graph = CreateGraph(ops);
 
-        // Perform scheduler_packing
-        auto schedOps = packing.Process(graph.get());
-        REQUIRE(schedOps.size() == 3);
+    // Perform scheduler_packing
+    auto schedOps = packing.Process(graph.get());
+    REQUIRE(schedOps.size() == 1);
 
-        // Ensure operation order is unchanged
-        REQUIRE(schedOps[0]->Type() == OpType::Abs);
-        REQUIRE(schedOps[0]->SubOps().empty());
-        REQUIRE(schedOps[1]->Type() == OpType::Passthrough);
-        REQUIRE(schedOps[1]->SubOps().empty());
-        REQUIRE(schedOps[2]->Type() == OpType::Abs);
-        REQUIRE(schedOps[2]->SubOps().empty());
-    }
+    // Validate the op and tensors
+    auto &schedOp1 = schedOps[0];
+    REQUIRE(schedOp1->Type() == OpType::Passthrough);
+    auto *ifmConn = schedOp1->Input(TensorUsage::IFM);
+    auto *ofmConn = schedOp1->Output(TensorUsage::OFM);
+    REQUIRE(ifmConn->tensor->Name() == "IFM");
+    REQUIRE(ifmConn->tensor->dataType == DataType::Resource);
+    REQUIRE(ifmConn->tensor->producers.empty());
+    REQUIRE(ifmConn->tensor->consumers.size() == 1);
+    REQUIRE(ifmConn->tensor->consumers[0] == schedOp1.get());
+    REQUIRE(ofmConn->tensor->Name() == "OFM");
+    REQUIRE(ofmConn->tensor->dataType == DataType::Int8);
+    REQUIRE(ofmConn->tensor->producers.size() == 1);
+    REQUIRE(ofmConn->tensor->producers[0] == schedOp1.get());
+    REQUIRE(ofmConn->tensor->consumers.empty());
+}
+
+TEST_CASE("Pack CPU operation with output that is graph output, but also consumed by NPU")
+{
+    // Create arch
+    auto arch = CreateArchDefault<ArchEthosU85>();
+    std::string err = "noerror";
+    arch->CheckConfiguration(err);
+    REQUIRE(err == "noerror");
+
+    // Create packing
+    const std::unordered_map<UniqueId, UniqueId> emptyTensorEquivalenceIdMap;
+    auto packing = SchedulerPacking(arch.get(), false, emptyTensorEquivalenceIdMap);
+
+    std::vector<std::shared_ptr<Operation>> ops;
+    auto ifm = CreateTensor("IFM", Shape(10, 10, 10), DataType::Int8);
+    auto mid = CreateTensor("MID", Shape(10, 10, 10), DataType::Int8);
+    auto ofm = CreateTensor("OFM", Shape(10, 10, 10), DataType::Int8);
+    auto ofm2 = CreateTensor("OFM2", Shape(10, 10, 10), DataType::Int8);
+
+    auto op1 = CreateOperation(OpType::Abs, TensorUsage::IFM, ifm, TensorUsage::OFM, mid);
+    ops.push_back(std::move(op1));
+    auto op2 = CreateOperation(OpType::Passthrough, TensorUsage::IFM, mid, TensorUsage::OFM, ofm);
+    ops.push_back(std::move(op2));
+    auto op3 = CreateOperation(OpType::Abs, TensorUsage::IFM, ofm, TensorUsage::OFM, ofm2);
+    ops.push_back(std::move(op3));
+
+    // Create graph with ops
+    auto graph = CreateGraph(ops);
+
+    // Mark CPU op OFM as graph output
+    graph->AddOutput(ofm);
+
+    // Perform scheduler_packing
+    auto schedOps = packing.Process(graph.get());
+    REQUIRE(schedOps.size() == 3);
+
+    // Ensure operation order is unchanged
+    REQUIRE(schedOps[0]->Type() == OpType::Abs);
+    REQUIRE(schedOps[0]->SubOps().empty());
+    REQUIRE(schedOps[1]->Type() == OpType::Passthrough);
+    REQUIRE(schedOps[1]->SubOps().empty());
+    REQUIRE(schedOps[2]->Type() == OpType::Abs);
+    REQUIRE(schedOps[2]->SubOps().empty());
 }

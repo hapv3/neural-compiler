@@ -721,9 +721,21 @@ int SchedulerPacking::CanPack(const SchedulerOperation *schedOp, const Scheduler
     }
 
     // Can not fuse operations with different scales
-    if ( IsElementwise(nextOp->Type()) == false && !nextConnIfm->quantization.EqualScales(nextConnOfm->quantization) )
+    if ( !IsElementwise(nextOp->Type()) )
     {
-        return 0;
+        if ( nextConnOfm->quantization.type == QuantizationType::TFLITE &&
+             !nextConnIfm->quantization.EqualScales(nextConnOfm->quantization) )
+        {
+            // For activations with QuantizationType::TFLITE, IFM and OFM scales must be equal
+            // TODO MLBEDSW-10086: Remove after converting TFLite to explicit scaling
+            return 0;
+        }
+        if ( nextConnOfm->quantization.type == QuantizationType::EXPLICIT &&
+             !(nextConnOfm->quantization.IsUnitScale() && nextConnIfm->quantization.IsUnitScale()) )
+        {
+            // For explicit quantization, activation must have unit scaling
+            return 0;
+        }
     }
 
     auto op1 = CreateOpGroupQuery(nextOp);
