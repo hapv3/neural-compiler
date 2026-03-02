@@ -458,9 +458,9 @@ static bool SupportedTensorAxes(Shape ifmShape, Shape ifm2Shape, Shape ofmShape)
 Flags<QueryResult> EthosU85Constraints::OperatorQuery(OpType opType, const ArchOperatorQuery *query, ArchRequirements *req)
 {
     Flags<QueryResult> result = QueryResult::Native;
-    const auto &ifmShape = query->ifm[0].shape;
-    const auto &ifm2Shape = query->ifm[1].shape;
-    const auto &ofmShape = query->ofm.shape;
+    const auto &ifmShape = query ? query->ifm[0].shape : Shape();
+    const auto &ifm2Shape = query ? query->ifm[1].shape : Shape();
+    const auto &ofmShape = query ? query->ofm.shape : Shape();
 
     // Check hardware-required substitutions first
     if ( (opType == OpType::Sigmoid) || (opType == OpType::Tanh) )

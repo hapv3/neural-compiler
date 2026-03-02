@@ -1568,8 +1568,9 @@ void EthosU55RCSGenerator::InsertMatMulCommand(const HLCStripe *stripe, Temporar
     // Final output tensor slice sizes
     Shape ofmShape = Shape(1, batches, MatMul::Rows(ifm0Shape), 1);
     EthosU55OpConfig *reduceConfig = static_cast<EthosU55OpConfig *>(stripe->operation->config);
+    assert(reduceConfig);
     EthosU55OpConfig *mulConfig = reduceConfig->PrevConfig();
-    assert(reduceConfig && mulConfig);
+    assert(mulConfig);
 
     Shape ifm0Start(0, inFM0.slice.offset ? inFM0.slice.offset.Height() : 0, 0, 0);
 
