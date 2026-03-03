@@ -108,6 +108,7 @@ enum class OpType : uint16_t
     LUT,
     AndNot,
     NullPool,
+    SumPool,
 
     // Compatibility Operators
     AddN,
@@ -268,9 +269,9 @@ constexpr inline bool IsConvolution(OpType opType)
 
 constexpr inline bool IsPooling(OpType opType)
 {
-    return opType == OpType::MaxPool || opType == OpType::AvgPool || opType == OpType::QuantizedAvgPool ||
-           opType == OpType::QuantizedMaxPool || opType == OpType::ReduceSum || opType == OpType::ReduceMin ||
-           opType == OpType::ReduceMax || opType == OpType::ReduceAny || opType == OpType::ReduceAll || opType == OpType::ArgMax;
+    return opType == OpType::MaxPool || opType == OpType::AvgPool || opType == OpType::QuantizedAvgPool || opType == OpType::QuantizedMaxPool ||
+           opType == OpType::ReduceSum || opType == OpType::ReduceMin || opType == OpType::ReduceMax ||
+           opType == OpType::ReduceAny || opType == OpType::ReduceAll || opType == OpType::ArgMax || opType == OpType::SumPool;
 }
 
 constexpr inline bool IsVectorProduct(OpType opType)

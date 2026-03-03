@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2023-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -92,6 +92,7 @@ BEGIN_ENUM_TABLE(regor::OpType)
     ADD_ENUM_NAME(LUT)
     ADD_ENUM_NAME(AndNot)
     ADD_ENUM_NAME(NullPool)
+    ADD_ENUM_NAME(SumPool)
     // Compatibility Operators
     ADD_ENUM_NAME(AddN)
     ADD_ENUM_NAME(ArgMin)

@@ -256,6 +256,7 @@ bool CanDecompose(Architecture *, const SchedulerOperation *schedOp)
     if ( schedOp->Type() == OpType::Reverse ) return true;
     if ( schedOp->Type() == OpType::Transpose ) return true;
     if ( schedOp->Type() == OpType::AvgPool ) return true;
+    if ( schedOp->Type() == OpType::SumPool ) return true;
     if ( schedOp->Type() == OpType::MaxPool ) return true;
     if ( schedOp->Type() == OpType::Resize ) return true;
     if ( schedOp->Type() == OpType::FullyConnected ) return true;
@@ -3076,8 +3077,9 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeAvgPool(DecompositionC
         result.emplace_back(std::move(op));
         return result;
     }
-
-    // Perform scaling of the output if needed
+    // Separate the division step of the averagePool into MUL + ASR operations.
+    // The averagePool is converted to a SumPool with unit quantization
+    // as the division is performed elsewhere.
     const int scaleSize = ofmConn->quantization.scales.size();
     if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::Scaling, ArchProperty::KernelStride) && scaleSize )
     {
@@ -3167,9 +3169,10 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeAvgPool(DecompositionC
 
         // Redirect ofm to perform scaling and set unit scaling
         ofmConn = op->ConnectOutput(TensorUsage::OFM, mulIfm);
+        // Convert to SumPool to signal that division by kernel sum is done elsewhere,
+        // i.e. with the MUL and ASR above.
         ofmConn->quantization = Quantization::Unit();
-        // Remove scales to signal scaling is done elsewhere, i.e. with the MUL and ASR above
-        ofmConn->quantization.scales.clear();
+        op->_type = OpType::SumPool;
         ofmConn->SetType(DataType::None);  // Reset any data type on the connection, since the tensor has been replaced
         auto subOps = DecomposeAvgPool(ctx, std::move(op));
         result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));

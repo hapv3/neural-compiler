@@ -1363,6 +1363,7 @@ EthosU85NpuOp ArchEthosU85::GetHWOp(OpType type)
         {OpType::MatMul, EthosU85NpuOp::VectorProduct},
         {OpType::MaxPool, EthosU85NpuOp::Pooling},
         {OpType::AvgPool, EthosU85NpuOp::Pooling},
+        {OpType::SumPool, EthosU85NpuOp::Pooling},
         {OpType::NullPool, EthosU85NpuOp::Pooling},
         {OpType::QuantizedAvgPool, EthosU85NpuOp::Pooling},
         {OpType::QuantizedMaxPool, EthosU85NpuOp::Pooling},

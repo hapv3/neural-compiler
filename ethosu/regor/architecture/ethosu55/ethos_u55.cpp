@@ -726,6 +726,7 @@ EthosU55NpuOp ArchEthosU55::GetHWOp(OpType type)
         {OpType::FullyConnected, EthosU55NpuOp::VectorProduct},
         {OpType::MaxPool, EthosU55NpuOp::Pooling},
         {OpType::AvgPool, EthosU55NpuOp::Pooling},
+        {OpType::SumPool, EthosU55NpuOp::Pooling},
         {OpType::QuantizedAvgPool, EthosU55NpuOp::Pooling},
         {OpType::QuantizedMaxPool, EthosU55NpuOp::Pooling},
         {OpType::ReduceSum, EthosU55NpuOp::ReduceSum},

@@ -351,6 +351,10 @@ pooling_mode GetPoolingMode(const HLCOperation *op)
         // SUM when kernel size > 8x8
         mode = (kernelSize.x <= 8 && kernelSize.y <= 8) ? pooling_mode::AVERAGE : pooling_mode::SUM;
     }
+    else if ( opType == OpType::SumPool )
+    {
+        mode = pooling_mode::SUM;
+    }
     else if ( opType == OpType::MaxPool || opType == OpType::ReduceMax || opType == OpType::ReduceAll )
     {
         mode = pooling_mode::MAX;
@@ -699,10 +703,12 @@ int EthosU85RCSGenerator::Disassemble(const uint32_t *in, std::string &op, std::
 void EthosU85RCSGenerator::GenerateOFMScalingForPooling(HLCOperation *poolOp, bool useGlobalScale)
 {
     QuantizedScale ofmScale(1, 0);
-    pooling_mode mode = (poolOp->type == OpType::AvgPool && (poolOp->kernel.Size().x > 8 || poolOp->kernel.Size().y > 8)) ? pooling_mode::SUM : pooling_mode::NONE;
 
-    if ( mode == pooling_mode::SUM && useGlobalScale && !poolOp->ofm.quantization.scales.empty() )
+    if ( poolOp->type == OpType::AvgPool && GetPoolingMode(poolOp) == pooling_mode::SUM )
     {
+        // AvgPool with pooling_mode::SUM needs special ofm-scaling
+        // to compensate for the sum of the kernel elements.
+        assert(useGlobalScale);
         uint32_t scale = 1;
         int shift = 0;
         QuantizePoolingScale(poolOp->kernel.ElementsWH(), GetScaleFactor(poolOp), 0, scale, shift, 31);

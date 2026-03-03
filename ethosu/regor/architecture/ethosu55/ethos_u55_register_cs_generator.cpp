@@ -557,7 +557,7 @@ void EthosU55RCSGenerator::GenerateOFMScalingForPooling(HLCOperation *poolOp, bo
     // OFM Quantization should always be unit, as we don't support fusing rescales on avgPool.
     // OFM-scale compensation for the average-pool sum still needs to happen.
     // TODO: MLBEDSW-11322 Refactor QuantizePoolingScale out of RescalePooling
-    if ( mode == pooling_mode::AVERAGE && QuantizedScale::ReduceScale(ofmScale) == QuantizedScale(1, 0) )
+    if ( mode == pooling_mode::AVERAGE && poolOp->type != OpType::SumPool && QuantizedScale::ReduceScale(ofmScale) == QuantizedScale(1, 0) )
     {
         uint32_t scale;
         int shift;
@@ -1796,6 +1796,7 @@ void EthosU55RCSGenerator::GeneratePoolingOp(const HLCStripe *stripe, MemoryAcce
     EthosU55OpConfig *config = static_cast<EthosU55OpConfig *>(stripe->operation->config);
     // 32-bit reduce-sum cannot use 40-bit accumulation
     assert(!(op->type == OpType::ReduceSum && ifmType == DataType::Int32 && config->_accumulatorType == EthosU55SHRamElements::SHRAM_Acc40));
+    assert((op->type != OpType::SumPool || padSum == 0) && "SumPool with nonzero padding.");
     if ( _arch->UseAvgPoolNop(op->type) )
     {
         assert(op->kernel.Size() == Point2i(1, 1));

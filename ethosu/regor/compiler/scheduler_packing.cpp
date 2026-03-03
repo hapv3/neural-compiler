@@ -956,6 +956,8 @@ std::vector<std::unique_ptr<SchedulerOperation>> SchedulerPacking::DecomposeSche
             result = DecomposeTranspose(_ctx, std::move(op));
             break;
         case OpType::AvgPool:
+            [[fallthrough]];
+        case OpType::SumPool:
             result = DecomposeAvgPool(_ctx, std::move(op));
             break;
         case OpType::MaxPool:
