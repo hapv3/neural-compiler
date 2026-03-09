@@ -966,7 +966,7 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
                     if ( hlcSubOp.ofm.slice.IsValid() )
                     {
                         // If the sub-op produces a slice of the ofm, move the area accordingly
-                        hlcSubOpArea.ofmArea.Move(hlcSubOp.ofm.slice.offset);
+                        hlcSubOpArea.ofmArea.Move(Shape::PadAxes(hlcSubOp.ofm.slice.offset, hlcSubOpArea.ofmArea.Start().Size(), 0));
                     }
                     for ( const auto &subOpIfm : hlcSubOp.ifm )
                     {
