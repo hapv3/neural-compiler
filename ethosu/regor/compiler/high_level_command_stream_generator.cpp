@@ -516,6 +516,35 @@ static HLCStripe *FindNextStripe(HLCStream &cmds, int fromIndex)
     return nullptr;
 }
 
+// Returns true when more output can be produced without overflowing the rolling buffer.
+static bool CanFitRollingBuffer(const CascadeInfo *cascadeInfo, vector_span<std::unique_ptr<SchedulerOperation>> cascadedOps,
+    const std::vector<HLCStripe *> &availableStripe, const std::vector<HLCStripe *> &nextStripe, int opIndex)
+{
+    int nextOpIndex = opIndex + 1;
+    assert(opIndex >= 0 && opIndex < int(nextStripe.size()));
+    assert(nextOpIndex > 0 && nextOpIndex < int(nextStripe.size()));
+    if ( nextOpIndex >= int(cascadedOps.size()) )
+    {
+        return false;
+    }
+    if ( nextStripe[opIndex] == nullptr || nextStripe[nextOpIndex] == nullptr )
+    {
+        return false;
+    }
+    auto bufferPos = cascadeInfo->buffers.find(*cascadedOps[nextOpIndex]);
+    if ( bufferPos == cascadeInfo->buffers.end() )
+    {
+        return false;
+    }
+    int bufferHeight = bufferPos->second.shape.Height();
+    int primaryIfmIndex = cascadedOps[nextOpIndex]->PrimaryIfmIndex();
+    // Use the next producer stripe to check if emitting it would overflow the rolling buffer.
+    const Shape &producerEnd = nextStripe[opIndex]->stripeAreas[0].ofmArea.End();
+    const Shape &consumerStart = nextStripe[nextOpIndex]->stripeAreas[0].ifmAreas.at(primaryIfmIndex).Start();
+    int bufferedHeight = producerEnd.Height() - consumerStart.Height();
+    return bufferedHeight <= bufferHeight;
+}
+
 // Generates Branch command for If/While
 void HLCStreamGenerator::GenerateHLCBranchCommands(
     SchedulerOperation *op, const std::shared_ptr<HLCOperation> &hlcOp, SubGraphs &subgraphs, HLCStream &cmds)
@@ -1097,21 +1126,30 @@ void HLCStreamGenerator::GenerateCommandsForCascade(vector_span<std::unique_ptr<
             {
                 availableStripe[opIndex] = nextStripe[opIndex];
                 nextStripe[opIndex] = FindNextStripe(stream, ix);
-                if ( opIndex < nrOps - 1 &&
-                     nextStripe[opIndex + 1]
-                         ->stripeAreas[0]
-                         .ifmAreas.at(cascadedOps[opIndex + 1]->PrimaryIfmIndex())
-                         .End()
-                         .IsSubShapeOf(availableStripe[opIndex]->stripeAreas[0].ofmArea.End()) )
-                {
-                    // Enough output has been produced to continue at next level
-                    ++opIndex;
-                }
                 if ( nextStripe[opIndex] == nullptr )
                 {
-                    // Finished
-                    assert(opIndex >= nrOps - 1);
-                    break;
+                    if ( opIndex >= nrOps - 1 )
+                    {
+                        // Finished
+                        break;
+                    }
+                    ++opIndex;
+                    continue;
+                }
+                // Move to next operation once the rolling buffer is full
+                if ( opIndex < nrOps - 1 && nextStripe[opIndex + 1] != nullptr &&
+                     !CanFitRollingBuffer(cascadeInfo, cascadedOps, availableStripe, nextStripe, opIndex) )
+                {
+                    // Validate that the available data in the rolling-buffer fulfills
+                    // The next stripes IFM area
+                    assert(
+                        nextStripe[opIndex + 1]
+                            ->stripeAreas[0]
+                            .ifmAreas.at(cascadedOps[opIndex + 1]->PrimaryIfmIndex())
+                            .End()
+                            .IsSubShapeOf(availableStripe[opIndex]->stripeAreas[0].ofmArea.End()) &&
+                        "Full rolling buffer is insufficient to cover next stripe");
+                    ++opIndex;
                 }
             }
         }
