@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2023, 2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 // SPDX-FileCopyrightText: Copyright 2025 Meta Platforms, Inc. and affiliates.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -103,8 +103,15 @@ private:
     unsigned _filterMask = ~0u;
     int _indent = 0;
     log_writer_t _logWriter = nullptr;
+    unsigned _capabilityMask = 0;
 
 public:
+    enum
+    {
+        CAP_NONE = 0,
+        CAP_COLOUR = 1
+    };
+
     struct Filter
     {
     public:
@@ -164,6 +171,8 @@ public:
         _logWriter = writer;
         if ( !_logWriter ) _filterMask = 0;
     }
+    void SetCapability(unsigned capBits) { _capabilityMask = capBits; }
+    bool Supports(unsigned capBits) const { return (_capabilityMask & capBits) == capBits; }
     void Indent();
     void Unindent();
     void Write(const std::string &s);

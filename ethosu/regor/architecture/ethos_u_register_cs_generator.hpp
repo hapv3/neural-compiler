@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2023-2024, 2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -32,7 +32,7 @@ public:
     {
         LOG_PRINT("Register command stream: {} words\n", stream.size());
         LOG_PRINT("{0:>8}: {1:8}{2:4} {3:4} - {4:30} {5:5}, {6}\n", "  Offset", "Payload", "Param", "Code", "Command", "Param", "Fields");
-
+        bool enableColour = Logging::Out.Supports(Logging::LogContext::CAP_COLOUR);
         size_t debugInfoIdx = 0;
         for ( unsigned i = 0; i < stream.size(); )
         {
@@ -52,7 +52,11 @@ public:
                 payload = stream[i + 1];
             }
             const auto &intr = nrWords == 2 ? fmt::format("{:08x}", payload) : fmt::format("{:8}", "");
-            LOG_PRINT("{0:#08x}: {1} {2:04x} {3:04x} - {4:30} {5:5}", i * sizeof(uint32_t), intr, par, code, op, par);
+
+            bool enable = enableColour && (op.find("NPU_OP") == 0);
+            std::string param = fmt::format("{0:30} {1:5}", op, par);
+            LOG_PRINT("{0:#08x}: {1} {2:04x} {3:04x} - {4}", i * sizeof(uint32_t), intr, par, code,
+                StyledText{param, fmt::fg(fmt::color::green), enable});
             i += nrWords;
             for ( auto &f : fields )
             {

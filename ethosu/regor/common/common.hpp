@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2023-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -45,6 +45,7 @@
 #endif
 // clang-format on
 
+#include <fmt/color.h>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 #include <cassert>
@@ -209,3 +210,29 @@ public:
 };
 
 }  // namespace regor
+
+struct StyledText
+{
+    std::string_view text;
+    fmt::text_style style;
+    bool enable;
+};
+
+namespace fmt
+{
+
+template<>
+struct formatter<StyledText> : fmt::formatter<std::string_view>
+{
+    template<typename CONTEXT>
+    auto format(const StyledText &txt, CONTEXT &ctx) const
+    {
+        if ( txt.enable )
+        {
+            return fmt::format_to(ctx.out(), txt.style, "{}", txt.text);
+        }
+        return fmt::formatter<std::string_view>::format(txt.text, ctx);
+    }
+};
+
+}  // namespace fmt

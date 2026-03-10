@@ -519,14 +519,20 @@ DLL_EXPORT int regor_free_data(regor_context_t ctx, const void *data)
     return 0;
 }
 
-
 DLL_EXPORT int regor_set_logging(regor_log_writer_t log_writer, unsigned filter_mask)
 {
-    Logging::Out.SetWriter(log_writer);
-    Logging::Out.SetFilterMask(filter_mask);
+    regor_set_logging_ex(log_writer, filter_mask, REGOR_LOG_FORMAT_TEXT);
     return 1;
 }
 
+DLL_EXPORT int regor_set_logging_ex(regor_log_writer_t log_writer, unsigned filter_mask, unsigned format)
+{
+    Logging::Out.SetWriter(log_writer);
+    Logging::Out.SetFilterMask(filter_mask);
+    if ( format == REGOR_LOG_FORMAT_TERMINAL ) Logging::Out.SetCapability(Logging::LogContext::CAP_COLOUR);
+    else if ( format == REGOR_LOG_FORMAT_TEXT ) Logging::Out.SetCapability(Logging::LogContext::CAP_NONE);
+    return 1;
+}
 
 DLL_EXPORT int regor_get_perf_report(regor_context_t ctx, regor_perf_report_t *report)
 {

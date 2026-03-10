@@ -244,10 +244,20 @@ int regor_get_error(regor_context_t ctx, char *text, size_t *length);
 // Free any data allocated by regor
 int regor_free_data(regor_context_t ctx, const void *data);
 
-// Set logging output
+// logging output function
 typedef void (*regor_log_writer_t)(const void *data, size_t size_to_write);
 
+typedef enum regor_logging_format_t
+{
+    REGOR_LOG_FORMAT_TEXT = 0,
+    REGOR_LOG_FORMAT_TERMINAL = 1,
+} regor_logging_format_t;
+
+// Set logging output with trace filter
 int regor_set_logging(regor_log_writer_t log_writer, unsigned filter_mask);
+
+// Set logging output with extended formatting (combine bits from regor_logging_format_t)
+int regor_set_logging_ex(regor_log_writer_t log_writer, unsigned filter_mask, unsigned format);
 
 int regor_get_perf_report(regor_context_t ctx, regor_perf_report_t *report);
 
