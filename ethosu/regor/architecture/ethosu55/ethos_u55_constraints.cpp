@@ -127,7 +127,7 @@ bool SupportedIFMQuant(OpType opType, const Quantization &ifmQuant, const Quanti
     return ifmScale == QuantizedScale::Unit();
 }
 // Check that OFM-scales are supported
-bool SupportedOFMQuant(OpType opType, EthosU55NpuOp npuOp, const Quantization &ofmQuant, DataType ifmType)
+bool SupportedOFMQuant(OpType opType, EthosU55NpuOp npuOp, const Quantization &ofmQuant, DataType ifmType, DataType ofmType)
 {
     // Reject per-channel scaling for opTypes that do not support it
     if ( IsElementwise(opType) || opType == OpType::ReduceSum || opType == OpType::AvgPool || opType == OpType::Table || opType == OpType::MatMul )
@@ -162,8 +162,8 @@ bool SupportedOFMQuant(OpType opType, EthosU55NpuOp npuOp, const Quantization &o
         {
             return ofmScale == QuantizedScale::Unit();
         }
-        // Elementwise supports shift-only if input is 32-bit
-        return DataTypeSizeBits(ifmType) < 32 || ofmScale.scale == 1;
+        // Elementwise supports shift-only if input or output is 32-bit
+        return (DataTypeSizeBits(ifmType) < 32 && DataTypeSizeBits(ofmType) < 32) || ofmScale.scale == 1;
     }
     return ofmScale == QuantizedScale::Unit();
 }
@@ -189,7 +189,7 @@ bool EthosU55Constraints::SupportsQuantization(OpType opType, const Quantization
     {
         return false;
     }
-    if ( !SupportedOFMQuant(opType, npuOp, ofmQuant, ifmType) )
+    if ( !SupportedOFMQuant(opType, npuOp, ofmQuant, ifmType, ofmType) )
     {
         return false;
     }
