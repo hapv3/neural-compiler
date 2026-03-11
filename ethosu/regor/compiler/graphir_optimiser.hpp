@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -42,6 +42,7 @@ class GraphIrOptimiser : public GraphOptimiser
 private:
     Operation *ConstPropagation(Graph *const graph, Operation *const operation);
     Operation *RewriteConst(Graph *const graph, Operation *const operation);
+    Operation *RewriteIdentityTranspose(Graph *const graph, Operation *const operation);
     Operation *ConvertAttributes(Graph *const graph, Operation *const operation);
     Operation *ConvertAttributeTensors(Graph *const graph, Operation *const operation);
     Operation *ConvertResizeOffsets(Graph *const graph, Operation *const operation);
@@ -117,6 +118,7 @@ private:
             {},
             {
                 &GraphIrOptimiser::RewriteConst,
+                &GraphIrOptimiser::RewriteIdentityTranspose,
             },
         },
         {

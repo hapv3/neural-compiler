@@ -761,6 +761,32 @@ Operation *GraphIrOptimiser::RewriteIdentityResize(Graph *const graph, Operation
     return returnOp;
 }
 
+// Replace transpose ops that are essentially just a reshape with a identity op
+Operation *GraphIrOptimiser::RewriteIdentityTranspose(Graph *const graph, Operation *const operation)
+{
+    UNUSED(graph);
+    Operation *returnOp = operation;
+    OpType opType = operation->Type();
+    if ( opType == OpType::Transpose )
+    {
+        auto *ifmConn = operation->Input(TensorUsage::IFM);
+        auto *ofmConn = operation->Output(TensorUsage::OFM);
+        auto *attr = operation->Attribute<transpose_attr_t>();
+
+        if ( IsNoOpPermuteForShape(ifmConn->shape, attr->perm) )
+        {
+            auto identityOp = std::make_shared<Operation>(OpType::Identity);
+            identityOp->CopyInput(TensorUsage::IFM0, *ifmConn);
+            identityOp->CopyOutput(TensorUsage::OFM, *ofmConn);
+
+            returnOp = identityOp.get();
+            RecordOptimisation(*operation, returnOp);
+            operation->Disconnect();
+        }
+    }
+    return returnOp;
+}
+
 Operation *GraphIrOptimiser::RewriteFullyConnected(Graph *const graph, Operation *const operation)
 {
     UNUSED(graph);

@@ -223,8 +223,8 @@ void Softmax::RecordOptimisation(Operation *const operation, Operation *op)
     }
 }
 
-Operation *Softmax::CreateTransposeMaxpool(Operation *const operation, TensorConnection *ifmConn, const Shape &transposePerm,
-    const Shape &transposeOFMShape, const Shape &maxPoolOFMStorageShape, const Quantization &noScaleQuant)
+Operation *Softmax::CreateTransposeMaxpool(Operation *const operation, TensorConnection *ifmConn, const Shape &ifmShape,
+    const Shape &transposePerm, const Shape &transposeOFMShape, const Shape &maxPoolOFMStorageShape, const Quantization &noScaleQuant)
 {
     std::shared_ptr transposeTens = ifmConn->tensor->Clone();
     transposeTens->SetName(ifmConn->tensor->Name() + "_transpose");
@@ -234,7 +234,7 @@ Operation *Softmax::CreateTransposeMaxpool(Operation *const operation, TensorCon
     auto transposeAttr = transposeOp->Attribute<transpose_attr_t>();
     transposeAttr->perm = transposePerm;
     transposeOp->CopyInput(TensorUsage::IFM, *ifmConn);
-    transposeOp->Input(TensorUsage::IFM)->Set(ifmConn->shape).Set(Quantization::Unit());
+    transposeOp->Input(TensorUsage::IFM)->Set(ifmShape).Set(Quantization::Unit());
     const auto &transposeConn = transposeOp->ConnectOutput(TensorUsage::OFM, transposeTens);
     RecordOptimisation(operation, transposeOp.get());
 
@@ -297,7 +297,7 @@ Operation *Softmax::GetGraph8Bit(Operation *const operation, TensorConnection *i
     // Insert transpose when it has native support if not a no-op and depth becomes large enough to benefit
     if ( hasFastTransposeSupport && ifmConn->shape.Depth() != ifmConn->shape.Elements() && transposeOFMShape.Depth() >= 16 )
     {
-        op = CreateTransposeMaxpool(operation, ifmConn, transposePerm, transposeOFMShape, maxPoolOFMStorageShape, noScaleQuant);
+        op = CreateTransposeMaxpool(operation, ifmConn, ifmShape3D, transposePerm, transposeOFMShape, maxPoolOFMStorageShape, noScaleQuant);
     }
     else
     {

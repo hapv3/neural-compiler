@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -352,6 +352,37 @@ TEST_CASE("test_graphir_optimiser - transpose removal")
     REQUIRE(allOps.front()->Type() == OpType::Add);
     REQUIRE(allOps.back()->Type() == OpType::Add);
     REQUIRE(allOps.front()->Output(TensorUsage::OFM)->tensor == allOps.back()->Input(TensorUsage::IFM)->tensor);
+}
+
+TEST_CASE("test_graphir_optimiser - transpose removal for unit tensors")
+{
+    // Create arch
+    auto arch = CreateArchDefault<ArchEthosU85>();
+    std::string err = "noerror";
+    arch->CheckConfiguration(err);
+    REQUIRE(err == "noerror");
+
+    std::vector<std::shared_ptr<Operation>> ops;
+    auto input = CreateTensor("INPUT", Shape(1, 1, 1, 1), DataType::Int8);
+    auto transposeOfm = CreateTensor("TRANSPOSE_OFM", Shape(1, 1, 1, 1), DataType::Int8);
+    auto output = CreateTensor("OUTPUT", Shape(1, 1, 1, 1), DataType::Int8);
+
+    ops.push_back(CreateOperation(OpType::Transpose, TensorUsage::IFM, input, TensorUsage::OFM, transposeOfm));
+    transpose_attr_t *attr = ops.back()->Attribute<transpose_attr_t>();
+    attr->perm = Shape(0, 1, 3, 2);
+    ops.push_back(CreateOperation(OpType::Abs, TensorUsage::IFM, transposeOfm, TensorUsage::OFM, output));
+
+    auto graph = CreateGraph(ops);
+
+    GraphOptimiserOptions options;
+    const auto &optimiser = GraphOptimiser::MakeGraphOptimiser(graph->Notation(), arch.get(), options, nullptr);
+
+    optimiser.back()->Process(graph.get());
+
+    std::vector<Operation *> allOps;
+    graph->GetAllOperations(allOps);
+    REQUIRE(allOps.size() == 1);
+    REQUIRE(allOps[0]->Type() == OpType::Abs);
 }
 
 TEST_CASE("test_graphir_optimiser - transpose merge")

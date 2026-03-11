@@ -1388,7 +1388,9 @@ void EthosU55RCSGenerator::InsertTransposeCommand(const HLCStripe *stripe, Tempo
         {
             elements = (elements / ofm.shape.Depth()) * RoundAway(ofm.shape.Depth(), 16);
         }
-        dma->length = DataTypeStorageSizeBytes(ofm.dataType, elements);
+        dma->length = RoundAway(DataTypeStorageSizeBytes(ofm.dataType, elements), 16);
+        assert(dma->length <= ifm.AllocationSizeBytes() && "Copy length exceeds IFM");
+        assert(dma->length <= ofm.AllocationSizeBytes() && "Copy length exceeds OFM");
         dma->destMemArea = ofm.memArea;
         dma->destAddress = ofm.address;
         emitted.push_back(dma.get());

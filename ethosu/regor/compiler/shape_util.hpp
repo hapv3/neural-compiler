@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -44,6 +44,22 @@ inline TransposeType TransposeTypeFromShape(const Shape &perm)
     uint32_t offset = 0x76543210 & ~(0xFFFFFFFF >> (4 * (8 - n)));
     uint32_t mask8D = mask + offset;
     return TransposeType(mask8D);
+}
+
+// Checks if a permutation vector is a no-op for a given shape, ignoring unit axes
+inline bool IsNoOpPermuteForShape(const Shape &shape, const Shape &perm)
+{
+    assert(shape.Size() == perm.Size());
+
+    int lastAxis = 0;
+    for ( int i = 0; i < perm.Size(); i++ )
+    {
+        const int axis = perm[i];
+        if ( shape[axis] == 1 ) continue;     // Ignore unit axes
+        if ( axis < lastAxis ) return false;  // Permute vector is not ordered
+        lastAxis = axis;
+    }
+    return true;
 }
 
 // Reshape for example (A, B, N, H, W, C) + (3, 2, 1) -> (A*B*N, H*W, C)

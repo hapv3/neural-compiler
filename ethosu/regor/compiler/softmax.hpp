@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -48,8 +48,8 @@ private:
     Operation *GetGraph8Bit(Operation *const operation, TensorConnection *ifmConn, TensorConnection *ofmConn);
     Operation *GetGraphInt16(Operation *const operation, TensorConnection *ifmConn, TensorConnection *ofmConn);
     std::vector<int32_t> GenerateExpTable(double beta, double inputScale);
-    Operation *CreateTransposeMaxpool(Operation *const operation, TensorConnection *ifmConn, const Shape &transposePerm,
-        const Shape &transposeOFMShape, const Shape &maxPoolOFMStorageShape, const Quantization &noScaleQuant);
+    Operation *CreateTransposeMaxpool(Operation *const operation, TensorConnection *ifmConn, const Shape &ifmShape,
+        const Shape &transposePerm, const Shape &transposeOFMShape, const Shape &maxPoolOFMStorageShape, const Quantization &noScaleQuant);
 };
 
 }  // namespace regor

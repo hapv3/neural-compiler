@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2023-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -44,6 +44,17 @@ TEST_CASE("TransposeTypeFromShape")
     Shape shape4(axes4, 6);
     auto mask4 = TransposeTypeFromShape(shape4);
     REQUIRE(uint32_t(mask4) == 0x76510243);
+}
+
+TEST_CASE("IsNoOpPermuteForShape")
+{
+    Shape shape1(2, 3, 5, 7);
+    REQUIRE(IsNoOpPermuteForShape(shape1, Shape(0, 1, 2, 3)));
+    REQUIRE_FALSE(IsNoOpPermuteForShape(shape1, Shape(0, 2, 1, 3)));
+
+    Shape shape2(1, 3, 1, 7);
+    REQUIRE(IsNoOpPermuteForShape(shape2, Shape(2, 1, 0, 3)));
+    REQUIRE_FALSE(IsNoOpPermuteForShape(shape2, Shape(3, 1, 2, 0)));
 }
 
 TEST_CASE("ReshapeTo3D")
