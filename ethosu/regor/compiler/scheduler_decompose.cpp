@@ -3081,7 +3081,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeAvgPool(DecompositionC
     // The averagePool is converted to a SumPool with unit quantization
     // as the division is performed elsewhere.
     const int scaleSize = ofmConn->quantization.scales.size();
-    if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::Scaling, ArchProperty::KernelStride) && scaleSize )
+    if ( qResult.Any(QueryResult::HasRequirements) && req.decomposeProps.Any(ArchProperty::Scaling) )
     {
         // Create scaling array
         int H = (kernel->Padding().Top() || kernel->Padding().Bottom()) ? ofmShape.Height() : 1;

@@ -734,12 +734,16 @@ Flags<QueryResult> EthosU85Constraints::OperatorQuery(OpType opType, const ArchO
             {
                 req->req.Set(ArchRequirement::Decompose);
                 req->decomposeProps.Set(ArchProperty::KernelStride);
+                if ( opType == OpType::AvgPool )
+                {
+                    // decomposing AvgPool kernels also requires decomposition of scaling
+                    req->decomposeProps.Set(ArchProperty::Scaling);
+                }
             }
             result.Set(QueryResult::HasRequirements);
         }
 
-        if ( opType == OpType::AvgPool && (k->Size().x > 8 || k->Size().y > 8) && !k->Padding().IsZero() &&
-             query->ofm.quantization->scales.size() )
+        if ( opType == OpType::AvgPool && (k->Size().x > 8 || k->Size().y > 8) && !k->Padding().IsZero() )
         {
             if ( req )
             {
