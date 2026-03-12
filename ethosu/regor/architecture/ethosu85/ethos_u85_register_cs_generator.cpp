@@ -2194,10 +2194,12 @@ void EthosU85RCSGenerator::GenerateDMA(const HLCDMA *dma, MemoryAccesses &memory
     Emit(isa::npu_set_dma0_dst_t(dma->destAddress));
     assert(dma->length > 0);
     Emit(isa::npu_set_dma0_len_t(dma->length));
-
-    if ( srcStrideMode != dma_stride_mode::D1 )
+    if ( srcStrideMode == dma_stride_mode::D1 )
     {
-        // Registers for 2D and 3D mode
+        Emit(isa::npu_set_dma0_size0_t(1));
+    }
+    else
+    {
         assert(size0 > 0);
         Emit(isa::npu_set_dma0_size0_t(size0));
     }
