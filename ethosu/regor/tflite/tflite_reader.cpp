@@ -78,7 +78,9 @@ const tflite::Model *TfLiteReader::LoadModel(const void *input, size_t size)
 {
     const uint8_t *buffer = static_cast<const uint8_t *>(input);
     flatbuffers::Verifier::Options options;
-    flatbuffers::Verifier verifier(buffer, size, options);
+    // No need to verify the entire buffer, just the part below the max size.
+    // Any data beyond the max size should be constant buffer data, appended after the flatbuffer data.
+    flatbuffers::Verifier verifier(buffer, std::min(size, options.max_size - 1), options);
 
     if ( !tflite::VerifyModelBuffer(verifier) )
     {
@@ -88,14 +90,14 @@ const tflite::Model *TfLiteReader::LoadModel(const void *input, size_t size)
     return tflite::GetModel(buffer);
 }
 
-void TfLiteReader::LoadGraphs(const uint8_t *input, const tflite::Model *model,
+void TfLiteReader::LoadGraphs(const uint8_t *input, size_t size, const tflite::Model *model,
     std::vector<std::unique_ptr<Graph>> &graphs, OptimiserDatabase *optDb, bool skipSemanticsCheck)
 {
     assert(model);
 
     if ( !skipSemanticsCheck )
     {
-        auto semanticsChecker = tflite::TFLiteModelSemantics(model);
+        auto semanticsChecker = tflite::TFLiteModelSemantics(model, input, size);
         semanticsChecker.Check();
     }
 
@@ -126,6 +128,7 @@ void TfLiteReader::LoadGraphs(const uint8_t *input, const tflite::Model *model,
     {
         if ( tflite_buffer->offset() > 1 )
         {
+            if ( tflite_buffer->offset() + tflite_buffer->size() > size ) throw std::runtime_error("Invalid buffer\n");
             const uint8_t *data = &input[tflite_buffer->offset()];
             buffers.push_back(std::make_shared<Buffer>(tflite_buffer->size(), data, true));
         }
@@ -353,7 +356,7 @@ void TfLiteReader::LoadGraphs(const uint8_t *input, const tflite::Model *model,
 void TfLiteReader::LoadGraphs(const void *input, size_t size, std::vector<std::unique_ptr<Graph>> &graphs,
     OptimiserDatabase *optDb, bool skipSemanticsCheck)
 {
-    LoadGraphs(reinterpret_cast<const uint8_t *>(input), LoadModel(input, size), graphs, optDb, skipSemanticsCheck);
+    LoadGraphs(reinterpret_cast<const uint8_t *>(input), size, LoadModel(input, size), graphs, optDb, skipSemanticsCheck);
 }
 
 std::shared_ptr<Tensor> TfLiteReader::ParseTensor(const tflite::Tensor *tflite_tensor, std::shared_ptr<Buffer> &buffer,

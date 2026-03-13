@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2023, 2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -27,11 +27,16 @@ namespace tflite
 class TFLiteModelSemantics
 {
 public:
-    explicit TFLiteModelSemantics(const Model *model) : m_model(model) {}
+    explicit TFLiteModelSemantics(const Model *model, const uint8_t *input, size_t size) :
+            m_model(model), m_input(input), m_size(size)
+    {
+    }
 
     void Check();
 
 private:
     const Model *m_model;
+    const uint8_t *m_input;
+    size_t m_size;
 };
 }  // namespace tflite

@@ -73,7 +73,7 @@ void Failure(const Operation *op, const std::string &extra)
         auto tfLiteType = TfLiteMapping::OpTypeToBuiltinOperator(opType);
         type = TfLiteMapping::BuiltinOperatorToString(tfLiteType);
     }
-    LOG_WARN("\nWarning (supported operators) operator:{} ofm:{}\n", std::move(type), name);
+    LOG_WARN("\nWarning (supported operators) operator: {}, ofm: '{}'\n", std::move(type), name);
     if ( extra.size() )
     {
         LOG_WARN("Reason: {}\n", extra);

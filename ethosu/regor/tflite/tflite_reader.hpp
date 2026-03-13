@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2023-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -42,8 +42,9 @@ public:
         OptimiserDatabase *optDb, bool skipSemanticsCheck = false);  // From buffer
 
 private:
-    static void LoadGraphs(const uint8_t *input, const tflite::Model *model, std::vector<std::unique_ptr<Graph>> &graphs,
-        OptimiserDatabase *optDb, bool skipSemanticsCheck = false);  // From model
+    static void LoadGraphs(const uint8_t *input, size_t size, const tflite::Model *model,
+        std::vector<std::unique_ptr<Graph>> &graphs, OptimiserDatabase *optDb, bool skipSemanticsCheck = false);  // From
+                                                                                                                  // model
     static const tflite::Model *LoadModel(const void *input, size_t size);
     static std::shared_ptr<Tensor> ParseTensor(const tflite::Tensor *tflite_tensor, std::shared_ptr<Buffer> &buffer,
         std::unordered_map<UniqueId, Quantization> &tensorQuantization);
