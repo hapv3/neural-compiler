@@ -719,7 +719,7 @@ void EthosU85RCSGenerator::GenerateOFMScalingForPooling(HLCOperation *poolOp, bo
         {
             // average-pooling with fused scale
             // compute OFM-scaling both based on ofmScale and kernel-sum
-            QuantizePoolingScaleMaxPrecision(poolOp->kernel.ElementsWH(), ofmScale.Dequantize(), multiplier, shift, 32);
+            QuantizePoolingScaleMaxPrecision(poolOp->kernel.ElementsWH(), ofmScale.Dequantize(), multiplier, shift, 31);
         }
         else
         {

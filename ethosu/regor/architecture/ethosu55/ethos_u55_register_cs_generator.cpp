@@ -544,13 +544,12 @@ void EthosU55RCSGenerator::GenerateOFMScalingForPooling(HLCOperation *poolOp, bo
 {
     QuantizedScale ofmScale(1, 0);
     bool isNoOp = _arch->UseAvgPoolNop(poolOp->type);
-    auto mode = GetPoolingMode(poolOp->type);
     ethosU55Scaling::RescalePooling(poolOp, isNoOp);
     if ( useGlobalScale && !poolOp->ofm.quantization.scales.empty() )
     {
         ofmScale = poolOp->ofm.quantization.scales[0];
     }
-    if ( mode == pooling_mode::AVERAGE && poolOp->type != OpType::SumPool )
+    if ( poolOp->type == OpType::AvgPool )
     {
         uint32_t multiplier = 1;
         int shift = 0;
