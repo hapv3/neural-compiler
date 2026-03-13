@@ -34,49 +34,6 @@
 namespace regor
 {
 
-// Update stripe-padding, offset and shape when we use stepping in the IFM or OFM.
-static std::tuple<Shape, Shape, HLCPadding> TransformWithInputOutputSteps(const Shape &stripeOffset,
-    const Shape &stripeShape, const Point2i &inputStep, const Box &outputArea, const Point2i &outputStep,
-    const Kernel *kernel, const HLCPadding &padding, const Shape &ifmOffset, const Shape &ifmShape)
-{
-    const auto &stride = kernel->Stride();
-    const auto dilatedWH = kernel->DilatedWH();
-    HLCPadding newPadding;
-    Shape stripeEnd = stripeOffset + stripeShape;
-    Shape ifmEnd = ifmOffset + ifmShape;
-    // Stride-multipliers (IFM/OFM-step) are not applied in the padded region
-    // Divide padding by input step to simulate stepping
-    newPadding.top = std::max(0, DivRoundUp(padding.top, inputStep.y));
-    newPadding.left = std::max(0, DivRoundUp(padding.left, inputStep.x));
-    // Adjust stripe start-coordinate as if we were performing stride-multiplier (steps) in the padded-area
-    Point2i startAdjustForPadFraction;
-    if ( padding.left > 0 && stripeOffset.Width() == 0 )
-        startAdjustForPadFraction.x = std::max(0, DivRoundUp(padding.left, inputStep.x) * inputStep.x - padding.left);
-    if ( padding.top > 0 && stripeOffset.Height() == 0 )
-        startAdjustForPadFraction.y = std::max(0, DivRoundUp(padding.top, inputStep.y) * inputStep.y - padding.top);
-    // Required input-elements to produce the OFM-area.
-    Point2i neededInput;
-    neededInput.x =
-        (DivRoundUp(outputArea.End().Width() - outputArea.Start().Width(), outputStep.x) - 1) * stride.x + dilatedWH.x;
-    neededInput.y =
-        (DivRoundUp(outputArea.End().Height() - outputArea.Start().Height(), outputStep.y) - 1) * stride.y + dilatedWH.y;
-    // Adjust start-coordinate based on stepped padding
-    Shape newStart =
-        stripeOffset.WithWidth(stripeOffset.Width() + startAdjustForPadFraction.x)
-            .WithHeight(stripeOffset.Height() + startAdjustForPadFraction.y);
-    Shape newEnd =
-        stripeEnd.WithWidth(std::min(stripeEnd.Width() + startAdjustForPadFraction.x, ifmEnd.Width()))
-            .WithHeight(std::min(stripeEnd.Height() + startAdjustForPadFraction.y, ifmEnd.Height()));
-    // Calculate bottom/right padding based on new start/end coordinates
-    newPadding.bottom = std::max(
-        0, neededInput.y - (DivRoundUp((ifmEnd.Height() - newStart.Height()), inputStep.y) + newPadding.top));
-    newPadding.right = std::max(
-        0, neededInput.x - (DivRoundUp((ifmEnd.Width() - newStart.Width()), inputStep.x) + newPadding.left));
-    Shape newShape = newEnd - newStart;
-    assert(newShape.Elements() > 0);
-    return std::make_tuple<Shape, Shape, HLCPadding>(std::move(newStart), std::move(newShape), std::move(newPadding));
-}
-
 // Calculates STRIDE_C/Y/X
 static Shape GetStrides(const HLCFeatureMap &fm)
 {
@@ -715,30 +672,36 @@ static std::unique_ptr<HLCDMA> GenerateWeightDMA(NpuWeightTensor *weightTens, co
     return dma;
 }
 
-static std::tuple<Shape, Shape, HLCPadding> CalculateStripePadding(const Shape &stripeOffset, const Shape &stripeShape, const Shape &ifmShape,
-    Point2i ifmStep, const Shape &ofmShape, Point2i ofmStep, const Kernel *kernel, const HLCPadding &stripePadding, OpType opType)
+static std::tuple<Shape, Shape, HLCPadding> CalculateStripePadding(const Shape &stripeOffset, const Shape &stripeShape,
+    const Shape &ifmShape, Point2i ifmStep, const Shape &ofmShape, Point2i ofmStep, const HLCPadding &stripePadding, OpType opType)
 {
     const Shape stripeEnd = stripeOffset + stripeShape;
     // Set padding if ifmStripe is outside the IFM shape
-    int left = std::max(0, -stripeOffset.Width());
-    int right = std::max(0, stripeEnd.Width() - ifmShape.Width());
-    int top = std::max(0, -stripeOffset.Height());
-    int bottom = std::max(0, stripeEnd.Height() - ifmShape.Height());
+    Point2i startPad = Point2i::Max({0, 0}, Point2i(0, 0) - stripeOffset.WH());
+    Point2i endPad = Point2i::Max({0, 0}, stripeEnd.WH() - ifmShape.WH());
     // Adjust offset and shape based on padded values
-    Shape newStart = stripeOffset + Shape(top, left, 0);
-    Shape newEnd = stripeEnd - Shape(bottom, right, 0);
-    Shape newShape = newEnd - newStart;
-    assert(newShape.Elements() > 0);
-    HLCPadding newPadding = {top, left, bottom, right};
-    // Re-calculate stripe and padding if we use non-unit stepping in the IFM
-    // TODO MLBEDSW-11383: refactor step-based padding into regular padding calculations.
+    Shape newStart = stripeOffset.WithHW(stripeOffset.WH() + startPad);
+    Shape newEnd = stripeEnd.WithHW(stripeEnd.WH() - endPad);
+    // When operations use stepping, we need to adjust padding as if we were also stepping
+    // in the padded area.
     bool stepped = (ofmStep != Point2i{1, 1} || ifmStep != Point2i{1, 1});
     if ( opType != OpType::MatMul && stepped )
     {
-        return TransformWithInputOutputSteps(
-            newStart, newShape, ifmStep, ofmShape, ofmStep, kernel, newPadding, ifmShape.WithZeros(), ifmShape);
+        // Adjust stripe start-coordinate as if we were performing input steps in the padded-area
+        Point2i startAdjustForPadFraction = DivRoundUp(startPad, ifmStep) * ifmStep - startPad;
+        // Divide top/left padding by input step to simulate stepping
+        startPad = Point2i::Max({0, 0}, DivRoundUp(startPad, ifmStep));
+        newStart = newStart.WithHW(newStart.WH() + startAdjustForPadFraction);
+        newEnd = newEnd.WithHW(Point2i::Min(newEnd.WH() + startAdjustForPadFraction, ifmShape.WH()));
+        // Adjust start-coordinate based on stepped padding
+        Point2i neededInput = DivRoundUp(stripeShape.WH(), ifmStep);
+        // Calculate bottom/right padding based on new start/end coordinates
+        endPad = Point2i::Max({0, 0}, neededInput - (DivRoundUp(ifmShape.WH() - newStart.WH(), ifmStep) + startPad));
     }
-    return std::make_tuple<Shape, Shape, HLCPadding>(std::move(newStart), std::move(newShape), std::move(newPadding));
+    Shape newShape = newEnd - newStart;
+    assert(newShape.Elements() > 0);
+    return std::make_tuple<Shape, Shape, HLCPadding>(
+        std::move(newStart), std::move(newShape), {startPad.y, startPad.x, endPad.y, endPad.x});
 }
 
 // Calculate the IFM-shape required to produce the OFM-shape for the stripe.
@@ -862,7 +825,7 @@ static Box CalculateIfmStripeAndPadding(const Shape &ofmStripeStartOffset, const
     // Upscaled space is required to perform padding calculations as padding is applied after upscaling in HW
     Shape ifmShapeUpscaled = Shape(ifmSlice.shape, 4, 1).WithHW(ifmSlice.shape.Height() * upscaling, ifmSlice.shape.Width() * upscaling);
     std::tie(stripeOffsetUpscaled, stripeShapeUpscaled, stripePadding) = CalculateStripePadding(stripeOffsetUpscaled,
-        stripeShapeUpscaled, ifmShapeUpscaled, ifmStep, untransposedOfmShape, ofmStep, kernel, stripePadding, opType);
+        stripeShapeUpscaled, ifmShapeUpscaled, ifmStep, untransposedOfmShape, ofmStep, stripePadding, opType);
 
     // 4. Adjust to IFM coordinate-system by dividing with upscaling
     // TODO MLBEDSW-7003: Handle stripe-offsets that start on an upscaled coordinate
