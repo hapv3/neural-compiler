@@ -1014,11 +1014,14 @@ DecomposeNonConstWeights(DecompositionContext &ctx, std::unique_ptr<SchedulerOpe
                         // Connect Weight tensor as IFM1 with correct slicing
                         auto *subWeightsConn = subOp->ConnectInput(TensorUsage::IFM1, weightsTensor);
                         subWeightsConn->shape = reshapedWeightsShape;
-                        // Use `slice.shape.width = validOfmDepth * kernelArea` together with `stepXY.x = kernelArea`
-                        // which yields exactly validOfmDepth sampled positions after striding.
-                        subWeightsConn->slice.shape = Shape(1, 1, validOfmDepth * kernelArea, ifmDepth);
                         // Flattened width index for (oc, ky, kx) is: (oc * KH * KW) + (ky * KW) + kx
                         subWeightsConn->slice.offset = Shape(0, 0, ofmZ * kernelArea + ky * kernelW + kx, ifmZ);
+                        // Use `slice.shape.width = validOfmDepth * kernelArea` together with `stepXY.x = kernelArea`
+                        // which yields exactly validOfmDepth sampled positions after striding.
+                        // Truncate to (shape - new offset) to stay within bounds.
+                        newWidth = std::min(validOfmDepth * kernelArea,
+                            subWeightsConn->shape.Width() - subWeightsConn->slice.offset.Width());
+                        subWeightsConn->slice.shape = Shape(1, 1, newWidth, ifmDepth);
                         // Step through the flattened width by kernelArea to jump between consecutive output channels
                         // while keeping the same (ky, kx)
                         subWeightsConn->stepXY.x = kernelArea;
