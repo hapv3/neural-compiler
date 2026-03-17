@@ -417,6 +417,11 @@ HandleDilation(DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op
             newIfmSlice.offset =
                 newIfmSlice.offset.WithHeight(newIfmSlice.offset.Height() + dy * GY * newStride.y)
                     .WithWidth(newIfmSlice.offset.Width() + dx * GX * newStride.x);
+            // Update slice-shape based on adjusted offset.
+            // Truncate to full slice to avoid inflated shapes (when offsets are negative).
+            int newHeight = std::min(ifmConn->slice.shape.Height(), ifmConn->slice.shape.Height() - newIfmSlice.offset.Height());
+            int newWidth = std::min(ifmConn->slice.shape.Width(), ifmConn->slice.shape.Width() - newIfmSlice.offset.Width());
+            newIfmSlice.shape = newIfmSlice.shape.WithHW(newHeight, newWidth);
             ifmStrides.y *= DY * GY;
             ifmStrides.x *= DX * GX;
             newOfmSlice.offset = newOfmSlice.offset.WithHW(newOfmSlice.offset.Height() + dy, newOfmSlice.offset.Width() + dx);
