@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2022-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2022-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -189,12 +189,7 @@ bool GraphBuilder::RequireSyntaxVersion(uint32_t version, int32_t level)
 {
     _syntaxVersion = (version & 0xFFFFFF00) | uint32_t(level);
 
-    if ( _syntaxVersion > (GraphApi::VERSION_TOSA_1_00 | GraphApi::PROFILE_BASELINE) )  // 1.0.Baseline
-    {
-        return false;
-    }
-
-    return true;
+    return (version & 0xFF000000) == GraphApi::VERSION_TOSA_1_00 && level == GraphApi::PROFILE_INT;
 }
 
 GraphApi::GraphOperation *GraphBuilder::CreateOp(tosa::Op tosaType, const GraphKernel *kernel)

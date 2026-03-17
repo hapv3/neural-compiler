@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2023-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -27,7 +27,7 @@ namespace
 
 std::optional<uint32_t> MaybeGetTosaVersion(uint32_t syntaxVersion)
 {
-    if ( syntaxVersion == 0 ) syntaxVersion = (GraphApi::VERSION_TOSA_1_00 | GraphApi::PROFILE_BASELINE);
+    if ( syntaxVersion == 0 ) syntaxVersion = (GraphApi::VERSION_TOSA_1_00 | GraphApi::PROFILE_INT);
     if ( (syntaxVersion & GraphApi::VERSION_TOSA_1_00) == GraphApi::VERSION_TOSA_1_00 )
     {
         return GraphApi::VERSION_TOSA_1_00;
@@ -50,13 +50,13 @@ TosaGraphValidator::TosaGraphValidator(GraphNotation notation, uint32_t syntaxVe
 {
     _context.version = MaybeGetTosaVersion(syntaxVersion).value_or(GraphApi::VERSION_TOSA_1_00);
 
-    if ( (syntaxVersion & GraphApi::PROFILE_MAIN) == GraphApi::PROFILE_MAIN )
+    if ( (syntaxVersion & GraphApi::PROFILE_FP) == GraphApi::PROFILE_FP )
     {
-        _context.profile = GraphApi::PROFILE_MAIN;
+        _context.profile = GraphApi::PROFILE_FP;
     }
     else
     {
-        _context.profile = GraphApi::PROFILE_BASELINE;
+        _context.profile = GraphApi::PROFILE_INT;
     }
     _context.GetGraph = [compiler](const char *name) { return compiler->GetGraph(name); };
 }

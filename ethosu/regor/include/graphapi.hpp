@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2022-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2022-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -176,8 +176,8 @@ enum class BufferMapping
 
 // Freeform syntax versioning
 static constexpr uint32_t VERSION_TOSA_1_00 = 0x01000000;
-static constexpr int32_t PROFILE_BASELINE = 0;
-static constexpr int32_t PROFILE_MAIN = 1;
+static constexpr int32_t PROFILE_INT = 0;
+static constexpr int32_t PROFILE_FP = 1;
 
 /// <summary>
 /// Interface to a graph builder.

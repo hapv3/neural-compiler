@@ -1,6 +1,6 @@
 #!/usr/bin/env ruby
 #
-# SPDX-FileCopyrightText: Copyright 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2023-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -520,7 +520,7 @@ class TosaValidator
       f.write "};\n\n"
       f.write "struct Context\n{\n"
       f.write indent(1) + "uint32_t version = GraphApi::VERSION_TOSA_1_00;\n"
-      f.write indent(1) + "int32_t profile = GraphApi::PROFILE_BASELINE;\n"
+      f.write indent(1) + "int32_t profile = GraphApi::PROFILE_INT;\n"
       f.write indent(1) + "Level level = Level::Level8K;\n"
       f.write indent(1) + "std::function<const regor::Graph *(const char *)> GetGraph;\n"
       f.write "};\n\n"
@@ -557,9 +557,9 @@ class TosaValidator
       draft_string = draft == "_" ? "" : "_DRAFT"
       tosa_version_const = "GraphApi::VERSION_TOSA_%d_%02d%s%s" % [major.to_i, minor.to_i, patch_string, draft_string]
       if (profile == "BI" || profile == "PRO_INT")
-        tosa_profile_const = "GraphApi::PROFILE_BASELINE"
+        tosa_profile_const = "GraphApi::PROFILE_INT"
       elsif (profile == "MAIN")
-        tosa_profile_const = "GraphApi::PROFILE_MAIN"
+        tosa_profile_const = "GraphApi::PROFILE_FP"
       else return
       end
       check = indent(1) + "if ( (context.version & 0xFFFFFF00) == %s && context.profile == %s )\n" % [tosa_version_const, tosa_profile_const]

@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -430,7 +430,7 @@ void TosaReader::LoadGraphs(const tosaFb::TosaGraph *model, std::list<GraphBuild
             builders.emplace_back(bbName);
             GraphApi::IGraphBuilder *builder = &builders.back();
 
-            TosaAssert(builder->RequireSyntaxVersion(ver_word, GraphApi::PROFILE_BASELINE), "Tosa version mismatch");
+            TosaAssert(builder->RequireSyntaxVersion(ver_word, GraphApi::PROFILE_INT), "Tosa version mismatch");
 
             std::unordered_map<std::string, TensorInfo> tensors;
             tensors.reserve(SafeDeref(tosaBasicBlock->tensors(), "No tensors").size());
