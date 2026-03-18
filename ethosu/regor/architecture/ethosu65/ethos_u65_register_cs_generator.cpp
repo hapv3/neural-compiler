@@ -1,5 +1,6 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2023-2024, 2026 Arm Limited and/or its affiliates
+// <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -30,79 +31,6 @@ using namespace ethosu65;
 EthosU65RCSGenerator::EthosU65RCSGenerator(ArchEthosU65 *arch) : EthosU55RCSGenerator(arch), _arch(arch)
 {
 }
-
-
-void EthosU65RCSGenerator::InsertTileDMACommand(const HLCStripe *stripe, Temporaries &temps, std::vector<const HighLevelCommand *> &emitted)
-{
-    // reshape to 3D-tensor where the width-axis is being tiled
-    static auto reshapeFunc = [](Shape &shape, int tiledAxis)
-    {
-        int height = 1;
-        int channel = 1;
-        // all axes before tiledAxis are reshaped to height
-        for ( int i = 0; i < tiledAxis; i++ )
-        {
-            height *= shape[i];
-        }
-        // all axes after tiledAxis are reshaped to channel
-        for ( int i = tiledAxis + 1; i < shape.Size(); i++ )
-        {
-            channel *= shape[i];
-        }
-
-        shape = {1, height, shape[tiledAxis], channel};
-    };
-
-    auto op = stripe->operation;
-    assert(op->type == OpType::Tile);
-
-    // convert tile-operation to multiple DMA operations
-    auto &ifm = op->ifm[0];
-    auto &ofm = op->ofm;
-    // max-height for 2D/3D DMA operations
-    constexpr int maxHeight = (1 << 16) - 1;
-
-    assert(ifm.format == TensorFormat::NHWC);
-    assert(ofm.format == TensorFormat::NHWC);
-
-    const auto &tileParams = op->parameters.tile;
-
-    reshapeFunc(ifm.shape, tileParams.axis);
-    reshapeFunc(ofm.shape, tileParams.axis);
-
-    int elemSize = DataTypeSizeBits(ifm.dataType) / 8;
-    auto srcStrides = Shape::GetStridesForShape(ifm.shape, {1, 1, 1, elemSize});
-    auto dstStrides = Shape::GetStridesForShape(ofm.shape, {1, 1, 1, elemSize});
-
-    int srcheightOffset = 0;
-    int dstheightOffset = 0;
-    int height = ifm.shape.Height();
-    while ( height > 0 )
-    {
-        int heightSlice = std::min(height, maxHeight);
-
-        // create 2D/3D DMA that copies ifm to ofm
-        for ( int i = 0; i < tileParams.multiplier; i++ )
-        {
-            int addrOffset = i * ifm.shape.Width() * srcStrides.Width();
-            auto dma = std::make_unique<HLCDMA>();
-            dma->srcMemArea = ifm.memArea;
-            dma->srcAddress = ifm.address + srcheightOffset;
-            dma->srcStrides = srcStrides;
-            dma->length = ifm.shape.Depth() * elemSize;
-            dma->sizes = Shape(heightSlice, ifm.shape.Width());
-            dma->destMemArea = ofm.memArea;
-            dma->destAddress = ofm.address + dstheightOffset + addrOffset;
-            dma->destStrides = dstStrides;
-            emitted.push_back(dma.get());
-            temps.cmds.push_back(std::move(dma));
-        }
-        height -= heightSlice;
-        srcheightOffset += heightSlice * srcStrides.Height();
-        dstheightOffset += heightSlice * dstStrides.Height();
-    }
-}
-
 
 // Generates register commands for DMA operations
 void EthosU65RCSGenerator::GenerateDMA(const HLCDMA *dma, AccessTracking &accesses)

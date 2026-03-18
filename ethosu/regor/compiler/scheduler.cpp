@@ -272,12 +272,6 @@ int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *con
                 tensor->needsLinearFormat = true;
                 continue;
             }
-            // TODO: Tile doesn't support brick format yet (MLBEDSW-9485)
-            else if ( producer->Type() == OpType::Tile )
-            {
-                tensor->needsLinearFormat = true;
-                continue;
-            }
             else if ( IsControlFlow(producer->Type()) )
             {
                 tensor->needsLinearFormat = true;
@@ -328,12 +322,6 @@ int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *con
 
             // TODO: Gather doesn't support brick format yet (MLBEDSW-8410)
             if ( consumer->Type() == OpType::Scatter || consumer->Type() == OpType::Gather )
-            {
-                tensor->needsLinearFormat = true;
-                continue;
-            }
-            // TODO: Tile doesn't support brick format yet (MLBEDSW-9485)
-            else if ( consumer->Type() == OpType::Tile )
             {
                 tensor->needsLinearFormat = true;
                 continue;

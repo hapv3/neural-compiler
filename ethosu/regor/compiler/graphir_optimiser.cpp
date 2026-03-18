@@ -2261,8 +2261,19 @@ Operation *GraphIrOptimiser::RewriteReduceSum(Graph *const graph, Operation *con
     return returnOp;
 }
 
-// Decompose Tile with more than one tiled axis
-// into several tile operations, each with one tiled axis
+static std::shared_ptr<Operation>
+CreateTileCopy(const TensorConnection &ifmConn, const TensorConnection &ofmConn, const TensorSlice *ofmSlice = nullptr)
+{
+    auto copyOp = std::make_shared<Operation>(OpType::MemoryCopy);
+    copyOp->CopyInput(TensorUsage::IFM, ifmConn);
+    copyOp->Input(TensorUsage::IFM)->Set(RoundMode::NATURAL);
+    copyOp->CopyOutput(TensorUsage::OFM, ofmConn);
+    if ( ofmSlice ) copyOp->Output(TensorUsage::OFM)->Set(*ofmSlice);
+    copyOp->Output(TensorUsage::OFM)->Set(RoundMode::NATURAL);
+    return copyOp;
+}
+
+// Rewrite Tile to one or more MemoryCopy operations
 Operation *GraphIrOptimiser::RewriteTile(Graph *const, Operation *const operation)
 {
     Operation *returnOp = operation;
@@ -2276,8 +2287,6 @@ Operation *GraphIrOptimiser::RewriteTile(Graph *const, Operation *const operatio
     auto *ofmConn = operation->Output(TensorUsage::OFM);
     auto *ifmConn = operation->Input(TensorUsage::IFM);
     auto *params = operation->Input(TensorUsage::Params);
-    auto *ofm = ofmConn->tensor.get();
-    auto *ifm = ifmConn->tensor.get();
 
     assert(ifmConn);
     assert(ofmConn);
@@ -2286,58 +2295,67 @@ Operation *GraphIrOptimiser::RewriteTile(Graph *const, Operation *const operatio
     // Convert params tensor to vector
     Shape multiples = TensorToShape(params->tensor.get(), params->shape.Elements());
 
-    // axisMask contains ones for every axis that needs to be tiled.
-    // e.g. if H,W are tiled, axisMask will be 0110
-    unsigned axisMask = multiples.GreaterMask(multiples.WithOnes());
-
-    // We only need to decompose if there is more than one tiled axis
-    if ( axisMask == 0 || IsPowerOfTwo(axisMask) )
+    TensorConnection inputConn = *ifmConn;
+    int finalTiledAxis = -1;
+    for ( int axis = 0; axis < multiples.Size(); ++axis )
     {
-        return returnOp;
+        if ( multiples[axis] > 1 ) finalTiledAxis = axis;
     }
 
-    auto inputConn = ifmConn;
-    int axis = ifmConn->shape.Size() - 1;
-
-    while ( axisMask )
+    if ( finalTiledAxis < 0 )
     {
-        // tile only if the LSB>0
-        if ( axisMask & 1 )
+        // If all multipliers are 1, replace Tile with a single MemoryCopy and skip all the tiling logic.
+        auto copyOp = CreateTileCopy(inputConn, *ofmConn);
+        RecordOptimisation(*operation, copyOp.get());
+        operation->Disconnect();
+        return copyOp.get();
+    }
+
+    for ( int axis = 0; axis < multiples.Size(); ++axis )
+    {
+        if ( multiples[axis] > 1 )
         {
-            // Create new tile operation that only tiles one of the axes
-            int multiplier = multiples[axis];
+            const int multiplier = multiples[axis];
 
             // The shape of the intermediate tensor is same as its input-tensor
             // but with one tiled axis (taken from ofm-shape)
-            Shape outShape = inputConn->shape;
+            Shape outShape = inputConn.shape;
             outShape[axis] = ofmConn->shape[axis];
 
-            std::vector<int32_t> newMultiples(multiples.Size(), 1);
-            newMultiples[axis] = multiplier;
-
-            std::shared_ptr<Tensor> outTens = ofmConn->tensor;
-            // create intermediate tensor if this is not the last tiled axis
-            if ( (axisMask >> 1) > 0 )
+            TensorConnection outConn;
+            if ( axis == finalTiledAxis )
             {
-                std::string name(fmt::format("{}_tiled_axis_{}", ofm->Name(), axis));
-                outTens = std::make_shared<Tensor>(name, ofm->Type(), outShape);
+                // The last MemoryCopy can write directly to the final OFM.
+                outConn = *ofmConn;
+            }
+            else
+            {
+                // Intermediate MemoryCopys materialize a partially tiled tensor that becomes
+                // the source for the next tiled axis.
+                std::string name = fmt::format("{}_tiled_axis_{}", ofmConn->tensor->Name(), axis);
+                outConn.tensor = std::make_shared<Tensor>(name, ofmConn->tensor->Type(), outShape);
+                outConn.shape = outShape;
+                outConn.quantization = inputConn.quantization;
+                outConn.rounding = RoundMode::NATURAL;
             }
 
-            auto tileOp = std::make_shared<Operation>(OpType::Tile);
-            tileOp->CopyInput(TensorUsage::IFM, *inputConn);
-            tileOp->ConnectOutput(TensorUsage::OFM, outTens).Set(outShape);
-            // create new param tensor
-            auto newParamtensor = CreateConstTensor(
-                "multiples", DataType::Int32, std::make_shared<Buffer>(newMultiples.size(), newMultiples.data()));
-            tileOp->ConnectInput(TensorUsage::Params, newParamtensor);
+            for ( int i = 0; i < multiplier; ++i )
+            {
+                // Copy the whole current input tensor into consecutive slices along the axis being expanded in this
+                // stage.
+                Shape offset = outShape.WithZeros();
+                offset[axis] = i * inputConn.shape[axis];
+                TensorSlice dst(offset, inputConn.shape);
 
-            RecordOptimisation(*operation, tileOp.get());
-            returnOp = tileOp.get();
+                auto copyOp = CreateTileCopy(inputConn, outConn, &dst);
+                RecordOptimisation(*operation, copyOp.get());
+                returnOp = copyOp.get();
+            }
 
-            inputConn = tileOp->Output(TensorUsage::OFM);
+            // Feed the next stage with the fully materialized intermediate tensor.
+            inputConn = std::move(outConn);
+            inputConn.slice = {};
         }
-        axis--;
-        axisMask >>= 1;
     }
 
     operation->Disconnect();

@@ -1,5 +1,6 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2023-2024, 2026 Arm Limited and/or its affiliates
+// <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -33,9 +34,6 @@ public:
     EthosU65RCSGenerator(ArchEthosU65 *arch);
 
 protected:
-    // Converts TILE operations to DMA commands
-    void InsertTileDMACommand(const HLCStripe *stripe, Temporaries &temps, std::vector<const HighLevelCommand *> &emitted) override;
-
     // Generate register commands for DMA operations
     void GenerateDMA(const HLCDMA *dma, AccessTracking &accesses) override;
     void GenerateInitialRegisterSetup() override;

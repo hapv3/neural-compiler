@@ -732,7 +732,6 @@ EthosU55NpuOp ArchEthosU55::GetHWOp(OpType type)
         {OpType::ReduceSum, EthosU55NpuOp::ReduceSum},
         {OpType::ReduceMax, EthosU55NpuOp::Pooling},
         {OpType::Rescale, EthosU55NpuOp::Pooling},
-        {OpType::Tile, EthosU55NpuOp::Dma},
         {OpType::Transpose, EthosU55NpuOp::Compound},
         {OpType::MatMul, EthosU55NpuOp::Compound},
     };

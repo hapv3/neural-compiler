@@ -1267,66 +1267,6 @@ void EthosU55RCSGenerator::InsertLUTDMACommand(const HLCStripe *stripe, Temporar
     }
 }
 
-// Inserts DMA commands to handle TILE operations
-void EthosU55RCSGenerator::InsertTileDMACommand(const HLCStripe *stripe, Temporaries &temps, std::vector<const HighLevelCommand *> &emitted)
-{
-    // reshape to 3D-tensor where the width-axis is being tiled
-    static auto reshapeFunc = [](Shape &shape, int tiledAxis)
-    {
-        int height = 1;
-        int channel = 1;
-        // all axes before tiledAxis are reshaped to height
-        for ( int i = 0; i < tiledAxis; i++ )
-        {
-            height *= shape[i];
-        }
-        // all axes after tiledAxis are reshaped to channel
-        for ( int i = tiledAxis + 1; i < shape.Size(); i++ )
-        {
-            channel *= shape[i];
-        }
-
-        shape = {1, height, shape[tiledAxis], channel};
-    };
-
-    auto op = stripe->operation;
-    assert(op->type == OpType::Tile);
-
-    auto &ifm = op->ifm[0];
-    auto &ofm = op->ofm;
-
-    assert(ifm.format == TensorFormat::NHWC);
-    assert(ofm.format == TensorFormat::NHWC);
-
-    const auto &tileParams = op->parameters.tile;
-
-    reshapeFunc(ifm.shape, tileParams.axis);
-    reshapeFunc(ofm.shape, tileParams.axis);
-
-    int srcOffset = 0;
-    int dstOffset = 0;
-    int elemSize = DataTypeSizeBits(ifm.dataType) / 8;
-    int rowBytes = ifm.shape[2] * ifm.shape[3] * elemSize;
-    // each row in the IFM is copied separately
-    // and duplicated based on the multiplier attribute.
-    for ( int h = 0; h < ifm.shape.Height(); h++ )
-    {
-        for ( int i = 0; i < tileParams.multiplier; i++ )
-        {
-            auto dma = std::make_unique<HLCDMA>();
-            dma->srcMemArea = ifm.memArea;
-            dma->srcAddress = ifm.address + srcOffset;
-            dma->length = rowBytes;
-            dma->destMemArea = ofm.memArea;
-            dma->destAddress = ofm.address + dstOffset;
-            emitted.push_back(dma.get());
-            temps.cmds.push_back(std::move(dma));
-            dstOffset += rowBytes;
-        }
-        srcOffset += rowBytes;
-    }
-}
-
 static inline int FirstSwapped(unsigned transpose, int &from)
 {
     unsigned mask = unsigned(transpose) ^ unsigned(TransposeType::None);
@@ -1943,11 +1883,7 @@ void EthosU55RCSGenerator::PrepareCommand(int index, HighLevelCommand *cmd, Temp
     HLCStripe *stripe = static_cast<HLCStripe *>(cmd);
     auto op = stripe->operation;
     temps.timestamp = index;
-    if ( op->type == OpType::Tile )
-    {
-        InsertTileDMACommand(stripe, temps, emitted);
-    }
-    else if ( op->type == OpType::Transpose )
+    if ( op->type == OpType::Transpose )
     {
         InsertTransposeCommand(stripe, temps, emitted);
     }

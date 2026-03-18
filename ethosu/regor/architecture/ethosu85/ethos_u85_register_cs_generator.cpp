@@ -1660,84 +1660,6 @@ EthosU85RCSGenerator::InsertLUTDMACommands(std::vector<std::unique_ptr<HighLevel
     return result;
 }
 
-// Converts TILE operations into 3D (or 2D) DMA operations
-std::vector<std::unique_ptr<HighLevelCommand>>
-EthosU85RCSGenerator::InsertTileDMACommands(std::vector<std::unique_ptr<HighLevelCommand>> &cmds)
-{
-    // reshape to 3D-tensor where the width-axis is being tiled
-    static auto reshapeFunc = [](Shape &shape, int tiledAxis)
-    {
-        int height = 1;
-        int channel = 1;
-        // all axes before tiledAxis are reshaped to height
-        for ( int i = 0; i < tiledAxis; i++ )
-        {
-            height *= shape[i];
-        }
-        // all axes after tiledAxis are reshaped to channel
-        for ( int i = tiledAxis + 1; i < shape.Size(); i++ )
-        {
-            channel *= shape[i];
-        }
-        shape = {1, height, shape[tiledAxis], channel};
-    };
-
-    std::vector<std::unique_ptr<HighLevelCommand>> result;
-    for ( auto &hlc : cmds )
-    {
-        if ( hlc->CommandType() == HighLevelCommandType::STRIPE )
-        {
-            auto stripe = static_cast<HLCStripe *>(hlc.get());
-            auto op = stripe->operation;
-            if ( op->type == OpType::Tile )
-            {
-                // convert tile-operation to multiple DMA operations
-                auto &ifm = op->ifm[0];
-                auto &ofm = op->ofm;
-                // max-height for 2D/3D DMA operations
-                constexpr int maxHeight = (1 << 16) - 1;
-                int elemSize = DataTypeSizeBits(ifm.dataType) / 8;
-                assert(ifm.format == TensorFormat::NHWC);
-                assert(ofm.format == TensorFormat::NHWC);
-                const auto &tileParams = op->parameters.tile;
-                reshapeFunc(ifm.shape, tileParams.axis);
-                reshapeFunc(ofm.shape, tileParams.axis);
-                auto srcStrides = Shape::GetStridesForShape(ifm.shape, {1, 1, 1, elemSize});
-                auto dstStrides = Shape::GetStridesForShape(ofm.shape, {1, 1, 1, elemSize});
-                int srcheightOffset = 0;
-                int dstheightOffset = 0;
-                int height = ifm.shape.Height();
-                // Decompose height in slices if needed
-                while ( height > 0 )
-                {
-                    int heightSlice = std::min(height, maxHeight);
-                    for ( int i = 0; i < tileParams.multiplier; i++ )
-                    {
-                        // create 2D/3D DMA that copies ifm to ofm
-                        int dstWidthOffset = i * ifm.shape.Width() * srcStrides.Width();
-                        auto dma = std::make_unique<HLCDMA>();
-                        dma->srcMemArea = ifm.memArea;
-                        dma->srcAddress = ifm.address + srcheightOffset;
-                        dma->srcStrides = srcStrides;
-                        dma->length = ifm.shape.Depth() * elemSize;
-                        dma->sizes = Shape(heightSlice, ifm.shape.Width());
-                        dma->destMemArea = ofm.memArea;
-                        dma->destAddress = ofm.address + dstheightOffset + dstWidthOffset;
-                        dma->destStrides = dstStrides;
-                        result.push_back(std::move(dma));
-                    }
-                    height -= heightSlice;
-                    srcheightOffset += heightSlice * srcStrides.Height();
-                    dstheightOffset += heightSlice * dstStrides.Height();
-                }
-                continue;
-            }
-        }
-        result.push_back(std::move(hlc));
-    }
-    return result;
-}
-
 //----------------------------------------------------------------------
 // Operations
 //----------------------------------------------------------------------
@@ -2289,7 +2211,6 @@ std::vector<uint32_t> EthosU85RCSGenerator::GenerateCommandStream(
     _opToLutSlot.clear();
     GenerateInitialRegisterSetup();
     auto cmds = InsertLUTDMACommands(highLevelCommandStream);
-    cmds = InsertTileDMACommands(cmds);
     std::deque<MemoryAccesses> outstandingDmaAccesses;
     std::deque<MemoryAccesses> outstandingNpuAccesses;
     int maxOutstandingDMAOps = _arch->MaxOutstandingDMAOps();

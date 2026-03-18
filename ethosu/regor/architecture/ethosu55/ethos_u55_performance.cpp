@@ -650,11 +650,6 @@ ElementAccess EthosU55Performance::MeasureElementAccess(const PerformanceQuery &
             }
         }
     }
-    else if ( query.type == OpType::Tile )
-    {
-        // IFM0 is read multiple times to cover all elements in ofmShape
-        access.ifmRead[0] = Shape::RoundAway(query.ofmShape, ofmRounding).Elements();
-    }
     else if ( query.type == OpType::Transpose )
     {
         access.ifmRead[0] = query.ifmShape[0].Elements();

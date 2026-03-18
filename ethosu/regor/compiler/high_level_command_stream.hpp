@@ -144,12 +144,6 @@ union HLCParameters
 
     struct
     {
-        int axis;
-        int multiplier;
-    } tile;
-
-    struct
-    {
         int shift;
     } double_round;
 };
@@ -187,7 +181,6 @@ struct HLCSubOperation
             parameters.double_round = other.parameters.double_round;
         else if ( other.type == OpType::LeakyRelu ) parameters.leaky_relu = other.parameters.leaky_relu;
         else if ( other.type == OpType::ArgMax ) parameters.argmax = other.parameters.argmax;
-        else if ( other.type == OpType::Tile ) parameters.tile = other.parameters.tile;
         else if ( other.type == OpType::Resize ) parameters.resize = other.parameters.resize;
         srcId = other.srcId;
         return *this;

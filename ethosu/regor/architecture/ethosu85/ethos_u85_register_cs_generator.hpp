@@ -227,8 +227,6 @@ protected:
     // Inserts DMA commands for copying LUTs from constant memory
     // to LUT memory
     std::vector<std::unique_ptr<HighLevelCommand>> InsertLUTDMACommands(std::vector<std::unique_ptr<HighLevelCommand>> &cmds);
-    // Inserts DMA commands to handle TILE operations
-    std::vector<std::unique_ptr<HighLevelCommand>> InsertTileDMACommands(std::vector<std::unique_ptr<HighLevelCommand>> &cmds);
 
     //----------------------------------------------------------------------
     // Operations

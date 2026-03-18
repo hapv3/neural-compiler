@@ -586,11 +586,6 @@ ElementAccess EthosU85Performance::MeasureElementAccess(const PerformanceQuery &
             // Complete IFM1 (index) is read
             access.ifmRead[1] = Shape::RoundAway(query.ifmShape[1], ifmRounding).Elements();
         }
-        else if ( query.type == OpType::Tile )
-        {
-            // IFM0 is read multiple times to cover all elements in ofmShape
-            access.ifmRead[0] = Shape::RoundAway(query.ofmShape, ifmRounding).Elements();
-        }
         else
         {
             LOG_WARN("Missing element access estimation for DMA op {}\n", OpTypeToString(query.type).c_str());

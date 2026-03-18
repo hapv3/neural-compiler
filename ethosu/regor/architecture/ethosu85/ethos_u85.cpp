@@ -1375,7 +1375,6 @@ EthosU85NpuOp ArchEthosU85::GetHWOp(OpType type)
         {OpType::Resize, EthosU85NpuOp::Resize},
         {OpType::Gather, EthosU85NpuOp::Dma},
         {OpType::Scatter, EthosU85NpuOp::Dma},
-        {OpType::Tile, EthosU85NpuOp::Dma},
         {OpType::If, EthosU85NpuOp::Branch},
         {OpType::While, EthosU85NpuOp::Branch},
     };
