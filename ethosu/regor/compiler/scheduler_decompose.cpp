@@ -83,7 +83,7 @@ bool ShouldDecompose(Architecture *arch, const SchedulerOperation *schedOp)
 }
 
 static std::unique_ptr<SchedulerOperation> MakeMemCopy(const std::shared_ptr<SchedulerTensor> &source,
-    const std::shared_ptr<SchedulerTensor> &dest, const TensorSlice *ofmSlice = nullptr)
+    const std::shared_ptr<SchedulerTensor> &dest, const Shape &ofmShape, const TensorSlice *ofmSlice = nullptr)
 {
     assert(ofmSlice == nullptr || ofmSlice->shape + ofmSlice->offset <= dest->storageShape);
     auto op = std::make_unique<SchedulerOperation>(OpType::MemoryCopy);
@@ -91,7 +91,7 @@ static std::unique_ptr<SchedulerOperation> MakeMemCopy(const std::shared_ptr<Sch
     op->SetKernel(Kernel::UnitKernel());
 
     auto ofmConn = op->ConnectOutput(TensorUsage::OFM, dest);
-    ofmConn->shape = Shape::PadAxes(dest->storageShape, 4, 1);
+    ofmConn->shape = Shape::PadAxes(ofmShape, 4, 1);
     if ( ofmSlice ) ofmConn->slice = *ofmSlice;
     if ( ofmConn->Type() == DataType::Int64 )
     {  // Copy int64 data as int32 data with 2 x C
@@ -1400,7 +1400,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeDepthwiseConv2D(Decomp
         result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
         if ( transposeOpOfm != ofmConn->tensor )
         {  // Insert memory copy of transposed ofm with slice offset
-            auto copyOp = DecomposeMemoryCopy(ctx, MakeMemCopy(transposeOpOfm, ofmConn->tensor, &ofmSlice));
+            auto copyOp = DecomposeMemoryCopy(ctx, MakeMemCopy(transposeOpOfm, ofmConn->tensor, ofmConn->shape, &ofmSlice));
             result.insert(result.end(), std::make_move_iterator(copyOp.begin()), std::make_move_iterator(copyOp.end()));
         }
         return result;
@@ -1820,7 +1820,7 @@ ConvertResizeBilinearHPCToDepthwise(Architecture *arch, std::unique_ptr<Schedule
     // Centre
     {
         TensorSlice dst = {{0, 1, 1, 0}, ifmShape};
-        auto mc = MakeMemCopy(tens, padT, &dst);
+        auto mc = MakeMemCopy(tens, padT, padT->storageShape, &dst);
         ifmConn = mc->Output(TensorUsage::OFM);
         result.emplace_back(std::move(mc));
     }
@@ -1828,7 +1828,7 @@ ConvertResizeBilinearHPCToDepthwise(Architecture *arch, std::unique_ptr<Schedule
     auto makeRowCopy = [&](int srcH, int dstH)
     {
         TensorSlice dst = {{0, dstH, 1, 0}, ifmShape.WithHeight(1)};
-        auto mc = MakeMemCopy(tens, padT, &dst);
+        auto mc = MakeMemCopy(tens, padT, padT->storageShape, &dst);
         auto *ifm = mc->IFM(0);
         ifm->slice.offset = Shape(0, srcH, 0, 0);
         ifm->slice.shape = dst.shape;
@@ -1840,7 +1840,7 @@ ConvertResizeBilinearHPCToDepthwise(Architecture *arch, std::unique_ptr<Schedule
     auto makeColCopy = [&](int srcW, int dstW)
     {
         TensorSlice dst = {{0, 0, dstW, 0}, padT->storageShape.WithWidth(1)};
-        auto mc = MakeMemCopy(padT, padT, &dst);
+        auto mc = MakeMemCopy(padT, padT, padT->storageShape, &dst);
         auto *ifm = mc->IFM(0);
         ifm->slice.offset = Shape(0, 0, srcW, 0);
         ifm->slice.shape = dst.shape;
