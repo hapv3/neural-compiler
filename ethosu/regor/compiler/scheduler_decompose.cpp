@@ -426,7 +426,8 @@ HandleDilation(DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op
             ifmStrides.x *= DX * GX;
             newOfmSlice.offset = newOfmSlice.offset.WithHW(newOfmSlice.offset.Height() + dy, newOfmSlice.offset.Width() + dx);
             newOfmSlice.shape = newOfmSlice.shape.WithHW(newOfmSlice.shape.Height() - dy, newOfmSlice.shape.Width() - dx);
-            if ( newOfmSlice.shape.Width() > 0 && newOfmSlice.shape.Height() > 0 )
+            if ( newOfmSlice.shape.Width() > 0 && newOfmSlice.shape.Height() > 0 && newIfmSlice.shape.Width() > 0 &&
+                 newIfmSlice.shape.Height() > 0 )
             {
                 ofmStrides.y *= DY;
                 ofmStrides.x *= DX;
