@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -260,6 +260,7 @@ public:
     ordered_map<TensorUsage, SchedulerConnection> outputs;
     std::unique_ptr<ArchitectureOpGroup> _opGroup;
     int _opGroupKey = 0;
+    int weightDepthOffset = 0;
 
 private:
     UniqueId _uid;

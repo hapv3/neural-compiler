@@ -650,7 +650,7 @@ WeightScaleEncoding Scheduler::EncodeBestWeightFormat(
     auto ifm = op->IFM(op->PrimaryIfmIndex());
     auto ifmType = ifm->Type();
     // The operation might have been decomposed in depth dimension and have an offset
-    const int depthBase = op->OFM()->slice.offset ? op->OFM()->slice.offset.Depth() : 0;
+    const int depthBase = op->weightDepthOffset;
     std::vector<int> depthOffsets{depthBase, depthBase + ofmShape.Unpermute(uint32_t(op->OFM()->transpose)).Depth()};
 
     const std::array<WF, 4> formatList = {WF(WeightFormat::Default, WeightFormat::Sparse2_4), WF(WeightFormat::Default),
@@ -781,7 +781,7 @@ std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(
     auto scales = op->TryInput(TensorUsage::Scales);
     if ( !weights && (op->OFM()->quantization.scales.size() > 1 || scales) )
     {
-        const int depthBase = op->OFM()->slice.offset ? op->OFM()->slice.offset.Depth() : 0;
+        const int depthBase = op->weightDepthOffset;
         std::vector<int> depthOffsets{depthBase, depthBase + ofmShape.Unpermute(uint32_t(op->OFM()->transpose)).Depth()};
 
         // The operation might have been decomposed in depth dimension and have an offset
@@ -791,7 +791,7 @@ std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(
         weightScales = EncodeQuantizationScaleTensor(op->Type(), std::move(encodingParams), depthOffsets, op->OFM()->quantization, scaleTensor);
     }
     // Finally construct and populate operator information (cost)
-    auto opInfo = std::make_unique<SchedulerOpInfo>(std::move(blockConfig), ifmShape, ifm2Shape, ofmShape);
+    auto opInfo = std::make_unique<SchedulerOpInfo>(std::move(blockConfig), ifmShape, ifm2Shape, ofmShape, op->weightDepthOffset);
     opInfo->SetWeightScaleTensors(weightScales.npuWeightsTensor, weightScales.npuScalesTensor);
 
     return opInfo;
@@ -1169,10 +1169,9 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
     const int fullDepthBeforeTransposition =
         (refCost->stripe == ofm->shape) ? refCost->stripe.Unpermute(uint32_t(ofm->transpose)).Depth() : refCost->stripe.Depth();
     const int fullDepthAfterTransposition = refCost->stripe.Depth();
-    // The operation might have been decomposed in depth dimension and have an offset
-    const int depthBase = ofm->slice.offset ? schedOp->OFM()->slice.offset.Depth() : 0;
+    const int depthBase = schedOp->weightDepthOffset;
     std::vector<int> ofmFullDepthSlicesBeforeTransposition = {depthBase, depthBase + fullDepthBeforeTransposition};
-    std::vector<int> ofmFullDepthSlicesAfterTransposition = {0, fullDepthAfterTransposition};
+    std::vector<int> ofmFullDepthSlicesAfterTransposition = {depthBase, depthBase + fullDepthAfterTransposition};
 
     assert(cost->npuWeightsTensor);
     auto weightFormat = cost->npuWeightsTensor->config->Format();
@@ -1666,7 +1665,7 @@ std::shared_ptr<Schedule> Scheduler::OptimizeSubSchedule(const CascadeInfo &casc
     bufferedSubSchedule->cascades = subSchedule->cascades;
 
     // Generate the possible stripings for the final Op in the sub-schedule
-    Shape finalOFMShape = subOps.back()->OFM()->shape;
+    Shape finalOFMShape = subOps.back()->OFM()->SliceShape();
     const int maxStripeHeight = (finalOFMShape.Height() + 1) / 2;
 
     // Skip testing the min stripe used in the MIN schedule since that will be used
@@ -1859,7 +1858,11 @@ PerformanceQuery Scheduler::InitPerfQuery(SchedulerOperation *op, ArchitectureOp
             query.weightStagingMemory = cost->bufferedWeightTensor.tensor[0]->memArea.memory;
             if ( cost->bufferedWeightTensor.preBuffer )
             {
-                auto preBufferRatio = float(cost->ofmDepthSlices[1]) / cost->ofmDepthSlices.back();
+                // Number of channels in the first slice (the pre-buffered slice) relative to total number of slices
+                assert(cost->ofmDepthSlices.size() >= 2);
+                const float prebufferChannels = cost->ofmDepthSlices[1] - cost->ofmDepthSlices[0];
+                const float channels = cost->ofmDepthSlices.back() - cost->ofmDepthSlices[0];
+                const auto preBufferRatio = prebufferChannels / channels;
                 query.firstWeightDMASize = query.encodedWeightSize * preBufferRatio;
             }
         }

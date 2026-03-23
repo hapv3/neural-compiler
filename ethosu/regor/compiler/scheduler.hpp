@@ -132,13 +132,16 @@ public:
     ElementAccess elementAccess;
 
 public:
-    SchedulerOpInfo(std::unique_ptr<ArchitectureOpConfig> opConfig, const Shape &stripeInput1, const Shape &stripeInput2, const Shape &stripe_)
+    SchedulerOpInfo(std::unique_ptr<ArchitectureOpConfig> opConfig, const Shape &stripeInput1,
+        const Shape &stripeInput2, const Shape &stripe_, const int depthOffset = 0)
     {
         this->_config = std::move(opConfig);
         this->stripeInput[0] = stripeInput1;
         this->stripeInput[1] = stripeInput2;
         this->stripe = stripe_;
-        this->ofmDepthSlices = {0, stripe_.Size() > 0 ? stripe.Depth() : 0};
+
+        // Create default single depth slice that covers the whole stripe depth. It may be updated later.
+        this->ofmDepthSlices = {depthOffset, depthOffset + (stripe_.Size() > 0 ? stripe.Depth() : 0)};
     }
 
     SchedulerOpInfo(const SchedulerOpInfo &other) { Copy(other); }

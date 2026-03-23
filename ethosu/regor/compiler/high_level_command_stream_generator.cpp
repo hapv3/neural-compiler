@@ -920,9 +920,9 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
     int upscaling = ifm0Conn->resamplingMode == ArchResampling::None ? 1 : 2;
     auto &depthSlices = opInfo->ofmDepthSlices;
     // Define Start offset and shape for the OFM
-    auto ofmOffset = Shape::PadAxes(ofmConn->shape, 4, 0).WithZeros().WithDepth(depthSlices[0]);
+    auto ofmOffset = Shape::PadAxes(ofmConn->shape, 4, 0).WithZeros();
     auto ofmShape = Shape::PadAxes(ofmConn->shape, 4, 1);
-    if ( ofmConn->slice.offset.Size() > 0 )
+    if ( ofmConn->slice )
     {
         ofmOffset = Shape::PadAxes(ofmConn->slice.offset, 4, 0);
         ofmShape = Shape::PadAxes(ofmConn->slice.shape, 4, 1);
@@ -953,8 +953,9 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
                 // Offsets are later converted into true tensor coordinates before creating the stripe-areas.
                 int depth = depthSlices[depthIndex];
                 int nextDepth = depthSlices[depthIndex + 1];
-                Shape ofmStripeStartOffset = Shape(0, height, width, depth);
-                Shape ofmStripeEndOffset = Shape(1, endHeight, endWidth, nextDepth);
+                int baseDepth = depthSlices[0];
+                Shape ofmStripeStartOffset = Shape(0, height, width, depth - baseDepth);
+                Shape ofmStripeEndOffset = Shape(1, endHeight, endWidth, nextDepth - baseDepth);
                 // assert that stripe-offsets are inside the OFM slice shape.
                 assert((Shape::Min(ofmStripeStartOffset, ofmShape) == ofmStripeStartOffset) && "OFM-start offset not inside OFM Shape");
                 assert((Shape::Min(ofmStripeEndOffset, ofmShape) == ofmStripeEndOffset) && "OFM-end offset not inside OFM Shape");
@@ -985,7 +986,7 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
                 }
                 if ( opInfo->npuWeightsTensor != nullptr )
                 {
-                    hlcStripe->weightRangeDepth = primaryStripeArea.ofmArea.Start().Depth();
+                    hlcStripe->weightRangeDepth = depth;
                     if ( opInfo->bufferedWeightTensor.parts > 0 &&
                          (primaryStripeArea.ofmArea.Start().Height() == ofmOffset.Height() ||
                              opInfo->bufferedWeightTensor.buffering == Buffering::Double) )
@@ -994,20 +995,18 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
                         int bufferIndex = depthIndex % opInfo->bufferedWeightTensor.parts;
                         assert(bufferIndex >= 0 && bufferIndex < 2);
                         // Metadata of new weights to put into the weight buffer tensor
-                        auto newWeights = std::make_tuple(opInfo->npuWeightsTensor->equivalenceId,
-                            primaryStripeArea.ofmArea.Start().Depth(), depthIndex);
+                        auto newWeights = std::make_tuple(opInfo->npuWeightsTensor->equivalenceId, depth, depthIndex);
                         if ( _filledWeightBuffers.count(opInfo->bufferedWeightTensor.tensor[bufferIndex].get()) == 0 )
                         {
-                            cmds.push_back(GenerateWeightDMA(opInfo->npuWeightsTensor.get(),
-                                opInfo->bufferedWeightTensor, primaryStripeArea.ofmArea.Start().Depth(), depthIndex));
+                            cmds.push_back(GenerateWeightDMA(opInfo->npuWeightsTensor.get(), opInfo->bufferedWeightTensor, depth, depthIndex));
                         }
                         else
                         {
                             auto &currentWeights = _filledWeightBuffers[opInfo->bufferedWeightTensor.tensor[bufferIndex].get()];
                             if ( currentWeights != newWeights )
                             {
-                                cmds.push_back(GenerateWeightDMA(opInfo->npuWeightsTensor.get(),
-                                    opInfo->bufferedWeightTensor, primaryStripeArea.ofmArea.Start().Depth(), depthIndex));
+                                cmds.push_back(GenerateWeightDMA(
+                                    opInfo->npuWeightsTensor.get(), opInfo->bufferedWeightTensor, depth, depthIndex));
                             }
                         }
                         _filledWeightBuffers[opInfo->bufferedWeightTensor.tensor[bufferIndex].get()] = newWeights;
@@ -1015,7 +1014,7 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
                 }
                 else if ( opInfo->npuScalesTensor != nullptr )
                 {
-                    hlcStripe->weightRangeDepth = primaryStripeArea.ofmArea.Start().Depth();
+                    hlcStripe->weightRangeDepth = depth;
                 }
                 else
                 {

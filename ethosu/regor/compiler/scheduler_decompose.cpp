@@ -149,6 +149,7 @@ MakeSubOperation(const SchedulerOperation *schedOp, const Kernel *newKernel = nu
     subOp->SetPrimaryIfmIndex(schedOp->PrimaryIfmIndex());
     subOp->SetAttributes(schedOp->AttributeRef());
     subOp->SetAccumulatorMode(schedOp->AccumulatorMode());
+    subOp->weightDepthOffset = schedOp->weightDepthOffset;
     for ( const auto *list : {&schedOp->inputs, &schedOp->outputs} )
     {
         for ( const auto &item : list->pairs() )
@@ -320,6 +321,8 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeBlocksElementwi
                 }
                 auto *subOfmConn = subOp->OFM();
                 subOfmConn->slice = std::move(newOfmSlice);
+                // Set scale slice offset
+                subOp->weightDepthOffset += bc * BC;
                 auto subOps = doDecompose(ctx, std::move(subOp));
                 result.insert(result.end(), std::make_move_iterator(subOps.begin()), std::make_move_iterator(subOps.end()));
             }
@@ -676,9 +679,8 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeBlocks(
                 subIfmConn->slice = std::move(newIfmSlice);
                 auto *subOfmConn = subOp->Output(TensorUsage::OFM);
                 subOfmConn->slice = std::move(newOfmSlice);
-                // Decomposition algorithm has weight slicing here if NC > 1, new_weights[oc,y,x,ic] =
-                // weights[oc+bc*NC,y,x,ic] Handled by the existing weight slicing code in the scheduler, so not done
-                // here.
+                // Set weight/scale slice offset
+                subOp->weightDepthOffset += bc * BC;
 
                 if ( subOp->Output(TensorUsage::OFM)->SliceShape().Elements() )
                 {
@@ -2292,6 +2294,8 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeMatmul(DecompositionCo
                     subOp->Input(TensorUsage::IFM)->slice = newIfmSlice;
                     subOp->Input(TensorUsage::IFM1)->slice = newIfm2Slice;
                     subOp->Output(TensorUsage::OFM)->slice = newOfmSlice;
+                    // Set weight/scale slice offset
+                    subOp->weightDepthOffset += width;
 
                     // Set accumulator mode according to these conditions:
                     //  * Reset accumulators if first depth-wise block otherwise preserve
