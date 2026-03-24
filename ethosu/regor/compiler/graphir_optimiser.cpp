@@ -1864,7 +1864,6 @@ Operation *GraphIrOptimiser::RewriteCast(Graph *const, Operation *const operatio
             newOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_one", int8_t(1)));
             newOp->CopyOutput(TensorUsage::OFM, *ofmConn);
             RecordOptimisation(*operation, newOp.get());
-            operation->Disconnect();
             returnOp = newOp.get();
         }
         else if ( IsInteger(ifmType) && IsBool(ofmType) )
@@ -1875,7 +1874,6 @@ Operation *GraphIrOptimiser::RewriteCast(Graph *const, Operation *const operatio
             newOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_zero", ifmConn->tensor->Type(), 0));
             newOp->CopyOutput(TensorUsage::OFM, *ofmConn);
             RecordOptimisation(*operation, newOp.get());
-            operation->Disconnect();
             returnOp = newOp.get();
         }
         else
@@ -1883,8 +1881,9 @@ Operation *GraphIrOptimiser::RewriteCast(Graph *const, Operation *const operatio
             // Replace CAST with ADD
             auto copyOp = std::make_shared<Operation>(OpType::Add);
             auto type = ifmConn->tensor->Type();
-            ReplaceOperation(operation, copyOp.get());
+            copyOp->CopyInput(TensorUsage::IFM0, *ifmConn);
             copyOp->ConnectInput(TensorUsage::IFM1, CreateConstTensor("const_zero", type, 0));
+            copyOp->CopyOutput(TensorUsage::OFM, *ofmConn);
             RecordOptimisation(*operation, copyOp.get());
             returnOp = copyOp.get();
         }
@@ -1896,6 +1895,9 @@ Operation *GraphIrOptimiser::RewriteCast(Graph *const, Operation *const operatio
             castOut->quantization.quantMin = {std::numeric_limits<int64_t>::min()};
             castOut->quantization.quantMax = {std::numeric_limits<int64_t>::max()};
         }
+
+        // Remove original op
+        operation->Disconnect();
     }
     return returnOp;
 }
