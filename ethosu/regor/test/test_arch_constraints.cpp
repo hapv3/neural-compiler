@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2025-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -79,7 +79,7 @@ TEST_CASE("Ethos-U55 SupportsQuantization handles IFM-fusing elementwise constra
     SECTION("rejects Mul with non-unit IFM-scaling")
     {
         const Quantization quant = MakeQuant(2, 1, 0);
-        REQUIRE_FALSE(constraints->SupportsQuantization(OpType::Add, quant, DataType::Int8, quant, DataType::Int8, unit, DataType::Int8));
+        REQUIRE_FALSE(constraints->SupportsQuantization(OpType::Mul, quant, DataType::Int8, quant, DataType::Int8, unit, DataType::Int8));
     }
 }
 

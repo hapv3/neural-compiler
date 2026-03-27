@@ -110,10 +110,14 @@ bool SupportedIFMQuant(OpType opType, const Quantization &ifmQuant, const Quanti
     // Binary IFM-fusing constraints for Add/Sub
     if ( opType == OpType::Add || opType == OpType::Sub )
     {
-        // TODO MLBEDSW-10115: Support full 32-bit (advanced) rescale (with nonzero shift)
-        // For now only allow 16-bit (simple) rescale with shift == 0
+        // Allow 16-bit (simple) rescale with shift == 0
         if ( ifmScale.shift == 0 && ifm2Scale.shift == 0 && int16_t(ifmScale.scale) == ifmScale.scale &&
              int16_t(ifm2Scale.scale) == ifm2Scale.scale )
+        {
+            return true;
+        }
+        // Allow if one of the inputs has power of two scale
+        if ( IsPowerOfTwo(ifmScale.scale) || IsPowerOfTwo(ifm2Scale.scale) )
         {
             return true;
         }
