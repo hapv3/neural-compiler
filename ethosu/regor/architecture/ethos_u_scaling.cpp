@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -53,68 +53,6 @@ void QuantizePoolingScaleMaxPrecision(int kernelElements, double rescale, uint32
         rescaleBits = -IntLog2(1.0 / rescale);
     }
     QuantizePoolingScale(kernelElements, rescale, rescaleBits, scale, shift, N);
-}
-
-// Simplified version of calculating elementwise Add/Sub scales
-void SimplifiedElementwiseAddSubScale(double input1Scale, double input2Scale, double outputScale, int inputShift,
-    double &input1Rescale, double &input2Rescale, QuantizedScale &outScale)
-{
-    auto m = 2 * std::max(input1Scale, input2Scale);
-    auto f = double(int64_t(1) << inputShift);
-    input1Rescale = input1Scale * f / m;
-    input2Rescale = input2Scale * f / m;
-    double outputRescale = m / (outputScale * f);
-    outScale = QuantizedScale(outputRescale);
-}
-
-Quantization RescalePerChannel(const Quantization &ifmQuant, const Quantization &weightQuant,
-    const Quantization &ofmQuant, const DataType scaleDataType, const DataType ifmDataType, OpType opType)
-{
-    if ( ofmQuant.type != QuantizationType::TFLITE )
-    {
-        // Explicit quantized scale has already been set
-        return ofmQuant;
-    }
-
-    Quantization quantResult;
-    quantResult.type = QuantizationType::EXPLICIT;
-    quantResult.zeroPoints = ofmQuant.zeroPoints;
-    quantResult.quantMin = ofmQuant.quantMin;
-    quantResult.quantMax = ofmQuant.quantMax;
-    quantResult.dimension = ofmQuant.dimension;
-
-    if ( !ifmQuant.scales.empty() && !ofmQuant.scales.empty() && !weightQuant.scales.empty() )
-    {
-        const bool reducedScale = (scaleDataType == DataType::Int64 && DataTypeSizeBits(ifmDataType) == 16);
-        const bool globalScale = weightQuant.scales.size() == 1;
-
-        const int modIfm = (ifmQuant.scales.size()) == 1 ? 0 : -1;
-        const int modOfm = (ofmQuant.scales.size()) == 1 ? 0 : -1;
-
-        quantResult.scales.reserve(weightQuant.scales.size());
-
-        for ( int i = 0; i < int(weightQuant.scales.size()); i++ )
-        {
-            double v = 1.0;
-            float ifmScale = float(ifmQuant.scales[i & modIfm].Dequantize());
-            float ofmScale = float(ofmQuant.scales[i & modOfm].Dequantize());
-            float weightScale = float(weightQuant.scales[i].Dequantize());
-            if ( ifmDataType == DataType::UInt8 || (opType == OpType::FullyConnected && globalScale) )
-            {
-                // Fuse the IFM, weight and OFM scales into one scale using single precision
-                v = double(ifmScale * weightScale) / double(ofmScale);
-            }
-            else if ( ifmDataType == DataType::Int8 || ifmDataType == DataType::Int16 )
-            {
-                // Fuse the IFM, weight and OFM scales into one scale using double precision
-                v = (double(ifmScale) * double(weightScale)) / double(ofmScale);
-            }
-
-            quantResult.scales.emplace_back(v, reducedScale);
-        }
-    }
-
-    return quantResult;
 }
 
 }  // namespace regor

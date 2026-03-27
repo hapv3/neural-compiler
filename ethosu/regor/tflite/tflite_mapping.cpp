@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2023-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -783,7 +783,15 @@ bool TfLiteMapping::CanFuseActivationFunction(const Operation *operation)
         return false;  // Only fuse operators to the activation functions they arrived fused to
     }
 
-    if ( operation->Output(TensorUsage::OFM)->quantization != successor->Output(TensorUsage::OFM)->quantization )
+    // Tanh requires special handling due to its quantization being converted to EXPLICIT in the reader,
+    // i.e. before supported operator checks.
+    if ( (activation == tflite::ActivationFunctionType::TANH) && !successor->Output(TensorUsage::OFM)->quantization.IsUnitScale() )
+    {
+        return false;  // If Tanh was fused in the source graph it must have unit quantization
+    }
+
+    if ( (activation != tflite::ActivationFunctionType::TANH) &&
+         (operation->Output(TensorUsage::OFM)->quantization != successor->Output(TensorUsage::OFM)->quantization) )
     {
         return false;  // Intermediate tensor contains quantization information that cannot be discarded
     }

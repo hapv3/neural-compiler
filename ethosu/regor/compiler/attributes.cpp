@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -58,6 +58,7 @@ DynamicRef CreateAttribute(uint32_t reducedHash)
         CASE_MAKE_ATTR_INSTANCE(unidirectional_sequence_lstm_attr_t);
         CASE_MAKE_ATTR_INSTANCE(internal_if_attr_t);
         CASE_MAKE_ATTR_INSTANCE(internal_while_attr_t);
+        CASE_MAKE_ATTR_INSTANCE(double_round_shift_attr_t);
         default:
             assert(false && "No attribute has this reduced hash");
             // Add a new XXX_attr_t struct to the header then

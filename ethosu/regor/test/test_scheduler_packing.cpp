@@ -126,11 +126,8 @@ TEST_CASE("Test activation fusing")
 {
     // Activations can be fused to previous operation
     // as long as they don't perform any rescaling.
-    // This is represented by:
-    // TFLITE:
-    //      ifm and ofm quantization must be equal
-    // EXPLICIT:
-    //      ifm and ofm quantization must be unit
+    // This is represented by ifm and ofm quantization
+    // both being unit
 
     // Create arch
     auto arch = CreateArchDefault<ArchEthosU85>();
@@ -153,87 +150,10 @@ TEST_CASE("Test activation fusing")
     ops.push_back(std::move(op1));
     auto op2 = CreateOperation(OpType::Relu, TensorUsage::IFM, ofm, TensorUsage::OFM, actofm);
     ops.push_back(op2);
-    SECTION("Don't fuse asymmetric TFLite quant")
+    SECTION("Don't fuse non-unit quant")
     {
-        // IFM/OFM quantization are not equal
-        // so fusing cannot happen
-        auto *reluIfmConn = op2->Input(TensorUsage::IFM);
-        auto *reluOfmConn = op2->Output(TensorUsage::OFM);
-        Quantization ifmQuant;
-        ifmQuant.scales.push_back({1, 5});
-        ifmQuant.type = QuantizationType::TFLITE;
-        reluIfmConn->quantization = std::move(ifmQuant);
-
-        Quantization ofmQuant;
-        ofmQuant.scales.push_back({1, 0});
-        ofmQuant.type = QuantizationType::TFLITE;
-        reluOfmConn->quantization = std::move(ofmQuant);
-
-        // Create graph with ops
-        auto graph = CreateGraph(ops);
-        // Perform scheduler_packing
-        auto schedOps = packing.Process(graph.get());
-        // no activation fusing
-        REQUIRE(schedOps.size() == 2);
-    }
-    SECTION("Fuse symmetric TFLite quant")
-    {
-        // IFM and OFM quantization are equal
-        // so fusing is expected to happen
-        auto *reluIfmConn = op2->Input(TensorUsage::IFM);
-        auto *reluOfmConn = op2->Output(TensorUsage::OFM);
-        Quantization ifmQuant;
-        ifmQuant.scales.push_back({1, 5});
-        ifmQuant.type = QuantizationType::TFLITE;
-        reluIfmConn->quantization = std::move(ifmQuant);
-
-        Quantization ofmQuant;
-        ofmQuant.scales.push_back({1, 5});
-        ofmQuant.type = QuantizationType::TFLITE;
-        reluOfmConn->quantization = std::move(ofmQuant);
-
-        // Create graph with ops
-        auto graph = CreateGraph(ops);
-        // Perform scheduler_packing
-        auto schedOps = packing.Process(graph.get());
-        // no activation fusing
-        REQUIRE(schedOps.size() == 1);
-
-        // Validate that the second op is packed as subop of first
-        auto &abs = schedOps[0];
-        REQUIRE(abs->Type() == OpType::Abs);
-        REQUIRE(abs->SubOps().size() == 1);
-        auto &relu = abs->SubOps()[0];
-        REQUIRE(relu->Type() == OpType::Relu);
-
-        // Validate the primary op
-        auto *absIfmConn = abs->Input(TensorUsage::IFM);
-        auto *absOfmConn = abs->Output(TensorUsage::OFM);
-        REQUIRE(absIfmConn->tensor->Name() == "IFM");
-        REQUIRE(absIfmConn->tensor->producers.empty());
-        REQUIRE(absIfmConn->tensor->consumers.size() == 1);
-        REQUIRE(absIfmConn->tensor->consumers[0] == abs.get());
-        REQUIRE(absOfmConn->tensor->Name() == "ACTOFM");
-        REQUIRE(absOfmConn->tensor->producers.size() == 1);
-        REQUIRE(absOfmConn->tensor->producers[0] == abs.get());
-        REQUIRE(absOfmConn->tensor->consumers.empty());
-
-        // Validate the activation op
-        auto *actIfmConn = relu->Input(TensorUsage::IFM);
-        auto *actOfmConn = relu->Output(TensorUsage::OFM);
-        REQUIRE(actIfmConn->tensor->Name() == "OFM");
-        REQUIRE(actIfmConn->tensor->producers.empty());
-        REQUIRE(actIfmConn->tensor->consumers.size() == 1);
-        REQUIRE(actIfmConn->tensor->consumers[0] == relu.get());
-        REQUIRE(actOfmConn->tensor->Name() == "ACTOFM");
-        REQUIRE(actOfmConn->tensor->producers.size() == 1);
-        REQUIRE(actOfmConn->tensor->producers[0] == abs.get());
-        REQUIRE(actOfmConn->tensor->consumers.empty());
-    }
-    SECTION("Don't fuse non-unit explicit quant")
-    {
-        // EXPLICIT quantization requires unit IFM and OFM quant
-        // validate that we don't fuse symmetric (like we'd do for TFLite)
+        // Fusing requires unit IFM and OFM quant
+        // validate that we don't fuse symmetric
         auto *reluIfmConn = op2->Input(TensorUsage::IFM);
         auto *reluOfmConn = op2->Output(TensorUsage::OFM);
         Quantization ifmQuant;
@@ -253,9 +173,9 @@ TEST_CASE("Test activation fusing")
         // no activation fusing
         REQUIRE(schedOps.size() == 2);
     }
-    SECTION("Fuse unit explicit quant")
+    SECTION("Fuse unit quant")
     {
-        // EXPLICIT quantization requires unit IFM and OFM quant
+        // Fusing requires unit IFM and OFM quant
         // validate that we fuse unit even in the asymmetric case (one can be empty)
         auto *reluIfmConn = op2->Input(TensorUsage::IFM);
         auto *reluOfmConn = op2->Output(TensorUsage::OFM);

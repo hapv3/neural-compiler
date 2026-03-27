@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -26,7 +26,6 @@
 #include "common/shape.hpp"
 #include "compiler/tensor_properties.hpp"
 #include "ethos_u85.hpp"
-#include "ethos_u85_scaling.hpp"
 
 #include <mlw_encode.h>
 #include <string>
@@ -714,17 +713,6 @@ std::unique_ptr<IVolumeScaleSource> EthosU85WeightEncoder::GetScaleSource(
     }
 
     return nullptr;
-}
-
-Quantization EthosU85WeightEncoder::MakeExplicit(const Quantization &ifmQ, const Quantization &weightQ,
-    const Quantization &ofmQ, DataType scaleType, DataType ifmType, OpType opType)
-{
-    if ( DataTypeSizeBits(ifmType) == 16 ) ifmType = DataType::Int16;
-
-    // Fuse IFM/Weights/OFM scales into one OFM scale (global or per channel). This function only does something if we
-    // still have not converted the op to EXPLICIT quantization, meaning it must be a conv-like TFLite op with constant
-    // weights.
-    return RescalePerChannel(ifmQ, weightQ, ofmQ, scaleType, ifmType, opType);
 }
 
 

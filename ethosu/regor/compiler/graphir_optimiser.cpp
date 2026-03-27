@@ -635,9 +635,11 @@ Operation *GraphIrOptimiser::ConstPropagation(Graph *const graph, Operation *con
     }
 
     auto *ofmConn = operation->Output(TensorUsage::OFM);
-    if ( ofmConn->quantization.type != QuantizationType::EXPLICIT )
+
+    // TODO: Relax this restriction when MLBEDSW-11640 is implemented
+    // Don't constant propagate operations which write to a tensor with other writers
+    if ( ofmConn->tensor->Writers().size() > 1 )
     {
-        // TODO: Remove this restriction when MLBEDSW-10086 is implemented
         return operation;
     }
 
@@ -2901,15 +2903,16 @@ Operation *GraphIrOptimiser::RewriteArgmax(Graph *const graph, Operation *const 
     auto convOp = std::make_shared<Operation>(OpType::DepthwiseConv2D);
     convOp->SetKernel(std::make_unique<Kernel>(Point2i(1, 1), Point2i(1, 1), Point2i(1, 1)));
     convOp->CopyInput(TensorUsage::IFM, *ifmConn);
+    convOp->Input(TensorUsage::IFM)->quantization = Quantization::Unit();
     convOp->ConnectInput(TensorUsage::Weights, weightTensor).Set(Quantization::Unit());
     // Add bias to the convolution corresponding to the input channel
     convOp->ConnectInput(TensorUsage::Scales, convBias).Set(Quantization::Unit());
-    convOp->ConnectOutput(TensorUsage::OFM, convOutput).Set(ifmConn->quantization);
+    convOp->ConnectOutput(TensorUsage::OFM, convOutput).Set(Quantization::Unit());
 
     // Max pool op. Squash the width dimension into height since max pool can only work in 2D.  1xHxWxC -> 1x(WxH)xCx1
     auto maxPoolOp = std::make_shared<Operation>(OpType::MaxPool);
     int newHeight = h * w;
-    maxPoolOp->ConnectInput(TensorUsage::IFM, convOutput).Set(ifmConn->quantization).Set(Shape(1, newHeight, c, 1));
+    maxPoolOp->ConnectInput(TensorUsage::IFM, convOutput).Set(Quantization::Unit()).Set(Shape(1, newHeight, c, 1));
     maxPoolOp->SetKernel(std::make_unique<Kernel>(Point2i(c, 1), Point2i(1, 1), Point2i(1, 1)));
     maxPoolOp->ConnectOutput(TensorUsage::OFM, maxPoolOutput).Set(Quantization::Unit()).Set(Shape(1, newHeight, 1, 1));
 
@@ -2922,7 +2925,7 @@ Operation *GraphIrOptimiser::RewriteArgmax(Graph *const graph, Operation *const 
     auto lutTensor = CreateConstTensor("lutTensor", DataType::UInt32, lutBuf, &lutShape);
 
     // Use the LUT operator to extract the channel information from the lower 7 bits
-    Operation *lutOp = CreateLUT(maxPoolOutput, lutTensor, ifmConn->quantization, ofmConn->quantization, DataType::UInt32);
+    Operation *lutOp = CreateLUT(maxPoolOutput, lutTensor, Quantization::Unit(), Quantization::Unit(), DataType::UInt32);
     lutOp->ConnectInput(TensorUsage::IFM, maxPoolOutput).Set(Quantization::Unit());
     lutOp->ConnectOutput(TensorUsage::OFM, lutOutput).Set(Quantization::Unit()).Set(Shape(h, w, 1));
 

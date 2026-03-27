@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -309,6 +309,14 @@ struct internal_while_attr_t
     BEGIN_FIELD_TABLE(internal_while_attr_t)
         ATTR_FIELD(cond_graph, 0)
         ATTR_FIELD(body_graph, 1)
+    END_FIELD_TABLE()
+};
+
+struct double_round_shift_attr_t
+{
+    int shift;
+    BEGIN_FIELD_TABLE(double_round_shift_attr_t)
+        ATTR_FIELD(shift, 0)
     END_FIELD_TABLE()
 };
 

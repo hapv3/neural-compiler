@@ -206,6 +206,19 @@ static HLCSubOperation MakeSubOperation(
         param.sizeBytes = lutTensor->AllocationSizeBytes();
         param.ifmType = schedOp->IFM(0)->Type();
     }
+    else if ( schedOp->Type() == OpType::Add || schedOp->Type() == OpType::Sub )
+    {
+        if ( schedOp->HasAttribute<double_round_shift_attr_t>() )
+        {
+            const auto *double_round_shift = schedOp->Attribute<double_round_shift_attr_t>();
+            hlcSubOp.parameters.double_round.shift = double_round_shift->shift;
+        }
+        else
+        {
+            // Default to zero
+            hlcSubOp.parameters.double_round.shift = 0;
+        }
+    }
     return hlcSubOp;
 }
 
@@ -341,6 +354,21 @@ static std::shared_ptr<HLCOperation> MakeOperation(SchedulerOperation *schedOp, 
             }
             op->parameters.tile.axis = axis;
             op->parameters.tile.multiplier = multiples[axis];
+        }
+        break;
+        case OpType::Add:
+        case OpType::Sub:
+        {
+            if ( schedOp->HasAttribute<double_round_shift_attr_t>() )
+            {
+                const auto *double_round_shift = schedOp->Attribute<double_round_shift_attr_t>();
+                op->parameters.double_round.shift = double_round_shift->shift;
+            }
+            else
+            {
+                // Default to zero
+                op->parameters.double_round.shift = 0;
+            }
         }
         break;
         default:

@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2023-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -180,6 +180,9 @@ private:
     // Converts TFLite SAME/VALID padding to GraphIR format
     Operation *RewriteTransposeConvPadding(Graph *const graph, Operation *const operation);
 
+    // Converts Concat to a series of MemoryCopy operations
+    Operation *RewriteConcat(Graph *const graph, Operation *const operation);
+
 public:
     // The graph optimisation steps.
     // Order matters, array of rewrites processed in order.
@@ -268,6 +271,7 @@ public:
                 &TFLiteGraphOptimiser::ConvertMirrorPad,
                 &TFLiteGraphOptimiser::ConvertPadV2,
                 &TFLiteGraphOptimiser::RewriteTransposeConvPadding,
+                &TFLiteGraphOptimiser::RewriteConcat,
             }
         },
         {

@@ -769,14 +769,7 @@ std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(
     std::unique_ptr<ArchitectureOpConfig> blockConfig;
     if ( weights )
     {
-        if ( op->OFM()->quantization.type != QuantizationType::EXPLICIT )
-        {
-            auto scales = op->Input(TensorUsage::Scales);
-            auto temp = _arch->WeightEncoder()->MakeExplicit(ifm->quantization, weights->quantization,
-                op->OFM()->quantization, scales->Type(), ifm->Type(), op->Type());
-            op->OFM()->quantization = std::move(temp);
-            assert(op->OFM()->quantization.type == QuantizationType::EXPLICIT);
-        }
+        assert(op->OFM()->quantization.type == QuantizationType::EXPLICIT);
         auto weightEncoding = EncodeBestWeightFormat(op, ifmShape, ifm2Shape, ofmShape, weightFormat);
         blockConfig = std::move(weightEncoding.blockConfig);
         weightScales = weightEncoding.weightScales;

@@ -30,7 +30,6 @@
 #define NPU_DISASSEMBLE
 #define NPU_NAMESPACE ethosu85
 #include "ethos_u85_interface.hpp"
-#include "ethos_u85_scaling.hpp"
 
 #include <deque>
 #include <unordered_map>
@@ -701,7 +700,6 @@ void EthosU85RCSGenerator::GenerateOFMScalingForPooling(HLCOperation *poolOp, bo
 {
     QuantizedScale ofmScale(1, 0);
     bool isNoOp = _arch->UseAvgPoolNop(poolOp->type);
-    ethosU85Scaling::RescalePooling(poolOp, isNoOp);
 
     if ( useGlobalScale && !poolOp->ofm.quantization.scales.empty() )
     {
@@ -731,7 +729,6 @@ void EthosU85RCSGenerator::GenerateOFMScalingForPooling(HLCOperation *poolOp, bo
     {
         assert(useGlobalScale && "argmax without global scaling");
         // Argmax requires custom scaling to separate values and indices
-        // We don't use RescalePooling as this is true regardless of QuantizationType
         const auto &unitQuant = Quantization::Unit();
         assert((poolOp->ofm.quantization.scales.empty() || poolOp->ofm.quantization.EqualScales(unitQuant)) && "Argmax without unit scale");
         ofmScale = QuantizedScale(1, 16);
@@ -744,12 +741,10 @@ void EthosU85RCSGenerator::GenerateScalingForElementwise(HLCOperation *op)
 {
     auto opType = op->type;
     int ifmCnt = int(op->ifm.size());
-    bool setIfmDoubleRound = op->ifm[0].quantization.type == QuantizationType::TFLITE;
 
     QuantizedScale input1Scale(QuantizedScale::Unit());
     QuantizedScale input2Scale(QuantizedScale::Unit());
     QuantizedScale outScale(QuantizedScale::Unit());
-    ethosU85Scaling::RescaleElementwise(op);
 
     auto ifmRoundMode = GetIfmRoundingMode(op, 0);
     uint32_t ifmDoubleRound = 0;
@@ -765,14 +760,18 @@ void EthosU85RCSGenerator::GenerateScalingForElementwise(HLCOperation *op)
 
     if ( opType == OpType::LeakyRelu )
     {
-        // input2Scale is used for alpha
-        input2Scale = op->ifm[0].quantization.scales.back();
+        // input1Scale is used for rescaling and input2Scale is used for alpha.
+        double ofmScale = op->ofm.quantization.Scale().Dequantize();
+        double ifmScale = op->ifm[0].quantization.Scale().Dequantize();
+        input1Scale = QuantizedScale(float(ifmScale) / float(ofmScale));
+        input2Scale = QuantizedScale(float(op->parameters.leaky_relu.alpha) * float(ifmScale) / float(ofmScale));
+        outScale = QuantizedScale::Unit();
         ifmCnt = 2;
     }
     else if ( opType == OpType::Add || opType == OpType::Sub )
     {
         // Double round is used to compensate for the left shift that happens in AdvancedElementwiseAddSubScale
-        if ( setIfmDoubleRound ) ifmDoubleRound = op->ifm[0].dataType == DataType::Int8 ? 20 : 15;
+        ifmDoubleRound = op->parameters.double_round.shift;
     }
 
     // Check that scaling is valid
@@ -1853,11 +1852,6 @@ void EthosU85RCSGenerator::GenerateConvolutionOp(const HLCStripe *stripe, Memory
     QuantizedScale ofmScale(1, 0);
     bool useGlobalScale = false;
 
-    // Fuse IFM/IFM2/Weights/OFM scales into one global OFM scale. This function only does something if we still have
-    // not converted the op to EXPLICIT quantization, meaning it must be a conv-like TFLite op with dynamic weights (for
-    // example CONV2D with dynamic weights) or IFM2 (for example MATMUL).
-    ethosU85Scaling::RescaleConvolution(op);
-
     if ( op->ifm.size() == 2 )
     {
         GenerateIFM2Precision(op->ifm[1], false, false);
@@ -2078,6 +2072,10 @@ std::shared_ptr<HLCStripe> EthosU85RCSGenerator::MakeStripeForSubOp(HLCStripe *s
     else if ( subOp.type == OpType::LeakyRelu )
     {
         op->parameters.leaky_relu = subOp.parameters.leaky_relu;
+    }
+    else if ( subOp.type == OpType::Add || subOp.type == OpType::Sub )
+    {
+        op->parameters.double_round = subOp.parameters.double_round;
     }
     op->config = stripe->operation->config;
     std::shared_ptr<HLCStripe> newStripe = std::make_shared<HLCStripe>(op);

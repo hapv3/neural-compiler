@@ -836,12 +836,23 @@ void TfLiteReader::UnFuseActivation(const std::shared_ptr<Operation> &operation,
 
     auto activation = std::make_shared<Operation>(TfLiteMapping::ActivationFunctionToOpType(type));
     auto &output_tensor = operation->Outputs().front().tensor;
-    Quantization quantization = operation->Outputs().front().quantization;
+    Quantization actQuantization = operation->Outputs().front().quantization;
+    if ( type == tflite::ActivationFunctionType::TANH )
+    {
+        // The Tanh activation has to have unit scaling in order to guarantee it will be re-fused.
+        // The output scales of the original combined operation is moved to the output quantization
+        // of the main operation.
+        actQuantization.scales.clear();
+        actQuantization.scales.push_back(QuantizedScale::Unit());
+        actQuantization.type = QuantizationType::EXPLICIT;
+    }
+
     std::shared_ptr<Tensor> intermediate_tensor = output_tensor->Clone();
-    activation->ConnectOutput(TensorUsage::OFM, output_tensor).Set(quantization);
+    activation->ConnectOutput(TensorUsage::OFM, output_tensor).Set(actQuantization);
     output_tensor->RemoveWriter(operation);
-    operation->ConnectOutput(TensorUsage::OFM, intermediate_tensor).Set(quantization);
-    activation->ConnectInput(TensorUsage::IFM, intermediate_tensor).Set(quantization);
+    // Set original output quantization to the non-activation operation's output
+    operation->ConnectOutput(TensorUsage::OFM, intermediate_tensor).Set(operation->Outputs().front().quantization);
+    activation->ConnectInput(TensorUsage::IFM, intermediate_tensor).Set(actQuantization);
     if ( optDb )
     {
         optDb->AddOptimised(*operation, activation.get());

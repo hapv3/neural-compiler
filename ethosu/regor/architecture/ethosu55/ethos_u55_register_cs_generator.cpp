@@ -27,7 +27,6 @@
 #include "compiler/op_type.hpp"
 #include "compiler/operation_util.hpp"
 #include "ethos_u55.hpp"
-#include "ethos_u55_scaling.hpp"
 #define NPU_DISASSEMBLE
 #define NPU_NAMESPACE ethosu55
 // Note: Ethos-U55 and Ethos-U65 share interface definitions
@@ -544,10 +543,9 @@ void EthosU55RCSGenerator::GenerateOFMScalingForPooling(HLCOperation *poolOp, bo
 {
     QuantizedScale ofmScale(1, 0);
     bool isNoOp = _arch->UseAvgPoolNop(poolOp->type);
-    ethosU55Scaling::RescalePooling(poolOp, isNoOp);
-    if ( useGlobalScale && !poolOp->ofm.quantization.scales.empty() )
+    if ( useGlobalScale )
     {
-        ofmScale = poolOp->ofm.quantization.scales[0];
+        ofmScale = poolOp->ofm.quantization.Scale();
     }
     if ( poolOp->type == OpType::AvgPool )
     {
@@ -583,18 +581,11 @@ RCSIfmScaleMode EthosU55RCSGenerator::GenerateScalingForElementwise(HLCOperation
     auto opType = op->type;
 
     QuantizedScale ofmScale(1, 0);
-    ethosU55Scaling::RescaleElementwise(op);
     int ifmCnt = int(op->ifm.size());
-    bool allHaveScale =
-        !op->ofm.quantization.scales.empty() && !op->ifm[0].quantization.scales.empty() && ifmCnt == 2 &&
-        !op->ifm[1].quantization.scales.empty();
 
     if ( opType == OpType::Mul || opType == OpType::Abs )
     {
-        if ( !op->ofm.quantization.scales.empty() )
-        {
-            ofmScale = op->ofm.quantization.scales[0];
-        }
+        ofmScale = op->ofm.quantization.Scale();
     }
     else if ( opType == OpType::LeakyRelu )
     {
@@ -607,41 +598,37 @@ RCSIfmScaleMode EthosU55RCSGenerator::GenerateScalingForElementwise(HLCOperation
         uint32_t opaScale = 1;
         uint32_t opbScale = 1;
         uint32_t opaShift = 0;
-        if ( allHaveScale )
+        ofmScale = op->ofm.quantization.Scale();
+        QuantizedScale ifm1Scale = op->ifm[ifm0Index].quantization.Scale();
+        QuantizedScale ifm2Scale = op->ifm[1 - ifm0Index].quantization.Scale();
+        int bitDepth = DataTypeSizeBits(op->ifm[0].dataType);
+        int dbl_rnd_shift = op->parameters.double_round.shift;
+        assert(dbl_rnd_shift == 0 || (dbl_rnd_shift == 20 && bitDepth == 8) || (dbl_rnd_shift == 15 && bitDepth != 8));
+        if ( ifm1Scale == ifm2Scale &&
+             ((bitDepth != 8 || (ofmScale.scale & 0xFFF) == 0) || dbl_rnd_shift == 0 || ifm1Scale == QuantizedScale::Unit()) )
         {
-            ofmScale = op->ofm.quantization.scales[0];
-            QuantizedScale ifm1Scale = op->ifm[ifm0Index].quantization.scales[0];
-            QuantizedScale ifm2Scale = op->ifm[1 - ifm0Index].quantization.scales[0];
+            // Input scales are equal and we can guarantee correct double-rounding behaviour using only scales.
+            // Remove the shift by right-shifting the scale
+            assert(ifm1Scale.shift >= 0 && ifm1Scale.shift < 64);
+            assert(ifm2Scale.shift >= 0 && ifm2Scale.shift < 64);
+            opToScale = RCSIfmScaleMode::OPA_OPB_16;
+            opaScale = ifm1Scale.scale >> ifm1Scale.shift;
+            opbScale = ifm2Scale.scale >> ifm2Scale.shift;
+        }
+        else if ( ifm2Scale < ifm1Scale )
+        {
+            opToScale = ifm0Index == 0 ? RCSIfmScaleMode::OPB_32 : RCSIfmScaleMode::OPA_32;
+            opaScale = ifm2Scale.scale;
+            opaShift = ifm2Scale.shift;
+            opbScale = ifm1Scale.scale;
+        }
+        else
+        {
+            assert(ifm1Scale <= ifm2Scale);
+            opToScale = ifm0Index == 0 ? RCSIfmScaleMode::OPA_32 : RCSIfmScaleMode::OPB_32;
             opaScale = ifm1Scale.scale;
             opaShift = ifm1Scale.shift;
             opbScale = ifm2Scale.scale;
-
-            if ( ifm1Scale.scale == 0 || ifm2Scale.scale == 0 )
-            {
-                opbScale = 0;
-                if ( ifm1Scale.scale == 0 )
-                {
-                    opToScale = RCSIfmScaleMode::OPB_32;
-                    opaScale = ifm2Scale.scale;
-                    opaShift = ifm2Scale.shift;
-                }
-                else
-                {
-                    opToScale = RCSIfmScaleMode::OPA_32;
-                }
-            }
-            if ( ifm0Index == 1 )
-            {
-                // Reversed operands
-                if ( opToScale == RCSIfmScaleMode::OPA_32 )
-                {
-                    opToScale = RCSIfmScaleMode::OPB_32;
-                }
-                else if ( opToScale == RCSIfmScaleMode::OPB_32 )
-                {
-                    opToScale = RCSIfmScaleMode::OPA_32;
-                }
-            }
         }
         assert(opaShift < 64);
         Emit(isa::npu_set_opa_scale_t(opaShift, opaScale));
@@ -1638,21 +1625,6 @@ void EthosU55RCSGenerator::InsertMatMulCommand(const HLCStripe *stripe, Temporar
     EthosU55OpConfig *reduceConfig = static_cast<EthosU55OpConfig *>(stripe->operation->config);
     EthosU55OpConfig *mulConfig = reduceConfig->PrevConfig();
     assert(reduceConfig && mulConfig);
-
-    // Push quantisation on to the last operation for TFLite (create ethosU55Scaling::RescaleMatmul)
-    if ( inFM0.quantization.type == QuantizationType::TFLITE )
-    {
-        QuantizedScale qs0 = inFM0.quantization.scales.empty() ? QuantizedScale::Unit() : inFM0.quantization.scales[0];
-        QuantizedScale qs1 = inFM1.quantization.scales.empty() ? QuantizedScale::Unit() : inFM1.quantization.scales[0];
-        QuantizedScale qOfm = outFM.quantization.scales.empty() ? QuantizedScale::Unit() : outFM.quantization.scales[0];
-        inFM0.quantization.scales.clear();
-        inFM1.quantization.scales.clear();
-        outFM.quantization.scales.clear();
-
-        double scaling = (qs0.Dequantize() * qs1.Dequantize()) / qOfm.Dequantize();
-        outFM.quantization.type = QuantizationType::EXPLICIT;
-        outFM.quantization.scales.push_back(QuantizedScale(scaling));
-    }
 
     Shape ifm0Start(0, inFM0.slice.offset ? inFM0.slice.offset.Height() : 0, 0, 0);
 

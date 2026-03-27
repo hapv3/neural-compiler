@@ -145,9 +145,6 @@ public:
     virtual std::unique_ptr<IVolumeScaleSource>
     GetScaleSource(IWeightEncodingConfig *config, DataType scaleType, const Quantization &explicitQuant) = 0;
 
-    virtual Quantization MakeExplicit(const Quantization &ifmQ, const Quantization &weightQ, const Quantization &ofmQ,
-        DataType scaleType, DataType ifmType, OpType opType) = 0;
-
     virtual WeightsInfo EncodeWeights(IWeightEncodingConfig *config, IWeightSource *source, std::vector<uint8_t> &result) = 0;
     virtual int EncodeScales(IWeightEncodingConfig *config, IScaleSource *source, std::vector<uint8_t> &result, bool measureOnly) = 0;
 };

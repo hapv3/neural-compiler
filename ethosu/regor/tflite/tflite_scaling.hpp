@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -19,8 +19,8 @@
 #pragma once
 
 #include "common/data_type.hpp"
+#include "common/numeric_util.hpp"
 #include "common/scaling.hpp"
-#include "compiler/high_level_command_stream.hpp"
 #include "compiler/op_type.hpp"
 #include "compiler/quantization.hpp"
 
@@ -29,9 +29,12 @@
 namespace regor
 {
 
-void QuantizePoolingScale(int kernelElements, double rescale, int rescaleBits, uint32_t &scale, int &shift, int N);
+void ElementwiseAddSubScale(double input1Scale, double input2Scale, double outputScale, int inputShift,
+    double &input1Rescale, double &input2Rescale, QuantizedScale &outScale);
 
-// Max scale precision based on register size N (32 or 31)
-void QuantizePoolingScaleMaxPrecision(int kernelElements, double rescale, uint32_t &scale, int &shift, int N);
+Quantization RescalePerChannelToExplicit(const Quantization &ifmQuant, const Quantization &weightQuant,
+    const Quantization &ofmQuant, const DataType scaleDataType, const DataType ifmDataType, OpType opType);
+
+QuantizedScale TanhSigmoidScale(double ifmScale, OpType opType);
 
 }  // namespace regor

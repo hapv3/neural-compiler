@@ -147,6 +147,11 @@ union HLCParameters
         int axis;
         int multiplier;
     } tile;
+
+    struct
+    {
+        int shift;
+    } double_round;
 };
 
 struct StripeArea
@@ -170,7 +175,7 @@ struct HLCSubOperation
     UniqueId srcId = 0;
     HLCSubOperation() = default;
     HLCSubOperation(const HLCSubOperation &other) { *this = other; }
-    void operator=(const HLCSubOperation &other)
+    HLCSubOperation &operator=(const HLCSubOperation &other)
     {
         type = other.type;
         ifm = other.ifm;
@@ -178,8 +183,14 @@ struct HLCSubOperation
         // Compilers disagree on whether the union is copyable.
         if ( other.type == OpType::LUT || other.type == OpType::Sigmoid || other.type == OpType::Tanh )
             parameters.lut = other.parameters.lut;
-        else parameters.resize = other.parameters.resize;
+        else if ( other.type == OpType::Add || other.type == OpType::Sub )
+            parameters.double_round = other.parameters.double_round;
+        else if ( other.type == OpType::LeakyRelu ) parameters.leaky_relu = other.parameters.leaky_relu;
+        else if ( other.type == OpType::ArgMax ) parameters.argmax = other.parameters.argmax;
+        else if ( other.type == OpType::Tile ) parameters.tile = other.parameters.tile;
+        else if ( other.type == OpType::Resize ) parameters.resize = other.parameters.resize;
         srcId = other.srcId;
+        return *this;
     }
 };
 

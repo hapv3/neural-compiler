@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2025-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -246,22 +246,16 @@ TensorConnection *LSTM::CalculateGate(const std::string &name, TensorConnection 
 
     Quantization addQuant;
     addQuant.type = QuantizationType::TFLITE;
-    addQuant.scales = {1.0f};
     addQuant.zeroPoints = {0};
+    addQuant.scales = {1.0 / 0x3000};  // Sigmoid/Tanh rescale
     Operation *add = CreateAdd(inputFCOfmConn->tensor, recurrentFCOfmConn->tensor, inputFCOfmConn->quantization,
         recurrentFCOfmConn->quantization, addQuant);
-
-    // Create activation function
-    Quantization activationQuant;
-    activationQuant.type = QuantizationType::TFLITE;
-    activationQuant.scales = {1.0f};
-    activationQuant.zeroPoints = {0};
 
     auto activation = std::make_shared<Operation>(activationType);
     auto addOfmTensor = add->Output(TensorUsage::OFM)->tensor;
 
-    activation->ConnectInput(TensorUsage::IFM, addOfmTensor).Set(addQuant);
-    activation->ConnectOutput(TensorUsage::OFM, addOfmTensor->Clone()).Set(activationQuant);
+    activation->ConnectInput(TensorUsage::IFM, addOfmTensor).Set(Quantization::Unit());
+    activation->ConnectOutput(TensorUsage::OFM, addOfmTensor->Clone()).Set(Quantization::Unit());
 
     auto returnConn = activation->Output(TensorUsage::OFM);
     if ( activationType == OpType::Sigmoid )
@@ -272,8 +266,15 @@ TensorConnection *LSTM::CalculateGate(const std::string &name, TensorConnection 
         // due to intermediate higher precision.)
         auto clamp = std::make_shared<Operation>(OpType::Clamp);
         auto *attr = clamp->Attribute<clamp_attr_t>();
-        attr->max = Quantize(32757.0f, activationQuant);
-        attr->min = Quantize(11.0f, activationQuant);
+
+        // Create clamp quantization
+        Quantization clampQuant;
+        clampQuant.type = QuantizationType::EXPLICIT;
+        clampQuant.scales = {1.0f};
+        clampQuant.zeroPoints = {0};
+
+        attr->max = Quantize(32757.0f, clampQuant);
+        attr->min = Quantize(11.0f, clampQuant);
 
         // Copying the input and output of the Add means the Clamp will also write to the cell state.
         clamp->CopyInput(TensorUsage::IFM, *returnConn);
