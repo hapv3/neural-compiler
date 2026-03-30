@@ -558,6 +558,42 @@ void SchedulerPacking::PackOperations()
                 {
                     // This is a non-fused op - update the tracking variable
                     lastNonFusedOp = nextOp;
+
+                    // Reshape the chained operation's tensors to match the primary op OFM
+                    auto *ofmConnPrimary = primaryOp->OFM();
+                    auto ifmConn0 = nextOp->IFM(0);
+                    auto ifmConn1 = nextOp->TryIFM(1);
+                    auto ofmConn = nextOp->OFM();
+                    if ( !ifmConn1 )
+                    {
+                        // Unary EW op
+                        ifmConn0->shape = ofmConnPrimary->shape;
+                        ofmConn->shape = ofmConnPrimary->shape;
+                    }
+                    else
+                    {
+                        // Binary EW op
+                        const bool ifm0IsScalar = ifmConn0->shape.Elements() == 1;
+                        const bool ifm1IsScalar = ifmConn1->shape.Elements() == 1;
+                        const bool ifm0IsBC = ifmConn0->shape.Elements() != ofmConn->shape.Elements();
+                        const bool ifm1IsBC = ifmConn1->shape.Elements() != ofmConn->shape.Elements();
+                        if ( ifm0IsScalar && !ifm1IsBC )
+                        {
+                            ifmConn1->shape = ofmConnPrimary->shape;  // Inherit IFM1 shape from primary op OFM
+                            ofmConn->shape = ofmConnPrimary->shape;   // Inherit OFM shape from primary op OFM
+                        }
+                        else if ( !ifm0IsBC && ifm1IsScalar )
+                        {
+                            ifmConn0->shape = ofmConnPrimary->shape;  // Inherit IFM0 shape from primary op OFM
+                            ofmConn->shape = ofmConnPrimary->shape;   // Inherit OFM shape from primary op OFM
+                        }
+                        else if ( !ifm0IsBC && !ifm1IsBC )
+                        {
+                            ifmConn0->shape = ofmConnPrimary->shape;  // Inherit IFM0 shape from primary op OFM
+                            ifmConn1->shape = ofmConnPrimary->shape;  // Inherit IFM1 shape from primary op OFM
+                            ofmConn->shape = ofmConnPrimary->shape;   // Inherit OFM shape from primary op OFM
+                        }
+                    }
                 }
 
                 primaryOp->AddSubOp(std::move(*cur));
@@ -713,6 +749,27 @@ int SchedulerPacking::CanPack(const SchedulerOperation *schedOp, const Scheduler
     if ( !Shape::IsReducedEqual(prevConnOfm->shape, prevConnOfm->SliceShape()) )
     {
         return 0;
+    }
+
+    // Can not have both reshape and slice/transpose/reverse
+    const bool hasOfmSlice = nextConnOfm->shape != nextConnOfm->SliceShape();
+    if ( prevOFM == ifmTensor )
+    {
+        const bool isReshape = prevConnOfm->shape != nextConnIfm->shape;
+        const bool hasIfmSlice = nextConnIfm->shape != nextConnIfm->SliceShape();
+        if ( isReshape && (hasIfmSlice || hasOfmSlice || nextOp->IsReordering()) )
+        {
+            return 0;
+        }
+    }
+    else if ( prevOFM == ifm2Tensor )
+    {
+        const bool isReshape = prevConnOfm->shape != nextConnIfm2->shape;
+        const bool hasIfm2Slice = nextConnIfm2->shape != nextConnIfm2->SliceShape();
+        if ( isReshape && (hasIfm2Slice || hasOfmSlice || nextOp->IsReordering()) )
+        {
+            return 0;
+        }
     }
 
     if ( schedOp->OFM()->tensor->isGraphOutput || prevOp->OFM()->tensor->isGraphOutput )

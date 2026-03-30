@@ -1527,12 +1527,6 @@ bool EthosU85OpGroup::Fuse(const ArchitectureOpGroupQuery &op, const std::vector
         return false;
     }
 
-    // Can't fuse reshaped Tensors
-    if ( prevOp.ofm.key == op.ifm[0].key && prevOp.ofm.shape != op.ifm[0].shape )
-    {
-        return false;
-    }
-
     _hasFusedTranspose = _hasFusedTranspose || (op.type == OpType::Transpose && !IsNone(op.ofm.transpose));
     _hasFusedReverse = _hasFusedReverse || (op.type == OpType::Reverse && op.ofm.reverse != ReverseType::None);
 
@@ -1542,6 +1536,16 @@ bool EthosU85OpGroup::Fuse(const ArchitectureOpGroupQuery &op, const std::vector
 
 bool EthosU85OpGroup::Chain(const ArchitectureOpGroupQuery &op, const std::vector<int> &dependsOn, int externalInputs)
 {
+    // This shows a chaining scenario:
+    //
+    // [T1] -> (O1) -> [T2] -> (O2) -> [T3] -> (O3) -> [T4]
+    //
+    // Where
+    // * O1 ("primary") starts the chain,
+    // * O2 ("prev") is chained on O1,
+    // * O3 ("next") is chained on O2 and
+    // * T2 and T3 are non-allocated tensors.
+
     // Op is considered for chaining
     EthosU85NpuOp npuOp = ArchEthosU85::GetHWOp(op.type);
     assert(_opsCount > 0);
@@ -1575,6 +1579,7 @@ bool EthosU85OpGroup::Chain(const ArchitectureOpGroupQuery &op, const std::vecto
     {
         return false;
     }
+    const EthosU85OpGroup::OpInfo &primaryOp = _ops[0];
     for ( int key : dependsOn )
     {
         int dep = KeyToOpIndex(key);
@@ -1590,13 +1595,39 @@ bool EthosU85OpGroup::Chain(const ArchitectureOpGroupQuery &op, const std::vecto
             return false;
         }
 
-        if ( prevOp.ofm.key == op.ifm[0].key )
+        if ( op.inputs == 1 && prevOp.ofm.key == op.ifm[0].key )
         {
+            // Can chain any unary EW regardless of shape as long as number of elements match
+            const bool matchingElements = primaryOp.ofm.shape.Elements() == op.ifm[0].shape.Elements();
+            if ( !matchingElements )
+            {
+                return false;
+            }
+
             _tensorCbMap[prevOp.ofm.key] = _chainIdx++;
             externalInputs--;
         }
-        else if ( op.inputs == 2 && (prevOp.ofm.key == op.ifm[1].key) )
+        else if ( op.inputs == 2 && (prevOp.ofm.key == op.ifm[0].key || prevOp.ofm.key == op.ifm[1].key) )
         {
+            // Can chain a binary EW if one of the following conditions are met:
+            //
+            // 1. No broadcasted IFMs
+            // 2. Same shape on the chained IFM and primary OFM (other IFM can be any shape)
+            // 3. Other IFM is scalar (chained IFM can be any shape)
+
+            const size_t chainedIFMIndex = prevOp.ofm.key == op.ifm[0].key ? 0 : 1;
+            assert(chainedIFMIndex < op.ifm.size());
+            const size_t otherIFMIndex = prevOp.ofm.key == op.ifm[0].key ? 1 : 0;
+            assert(otherIFMIndex < op.ifm.size());
+            const bool isBroadcast = op.ifm[chainedIFMIndex].shape != op.ifm[otherIFMIndex].shape;
+            const bool matchingShapes = op.ifm[chainedIFMIndex].shape == primaryOp.ofm.shape;
+            const bool matchingElements = op.ifm[chainedIFMIndex].shape.Elements() == primaryOp.ofm.shape.Elements();
+            const bool otherIsScalar = op.ifm[otherIFMIndex].shape.Elements() == 1;
+            if ( isBroadcast && !matchingShapes && !(matchingElements && otherIsScalar) )
+            {
+                return false;
+            }
+
             _tensorCbMap[prevOp.ofm.key] = _chainIdx++;
             externalInputs--;
         }

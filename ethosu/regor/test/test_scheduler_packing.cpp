@@ -192,8 +192,88 @@ TEST_CASE("Test activation fusing")
         auto graph = CreateGraph(ops);
         // Perform scheduler_packing
         auto schedOps = packing.Process(graph.get());
-        // no activation fusing
+        // Activation fusing
         REQUIRE(schedOps.size() == 1);
+
+        // Validate that the second op is packed as subop of first
+        auto &abs = schedOps[0];
+        REQUIRE(abs->Type() == OpType::Abs);
+        REQUIRE(abs->SubOps().size() == 1);
+        auto &relu = abs->SubOps()[0];
+        REQUIRE(relu->Type() == OpType::Relu);
+
+        // Validate the primary op
+        auto *absIfmConn = abs->Input(TensorUsage::IFM);
+        auto *absOfmConn = abs->Output(TensorUsage::OFM);
+        REQUIRE(absIfmConn->tensor->Name() == "IFM");
+        REQUIRE(absIfmConn->tensor->producers.empty());
+        REQUIRE(absIfmConn->tensor->consumers.size() == 1);
+        REQUIRE(absIfmConn->tensor->consumers[0] == abs.get());
+        REQUIRE(absOfmConn->tensor->Name() == "ACTOFM");
+        REQUIRE(absOfmConn->tensor->producers.size() == 1);
+        REQUIRE(absOfmConn->tensor->producers[0] == abs.get());
+        REQUIRE(absOfmConn->tensor->consumers.empty());
+
+        // Validate the activation op
+        auto *actIfmConn = relu->Input(TensorUsage::IFM);
+        auto *actOfmConn = relu->Output(TensorUsage::OFM);
+        REQUIRE(actIfmConn->tensor->Name() == "OFM");
+        REQUIRE(actIfmConn->tensor->producers.empty());
+        REQUIRE(actIfmConn->tensor->consumers.size() == 1);
+        REQUIRE(actIfmConn->tensor->consumers[0] == relu.get());
+        REQUIRE(actOfmConn->tensor->Name() == "ACTOFM");
+        REQUIRE(actOfmConn->tensor->producers.size() == 1);
+        REQUIRE(actOfmConn->tensor->producers[0] == abs.get());
+        REQUIRE(actOfmConn->tensor->consumers.empty());
+    }
+    SECTION("Fuse reshaped activation")
+    {
+        auto *reluIfmConn = op2->Input(TensorUsage::IFM);
+        auto *reluOfmConn = op2->Output(TensorUsage::OFM);
+        reluIfmConn->shape = {1, 100, 10};
+        reluOfmConn->shape = {1, 100, 10};
+
+        // Create graph with ops
+        auto graph = CreateGraph(ops);
+        // Perform scheduler_packing
+        auto schedOps = packing.Process(graph.get());
+        // Activation fusing
+        REQUIRE(schedOps.size() == 1);
+
+        // Validate that the second op is packed as subop of first
+        auto &abs = schedOps[0];
+        REQUIRE(abs->Type() == OpType::Abs);
+        REQUIRE(abs->SubOps().size() == 1);
+        auto &relu = abs->SubOps()[0];
+        REQUIRE(relu->Type() == OpType::Relu);
+
+        // Validate the primary op
+        auto *absIfmConn = abs->Input(TensorUsage::IFM);
+        auto *absOfmConn = abs->Output(TensorUsage::OFM);
+        REQUIRE(absIfmConn->tensor->Name() == "IFM");
+        REQUIRE(absIfmConn->tensor->producers.empty());
+        REQUIRE(absIfmConn->tensor->consumers.size() == 1);
+        REQUIRE(absIfmConn->tensor->consumers[0] == abs.get());
+        REQUIRE(absIfmConn->shape == Shape(1, 10, 10, 10));  // Original shape
+        REQUIRE(absOfmConn->tensor->Name() == "ACTOFM");
+        REQUIRE(absOfmConn->tensor->producers.size() == 1);
+        REQUIRE(absOfmConn->tensor->producers[0] == abs.get());
+        REQUIRE(absOfmConn->tensor->consumers.empty());
+        REQUIRE(absOfmConn->shape == Shape(1, 10, 10, 10));  // Original shape
+
+        // Validate the activation op
+        auto *actIfmConn = relu->Input(TensorUsage::IFM);
+        auto *actOfmConn = relu->Output(TensorUsage::OFM);
+        REQUIRE(actIfmConn->tensor->Name() == "OFM");
+        REQUIRE(actIfmConn->tensor->producers.empty());
+        REQUIRE(actIfmConn->tensor->consumers.size() == 1);
+        REQUIRE(actIfmConn->tensor->consumers[0] == relu.get());
+        REQUIRE(actIfmConn->shape == Shape(1, 10, 10, 10));  // Inherited shape from ABS
+        REQUIRE(actOfmConn->tensor->Name() == "ACTOFM");
+        REQUIRE(actOfmConn->tensor->producers.size() == 1);
+        REQUIRE(actOfmConn->tensor->producers[0] == abs.get());
+        REQUIRE(actOfmConn->tensor->consumers.empty());
+        REQUIRE(actOfmConn->shape == Shape(1, 10, 10, 10));  // Inherited shape from ABS
     }
 }
 
