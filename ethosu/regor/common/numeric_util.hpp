@@ -341,15 +341,23 @@ TYPE RoundAway(TYPE value, TYPE align)
 inline float RoundAway(float value, float align)
 {
     assert(align > 0);
-    if ( value < 0 )
-    {
-        value = value - align + 1;
-    }
-    else
-    {
-        value = value + align - 1;
-    }
-    return std::truncf(value / align) * align;
+    float qvalue = value / align;
+    float intval = std::round(qvalue);
+    float TOLERANCE = 2.0f * std::numeric_limits<float>::epsilon() * std::max(1.0f, std::abs(qvalue));
+    if ( std::abs(qvalue - intval) <= TOLERANCE ) qvalue = intval;
+    else if ( intval == 0 && value != 0 ) qvalue = std::copysignf(1.0f, value);
+    return (qvalue >= 0) ? std::ceil(qvalue) * align : std::floor(qvalue) * align;
+}
+
+inline double RoundAway(double value, double align)
+{
+    assert(align > 0);
+    double qvalue = value / align;
+    double intval = std::round(qvalue);
+    double TOLERANCE = 2.0f * std::numeric_limits<double>::epsilon() * std::max(1.0, std::abs(qvalue));
+    if ( std::abs(qvalue - intval) <= TOLERANCE ) qvalue = intval;
+    else if ( intval == 0 && value != 0 ) qvalue = std::copysign(1.0, value);
+    return (qvalue >= 0) ? std::ceil(qvalue) * align : std::floor(qvalue) * align;
 }
 
 template<typename TYPE>
