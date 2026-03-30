@@ -664,9 +664,9 @@ static std::unique_ptr<HLCDMA> GenerateWeightDMA(NpuWeightTensor *weightTens, co
             dma->length = RoundAway(item->second.offset + item->second.TotalBytes() - offset0, 16);
         }
     }
-    assert(bufConn.parts > 0 && bufConn.parts <= 2);
-    int index = depthIndex % bufConn.parts;
-    assert(index >= 0 && index < 2);
+    assert(bufConn.parts);
+    unsigned index = unsigned(depthIndex) % bufConn.parts;
+    assert(index < std::size(bufConn.tensor));
     dma->destMemArea = bufConn.tensor[index]->memArea;
     dma->destAddress = bufConn.tensor[index]->AllocatedAddress();
     return dma;
@@ -934,9 +934,8 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
                          (primaryStripeArea.ofmArea.Start().Height() == ofmOffset.Height() ||
                              opInfo->bufferedWeightTensor.buffering == Buffering::Double) )
                     {
-                        assert(opInfo->bufferedWeightTensor.parts > 0 && opInfo->bufferedWeightTensor.parts <= 2);
-                        int bufferIndex = depthIndex % opInfo->bufferedWeightTensor.parts;
-                        assert(bufferIndex >= 0 && bufferIndex < 2);
+                        unsigned bufferIndex = unsigned(depthIndex) % opInfo->bufferedWeightTensor.parts;
+                        assert(bufferIndex < std::size(opInfo->bufferedWeightTensor.tensor));
                         // Metadata of new weights to put into the weight buffer tensor
                         auto newWeights = std::make_tuple(opInfo->npuWeightsTensor->equivalenceId, depth, depthIndex);
                         if ( _filledWeightBuffers.count(opInfo->bufferedWeightTensor.tensor[bufferIndex].get()) == 0 )

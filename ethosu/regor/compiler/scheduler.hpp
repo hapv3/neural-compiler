@@ -92,7 +92,7 @@ struct WeightScaleEncoding
 struct SchedulerBufferTensor
 {
     std::shared_ptr<SchedulerTensor> tensor[2];
-    int parts = 0;
+    unsigned parts = 0;
     bool preBuffer = false;
     Buffering buffering = Buffering::None;
 

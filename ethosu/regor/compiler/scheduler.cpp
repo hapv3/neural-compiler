@@ -995,7 +995,7 @@ int Scheduler::ComputeLocalMemUsage(const SchedulerOperation &schedOp, const Sch
         opMemUsage += ofmConn->tensor->AllocationSizeBytes();
     }
 
-    for ( int i = 0; i < cost.bufferedWeightTensor.parts; ++i )
+    for ( unsigned i = 0; i < cost.bufferedWeightTensor.parts; ++i )
     {
         const auto &bufTensor = cost.bufferedWeightTensor.tensor[i];
         if ( bufTensor && bufTensor->memArea == stagingMemory )

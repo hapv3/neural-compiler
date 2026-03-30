@@ -155,6 +155,7 @@ void LiveRangeGraph::ExtractLiveRangesFromCascades(const std::vector<std::unique
                 }
                 timeForCascade[cascade] = timeToSet;
             }
+
             // Buffered weight tensor
             const auto &bufferTensor = opInfo->bufferedWeightTensor;
             assert(
@@ -162,11 +163,11 @@ void LiveRangeGraph::ExtractLiveRangesFromCascades(const std::vector<std::unique
                 (bufferTensor.buffering == Buffering::Single && bufferTensor.parts == 1) ||
                 (bufferTensor.buffering == Buffering::Double && bufferTensor.parts == 2));
             assert(!bufferTensor.preBuffer || bufferTensor.buffering != Buffering::None);
-            assert(int(opInfo->ofmDepthSlices.size()) >= bufferTensor.parts);
-            for ( int part = 0; part < bufferTensor.parts; part++ )
+            assert(opInfo->ofmDepthSlices.size() >= bufferTensor.parts);
+            for ( unsigned part = 0; part < bufferTensor.parts; part++ )
             {
-                const int sliceCount = int(opInfo->ofmDepthSlices.size()) - 1;
-                const int lastSlicePart = (sliceCount - 1) % bufferTensor.parts;
+                const unsigned sliceCount = opInfo->ofmDepthSlices.size() - 1;
+                const unsigned lastSlicePart = (sliceCount - 1) % bufferTensor.parts;
                 auto *partWeightTensor = bufferTensor.tensor[part].get();
                 if ( !ShouldBeIgnored(partWeightTensor, targetMemory) )
                 {
@@ -188,6 +189,7 @@ void LiveRangeGraph::ExtractLiveRangesFromCascades(const std::vector<std::unique
                     lr->MarkUsage(start, duration);
                 }
             }
+
             // Read-only weight/scale tensors
             for ( auto tens : {opInfo->npuWeightsTensor, opInfo->npuScalesTensor} )
             {
