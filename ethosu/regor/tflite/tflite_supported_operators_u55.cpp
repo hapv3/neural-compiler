@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2025-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -85,6 +85,7 @@ static const std::set<OpType> s_supportedOpTypes = {
     OpType::MemoryCopy,
     OpType::Log,
     OpType::UnidirectionalSequenceLstm,
+    OpType::Neg,
 };
 
 // generic dataType support
@@ -112,6 +113,7 @@ static const std::unordered_set<OpType> s_supports32Bit = {
     OpType::ExpandDims,
     OpType::Identity,
     OpType::MemoryCopy,
+    OpType::Neg,
 };
 
 static const std::unordered_set<OpType> s_supports64Bit = {

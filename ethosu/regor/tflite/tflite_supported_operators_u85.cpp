@@ -100,6 +100,7 @@ static const std::set<OpType> s_supportedOpTypes = {
     OpType::MemoryCopy,
     OpType::Log,
     OpType::UnidirectionalSequenceLstm,
+    OpType::Neg,
 };
 
 static const std::set<DataType> s_supportedDataTypes = {
