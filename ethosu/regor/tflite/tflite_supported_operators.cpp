@@ -193,7 +193,7 @@ bool TensQuantized(const Operation *op)
         {
             auto usage = item.first;
             const auto &conn = item.second;
-            if ( conn.tensor->Type() != DataType::Int64 &&
+            if ( conn.tensor->Type() != DataType::Int64 && conn.tensor->Type() != DataType::Bool8 &&
                  (((IsIFM(usage) || IsOFM(usage)) && (conn.tensor->Type() != DataType::Int32 || op->Type() == OpType::Quantize)) || usage == TensorUsage::Weights) )
             {
                 const Quantization &quant = conn.quantization;

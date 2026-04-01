@@ -2509,6 +2509,24 @@ Operation *TFLiteGraphOptimiser::ConvertPadV2(Graph *const graph, Operation *con
     return operation;
 }
 
+// Converts a Less[Equal] operator to a Greater[Equal] operator with swapped inputs
+Operation *TFLiteGraphOptimiser::ConvertLess(Graph *const graph, Operation *const operation)
+{
+    UNUSED(graph);
+    if ( operation->Type() == OpType::Less || operation->Type() == OpType::LessEqual )
+    {
+        auto greaterOp = std::make_shared<Operation>(operation->Type() == OpType::Less ? OpType::Greater : OpType::GreaterEqual);
+        greaterOp->CopyInput(TensorUsage::IFM0, *operation->Input(TensorUsage::IFM1));
+        greaterOp->CopyInput(TensorUsage::IFM1, *operation->Input(TensorUsage::IFM0));
+        greaterOp->CopyOutput(TensorUsage::OFM, *operation->Output(TensorUsage::OFM));
+
+        RecordOptimisation(*operation, greaterOp.get());
+        operation->Disconnect();
+        return greaterOp.get();
+    }
+    return operation;
+}
+
 void TFLiteGraphOptimiser::MakeMemoryCopyForMirrorPad(const Operation *operation, TensorConnection *ifmConn, const Shape &readShape,
     const Shape &readOffset, TensorConnection *ofmConn, const Shape &writeShape, const Shape &writeOffset, ReverseType reverseAxis)
 {
@@ -2788,6 +2806,38 @@ Operation *TFLiteGraphOptimiser::ConvertQuantizationToExplicit(Graph *const grap
     if ( opType == OpType::Passthrough )
     {
         return operation;
+    }
+
+    // Special handling of boolean comparison operators, since the boolean ofm tensor has no quantization
+    // but the ifm tensors may have TFLite quantization which requires adjusting.
+    switch ( opType )
+    {
+        case OpType::Less:
+        case OpType::Greater:
+        case OpType::Equal:
+        case OpType::NotEqual:
+        case OpType::LessEqual:
+        case OpType::GreaterEqual:
+        {
+            Quantization &ifm0Quant = operation->Input(TensorUsage::IFM0)->quantization;
+            Quantization &ifm1Quant = operation->Input(TensorUsage::IFM1)->quantization;
+            // Handle left shift by 8 in the reference by reducing the right shift of the
+            // input quantization scales by 8 to compensate.
+            if ( ifm0Quant.type == QuantizationType::TFLITE )
+            {
+                if ( !ifm0Quant.scales.empty() ) ifm0Quant.scales.front().shift -= 8;
+                ifm0Quant.type = QuantizationType::EXPLICIT;
+            }
+            if ( ifm1Quant.type == QuantizationType::TFLITE )
+            {
+                if ( !ifm1Quant.scales.empty() ) ifm1Quant.scales.front().shift -= 8;
+                ifm1Quant.type = QuantizationType::EXPLICIT;
+            }
+            break;
+        }
+        default:
+            // Do nothing, other ops are expected to be handled by the general logic below
+            break;
     }
 
     auto ofmConn = operation->Output(TensorUsage::OFM);
