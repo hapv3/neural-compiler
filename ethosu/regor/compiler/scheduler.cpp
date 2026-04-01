@@ -803,7 +803,7 @@ std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(
 
 std::unique_ptr<Schedule> Scheduler::CreateInitialSchedule()
 {
-    auto schedule = std::make_unique<Schedule>(_name + "_MAX");
+    auto schedule = std::make_unique<Schedule>(_name + "_MAX", 0, _ops.size());
     for ( auto &op : _ops )
     {
         const auto ofm = op->OFM();
@@ -1043,27 +1043,22 @@ std::unordered_map<UniqueId, int> Scheduler::ComputeNonLocalUsage(Schedule *sche
 
 std::shared_ptr<Schedule> Scheduler::ProposeScheduleBuffering(Schedule *refSchedule, Address stagingLimitBytes)
 {
-    auto bufferedSchedule = std::make_shared<Schedule>(refSchedule->Name() + "_BUFFERED");
+    auto bufferedSchedule = std::make_shared<Schedule>(
+        refSchedule->Name() + "_BUFFERED", refSchedule->Start(), refSchedule->End());
     int stagingLimitClamped = int(std::min(INT64_C(1) << 30, stagingLimitBytes));
 
     SchedulerOperation *prevOp = nullptr;
-    for ( auto const &schedOp : _ops )
+    for ( int pos = refSchedule->Start(); pos < refSchedule->End(); pos++ )
     {
-        SchedulerOpInfo *cost = refSchedule->Cost(schedOp.get());
-        // schedOp is not part of this sub-schedule - skip
-        if ( cost == nullptr )
-        {
-            continue;
-        }
-
-        ProposeOperatorBuffering(schedOp.get(), prevOp, bufferedSchedule.get(), refSchedule, stagingLimitClamped);
+        auto *schedOp = _ops.at(pos).get();
+        ProposeOperatorBuffering(schedOp, prevOp, bufferedSchedule.get(), refSchedule, stagingLimitClamped);
 
         // chained sub-operations
         for ( auto const &subOp : schedOp->SubOps() )
         {
             ProposeOperatorBuffering(subOp.get(), prevOp, bufferedSchedule.get(), refSchedule, stagingLimitClamped);
         }
-        prevOp = schedOp.get();
+        prevOp = schedOp;
     }
 
     return bufferedSchedule;
@@ -1413,7 +1408,7 @@ std::shared_ptr<Schedule> Scheduler::ProposeMinimalSchedule()
 {
     // Proposes scheduling parameters where every operator is subdivided into the smallest stripe that
     // satisfies the next operators stride
-    auto minSchedule = std::make_shared<Schedule>(_name + "_MIN");
+    auto minSchedule = std::make_shared<Schedule>(_name + "_MIN", 0, _ops.size());
 
     // Keep track of the previous Op - which consumes the current Op's OFM
     SchedulerOperation *prevOp = nullptr;
@@ -1507,7 +1502,7 @@ std::shared_ptr<Schedule> Scheduler::OptimizeSchedule(Schedule *schedule, const 
 std::shared_ptr<Schedule> Scheduler::ProposeScheduleStriping(const Shape &finalStripe, const std::string &label, Schedule *refSchedule)
 {
     // Proposes new striping for a schedule. The stripe is derived from the ifm requirements of the next Op down
-    auto stripedSchedule = std::make_shared<Schedule>(label);
+    auto stripedSchedule = std::make_shared<Schedule>(label, refSchedule->Start(), refSchedule->End());
 
     Shape stripe = finalStripe;
     for ( auto pos = _ops.rbegin(); pos != _ops.rend(); pos++ )
@@ -1632,7 +1627,8 @@ std::shared_ptr<Schedule> Scheduler::OptimizeSubSchedule(const CascadeInfo &casc
     vector_span<std::unique_ptr<SchedulerOperation>> subOps(_ops, cascadeInfo.start, cascadeInfo.end + 1);
 
     // Create a sub-schedule that contains only the costs for the Ops that are part of the sub-schedule
-    auto subSchedule = std::make_shared<Schedule>(_name + fmt::format("SUB_{}_{}", cascadeInfo.start, cascadeInfo.end));
+    auto subSchedule = std::make_shared<Schedule>(
+        _name + fmt::format("SUB_{}_{}", cascadeInfo.start, cascadeInfo.end), cascadeInfo.start, cascadeInfo.end + 1);
     for ( auto &op : subOps )
     {
         // NOTE: Copies the cost objects, consider optimising this

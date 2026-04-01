@@ -60,7 +60,7 @@ std::unique_ptr<ArchitectureOpConfig> GetOpConfig(std::unique_ptr<SchedulerOpera
 
 Schedule CreateSchedule(std::unique_ptr<SchedulerOperation> &schedOp, Shape stripeShape)
 {
-    Schedule schedule("Schedule");
+    Schedule schedule("Schedule", 0, 1);
     std::unique_ptr<ArchitectureOpConfig> opConfig = GetOpConfig(schedOp);
     Shape ifmShape = schedOp->IFM(0)->SliceShape();
     Shape ifm2Shape;
