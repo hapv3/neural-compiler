@@ -228,6 +228,8 @@ class Schedule
 private:
     std::string _name;
     SchedulerCostMap _costMap;
+    int _subScheduleStart = 0;  // Start index in external ops array
+    int _subScheduleEnd = 0;    // Exclusive end index in external ops array
 
 public:
     std::unordered_map<int, CascadeInfo> cascades;
@@ -238,9 +240,15 @@ public:
     std::unique_ptr<LiveRangeGraph> stagingLRGraph;
 
 public:
-    Schedule(const std::string &name) : _name(name) {}
+    Schedule(const std::string &name, int startIndex, unsigned endIndex) :
+            _name(name), _subScheduleStart(startIndex), _subScheduleEnd(int(endIndex))
+    {
+        assert(_subScheduleStart >= 0 && _subScheduleEnd >= _subScheduleStart);
+    }
 
     const std::string &Name() const { return _name; }
+    int Start() const { return _subScheduleStart; }
+    int End() const { return _subScheduleEnd; }
 
     void SetCost(UniqueId id, std::unique_ptr<SchedulerOpInfo> opInfo) { _costMap[id] = std::move(opInfo); }
 

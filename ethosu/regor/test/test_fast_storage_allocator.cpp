@@ -69,7 +69,7 @@ static std::unique_ptr<SchedulerOperation> CreateSchedulerOperation(std::unique_
 
 static std::unique_ptr<Schedule> CreateSchedule(std::unique_ptr<Architecture> &arch, std::vector<std::unique_ptr<SchedulerOperation>> &schedOps)
 {
-    auto schedule = std::make_unique<Schedule>("test");
+    auto schedule = std::make_unique<Schedule>("test", 0, schedOps.size());
     for ( auto &op : schedOps )
     {
         auto ifm = op->IFM(0);
