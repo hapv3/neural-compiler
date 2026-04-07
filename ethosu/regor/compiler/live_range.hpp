@@ -111,13 +111,14 @@ public:
     LiveRange *GetOrCreateRange(SchedulerTensor *tens, LRUsage usage);
     bool AreInSameRange(const SchedulerTensor *lhs, const SchedulerTensor *rhs) const;
     LiveRange *SplitFromRange(SchedulerTensor *tens);
+    static bool CanReuseIFMTensors(const SchedulerTensor *ifmTens, const SchedulerTensor *ofmTens);
+    static bool IsOp1To1(const SchedulerOperation *op);
 
 private:
     LiveRange *FuseRanges(SchedulerTensor *inTens, SchedulerTensor *outTens);
     SchedulerTensor *ReusableIFM(const std::unique_ptr<SchedulerOperation> &schedOp, const SchedulerTensor *ofmTensor,
         const MemArea &targetMemory);
     bool ShouldBeIgnored(const SchedulerTensor *tens, const MemArea &targetMemory);
-    bool HasReusableIFM(const SchedulerOperation *op);
 };
 
 }  // namespace regor

@@ -117,6 +117,7 @@ public:
 
 private:
     bool IsCascadable(const SchedulerOperation *op, SchedulerConnection *ifmConn, SchedulerOpInfo *cost) const;
+    bool CanReuseCascadeRollingBuffer(const SchedulerOperation *op, const CascadeBuffer &ifmBuffer, const CascadeBuffer &ofmBuffer) const;
     int EstimateUncascadedBufferUsage(SchedulerOperation *op, SchedulerOpInfo *cost) const;
     int NonLocalUsage(UniqueId uid) const;
     int OpLocalUsage(UniqueId uid) const;

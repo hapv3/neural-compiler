@@ -2422,7 +2422,13 @@ void Scheduler::PrintSchedule(Schedule *schedule)
     for ( auto key : keys )
     {
         auto const &cascade = cascades.at(key & 0xFFFF);
-        LOG_PRINT("\t\t{0}: {1} -> {2}, size: {3}\n", key & 0xFFFF, cascade.start, cascade.end, cascade.memUsage);
+        int cascadeMemUsage = 0;
+        if ( cascade.start >= 0 && cascade.start < int(_ops.size()) )
+        {
+            auto *cost = schedule->Cost(_ops[cascade.start].get());
+            cascadeMemUsage = cost ? schedule->MemoryUsageAt(cost->timeIndex) : 0;
+        }
+        LOG_PRINT("\t\t{0}: {1} -> {2}, size: {3}\n", key & 0xFFFF, cascade.start, cascade.end, cascadeMemUsage);
     }
 }
 

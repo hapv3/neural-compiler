@@ -123,13 +123,15 @@ void LiveRangeGraph::ExtractLiveRangesFromCascades(const std::vector<std::unique
         int timeToSet = _currentTime;
         if ( schedOp->IsNpuOp() )
         {
-            if ( cascadeInfo == nullptr && _reuseIfms )
+            auto cascadeReuse = !addRollingBuffers && cascadeInfo != nullptr;
+            auto nonCascadeReuse = _reuseIfms && cascadeInfo == nullptr;
+            if ( cascadeReuse || nonCascadeReuse )
             {
                 auto opGroup = schedOp->OpGroup();
                 assert(opGroup != nullptr);
 
                 // Get the ofm of the last operator in the group
-                auto opGroupOfm = schedOp->SubOps().size() ? schedOp->SubOps().back()->OFM() : schedOp->OFM();
+                auto opGroupOfm = schedOp->FinalSubOFM();
                 if ( opGroup->NeedsAllocation(opGroupOfm->tensor->uid) )
                 {
                     // Check if op have an ifm tensor that can be reused for the ofm
@@ -141,7 +143,7 @@ void LiveRangeGraph::ExtractLiveRangesFromCascades(const std::vector<std::unique
                     }
                 }
             }
-            else if ( cascadeInfo != nullptr )
+            if ( cascadeInfo != nullptr )
             {
                 auto entry = cascadeInfo->buffers.find(*schedOp);
                 if ( entry != cascadeInfo->buffers.end() )
@@ -325,6 +327,13 @@ LiveRange *LiveRangeGraph::SplitFromRange(SchedulerTensor *tens)
     return GetOrCreateRange(tens, LRUsage::OpLocal);  // Assumes we only fuse op local IFM/OFM
 }
 
+bool LiveRangeGraph::CanReuseIFMTensors(const SchedulerTensor *ifmTens, const SchedulerTensor *ofmTens)
+{
+    assert(ifmTens != nullptr && ofmTens != nullptr && "IFM and OFM tensors can't be nullptr");
+    return !ifmTens->isGraphOutput && !ifmTens->isPersistent && !ofmTens->isPersistent &&
+           ifmTens->dataType == ofmTens->dataType && ifmTens->consumers.size() == 1 && ofmTens->producers.size() == 1;
+}
+
 // Check if any of the IFMs consumed by the first operator in an opgroup can be reused for the OFM
 // tensor of the last operator in the opgroup.
 // Requires the first operator to be an elementwise operator and is also applicaple to stand-alone
@@ -334,18 +343,15 @@ SchedulerTensor *LiveRangeGraph::ReusableIFM(
 {
     SchedulerTensor *reusableIfm = nullptr;
     const auto *ofm = schedOp->Output(TensorUsage::OFM);
-    if ( HasReusableIFM(schedOp.get()) )
+    if ( IsOp1To1(schedOp.get()) )
     {
         if ( !ShouldBeIgnored(ofmTens, targetMemory) )
         {
             for ( const auto &[usage, ifmConn] : schedOp->inputs.pairs() )
             {
                 const auto ifmTens = ifmConn.tensor.get();
-
-                if ( IsIFM(usage) && !ifmTens->isGraphOutput && !ifmTens->isPersistent && !ofmTens->isPersistent &&
-                     ifmTens->storageShape == ofmTens->storageShape && ifmTens->format == ofmTens->format &&
-                     ifmTens->dataType == ofmTens->dataType && !ShouldBeIgnored(ifmTens, targetMemory) &&
-                     ifmTens->consumers.size() == 1 && ofmTens->producers.size() == 1 )
+                if ( IsIFM(usage) && ifmTens->storageShape == ofmTens->storageShape && CanReuseIFMTensors(ifmTens, ofmTens) &&
+                     ifmTens->format == ofmTens->format && !ShouldBeIgnored(ifmTens, targetMemory) )
                 {
                     reusableIfm = ifmTens;
                     break;
@@ -382,7 +388,7 @@ bool LiveRangeGraph::ShouldBeIgnored(const SchedulerTensor *tens, const MemArea 
 }
 
 // IFM reuse is possible for any operator that maps a single IFM element to a single OFM element
-bool LiveRangeGraph::HasReusableIFM(const SchedulerOperation *op)
+bool LiveRangeGraph::IsOp1To1(const SchedulerOperation *op)
 {
     const auto *kernel = op->Kernel();
     const bool unitKernel = kernel && kernel->ElementsWH() == 1;

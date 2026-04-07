@@ -225,6 +225,7 @@ void CascadeBuilder::BuildCascades(Schedule *refSchedule, Schedule *fallbackSche
 
         // Op is the producer of the OFM consumed by the next Op to consider
         auto producer = op;
+        CascadeBuffer previousBuffer;
         while ( true )
         {
             auto &dependants = producer->OFM()->tensor->consumers;
@@ -269,7 +270,12 @@ void CascadeBuilder::BuildCascades(Schedule *refSchedule, Schedule *fallbackSche
             opsInCascade.push_back(currentOp);
 
             // Increase the accumulated intermediate buffers in the cascade
-            cascadeBuffersSize += ifmBufferSize + opWeightBuffer;
+            const bool reusePreviousBuffer = CanReuseCascadeRollingBuffer(producer, previousBuffer, bufferInfo);
+            cascadeBuffersSize += opWeightBuffer;
+            if ( !reusePreviousBuffer )
+            {
+                cascadeBuffersSize += ifmBufferSize;
+            }
 
             bool startIfmRangeAlreadyLocal = false;
             if ( rangeSize > 0 && startIfmRangeId != INVALID_UID )
@@ -332,6 +338,7 @@ void CascadeBuilder::BuildCascades(Schedule *refSchedule, Schedule *fallbackSche
                 }
             }
 
+            previousBuffer = bufferInfo;
             producer = currentOp;
         }
 
@@ -405,6 +412,22 @@ bool CascadeBuilder::IsCascadable(const SchedulerOperation *op, SchedulerConnect
     return (cost->stripe.Height() < op->OFM()->shape.Height()) &&
            ((IsConvolution(type) && (ifmConn->resamplingMode == ArchResampling::None)) || IsElementwise(type) ||
                (IsPooling(type) && type != OpType::ReduceSum));
+}
+
+bool CascadeBuilder::CanReuseCascadeRollingBuffer(const SchedulerOperation *op, const CascadeBuffer &ifmBuffer, const CascadeBuffer &ofmBuffer) const
+{
+    if ( !LiveRangeGraph::IsOp1To1(op) )
+    {
+        return false;
+    }
+
+    const auto *ifmConn = op->IFM(op->PrimaryIfmIndex());
+    const auto *ofmConn = op->SubOps().empty() ? op->OFM() : op->SubOps().back()->OFM();
+    if ( !LiveRangeGraph::CanReuseIFMTensors(ifmConn->tensor.get(), ofmConn->tensor.get()) )
+    {
+        return false;
+    }
+    return ifmBuffer.shape == ofmBuffer.shape && ifmBuffer.sizeBytes == ofmBuffer.sizeBytes;
 }
 
 

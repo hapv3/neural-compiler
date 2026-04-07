@@ -195,7 +195,7 @@ std::shared_ptr<SchedulerTensor> CreateSchedulerTensor(const std::string &name, 
 {
     auto tensor = CreateTensor(name, storageShape, dtype);
     auto schedTensor = std::make_shared<SchedulerTensor>();
-    schedTensor->srcTensor = tensor;
+    schedTensor->srcTensor = std::move(tensor);
     schedTensor->storageShape = storageShape;
     schedTensor->dataType = dtype;
     schedTensor->format = format;
