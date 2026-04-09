@@ -2820,11 +2820,19 @@ Operation *TFLiteGraphOptimiser::ConvertQuantizationToExplicit(Graph *const grap
             }
             else
             {
-                // Cast to float and back to double is necessary to match TFLite reference kernel
                 float ifmScale = ifmQuant.Scale().Dequantize();
                 float ofmScale = ofmQuant.Scale().Dequantize();
                 ofmQuant.scales.clear();
-                ofmQuant.scales.push_back(static_cast<double>(ifmScale) / static_cast<double>(ofmScale));
+                if ( opType == OpType::MemoryCopy || opType == OpType::Quantize )
+                {
+                    // Cast to float and back to double is necessary to match TFLite reference kernel
+                    ofmQuant.scales.push_back(static_cast<double>(ifmScale) / static_cast<double>(ofmScale));
+                }
+                else
+                {
+                    // Relu requires float division to match TFLite reference kernel
+                    ofmQuant.scales.push_back(ifmScale / ofmScale);
+                }
             }
             break;
         }
