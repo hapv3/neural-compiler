@@ -1040,10 +1040,9 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
                     for ( const auto &subOpIfm : hlcSubOp.ifm )
                     {
                         if ( !IsIFM(subOpIfm.usage) ) continue;
-                        if ( subOpIfm.address == hlcOp->ofm.address )
+                        if ( subOpIfm.address == -1 )
                         {
-                            assert(subOpIfm.address == -1);  // Address -1 signifies that the FM is in an internal
-                                                             // buffer
+                            // Address -1 signifies that the FM is in an internal buffer
                             hlcSubOpArea.AddIfm(hlcStripe->stripeAreas[0].ofmArea);
                         }
                         else
