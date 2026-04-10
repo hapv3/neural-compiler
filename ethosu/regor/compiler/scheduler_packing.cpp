@@ -757,7 +757,7 @@ int SchedulerPacking::CanPack(const SchedulerOperation *schedOp, const Scheduler
     {
         const bool isReshape = prevConnOfm->shape != nextConnIfm->shape;
         const bool hasIfmSlice = nextConnIfm->shape != nextConnIfm->SliceShape();
-        if ( isReshape && (hasIfmSlice || hasOfmSlice || nextOp->IsReordering()) )
+        if ( hasIfmSlice || (isReshape && (hasOfmSlice || nextOp->IsReordering())) )
         {
             return 0;
         }
@@ -766,7 +766,7 @@ int SchedulerPacking::CanPack(const SchedulerOperation *schedOp, const Scheduler
     {
         const bool isReshape = prevConnOfm->shape != nextConnIfm2->shape;
         const bool hasIfm2Slice = nextConnIfm2->shape != nextConnIfm2->SliceShape();
-        if ( isReshape && (hasIfm2Slice || hasOfmSlice || nextOp->IsReordering()) )
+        if ( hasIfm2Slice || (isReshape && (hasOfmSlice || nextOp->IsReordering())) )
         {
             return 0;
         }
