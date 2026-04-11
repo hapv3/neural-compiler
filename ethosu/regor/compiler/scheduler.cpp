@@ -1249,8 +1249,16 @@ void Scheduler::ProposeWeightBuffering(SchedulerConnection *weights, SchedulerCo
     if ( cost->cascade != 0 || forceFullDepthSlice )
     {
         weightBufferSize = fullWeightsBytes;
-        // Update the memory snapshot to reflect the added size of the weights
-        refSchedule->memorySnapshot[cost->timeIndex].buffering += weightBufferSize;  // TODO: Update via liverange
+        // Repeated buffering proposals can revisit the same op/time index. Apply only the
+        // delta versus existing buffered bytes to avoid inflating snapshot usage.
+        int existingWeightBufferSize = refCost->bufferedWeightTensor.AllocatedSize();
+        int bufferingDelta = weightBufferSize - existingWeightBufferSize;
+        if ( bufferingDelta != 0 )
+        {
+            // TODO: Derive this through live-range reconstruction rather than mutating snapshot state here.
+            refSchedule->memorySnapshot[cost->timeIndex].buffering += bufferingDelta;
+            assert(refSchedule->memorySnapshot[cost->timeIndex].buffering >= 0);
+        }
     }
     else
     {
