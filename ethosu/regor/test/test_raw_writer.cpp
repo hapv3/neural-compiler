@@ -51,7 +51,7 @@ TEST_CASE("raw_writer - metadata")
     REQUIRE_FALSE(scratch->IsConstant());
     REQUIRE_FALSE(scratchFast->IsConstant());
 
-    // Build tensors with quantization
+    // Build tensors with quantization metadata
     const auto input = std::make_shared<Tensor>("input_1", DataType::Int8, Shape({2, 3, 4, 5, 6, 7}));
     const auto inputNoQuant = std::make_shared<Tensor>("input_2", DataType::Int8, Shape({2, 3, 4, 5, 6, 7}));
     const auto output = std::make_shared<Tensor>("output_1", DataType::Int8, Shape({3, 4, 5, 6, 7, 8}));
@@ -61,20 +61,64 @@ TEST_CASE("raw_writer - metadata")
     REQUIRE_FALSE(output->IsConstant());
     REQUIRE_FALSE(variable->IsConstant());
 
-    Quantization perTensorQuant;
-    perTensorQuant.scales.push_back(QuantizedScale(2, 0));
-    perTensorQuant.zeroPoints.push_back(3);
+    auto createPassthroughTensor =
+        [](const char *name, const std::vector<int32_t> &shape, const std::vector<float> *scale,
+            const std::vector<int64_t> *zeroPoint, int32_t quantizedDimension = 0, bool isVariable = false)
+    {
+        flatbuffers::FlatBufferBuilder builder;
+        flatbuffers::Offset<tflite::QuantizationParameters> quantization = 0;
+        if ( scale && zeroPoint )
+        {
+            quantization = tflite::CreateQuantizationParametersDirect(
+                builder, nullptr, nullptr, scale, zeroPoint, tflite::QuantizationDetails::NONE, 0, quantizedDimension);
+        }
 
-    Quantization perChannelQuant;
-    perChannelQuant.scales.push_back(QuantizedScale(1, 0));
-    perChannelQuant.scales.push_back(QuantizedScale(2, 0));
-    perChannelQuant.zeroPoints.push_back(0);
-    perChannelQuant.zeroPoints.push_back(10);
-    perChannelQuant.dimension = 3;
+        const auto tensor = tflite::CreateTensorDirect(builder, &shape, tflite::TensorType::INT8, 0, name, quantization, isVariable);
+        builder.Finish(tensor);
 
-    Quantization variableQuant;
-    variableQuant.scales.push_back(QuantizedScale(5, 0));
-    variableQuant.zeroPoints.push_back(0);
+        size_t rawSize = 0;
+        size_t rawOffset = 0;
+        const uint8_t *raw = builder.ReleaseRaw(rawSize, rawOffset);
+        UNUSED(rawSize);
+        return std::make_pair(std::unique_ptr<const uint8_t[]>(raw), flatbuffers::GetRoot<tflite::Tensor>(&raw[rawOffset]));
+    };
+
+    const std::vector<float> inputScale = {2.0f};
+    const std::vector<int64_t> inputZeroPoint = {3};
+    const auto inputPassthrough = createPassthroughTensor("input_1", {2, 3, 4, 5, 6, 7}, &inputScale, &inputZeroPoint);
+
+    const auto inputNoQuantPassthrough = createPassthroughTensor("input_2", {2, 3, 4, 5, 6, 7}, nullptr, nullptr);
+
+    const std::vector<float> outputScale = {1.0f, 2.0f};
+    const std::vector<int64_t> outputZeroPoint = {0, 10};
+    const auto outputPassthrough = createPassthroughTensor("output_1", {3, 4, 5, 6, 7, 8}, &outputScale, &outputZeroPoint, 3);
+
+    const std::vector<float> variableScale = {5.0f};
+    const std::vector<int64_t> variableZeroPoint = {0};
+    const auto variablePassthrough = createPassthroughTensor("variable_1", {4, 5, 6, 7, 8, 9}, &variableScale, &variableZeroPoint, 0, true);
+
+    input->SetPassthrough(inputPassthrough.second);
+    inputNoQuant->SetPassthrough(inputNoQuantPassthrough.second);
+    output->SetPassthrough(outputPassthrough.second);
+    variable->SetPassthrough(variablePassthrough.second);
+
+    Quantization perTensorConnQuant;
+    perTensorConnQuant.scales.push_back(QuantizedScale(8, 0));
+    perTensorConnQuant.zeroPoints.push_back(9);
+
+    Quantization noQuantConnQuant;
+    noQuantConnQuant.scales.push_back(QuantizedScale(10, 0));
+    noQuantConnQuant.zeroPoints.push_back(11);
+
+    Quantization perChannelConnQuant;
+    perChannelConnQuant.scales.push_back(QuantizedScale(12, 0));
+    perChannelConnQuant.scales.push_back(QuantizedScale(13, 0));
+    perChannelConnQuant.zeroPoints.push_back(14);
+    perChannelConnQuant.zeroPoints.push_back(15);
+
+    Quantization variableConnQuant;
+    variableConnQuant.scales.push_back(QuantizedScale(16, 0));
+    variableConnQuant.zeroPoints.push_back(17);
 
     // Create custom op
     auto op = std::make_shared<Operation>(OpType::CustomNpuOp);
@@ -82,10 +126,10 @@ TEST_CASE("raw_writer - metadata")
     op->ConnectInput(MakeTensorUsage(TensorUsage::Params, 1), readOnlyTensor);
     op->ConnectInput(MakeTensorUsage(TensorUsage::State, 0), scratch);
     op->ConnectInput(MakeTensorUsage(TensorUsage::State, 1), scratchFast);
-    op->ConnectInput(TensorUsage::IFM0, input).Set(perTensorQuant);
-    op->ConnectInput(TensorUsage::IFM1, inputNoQuant);
-    op->ConnectOutput(TensorUsage::OFM, output).Set(perChannelQuant);
-    op->ConnectOutput(MakeTensorUsage(TensorUsage::OFM, 1), variable).Set(variableQuant);
+    op->ConnectInput(TensorUsage::IFM0, input).Set(perTensorConnQuant);
+    op->ConnectInput(TensorUsage::IFM1, inputNoQuant).Set(noQuantConnQuant);
+    op->ConnectOutput(TensorUsage::OFM, output).Set(perChannelConnQuant);
+    op->ConnectOutput(MakeTensorUsage(TensorUsage::OFM, 1), variable).Set(variableConnQuant);
 
     // Create graph
     std::vector<std::unique_ptr<Graph>> graphs;

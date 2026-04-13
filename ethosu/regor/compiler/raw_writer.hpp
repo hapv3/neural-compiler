@@ -48,13 +48,13 @@ private:
 
     void SerialiseScratchFastTensor(const Tensor *tensor, const MemUsageAddress &address);
 
-    void SerialiseInputTensor(const Tensor *tensor, const TensorConnection *connection, const MemUsageAddress &address);
+    void SerialiseInputTensor(const Tensor *tensor, const MemUsageAddress &address);
 
-    void SerialiseOutputTensor(const Tensor *tensor, const TensorConnection *connection, const MemUsageAddress &address);
+    void SerialiseOutputTensor(const Tensor *tensor, const MemUsageAddress &address);
 
-    void SerialiseVariableTensor(const Tensor *tensor, const TensorConnection *connection, const MemUsageAddress &address);
+    void SerialiseVariableTensor(const Tensor *tensor, const MemUsageAddress &address);
 
-    std::vector<uint8_t> SerialiseQuantization(const Quantization &quant) const;
+    std::vector<uint8_t> SerialiseQuantization(const Tensor *tensor) const;
 };
 
 }  // namespace regor

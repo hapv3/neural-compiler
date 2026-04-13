@@ -142,8 +142,7 @@ std::vector<std::pair<std::unique_ptr<const uint8_t[]>, size_t>> RawWriter::Seri
         auto tensorUsage = customNpuOp->UsageOfTensor(tensor);
         if ( IsIFM(tensorUsage) && !tensor->IsConstant() )
         {
-            const TensorConnection *conn = customNpuOp->Input(tensorUsage);
-            SerialiseInputTensor(tensor, conn, tensor_address_map.at(tensor->Uid()));
+            SerialiseInputTensor(tensor, tensor_address_map.at(tensor->Uid()));
         }
     }
 
@@ -154,8 +153,7 @@ std::vector<std::pair<std::unique_ptr<const uint8_t[]>, size_t>> RawWriter::Seri
         auto tensorUsage = customNpuOp->UsageOfTensor(tensor);
         if ( IsOFM(tensorUsage) )
         {
-            const TensorConnection *conn = customNpuOp->Output(tensorUsage);
-            SerialiseOutputTensor(tensor, conn, tensor_address_map.at(tensor->Uid()));
+            SerialiseOutputTensor(tensor, tensor_address_map.at(tensor->Uid()));
         }
     }
 
@@ -166,8 +164,7 @@ std::vector<std::pair<std::unique_ptr<const uint8_t[]>, size_t>> RawWriter::Seri
         auto tensorUsage = customNpuOp->UsageOfTensor(tensor);
         if ( (tensorUsage != TensorUsage::None) )
         {
-            const TensorConnection *conn = IsOFM(tensorUsage) ? customNpuOp->Output(tensorUsage) : customNpuOp->Input(tensorUsage);
-            SerialiseVariableTensor(tensor, conn, tensor_address_map.at(tensor->Uid()));
+            SerialiseVariableTensor(tensor, tensor_address_map.at(tensor->Uid()));
         }
     }
 
@@ -265,11 +262,11 @@ void RawWriter::SerialiseScratchFastTensor(const Tensor *tensor, const MemUsageA
     _raw.emplace_back(std::move(serialisedTensor), serialisedTensorSize);
 }
 
-void RawWriter::SerialiseInputTensor(const Tensor *tensor, const TensorConnection *connection, const MemUsageAddress &address)
+void RawWriter::SerialiseInputTensor(const Tensor *tensor, const MemUsageAddress &address)
 {
     assert(!tensor->IsConstant());
 
-    const auto quantPayload = SerialiseQuantization(connection->quantization);
+    const auto quantPayload = SerialiseQuantization(tensor);
     const bool hasQuantization = !quantPayload.empty();
     const size_t serialisedTensorSize = sizeof(regor_raw_tensor_header_t) + quantPayload.size();
     auto serialisedTensor = std::make_unique<uint8_t[]>(serialisedTensorSize);
@@ -301,11 +298,11 @@ void RawWriter::SerialiseInputTensor(const Tensor *tensor, const TensorConnectio
     _raw.emplace_back(std::move(serialisedTensor), serialisedTensorSize);
 }
 
-void RawWriter::SerialiseOutputTensor(const Tensor *tensor, const TensorConnection *connection, const MemUsageAddress &address)
+void RawWriter::SerialiseOutputTensor(const Tensor *tensor, const MemUsageAddress &address)
 {
     assert(!tensor->IsConstant());
 
-    const auto quantPayload = SerialiseQuantization(connection->quantization);
+    const auto quantPayload = SerialiseQuantization(tensor);
     const bool hasQuantization = !quantPayload.empty();
     const size_t serialisedTensorSize = sizeof(regor_raw_tensor_header_t) + quantPayload.size();
     auto serialisedTensor = std::make_unique<uint8_t[]>(serialisedTensorSize);
@@ -337,11 +334,11 @@ void RawWriter::SerialiseOutputTensor(const Tensor *tensor, const TensorConnecti
     _raw.emplace_back(std::move(serialisedTensor), serialisedTensorSize);
 }
 
-void RawWriter::SerialiseVariableTensor(const Tensor *tensor, const TensorConnection *connection, const MemUsageAddress &address)
+void RawWriter::SerialiseVariableTensor(const Tensor *tensor, const MemUsageAddress &address)
 {
     assert(!tensor->IsConstant());
 
-    const auto quantPayload = SerialiseQuantization(connection->quantization);
+    const auto quantPayload = SerialiseQuantization(tensor);
     const bool hasQuantization = !quantPayload.empty();
     const size_t serialisedTensorSize = sizeof(regor_raw_tensor_header_t) + quantPayload.size();
     auto serialisedTensor = std::make_unique<uint8_t[]>(serialisedTensorSize);
@@ -371,15 +368,17 @@ void RawWriter::SerialiseVariableTensor(const Tensor *tensor, const TensorConnec
     _raw.emplace_back(std::move(serialisedTensor), serialisedTensorSize);
 }
 
-std::vector<uint8_t> RawWriter::SerialiseQuantization(const Quantization &quant) const
+std::vector<uint8_t> RawWriter::SerialiseQuantization(const Tensor *tensor) const
 {
-    if ( !quant.IsValid() )
+    const auto *tfliteTensor = tensor->Passthrough() ? static_cast<const tflite::Tensor *>(tensor->Passthrough()) : nullptr;
+    const auto *quantization = tfliteTensor ? tfliteTensor->quantization() : nullptr;
+    if ( !quantization || !quantization->scale() || !quantization->zero_point() )
     {
         return {};
     }
 
-    const size_t count = quant.scales.size();
-    const size_t zpCount = quant.zeroPoints.size();
+    const size_t count = quantization->scale()->size();
+    const size_t zpCount = quantization->zero_point()->size();
     if ( zpCount != 1 && zpCount != count )
     {
         throw std::invalid_argument("Raw output requires zero_points.size() == 1 or zero_points.size() == scales.size()");
@@ -399,8 +398,8 @@ std::vector<uint8_t> RawWriter::SerialiseQuantization(const Quantization &quant)
     const size_t zeroPointsOffset = scalesOffset + scalesBytes;
     for ( size_t i = 0; i < count; ++i )
     {
-        const auto scale = float(quant.scales[i].Dequantize());
-        const int64_t zeroPoint = (zpCount == 1) ? quant.zeroPoints.front() : quant.zeroPoints[i];
+        const auto scale = (*quantization->scale())[i];
+        const int64_t zeroPoint = (zpCount == 1) ? quantization->zero_point()->Get(0) : quantization->zero_point()->Get(i);
         const auto zp = ClampToType<int32_t>(zeroPoint);
         std::copy_n(reinterpret_cast<const char *>(&scale), sizeof(scale),
             reinterpret_cast<char *>(buffer.data() + scalesOffset + (i * sizeof(float))));
