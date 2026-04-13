@@ -462,8 +462,13 @@ HandleDilation(DecompositionContext &ctx, std::unique_ptr<SchedulerOperation> op
 static Margin NewPaddingForBlock(const Margin &padding, const Shape &offset, const Shape &ifmShape, const Shape &block,
     const Point2i &stride, const Point2i &kernelSize)
 {
-    int top = std::max(padding.Top() - std::max(offset.Height(), 0), 0);
-    int left = std::max(padding.Left() - std::max(offset.Width(), 0), 0);
+    // amount of steps already consumed before offset (counting padded area)
+    // e.g. padding = 6, offset = -1 -> 5 consumed steps
+    int topConsumed = std::max(offset.Height() + padding.Top(), 0);
+    int leftConsumed = std::max(offset.Width() + padding.Left(), 0);
+    // Adjust top/left padding based on consumed steps
+    int top = std::max(padding.Top() - topConsumed, 0);
+    int left = std::max(padding.Left() - leftConsumed, 0);
     int remainingHeight = ifmShape.Height() - (block.Height() * stride.y + offset.Height() + kernelSize.y - 1);
     int remainingWidth = ifmShape.Width() - (block.Width() * stride.x + offset.Width() + kernelSize.x - 1);
     int bottom = std::min(padding.Bottom(), std::max(-remainingHeight, 0));
