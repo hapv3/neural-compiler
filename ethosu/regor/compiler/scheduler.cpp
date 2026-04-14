@@ -214,6 +214,21 @@ static bool CheckLinearFormatForConcatSplit(SchedulerTensor *tensor)
     return false;
 }
 
+// Align stripes so that height is a multiple of the upscaling-factor
+Shape Scheduler::AlignStripe(const SchedulerOperation *schedOp, const Shape &stripe)
+{
+    auto ifm = schedOp->TryIFM(0);
+    auto ofm = schedOp->TryOFM();
+    if ( !ofm || !ifm ) return stripe;
+    if ( stripe != ofm->SliceShape() )
+    {
+        // striped operation, align stripe-height with upscaling factor
+        int rounding = 0;
+        int upscale = _arch->UpscaleAndRounding(ifm->resamplingMode, rounding);
+        return stripe.WithHeight(RoundAway(stripe.Height(), upscale));
+    }
+    return stripe;
+}
 
 int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *conn, std::unordered_set<UniqueId> &visited)
 {
@@ -778,6 +793,7 @@ std::unique_ptr<SchedulerOpInfo> Scheduler::CreateSchedulerOpInfo(
     {
         blockConfig = parentInfo ? parentInfo->Config()->Clone() : GetOpConfig(op, ifmShape, ifm2Shape, ofmShape, weightFormat);
     }
+    assert((ofmShape == op->OFM()->SliceShape() || ofmShape.Height() % blockConfig->MinimalStripeGranule().y == 0) && "Stripe is not divisible with minimalStripeGranule");
     auto scales = op->TryInput(TensorUsage::Scales);
     if ( !weights && (op->OFM()->quantization.scales.size() > 1 || scales) )
     {
@@ -1419,6 +1435,8 @@ std::shared_ptr<Schedule> Scheduler::ProposeMinimalSchedule()
             minStripeHeight = isNextAccKeep || isAccKeep ? ofmShape.Height() : prevOp->Kernel()->Stride().y;
         }
         Shape minStripe = Shape::PadAxes(ofmShape, 3, 1).WithHeight(minStripeHeight);
+        // Align stripe based on resamplingMode
+        minStripe = AlignStripe(schedOp.get(), minStripe);
         auto cost = CreateSchedulerOpInfo(schedOp.get(), minStripe);
         for ( auto &subOp : schedOp->SubOps() )
         {
@@ -1503,7 +1521,8 @@ std::shared_ptr<Schedule> Scheduler::ProposeScheduleStriping(const Shape &finalS
             // sched_op is not part of the sub-schedule - skip
             continue;
         }
-
+        // align stripe based on resampling mode
+        stripe = AlignStripe(schedOp, stripe);
         // Create a cost entry with the new stripe
         auto cost = CreateSchedulerOpInfo(schedOp, stripe);
         cost->timeIndex = refCost->timeIndex;
@@ -1543,7 +1562,15 @@ std::shared_ptr<Schedule> Scheduler::ProposeScheduleStriping(const Shape &finalS
         stripedSchedule->SetCost(*schedOp, std::move(cost));
 
         // Calculate the preceeding Op's stripe
-        stripe = schedOp->IFM(schedOp->PrimaryIfmIndex())->shape.With(-3, stripe.Height() * schedOp->Kernel()->Stride().y);
+        int upscaling = 1;
+        if ( auto ifm = schedOp->TryIFM(0) )
+        {
+            int rounding;
+            upscaling = _arch->UpscaleAndRounding(ifm->resamplingMode, rounding);
+        }
+        assert((stripe.Height() % upscaling == 0) && "stripe height is not aligned with the upscaling-factor");
+        stripe = schedOp->IFM(schedOp->PrimaryIfmIndex())
+                     ->shape.With(-3, (stripe.Height() / upscaling) * schedOp->Kernel()->Stride().y);
     }
     return stripedSchedule;
 }

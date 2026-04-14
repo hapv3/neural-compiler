@@ -342,6 +342,8 @@ public:
         WeightFormat wgtFormat = WeightFormat::Default, SchedulerOpInfo *cost = nullptr, Schedule *schedule = nullptr);
 
 private:
+    Shape AlignStripe(const SchedulerOperation *schedOp, const Shape &stripe);
+
     int UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *conn, std::unordered_set<UniqueId> &visited);
 
     Address CreateSchedulerRepresentation();
