@@ -211,7 +211,7 @@ std::vector<uint32_t> ArchEthosU85::ConfigRegisters()
 int ArchEthosU85::UpscaleAndRounding(ArchResampling resampling, int &rounding)
 {
     rounding = (resampling == ArchResampling::Nearest) ? 1 : 0;
-    return (resampling == ArchResampling::Zeros) ? 2 : 1;
+    return (resampling == ArchResampling::None) ? 1 : 2;
 }
 
 AxisMask ArchEthosU85::CanSubdivide(OpType opType, TransposeType transpose, ReverseType reverse)

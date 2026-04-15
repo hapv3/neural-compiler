@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024, 2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -85,5 +85,32 @@ TEST_CASE("arch_ethos_u85 GetOpConfig")
         auto archOpConfig = arch->GetOpConfig(type, query);
         EthosU85OpConfig *ethosU85OpConfig = static_cast<EthosU85OpConfig *>(archOpConfig.get());
         REQUIRE(ethosU85OpConfig->OfmUBlock() == Shape(2, 4, 16));
+    }
+}
+
+
+TEST_CASE("arch_ethos_u85 UpscaleAndRounding")
+{
+    auto arch = CreateArchDefault<ArchEthosU85>(1024);
+    SECTION("Resampling None")
+    {
+        int rounding;
+        int upscale = arch->UpscaleAndRounding(ArchResampling::None, rounding);
+        REQUIRE(rounding == 0);
+        REQUIRE(upscale == 1);
+    }
+    SECTION("Resampling Zero")
+    {
+        int rounding;
+        int upscale = arch->UpscaleAndRounding(ArchResampling::Zeros, rounding);
+        REQUIRE(rounding == 0);
+        REQUIRE(upscale == 2);
+    }
+    SECTION("Resampling Nearest")
+    {
+        int rounding;
+        int upscale = arch->UpscaleAndRounding(ArchResampling::Nearest, rounding);
+        REQUIRE(rounding == 1);
+        REQUIRE(upscale == 2);
     }
 }
