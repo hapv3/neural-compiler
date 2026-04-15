@@ -132,8 +132,7 @@ public:
     ElementAccess elementAccess;
 
 public:
-    SchedulerOpInfo(std::unique_ptr<ArchitectureOpConfig> opConfig, const Shape &stripeInput1,
-        const Shape &stripeInput2, const Shape &stripe_, const int depthOffset = 0)
+    SchedulerOpInfo(std::unique_ptr<ArchitectureOpConfig> opConfig, const Shape &stripeInput1, const Shape &stripeInput2, const Shape &stripe_)
     {
         this->_config = std::move(opConfig);
         this->stripeInput[0] = stripeInput1;
@@ -141,7 +140,7 @@ public:
         this->stripe = stripe_;
 
         // Create default single depth slice that covers the whole stripe depth. It may be updated later.
-        this->ofmDepthSlices = {depthOffset, depthOffset + (stripe_.Size() > 0 ? stripe.Depth() : 0)};
+        this->ofmDepthSlices = {0, (stripe_.Size() > 0 ? stripe.Depth() : 0)};
     }
 
     SchedulerOpInfo(const SchedulerOpInfo &other) { Copy(other); }
@@ -296,28 +295,31 @@ class Scheduler
 {
     struct TensorCacheKey
     {
-    public:
+    private:
         IWeightEncodingConfig *_config;  // must persist as map entry
         uint32_t _hash;
         UniqueId _uid;
+        int _weightDepthBase;
 
     public:
-        TensorCacheKey(IWeightEncodingConfig *config, const std::vector<int> &depthOffsets, const BufferView &view, UniqueId uid) :
-                _config(config), _uid(uid)
+        TensorCacheKey(IWeightEncodingConfig *config, int weightDepthBase, const std::vector<int> &depthOffsets, const BufferView &view, UniqueId uid) :
+                _config(config), _uid(uid), _weightDepthBase(weightDepthBase)
         {
-            _hash = SimpleHash32(HashVector32(depthOffsets), view.BaseOffset(), view.StrideBytes(), view.ViewShape(),
-                _config->Hash(), uid);
+            _hash = SimpleHash32(weightDepthBase, HashVector32(depthOffsets), view.BaseOffset(), view.StrideBytes(),
+                view.ViewShape(), _config->Hash(), uid);
         }
 
         bool operator==(const TensorCacheKey &other) const
         {
-            return _config->Equals(other._config) && (_uid == other._uid) && (_hash == other._hash);
+            return _config->Equals(other._config) && (_uid == other._uid) && (_hash == other._hash) &&
+                   (_weightDepthBase == other._weightDepthBase);
         }
+        uint32_t Hash() const { return _hash; }
     };
 
     struct TensorCacheHash
     {
-        std::size_t operator()(const TensorCacheKey &key) const { return key._hash; }
+        std::size_t operator()(const TensorCacheKey &key) const { return key.Hash(); }
     };
 
 private:
@@ -405,14 +407,14 @@ private:
 
     void PrintSchedule(Schedule *schedule);
 
-    WeightScaleTensors EncodeQuantizationScaleTensor(OpType forOp, std::unique_ptr<IWeightEncodingConfig> encodingParams,
+    WeightScaleTensors EncodeQuantizationScaleTensor(OpType forOp, std::unique_ptr<IWeightEncodingConfig> encodingParams, int weightDepthBase,
         const std::vector<int> &depthOffsets, const Quantization &ofmQuantization, const SchedulerTensor *scales = nullptr);
 
     WeightScaleTensors EncodeWeightAndScaleTensor(OpType forOp, std::unique_ptr<IWeightEncodingConfig> encodingParams,
-        const std::vector<int> &depthOffsets, const SchedulerTensor *weightTens, const SchedulerTensor *scaleTens,
-        const Quantization &weightQuantization, const Quantization &ofmQuantization);
+        int weightDepthBase, const std::vector<int> &depthOffsets, const SchedulerTensor *weightTens,
+        const SchedulerTensor *scaleTens, const Quantization &weightQuantization, const Quantization &ofmQuantization);
 
-    WeightScaleTensors TryEncodeWeightAndScaleTensor(OpType forOp, IWeightEncodingConfig *encodingParams,
+    WeightScaleTensors TryEncodeWeightAndScaleTensor(OpType forOp, IWeightEncodingConfig *encodingParams, int weightDepthBase,
         const std::vector<int> &depthOffsets, const SchedulerTensor *weightTens, const SchedulerTensor *scaleTens,
         const Quantization &weightQuantization, const Quantization &ofmQuantization, bool doWeights, bool doScales);
 

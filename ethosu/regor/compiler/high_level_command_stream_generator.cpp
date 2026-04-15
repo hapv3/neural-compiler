@@ -896,9 +896,8 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
                 // Offsets are later converted into true tensor coordinates before creating the stripe-areas.
                 int depth = depthSlices[depthIndex];
                 int nextDepth = depthSlices[depthIndex + 1];
-                int baseDepth = depthSlices[0];
-                Shape ofmStripeStartOffset = Shape(0, height, width, depth - baseDepth);
-                Shape ofmStripeEndOffset = Shape(1, endHeight, endWidth, nextDepth - baseDepth);
+                Shape ofmStripeStartOffset = Shape(0, height, width, depth);
+                Shape ofmStripeEndOffset = Shape(1, endHeight, endWidth, nextDepth);
                 // assert that stripe-offsets are inside the OFM slice shape.
                 assert((Shape::Min(ofmStripeStartOffset, ofmShape) == ofmStripeStartOffset) && "OFM-start offset not inside OFM Shape");
                 assert((Shape::Min(ofmStripeEndOffset, ofmShape) == ofmStripeEndOffset) && "OFM-end offset not inside OFM Shape");
@@ -929,7 +928,7 @@ void HLCStreamGenerator::GenerateHLCStripeCommands(SchedulerOperation *op, const
                 }
                 if ( opInfo->npuWeightsTensor != nullptr )
                 {
-                    hlcStripe->weightRangeDepth = depth;
+                    hlcStripe->weightRangeDepth = depth;  // Now a relative zero-offset OFM depth
                     if ( opInfo->bufferedWeightTensor.parts > 0 &&
                          (primaryStripeArea.ofmArea.Start().Height() == ofmOffset.Height() ||
                              opInfo->bufferedWeightTensor.buffering == Buffering::Double) )
