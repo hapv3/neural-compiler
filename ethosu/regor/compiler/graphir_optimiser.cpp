@@ -3404,7 +3404,9 @@ Operation *GraphIrOptimiser::MoveConcatSliceToProducer(Graph *const graph, Opera
     // OFM slice not possible on certain ops
     const auto producer = intermediate->Writers().front();  // O1/O2 in above graph
     assert(producer);
-    if ( producer->Type() == OpType::Passthrough || IsDataLayout(producer->Type()) || IsControlFlow(producer->Type()) )
+    const auto prodOpType = producer->Type();
+    if ( prodOpType == OpType::Passthrough || prodOpType == OpType::Tile || prodOpType == OpType::Scatter ||
+         prodOpType == OpType::Gather || IsReshape(prodOpType) || IsDataLayout(prodOpType) || IsControlFlow(prodOpType) )
     {
         return operation;
     }
