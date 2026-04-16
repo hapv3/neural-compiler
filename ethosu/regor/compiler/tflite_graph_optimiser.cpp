@@ -28,6 +28,7 @@
 #include "graph.hpp"
 #include "graph_optimiser.hpp"
 #include "lstm.hpp"
+#include "lut_util.hpp"
 #include "op_type.hpp"
 #include "operation.hpp"
 #include "optimiser_utils.hpp"
@@ -398,50 +399,8 @@ static Operation *ConvertToInterpolatingLUT16(Operation *op, FUNC func, const st
     float ofmScale = float(ofmConn->quantization.scales[0].Dequantize());
     auto zpIn = ifmConn->quantization.zeroPoints[0];
     auto zpOut = ofmConn->quantization.zeroPoints[0];
-    float qMin = std::numeric_limits<int16_t>::min();
-    float qMax = std::numeric_limits<int16_t>::max();
-    float inputMin = ifmScale * (qMin - zpIn);
-    float inputMax = ifmScale * (qMax - zpIn);
-    float outputMin = ofmScale * (qMin - zpOut);
-    float outputMax = ofmScale * (qMax - zpOut);
-    const int steps = 512;
-    float step = (inputMax - inputMin) / steps;
-    float halfStep = step / 2.0f;
-    float outputScalingInv = (qMax - qMin + 1) / (outputMax - outputMin);
 
-    // Create 32-bit LUT represented by a 16-bit base and 16-bit slope.
-    auto lut = std::make_unique<uint32_t[]>(512);
-    int16_t prevLutResult = 0;
-    for ( int i = 0; i < steps; i++ )
-    {
-        float val = func(inputMin + i * step);
-        float valMidpoint = func(inputMin + i * step + halfStep);
-        float valNext = func(inputMin + (i + 1) * step);
-        float sampleVal = std::round(val * outputScalingInv);
-
-        float midpointInterpVal = std::round((valNext * outputScalingInv + sampleVal) / 2.0f);
-        float midpointVal = std::round(valMidpoint * outputScalingInv);
-        float midpointErr = midpointInterpVal - midpointVal;
-        float bias = std::round(midpointErr / 2.0f);
-
-        float clampedLutResult = std::clamp(sampleVal - bias, qMin, qMax);
-        int16_t lutResult = int16_t(clampedLutResult);
-
-        if ( i > 0 )
-        {
-            int16_t base = prevLutResult;
-            int16_t slope = lutResult - prevLutResult;
-            lut[i - 1] = uint16_t(base) + (uint16_t(slope) << 16);
-        }
-        prevLutResult = lutResult;
-    }
-    float val = float(std::round(func(inputMax) * outputScalingInv));
-    float clampedLutResult = std::clamp(val, qMin, qMax);
-    int16_t lutResult = int16_t(clampedLutResult);
-    uint32_t base = uint32_t(prevLutResult);
-    uint32_t slope = uint32_t(lutResult - prevLutResult);
-    lut[steps - 1] = base + (slope << 16);
-
+    auto lut = GenerateInterpolatingLUT16(func, ifmScale, ofmScale, zpIn, zpOut);
     auto lutTens = CreateConstTensor(name, DataType::Int32, std::make_shared<Buffer>(std::move(lut), 512));
     // The LUT must be applied without any preceding rescaling (the LUT itself performs the rescale),
     // so even if the OFM has a different scale than the IFM, the generated OFM scale instructions
@@ -568,7 +527,7 @@ Operation *TFLiteGraphOptimiser::ConvertExpToLUT(Graph *const graph, Operation *
     else if ( ifmType == DataType::Int16 )
     {
         returnOp = ConvertToInterpolatingLUT16(
-            operation, [](double x) -> float { return expf(float(x)); }, "Exp16(interp)");
+            operation, [](float x) -> float { return expf(x); }, "Exp16(interp)");
         RecordOptimisation(*operation, returnOp);
         operation->Disconnect();
     }
@@ -605,7 +564,7 @@ Operation *TFLiteGraphOptimiser::ConvertLogToLUT(Graph *const graph, Operation *
     else if ( ifmType == DataType::Int16 )
     {
         returnOp = ConvertToInterpolatingLUT16(
-            operation, [&](double x) -> float { return x <= 0.0f ? minVal : std::log(float(x)); }, "Log16(interp)");
+            operation, [&](float x) -> float { return x <= 0.0f ? minVal : std::log(x); }, "Log16(interp)");
         RecordOptimisation(*operation, returnOp);
         operation->Disconnect();
     }
