@@ -772,6 +772,7 @@ def get_compiler_config(
     separate_io_regions: bool,
     cpu_tensor_alignment: int,
     tensor_allocator: str,
+    softmax_int16_neg_exp_range: float,
 ) -> str:
     """Build compiler config file."""
     config = "\n[compiler]\n"
@@ -816,7 +817,8 @@ def get_compiler_config(
         config += "verbose=true\n"
     if verbose_quantization:
         config += "verbose_quantization=true\n"
-
+    if softmax_int16_neg_exp_range > 0:
+        config += f"softmax_int16_neg_exp_range={softmax_int16_neg_exp_range}\n"
     return config
 
 
@@ -1084,6 +1086,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Use separate regions for input and output tensors (implies COP2 driver actions format)",
     )
 
+    # experimental options
+    parser.add_argument(
+        "--experimental-softmax-int16-neg-exp-range",
+        type=float,
+        default=10.0,
+        help="[EXPERIMENTAL]: Set the negative exponent range (0, 65535) for int16 softmax (default: %(default)s)",
+    )
+
     # debug options
     parser.add_argument(
         "--debug-force-legacy-core",
@@ -1118,6 +1128,11 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.cop_format == "COP1" and args.separate_io_regions:
         parser.error("Driver actions format 'COP2' is required for --separate-io-regions")
+
+    if not (0 < args.experimental_softmax_int16_neg_exp_range < 65535):
+        parser.error(
+            f"Invalid argument to --experimental-softmax-int16-neg-exp-range = {args.experimental_softmax_int16_neg_exp_range}, valid range: (0, 65535)"
+        )
 
     def _parse_config(config):
         # Make sure the correct separator is used depending on OS
@@ -1245,6 +1260,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             args.separate_io_regions,
             args.cpu_tensor_alignment,
             args.tensor_allocator,
+            args.experimental_softmax_int16_neg_exp_range,
         )
 
         process_regor(
@@ -1263,6 +1279,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
 
     else:
+        if args.experimental_softmax_int16_neg_exp_range != 10.0:
+            print(
+                "Warning: The --experimental-softmax-int16-neg-exp-range option has no effect when using the legacy "
+                "Python compilation core, and is only applicable when using the Regor C++ compilation core."
+            )
         compiler_options = compiler_driver.CompilerOptions(
             verbose_graph=args.verbose_graph,
             verbose_quantization=args.verbose_quantization,

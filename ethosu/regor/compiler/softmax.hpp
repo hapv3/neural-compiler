@@ -38,9 +38,10 @@ class Softmax
 private:
     OptimiserDatabase *_db = nullptr;
     IArchitectureConstraints *_constraints = nullptr;
+    double _negExpRange;
 
 public:
-    Softmax(OptimiserDatabase *db, IArchitectureConstraints *constraints);
+    Softmax(OptimiserDatabase *db, IArchitectureConstraints *constraints, double int16NegExpRange = 10.0);
     Operation *ConvertOp(Operation *const operation);
 
 private:

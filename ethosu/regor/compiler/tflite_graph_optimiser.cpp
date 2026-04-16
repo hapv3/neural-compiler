@@ -3367,7 +3367,7 @@ TFLiteGraphOptimiser::TFLiteGraphOptimiser(IArchitectureConstraints *constraints
         GraphOptimiser(constraints, options, db)
 {
     _supportedOps = std::move(supportedOps);
-    _softmax = std::make_unique<Softmax>(db, constraints);
+    _softmax = std::make_unique<Softmax>(db, constraints, options.softmax.int16NegExpRange);
 }
 
 void TFLiteGraphOptimiser::OptimiseGraph(Graph *graph)

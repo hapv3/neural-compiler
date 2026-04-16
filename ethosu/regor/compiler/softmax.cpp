@@ -31,8 +31,10 @@
 namespace regor
 {
 
-Softmax::Softmax(OptimiserDatabase *db, IArchitectureConstraints *constraints) : _db(db), _constraints(constraints)
+Softmax::Softmax(OptimiserDatabase *db, IArchitectureConstraints *constraints, double int16NegExpRange) :
+        _db(db), _constraints(constraints), _negExpRange(int16NegExpRange)
 {
+    assert(int16NegExpRange > 0 && int16NegExpRange < 65535);
 }
 
 Operation *Softmax::ConvertOp(Operation *const operation)
@@ -359,7 +361,7 @@ Operation *Softmax::GetGraphInt16(Operation *const operation, TensorConnection *
     // PASS 2 - Mul
     auto *softmax = operation->Attribute<softmax_attr_t>();
     double beta = double(softmax->beta);
-    double exp_scale = 10.0 / range;
+    double exp_scale = _negExpRange / range;
     auto quant = ElementwiseMulScale<double>(ifmConn->quantization.scales[0].Dequantize(), beta, exp_scale);
     auto scale_quant = ifmConn->quantization;
     scale_quant.scales[0] = QuantizedScale(beta);

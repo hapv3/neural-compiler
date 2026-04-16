@@ -243,6 +243,18 @@ void GraphOptimiser::ParseGraphOptimiserOptions(GraphOptimiserOptions &opt, IniR
         {
             opt.verboseQuantization = reader.Get<bool>();
         }
+        if ( key == "softmax_int16_neg_exp_range" )
+        {
+            auto value = reader.Get<float>();
+            if ( value > 0 && value < 65535 )
+            {
+                opt.softmax.int16NegExpRange = value;
+            }
+            else
+            {
+                LOG_ERROR("Invalid value for softmax_int16_neg_exp_range: {0} (must be in range (0, 65535))", value);
+            }
+        }
 
         reader.End();
     }

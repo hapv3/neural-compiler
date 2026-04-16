@@ -674,6 +674,24 @@ the compiler driver and scheduler.
 vela network.tflite --verbose-progress
 ```
 
+### Experimental: int16 Softmax negative exponential range
+
+Adjusts the negative-exponential lookup table (LUT) range used by the int16
+Softmax graph optimisation.
+
+**Note:** The default value is `10.0`. Values other than `10.0` are
+experimental, have not been validated, and may reduce numerical correlation
+with the reference kernel. The value must be greater than `0` and
+less than `65535`.
+
+**Type: Float**  
+**Default: 10.0**  
+**Range: (0, 65535)**
+
+```bash
+vela network.tflite --experimental-softmax-int16-neg-exp-range 10.0
+````
+
 ### Debug force legacy core
 
 **Deprecation notice:**
