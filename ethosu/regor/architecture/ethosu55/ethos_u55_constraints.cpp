@@ -800,18 +800,23 @@ Flags<QueryResult> EthosU55Constraints::OperatorQuery(OpType opType, const ArchO
         {
             const int ofmBits = DataTypeSizeBits(ofmType);
             assert(ofmBits == 32 || ofmBits == 64);
+            result.Set(QueryResult::HasRequirements);
             // Depth has additional constraints for 64-bit and 32-bit copies since they're expanded in RCS generation
             const int depthMultiplier = ofmBits == 64 ? 4 : 2;
             const int maxDepth = MAX_AXIS / depthMultiplier;
-            if ( ofmShape.Depth() > maxDepth )
+            if ( req )
             {
-                if ( req )
+                req->req.Set(ArchRequirement::Tensor);
+                // The int16 reinterpretation in Ethos-U55 RCS generation only supports linear format.
+                ArchTensorRequirement *tr = &req->tensor;
+                Set(*tr, TensorUsage::OFM, DataType::None, TensorFormat::NHWC);
+                if ( ofmShape.Depth() > maxDepth )
                 {
                     req->req.Set(ArchRequirement::Decompose);
                     req->decomposeProps.Set(ArchProperty::DataTypeLegalisation);
-                    Set(req->tensor, TensorUsage::OFM, DataType::None, TensorFormat::Unknown, ofmShape.WithDepth(maxDepth));
+                    tr->shape = ofmShape.WithDepth(maxDepth);
                 }
-                result.Set(QueryResult::HasRequirements);
+                Set(*NextTensor(tr, usedTensors), TensorUsage::IFM, TensorFormat::NHWC);
             }
         }
     }

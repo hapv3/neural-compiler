@@ -281,6 +281,9 @@ int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *con
             {
                 ArchRequirements req;
                 ArchOperatorQuery query;
+                Set(query.ifm[0], producer->TryIFM(0));
+                Set(query.ifm[1], producer->TryIFM(1));
+                Set(query.ofm, producer->OFM());
                 query.transposeMask = producer->OFM()->transpose;
                 if ( _arch->Constraints()->OperatorQuery(producer->Type(), &query, &req).Any(QueryResult::Native) )
                 {
@@ -363,6 +366,7 @@ int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *con
             ArchOperatorQuery query;
             Set(query.ifm[0], consumer->TryIFM(0));
             Set(query.ifm[1], consumer->TryIFM(1));
+            Set(query.ofm, consumer->OFM());
             query.transposeMask = consumer->OFM()->transpose;
             for ( const auto [consumerUsage, connection] : consumer->inputs.pairs() )
             {
