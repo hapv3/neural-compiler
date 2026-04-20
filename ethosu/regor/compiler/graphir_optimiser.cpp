@@ -3411,6 +3411,12 @@ Operation *GraphIrOptimiser::MoveConcatSliceToProducer(Graph *const graph, Opera
         return operation;
     }
 
+    // Don't do this optimization on non-EW ops with >3D IFM, because the decomposition path will re-add the MemoryCopy
+    if ( !IsElementwise(prodOpType) && ifmConn->shape.Elements() > ifmConn->shape.ElementsHWC() )
+    {
+        return operation;
+    }
+
     // Require that producer actually produce an OFM
     const auto prodOfmUsage = producer->UsageOfTensor(intermediate);
     if ( !IsOFM(prodOfmUsage) )
