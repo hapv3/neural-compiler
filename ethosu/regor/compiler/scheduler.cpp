@@ -998,7 +998,10 @@ int Scheduler::ComputeLocalMemUsage(const SchedulerOperation &schedOp, const Sch
         opMemUsage += ifmConn->tensor->AllocationSizeBytes();
     }
 
-    const bool reuseOfmFlag = lrGraph.AreInSameRange(ifmConn->tensor.get(), ofmConn->tensor.get());
+    // This local-op memory is later reused when comparing a cascade proposal against running the same op on its own.
+    // For ops that are already in a cascade, still count a full OFM even if the live-range graph has fused the rolling
+    // buffer IFM and OFM, so that standalone-op cost is not understated.
+    const bool reuseOfmFlag = (cost.cascade == 0) && lrGraph.AreInSameRange(ifmConn->tensor.get(), ofmConn->tensor.get());
     if ( ofmConn->tensor->memArea == stagingMemory && !reuseOfmFlag )
     {
         opMemUsage += ofmConn->tensor->AllocationSizeBytes();

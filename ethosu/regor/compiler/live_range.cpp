@@ -123,24 +123,27 @@ void LiveRangeGraph::ExtractLiveRangesFromCascades(const std::vector<std::unique
         int timeToSet = _currentTime;
         if ( schedOp->IsNpuOp() )
         {
-            auto cascadeReuse = !addRollingBuffers && cascadeInfo != nullptr;
-            auto nonCascadeReuse = _reuseIfms && cascadeInfo == nullptr;
-            if ( cascadeReuse || nonCascadeReuse )
-            {
-                auto opGroup = schedOp->OpGroup();
-                assert(opGroup != nullptr);
+            auto opGroup = schedOp->OpGroup();
+            assert(opGroup != nullptr);
 
-                // Get the ofm of the last operator in the group
-                auto opGroupOfm = schedOp->FinalSubOFM();
-                if ( opGroup->NeedsAllocation(opGroupOfm->tensor->uid) )
+            // Get the ofm of the last operator in the group
+            auto opGroupOfm = schedOp->FinalSubOFM();
+            if ( opGroup->NeedsAllocation(opGroupOfm->tensor->uid) )
+            {
+                SchedulerTensor *ifmTens = nullptr;
+                auto targetMemoryAllowed = addRollingBuffers || !ShouldBeIgnored(opGroupOfm->tensor.get(), targetMemory);
+                if ( targetMemoryAllowed && opInfo->ofmEquivalenceId != INVALID_UID )
+                {
+                    ifmTens = ReusableRollingBufferIFM(schedOp, opInfo->ofmEquivalenceId);
+                }
+                if ( !ifmTens && _reuseIfms && cascadeInfo == nullptr )
                 {
                     // Check if op have an ifm tensor that can be reused for the ofm
-                    auto ifmTens = ReusableIFM(schedOp, opGroupOfm->tensor.get(), targetMemory);
-                    if ( ifmTens != nullptr )
-                    {
-                        // ifm can be reused
-                        FuseRanges(ifmTens, opGroupOfm->tensor.get());
-                    }
+                    ifmTens = ReusableIFM(schedOp, opGroupOfm->tensor.get(), targetMemory);
+                }
+                if ( ifmTens != nullptr )
+                {
+                    FuseRanges(ifmTens, opGroupOfm->tensor.get());
                 }
             }
             if ( cascadeInfo != nullptr )
@@ -360,6 +363,19 @@ SchedulerTensor *LiveRangeGraph::ReusableIFM(
         }
     }
     return reusableIfm;
+}
+
+SchedulerTensor *LiveRangeGraph::ReusableRollingBufferIFM(const std::unique_ptr<SchedulerOperation> &schedOp, UniqueId ofmEquivalenceId)
+{
+    for ( const auto &[usage, ifmConn] : schedOp->inputs.pairs() )
+    {
+        const auto ifmTens = ifmConn.tensor.get();
+        if ( IsIFM(usage) && ifmTens->equivalenceId == ofmEquivalenceId )
+        {
+            return ifmTens;
+        }
+    }
+    return nullptr;
 }
 
 bool LiveRangeGraph::AreInSameRange(const SchedulerTensor *lhs, const SchedulerTensor *rhs) const

@@ -61,6 +61,7 @@ add_catch_test(
         test_operation_utils.cpp
         test_graphir_optimiser.cpp
         test_high_level_command_stream_generator.cpp
+        test_cascade_builder.cpp
         test_fast_storage_allocator.cpp
         test_tflite_fb.cpp
         test_tflite_reader.cpp

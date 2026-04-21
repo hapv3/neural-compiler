@@ -116,6 +116,7 @@ public:
 
 private:
     LiveRange *FuseRanges(SchedulerTensor *inTens, SchedulerTensor *outTens);
+    SchedulerTensor *ReusableRollingBufferIFM(const std::unique_ptr<SchedulerOperation> &schedOp, UniqueId ofmEquivalenceId);
     SchedulerTensor *ReusableIFM(const std::unique_ptr<SchedulerOperation> &schedOp, const SchedulerTensor *ofmTensor,
         const MemArea &targetMemory);
     bool ShouldBeIgnored(const SchedulerTensor *tens, const MemArea &targetMemory);

@@ -111,13 +111,14 @@ public:
     CascadeBuilder(vector_span<std::unique_ptr<SchedulerOperation>> ops,
         const std::unordered_map<UniqueId, int> &nonLocalMemUsage, const std::unordered_map<UniqueId, int> &opLocalMemUsage,
         const std::unordered_map<UniqueId, LiveRangeSummary> &tensorLiveRanges, bool spilling);
+    static bool CanReuseCascadeRollingBuffer(const SchedulerOperation *op, const SchedulerOpInfo *opInfo,
+        const CascadeBuffer &ifmBuffer, const CascadeBuffer &ofmBuffer);
 
 public:
     void BuildCascades(Schedule *refSchedule, Schedule *fallbackSchedule, Address guidingStagingLimit);
 
 private:
     bool IsCascadable(const SchedulerOperation *op, SchedulerConnection *ifmConn, SchedulerOpInfo *cost) const;
-    bool CanReuseCascadeRollingBuffer(const SchedulerOperation *op, const CascadeBuffer &ifmBuffer, const CascadeBuffer &ofmBuffer) const;
     int EstimateUncascadedBufferUsage(SchedulerOperation *op, SchedulerOpInfo *cost) const;
     int NonLocalUsage(UniqueId uid) const;
     int OpLocalUsage(UniqueId uid) const;

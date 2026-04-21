@@ -137,9 +137,12 @@ private:
     std::unique_ptr<ArchitectureOpConfig> _config;
 
 public:
+    // Uses primary-IFM order: [0] is the stripe for IFM(PrimaryIfmIndex()), [1] is the stripe for any other IFM.
     Shape stripeInput[2];
     Shape stripe;
     int cascade = 0;
+    // Setting this to the UID of the IFM signals reuse.
+    UniqueId ofmEquivalenceId = INVALID_UID;
     bool firstInCascade = false;
     int timeIndex = -1;
     std::vector<int> ofmDepthSlices;
@@ -228,6 +231,7 @@ private:
         stripeInput[1] = other.stripeInput[1];
         stripe = other.stripe;
         cascade = other.cascade;
+        ofmEquivalenceId = other.ofmEquivalenceId;
         timeIndex = other.timeIndex;
         firstInCascade = other.firstInCascade;
         ofmDepthSlices = other.ofmDepthSlices;
