@@ -389,7 +389,10 @@ bool Transpose32Bit(const Operation *op)
 bool Transpose8And16Bit(const Operation *op)
 {
     auto ifmConn = op->Input(TensorUsage::IFM);
-    auto ifmShape = Shape::PadAxes(ifmConn->shape, 4, 1);
+    auto &ifmShape = ifmConn->shape;
+    auto ifmRank = ifmShape.Size();
+    auto ifmElements = ifmShape.Elements64();
+    auto ifmShape3D = ReshapeToHWC(ifmShape);
     auto ifmType = ifmConn->tensor->Type();
     auto *params = op->Input(TensorUsage::Params);
     assert(params);
@@ -404,33 +407,44 @@ bool Transpose8And16Bit(const Operation *op)
         // NHWC: any size is supported
         return true;
     }
-    if ( (ifmShape.Size() <= 4) &&
+    if ( (ifmRank <= 3 || ifmShape.AxisProduct(0, -3) == 1) &&
          (transposeMask == TransposeType::NWHC || transposeMask == TransposeType::NHCW || transposeMask == TransposeType::NCWH ||
              transposeMask == TransposeType::NWCH || transposeMask == TransposeType::NCHW) )
     {
+        // Checks for transpose in 3D or less
+
         // Directly HW-supported transpose-masks
-        // NWHC/NHCW/NCWH: (N*H: 65536, W: 65536, C: 65536)
+        // NWHC/NHCW/NCWH: (H: 65536, W: 65536, C: 65536)
         // Indirectly HW-supported transpose-masks through decomposition
-        // NWCH/NCHW: (N*H: 65536, W: 65536, C: 65536)
+        // NWCH/NCHW: (H: 65536, W: 65536, C: 65536)
         const static Shape maxShape = Shape((1 << 16), (1 << 16), (1 << 16));
-        Shape ifmSquashed = ifmShape.WithHeight(ifmShape.Height() * ifmShape.Batch()).WithBatch(1);
-        if ( ifmSquashed.GreaterMask(maxShape) > 0 )
+        if ( ifmShape3D.GreaterMask(maxShape) > 0 )
         {
             Failure(op,
                 fmt::format("Transpose with permutation {} has shape out of range: {}", EnumToString(transposeMask),
-                    ifmSquashed.ToString()));
+                    ifmShape3D.ToString()));
             return false;
         }
     }
-    else
+    else if ( ifmElements > 0 )
     {
+        // Checks for transpose in 4D or more
+
         // Decomposed transpose-masks
-        // Axis product must be less or equal to 65536
-        if ( ifmShape.Elements64() > (1 << 16) )
+        // Product of any N-2 axes must be less than or equal to 2^16
+        for ( int i = 0; i < ifmRank; i++ )
         {
-            Failure(op,
-                fmt::format("Transpose with permutation {} has shape out of range: {}", perm.ToString(), ifmShape.ToString()));
-            return false;
+            for ( int j = i + 1; j < ifmRank; j++ )
+            {
+                int64_t axesProduct = ifmElements / (int64_t(ifmShape[i]) * int64_t(ifmShape[j]));
+                if ( axesProduct > (1 << 16) )
+                {
+                    Failure(op,
+                        fmt::format("Transpose with permutation {} has shape out of range: {}", perm.ToString(),
+                            ifmShape.ToString()));
+                    return false;
+                }
+            }
         }
     }
     return true;
@@ -614,17 +628,17 @@ TfLiteSupportedOperatorsU55::TfLiteSupportedOperatorsU55() :
         "IF IFM is Int32:\n"
         "  - Rank must be less than or equal to 4\n"
         "  - NHWC: C <= 2^16\n"
-        "  - NWHC: N ==1, H <= 2^16, W <= 2^16, C <= 2^14\n"
+        "  - NWHC: N == 1, H <= 2^16, W <= 2^16, C <= 2^14\n"
         "  - NHCW: N*H <= 2^16, W <= 2^16, C <= 2^16\n"
         "  - Any other permutation vector is unsupported"};
 
     transpose8And16Bit = {&Transpose8And16Bit,
         "IF IFM is Int8 or Int16\n"
         "  - NHWC: no shape constraints\n"
-        "  - ELSE IF Rank <= 4D and permutation is: NWHC/NHCW/NCWH/NWCH/NCHW:\n"
-        "    - (N*H, W, C) <= (2^16, 2^16, 2^16)\n"
+        "  - ELSE IF permutation is: NWHC/NHCW/NCWH/NWCH/NCHW and the tensor is 3D, or higher-rank with all axes outside H/W/C equal to 1:\n"
+        "    - (H, W, C) <= (2^16, 2^16, 2^16)\n"
         "  - ELSE:\n"
-        "    - Product of elements must be less than or equal to 2^16."};
+        "    - Product of any N-2 axes in a rank N tensor must be less than or equal to 2^16. For example, for rank 4: N*H <= 2^16, N*W <= 2^16, N*C <= 2^16, H*W <= 2^16, H*C <= 2^16, W*C <= 2^16.\n"};
 
     resizeBilinear = {&Resize,
         "IF not (IFM H == IFM W == 1) AND not IFM Shape == OFM Shape:\n"
