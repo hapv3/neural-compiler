@@ -169,6 +169,8 @@ bool KernelStride(const Operation *op)
 // Stride > 3 is only supported IF:
 //    * dilation == 1
 //    * padding == VALID
+// or the output in the strided dimensions is 1 (i.e. width or height is 1),
+// since there is no actual striding in this case
 bool UnrolledKernelStride(const Operation *op)
 {
     // Constraints for UnrollConv
@@ -178,9 +180,11 @@ bool UnrolledKernelStride(const Operation *op)
     assert(ifmConn);
     assert(ofmConn);
     assert(kernel);
+    const auto width = ofmConn->SliceShape().Width();
+    const auto height = ofmConn->SliceShape().Height();
     const int32_t stride_w = kernel->Stride().x;
     const int32_t stride_h = kernel->Stride().y;
-    if ( stride_w <= 3 && stride_h <= 3 )
+    if ( (stride_w <= 3 || width == 1) && (stride_h <= 3 || height == 1) )
     {
         // always supported
         return true;

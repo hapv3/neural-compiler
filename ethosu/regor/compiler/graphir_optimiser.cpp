@@ -1190,18 +1190,10 @@ Operation *GraphIrOptimiser::UnrollKernelStrides(Graph *const, Operation *const 
 
         const auto kernel = operation->Kernel();
         assert(kernel);
-        const int32_t kernel_h = kernel->Size().y;
-        assert(kernel_h > 0);
-        const int32_t kernel_w = kernel->Size().x;
-        assert(kernel_w > 0);
         const int32_t stride_h = kernel->Stride().y;
-        assert(stride_h > 0);
         const int32_t stride_w = kernel->Stride().x;
-        assert(stride_w > 0);
         const int32_t dilation_h = kernel->Dilation().y;
-        assert(dilation_h > 0);
         const int32_t dilation_w = kernel->Dilation().x;
-        assert(dilation_w > 0);
         const bool hasPadding = !kernel->Padding().IsZero();
         const bool hasIfmSlice = ifmConn->slice.shape || ifmConn->slice.offset;
         const bool hasOfmSlice = ofmConn->slice.shape || ofmConn->slice.offset;
@@ -1211,51 +1203,68 @@ Operation *GraphIrOptimiser::UnrollKernelStrides(Graph *const, Operation *const 
         const bool needUnrollW = stride_w > 3;
 
         // Figure out if op can be unrolled
-        const bool canUnroll = !hasPadding && !hasIfmSlice && !hasOfmSlice && kernel->Padding().IsZero();
+        const bool canUnroll = !hasPadding && !hasIfmSlice && !hasOfmSlice;
         const bool canUnrollH = dilation_h == 1 && canUnroll;
         const bool canUnrollW = dilation_w == 1 && canUnroll;
 
-        if ( (needUnrollH || needUnrollW) && canUnrollH && canUnrollW )
+        if ( needUnrollH || needUnrollW )
         {
-            const Shape inputGridCell = ifmConn->shape.WithHW(kernel_h, kernel_w);
-            const Shape outputGridCell = ofmConn->shape.WithHW(1, 1);
-            const Point2i gridSize = ofmConn->shape.WH();
-
-            for ( int h = 0; h < gridSize.y; h++ )
+            if ( canUnrollH && canUnrollW )
             {
-                for ( int w = 0; w < gridSize.x; w++ )
+                const Shape inputGridCell = ifmConn->shape.WithHW(kernel->Size());
+                const Shape outputGridCell = ofmConn->shape.WithHW(1, 1);
+                const Point2i gridSize = ofmConn->shape.WH();
+
+                for ( int h = 0; h < gridSize.y; h++ )
                 {
-                    TensorSlice ifmSlice;
-                    ifmSlice.shape = inputGridCell;
-                    ifmSlice.offset = Shape(0, h * stride_h, w * stride_w, 0);
-
-                    TensorSlice ofmSlice;
-                    ofmSlice.shape = outputGridCell;
-                    ofmSlice.offset = Shape(0, h, w, 0);
-
-                    // Add new for this grid cell
-                    auto op = std::make_shared<Operation>(operation->Type());
-                    op->SetKernel(std::make_unique<Kernel>(kernel->WithStride({1, 1})));
-                    op->CopyInput(TensorUsage::IFM, *ifmConn);
-                    op->Input(TensorUsage::IFM)->Set(ifmSlice);
-                    if ( weightsConn )
+                    for ( int w = 0; w < gridSize.x; w++ )
                     {
-                        op->CopyInput(TensorUsage::Weights, *weightsConn);
-                    }
-                    if ( scalesConn )
-                    {
-                        op->CopyInput(TensorUsage::Scales, *scalesConn);
-                    }
-                    op->CopyOutput(TensorUsage::OFM, *ofmConn);
-                    op->Output(TensorUsage::OFM)->Set(ofmSlice);
-                    RecordOptimisation(*operation, op.get());
+                        TensorSlice ifmSlice;
+                        ifmSlice.shape = inputGridCell;
+                        ifmSlice.offset = Shape(0, h * stride_h, w * stride_w, 0);
 
-                    returnOp = op.get();
+                        TensorSlice ofmSlice;
+                        ofmSlice.shape = outputGridCell;
+                        ofmSlice.offset = Shape(0, h, w, 0);
+
+                        // Add new for this grid cell
+                        auto op = std::make_shared<Operation>(operation->Type());
+                        op->SetKernel(std::make_unique<Kernel>(kernel->WithStride({1, 1})));
+                        op->CopyInput(TensorUsage::IFM, *ifmConn);
+                        op->Input(TensorUsage::IFM)->Set(ifmSlice);
+                        if ( weightsConn )
+                        {
+                            op->CopyInput(TensorUsage::Weights, *weightsConn);
+                        }
+                        if ( scalesConn )
+                        {
+                            op->CopyInput(TensorUsage::Scales, *scalesConn);
+                        }
+                        op->CopyOutput(TensorUsage::OFM, *ofmConn);
+                        op->Output(TensorUsage::OFM)->Set(ofmSlice);
+                        RecordOptimisation(*operation, op.get());
+
+                        returnOp = op.get();
+                    }
+                }
+
+                // Remove original op
+                operation->Disconnect();
+            }
+            else
+            {
+                // If the output is only one element in a dimension, the stride in that dimension has no effect
+                // and can be set to 1
+                auto newStride = kernel->Stride();
+                if ( ofmConn->SliceShape().Width() == 1 ) newStride.x = 1;
+                if ( ofmConn->SliceShape().Height() == 1 ) newStride.y = 1;
+                if ( newStride != kernel->Stride() )
+                {
+                    auto newKernel = kernel->WithStride(newStride);
+                    operation->SetKernel(std::make_unique<Kernel>(std::move(newKernel)));
+                    RecordOptimisation(*operation, operation);
                 }
             }
-
-            // Remove original op
-            operation->Disconnect();
         }
     }
 

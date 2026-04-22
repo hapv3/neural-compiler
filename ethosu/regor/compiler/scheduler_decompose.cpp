@@ -717,10 +717,6 @@ DecomposeForStrides(DecompositionContext &ctx, std::unique_ptr<SchedulerOperatio
     auto SY = stride.y;
     auto SX = stride.x;
 
-    const int MAX_KERNEL_X = std::numeric_limits<uint16_t>::max();
-    const int MAX_KERNEL_Y = std::numeric_limits<uint16_t>::max();
-    const int MAX_IFM_DEPTH = std::numeric_limits<uint16_t>::max();
-    auto ifm_depth = ifmConn->slice.shape.Depth();
     bool didSendOne = false;
     AccumulatorControl accMode = {AccumulatorSource::Acc, false};
     for ( auto ky = 0; ky < kernelSize.y; ky++ )
@@ -760,26 +756,26 @@ DecomposeForStrides(DecompositionContext &ctx, std::unique_ptr<SchedulerOperatio
                 // we need to account for ifmStrides and compute the first positive offset
                 if ( newIfmSlice.offset.Height() < 0 )
                 {
+                    int steps = DivRoundUp(-newIfmSlice.offset.Height(), ifmStrides.y);
+                    if ( steps >= ofmConn->SliceShape().Height() )
+                        continue;  // There is not enough steps in the ofm, so this will only read from the padding
+
                     // Find first positive coordinate and check whether it is inside the slice
-                    int firstH = (newIfmSlice.offset.Height() % ifmStrides.y);
-                    if ( firstH < 0 )
-                    {
-                        firstH += ifmStrides.y;
-                    }
+                    int firstH = newIfmSlice.offset.Height() + steps * ifmStrides.y;
                     if ( firstH >= newIfmSlice.shape.Height() )
                     {
-                        // First positive coordinate results in zero volume
+                        // First positive coordinate is outside of the slice-shape
                         continue;
                     }
                 }
-                else if ( newIfmSlice.offset.Width() < 0 )
+                if ( newIfmSlice.offset.Width() < 0 )
                 {
-                    // Find first positive coordinate results in zero volume
-                    int firstW = (newIfmSlice.offset.Width() % ifmStrides.x);
-                    if ( firstW < 0 )
-                    {
-                        firstW += ifmStrides.x;
-                    }
+                    int steps = DivRoundUp(-newIfmSlice.offset.Width(), ifmStrides.x);
+                    if ( steps >= ofmConn->SliceShape().Width() )
+                        continue;  // There is not enough steps in the ofm, so this will only read from the padding
+
+                    // Find first positive coordinate and check whether it is inside the slice
+                    int firstW = newIfmSlice.offset.Width() + steps * ifmStrides.x;
                     if ( firstW >= newIfmSlice.shape.Width() )
                     {
                         // First positive coordinate is outside of the slice-shape
