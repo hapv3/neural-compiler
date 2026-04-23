@@ -267,38 +267,47 @@ void ConstraintEmptyConstTensors(const Model &m_model)
     for ( const auto subgraph : *m_model.subgraphs() )
     {
         auto &tensors = *CheckedPtr(subgraph->tensors());
-        if ( subgraph->inputs() && subgraph->operators() )
+        if ( subgraph->inputs() )
         {
             for ( auto input : *subgraph->inputs() )
             {
                 writtenTensors.insert(input);
             }
+        }
 
+        if ( subgraph->operators() )
+        {
             for ( auto op : *subgraph->operators() )
             {
-                for ( auto output : *op->outputs() )
+                if ( op->outputs() )
                 {
-                    writtenTensors.insert(output);
+                    for ( auto output : *op->outputs() )
+                    {
+                        writtenTensors.insert(output);
+                    }
                 }
             }
             for ( auto op : *subgraph->operators() )
             {
-                for ( auto input : *op->inputs() )
+                if ( op->inputs() )
                 {
-                    if ( input != -1 && !writtenTensors.count(input) )
+                    for ( auto input : *op->inputs() )
                     {
-                        auto tensor = tensors[BoundsCheckedIndex(input, tensors)];
-                        // Buffer 0 is a special buffer that is used for empty tensors.
-                        // Variable tensors are also empty but are not forced to use Buffer 0.
-                        if ( tensor->buffer() == 0 || tensor->is_variable() ) continue;
-
-                        auto buffer = buffers[BoundsCheckedIndex(tensor->buffer(), buffers)];
-
-                        if ( !((buffer->offset() > 1 && buffer->size() != 0) || (buffer->data() && buffer->data()->size() != 0)) )
+                        if ( input != -1 && !writtenTensors.count(input) )
                         {
-                            std::string constraint = "Constant tensors must not have empty buffers";
-                            std::string extra = "Found Constant Tensor with empty buffer";
-                            throw InvalidTfLiteException(constraint, extra, *tensor);
+                            auto tensor = tensors[BoundsCheckedIndex(input, tensors)];
+                            // Buffer 0 is a special buffer that is used for empty tensors.
+                            // Variable tensors are also empty but are not forced to use Buffer 0.
+                            if ( tensor->buffer() == 0 || tensor->is_variable() ) continue;
+
+                            auto buffer = buffers[BoundsCheckedIndex(tensor->buffer(), buffers)];
+
+                            if ( !((buffer->offset() > 1 && buffer->size() != 0) || (buffer->data() && buffer->data()->size() != 0)) )
+                            {
+                                std::string constraint = "Constant tensors must not have empty buffers";
+                                std::string extra = "Found Constant Tensor with empty buffer";
+                                throw InvalidTfLiteException(constraint, extra, *tensor);
+                            }
                         }
                     }
                 }
@@ -331,9 +340,9 @@ void ConstraintTensQuantScale(const Model &m_model)
 
 void ConstraintQuantScaleInf(const Operator &op, const SubGraph &subgraph, const BuiltinOperator &builtinOperator, const BufferContext &)
 {
-    auto *inputs = CheckedPtr(op.inputs());
-    auto *outputs = CheckedPtr(op.outputs());
-    if ( inputs->size() > 0 && outputs->size() > 0 )
+    auto *inputs = op.inputs();
+    auto *outputs = op.outputs();
+    if ( inputs && inputs->size() > 0 && outputs && outputs->size() > 0 )
     {
         auto ifm = TensorFromUsage(regor::TensorUsage::IFM, op, builtinOperator, *subgraph.tensors());
         auto ofm = TensorFromUsage(regor::TensorUsage::OFM, op, builtinOperator, *subgraph.tensors());

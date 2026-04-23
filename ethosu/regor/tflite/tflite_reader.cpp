@@ -177,54 +177,56 @@ void TfLiteReader::LoadGraphs(const uint8_t *input, size_t size, const tflite::M
         int ext_key = 0;
         for ( const auto &tflite_operator : *tflite_operators )
         {
+            assert(tflite_operator);
             const OpType op_type = TfLiteMapping::BuiltinOperatorToOpType(opcodes.at(tflite_operator->opcode_index()));
             auto operation = std::make_shared<Operation>(op_type);
+            auto tflite_inputs = tflite_operator->inputs();
+            auto tflite_outputs = tflite_operator->outputs();
+            auto tflite_intermediates = tflite_operator->intermediates();
 
             // Connect operation to its input tensors
-            assert(tflite_operator);
-            auto tflite_inputs = tflite_operator->inputs();
-            assert(tflite_inputs);
-            auto tflite_outputs = tflite_operator->outputs();
-            assert(tflite_outputs);
-            auto tflite_intermediates = tflite_operator->intermediates();
-            const auto &input_tensors = *tflite_inputs;  // A vector of indices into the `tensors` vector
-            int indirect_index = 0;                      // An index into `input_tensors`
             int ifm_count = 0;
-            for ( const auto &map_entry : TfLiteMapping::InputTensorIndices(op_type) )
+            if ( tflite_inputs )
             {
-                const TensorUsage usage = map_entry.second;
-                if ( indirect_index < int(input_tensors.size()) )  // Missing index means optional tensor not present
+                int indirect_index = 0;                      // An index into `input_tensors`
+                const auto &input_tensors = *tflite_inputs;  // A vector of indices into the `tensors` vector
+                for ( const auto &map_entry : TfLiteMapping::InputTensorIndices(op_type) )
                 {
-                    const int direct_index = input_tensors[indirect_index++];
-                    if ( direct_index >= 0 )  // -1 indicates an optional tensor is not present
+                    const TensorUsage usage = map_entry.second;
+                    if ( indirect_index < int(input_tensors.size()) )  // Missing index means optional tensor not
+                                                                       // present
                     {
-                        auto &tensor = tensors.at(direct_index);
-                        assert(tensorQuantization.count(tensor->Uid()) > 0);
-                        operation->ConnectInput(usage, tensor).Set(tensorQuantization[tensor->Uid()]);
-                    }
-                    if ( IsIFM(usage) )
-                    {
-                        ifm_count++;
+                        const int direct_index = input_tensors[indirect_index++];
+                        if ( direct_index >= 0 )  // -1 indicates an optional tensor is not present
+                        {
+                            auto &tensor = tensors.at(direct_index);
+                            assert(tensorQuantization.count(tensor->Uid()) > 0);
+                            operation->ConnectInput(usage, tensor).Set(tensorQuantization[tensor->Uid()]);
+                        }
+                        if ( IsIFM(usage) )
+                        {
+                            ifm_count++;
+                        }
                     }
                 }
-            }
-            while ( indirect_index < int(input_tensors.size()) )
-            {
-                const int direct_index = input_tensors[indirect_index++];
-                if ( direct_index >= 0 )
+                while ( indirect_index < int(input_tensors.size()) )
                 {
-                    auto &tensor = tensors.at(direct_index);
-                    if ( IsVariadic(op_type) )
+                    const int direct_index = input_tensors[indirect_index++];
+                    if ( direct_index >= 0 )
                     {
-                        // Treat all input tensors beyond those specified in the indices map as IFMs.
-                        assert(tensorQuantization.count(tensor->Uid()) > 0);
-                        operation->ConnectInput(MakeTensorUsage(TensorUsage::IFM, ifm_count++), tensor)
-                            .Set(tensorQuantization[tensor->Uid()]);
-                    }
-                    else
-                    {
-                        operation->ConnectInput(MakeTensorUsage(TensorUsage::IFM, ifm_count++), tensor)
-                            .Set(tensorQuantization[tensor->Uid()]);
+                        auto &tensor = tensors.at(direct_index);
+                        if ( IsVariadic(op_type) )
+                        {
+                            // Treat all input tensors beyond those specified in the indices map as IFMs.
+                            assert(tensorQuantization.count(tensor->Uid()) > 0);
+                            operation->ConnectInput(MakeTensorUsage(TensorUsage::IFM, ifm_count++), tensor)
+                                .Set(tensorQuantization[tensor->Uid()]);
+                        }
+                        else
+                        {
+                            operation->ConnectInput(MakeTensorUsage(TensorUsage::IFM, ifm_count++), tensor)
+                                .Set(tensorQuantization[tensor->Uid()]);
+                        }
                     }
                 }
             }
@@ -252,31 +254,34 @@ void TfLiteReader::LoadGraphs(const uint8_t *input, size_t size, const tflite::M
 
             // Connect operation to its output tensors
             int ofm_count = 0;
-            for ( const int tensor_index : *tflite_outputs )
+            if ( tflite_outputs )
             {
-                const auto &ofm = tensors.at(tensor_index);
-                if ( !ofm->StorageShape() )
+                for ( const int tensor_index : *tflite_outputs )
                 {
-                    // Try to figure out the OFM shape if the OFM shape is unknown
-                    if ( IsUnaryElementwise(op_type) || op_type == OpType::Quantize )
+                    const auto &ofm = tensors.at(tensor_index);
+                    if ( !ofm->StorageShape() )
                     {
-                        auto ifm = operation->IFM(0);
-                        assert(ifm);
-                        ofm->SetStorageShape(ifm->StorageShape());
-                    }
-                    else if ( IsBinaryElementwise(op_type) )
-                    {
-                        auto ifm0 = operation->IFM(0);
-                        auto ifm1 = operation->IFM(1);
-                        assert(ifm0 && ifm1);
-                        if ( ifm0->StorageShape() && ifm1->StorageShape() )
+                        // Try to figure out the OFM shape if the OFM shape is unknown
+                        if ( IsUnaryElementwise(op_type) || op_type == OpType::Quantize )
                         {
-                            ofm->SetStorageShape(Shape::Max(ifm0->StorageShape(), ifm1->StorageShape()));
+                            auto ifm = operation->IFM(0);
+                            assert(ifm);
+                            ofm->SetStorageShape(ifm->StorageShape());
+                        }
+                        else if ( IsBinaryElementwise(op_type) )
+                        {
+                            auto ifm0 = operation->IFM(0);
+                            auto ifm1 = operation->IFM(1);
+                            assert(ifm0 && ifm1);
+                            if ( ifm0->StorageShape() && ifm1->StorageShape() )
+                            {
+                                ofm->SetStorageShape(Shape::Max(ifm0->StorageShape(), ifm1->StorageShape()));
+                            }
                         }
                     }
+                    assert(tensorQuantization.count(ofm->Uid()) > 0);
+                    operation->ConnectOutput(MakeTensorUsage(TensorUsage::OFM, ofm_count++), ofm).Set(tensorQuantization[ofm->Uid()]);
                 }
-                assert(tensorQuantization.count(ofm->Uid()) > 0);
-                operation->ConnectOutput(MakeTensorUsage(TensorUsage::OFM, ofm_count++), ofm).Set(tensorQuantization[ofm->Uid()]);
             }
             if ( ofm_count == 0 )
             {
@@ -305,13 +310,19 @@ void TfLiteReader::LoadGraphs(const uint8_t *input, size_t size, const tflite::M
 
         // Create graph
         auto graph = std::make_unique<Graph>(GraphNotation::TFLite);
-        for ( const auto &index : *tflite_subgraph->inputs() )
+        if ( tflite_subgraph->inputs() )
         {
-            graph->AddInput(tensors.at(index));
+            for ( const auto &index : *tflite_subgraph->inputs() )
+            {
+                graph->AddInput(tensors.at(index));
+            }
         }
-        for ( const auto &index : *tflite_subgraph->outputs() )
+        if ( tflite_subgraph->outputs() )
         {
-            graph->AddOutput(tensors.at(index));
+            for ( const auto &index : *tflite_subgraph->outputs() )
+            {
+                graph->AddOutput(tensors.at(index));
+            }
         }
         for ( auto &tensor : persistent )
         {
