@@ -732,13 +732,14 @@ DecomposeForStrides(DecompositionContext &ctx, std::unique_ptr<SchedulerOperatio
             // it needs to be increased again as we step past some padding.
             auto extendMax = Point2i{0, 0} - Point2i::Min(ifmConn->slice.offset.WH(), {0, 0});
             auto extend = Point2i::Min(ifmConn->stepXY * Point2i{kx, ky}, extendMax);
-            newIfmSlice.shape =
-                newIfmSlice.shape
-                    .WithHeight(std::max(0,
-                        std::min(ifmConn->shape.Height() - newIfmSlice.offset.Height(),
-                            newIfmSlice.shape.Height() + extend.y)))
-                    .WithWidth(std::max(0,
-                        std::min(ifmConn->shape.Width() - newIfmSlice.offset.Width(), newIfmSlice.shape.Width() + extend.x)));
+            auto newIfmSliceHeight = std::max(0,
+                std::min(ifmConn->shape.Height() - newIfmSlice.offset.Height(), newIfmSlice.shape.Height() + extend.y));
+            auto newIfmSliceWidth = std::max(
+                0, std::min(ifmConn->shape.Width() - newIfmSlice.offset.Width(), newIfmSlice.shape.Width() + extend.x));
+            // Finally clamp to actual IFM slice shape to avoid creating slices that are larger than the IFM
+            newIfmSliceHeight = std::min(newIfmSliceHeight, ifmConn->SliceShape().Height());
+            newIfmSliceWidth = std::min(newIfmSliceWidth, ifmConn->SliceShape().Width());
+            newIfmSlice.shape = newIfmSlice.shape.WithHW(newIfmSliceHeight, newIfmSliceWidth);
             ifmStrides.y *= SY;
             ifmStrides.x *= SX;
             // Don't generate an op that will only produce zeros, unless it is the last one in the group,
@@ -783,11 +784,6 @@ DecomposeForStrides(DecompositionContext &ctx, std::unique_ptr<SchedulerOperatio
                     }
                 }
             }
-            Point2i ifmPoints =
-                DivRoundUp((Point2i{newIfmSlice.shape.Width(), newIfmSlice.shape.Height()} +
-                               Point2i{kernel->Padding().Left(), kernel->Padding().Top()}),
-                    ifmStrides) -
-                Point2i{1, 1};
             const auto newHeight = 1;
             const auto newWidth = 1;
             auto weightOffsetXY = Point2i::Min(Point2i{kx, ky}, kernelSize - Point2i{1, 1});
