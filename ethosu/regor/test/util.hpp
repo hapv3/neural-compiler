@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -90,7 +90,8 @@ std::shared_ptr<Operation> CreateOperation(OpType opType, TensorUsage ifmUsage, 
 // -----------------------------
 // Create a SchedulerTensor with name, storageshape and datatype
 // also creates a srcTensor (in GraphIR)
-std::shared_ptr<SchedulerTensor> CreateSchedulerTensor(const std::string &name, const Shape &storageShape, DataType dtype);
+std::shared_ptr<SchedulerTensor> CreateSchedulerTensor(
+    const std::string &name, const Shape &storageShape, DataType dtype, TensorFormat format = TensorFormat::NHWC);
 
 // Create a SchedulerOperation with unary input
 std::unique_ptr<SchedulerOperation> CreateSchedulerOperation(OpType opType, TensorUsage ifmUsage,
