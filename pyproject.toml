@@ -36,7 +36,7 @@ classifiers = [
 keywords = ["ethos-u", "vela", "tosa", "tflite", "npu", "compiler"]
 # Third-party dependency versions are restricted based upon compatibility and security concerns.
 dependencies = [
-    "flatbuffers==24.3.25",
+    "flatbuffers",
     "numpy>=1.23.0",
 ]
 dynamic = ["readme", "version"]
