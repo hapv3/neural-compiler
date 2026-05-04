@@ -239,11 +239,11 @@ void GraphOptimiser::ParseGraphOptimiserOptions(GraphOptimiserOptions &opt, IniR
         {
             opt.verboseGraph = reader.Get<bool>();
         }
-        if ( key == "verbose_quantization" )
+        else if ( key == "verbose_quantization" )
         {
             opt.verboseQuantization = reader.Get<bool>();
         }
-        if ( key == "softmax_int16_neg_exp_range" )
+        else if ( key == "softmax_int16_neg_exp_range" )
         {
             auto value = reader.Get<float>();
             if ( value > 0 && value < 65535 )
@@ -254,6 +254,10 @@ void GraphOptimiser::ParseGraphOptimiserOptions(GraphOptimiserOptions &opt, IniR
             {
                 LOG_ERROR("Invalid value for softmax_int16_neg_exp_range: {0} (must be in range (0, 65535))", value);
             }
+        }
+        else if ( key == "ignore_ops" )
+        {
+            opt.ignoreOpList = reader.Get<std::string>();
         }
 
         reader.End();

@@ -22,6 +22,7 @@ import argparse
 import glob
 import mmap
 import os
+import re
 import sys
 import time
 from configparser import ConfigParser
@@ -51,6 +52,7 @@ from ethosu import regor
 
 TFLITE_MAGIC = 0x334C4654
 TOSA_MAGIC = 0x41534F54
+MAX_IGNORE_OPS_LENGTH = 4096
 
 
 def process(
@@ -748,6 +750,17 @@ def generate_supported_ops():
         print(f"Report file: {filepath}")
 
 
+def normalise_ignore_ops(ignore_ops: Optional[List[str]]) -> str:
+    if not ignore_ops:
+        return ""
+    op_list = ",".join(ignore_ops)
+    if len(op_list) > MAX_IGNORE_OPS_LENGTH:
+        raise ValueError(f"Invalid argument to --ignore-ops: maximum length is {MAX_IGNORE_OPS_LENGTH} characters")
+    if re.search(r"[^A-Za-z0-9_,]", op_list):
+        raise ValueError("Invalid argument to --ignore-ops: only A-Z, 0-9, '_' and ',' are accepted")
+    return op_list.upper().strip().replace("ARG_MAX", "ARGMAX")
+
+
 def get_compiler_config(
     enable_debug_db: bool,
     verbose_all: bool,
@@ -773,6 +786,7 @@ def get_compiler_config(
     cpu_tensor_alignment: int,
     tensor_allocator: str,
     softmax_int16_neg_exp_range: float,
+    ignore_ops: str = "",
 ) -> str:
     """Build compiler config file."""
     config = "\n[compiler]\n"
@@ -819,6 +833,8 @@ def get_compiler_config(
         config += "verbose_quantization=true\n"
     if softmax_int16_neg_exp_range > 0:
         config += f"softmax_int16_neg_exp_range={softmax_int16_neg_exp_range}\n"
+    if ignore_ops:
+        config += f"ignore_ops={ignore_ops}\n"
     return config
 
 
@@ -976,6 +992,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     parser.add_argument(
         "--show-cpu-operations", action="store_true", help="Show the operations that fall back to the CPU"
+    )
+    parser.add_argument(
+        "--ignore-ops",
+        action="append",
+        metavar="OP[,OP...]",
+        help="Let the specified TFLite builtin operator types fall back to the CPU",
     )
     parser.add_argument(
         "--timing", action="deprecated_store_true", help="[DEPRECATED] Time the compiler doing operations"
@@ -1234,6 +1256,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         substrings = [substring.capitalize() for substring in substrings[:-1]]
         accelerator = "".join(substrings)
 
+        try:
+            args.ignore_ops = normalise_ignore_ops(args.ignore_ops)
+        except ValueError as e:
+            parser.error(str(e))
+
         options = get_compiler_config(
             args.enable_debug_db,
             args.verbose_all,
@@ -1261,6 +1288,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             args.cpu_tensor_alignment,
             args.tensor_allocator,
             args.experimental_softmax_int16_neg_exp_range,
+            args.ignore_ops,
         )
 
         process_regor(
@@ -1279,6 +1307,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
 
     else:
+        if args.ignore_ops:
+            parser.error("The --ignore-ops option is only supported when using the Regor C++ compilation core.")
         if args.experimental_softmax_int16_neg_exp_range != 10.0:
             print(
                 "Warning: The --experimental-softmax-int16-neg-exp-range option has no effect when using the legacy "

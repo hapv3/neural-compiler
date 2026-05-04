@@ -396,6 +396,24 @@ offset 0.
 vela network.tflite --separate-io-regions --cop-format COP2
 ```
 
+### Ignore Ops
+
+Lets the specified TFLite builtin operator types fall back to the CPU so they
+remain as CPU operators in the output `.tflite` model.
+
+This option is only supported when using the Regor core. For TOSA input networks,
+the option is accepted but ignored. The value is a comma-separated list of
+TFLite builtin operator names and the option can be specified multiple times.
+Operator names are case-insensitive.
+
+**Type: String**  
+**Default: None**  
+**Format: `OP[,OP...]`**
+
+```bash
+vela network.tflite --ignore-ops ADD,ARGMAX --ignore-ops CONV_2D
+```
+
 ## Verbose Print Options
 
 All of the options below are disabled by default and enabling them will add

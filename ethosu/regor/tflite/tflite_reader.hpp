@@ -26,7 +26,9 @@
 #include "tflite_schema_generated.hpp"
 
 #include <memory>
+#include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace regor
 {
@@ -39,12 +41,13 @@ public:
     TfLiteReader() {}
 
     static void LoadGraphs(const void *input, size_t size, std::vector<std::unique_ptr<Graph>> &graphs,
-        OptimiserDatabase *optDb, bool skipSemanticsCheck = false);  // From buffer
+        OptimiserDatabase *optDb, bool skipSemanticsCheck = false, const std::string &ignoreOpList = {});  // From
+                                                                                                           // buffer
+    static std::unordered_set<tflite::BuiltinOperator> ParseIgnoreOpList(const std::string &ignoreOpList);
 
 private:
-    static void LoadGraphs(const uint8_t *input, size_t size, const tflite::Model *model,
-        std::vector<std::unique_ptr<Graph>> &graphs, OptimiserDatabase *optDb, bool skipSemanticsCheck = false);  // From
-                                                                                                                  // model
+    static void LoadGraphs(const uint8_t *input, size_t size, const tflite::Model *model, std::vector<std::unique_ptr<Graph>> &graphs,
+        OptimiserDatabase *optDb, bool skipSemanticsCheck = false, const std::string &ignoreOpList = {});  // From model
     static const tflite::Model *LoadModel(const void *input, size_t size);
     static std::shared_ptr<Tensor> ParseTensor(const tflite::Tensor *tflite_tensor, std::shared_ptr<Buffer> &buffer,
         std::unordered_map<UniqueId, Quantization> &tensorQuantization);

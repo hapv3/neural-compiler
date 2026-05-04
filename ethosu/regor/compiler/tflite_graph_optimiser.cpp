@@ -3106,6 +3106,12 @@ void DisconnectActivation(Operation *const op)
 
 Operation *TFLiteGraphOptimiser::SupportedOperatorChecks(Graph *const graph, Operation *const operation)
 {
+    UNUSED(graph);
+    if ( operation->Type() == OpType::Passthrough )
+    {
+        return operation;
+    }
+
     Operation *returnOp = operation;
     if ( !_supportedOps->Check(operation) )
     {

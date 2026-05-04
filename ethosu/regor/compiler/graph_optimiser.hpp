@@ -54,6 +54,7 @@ struct GraphOptimiserOptions
 {
     bool verboseGraph = false;
     bool verboseQuantization = false;
+    std::string ignoreOpList;
     struct
     {
         float int16NegExpRange = 10.0f;

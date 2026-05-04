@@ -22,6 +22,7 @@
 
 #include "common/buffer_view.hpp"
 #include "common/data_type.hpp"
+#include "common/lexer.hpp"
 #include "common/numeric_util.hpp"
 #include "common/reverse_type.hpp"
 #include "common/scaling.hpp"
@@ -37,13 +38,56 @@
 #include "tflite_model_semantics.hpp"
 #include "tflite_schema_generated.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <memory>
+#include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace regor
 {
+
+std::unordered_set<tflite::BuiltinOperator> TfLiteReader::ParseIgnoreOpList(const std::string &ignoreOpList)
+{
+    std::unordered_set<tflite::BuiltinOperator> ignoreOps;
+
+    std::vector<std::string> names;
+    std::string ident;
+    Lexer lexer(ignoreOpList.data(), ignoreOpList.size());
+    while ( lexer.GetIdent(ident, true) )
+    {
+        names.push_back(ident);
+        if ( lexer.SkipWhite() ) lexer.Expect(',');
+    }
+
+    if ( !lexer.IsEOS() )
+    {
+        throw std::runtime_error("Unrecognised ignore_ops value '" + ignoreOpList + "'");
+    }
+
+    if ( !names.empty() )
+    {
+        auto end = names.end();
+        for ( const auto candidate : tflite::EnumValuesBuiltinOperator() )
+        {
+            auto last = std::remove(names.begin(), end, EnumNameBuiltinOperator(candidate));
+            if ( last != end )
+            {
+                ignoreOps.insert(candidate);
+                end = last;
+            }
+        }
+        names.erase(end, names.end());
+
+        if ( !names.empty() )
+        {
+            throw std::runtime_error(fmt::format("Unrecognised ignore_ops value '{}'", fmt::join(names, ",")));
+        }
+    }
+    return ignoreOps;
+}
 
 static void SetKernel(const std::shared_ptr<Operation> &operation, const Point2i &size, const Point2i &stride,
     const Point2i &dilation, tflite::Padding padding)
@@ -91,9 +135,10 @@ const tflite::Model *TfLiteReader::LoadModel(const void *input, size_t size)
 }
 
 void TfLiteReader::LoadGraphs(const uint8_t *input, size_t size, const tflite::Model *model,
-    std::vector<std::unique_ptr<Graph>> &graphs, OptimiserDatabase *optDb, bool skipSemanticsCheck)
+    std::vector<std::unique_ptr<Graph>> &graphs, OptimiserDatabase *optDb, bool skipSemanticsCheck, const std::string &ignoreOpList)
 {
     assert(model);
+    const auto ignoreOps = ParseIgnoreOpList(ignoreOpList);
 
     if ( !skipSemanticsCheck )
     {
@@ -178,7 +223,8 @@ void TfLiteReader::LoadGraphs(const uint8_t *input, size_t size, const tflite::M
         for ( const auto &tflite_operator : *tflite_operators )
         {
             assert(tflite_operator);
-            const OpType op_type = TfLiteMapping::BuiltinOperatorToOpType(opcodes.at(tflite_operator->opcode_index()));
+            const auto builtin = opcodes.at(tflite_operator->opcode_index());
+            const OpType op_type = TfLiteMapping::BuiltinOperatorToOpType(builtin);
             auto operation = std::make_shared<Operation>(op_type);
             auto tflite_inputs = tflite_operator->inputs();
             auto tflite_outputs = tflite_operator->outputs();
@@ -299,10 +345,18 @@ void TfLiteReader::LoadGraphs(const uint8_t *input, size_t size, const tflite::M
 
             // Interpretation of operator options may depend on input/output tensor information,
             // so the operation must be connected to its tensors before parsing operator options.
-            ParseOperatorOptions(operation, tflite_operator, optDb);
+            if ( ignoreOps.count(builtin) != 0 )
+            {
+                operation->SetPassthrough(tflite_operator);
+                operation->SetPassthroughOp();
+            }
+            else
+            {
+                ParseOperatorOptions(operation, tflite_operator, optDb);
 
-            // Set rounding according to reference
-            SetOFMRounding(operation);
+                // Set rounding according to reference
+                SetOFMRounding(operation);
+            }
 
             operations.push_back(std::move(operation));
             ext_key++;
@@ -365,9 +419,9 @@ void TfLiteReader::LoadGraphs(const uint8_t *input, size_t size, const tflite::M
 }
 
 void TfLiteReader::LoadGraphs(const void *input, size_t size, std::vector<std::unique_ptr<Graph>> &graphs,
-    OptimiserDatabase *optDb, bool skipSemanticsCheck)
+    OptimiserDatabase *optDb, bool skipSemanticsCheck, const std::string &ignoreOpList)
 {
-    LoadGraphs(reinterpret_cast<const uint8_t *>(input), size, LoadModel(input, size), graphs, optDb, skipSemanticsCheck);
+    LoadGraphs(reinterpret_cast<const uint8_t *>(input), size, LoadModel(input, size), graphs, optDb, skipSemanticsCheck, ignoreOpList);
 }
 
 std::shared_ptr<Tensor> TfLiteReader::ParseTensor(const tflite::Tensor *tflite_tensor, std::shared_ptr<Buffer> &buffer,
@@ -881,7 +935,7 @@ void TfLiteReader::CreateAxisAttribute(const std::shared_ptr<Operation> &operati
     int axis = 0;
     if ( params->tensor->Type() == DataType::Int64 )
     {
-        assert(Scalar<int64_t>(*params->tensor) < std::numeric_limits<int32_t>::max() && ("Too large axis attribute"));
+        assert(Scalar<int64_t>(*params->tensor) < std::numeric_limits<int32_t>::max() && "Too large axis attribute");
         axis = ClampToType<int32_t>(Scalar<int64_t>(*params->tensor));
     }
     else

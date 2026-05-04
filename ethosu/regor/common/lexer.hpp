@@ -39,6 +39,8 @@ protected:
 public:
     Lexer(const char *text, size_t length) : _source(text), _end(text + length) { _pos = _source; }
 
+    bool IsEOS() const { return (_pos >= _end); }
+
     bool SkipSpace()
     {
         const char *p = _pos;
