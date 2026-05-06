@@ -1627,6 +1627,8 @@ Operation *GraphIrOptimiser::RemoveReshape(Graph *const graph, Operation *const 
         bool isIfmSgIfm = graph->IsInput(ifm);
         bool isOfmSgOfm = graph->IsOutput(ofm);
         bool isIfmSgOfm = graph->IsOutput(ifm);
+        bool isOfmPersistent = graph->IsPersistent(ofm);
+        bool isIfmPersistent = graph->IsPersistent(ifm);
 
         // Check if ifm/ofm is produced/consumed by a CPU operation
         auto isPassthroughOp = [](const std::shared_ptr<Operation> &op) { return op->Type() == OpType::Passthrough; };
@@ -1636,7 +1638,7 @@ Operation *GraphIrOptimiser::RemoveReshape(Graph *const graph, Operation *const 
             std::find_if(ifm->Writers().begin(), ifm->Writers().end(), isPassthroughOp) != ifm->Writers().end();
 
         // Inserts a copy op if needed before removing reshapes.
-        if ( ((isIfmSgIfm || isIfmSgOfm || isIfmConst || isIfmCpuOfm) && (isOfmSgOfm || isOfmCpuIfm)) ||
+        if ( ((isIfmSgIfm || isIfmSgOfm || isIfmConst || isIfmCpuOfm || isIfmPersistent) && (isOfmSgOfm || isOfmCpuIfm || isOfmPersistent)) ||
              ((ifm->Readers().size() > 1) && (ifm->StorageShape() != ofm->StorageShape())) )
         {
             auto copyOp = InsertCopyOpAfterTensor(ifmConn->tensor, ifmConn->quantization);
@@ -1651,7 +1653,7 @@ Operation *GraphIrOptimiser::RemoveReshape(Graph *const graph, Operation *const 
         }
 
         // Remove the reshape and one of the tensors.
-        if ( isOfmSgOfm || isOfmCpuIfm )
+        if ( isOfmSgOfm || isOfmCpuIfm || isOfmPersistent )
         {
             // The OFM is in graph outputs, do not remove this tensor.
             // Bypass by replacing ifm with ofm.
