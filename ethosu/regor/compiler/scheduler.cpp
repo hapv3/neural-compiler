@@ -1639,7 +1639,7 @@ bool Scheduler::ProposeSlicedWeightBuffering(SchedulerConnection *weights, Sched
                 assert(bufferingDepth);
                 float blockUtilisation = float(bufferingDepth) / RoundAway(bufferingDepth, configBlockDepth);
                 // Less than 30% of the block config depth is considered underutilised
-                if ( blockUtilisation < 0.3f )
+                if ( blockUtilisation < 0.3f && opcycleDominated )
                 {
                     return false;  // No buffering
                 }
