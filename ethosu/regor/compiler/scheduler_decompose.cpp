@@ -687,6 +687,16 @@ static std::vector<std::unique_ptr<SchedulerOperation>> DecomposeBlocks(
                 // Set weight/scale slice offset
                 subOp->weightDepthOffset += bc * BC;
 
+                if ( subOp->AccumulatorMode().source == AccumulatorSource::Ifm2 )
+                {
+                    if ( auto *subIfm2Conn = subOp->TryInput(TensorUsage::IFM1) )
+                    {
+                        // Accumulator input must align to the OFM slice for block decomposition.
+                        subIfm2Conn->slice.shape = subOfmConn->slice.shape;
+                        subIfm2Conn->slice.offset = subOfmConn->slice.offset;
+                        subIfm2Conn->stepXY = subOfmConn->stepXY;
+                    }
+                }
                 if ( subOp->Output(TensorUsage::OFM)->SliceShape().Elements() )
                 {
                     auto subOps = doDecompose(ctx, std::move(subOp));
