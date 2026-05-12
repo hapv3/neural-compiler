@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2022-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2022-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -175,7 +175,7 @@ public:
         return int(table->rows.size()) - 1;
     }
 
-    int AddRow(int tableId, int uniqueId, std::vector<std::string> values)
+    int AddRow(int tableId, int uniqueId, const std::vector<std::string> &values)
     {
         assert(tableId >= 0 && tableId < int(_tables.size()));
         DataTable *table = &_tables[tableId];

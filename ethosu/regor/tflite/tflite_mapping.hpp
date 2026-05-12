@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2023-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -133,7 +133,7 @@ private:
 
     // Assumes 1:1 mapping (else some entries will be lost)
     template<typename T1, typename T2>
-    static std::map<T2, T1> InvertMap(std::map<T1, T2> map)
+    static std::map<T2, T1> InvertMap(const std::map<T1, T2> &map)
     {
         std::map<T2, T1> inverse_map;
         for ( const auto &pair : map )
