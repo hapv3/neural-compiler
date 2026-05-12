@@ -1810,8 +1810,8 @@ void EthosU85RCSGenerator::GeneratePoolingOp(HLCStripe *stripe, MemoryAccesses &
     bool useGlobalScale = !op->scales;
     DataType ifmType = op->ifm[0].dataType;
     EthosU85OpConfig *config = static_cast<EthosU85OpConfig *>(stripe->operation->config);
-    // 32-bit reduce-sum cannot use 48-bit accumulation
-    assert(!(op->type == OpType::ReduceSum && ifmType == DataType::Int32 && config->_accumulatorType == EthosU85Accumulator::Acc48));
+    // Reduce-sum cannot use 48-bit accumulation
+    assert(!(op->type == OpType::ReduceSum && config->_accumulatorType == EthosU85Accumulator::Acc48));
     if ( _arch->UseNullPool(opType, DataTypeSizeBits(ifmType)) )
     {
         assert(!stripe->stripeAreas.empty());
