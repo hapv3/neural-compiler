@@ -1236,6 +1236,7 @@ TEST_CASE("ordered_map: reverse value iterator")
 {
     ordered_map<int, std::string> map(defaultValues, std::size(defaultValues));
     auto pos = map.rbegin();
+    // cppcheck-suppress knownConditionTrueFalse
     for ( auto i = std::size(defaultValues) - 1; i < std::size(defaultValues); i-- )
     {
         REQUIRE(defaultValues[i].second == *pos++);

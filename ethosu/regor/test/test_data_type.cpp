@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2023-2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2023-2024, 2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -134,9 +134,11 @@ TEST_CASE("int48_t")
     const int64_t val = 48217395205765;
     int48_t val48 = val;
     int64_t val64 = val48;
+    // cppcheck-suppress knownConditionTrueFalse
     REQUIRE(val64 == val);
     int48_t val48neg = -val;
     val64 = val48neg;
+    // cppcheck-suppress knownConditionTrueFalse
     REQUIRE(val64 == -val);
     int48_t array48[] = {val, -val};
     int48_t *p48 = &array48[0];
