@@ -505,10 +505,10 @@ public:
     struct iterator_base_t
     {
     private:
-        GetFunc _get;
+        GetFunc _get = nullptr;
         const void *_data = nullptr;
-        size_t _offset;
-        size_t _strideBytes;
+        size_t _offset = 0;
+        size_t _strideBytes = 0;
 
     public:
         using value_type = VALUE;

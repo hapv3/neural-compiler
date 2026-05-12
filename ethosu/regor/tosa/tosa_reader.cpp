@@ -54,10 +54,10 @@ namespace
 
 struct TensorInfo
 {
-    GraphApi::GraphTensor *tensor;
-    GraphApi::GraphShape shape;
-    GraphApi::GraphDataType type;
-    bool constant;
+    GraphApi::GraphTensor *tensor = nullptr;
+    GraphApi::GraphShape shape = {};
+    GraphApi::GraphDataType type = GraphApi::GraphDataType::Unknown;
+    bool constant = false;
 
     TensorInfo() = default;
 

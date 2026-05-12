@@ -436,7 +436,7 @@ TEST_CASE("ordered_map: Resizes (trivially copyable)")
 
     struct Val
     {
-        Key key;
+        Key key = {};
         Val() = default;
         Val(Key k) : key(k) {}
         Val &operator=(const Val &val) = default;
@@ -471,7 +471,7 @@ TEST_CASE("ordered_map: Resizes (not move assignable, not trivially copyable)")
 
     struct Val
     {
-        Key key;
+        Key key = {};
         Val() = default;
         Val(Key k) : key(k) {}
         Val(const Val &val) : key(val.key) {}

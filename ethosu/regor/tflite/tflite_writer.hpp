@@ -74,10 +74,10 @@ private:
 
     struct OperatorCodeDesc
     {
-        int8_t deprecated_builtin_code;
-        const char *custom_code;
-        int32_t version;
-        tflite::BuiltinOperator type;
+        int8_t deprecated_builtin_code = 0;
+        const char *custom_code = nullptr;
+        int32_t version = 0;
+        tflite::BuiltinOperator type = {};
         OperatorCodeDesc() = default;
         OperatorCodeDesc(int8_t _deprecated_builtin_code, const char *_custom_code, int32_t _version, tflite::BuiltinOperator _type) :
                 deprecated_builtin_code(_deprecated_builtin_code), custom_code(_custom_code), version(_version), type(_type)

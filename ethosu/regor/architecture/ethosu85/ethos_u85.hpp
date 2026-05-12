@@ -119,7 +119,7 @@ class EthosU85OpGroup : public ArchitectureOpGroup
 private:
     ArchEthosU85 *_arch;
     Flags<Requirement> _requirements = Requirement::None;
-    std::array<OpInfo, 8> _ops;
+    std::array<OpInfo, 8> _ops = {};
     std::array<InternalOpInfo, 8> _opsInternal;
     std::unordered_map<UniqueId, int> _tensorCbMap;
     std::unordered_set<UniqueId> _fusedTensors;

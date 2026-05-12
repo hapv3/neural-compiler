@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -24,8 +24,8 @@
 class QuantizedScale
 {
 public:
-    int32_t scale;
-    int shift;
+    int32_t scale = 1;
+    int shift = 0;
 
 public:
     QuantizedScale() = default;
