@@ -442,6 +442,9 @@ private:
         WeightFormat wgtFormat = WeightFormat::Default, ArchitectureMemory *wgtStaging = nullptr,
         OpScheduling scheduling = OpScheduling::Single);
 
+    EstimatedPerf EstimateSlicedOpPerformance(
+        SchedulerOperation *schedOp, SchedulerOpInfo *cost, const Point2i stripe, int slackCycles, Buffering buffering);
+
     EstimatedPerf EstimateSlicedOpPerformance(SchedulerOperation *schedOp, const std::vector<int> &depthSlices, ArchitectureOpConfig *opConfig,
         NpuWeightTensor *weights, Flags<StagingPref> stageFlags, const Point2i stripe, int slackCycles, Buffering buffering);
 

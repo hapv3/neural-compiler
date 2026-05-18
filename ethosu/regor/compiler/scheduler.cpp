@@ -835,8 +835,7 @@ std::unique_ptr<Schedule> Scheduler::CreateInitialSchedule()
                 op.get(), cost->Config(), ofmShape.Depth(), WeightFormat::Default, cost.get(), schedule.get());
             cost->cycles = _arch->Performance()->MeasureCycleCost(query);
             cost->elementAccess = _arch->Performance()->MeasureElementAccess(query);
-            cost->perf = EstimateSlicedOpPerformance(op.get(), cost->ofmDepthSlices, cost->Config(),
-                cost->npuWeightsTensor.get(), StagingPref::None, ofmShape.WH(), 0, Buffering::None);
+            cost->perf = EstimateSlicedOpPerformance(op.get(), cost.get(), cost->stripe.WH(), 0, Buffering::None);
         }
 
         schedule->SetCost(*op, std::move(cost));
@@ -1240,6 +1239,20 @@ bool PreferFutureOpPerformance(SchedulerOperation *schedOp, Schedule *refSchedul
 
 }  // namespace
 
+
+EstimatedPerf Scheduler::EstimateSlicedOpPerformance(
+    SchedulerOperation *schedOp, SchedulerOpInfo *cost, const Point2i stripe, int slackCycles, Buffering buffering)
+{
+    auto *ofm = schedOp->OFM();
+
+    const int untransposedFullDepth = ofm->shape.Unpermute(uint32_t(ofm->transpose)).Depth();
+    const std::vector<int> &untransposedDepthSlices =
+        (ofm->transpose & TransposeType::MaskC) != TransposeType::C ? std::vector<int>{0, untransposedFullDepth} : cost->ofmDepthSlices;
+
+    return EstimateSlicedOpPerformance(schedOp, untransposedDepthSlices, cost->Config(), cost->npuWeightsTensor.get(),
+        cost->stagingPreference, stripe, slackCycles, buffering);
+}
+
 EstimatedPerf Scheduler::EstimateSlicedOpPerformance(SchedulerOperation *schedOp, const std::vector<int> &depthSlices, ArchitectureOpConfig *opConfig,
     NpuWeightTensor *weights, Flags<StagingPref> stageFlags, const Point2i stripe, int slackCycles, Buffering buffering)
 {
@@ -1247,6 +1260,11 @@ EstimatedPerf Scheduler::EstimateSlicedOpPerformance(SchedulerOperation *schedOp
 
     auto *ifm = schedOp->IFM(0);
     auto *ofm = schedOp->OFM();
+
+    // There must be either no transpose, or single-slice transpose
+    const int untransposedFullDepth = ofm->shape.Unpermute(uint32_t(ofm->transpose)).Depth();
+    assert((ofm->transpose & TransposeType::MaskC) == TransposeType::C || (untransposedFullDepth == depthSlices[1]));
+
     double stripeRepeats = std::max(1.0, double(ofm->SliceShape().Height()) / stripe.y);
     Flags<WeightFormat> weightFormat;
     ArchitectureMemory *wgtMemory = nullptr;
@@ -1826,8 +1844,7 @@ std::shared_ptr<Schedule> Scheduler::ProposeMinimalSchedule()
                 schedOp.get(), cost->Config(), ofmShape.Depth(), WeightFormat::Default, cost.get(), minSchedule.get());
             cost->cycles = _arch->Performance()->MeasureCycleCost(query);
             cost->elementAccess = _arch->Performance()->MeasureElementAccess(query);
-            cost->perf = EstimateSlicedOpPerformance(schedOp.get(), cost->ofmDepthSlices, cost->Config(),
-                cost->npuWeightsTensor.get(), StagingPref::None, cost->stripe.WH(), 0, Buffering::None);
+            cost->perf = EstimateSlicedOpPerformance(schedOp.get(), cost.get(), cost->stripe.WH(), 0, Buffering::None);
         }
 
         minSchedule->SetCost(*schedOp, std::move(cost));
@@ -1930,8 +1947,7 @@ std::shared_ptr<Schedule> Scheduler::ProposeScheduleStriping(const Shape &finalS
             cost.get(), stripedSchedule.get());
         cost->cycles = _arch->Performance()->MeasureCycleCost(query);
         cost->elementAccess = _arch->Performance()->MeasureElementAccess(query);
-        cost->perf = EstimateSlicedOpPerformance(schedOp, cost->ofmDepthSlices, cost->Config(),
-            cost->npuWeightsTensor.get(), StagingPref::None, cost->stripe.WH(), 0, Buffering::None);
+        cost->perf = EstimateSlicedOpPerformance(schedOp, cost.get(), cost->stripe.WH(), 0, cost->bufferedWeightTensor.buffering);
 
         stripedSchedule->SetCost(*schedOp, std::move(cost));
 
