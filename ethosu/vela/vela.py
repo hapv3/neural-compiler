@@ -1157,6 +1157,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
 
     def _parse_config(config):
+        # Store leading "." as it is removed by normpath
+        relativePath = config.startswith(".")
         # Make sure the correct separator is used depending on OS
         config = os.path.normpath(config)
 
@@ -1166,7 +1168,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         if (
             len(config.split(os.path.sep)) == 2
             and not config.startswith(os.path.sep)
-            and not config.startswith(".")
+            and not relativePath
             and not config.startswith("~")
         ):
             config_path = os.path.join(architecture_features.CONFIG_FILES_PATH, config)
