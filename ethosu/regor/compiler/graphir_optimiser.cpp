@@ -1251,24 +1251,40 @@ Operation *GraphIrOptimiser::UnrollKernelStrides(Graph *const, Operation *const 
                 // Remove original op
                 operation->Disconnect();
             }
-            else
-            {
-                // If the output is only one element in a dimension, the stride in that dimension has no effect
-                // and can be set to 1
-                auto newStride = kernel->Stride();
-                if ( ofmConn->SliceShape().Width() == 1 ) newStride.x = 1;
-                if ( ofmConn->SliceShape().Height() == 1 ) newStride.y = 1;
-                if ( newStride != kernel->Stride() )
-                {
-                    auto newKernel = kernel->WithStride(newStride);
-                    operation->SetKernel(std::make_unique<Kernel>(std::move(newKernel)));
-                    RecordOptimisation(*operation, operation);
-                }
-            }
         }
     }
 
     return returnOp;
+}
+
+Operation *GraphIrOptimiser::ResetKernelAttributes(Graph *const, Operation *const operation)
+{
+    if ( IsConvolution(operation->Type()) || IsPooling(operation->Type()) || operation->Type() == OpType::Conv3D )
+    {
+        const auto &ofmConn = operation->Output(TensorUsage::OFM);
+        const auto kernel = operation->Kernel();
+
+        // If the output is only one element in a dimension, the stride in that dimension has no effect
+        // and can be set to 1
+        auto newStride = kernel->Stride();
+        auto ofmShape = Shape::PadAxes(ofmConn->SliceShape(), 3, 1);
+        if ( ofmShape.Width() == 1 ) newStride.x = 1;
+        if ( ofmShape.Height() == 1 ) newStride.y = 1;
+
+        // If the kernel is only one element in a dimension, the dilation in that dimension has no effect
+        // and can be set to 1
+        auto newDilation = kernel->Dilation();
+        if ( kernel->Size().x == 1 ) newDilation.x = 1;
+        if ( kernel->Size().y == 1 ) newDilation.y = 1;
+
+        if ( newStride != kernel->Stride() || newDilation != kernel->Dilation() )
+        {
+            auto newKernel = kernel->WithStride(newStride).WithDilation(newDilation);
+            operation->SetKernel(std::make_unique<Kernel>(std::move(newKernel)));
+            RecordOptimisation(*operation, operation);
+        }
+    }
+    return operation;
 }
 
 namespace

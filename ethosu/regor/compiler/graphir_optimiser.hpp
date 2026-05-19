@@ -79,6 +79,7 @@ private:
     Operation *MoveSplitSliceToConsumer(Graph *const, Operation *const operation);
     Operation *MoveConcatSliceToProducer(Graph *const graph, Operation *const operation);
     Operation *UnrollKernelStrides(Graph *const, Operation *const operation);
+    Operation *ResetKernelAttributes(Graph *const, Operation *const operation);
     Operation *RewriteIdentityResize(Graph *const graph, Operation *const operation);
     Operation *RewriteNonConstWeightOp(Graph *const, Operation *const operation);
     Operation *RewriteConv3D(Graph *const, Operation *const operation);
@@ -173,6 +174,7 @@ private:
                 &GraphIrOptimiser::RewriteNonConstWeightOp,
                 &GraphIrOptimiser::RewriteConv3D,
                 &GraphIrOptimiser::RealiseKernelPadding,
+                &GraphIrOptimiser::ResetKernelAttributes,
                 &GraphIrOptimiser::RewritePad,
                 &GraphIrOptimiser::RewriteTable,
                 &GraphIrOptimiser::RewriteCast,
