@@ -3106,7 +3106,7 @@ Operation *GraphIrOptimiser::RewriteNonConstWeightOp(Graph *const, Operation *co
         Point2i newStride(kernel->Stride().y, kernel->Stride().x);
         Point2i newDilation(kernel->Dilation().y, kernel->Dilation().x);
         auto &pad = operation->Kernel()->Padding();
-        Margin newPadding(pad.Left(), pad.Top(), pad.Right(), pad.Bottom());
+        Margin newPadding(pad.Left(), pad.Top(), pad.Right(), pad.Bottom(), pad.Near(), pad.Far());
         auto newKernel = std::make_unique<Kernel>(
             kernel->WithSize(newSize).WithStride(newStride).WithDilation(newDilation).WithPadding(newPadding));
         operation->SetKernel(std::move(newKernel));
