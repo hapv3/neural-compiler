@@ -100,6 +100,7 @@ private:
     Operation *SupportedOperatorChecks(Graph *const graph, Operation *const operation);
     Operation *ClampActivations(Graph *const graph, Operation *const operation);
     Operation *ConvertConvolutionGroup(Graph *const graph, Operation *const operation);
+    Operation *ConvertGeluToLUT(Graph *const graph, Operation *const operation);
     Operation *ConvertExpToLUT(Graph *const graph, Operation *const operation);
     Operation *ConvertLogToLUT(Graph *const graph, Operation *const operation);
     Operation *RewritePack(Graph *const graph, Operation *const operation);
@@ -256,6 +257,7 @@ public:
                 &TFLiteGraphOptimiser::FixupDilationGT2,
                 &TFLiteGraphOptimiser::FixupBias,
                 &TFLiteGraphOptimiser::ConvertReduceMinMaxAnyAll,
+                &TFLiteGraphOptimiser::ConvertGeluToLUT,
                 &TFLiteGraphOptimiser::ConvertExpToLUT,
                 &TFLiteGraphOptimiser::ConvertLogToLUT,
                 &TFLiteGraphOptimiser::ConvertTanhSigmoidToLUT,

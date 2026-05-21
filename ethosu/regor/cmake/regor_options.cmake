@@ -1,5 +1,5 @@
 #
-# SPDX-FileCopyrightText: Copyright 2021, 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2021, 2023-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -145,6 +145,7 @@ list(APPEND REGOR_DEFAULT_DOPTS
     "$<$<BOOL:${REGOR_ENABLE_EXPENSIVE_CHECKS}>:_GLIBCXX_DEBUG>"
     "$<$<BOOL:${REGOR_ENABLE_EXPENSIVE_CHECKS}>:_GLIBCXX_DEBUG_PEDANTIC>"
     "$<$<CXX_COMPILER_ID:MSVC>:NOMINMAX>"
+    "$<$<CXX_COMPILER_ID:MSVC>:_USE_MATH_DEFINES>"
     "$<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>"
 )
 

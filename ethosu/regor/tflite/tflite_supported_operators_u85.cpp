@@ -79,6 +79,7 @@ static const std::set<OpType> s_supportedOpTypes = {
     OpType::ReduceMax,
     OpType::Pack,
     OpType::Unpack,
+    OpType::Gelu,
     OpType::ReduceMin,
     OpType::ReduceAny,
     OpType::LogicalOr,

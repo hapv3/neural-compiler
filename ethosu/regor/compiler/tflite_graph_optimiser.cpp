@@ -505,6 +505,44 @@ Operation *TFLiteGraphOptimiser::ConvertTanhSigmoidToLUT16(Operation *const op)
 
 // Rewrite functions
 
+// Convert GELU operations to LUT
+Operation *TFLiteGraphOptimiser::ConvertGeluToLUT(Graph *const graph, Operation *const operation)
+{
+    UNUSED(graph);
+    Operation *returnOp = operation;
+    if ( operation->Type() != OpType::Gelu )
+    {
+        return returnOp;
+    }
+
+    const bool approximate = operation->Attribute<gelu_attr_t>()->approximate;
+    auto gelu = [approximate](double x) -> double
+    {
+        if ( approximate )
+        {
+            constexpr double GELU_TANH_APPROX_CUBIC_COEFF = 0.044715f;
+            const double SQRT_2_OVER_PI = std::sqrt(2.0 / M_PI);
+            const double tanhArg = SQRT_2_OVER_PI * ((GELU_TANH_APPROX_CUBIC_COEFF * std::pow(x, 3)) + x);
+            return 0.5f * x * (1.0f + std::tanh(tanhArg));
+        }
+        else
+        {
+            return x * 0.5f * std::erfc(-x / M_SQRT2);
+        }
+    };
+
+    const auto *ifmConn = operation->Input(TensorUsage::IFM0);
+    DataType ifmType = ifmConn->tensor->Type();
+    if ( ifmType == DataType::Int8 || ifmType == DataType::UInt8 )
+    {
+        returnOp = ConvertToLUT8(operation, gelu, "Gelu");
+        RecordOptimisation(*operation, returnOp);
+        operation->Disconnect();
+    }
+
+    return returnOp;
+}
+
 // Convert EXP operations to LUT
 Operation *TFLiteGraphOptimiser::ConvertExpToLUT(Graph *const graph, Operation *const operation)
 {

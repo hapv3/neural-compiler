@@ -240,6 +240,14 @@ struct leaky_relu_attr_t
     END_FIELD_TABLE()
 };
 
+struct gelu_attr_t
+{
+    bool approximate = false;
+    BEGIN_FIELD_TABLE(gelu_attr_t)
+        ATTR_FIELD(approximate, 0)
+    END_FIELD_TABLE()
+};
+
 struct softmax_attr_t
 {
     float beta;
