@@ -198,16 +198,21 @@ inline constexpr int DataTypeSizeBits(DataType type)
     return int(bits);
 }
 
-inline constexpr int DataTypeStorageSizeBytes(DataType type, int elements)
+inline constexpr int64_t DataTypeStorageSizeBytes(DataType type, int64_t elements)
 {
     const int storageBits = DataTypeStorageSizeBits(type);
     const int bits = IsPacked(type) ? DataTypeSizeBits(type) : storageBits;
     assert(storageBits >= 8);
-    int64_t result = (((int64_t(elements) * bits) + storageBits - 1) / storageBits) * (storageBits / 8);
+    int64_t result = (((elements * bits) + storageBits - 1) / storageBits) * (storageBits / 8);
+    return result;
+}
+
+inline constexpr int DataTypeStorageSizeBytes(DataType type, int elements)
+{
+    int64_t result = DataTypeStorageSizeBytes(type, int64_t(elements));
     assert(result < std::numeric_limits<int>::max());
     return int(result);
 }
-
 
 inline constexpr int DataTypeElements(DataType type, int size)
 {

@@ -157,8 +157,8 @@ Shape GetOfmMicroBlock(const Shape &archUBlock, const Shape &ofmShape, EthosU55N
     return archUBlock;
 }
 
-int EstimateMemoryTransfer(int cores, bool isRead, ArchitectureMemory *memory, TensorFormat format, int elementBits,
-    Shape block, Shape shape, int toTransfer)
+int64_t EstimateMemoryTransfer(int cores, bool isRead, ArchitectureMemory *memory, TensorFormat format, int elementBits,
+    Shape block, Shape shape, int64_t toTransfer)
 {
     int burstLen = 8;
 
@@ -216,12 +216,12 @@ int64_t MinimumIfmCycles(const PerformanceQuery &query, int cores)
     EthosU55OpConfig *opConfig = static_cast<EthosU55OpConfig *>(query.config);
 
     int ifmBits = DataTypeSizeBits(query.ifmType[0]);  // All inputs expect same bit width
-    const int ifmCount = query.ifmShape[1].Elements() > 0 ? int(std::size(query.ifmShape)) : 1;
+    const int ifmCount = query.ifmShape[1] ? int(std::size(query.ifmShape)) : 1;
     int64_t cyclesIfm = 0;
     for ( int i = 0; i < ifmCount; i++ )
     {
         // Input block HW transfer (only for elements present)
-        int ifmBytes = Shape::Min(query.ifmShape[i], opConfig->IfmBlock()).Elements() * ifmBits / 8;
+        int64_t ifmBytes = Shape::Min(query.ifmShape[i], opConfig->IfmBlock()).Elements64() * ifmBits / 8;
         int64_t cyclesIfmBlk = query.ifmMemory[i]->ReadLatency();
         int64_t tx = EstimateMemoryTransfer(cores, true, query.ifmMemory[i], query.ifmFormat[i], ifmBits,
             opConfig->IfmBlock(), query.ifmShape[i], ifmBytes);
@@ -238,7 +238,7 @@ int64_t MinimumOfmCycles(const PerformanceQuery &query, int cores)
 
     // Output block HW transfer (only for elements present)
     int ofmBits = DataTypeSizeBits(query.ofmType);
-    int ofmBytes = Shape::Min(query.ofmShape, opConfig->OfmBlock()).Elements() * ofmBits / 8;
+    int64_t ofmBytes = Shape::Min(query.ofmShape, opConfig->OfmBlock()).Elements64() * ofmBits / 8;
     int64_t cyclesOfm = query.ofmMemory->WriteLatency();
     int64_t tx = EstimateMemoryTransfer(
         cores, false, query.ofmMemory, query.ofmFormat, ofmBits, opConfig->OfmBlock(), query.ofmShape, ofmBytes);
@@ -424,7 +424,7 @@ EthosU55Cycles EthosU55Performance::EstimateMacOpCycles(const PerformanceQuery &
     if ( query.scheduling & OpScheduling::Last ) totalCycles += ofmBlockCycles;
     if ( query.scheduling & OpScheduling::First ) totalCycles += ifmBlockCycles;
 
-    int64_t totalMacs = int64_t(query.kernel->ElementsWH()) * query.ofmShape.Elements();
+    int64_t totalMacs = int64_t(query.kernel->ElementsWH()) * query.ofmShape.Elements64();
     if ( (npuOp != EthosU55NpuOp::Depthwise) && (npuOp != EthosU55NpuOp::Pooling) )
     {
         totalMacs *= query.ifmShape[0].Depth();
@@ -525,7 +525,7 @@ double EthosU55Performance::EstimateAOCyclesPerElement(const PerformanceQuery &q
     if ( (npuOp == EthosU55NpuOp::Elementwise) && (ifmBits == 32) )
     {
         // Unary op else Binary op
-        outputPerfIndex = query.ifmShape[1].Elements() > 0 ? 1 : 0;
+        outputPerfIndex = query.ifmShape[1] ? 1 : 0;
     }
     else if ( query.type == OpType::Mul && ofmBits == 32 )
     {
@@ -638,44 +638,44 @@ ElementAccess EthosU55Performance::MeasureElementAccess(const PerformanceQuery &
     else if ( npuOp == EthosU55NpuOp::Elementwise )
     {
         // IFM1 is scalar
-        if ( query.ifmShape[0].Elements() == 1 )
+        if ( query.ifmShape[0].Elements64() == 1 )
         {
             if ( DataTypeSizeBits(query.ifmType[0]) > 8 )  // IFM1 is a non 8-bit scalar
             {
-                access.ifmRead[0] = Shape::RoundAway(query.ifmShape[0], ifmRounding).Elements();
+                access.ifmRead[0] = Shape::RoundAway(query.ifmShape[0], ifmRounding).Elements64();
             }
-            else if ( query.ifmShape[1].Elements() > 0 )
+            else if ( query.ifmShape[1].Elements64() > 0 )
             {
-                access.ifmRead[1] = Shape::RoundAway(query.ofmShape, ifmRounding).Elements();
+                access.ifmRead[1] = Shape::RoundAway(query.ofmShape, ifmRounding).Elements64();
             }
         }
         else  // IFM1 is not scalar
         {
-            access.ifmRead[0] = Shape::RoundAway(query.ofmShape, ifmRounding).Elements();
-            if ( query.ifmShape[1].Elements() > 0 )
+            access.ifmRead[0] = Shape::RoundAway(query.ofmShape, ifmRounding).Elements64();
+            if ( query.ifmShape[1].Elements64() > 0 )
             {
                 // IFM2 is not scalar
-                if ( query.ifmShape[1].Elements() > 1 )
+                if ( query.ifmShape[1].Elements64() > 1 )
                 {
                     access.ifmRead[1] = access.ifmRead[0];
                 }
                 else if ( DataTypeSizeBits(query.ifmType[1]) > 8 )  // IFM2 is a non 8-bit scalar
                 {
-                    access.ifmRead[1] = Shape::RoundAway(query.ifmShape[1], ifmRounding).Elements();
+                    access.ifmRead[1] = Shape::RoundAway(query.ifmShape[1], ifmRounding).Elements64();
                 }
             }
         }
     }
     else if ( query.type == OpType::Transpose )
     {
-        access.ifmRead[0] = query.ifmShape[0].Elements();
+        access.ifmRead[0] = query.ifmShape[0].Elements64();
     }
     else if ( query.type == OpType::MatMul )
     {
         // Requires pretransposed operand
         int cols = query.ifmShape[1].Width();
-        access.ifmRead[0] = query.ifmShape[0].Elements() * cols;
-        access.ifmRead[1] = query.ifmShape[1].Elements();
+        access.ifmRead[0] = query.ifmShape[0].Elements64() * cols;
+        access.ifmRead[1] = query.ifmShape[1].Elements64();
         access.tmpRead = access.tmpWrite = access.ifmRead[0];
     }
     else
@@ -683,7 +683,7 @@ ElementAccess EthosU55Performance::MeasureElementAccess(const PerformanceQuery &
         assert(false);
     }
 
-    access.ofmWrite = Shape::RoundAway(query.ofmShape, ofmRounding).Elements();
+    access.ofmWrite = Shape::RoundAway(query.ofmShape, ofmRounding).Elements64();
 
     return access;
 }
@@ -697,7 +697,7 @@ ElementAccess EthosU55Performance::ElementTransferToBytes(const PerformanceQuery
 
     // IFM bytes transferred
     int ifmBits = DataTypeSizeBits(query.ifmType[0]);  // All inputs expect same bit width
-    const int ifmCount = query.ifmShape[1].Elements() > 0 ? int(std::size(query.ifmShape)) : 1;
+    const int ifmCount = query.ifmShape[1] ? int(std::size(query.ifmShape)) : 1;
     for ( int i = 0; i < ifmCount; i++ )
     {
         result.ifmRead[i] = EstimateMemoryTransfer(_arch->_cores, true, query.ifmMemory[i], query.ifmFormat[i], ifmBits,

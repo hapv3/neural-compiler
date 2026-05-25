@@ -1292,7 +1292,7 @@ EstimatedPerf Scheduler::EstimateSlicedOpPerformance(SchedulerOperation *schedOp
     int totalWeightFetches = 0;
     // Calculate total IFM and Weight reads
     {
-        int ifmRd = 0;
+        int64_t ifmRd = 0;
         ElementAccess elementAccess;
 
         for ( unsigned i = 0; i < slices; i++ )
