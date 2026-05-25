@@ -22,6 +22,41 @@ main feature changes, interface changes and reported defects that have been
 fixed.  The version numbering adheres to the
 [semantic versioning](https://semver.org/) scheme.
 
+## Release 5.1.0 - 02/06/2026
+
+**Main feature changes:**
+
+* Added support for TFLite `NEG` on Ethos-U55, Ethos-U65 and Ethos-U85.
+* Added support for TFLite `LESS` on Ethos-U85.
+* Added support for TFLite models with omitted optional inputs or outputs.
+* Added support for loading compatible TOSA v1.x files generated with newer schema versions.
+* Relaxed `TRANSPOSE` constraints for Ethos-U55 and Ethos-U65.
+* Added tensor information to the debug database output.
+* Improved IFM reuse for elementwise operators and cascaded operations.
+* Improved weight buffering by making use of internal performance estimation.
+* Relaxed the FlatBuffers version constraint for the legacy Python compilation core.
+
+**Interface changes:**
+
+* Added CLI option `--ignore-ops` to leave selected TFLite operators on the CPU in Regor output.
+* Added experimental CLI option `--experimental-softmax-int16-neg-exp-range` for int16 Softmax tuning.
+* Source builds now require `setuptools >= 82.0.0`.
+
+**Reported defect fixes:**
+
+* Ethos-U55/Ethos-U65:
+  * Fixed incorrect output for elementwise operations with scaled inputs.
+  * Fixed incorrect output for MATMUL patterns involving TRANSPOSE and RESHAPE.
+  * Fixed failures for small identity TRANSPOSE operations.
+  * Fixed numerical differences when fusing NEG followed by ADD.
+* Ethos-U85:
+  * Fixed incorrect output for 16-bit REDUCE_SUM.
+  * Fixed incorrect output for TOSA SCATTER.
+* General:
+  * Fixed parsing of relative `.ini` config file paths that start with `.`.
+  * Fixed raw output quantization for passthrough tensors.
+  * Fixed buffering choices for transposed operators.
+
 ## Release 5.0.0 - 26/02/2026
 
 **Main feature changes:**
