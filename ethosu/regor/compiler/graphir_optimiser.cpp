@@ -2634,36 +2634,7 @@ Operation *GraphIrOptimiser::RewriteMatmul(Graph *const graph, Operation *const 
     ifm1Conn->shape = ReshapeFunc(ifm1Conn->shape);
     ofmConn->shape = ReshapeFunc(ofmConn->shape);
 
-    // If IFM2 producer is already a NHCW transpose
-    // and there are no other producers/consumers of ifm2
-    // we remove the transpose instead of adding another
-    const auto &ifm1Writers = ifm1Conn->tensor->Writers();
-    const auto &ifm1Readers = ifm1Conn->tensor->Readers();
-    // TODO MLBEDSW-9620: Remove inverse transpose sequences
-    if ( (ifm1Readers.size() == 1) && (ifm1Writers.size() == 1) )
-    {
-        auto producer = ifm1Writers[0];
-        if ( producer->Type() == OpType::Transpose )
-        {
-
-            auto *attr = producer->Attribute<transpose_attr_t>();
-            TransposeType transposeType = TransposeType::None;
-            if ( attr->perm.Size() <= 4 )
-            {
-                transposeType = TransposeTypeFromShape(attr->perm);
-            }
-            if ( transposeType == TransposeType::NHCW )
-            {
-                auto *producerIfm = producer->Input(TensorUsage::IFM0);
-                operation->ConnectInput(TensorUsage::IFM1, producerIfm->tensor).Set(ifm1Conn->quantization);
-                operation->Input(TensorUsage::IFM1)->shape = ReshapeFunc(producerIfm->shape);
-                producer->Disconnect();
-                return returnOp;
-            }
-        }
-    }
-
-    // Otherwise create new transpose op
+    // Create new NHCW transpose op for IFM2
     auto transposeOp = std::make_shared<Operation>(OpType::Transpose);
     auto *attr = transposeOp->Attribute<transpose_attr_t>();
     attr->perm = Shape(0, 1, 3, 2);
