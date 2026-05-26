@@ -158,7 +158,7 @@ Shape GetOfmMicroBlock(const Shape &archUBlock, const Shape &ofmShape, EthosU55N
 }
 
 int64_t EstimateMemoryTransfer(int cores, bool isRead, ArchitectureMemory *memory, TensorFormat format, int elementBits,
-    Shape block, Shape shape, int64_t toTransfer)
+    Shape block, Shape shape, int64_t elementsToTransfer)
 {
     int burstLen = 8;
 
@@ -205,9 +205,10 @@ int64_t EstimateMemoryTransfer(int cores, bool isRead, ArchitectureMemory *memor
         }
     }
 
-    burstLen = std::min(memory->MaxBurstLength(), burstLen / 8);
-    assert(burstLen > 0 && "Burst length cannot be zero");
-    return (toTransfer * memory->MaxBurstLength()) / burstLen;
+    int64_t bytesToTransfer = (elementsToTransfer * elementBits) / 8;
+    int burstLenBytes = std::min(memory->MaxBurstLength(), burstLen / 8);
+    assert(burstLenBytes > 0 && "Burst length cannot be zero");
+    return (bytesToTransfer * memory->MaxBurstLength()) / burstLenBytes;
 }
 
 
@@ -221,10 +222,10 @@ int64_t MinimumIfmCycles(const PerformanceQuery &query, int cores)
     for ( int i = 0; i < ifmCount; i++ )
     {
         // Input block HW transfer (only for elements present)
-        int64_t ifmBytes = Shape::Min(query.ifmShape[i], opConfig->IfmBlock()).Elements64() * ifmBits / 8;
+        int64_t ifmElements = Shape::Min(query.ifmShape[i], opConfig->IfmBlock()).Elements64();
         int64_t cyclesIfmBlk = query.ifmMemory[i]->ReadLatency();
         int64_t tx = EstimateMemoryTransfer(cores, true, query.ifmMemory[i], query.ifmFormat[i], ifmBits,
-            opConfig->IfmBlock(), query.ifmShape[i], ifmBytes);
+            opConfig->IfmBlock(), query.ifmShape[i], ifmElements);
         cyclesIfmBlk += int64_t(float(tx) / query.ifmMemory[i]->Bandwidth());
 
         cyclesIfm = std::max(cyclesIfm, cyclesIfmBlk);
@@ -238,10 +239,10 @@ int64_t MinimumOfmCycles(const PerformanceQuery &query, int cores)
 
     // Output block HW transfer (only for elements present)
     int ofmBits = DataTypeSizeBits(query.ofmType);
-    int64_t ofmBytes = Shape::Min(query.ofmShape, opConfig->OfmBlock()).Elements64() * ofmBits / 8;
+    int64_t ofmElements = Shape::Min(query.ofmShape, opConfig->OfmBlock()).Elements64();
     int64_t cyclesOfm = query.ofmMemory->WriteLatency();
     int64_t tx = EstimateMemoryTransfer(
-        cores, false, query.ofmMemory, query.ofmFormat, ofmBits, opConfig->OfmBlock(), query.ofmShape, ofmBytes);
+        cores, false, query.ofmMemory, query.ofmFormat, ofmBits, opConfig->OfmBlock(), query.ofmShape, ofmElements);
     cyclesOfm += int64_t(float(tx) / query.ofmMemory->Bandwidth());
 
     return cyclesOfm;
@@ -696,10 +697,10 @@ ElementAccess EthosU55Performance::ElementTransferToBytes(const PerformanceQuery
     ElementAccess result = access;
 
     // IFM bytes transferred
-    int ifmBits = DataTypeSizeBits(query.ifmType[0]);  // All inputs expect same bit width
     const int ifmCount = query.ifmShape[1] ? int(std::size(query.ifmShape)) : 1;
     for ( int i = 0; i < ifmCount; i++ )
     {
+        int ifmBits = DataTypeSizeBits(query.ifmType[i]);
         result.ifmRead[i] = EstimateMemoryTransfer(_arch->_cores, true, query.ifmMemory[i], query.ifmFormat[i], ifmBits,
             opConfig->IfmBlock(), query.ifmShape[i], access.ifmRead[i]);
     }
