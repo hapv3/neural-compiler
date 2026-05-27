@@ -98,7 +98,27 @@ bool EthosU55Constraints::SupportsFusedReverse(OpType opType, ReverseType revers
 namespace
 {
 // Check that IFM-scales are supported
-bool SupportedIFMQuant(OpType opType, const Quantization &ifmQuant, const Quantization &ifm2Quant)
+bool SupportsAdvancedAddSubIFMScaling(const QuantizedScale &ifmScale, const QuantizedScale &ifm2Scale, DataType ifmType)
+{
+    const int ifmBits = DataTypeSizeBits(ifmType);
+    if ( ifmBits != 8 && ifmBits != 16 )
+    {
+        return false;
+    }
+
+    const auto reducedIfmScale = QuantizedScale::ReduceScale(ifmScale);
+    const auto reducedIfm2Scale = QuantizedScale::ReduceScale(ifm2Scale);
+    if ( reducedIfmScale == reducedIfm2Scale )
+    {
+        return false;
+    }
+
+    const QuantizedScale fixedShiftScale(1 << (ifmBits == 8 ? 19 : 14), 0);
+    const QuantizedScale maxScale = reducedIfm2Scale < reducedIfmScale ? reducedIfmScale : reducedIfm2Scale;
+    return maxScale == fixedShiftScale;
+}
+
+bool SupportedIFMQuant(OpType opType, const Quantization &ifmQuant, const Quantization &ifm2Quant, DataType ifmType)
 {
     // Per-channel IFM scaling is not supported
     if ( ifmQuant.scales.size() > 1 || ifm2Quant.scales.size() > 1 )
@@ -116,8 +136,9 @@ bool SupportedIFMQuant(OpType opType, const Quantization &ifmQuant, const Quanti
         {
             return true;
         }
-        // Allow if one of the inputs has power of two scale
-        if ( IsPowerOfTwo(ifmScale.scale) || IsPowerOfTwo(ifm2Scale.scale) )
+        // Allow 32-bit (advanced) rescale when the unscaled input can be
+        // represented by the fixed left shift used by the hardware.
+        if ( SupportsAdvancedAddSubIFMScaling(ifmScale, ifm2Scale, ifmType) )
         {
             return true;
         }
@@ -189,7 +210,7 @@ bool EthosU55Constraints::SupportsQuantization(OpType opType, const Quantization
         return false;
     }
     // Validate that quantization is valid
-    if ( !SupportedIFMQuant(opType, ifmQuant, ifm2Quant) )
+    if ( !SupportedIFMQuant(opType, ifmQuant, ifm2Quant, ifmType) )
     {
         return false;
     }
