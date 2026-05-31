@@ -557,7 +557,7 @@ double EthosU55Performance::EstimateAOCyclesPerElement(const PerformanceQuery &q
         outputPerfIndex = 7;
     }
 
-    size_t activationPerfIndex = 0;
+    size_t activationPerfIndex = 2;
 
     EthosU55OpGroup *opGroup = static_cast<EthosU55OpGroup *>(query.opGroup);
     assert(opGroup);
