@@ -137,7 +137,7 @@ int64_t EthosU55Performance::MemToMemCycles(const ArchitectureMemory *dest, cons
     int64_t fromCycles = int64_t(float(sizeBytes) / source->Bandwidth());
     fromCycles += source->ReadLatency();
     int64_t toCycles = int64_t(float(sizeBytes) / dest->Bandwidth());
-    toCycles += source->WriteLatency();
+    toCycles += dest->WriteLatency();
     return std::max(fromCycles, toCycles);
 }
 
