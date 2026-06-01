@@ -118,7 +118,7 @@ bool SupportsAdvancedAddSubIFMScaling(const QuantizedScale &ifmScale, const Quan
     return maxScale == fixedShiftScale;
 }
 
-bool SupportedIFMQuant(OpType opType, const Quantization &ifmQuant, const Quantization &ifm2Quant, DataType ifmType)
+bool SupportedIFMQuant(OpType opType, const Quantization &ifmQuant, const Quantization &ifm2Quant, DataType ifmType, DataType ofmType)
 {
     // Per-channel IFM scaling is not supported
     if ( ifmQuant.scales.size() > 1 || ifm2Quant.scales.size() > 1 )
@@ -130,6 +130,10 @@ bool SupportedIFMQuant(OpType opType, const Quantization &ifmQuant, const Quanti
     // Binary IFM-fusing constraints for Add/Sub
     if ( opType == OpType::Add || opType == OpType::Sub )
     {
+        // 32-bit output requires unit IFM scaling
+        if ( DataTypeSizeBits(ofmType) > 16 && (ifmScale != QuantizedScale::Unit() || ifm2Scale != QuantizedScale::Unit()) )
+            return false;
+
         // Allow 16-bit (simple) rescale with shift == 0
         if ( ifmScale.shift == 0 && ifm2Scale.shift == 0 && int16_t(ifmScale.scale) == ifmScale.scale &&
              int16_t(ifm2Scale.scale) == ifm2Scale.scale )
@@ -210,7 +214,7 @@ bool EthosU55Constraints::SupportsQuantization(OpType opType, const Quantization
         return false;
     }
     // Validate that quantization is valid
-    if ( !SupportedIFMQuant(opType, ifmQuant, ifm2Quant, ifmType) )
+    if ( !SupportedIFMQuant(opType, ifmQuant, ifm2Quant, ifmType, ofmType) )
     {
         return false;
     }

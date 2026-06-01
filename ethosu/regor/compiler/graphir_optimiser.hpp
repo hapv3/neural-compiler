@@ -94,7 +94,9 @@ private:
     bool CanFuseMultipleRescalesOnConsumer(Operation *const consumer, Operation *const rescale1,
         Operation *const rescale2, const Quantization &q1, const Quantization &q2);
     // Checks for OFM-fusing
-    bool CanFuseRescaleOnProducer(Operation *const producer, Quantization &newQuant, DataType newType);
+    bool CanFuseRescaleOnProducer(Operation *const producer, Quantization &newQuant, DataType newType,
+        const Quantization *newIFMQuant = nullptr, DataType newIFMType = DataType::None,
+        const Quantization *newIFM2Quant = nullptr, DataType newIFM2Type = DataType::None);
 
 
 
