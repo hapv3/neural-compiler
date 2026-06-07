@@ -140,6 +140,10 @@ PerformanceResult NetworkPerformance::Measure(Schedule *schedule, OptimiserDatab
                 "weight_pre_buffer",
                 "weight_buffering",
                 "weight_transfer_cycles",
+                "est_op_cycles_without_buffering",  // EstimatedPerf.opRunCycles
+                "est_op_cycles_with_buffering",     // EstimatedPerf.fullRunCycles
+                "est_ifm_read_cycles",              // EstimatedPerf.ifmReadCycles
+                "est_weight_read_cycles",           // EstimatedPerf.weightReadCycles
                 "kernel_depth_multiplier",
             });
 
@@ -395,6 +399,11 @@ void NetworkPerformance::AddToDatabase(const PerformanceResult &perf, SchedulerO
         cost->bufferedWeightTensor.tensor[0] ? std::to_string(cost->bufferedWeightTensor.preBuffer) : "",
         cost->bufferedWeightTensor.tensor[0] ? EnumToString(cost->bufferedWeightTensor.buffering) : "",
         cost->bufferedWeightTensor.tensor[0] ? std::to_string(cost->fullWeightTransferCycles) : "",
+        // Perf
+        std::to_string(cost->perf.opRunCycles),
+        std::to_string(cost->perf.fullRunCycles),
+        std::to_string(cost->perf.ifmReadCycles),
+        std::to_string(cost->perf.weightReadCycles),
         // Kernel
         std::to_string(schedOp->Type() == OpType::DepthwiseConv2D ?
                        schedOp->OFM()->SliceShape().Depth() /  schedOp->IFM(0)->SliceShape().Depth() : 1 ),
