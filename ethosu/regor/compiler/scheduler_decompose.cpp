@@ -814,7 +814,7 @@ DecomposeForStrides(DecompositionContext &ctx, std::unique_ptr<SchedulerOperatio
             auto *subIfmConn = subOp->Input(TensorUsage::IFM);
             subIfmConn->slice = std::move(newIfmSlice);
             subIfmConn->stepXY = ifmStrides;
-            if ( weightsConn && (!weightSlice.offset.WH() || weightSlice.shape < weightsConn->SliceShape()) )
+            if ( weightsConn && (!!weightSlice.offset.WH() || weightSlice.shape < weightsConn->SliceShape()) )
             {
                 auto *subWeightsConn = subOp->Input(TensorUsage::Weights);
                 subWeightsConn->tensor = Slice(weightsConn->tensor.get(), weightSlice.offset, weightSlice.shape, {}, weightStepXY);
