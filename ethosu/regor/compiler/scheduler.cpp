@@ -1246,8 +1246,9 @@ EstimatedPerf Scheduler::EstimateSlicedOpPerformance(
     auto *ofm = schedOp->OFM();
 
     const int untransposedFullDepth = ofm->shape.Unpermute(uint32_t(ofm->transpose)).Depth();
+    const bool preTransposeDepth = IsConvolution(schedOp->Type()) || schedOp->Type() == OpType::FullyConnected;
     const std::vector<int> &untransposedDepthSlices =
-        (ofm->transpose & TransposeType::MaskC) != TransposeType::C ? std::vector<int>{0, untransposedFullDepth} : cost->ofmDepthSlices;
+        ((ofm->transpose & TransposeType::MaskC) != TransposeType::C && preTransposeDepth) ? std::vector<int>{0, untransposedFullDepth} : cost->ofmDepthSlices;
 
     return EstimateSlicedOpPerformance(schedOp, untransposedDepthSlices, cost->Config(), cost->npuWeightsTensor.get(),
         cost->stagingPreference, stripe, slackCycles, buffering);
@@ -1263,7 +1264,8 @@ EstimatedPerf Scheduler::EstimateSlicedOpPerformance(SchedulerOperation *schedOp
 
     // There must be either no transpose, or single-slice transpose
     const int untransposedFullDepth = ofm->shape.Unpermute(uint32_t(ofm->transpose)).Depth();
-    assert((ofm->transpose & TransposeType::MaskC) == TransposeType::C || (untransposedFullDepth == depthSlices[1]));
+    const bool preTransposeDepth = IsConvolution(schedOp->Type()) || schedOp->Type() == OpType::FullyConnected;
+    assert((ofm->transpose & TransposeType::MaskC) == TransposeType::C || !preTransposeDepth || (untransposedFullDepth == depthSlices[1]));
 
     double stripeRepeats = std::max(1.0, double(ofm->SliceShape().Height()) / stripe.y);
     Flags<WeightFormat> weightFormat;
