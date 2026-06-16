@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021, 2023-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021, 2023-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -216,6 +216,7 @@ static std::string AllFlagsToString()
     int length = 0;
     extern const EnumNameEntry *GetEnumTable(ENUM, int &);
     const EnumNameEntry *table = GetEnumTable(ENUM(0), length);
+    assert(length > 0);
     for ( int i = 0; i < length; i++ )
     {
         const auto *sz = table[i].name;
