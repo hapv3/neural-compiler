@@ -137,6 +137,7 @@ enum class OpType : uint16_t
     Fill,
     FloorDiv,
     FloorMod,
+    Gelu,
     FullyConnected,
     GatherNd,
     GatherV2,
@@ -233,7 +234,7 @@ constexpr inline bool IsClipping(OpType opType)
 
 constexpr inline bool IsUnaryElementwise(OpType opType)
 {
-    return opType == OpType::Abs || opType == OpType::LeakyRelu || opType == OpType::CLZ ||
+    return opType == OpType::Abs || opType == OpType::Gelu || opType == OpType::LeakyRelu || opType == OpType::CLZ ||
            opType == OpType::LogicalNot || opType == OpType::Not || opType == OpType::Neg;
 }
 

@@ -700,6 +700,13 @@ void TfLiteReader::ParseOperatorOptions(
         }
         break;
 
+        case tflite::BuiltinOptions::GeluOptions:
+        {
+            const auto options = GetBuiltinOptions<tflite::GeluOptions>(tflite_operator);
+            operation->Attribute<gelu_attr_t>()->approximate = options->approximate();
+        }
+        break;
+
         case tflite::BuiltinOptions::StridedSliceOptions:
             break;
 

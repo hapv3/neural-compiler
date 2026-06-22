@@ -661,6 +661,46 @@ bool LogPrecision(const Operation *op)
     return true;
 }
 
+// IFM and OFM shapes must match
+bool GeluShapes(const Operation *op)
+{
+    auto ifmConn = op->Input(TensorUsage::IFM);
+    assert(ifmConn);
+    auto ofmConn = op->Output(TensorUsage::OFM);
+    assert(ofmConn);
+    const auto &ifmShape = ifmConn->shape;
+    const auto &ofmShape = ofmConn->shape;
+    if ( ifmShape != ofmShape )
+    {
+        Failure(op, fmt::format("Mismatching shapes: IFM={}, OFM={}", ifmShape.ToString(), ofmShape.ToString()));
+        return false;
+    }
+    return true;
+}
+
+// IFM and OFM datatypes must match.
+// IFM and OFM datatypes must be Int8 or UInt8.
+bool GeluPrecision(const Operation *op)
+{
+    auto ifmConn = op->Input(TensorUsage::IFM);
+    assert(ifmConn);
+    auto ofmConn = op->Output(TensorUsage::OFM);
+    assert(ofmConn);
+    auto ifmType = ifmConn->tensor->Type();
+    auto ofmType = ofmConn->tensor->Type();
+    if ( ifmType != DataType::Int8 && ifmType != DataType::UInt8 )
+    {
+        Failure(op, fmt::format("Unsupported IFM type: {}", DataTypeToString(ifmType)));
+        return false;
+    }
+    if ( ifmType != ofmType )
+    {
+        Failure(op, fmt::format("Mismatching dataTypes: IFM={}, OFM={}", DataTypeToString(ifmType), DataTypeToString(ofmType)));
+        return false;
+    }
+    return true;
+}
+
 // Batch must be 1.
 bool UnitBatch(const Operation *op)
 {
@@ -1080,6 +1120,8 @@ TfLiteSupportedOperators::TfLiteSupportedOperators(int64_t maxWeightSum8Bit, int
     transposeDims = {&TransposeDims, "Tensor dimension must be <= 8"};
     logShapes = {&LogShapes, "IFM and OFM shapes must match"};
     logPrecision = {&LogPrecision, "IFM and OFM datatypes must match, and must be Int8 or Int16"};
+    geluShapes = {&GeluShapes, "IFM and OFM shapes must match"};
+    geluPrecision = {&GeluPrecision, "IFM and OFM datatypes must match, and must be Int8 or UInt8"};
     unitBatch = {&UnitBatch, "Batch must be 1."};
     meanDepth = {&MeanDepth, "Reduction over depth is only supported if any of h,w,c == 1"};
     meanAxisSize = {&MeanAxisSize, fmt::format("Reduced axis must be less than {}", MAX_MEAN_KERNEL_SIZE)};
@@ -1144,6 +1186,8 @@ TfLiteSupportedOperators::TfLiteSupportedOperators(int64_t maxWeightSum8Bit, int
     opConstraints[OpType::Pad].push_back(&padParams);
     opConstraints[OpType::PadV2].push_back(&padParams);
     opConstraints[OpType::MirrorPad].push_back(&padParams);
+    opConstraints[OpType::Gelu].push_back(&geluShapes);
+    opConstraints[OpType::Gelu].push_back(&geluPrecision);
     opConstraints[OpType::Log].push_back(&logShapes);
     opConstraints[OpType::Log].push_back(&logPrecision);
     opConstraints[OpType::Mean].push_back(&unitBatch);

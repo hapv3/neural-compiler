@@ -176,16 +176,16 @@ const std::array<BuiltinOperator, 2> poolingOps = {BuiltinOperator::AVERAGE_POOL
 
 const std::array<BuiltinOperator, 1> concatOps = {BuiltinOperator::CONCATENATION};
 
-const std::array<BuiltinOperator, 4> unaryElemWiseMainOps = {
-    BuiltinOperator::ABS, BuiltinOperator::EXP, BuiltinOperator::LEAKY_RELU, BuiltinOperator::RSQRT};
+const std::array<BuiltinOperator, 5> unaryElemWiseMainOps = {BuiltinOperator::ABS, BuiltinOperator::EXP,
+    BuiltinOperator::GELU, BuiltinOperator::LEAKY_RELU, BuiltinOperator::RSQRT};
 
 const std::array<BuiltinOperator, 2> binaryElemWiseMinMaxOps = {BuiltinOperator::MINIMUM, BuiltinOperator::MAXIMUM};
 
 const std::array<BuiltinOperator, 3> binaryElemWiseAddMulSub = {BuiltinOperator::ADD, BuiltinOperator::MUL, BuiltinOperator::SUB};
 
-const std::array<BuiltinOperator, 10> elemWiseMainOps = {BuiltinOperator::MINIMUM, BuiltinOperator::MAXIMUM,
+const std::array<BuiltinOperator, 11> elemWiseMainOps = {BuiltinOperator::MINIMUM, BuiltinOperator::MAXIMUM,
     BuiltinOperator::ADD, BuiltinOperator::MUL, BuiltinOperator::SUB, BuiltinOperator::ABS, BuiltinOperator::EXP,
-    BuiltinOperator::LEAKY_RELU, BuiltinOperator::RSQRT, BuiltinOperator::SQUARED_DIFFERENCE};
+    BuiltinOperator::GELU, BuiltinOperator::LEAKY_RELU, BuiltinOperator::RSQRT, BuiltinOperator::SQUARED_DIFFERENCE};
 
 const std::array<BuiltinOperator, 3> reshapeOps = {BuiltinOperator::RESHAPE, BuiltinOperator::SQUEEZE, BuiltinOperator::EXPAND_DIMS};
 
