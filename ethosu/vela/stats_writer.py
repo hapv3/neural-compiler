@@ -449,6 +449,12 @@ def regor_operations_from_database(opt_database):
             idx.append(header.index(name))
         return idx
 
+    def parse_dim(value):
+        if value == "":
+            return -1
+        else:
+            return int(value)
+
     # set of optimised_ids that ended up on NPU
     npu_optimised_ids = set()
     group_ids = set()
@@ -477,9 +483,9 @@ def regor_operations_from_database(opt_database):
     id_idx, w_idx, h_idx, d_idx = ids
     for entry in src.data:
         src_id = entry[id_idx]
-        w = int(entry[w_idx])
-        h = int(entry[h_idx])
-        d = int(entry[d_idx])
+        w = parse_dim(entry[w_idx])
+        h = parse_dim(entry[h_idx])
+        d = parse_dim(entry[d_idx])
         ofm_shapes[src_id] = [1, w, h, d]
 
     # build npu_optimised_ids from queue table
