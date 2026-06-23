@@ -911,20 +911,17 @@ TEST_CASE("test_graphir_optimiser - do not fuse Ethos-U55 advanced add scales wi
     graph->GetAllOperations(allOps);
     REQUIRE(allOps.size() > 1);
 
-    auto findOp = [&](OpType type)
-    {
-        auto pos = std::find_if(allOps.begin(), allOps.end(), [&](const auto *op) { return op->Type() == type; });
-        REQUIRE(pos != allOps.end());
-        assert(pos != allOps.end());
-        return *pos;
-    };
+    auto absPos = std::find_if(allOps.begin(), allOps.end(), [&](const auto *op) { return op->Type() == OpType::Abs; });
+    REQUIRE(absPos != allOps.end());
+    assert(absPos != allOps.end());
+    auto abs = *absPos;
 
-    auto abs = findOp(OpType::Abs);
     auto addPos = std::find_if(allOps.begin(), allOps.end(),
         [&](const auto *op) { return op->Type() == OpType::Add && op->Output(TensorUsage::OFM)->tensor == addOfm; });
     REQUIRE(addPos != allOps.end());
     assert(addPos != allOps.end());
     auto add = *addPos;
+
     REQUIRE(add->Input(TensorUsage::IFM0)->tensor == rescale0Ofm);
     REQUIRE(add->Input(TensorUsage::IFM1)->tensor == rescale1Ofm);
     REQUIRE(add->Output(TensorUsage::OFM)->tensor == addOfm);
@@ -980,14 +977,6 @@ TEST_CASE("test_graphir_optimiser - do not fuse Ethos-U55 advanced add scales wi
     std::vector<Operation *> allOps;
     graph->GetAllOperations(allOps);
     REQUIRE(allOps.size() > 1);
-
-    auto findOp = [&](OpType type)
-    {
-        auto pos = std::find_if(allOps.begin(), allOps.end(), [&](const auto *op) { return op->Type() == type; });
-        REQUIRE(pos != allOps.end());
-        assert(pos != allOps.end());
-        return *pos;
-    };
 
     auto add = ops.back().get();
     REQUIRE(add->Input(TensorUsage::IFM0)->tensor == rescale0Ofm);

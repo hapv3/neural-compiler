@@ -89,14 +89,18 @@ private:
     Operation *MakeFillOperation(TensorConnection *const ofmConn, const Shape &ofmShape, const TensorSlice &ofmSlice,
         std::shared_ptr<Tensor> padTensor);
     // Checks for unary IFM-fusing
-    bool CanFuseRescaleOnConsumer(Operation *const consumer, TensorUsage usage, Quantization &newQuant, DataType newType);
+    bool CanFuseRescaleOnConsumer(Operation *const consumer, TensorUsage usage, const Quantization &newQuant, DataType newType);
     // Checks for binary IFM-fusing
     bool CanFuseMultipleRescalesOnConsumer(Operation *const consumer, Operation *const rescale1,
         Operation *const rescale2, const Quantization &q1, const Quantization &q2);
     // Checks for OFM-fusing
-    bool CanFuseRescaleOnProducer(Operation *const producer, Quantization &newQuant, DataType newType,
-        const Quantization *newIFMQuant = nullptr, DataType newIFMType = DataType::None,
-        const Quantization *newIFM2Quant = nullptr, DataType newIFM2Type = DataType::None);
+    bool CanFuseRescaleOnProducer(Operation *const producer, const Quantization &newQuant, DataType newType);
+    // Checks compound fusing
+    bool CanFuseRescalesOnOperation(Operation *const producer, const Quantization &newOfmQuant, DataType newOfmType,
+        TensorUsage ifmUsage, const Quantization &newIfmQuant, DataType newIfmType);
+    // Checks binary-compound fusing
+    bool CanFuseRescalesOnOperation(Operation *const producer, const Quantization &newOfmQuant, DataType newOfmType,
+        const Quantization &newIfmQuant, DataType newIfmType, const Quantization &newIfm2Quant, DataType newIfm2Type);
 
 
 
@@ -154,13 +158,7 @@ private:
         {
             {},
             {
-                &GraphIrOptimiser::FuseRescale,  // First pass fuse all possible ifm and ofm rescales
-            }
-        },
-        {
-            {},
-            {
-                &GraphIrOptimiser::FuseRescale, // Second pass, fuse any remaining ofm rescales after ifm fusing in first pass
+                &GraphIrOptimiser::FuseRescale,
             }
         },
         {
