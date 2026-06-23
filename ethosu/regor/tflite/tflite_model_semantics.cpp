@@ -23,6 +23,7 @@
 #include "tflite_mapping.hpp"
 
 #include <fmt/format.h>
+#include <algorithm>
 #include <string>
 #include <type_traits>
 #include <unordered_set>
@@ -856,6 +857,68 @@ void ConstraintMatchingEitherShapes(const Operator &op, const SubGraph &subgraph
     }
 }
 
+void ConstraintBatchMatMulRanks(const Operator &op, const SubGraph &subgraph, const BuiltinOperator &builtinOperator, const BufferContext &)
+{
+    const auto ifmShape = ShapeFromTens(TensorFromUsage(regor::TensorUsage::IFM0, op, builtinOperator, *subgraph.tensors()));
+    const auto ifm2Shape = ShapeFromTens(TensorFromUsage(regor::TensorUsage::IFM1, op, builtinOperator, *subgraph.tensors()));
+    const auto ofmShape = ShapeFromTens(TensorFromUsage(regor::TensorUsage::OFM, op, builtinOperator, *subgraph.tensors()));
+
+    if ( ifmShape.Size() < 2 || ifm2Shape.Size() < 2 || ofmShape.Size() < 2 )
+    {
+        std::string constraint = "BatchMatMul inputs and output must have rank at least 2";
+        std::string extra = fmt::format("IFM shape={}, IFM2 shape={} and OFM shape={}", ifmShape.ToString(),
+            ifm2Shape.ToString(), ofmShape.ToString());
+        throw InvalidTfLiteException(constraint, extra, op, subgraph, builtinOperator);
+    }
+
+    // The output rank is the input rank after leading-dimension broadcasting.
+    const int rank = std::max(ifmShape.Size(), ifm2Shape.Size());
+    if ( ofmShape.Size() != rank )
+    {
+        std::string constraint = "BatchMatMul output rank must match the broadcasted input rank";
+        std::string extra = fmt::format(
+            "IFM rank={}, IFM2 rank={} and OFM rank={}", ifmShape.Size(), ifm2Shape.Size(), ofmShape.Size());
+        throw InvalidTfLiteException(constraint, extra, op, subgraph, builtinOperator);
+    }
+}
+
+void ConstraintBatchMatMulBroadcastShapes(
+    const Operator &op, const SubGraph &subgraph, const BuiltinOperator &builtinOperator, const BufferContext &)
+{
+    const auto ifmShape = ShapeFromTens(TensorFromUsage(regor::TensorUsage::IFM0, op, builtinOperator, *subgraph.tensors()));
+    const auto ifm2Shape = ShapeFromTens(TensorFromUsage(regor::TensorUsage::IFM1, op, builtinOperator, *subgraph.tensors()));
+    const auto ofmShape = ShapeFromTens(TensorFromUsage(regor::TensorUsage::OFM, op, builtinOperator, *subgraph.tensors()));
+    const int rank = ofmShape.Size();
+
+    // Leading dimensions above rank 2 must be the same, 1, or broadcast as 1.
+    for ( int axis = 0; axis < rank - 2; axis++ )
+    {
+        const int ifmAxis = axis - (rank - ifmShape.Size());
+        const int ifm2Axis = axis - (rank - ifm2Shape.Size());
+        const int ifmDim = ifmAxis < 0 ? 1 : ifmShape[ifmAxis];
+        const int ifm2Dim = ifm2Axis < 0 ? 1 : ifm2Shape[ifm2Axis];
+        if ( ifmDim != ifm2Dim && ifmDim != 1 && ifm2Dim != 1 )
+        {
+            std::string constraint = "BatchMatMul input leading dimensions must be equal or 1";
+            std::string extra = fmt::format("IFM shape={}, IFM2 shape={} and OFM shape={}", ifmShape.ToString(),
+                ifm2Shape.ToString(), ofmShape.ToString());
+            throw InvalidTfLiteException(constraint, extra, op, subgraph, builtinOperator);
+        }
+    }
+
+    // Only leading dimensions are broadcast; keep the final two matrix axes from the OFM when comparing.
+    auto expectedOfmShape = Shape::Max(Shape::PadAxes(ifmShape, rank, 1), Shape::PadAxes(ifm2Shape, rank, 1));
+    expectedOfmShape[rank - 2] = ofmShape[rank - 2];
+    expectedOfmShape[rank - 1] = ofmShape[rank - 1];
+    if ( expectedOfmShape != ofmShape )
+    {
+        std::string constraint = "BatchMatMul output leading dimensions must match the broadcasted input shape";
+        std::string extra = fmt::format("IFM shape={}, IFM2 shape={} and OFM shape={}", ifmShape.ToString(),
+            ifm2Shape.ToString(), ofmShape.ToString());
+        throw InvalidTfLiteException(constraint, extra, op, subgraph, builtinOperator);
+    }
+}
+
 void ConstraintMatchingInOutQuant(const Operator &op, const SubGraph &subgraph, const BuiltinOperator &builtinOperator, const BufferContext &)
 {
     auto ifm = TensorFromUsage(regor::TensorUsage::IFM, op, builtinOperator, *subgraph.tensors());
@@ -1050,6 +1113,10 @@ regor::ordered_map<BuiltinOperator, OpCheckVec> GetSpecificConstraints()
     // TransposeSpecificChecks
     specificOpConstraints[BuiltinOperator::TRANSPOSE].emplace_back(&ConstraintParams32bit);
     specificOpConstraints[BuiltinOperator::TRANSPOSE].emplace_back(&ConstraintTransposeParamsInput);
+
+    // BatchMatMulSpecificChecks
+    specificOpConstraints[BuiltinOperator::BATCH_MATMUL].emplace_back(&ConstraintBatchMatMulRanks);
+    specificOpConstraints[BuiltinOperator::BATCH_MATMUL].emplace_back(&ConstraintBatchMatMulBroadcastShapes);
 
     return specificOpConstraints;
 }
