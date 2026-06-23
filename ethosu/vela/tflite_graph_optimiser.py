@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2020-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2020-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -2612,8 +2612,7 @@ def optimise_quantize(op: Operation, arch, nng):
                 clamped_ofm_value = max(min(ofm_val, ofm.quantization.quant_max), ofm.quantization.quant_min)
                 requantized_vals.append(clamped_ofm_value)
 
-            ofm.values = np.array(requantized_vals, ofm.dtype.as_numpy_type())
-            ofm.values.shape = input_values.shape
+            ofm.values = np.array(requantized_vals, ofm.dtype.as_numpy_type()).reshape(input_values.shape)
 
         # Case: Float input - quantize to int
         elif ifm.dtype.type == BaseType.Float:
