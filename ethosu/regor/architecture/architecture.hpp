@@ -256,6 +256,25 @@ struct FeatureMapRecord
     ElementAccess *access = nullptr;
 };
 
+
+class Quantization;
+
+/// <summary>
+/// Simple Architecture feature map properties
+/// </summary>
+struct ArchFM
+{
+    Shape shape;
+    DataType type = {};
+    TensorFormat format = {};
+    const Quantization *quantization = nullptr;
+};
+
+struct ArchPerfFM : public ArchFM
+{
+    const ArchitectureMemory *memory = nullptr;
+};
+
 /// <summary>
 /// Information for querying operation performance
 /// </summary>
@@ -264,14 +283,8 @@ struct PerformanceQuery
     OpType type;
     const Kernel *kernel;
     ArchitectureOpConfig *config;
-    Shape ifmShape[2];
-    ArchitectureMemory *ifmMemory[2];
-    DataType ifmType[2];
-    TensorFormat ifmFormat[2];
-    Shape ofmShape;
-    ArchitectureMemory *ofmMemory;
-    DataType ofmType;
-    TensorFormat ofmFormat;
+    ArchPerfFM ifm[2];
+    ArchPerfFM ofm;
     Shape constShape;
     ArchitectureMemory *constMemory;
     WeightFormat weightFormat;
@@ -326,8 +339,8 @@ public:
         Flags<WeightFormat> format, ArchitectureMemory *weightsMemory) = 0;
     virtual void InitDatabase(Database *db) = 0;
     virtual void RecordToDB(int opId) = 0;
-    virtual int64_t MinReadCycles(ArchitectureMemory *mem, int64_t size, TensorUsage usage, OpType type, bool fastWeights) = 0;
-    virtual int64_t MinWriteCycles(ArchitectureMemory *mem, int64_t size) = 0;
+    virtual int64_t MinReadCycles(const ArchitectureMemory *mem, int64_t size, TensorUsage usage, OpType type, bool fastWeights) = 0;
+    virtual int64_t MinWriteCycles(const ArchitectureMemory *mem, int64_t size) = 0;
     virtual std::unordered_map<const ArchitectureMemory *, AccessCycles>
     MeasureAccessCycles(const PerformanceQuery &query, const ElementAccess &byteAccess) = 0;
 };

@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2024-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -34,17 +34,6 @@ namespace regor
 {
 
 enum class TensorFormat : uint16_t;
-
-/// <summary>
-/// Simple Architecture feature map properties
-/// </summary>
-struct ArchFM
-{
-    Shape shape;
-    DataType type = {};
-    TensorFormat format = {};
-    const Quantization *quantization = nullptr;
-};
 
 struct ArchOperatorQuery
 {

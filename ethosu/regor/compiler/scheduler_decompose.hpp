@@ -76,4 +76,14 @@ inline ArchFM &Set(ArchFM &fm, const SchedulerConnection *conn)
     return fm;
 }
 
+inline ArchPerfFM &Set(ArchPerfFM &fm, const SchedulerConnection *conn)
+{
+    if ( conn )
+    {
+        Set(static_cast<ArchFM &>(fm), conn);
+        fm.memory = conn->tensor->memArea.memory;
+    }
+    return fm;
+}
+
 }  // namespace regor

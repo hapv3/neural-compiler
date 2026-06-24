@@ -75,8 +75,8 @@ public:
         ArchitectureMemory *weightsMemory) override;
     void InitDatabase(Database *optDB) override;
     void RecordToDB(int opId) override;
-    int64_t MinReadCycles(ArchitectureMemory *mem, int64_t size, TensorUsage usage, OpType type, bool fastWeights) override;
-    int64_t MinWriteCycles(ArchitectureMemory *mem, int64_t size) override;
+    int64_t MinReadCycles(const ArchitectureMemory *mem, int64_t size, TensorUsage usage, OpType type, bool fastWeights) override;
+    int64_t MinWriteCycles(const ArchitectureMemory *mem, int64_t size) override;
     std::unordered_map<const ArchitectureMemory *, AccessCycles>
     MeasureAccessCycles(const PerformanceQuery &query, const ElementAccess &byteAccess) override;
 
