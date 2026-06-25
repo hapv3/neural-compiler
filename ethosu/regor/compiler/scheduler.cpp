@@ -1279,13 +1279,13 @@ EstimatedPerf Scheduler::EstimateSlicedOpPerformance(SchedulerOperation *schedOp
     auto query = InitPerfQuery(schedOp, opConfig, 1, weightFormat, nullptr, nullptr);
     query.weightStagingMemory = wgtMemory;  // TODO: Design out - stop passing weights via const[]
 
-    if ( stageFlags % StagingPref::IFM ) query.ifmMemory[0] = _arch->StagingMemory().memory;
+    if ( stageFlags % StagingPref::IFM ) query.ifm[0].memory = _arch->StagingMemory().memory;
 
     // Striped OFM dimensions
-    query.ofmShape = Shape(1, stripe.y, stripe.x, 0);
-    auto inputArea = GetStripeInputRequirement(query.ofmShape, schedOp->Kernel(), ifm->stepXY, ifm->resamplingMode);
+    query.ofm.shape = Shape(1, stripe.y, stripe.x, 0);
+    auto inputArea = GetStripeInputRequirement(query.ofm.shape, schedOp->Kernel(), ifm->stepXY, ifm->resamplingMode);
     inputArea = Point2i::Min(inputArea, ifm->SliceShape().WH());
-    query.ifmShape[0] = Shape(1, inputArea.y, inputArea.x, ifm->SliceShape().Depth());
+    query.ifm[0].shape = Shape(1, inputArea.y, inputArea.x, ifm->SliceShape().Depth());
 
     assert(depthSlices.size() > 1);
     const unsigned slices = depthSlices.size() - 1;
@@ -1301,9 +1301,9 @@ EstimatedPerf Scheduler::EstimateSlicedOpPerformance(SchedulerOperation *schedOp
         {
             int depth = depthSlices[i + 1] - depthSlices[i];
             // Cache results for same-depth slices
-            if ( query.ofmShape[-1] != depth )
+            if ( query.ofm.shape[-1] != depth )
             {
-                query.ofmShape[-1] = depth;
+                query.ofm.shape[-1] = depth;
                 elementAccess = _arch->Performance()->MeasureElementAccess(query);
                 ifmRd = DataTypeStorageSizeBytes(ifm->Type(), elementAccess.ifmRead[0]);
             }
@@ -1315,7 +1315,7 @@ EstimatedPerf Scheduler::EstimateSlicedOpPerformance(SchedulerOperation *schedOp
             }
         }
 
-        result.ifmSizeBytes = DataTypeStorageSizeBytes(ifm->Type(), query.ifmShape[0].Elements());
+        result.ifmSizeBytes = DataTypeStorageSizeBytes(ifm->Type(), query.ifm[0].shape.Elements());
     }
 
     // Calculate the full, sliced, operator runtime taking into account
@@ -1331,7 +1331,7 @@ EstimatedPerf Scheduler::EstimateSlicedOpPerformance(SchedulerOperation *schedOp
         int depth = depthSlices[i + 1] - depthSlices[i];
         if ( i == slices - 1 && i != 0 ) sched = OpScheduling::Last;
 
-        query.ofmShape[-1] = depth;
+        query.ofm.shape[-1] = depth;
         query.scheduling = sched;
 
         sliceCycles = _arch->Performance()->MeasureCycleCost(query).opCycles;
@@ -1362,7 +1362,7 @@ EstimatedPerf Scheduler::EstimateSlicedOpPerformance(SchedulerOperation *schedOp
     }
 
     result.ifmReadCycles = _arch->Performance()->MinReadCycles(
-        query.ifmMemory[0], result.ifmReadBytes, TensorUsage::IFM, schedOp->Type(), false);
+        query.ifm[0].memory, result.ifmReadBytes, TensorUsage::IFM, schedOp->Type(), false);
 
     result.weightReadCycles = int64_t(stripeRepeats * result.weightReadCycles);
     result.weightReadBytes = int64_t(stripeRepeats * result.weightReadBytes);
@@ -2236,26 +2236,14 @@ PerformanceQuery Scheduler::InitPerfQuery(const SchedulerOperation *op, Architec
     query.config = config;
 
     const SchedulerConnection *ifm0 = op->IFM(0);
-    query.ifmShape[0] = ifm0->SliceShape();
-    query.ifmMemory[0] = ifm0->tensor->memArea.memory;
-    query.ifmType[0] = ifm0->Type();
-    query.ifmFormat[0] = ifm0->tensor->format;
+    Set(query.ifm[0], ifm0);
 
     const SchedulerConnection *ifm1 = op->TryIFM(1);
-    if ( ifm1 )
-    {
-        query.ifmShape[1] = ifm1->SliceShape();
-        query.ifmMemory[1] = ifm1->tensor->memArea.memory;
-        query.ifmType[1] = ifm1->Type();
-        query.ifmFormat[1] = ifm1->tensor->format;
-    }
+    Set(query.ifm[1], ifm1);
 
     const SchedulerConnection *ofm = op->OFM();
     ofmDepth = (ofmDepth >= 0) ? ofmDepth : ofm->SliceShape().Depth();
-    query.ofmShape = ofm->SliceShape().WithDepth(ofmDepth);
-    query.ofmMemory = ofm->tensor->memArea.memory;
-    query.ofmType = ofm->Type();
-    query.ofmFormat = ofm->tensor->format;
+    Set(query.ofm, ofm).shape = ofm->SliceShape().WithDepth(ofmDepth);
 
     const SchedulerConnection *scratch = op->TryInput(TensorUsage::Scratch);
     if ( scratch )
@@ -2266,7 +2254,7 @@ PerformanceQuery Scheduler::InitPerfQuery(const SchedulerOperation *op, Architec
     const SchedulerConnection *scales = op->TryInput(TensorUsage::Scales);
     if ( scales )
     {
-        query.constShape = Shape(1, 1, 1, query.ofmShape.Depth());
+        query.constShape = Shape(1, 1, 1, query.ofm.shape.Depth());
         query.constMemory = scales->tensor->memArea.memory;
     }
 
