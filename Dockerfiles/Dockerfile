@@ -1,5 +1,5 @@
 #
-# SPDX-FileCopyrightText: Copyright 2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-FileCopyrightText: Copyright 2025-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -16,7 +16,7 @@
 # limitations under the License.
 #
 
-FROM ubuntu:22.04
+FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Packages
@@ -35,4 +35,5 @@ RUN apt-get update && \
     ccache \
     python3-pip \
     python3-venv \
-    python3-dev
+    python3-dev \
+    cppcheck=2.13.0-2ubuntu3

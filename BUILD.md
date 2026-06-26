@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright 2020-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+SPDX-FileCopyrightText: Copyright 2020-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 
 SPDX-License-Identifier: Apache-2.0
 
@@ -83,7 +83,6 @@ CMAKE_ARGS="-DREGOR_ENABLE_LTO=OFF -DREGOR_ENABLE_WERROR=ON" pip3 install -e ".[
 | REGOR_ENABLE_RTTI                  | Enable RTTI (run-time type information)   | ON/OFF                              |
 | REGOR_ENABLE_VALGRIND              | Enable Valgrind during check target       | ON/OFF                              |
 | REGOR_ENABLE_TESTING               | Enable unit testing                       | ON/OFF                              |
-| REGOR_ENABLE_CPPCHECK              | Enable CPPCHECK                           | ON/OFF                              |
 | REGOR_SANITIZE                     | Sanitizer setting (forwards to fsanitize) | String                              |
 | REGOR_LOG_TRACE_MASK               | Log trace enable mask                     | int (0->7) (See common/logging.hpp) |
 | REGOR_PACKAGE_NAME                 | CPack package name                        | String                              |

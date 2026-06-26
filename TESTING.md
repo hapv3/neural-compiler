@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright 2020, 2022-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+SPDX-FileCopyrightText: Copyright 2020, 2022-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 
 SPDX-License-Identifier: Apache-2.0
 
@@ -113,6 +113,20 @@ Vela's C/C++ code is formatted using the following tools (excluding some
 auto-generated and third-party code see `.pre-commit-config.yaml` for details):
 
 * clang-format (code formatter)
+
+Vela's C/C++ code is also checked using Cppcheck. This check is not run by
+pre-commit and needs to be run manually using the `ethosu/regor/tools/cppcheck.py`
+script. The current Cppcheck version used is 2.13.0.
+
+To run Cppcheck on all C/C++ files:
+```bash
+$ python3 ethosu/regor/tools/cppcheck.py
+```
+
+To run Cppcheck on files changed against a Git revision:
+```bash
+$ python3 ethosu/regor/tools/cppcheck.py --revision HEAD
+```
 
 ### Unit Tests
 

@@ -153,7 +153,6 @@ option(REGOR_ENABLE_EXPENSIVE_CHECKS "Enable expensive STL GLICXX asserts" OFF)
 option(REGOR_ENABLE_RTTI "Enable RTTI" OFF)
 option(REGOR_ENABLE_VALGRIND "Enable valgrind during check target" OFF)
 option(REGOR_ENABLE_TESTING "Enable unit testing" ON)
-option(REGOR_ENABLE_CPPCHECK "Enable cppcheck" OFF)
 set(REGOR_SANITIZE "" CACHE STRING "Sanitizer setting. For example undefined")
 set(REGOR_LOG_TRACE_MASK "" CACHE STRING "Log trace enable mask")
 set(REGOR_PACKAGE_NAME "${PROJECT_NAME}" CACHE STRING "CPack package name. Will be suffixed with platform tag")
@@ -182,22 +181,6 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Action CCache
 if (REGOR_ENABLE_CCACHE)
     set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${CCACHE_PROGRAM}")
-endif()
-
-# Action CPPCHECK
-if (REGOR_ENABLE_CPPCHECK)
-    find_program(CPPCHECK cppcheck)
-    if (CPPCHECK)
-        message(STATUS "Looking for cppcheck support - Success")
-        set(CMAKE_CXX_CPPCHECK ${CMAKE_COMMAND} -E env CMAKE_BINARY_DIR=${CMAKE_BINARY_DIR}
-            ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/tools/cppcheck.py
-            ${CPPCHECK} --enable=all --inconclusive --quiet
-            --suppress=missingIncludeSystem
-            --suppress=*:${CMAKE_CURRENT_LIST_DIR}/dependencies/*
-        )
-    else()
-        message(STATUS "Looking for cppcheck support - Not found")
-    endif()
 endif()
 
 #############################################################################
