@@ -810,8 +810,14 @@ EthosU55Performance::MeasureAccessCycles(const PerformanceQuery &query, const El
         // Weights
         if ( query.weightStagingMemory )
         {
-            // Concurrent DMA Weights
-            auto nonPreBufferedWeightsSize = std::max(int64_t(query.encodedWeightSize) - int64_t(query.firstWeightDMASize), int64_t(0));
+            // Concurrent DMA Weights (+ Scales if encoded together)
+            int64_t totalSize = query.encodedWeightSize;
+            int64_t firstDMASize = query.firstWeightDMASize;
+            if ( query.combinedWeightsAndScales )
+            {
+                totalSize += query.encodedScaleSize;
+            }
+            auto nonPreBufferedWeightsSize = std::max(totalSize - firstDMASize, int64_t(0));
             transferBytes[query.constMemory][TransferGroup::Weights] += nonPreBufferedWeightsSize;
             transferBytes[query.weightStagingMemory][TransferGroup::Weights] += nonPreBufferedWeightsSize;
             transferBytes[query.weightStagingMemory][TransferGroup::Weights] += byteAccess.constRead[0];
@@ -821,7 +827,8 @@ EthosU55Performance::MeasureAccessCycles(const PerformanceQuery &query, const El
             transferBytes[query.constMemory][TransferGroup::Weights] += byteAccess.constRead[0];
         }
         // Scales
-        transferBytes[query.constMemory][TransferGroup::Scales] += byteAccess.constRead[1];
+        auto *scaleMemory = query.scaleStagingMemory ? query.scaleStagingMemory : query.constMemory;
+        transferBytes[scaleMemory][TransferGroup::Scales] += byteAccess.constRead[1];
     }
     // DMA
     if ( query.tmpMemory )

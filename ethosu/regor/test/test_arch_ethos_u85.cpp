@@ -111,3 +111,69 @@ TEST_CASE("arch_ethos_u85 UpscaleAndRounding")
         REQUIRE(upscale == 2);
     }
 }
+
+TEST_CASE("arch_ethos_u85 PerformanceModel ScaleAccounting")
+{
+    auto arch = CreateArchDefault<ArchEthosU85>();
+    auto *sram = arch->StagingMemory().memory;
+    auto *flash = arch->ReadonlyMemory().memory;
+    REQUIRE(sram != nullptr);
+    REQUIRE(flash != nullptr);
+
+    ArchitectureOpGroupQuery opGroupQuery{};
+    opGroupQuery.type = OpType::Conv2D;
+    opGroupQuery.opId = 1;
+    auto opGroup = arch->CreateOpGroup(opGroupQuery);
+
+    PerformanceQuery query{};
+    query.type = OpType::Conv2D;
+    query.opGroup = opGroup.get();
+    query.constMemory = flash;
+    query.weightStagingMemory = sram;
+    query.scaleStagingMemory = sram;  // Staged together
+    query.ifm[0].memory = sram;
+    query.ifm[1].memory = sram;
+    query.ofm.memory = sram;
+    query.combinedWeightsAndScales = true;
+    query.encodedWeightSize = 1000;
+    query.encodedScaleSize = 100;
+    query.firstWeightDMASize = 550;  // 500 weights + 50 scales
+
+    ElementAccess byteAccess{};
+    byteAccess.constRead[0] = 1000;
+    byteAccess.constRead[1] = 100;
+
+    SECTION("Scale read attribution")
+    {
+        // Staged case
+        {
+            auto perf = arch->Performance()->MeasureAccessCycles(query, byteAccess);
+            CHECK(perf[sram].scalesAccessCycles > 0);
+            CHECK(perf[flash].scalesAccessCycles == 0);
+        }
+
+        // Not staged case
+        {
+            PerformanceQuery query_not_staged = query;
+            query_not_staged.scaleStagingMemory = nullptr;
+            auto perf = arch->Performance()->MeasureAccessCycles(query_not_staged, byteAccess);
+            CHECK(perf[sram].scalesAccessCycles == 0);
+            CHECK(perf[flash].scalesAccessCycles > 0);
+        }
+    }
+
+    SECTION("DMA cost inclusion")
+    {
+        // With scales in DMA
+        auto perf_with_scales = arch->Performance()->MeasureAccessCycles(query, byteAccess);
+
+        // Without scales in DMA (simulated by setting encodedScaleSize to 0)
+        PerformanceQuery query_no_scales = query;
+        query_no_scales.encodedScaleSize = 0;
+        auto perf_no_scales = arch->Performance()->MeasureAccessCycles(query_no_scales, byteAccess);
+
+        // FLASH is the source of the DMA, so its weightsAccessCycles should be larger
+        // when scales are included in the DMA.
+        CHECK(perf_with_scales[flash].weightsAccessCycles > perf_no_scales[flash].weightsAccessCycles);
+    }
+}

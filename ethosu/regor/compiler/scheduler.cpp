@@ -2263,18 +2263,31 @@ PerformanceQuery Scheduler::InitPerfQuery(const SchedulerOperation *op, Architec
     {
         float ratio = float(ofmDepth) / ofm->SliceShape().Depth();
         unsigned weightBytes = cost->npuWeightsTensor->totalWeightBytes;
-        unsigned scaleBytes = cost->npuWeightsTensor->AllocationSizeBytes() - weightBytes;
+        unsigned scaleBytes = 0;
+        if ( cost->npuScalesTensor )
+        {
+            scaleBytes = cost->npuScalesTensor->AllocationSizeBytes();
+        }
+        else
+        {
+            scaleBytes = cost->npuWeightsTensor->AllocationSizeBytes() - weightBytes;
+        }
 
         // Encoded weight and scale sizes, estimated as a proportion if sliced.
         query.encodedWeightSize = unsigned(weightBytes * ratio);
         query.encodedScaleSize = unsigned(scaleBytes * ratio);
         query.constMemory = cost->npuWeightsTensor->memArea.memory;
+        query.combinedWeightsAndScales = (cost->npuScalesTensor == nullptr);
         if ( cost->bufferedWeightTensor.tensor[0] )
         {
             query.weightStagingMemory = cost->bufferedWeightTensor.tensor[0]->memArea.memory;
             if ( cost->bufferedWeightTensor.preBuffer )
             {
                 query.firstWeightDMASize = cost->npuWeightsTensor->rangeSizes.front();
+            }
+            if ( !cost->npuScalesTensor )
+            {
+                query.scaleStagingMemory = cost->bufferedWeightTensor.tensor[0]->memArea.memory;
             }
         }
     }

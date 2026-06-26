@@ -293,6 +293,8 @@ struct PerformanceQuery
     unsigned encodedScaleSize;
     ArchitectureMemory *weightStagingMemory;
     unsigned firstWeightDMASize;
+    ArchitectureMemory *scaleStagingMemory;
+    bool combinedWeightsAndScales;
     ArchitectureOpGroup *opGroup;
     std::vector<FeatureMapRecord> featureMapRecords;
     OpScheduling scheduling = OpScheduling::Single;

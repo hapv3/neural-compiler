@@ -936,8 +936,14 @@ EthosU85Performance::MeasureAccessCycles(const PerformanceQuery &query, const El
         channel = LookupChannel(query.type, TensorUsage::Weights, query.weightFormat & WeightFormat::Fast);
         if ( query.weightStagingMemory )
         {
-            // Concurrent DMA Weights
-            auto nonPreBufferedWeightsSize = std::max(int64_t(query.encodedWeightSize) - int64_t(query.firstWeightDMASize), int64_t(0));
+            // Concurrent DMA Weights (+ Scales if encoded together)
+            int64_t totalSize = query.encodedWeightSize;
+            int64_t firstDMASize = query.firstWeightDMASize;
+            if ( query.combinedWeightsAndScales )
+            {
+                totalSize += query.encodedScaleSize;
+            }
+            auto nonPreBufferedWeightsSize = std::max(totalSize - firstDMASize, int64_t(0));
             channelTransferBytes[query.constMemory][MemChannel::Mem2Mem][TransferGroup::Weights] += nonPreBufferedWeightsSize;
             channelTransferBytes[query.weightStagingMemory][MemChannel::Write][TransferGroup::Weights] += nonPreBufferedWeightsSize;
             channelTransferBytes[query.weightStagingMemory][channel][TransferGroup::Weights] += byteAccess.constRead[0];
@@ -948,7 +954,8 @@ EthosU85Performance::MeasureAccessCycles(const PerformanceQuery &query, const El
         }
         // Scales
         channel = LookupChannel(query.type, TensorUsage::Scales, false);
-        channelTransferBytes[query.constMemory][channel][TransferGroup::Scales] += byteAccess.constRead[1];
+        auto *scaleMemory = query.scaleStagingMemory ? query.scaleStagingMemory : query.constMemory;
+        channelTransferBytes[scaleMemory][channel][TransferGroup::Scales] += byteAccess.constRead[1];
     }
     // DMA
     if ( query.tmpMemory )
