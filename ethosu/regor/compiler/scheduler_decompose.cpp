@@ -2076,7 +2076,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> LegaliseResize(DecompositionCon
     newOp->SetKernel(kernel);
 
     ofmConn->quantization = Quantization::Unit();
-    ofmConn->rounding = RoundMode::DBL;
+    ofmConn->Set(RoundMode::DBL);
     *newOp->ConnectOutput(TensorUsage::OFM, ofmConn->tensor) = *ofmConn;
     result.emplace_back(std::move(newOp));
 
@@ -3176,7 +3176,7 @@ std::vector<std::unique_ptr<SchedulerOperation>> DecomposeAvgPool(DecompositionC
         auto mulOfmConn = mul->ConnectOutput(TensorUsage::OFM, mulOfm);
         mulOfmConn->shape = mulOfm->storageShape;
         mulOfmConn->quantization.scales.emplace_back(QuantizedScale{1, 30});
-        mulOfmConn->rounding = RoundMode::TRUNCATE_TO_LOWER;
+        mulOfmConn->Set(RoundMode::TRUNCATE_TO_LOWER);
         auto mulOps = DecomposeElementwise(ctx, std::move(mul));
 
         // Apply shift

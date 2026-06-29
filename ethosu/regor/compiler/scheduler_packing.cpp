@@ -812,7 +812,7 @@ void SchedulerPacking::InitSchedulerConnection(SchedulerConnection *schedConn, T
     schedConn->quantization = conn.quantization;
     schedConn->reverse = conn.reverse;
     schedConn->resamplingMode = ArchResampling::None;
-    schedConn->rounding = conn.rounding;
+    schedConn->Set(conn.rounding);
     schedConn->transpose = TransposeType::None;
     if ( schedConn->slice.stride )
     {

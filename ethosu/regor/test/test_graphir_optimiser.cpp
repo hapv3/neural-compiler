@@ -227,7 +227,7 @@ TEST_CASE("test_graphir_optimiser - constant propagation")
             outQuant.zeroPoints.clear();
             outQuant.zeroPoints.push_back(5);
             outQuant.type = QuantizationType::EXPLICIT;
-            qop->Output(TensorUsage::OFM)->rounding = RoundMode::DBL;
+            qop->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
 
             auto &inQuant = qop->Input(TensorUsage::IFM)->quantization;
             inQuant.scales.clear();

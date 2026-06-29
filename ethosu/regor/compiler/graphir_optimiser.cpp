@@ -2455,7 +2455,7 @@ Operation *GraphIrOptimiser::RewriteTile(Graph *const, Operation *const operatio
                 outConn.tensor = std::make_shared<Tensor>(name, ofmConn->tensor->Type(), outShape);
                 outConn.shape = outShape;
                 outConn.quantization = inputConn.quantization;
-                outConn.rounding = RoundMode::NATURAL;
+                outConn.Set(RoundMode::NATURAL);
             }
 
             for ( int i = 0; i < multiplier; ++i )
@@ -3076,7 +3076,7 @@ Operation *GraphIrOptimiser::RewriteResize(Graph *const, Operation *const operat
     auto copyOp = std::make_shared<Operation>(OpType::Add);
     ReplaceOperation(operation, copyOp.get());
     copyOp->ConnectInput(TensorUsage::IFM1, zeroTensor).Set(copyOp->Input(TensorUsage::IFM)->quantization);
-    copyOp->Output(TensorUsage::OFM)->rounding = RoundMode::DBL;
+    copyOp->Output(TensorUsage::OFM)->Set(RoundMode::DBL);
     RecordOptimisation(*operation, copyOp.get());
     return copyOp.get();
 }

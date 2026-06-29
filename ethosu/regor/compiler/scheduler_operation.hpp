@@ -223,6 +223,11 @@ public:
     const Shape &SliceShape() const { return slice.shape.IsEmpty() ? shape : slice.shape; }
     void SetType(DataType dt) { dataType = dt; }
     DataType Type() const { return dataType == DataType::None ? tensor->dataType : dataType; }
+    SchedulerConnection &Set(const RoundMode &r)
+    {
+        rounding = r;
+        return *this;
+    }
 };
 
 enum class AccumulatorSource
