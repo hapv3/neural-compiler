@@ -15,6 +15,8 @@
 # limitations under the License.
 #
 """Ethos-U-Vela package test."""
+import base64
+import json
 import os
 import subprocess
 
@@ -211,6 +213,146 @@ def test_ethos_u_vela_with_regor_raw_output_and_cop2(tmp_path):
     assert raw["variable_elem_size"].size == 0
     assert raw["variable_region"].size == 0
     assert raw["variable_offset"].size == 0
+
+
+def test_ethos_u_vela_with_regor_json_output(tmp_path):
+    """Testing ethos-u-vela with regor compiler core and json output"""
+    from network import TEST_NETWORK
+
+    output_dir = tmp_path
+    output_file = tmp_path / "model_vela.json"
+    network_file = tmp_path / "model.tflite"
+    network_file.write_bytes(TEST_NETWORK)
+    cur_path = os.path.dirname(os.path.realpath(__file__))
+    sc_path = os.path.join(cur_path, "..", "ethosu", "config_files", "Arm", "vela.ini")
+    cli = [
+        "vela",
+        "--accelerator-config",
+        "ethos-u85-256",
+        "--config",
+        sc_path,
+        "--system-config",
+        "Ethos_U85_SYS_Flash_High",
+        "--memory-mode",
+        "Shared_Sram",
+        "--output-dir",
+        output_dir,
+        "--output-format",
+        "json",
+        network_file,
+    ]
+    subprocess.check_call(cli)
+    raw = json.loads(output_file.read_text())
+    cmd_bytes = base64.b64decode(raw["cmd_data"])
+    weight_bytes = base64.b64decode(raw["weight_data"])
+    assert len(cmd_bytes) > 0
+    assert b"COP1" in cmd_bytes
+    assert len(weight_bytes) > 0
+    assert raw["weight_region"] == 0
+    assert all(v > 0 for v in raw["scratch_shape"])
+    assert raw["scratch_region"] == 1
+    assert raw["scratch_size"] > 0
+    assert raw["scratch_fast_shape"] == [0]
+    assert raw["scratch_fast_region"] == 0
+    assert raw["scratch_fast_size"] == 0
+    assert raw["input_shape"][0] == [1, 1, 1, 64, 64, 16]
+    assert raw["input_elem_size"][0] == 1
+    assert raw["input_region"][0] == 1
+    assert raw["input_offset"][0] >= 0
+    assert raw["output_shape"][0] == [1, 1, 1, 64, 64, 8]
+    assert raw["output_elem_size"][0] == 1
+    assert raw["output_region"][0] == 1
+    assert raw["output_offset"][0] >= 0
+    # Model contains no variables, check that the values are empty arrays.
+    assert raw["variable_shape"] == []
+    assert raw["variable_elem_size"] == []
+    assert raw["variable_region"] == []
+    assert raw["variable_offset"] == []
+    assert "input_quantization" in raw
+    assert "output_quantization" in raw
+    assert "variable_quantization" in raw
+
+    assert len(raw["input_quantization"]) == len(raw["input_shape"])
+    assert len(raw["output_quantization"]) == len(raw["output_shape"])
+    assert len(raw["variable_quantization"]) == 0
+
+    input_q0 = raw["input_quantization"][0]
+    assert isinstance(input_q0, dict)
+    assert input_q0["quant_type"] in ("per_tensor", "per_channel")
+    assert "scale" in input_q0
+    assert "zero_point" in input_q0
+    assert isinstance(input_q0["scale"], list)
+    assert isinstance(input_q0["zero_point"], list)
+    assert len(input_q0["scale"]) >= 1
+    assert len(input_q0["zero_point"]) >= 1
+
+    output_q0 = raw["output_quantization"][0]
+    assert isinstance(output_q0, dict)
+    assert output_q0["quant_type"] in ("per_tensor", "per_channel")
+    assert "scale" in output_q0
+    assert "zero_point" in output_q0
+    assert isinstance(output_q0["scale"], list)
+    assert isinstance(output_q0["zero_point"], list)
+    assert len(output_q0["scale"]) >= 1
+    assert len(output_q0["zero_point"]) >= 1
+
+
+def test_ethos_u_vela_with_regor_json_output_and_cop2(tmp_path):
+    """Testing ethos-u-vela with regor compiler core and json output with COP2"""
+    from network import TEST_NETWORK
+
+    output_dir = tmp_path
+    output_file = tmp_path / "model_vela.json"
+    network_file = tmp_path / "model.tflite"
+    network_file.write_bytes(TEST_NETWORK)
+    cur_path = os.path.dirname(os.path.realpath(__file__))
+    sc_path = os.path.join(cur_path, "..", "ethosu", "config_files", "Arm", "vela.ini")
+    cli = [
+        "vela",
+        "--accelerator-config",
+        "ethos-u85-256",
+        "--config",
+        sc_path,
+        "--system-config",
+        "Ethos_U85_SYS_Flash_High",
+        "--memory-mode",
+        "Shared_Sram",
+        "--output-dir",
+        output_dir,
+        "--output-format",
+        "json",
+        "--separate-io-regions",
+        "--cop-format",
+        "COP2",
+        network_file,
+    ]
+    subprocess.check_call(cli)
+    raw = json.loads(output_file.read_text())
+    cmd_bytes = base64.b64decode(raw["cmd_data"])
+    weight_bytes = base64.b64decode(raw["weight_data"])
+    assert len(cmd_bytes) > 0
+    assert b"COP2" in cmd_bytes
+    assert len(weight_bytes) > 0
+    assert raw["weight_region"] == 0
+    assert all(v > 0 for v in raw["scratch_shape"])
+    assert raw["scratch_region"] == 1
+    assert raw["scratch_size"] > 0
+    assert raw["scratch_fast_shape"] == [0]
+    assert raw["scratch_fast_region"] == 0
+    assert raw["scratch_fast_size"] == 0
+    assert raw["input_shape"][0] == [1, 1, 1, 64, 64, 16]
+    assert raw["input_elem_size"][0] == 1
+    assert raw["input_region"][0] == 3
+    assert raw["input_offset"][0] == 0
+    assert raw["output_shape"][0] == [1, 1, 1, 64, 64, 8]
+    assert raw["output_elem_size"][0] == 1
+    assert raw["output_region"][0] == 4
+    assert raw["output_offset"][0] == 0
+    # Model contains no variables, check that the values are empty arrays.
+    assert raw["variable_shape"] == []
+    assert raw["variable_elem_size"] == []
+    assert raw["variable_region"] == []
+    assert raw["variable_offset"] == []
 
 
 def test_regor():

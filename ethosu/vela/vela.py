@@ -34,6 +34,7 @@ import flatbuffers
 from . import architecture_features
 from . import compiler_driver
 from . import model_reader
+from . import json_writer
 from . import rawdata_writer
 from . import scheduler
 from . import stats_writer
@@ -94,6 +95,8 @@ def process(
     output_tfl_filename = output_basename + "_vela.tflite"
     if output_format == "tflite":
         tflite_writer.write_tflite(nng, output_tfl_filename)
+    elif output_format == "json":
+        json_writer.write_rawdata_output(nng, arch, output_basename)
     elif output_format == "raw":
         rawdata_writer.write_rawdata_output(nng, arch, output_basename)
     else:
@@ -145,6 +148,9 @@ def process_regor(
         output_name = output_basename + "_vela.tflite"
         with open(output_name, "wb") as f:
             f.write(compiled_model.model)
+    elif output_format == "json":
+        assert isinstance(compiled_model, regor.CompiledRawModel) 
+        json_writer.write_rawdata_output_from_model(output_basename, compiled_model)
     elif output_format == "raw":
         assert isinstance(compiled_model, regor.CompiledRawModel)
         rawdata_writer.write_rawdata_output_from_model(output_basename, compiled_model)
@@ -796,7 +802,7 @@ def get_compiler_config(
         config += "verbose_register_command_stream=true\n"
     if verbose_performance or show_cpu_operations or enable_debug_db:
         config += "enable_db=true\n"
-    if output_format == "raw":
+    if output_format in ("json", "raw"):
         config += "output_format=Raw\n"
     else:
         config += "output_format=TFLite\n"
@@ -945,7 +951,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--output-format",
         type=str,
         default="tflite",
-        choices=["tflite", "raw"],
+        choices=["tflite", "json", "raw"],
         help="Output format (default: %(default)s).",
     )
     parser.add_argument(

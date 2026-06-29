@@ -167,6 +167,9 @@ converting TFLite to TOSA.
 
 Raw output includes tensor quantization metadata in the `.npz` output.
 
+JSON output is similar to raw format, but uses `.json` as a more universal
+machine-readable data exchange format.
+
 #### Warnings
 
 It is important to thoroughly review and understand all warning messages

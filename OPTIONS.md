@@ -123,7 +123,7 @@ vela network.tflite --output-dir ./custom_directory
 
 ### Output format
 
-Selects output format. The available options are `tflite` and `raw`.
+Selects output format. The available options are `tflite`, `raw` and `json`.
 
 The `tflite` format produces a `.tflite` file containing Ethos-U custom
 operators for each group of NPU operators​ with command streams and driver
@@ -157,9 +157,12 @@ input, output and variable tensor.
 
 For this format, it is not supported to have any operators fall back to the CPU.
 
+The `json` format produces the same output as `raw`, but in a more universal
+machine-readable data exchange format that can be used without NumPy.
+
 **Type: String**  
 **Default: tflite**  
-**Choices: [tflite, raw]**  
+**Choices: [tflite, json, raw]**  
 
 ```bash
 vela network.tflite --accelerator-config ethos-u85-512 --output-format raw
