@@ -214,7 +214,7 @@ public:
     ArchResampling resamplingMode = ArchResampling::None;
     TransposeType transpose = TransposeType::None;
     ReverseType reverse = ReverseType::None;
-    RoundMode rounding = RoundMode::AUTO;
+    RoundMode rounding = RoundMode::NATURAL;
     bool requireFullTensor = false;
     bool preBuffer = false;
     Buffering buffering = Buffering::None;
@@ -225,7 +225,8 @@ public:
     DataType Type() const { return dataType == DataType::None ? tensor->dataType : dataType; }
     SchedulerConnection &Set(const RoundMode &r)
     {
-        rounding = r;
+        UNUSED(r);
+        rounding = RoundMode::NATURAL;
         return *this;
     }
 };

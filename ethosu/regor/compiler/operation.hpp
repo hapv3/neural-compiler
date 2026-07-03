@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: Copyright 2021-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -100,7 +100,7 @@ struct TensorConnection
     TensorSlice slice;
     Quantization quantization;
     ReverseType reverse = ReverseType::None;
-    RoundMode rounding = RoundMode::AUTO;
+    RoundMode rounding = RoundMode::NATURAL;
 
 
     TensorConnection &Set(const Shape &s)
@@ -125,7 +125,8 @@ struct TensorConnection
     }
     TensorConnection &Set(const RoundMode &r)
     {
-        rounding = r;
+        UNUSED(r);
+        rounding = RoundMode::NATURAL;
         return *this;
     }
 

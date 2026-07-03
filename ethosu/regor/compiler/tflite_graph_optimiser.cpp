@@ -41,8 +41,10 @@
 #include <fixedpoint/fixedpoint.h>
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <memory>
 #include <numeric>
@@ -59,11 +61,25 @@ using namespace GraphOptimisation;
 int TFLiteGraphOptimiser::MultiplyByQuantizedMultiplier(int x, QuantizedScale quantScale)
 {
     // Multiplies x (int32) by QuantizedScale (scale, shift), returns rounded result.
-    // Expects the QuantizedScale to be left-shift positive.
-    const int leftShift = quantScale.shift > 0 ? quantScale.shift : 0;
-    const int rightShift = quantScale.shift < 0 ? -quantScale.shift : 0;
-    const std::int32_t mul = gemmlowp::SaturatingRoundingDoublingHighMul(x * (1 << leftShift), quantScale.scale);
-    return gemmlowp::RoundingDivideByPOT<std::int32_t>(mul, rightShift);
+    // Expects the QuantizedScale to be in left-shift-positive notation. Negative scales
+    // are needed for 8-bit LeakyRelu LUTs with alpha between -1 and 0.
+    if ( quantScale.shift < -31 )
+    {
+        return 0;
+    }
+    if ( quantScale.shift > 30 )
+    {
+        quantScale.scale = std::numeric_limits<int32_t>::max();
+        quantScale.shift = 30;
+    }
+
+    const int64_t totalShift = int64_t(31) - quantScale.shift;
+    const int64_t round = int64_t(1) << (totalShift - 1);
+    const int64_t result = (int64_t(x) * int64_t(quantScale.scale) + round) >> totalShift;
+
+    assert(result >= std::numeric_limits<int32_t>::min());
+    assert(result <= std::numeric_limits<int32_t>::max());
+    return int32_t(result);
 }
 
 Operation *TFLiteGraphOptimiser::MakeMulWithConstTensor(const std::string &name, const TensorConnection &ifmConn,
