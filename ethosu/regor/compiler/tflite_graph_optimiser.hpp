@@ -115,6 +115,7 @@ private:
     Operation *ConvertReduceMinMaxAnyAll(Graph *const graph, Operation *const operation);
 
     // RewriteBatchMatMul must be called before rewrite of transpose
+    Operation *CreateTileOp(const TensorConnection *ifm, const Shape &ofmShape);
     Operation *CreateTransposeForMatMul(const std::shared_ptr<Tensor> &ifm, const Shape &ofmShape);
     Operation *RewriteBatchMatMul(Graph *const, Operation *const operation);
     Operation *RewriteSpaceToBatchConvBatchToSpace(Graph *const, Operation *const operation);

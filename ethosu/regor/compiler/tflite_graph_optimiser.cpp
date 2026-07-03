@@ -1295,6 +1295,21 @@ Operation *TFLiteGraphOptimiser::ConvertReduceMinMaxAnyAll(Graph *const graph, O
     return returnOp;
 }
 
+Operation *TFLiteGraphOptimiser::CreateTileOp(const TensorConnection *ifm, const Shape &ofmShape)
+{
+    auto op = std::make_shared<Operation>(OpType::Tile);
+    const Shape ifmShape = Shape::PadAxes(ifm->shape, ofmShape.Size(), 1);
+
+    auto multiples = (ofmShape / ifmShape).ToList<int32_t>();
+    auto multiplesTensor = CreateConstTensor("multiples", DataType::Int32, std::make_shared<Buffer>(std::move(multiples)));
+    auto ofm = std::make_shared<Tensor>(ifm->tensor->Name() + "/" + OpTypeToString(op->Type()), ifm->tensor->Type(), ofmShape);
+
+    op->ConnectInput(TensorUsage::IFM, ifm->tensor).Set(ifmShape).Set(ifm->quantization);
+    op->ConnectInput(TensorUsage::Params, multiplesTensor);
+    op->ConnectOutput(TensorUsage::OFM, ofm).Set(ofmShape).Set(ifm->quantization);
+    return op.get();
+}
+
 Operation *TFLiteGraphOptimiser::CreateTransposeForMatMul(const std::shared_ptr<Tensor> &ifm, const Shape &ofmShape)
 {
     auto op = std::make_shared<Operation>(OpType::Transpose);
@@ -1351,11 +1366,18 @@ Operation *TFLiteGraphOptimiser::RewriteBatchMatMul(Graph *const, Operation *con
         // IFM handling - Reshape ifm N,H,W,C -> 1,NxH,W,C
         auto ifmReshaped = Shape(1, n, ifmShape.Width(), ifmShape.Depth());
         auto ifmTensor = ifm->tensor;
+        // Materialise broadcasted leading dimensions before flattening them into MatMul rows.
+        if ( ifmShape.Batch() != ofmShape.Batch() || ifmShape.Height() != ofmShape.Height() )
+        {
+            auto op = CreateTileOp(ifm, ifmShape.WithBatch(ofmShape.Batch()).WithHeight(ofmShape.Height()));
+            RecordOptimisation(*operation, op);
+            ifmTensor = op->Output(TensorUsage::OFM)->tensor;
+        }
         if ( transposeIfm )
         {
             // Add Transpose op, ifm:  1,n,W,C -> 1,n,C,W
             ifmReshaped = Shape(1, ifmReshaped.Height(), ifmReshaped.Depth(), ifmReshaped.Width());
-            auto op = CreateTransposeForMatMul(ifm->tensor, ifmReshaped);
+            auto op = CreateTransposeForMatMul(ifmTensor, ifmReshaped);
             RecordOptimisation(*operation, op);
             ifmTensor = op->Output(TensorUsage::OFM)->tensor;
         }
@@ -1363,11 +1385,18 @@ Operation *TFLiteGraphOptimiser::RewriteBatchMatMul(Graph *const, Operation *con
         // IFM2 handling - Reshape ifm2 N,H,W,C -> 1,NxH,W,C
         auto ifm2Reshaped = Shape(1, n, ifm2Shape.Width(), ifm2Shape.Depth());
         auto ifm2Tensor = ifm2->tensor;
+        // Materialise broadcasted leading dimensions before flattening them into MatMul rows.
+        if ( ifm2Shape.Batch() != ofmShape.Batch() || ifm2Shape.Height() != ofmShape.Height() )
+        {
+            auto op = CreateTileOp(ifm2, ifm2Shape.WithBatch(ofmShape.Batch()).WithHeight(ofmShape.Height()));
+            RecordOptimisation(*operation, op);
+            ifm2Tensor = op->Output(TensorUsage::OFM)->tensor;
+        }
         if ( transposeIfm2 )
         {
             // Add Transpose op, ifm2: 1,n,W,C -> 1,n,C,W
             ifm2Reshaped = Shape(1, ifm2Reshaped.Height(), ifm2Reshaped.Depth(), ifm2Reshaped.Width());
-            auto op = CreateTransposeForMatMul(ifm2->tensor, ifm2Reshaped);
+            auto op = CreateTransposeForMatMul(ifm2Tensor, ifm2Reshaped);
             RecordOptimisation(*operation, op);
             ifm2Tensor = op->Output(TensorUsage::OFM)->tensor;
         }
