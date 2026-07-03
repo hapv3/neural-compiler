@@ -314,4 +314,9 @@ constexpr inline bool IsControlFlow(OpType opType)
     return opType == OpType::If || opType == OpType::While;
 }
 
+constexpr inline bool IsRescale(OpType opType)
+{
+    return opType == OpType::Rescale || opType == OpType::Quantize;
+}
+
 }  // namespace regor

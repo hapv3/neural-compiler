@@ -1310,7 +1310,7 @@ std::vector<QuantizedScale> ReduceScales(const std::vector<QuantizedScale> &scal
 // Generic constraints to determine whether a Rescale should be considered for fusing.
 bool CanBeFused(Graph *const graph, Operation *const operation, bool ontoConsumers)
 {
-    assert(operation->Type() == OpType::Rescale);
+    assert(IsRescale(operation->Type()));
     auto ifmConn = operation->Input(TensorUsage::IFM);
     auto ofmConn = operation->Output(TensorUsage::OFM);
     assert(ifmConn);
@@ -1432,8 +1432,8 @@ bool GraphIrOptimiser::CanFuseMultipleRescalesOnConsumer(Operation *const consum
     {
         return false;
     }
-    assert(rescale1->Type() == OpType::Rescale);
-    assert(rescale2->Type() == OpType::Rescale);
+    assert(IsRescale(rescale1->Type()));
+    assert(IsRescale(rescale2->Type()));
     auto ofmConn1 = rescale1->Output(TensorUsage::OFM);
     auto ofmConn2 = rescale2->Output(TensorUsage::OFM);
     auto consumerOfmConn = consumer->Output(TensorUsage::OFM);
@@ -1468,6 +1468,14 @@ bool GraphIrOptimiser::CanFuseRescaleOnProducer(Operation *const producer, const
     {
         return false;
     }
+
+    // Don't fuse to ReinterpretCast operations as those are just placeholder operations for
+    // changing the tensor type and are not associated with quantization
+    if ( opType == OpType::ReinterpretCast )
+    {
+        return false;
+    }
+
     // TODO MLBEDSW-11441: Support OFM-fusing on Select operations.
     if ( opType == OpType::Select )
     {
@@ -1475,10 +1483,14 @@ bool GraphIrOptimiser::CanFuseRescaleOnProducer(Operation *const producer, const
     }
     // Connection to the fused-away tensor
     auto fusedConn = producer->Output(TensorUsage::OFM);
-    auto fusedType = fusedConn->tensor->Type();
+    const auto fusedType = fusedConn->tensor->Type();
+    const auto &fusedQuant = fusedConn->quantization;
     assert(producer->Input(TensorUsage::IFM));
     // Cannot fuse-away non-unit quantization
-    if ( !fusedConn->quantization.EqualScales(Quantization::Unit()) )
+    const bool isUnitScale = fusedQuant.EqualScales(Quantization::Unit());
+    if ( !(isUnitScale ||
+             (newQuant.IsUnitScale() &&
+                 std::all_of(fusedQuant.zeroPoints.begin(), fusedQuant.zeroPoints.end(), [](auto z) { return z == 0; }))) )
     {
         return false;
     }
@@ -1488,7 +1500,19 @@ bool GraphIrOptimiser::CanFuseRescaleOnProducer(Operation *const producer, const
     const auto &ifmQuant = ifmConn->quantization;
     auto ifm2Type = ifm2Conn ? ifm2Conn->tensor->Type() : DataType::None;
     const auto &ifm2Quant = ifm2Conn ? ifm2Conn->quantization : Quantization::Unit();
-    return _constraints->SupportsQuantization(producer->Type(), ifmQuant, ifmType, ifm2Quant, ifm2Type, newQuant, newType);
+    if ( isUnitScale )
+    {
+        // If the fused-away tensor has unit scale, then the new quantization is used for the producer's output
+        return _constraints->SupportsQuantization(producer->Type(), ifmQuant, ifmType, ifm2Quant, ifm2Type, newQuant, newType);
+    }
+    else
+    {
+        // If the fused-away tensor has non-unit scale, but the new quantization has unit scale,
+        // then only the new zero points are used for the producer's output
+        auto newOfmQuant = fusedQuant;
+        newOfmQuant.zeroPoints = newQuant.zeroPoints;
+        return _constraints->SupportsQuantization(producer->Type(), ifmQuant, ifmType, ifm2Quant, ifm2Type, newOfmQuant, newType);
+    }
 }
 
 // Check if rescales can be compound fused onto a specific operation
@@ -1548,16 +1572,14 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const graph, Operation *const op
 {
     Operation *returnOp = operation;
     OpType opType = operation->Type();
-    if ( opType != OpType::Rescale )
+    if ( !IsRescale(opType) )
     {
         return returnOp;
     }
     // Create new quantization after IFM-fusing a rescale
     auto QuantAfterIFMFusing = [](Operation *const rescale) -> Quantization
     {
-        assert(rescale->Type() == OpType::Rescale);
-        auto *attr = rescale->Attribute<rescale_attr_t>();
-        assert(attr);
+        assert(IsRescale(rescale->Type()));
         auto ifmConn = rescale->Input(TensorUsage::IFM);
         auto ofmConn = rescale->Output(TensorUsage::OFM);
         // The resulting quantization is ofm-scales, but with ifm ZP and clamping
@@ -1566,18 +1588,16 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const graph, Operation *const op
         //    connection when IFM-fusing        are stored here in GraphIR
         auto quant = ifmConn->quantization;
         assert(quant.type == QuantizationType::EXPLICIT && "Rescale without explicit scaling");
-        quant.scales = ReduceScales(ofmConn->quantization.scales, attr->double_round);
+        quant.scales = ReduceScales(ofmConn->quantization.scales, ofmConn->rounding == RoundMode::DBL);
         return quant;
     };
     auto QuantAfterOFMFusing = [](Operation *const rescale) -> Quantization
     {
-        assert(rescale->Type() == OpType::Rescale);
-        auto *attr = rescale->Attribute<rescale_attr_t>();
-        assert(attr);
+        assert(IsRescale(rescale->Type()));
         auto ofmConn = rescale->Output(TensorUsage::OFM);
         auto quant = ofmConn->quantization;
-        quant.scales = ReduceScales(quant.scales, attr->double_round);
         assert(quant.type == QuantizationType::EXPLICIT && "Rescale without explicit scaling");
+        quant.scales = ReduceScales(quant.scales, ofmConn->rounding == RoundMode::DBL);
         return quant;
     };
     auto OutputRescaleCandidate = [&](const Operation &producer) -> std::shared_ptr<Operation>
@@ -1585,7 +1605,7 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const graph, Operation *const op
         auto producerOfmConn = producer.Output(TensorUsage::OFM);
         if ( producerOfmConn->tensor->Readers().size() != 1 ) return nullptr;
         auto rescale = producerOfmConn->tensor->Readers()[0];
-        if ( rescale->Type() != OpType::Rescale ) return nullptr;
+        if ( !IsRescale(rescale->Type()) ) return nullptr;
         if ( !CanBeFused(graph, rescale.get(), /* ontoConsumers */ false) ) return nullptr;
         return rescale;
     };
@@ -1593,7 +1613,18 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const graph, Operation *const op
     {
         auto outputRescaleOfmConn = rescale->Output(TensorUsage::OFM);
         ReplaceProducerOutput({producer}, rescale->IFM(0), outputRescaleOfmConn->tensor);
-        producer->Output(TensorUsage::OFM)->Set(outputRescaleOfmConn->rounding).Set(newQuant);
+        // If the new quantization is unit scale, we can just set the zeroPoints and clamp values
+        // on the producer output and leave the scales as is.
+        if ( newQuant.IsUnitScale() )
+        {
+            producer->Output(TensorUsage::OFM)->quantization.zeroPoints = newQuant.zeroPoints;
+            producer->Output(TensorUsage::OFM)->quantization.quantMin = newQuant.quantMin;
+            producer->Output(TensorUsage::OFM)->quantization.quantMax = newQuant.quantMax;
+        }
+        else
+        {
+            producer->Output(TensorUsage::OFM)->Set(outputRescaleOfmConn->rounding).Set(newQuant);
+        }
         rescale->Disconnect();
     };
     auto FuseInputRescale = [](const std::shared_ptr<Operation> &consumer, Operation *const rescale, TensorUsage inputUsage, const Quantization &newQuant)
@@ -1652,7 +1683,7 @@ Operation *GraphIrOptimiser::FuseRescale(Graph *const graph, Operation *const op
             const auto otherInputUsage = consumerUsage == TensorUsage::IFM0 ? TensorUsage::IFM1 : TensorUsage::IFM0;
             auto otherInputConn = consumer->Input(otherInputUsage);
             // Other connection must have one producer, and it must be a rescale
-            if ( otherInputConn->tensor->Writers().size() == 1 && otherInputConn->tensor->Writers()[0]->Type() == OpType::Rescale )
+            if ( otherInputConn->tensor->Writers().size() == 1 && IsRescale(otherInputConn->tensor->Writers()[0]->Type()) )
             {
                 auto otherRescale = otherInputConn->tensor->Writers()[0];
                 const auto newType2 = otherRescale->IFM(0)->Type();
