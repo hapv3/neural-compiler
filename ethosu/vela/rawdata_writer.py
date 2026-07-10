@@ -18,10 +18,7 @@
 # Functions used to write to a raw format (.npz) file.
 import numpy as np
 
-from .high_level_command_to_npu_op import get_region
-from .nn_graph import PassPlacement
-from .operation import Op
-
+# Core raw compilation format writing is handled by write_rawdata_output_from_model.
 
 def _quantization_entry(quant_type, scale, zero_point):
     qt = (quant_type or "").lower()
@@ -64,76 +61,6 @@ def _quantization_entry_from_tensor(tensor):
     quant_type = "per_channel" if quant.is_per_axis() else "per_tensor"
     return _quantization_entry(quant_type, quant.scale_f32, quant.zero_point)
 
-
-def write_rawdata_output(nng, arch, filename):
-    subgraphs_to_write = [sg for sg in nng.subgraphs if sg.placement == PassPlacement.Cpu]
-
-    for sg_idx, sg in enumerate(subgraphs_to_write):
-        custom_op = None
-        for ps in sg.passes:
-            for op in ps.ops:
-                if op.type == Op.CustomNpuOp:
-                    custom_op = op
-                    break
-            if custom_op:
-                break
-
-        if custom_op:
-            ifm_shapes = []
-            ifm_elem_sizes = []
-            ifm_regions = []
-            ifm_offsets = []
-            ifm_quantization = []
-            ofm_shapes = []
-            ofm_elem_sizes = []
-            ofm_regions = []
-            ofm_offsets = []
-            ofm_quantization = []
-            cmd_stream_tensor, weight_tensor, scratch_tensor, scratch_fast_tensor = custom_op.inputs[:4]
-            weight_region = get_region(weight_tensor.mem_type, arch)
-            scratch_region = get_region(scratch_tensor.mem_type, arch)
-            scratch_fast_region = get_region(scratch_fast_tensor.mem_type, arch)
-            for ifm in custom_op.inputs[4:]:
-                ifm_shapes.append(ifm.get_full_shape())
-                ifm_regions.append(get_region(ifm.mem_type, arch))
-                ifm_offsets.append(ifm.address)
-                ifm_elem_sizes.append(ifm.element_size())
-                ifm_quantization.append(_quantization_entry_from_tensor(ifm))
-            for ofm in custom_op.outputs:
-                ofm_shapes.append(ofm.get_full_shape())
-                ofm_regions.append(get_region(ofm.mem_type, arch))
-                ofm_offsets.append(ofm.address)
-                ofm_elem_sizes.append(ofm.element_size())
-                ofm_quantization.append(_quantization_entry_from_tensor(ofm))
-
-            filename_sg = f"{filename}_vela_sg{sg_idx}.npz"
-            np.savez(
-                filename_sg,
-                cmd_data=cmd_stream_tensor.values,
-                weight_data=weight_tensor.values,
-                weight_region=weight_region,
-                scratch_shape=scratch_tensor.shape,
-                scratch_region=scratch_region,
-                scratch_size=int(scratch_tensor.shape[0]),
-                scratch_fast_shape=scratch_fast_tensor.shape,
-                scratch_fast_region=scratch_fast_region,
-                scratch_fast_size=int(scratch_fast_tensor.shape[0]),
-                input_shape=ifm_shapes,
-                input_elem_size=ifm_elem_sizes,
-                input_region=ifm_regions,
-                input_offset=ifm_offsets,
-                output_shape=ofm_shapes,
-                output_elem_size=ofm_elem_sizes,
-                output_region=ofm_regions,
-                output_offset=ofm_offsets,
-                input_quantization=ifm_quantization,
-                output_quantization=ofm_quantization,
-                variable_quantization=[],
-                variable_shape=[],
-                variable_elem_size=[],
-                variable_region=[],
-                variable_offset=[],
-            )
 
 
 # Write out a CompiledRawModel to a numpy raw file.

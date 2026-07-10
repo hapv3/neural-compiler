@@ -21,29 +21,6 @@ import subprocess
 import numpy as np
 
 
-def test_ethos_u_vela_with_vela(tmp_path):
-    """Testing ethos-u-vela with vela compiler core."""
-    from network import TEST_NETWORK
-
-    output_dir = tmp_path
-    output_file = tmp_path / "model_vela.tflite"
-    network_file = tmp_path / "model.tflite"
-    network_file.write_bytes(TEST_NETWORK)
-    cli = [
-        "vela",
-        "--debug-force-legacy-core",
-        "--accelerator-config",
-        "ethos-u55-256",
-        "--output-dir",
-        output_dir,
-        network_file,
-    ]
-    subprocess.check_call(cli)
-    output = output_file.read_bytes()
-    assert str.encode("COP1") in output
-    assert str.encode("ethos-u") in output
-    assert str.encode("_split_1_command_stream") in output
-
 
 def test_ethos_u_vela_with_regor(tmp_path):
     """Testing ethos-u-vela with regor compiler core."""

@@ -7,3 +7,4 @@ output/
 __pycache__
 *.pyc
 *.pyd
+build-unit-tests/

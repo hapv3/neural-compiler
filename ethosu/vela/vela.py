@@ -19,6 +19,7 @@
 #
 """Compile a neural network model for Arm Ethos-U NPUs."""
 import argparse
+import enum
 import glob
 import mmap
 import os
@@ -31,23 +32,19 @@ from typing import Optional
 
 import flatbuffers
 
+class OptimizationStrategy(enum.Enum):
+    Size = 1
+    Performance = 2
+
 from . import architecture_features
-from . import compiler_driver
-from . import model_reader
 from . import rawdata_writer
-from . import scheduler
 from . import stats_writer
-from . import tflite_writer
 from ._version import __version__
 from .api import API_VERSION
-from .debug_database import DebugDatabase
 from .errors import InputFileError
 from .errors import VelaError
-from .hillclimb_allocation import HillClimbAllocator
 from .nn_graph import TensorAllocator
-from .tensor import MemArea
 from .tensor import Tensor
-from .tflite.Model import Model
 from ethosu import regor
 
 TFLITE_MAGIC = 0x334C4654
@@ -55,65 +52,7 @@ TOSA_MAGIC = 0x41534F54
 MAX_IGNORE_OPS_LENGTH = 4096
 
 
-def process(
-    input_name, enable_debug_db, arch, model_reader_options, compiler_options, scheduler_options, output_format
-):
-    if compiler_options.timing:
-        start = time.time()
-
-    os.makedirs(compiler_options.output_dir, exist_ok=True)
-    output_basename = os.path.join(compiler_options.output_dir, os.path.splitext(os.path.basename(input_name))[0])
-    DebugDatabase.show_warnings = enable_debug_db
-
-    nng, network_type = model_reader.read_model(input_name, model_reader_options)
-
-    if not nng:
-        raise InputFileError(input_name, "Input file could not be read")
-
-    if compiler_options.verbose_operators:
-        nng.print_operators()
-
-    if compiler_options.timing:
-        stop = time.time()
-        print("Model reading took %f s" % (stop - start))
-        start = time.time()
-
-    compiler_driver.compiler_driver(nng, arch, compiler_options, scheduler_options, network_type, output_basename)
-
-    summary_csv_file = "{0}_summary_{1}.csv".format(output_basename, arch.system_config)
-    stats_writer.write_summary_metrics_csv(nng, summary_csv_file, arch)
-
-    stats_writer.print_performance_metrics(
-        nng,
-        show_cpu_operations=compiler_options.show_cpu_operations,
-        verbose_weights=compiler_options.verbose_weights,
-        verbose_cycle_estimate=compiler_options.verbose_cycle_estimate,
-        arch=arch,
-    )
-
-    output_tfl_filename = output_basename + "_vela.tflite"
-    if output_format == "tflite":
-        tflite_writer.write_tflite(nng, output_tfl_filename)
-    elif output_format == "raw":
-        rawdata_writer.write_rawdata_output(nng, arch, output_basename)
-    else:
-        assert False, f"Unsupported output_format = {output_format}"
-
-    if enable_debug_db:
-        file_offsets = calculate_operator_file_offsets(output_tfl_filename)
-        for idx, offset in enumerate(sorted(file_offsets)):
-            sg = find_subgraph_with_command_stream_order(nng, idx)
-            if sg is not None:
-                DebugDatabase.set_stream_offset(sg, offset)
-        debug_filename = output_basename + "_debug.xml"
-        DebugDatabase.write(debug_filename, input_name, output_tfl_filename)
-
-    if compiler_options.timing:
-        stop = time.time()
-        print("Compiler driver took %f s" % (stop - start))
-
-    return nng
-
+# Legacy process and graph printing functions removed. Compilation logic is in C++.
 
 def process_regor(
     arch,
@@ -173,70 +112,6 @@ def process_regor(
     )
     if enable_debug_db:
         stats_writer.write_regor_db(compiled_model.opt_database, output_basename)
-
-
-def find_subgraph_with_command_stream_order(nng, idx):
-    for sg in nng.subgraphs:
-        if sg.generated_stream_id == idx:
-            return sg
-    return None
-
-
-def calculate_operator_file_offsets(name: str):
-    # Read the vela optimized TFLite file
-    with open(name, "rb") as f:
-        buf = bytearray(f.read())
-    # Calculate the file offsets for each custom operator
-    file_offsets = []
-    model = Model.GetRootAsModel(buf, 0)
-    for idx in range(model.SubgraphsLength()):  # However only one subgraph is supported as of now
-        sg = model.Subgraphs(idx)
-        for idx in range(sg.OperatorsLength()):
-            operator = sg.Operators(idx)
-            if model.OperatorCodes(operator.OpcodeIndex()).CustomCode() is not None:
-                tensor_idx = operator.Inputs(0)
-                tensor = sg.Tensors(tensor_idx)
-                buffer = model.Buffers(tensor.Buffer())
-                offset = flatbuffers.number_types.UOffsetTFlags.py_type(buffer._tab.Offset(4))
-                file_offsets.append(buffer._tab.Vector(offset))
-    return file_offsets
-
-
-def print_subgraph_io_summary(nng):
-    """Print a summary of all the input and output tensor sizes for all subgraphs.
-    Also displays the total tensor size and the memory used area for sram.
-    """
-
-    print("Subgraph IO Summary")
-    print("-------------------")
-    print(f"NNG: {nng.name}")
-    max_sg_size = 0
-    for sg in reversed(nng.subgraphs):
-        print(f"  NNG Subgraph: {sg.name} = {sg.placement}")
-        sg_size = 0
-
-        if hasattr(sg, "scratch_tensor") and sg.scratch_tensor is not None:
-            sg_tensors = sg.input_tensors + [sg.scratch_tensor] + sg.output_tensors
-        else:
-            sg_tensors = sg.input_tensors + sg.output_tensors
-
-        for tens in sg_tensors:
-            if tens in sg.input_tensors:
-                tens_dir = "In"
-            elif tens in sg.output_tensors:
-                tens_dir = "Out"
-            else:
-                tens_dir = "In/Out"
-
-            size = tens.elements() * tens.element_size() / 1024.0
-            sg_size = sg_size + size
-            print(f"         Tensor [{tens_dir}]: {tens.name} = {size} KiB")
-
-        print(f"      Total Size = {sg_size} KiB")
-        print(f"      SRAM Memory Used = {sg.memory_used.get(MemArea.Sram, 0) / 1024.0} KiB")
-        max_sg_size = max(sg_size, max_sg_size)
-
-    print(f"   Maximum NNG Subgraph Size = {max_sg_size} KiB")
 
 
 def generate_supported_ops():
@@ -1051,9 +926,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     parser.add_argument(
         "--optimise",
-        type=lambda s: scheduler.OptimizationStrategy[s],
-        default=scheduler.OptimizationStrategy.Performance,
-        choices=list(scheduler.OptimizationStrategy),
+        type=lambda s: OptimizationStrategy[s],
+        default=OptimizationStrategy.Performance,
+        choices=list(OptimizationStrategy),
         help=(
             "Set the optimisation strategy. The Size strategy results in minimal SRAM usage (does not use"
             " arena-cache-size). The Performance strategy results in maximal performance (uses the arena-cache-size"
@@ -1091,7 +966,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--hillclimb-max-iterations",
         action="deprecated_store",
         type=int,
-        default=HillClimbAllocator.MAX_ITERATIONS,
+        default=999999,
         help=(
             "[DEPRECATED] Set the maximum number of iterations the Hill Climb tensor allocator"
             " will run (default: %(default)s)"
@@ -1203,10 +1078,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             "".format(args.cpu_tensor_alignment)
         )
 
-    if args.debug_force_legacy_core and args.debug_force_regor:
+    if args.debug_force_legacy_core:
         parser.error(
-            "Cannot force the use of both the deprecated legacy Python compilation core and the Regor C++ compilation"
-            " core at the same time. Please choose only one of these options."
+            "The legacy Python compilation core has been completely removed. "
+            "Please use the Regor C++ compilation core by removing the --debug-force-legacy-core option."
         )
 
     if args.verbose_all:
@@ -1226,142 +1101,73 @@ def main(argv: Optional[List[str]] = None) -> int:
         arena_cache_size=args.arena_cache_size,
     )
 
-    model_reader_options = model_reader.ModelReaderOptions()
+    system_config = "[architecture]\n"
+    system_config += f"macs={arch.num_macs_per_cycle}\n"
+    system_config += f"cores={arch.ncores}\n"
 
-    # Vela's legacy Python compilation core has been deprecated.
-    # However, this can be overridden to still be used for TFLite and Ethos-U55 or Ethos-U65 by using the
-    # `--debug-force-legacy-core` option, until fully removed.
-    # All Ethos-U85 or TOSA network compilations always use Vela's C++ compilation core (Regor).
-    if arch.is_ethos_u85_system or args.network.lower().endswith(".tosa") or not args.debug_force_legacy_core:
-        if args.debug_force_legacy_core:
-            parser.error(
-                "Forcing the use of the deprecated legacy Python compilation core is not possible for this target"
-                " system or input network. \nThe legacy core only supports Ethos-U55 and Ethos-U65 systems and TFLite"
-                " input networks. Please remove the --debug-force-legacy-core option and try again."
-            )
-        system_config = "[architecture]\n"
-        system_config += f"macs={arch.num_macs_per_cycle}\n"
-        system_config += f"cores={arch.ncores}\n"
+    system_config += "[vela]\n"
+    system_config += f"system_config_name={arch.system_config}\n"
+    system_config += f"memory_mode_name={arch.memory_mode}\n"
 
-        system_config += "[vela]\n"
-        system_config += f"system_config_name={arch.system_config}\n"
-        system_config += f"memory_mode_name={arch.memory_mode}\n"
+    # TODO MLBEDSW-8190: Improve support for multiple config files
+    for config_file in arch.vela_config_files:
+        with open(config_file, "rb") as f:
+            system_config += f.read().decode("utf-8")
 
-        # TODO MLBEDSW-8190: Improve support for multiple config files
-        for config_file in arch.vela_config_files:
-            with open(config_file, "rb") as f:
-                system_config += f.read().decode("utf-8")
+    # Transform Vela accelerator config string format to Regor format
+    accelerator_config = args.accelerator_config
+    substrings = accelerator_config.split("-")
+    substrings = [substring.capitalize() for substring in substrings[:-1]]
+    accelerator = "".join(substrings)
 
-        # Transform Vela accelerator config string format to Regor format
-        accelerator_config = args.accelerator_config
-        substrings = accelerator_config.split("-")
-        substrings = [substring.capitalize() for substring in substrings[:-1]]
-        accelerator = "".join(substrings)
+    try:
+        args.ignore_ops = normalise_ignore_ops(args.ignore_ops)
+    except ValueError as e:
+        parser.error(str(e))
 
-        try:
-            args.ignore_ops = normalise_ignore_ops(args.ignore_ops)
-        except ValueError as e:
-            parser.error(str(e))
+    options = get_compiler_config(
+        args.enable_debug_db,
+        args.verbose_all,
+        args.verbose_high_level_command_stream,
+        args.verbose_register_command_stream,
+        args.optimise,
+        # TODO MLBEDSW-8191: Clean up arena_cache_size selection
+        # arch.arena_cache_size will use value from CLI option if available, otherwise from config file
+        arch.arena_cache_size,
+        args.verbose_schedule,
+        args.verbose_allocation,
+        args.verbose_graph,
+        args.verbose_quantization,
+        args.verbose_packing,
+        args.verbose_performance,
+        args.show_cpu_operations,
+        args.output_format,
+        args.disable_chaining,
+        args.disable_fwd,
+        args.disable_cascading,
+        args.disable_buffering,
+        args.disable_ifm_reuse,
+        args.cop_format,
+        args.separate_io_regions,
+        args.cpu_tensor_alignment,
+        args.tensor_allocator,
+        args.experimental_softmax_int16_neg_exp_range,
+        args.ignore_ops,
+    )
 
-        options = get_compiler_config(
-            args.enable_debug_db,
-            args.verbose_all,
-            args.verbose_high_level_command_stream,
-            args.verbose_register_command_stream,
-            args.optimise,
-            # TODO MLBEDSW-8191: Clean up arena_cache_size selection
-            # arch.arena_cache_size will use value from CLI option if available, otherwise from config file
-            arch.arena_cache_size,
-            args.verbose_schedule,
-            args.verbose_allocation,
-            args.verbose_graph,
-            args.verbose_quantization,
-            args.verbose_packing,
-            args.verbose_performance,
-            args.show_cpu_operations,
-            args.output_format,
-            args.disable_chaining,
-            args.disable_fwd,
-            args.disable_cascading,
-            args.disable_buffering,
-            args.disable_ifm_reuse,
-            args.cop_format,
-            args.separate_io_regions,
-            args.cpu_tensor_alignment,
-            args.tensor_allocator,
-            args.experimental_softmax_int16_neg_exp_range,
-            args.ignore_ops,
-        )
-
-        process_regor(
-            arch,
-            args.network,
-            accelerator,
-            system_config,
-            options,
-            args.enable_debug_db,
-            args.output_dir,
-            args.output_format,
-            args.verbose_weights,
-            args.verbose_cycle_estimate,
-            args.show_cpu_operations,
-            args.verbose_performance,
-        )
-
-    else:
-        if args.ignore_ops:
-            parser.error("The --ignore-ops option is only supported when using the Regor C++ compilation core.")
-        if args.experimental_softmax_int16_neg_exp_range != 10.0:
-            print(
-                "Warning: The --experimental-softmax-int16-neg-exp-range option has no effect when using the legacy "
-                "Python compilation core, and is only applicable when using the Regor C++ compilation core."
-            )
-        compiler_options = compiler_driver.CompilerOptions(
-            verbose_graph=args.verbose_graph,
-            verbose_quantization=args.verbose_quantization,
-            verbose_packing=args.verbose_packing,
-            verbose_tensor_purpose=args.verbose_tensor_purpose,
-            verbose_tensor_format=args.verbose_tensor_format,
-            verbose_allocation=args.verbose_allocation,
-            verbose_high_level_command_stream=args.verbose_high_level_command_stream,
-            verbose_register_command_stream=args.verbose_register_command_stream,
-            verbose_operators=args.verbose_operators,
-            verbose_weights=args.verbose_weights,
-            verbose_cycle_estimate=args.verbose_cycle_estimate,
-            verbose_performance=args.verbose_performance,
-            verbose_progress=args.verbose_progress,
-            show_cpu_operations=args.show_cpu_operations,
-            tensor_allocator=args.tensor_allocator,
-            timing=args.timing,
-            force_symmetric_int_weights=args.force_symmetric_int_weights,
-            output_dir=args.output_dir,
-            cpu_tensor_alignment=args.cpu_tensor_alignment,
-            hillclimb_max_iterations=args.hillclimb_max_iterations,
-        )
-
-        scheduler_options = scheduler.SchedulerOptions(
-            optimization_strategy=args.optimise,
-            sram_target=arch.arena_cache_size,
-            verbose_schedule=args.verbose_schedule,
-            verbose_progress=args.verbose_progress,
-        )
-
-        try:
-            nng = process(
-                args.network,
-                args.enable_debug_db,
-                arch,
-                model_reader_options,
-                compiler_options,
-                scheduler_options,
-                args.output_format,
-            )
-
-        except VelaError as e:
-            print(e.data)
-            return 1
-
-        if args.show_subgraph_io_summary:
-            print_subgraph_io_summary(nng)
+    process_regor(
+        arch,
+        args.network,
+        accelerator,
+        system_config,
+        options,
+        args.enable_debug_db,
+        args.output_dir,
+        args.output_format,
+        args.verbose_weights,
+        args.verbose_cycle_estimate,
+        args.show_cpu_operations,
+        args.verbose_performance,
+    )
 
     return 0

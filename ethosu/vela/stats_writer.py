@@ -22,11 +22,8 @@ import sys
 
 import numpy as np
 
-from .nn_graph import PassPlacement
-from .npu_performance import BandwidthDirection
 from .npu_performance import PassCycles
-from .numeric_util import round_up_to_int
-from .operation import Op
+from .tensor import BandwidthDirection
 from .tensor import MemArea
 from .tensor import TensorPurpose
 
@@ -145,108 +142,6 @@ def write_summary_metrics_csv_common(
         data_items += [cycles[kind] for kind in PassCycles.all()]
 
         writer.writerow(data_items)
-
-
-def write_summary_metrics_csv(nng, summary_filename, arch):
-    n_passes = sum(len(sg.passes) for sg in nng.subgraphs)
-    n_cascaded_passes = sum(len(sg.cascaded_passes) for sg in nng.subgraphs)
-    write_summary_metrics_csv_common(
-        summary_filename,
-        arch,
-        nng.name,
-        nng.total_original_weights,
-        nng.total_npu_encoded_weights,
-        n_passes,
-        n_cascaded_passes,
-        nng.cycles,
-        nng.bandwidths,
-        nng.memory_used,
-        nng.batch_size,
-        nng.macs,
-    )
-
-
-def write_pass_metrics_csv(nng, pass_filename):
-
-    with open(pass_filename, "w") as f:
-        writer = csv.writer(f)
-
-        purpose_list = (
-            ("total", (TensorPurpose.Weights, TensorPurpose.FeatureMap)),
-            ("weights", (TensorPurpose.Weights,)),
-            ("feature_map", (TensorPurpose.FeatureMap,)),
-        )
-
-        direction_list = (
-            ("total", (BandwidthDirection.Read, BandwidthDirection.Write)),
-            ("read", (BandwidthDirection.Read,)),
-            ("write", (BandwidthDirection.Write,)),
-        )
-        bandwidth_names = []
-        bandwidth_indices = []
-        for mem_area in mem_areas_to_report():
-            for purpose, purpose_candidates in purpose_list:
-                for direction, direction_candidates in direction_list:
-                    label = "bytes_{}_{}_{}".format(mem_area.identifier_name(), purpose, direction)
-                    bandwidth_names.append(label)
-                    bandwidth_indices.append((mem_area, purpose_candidates, direction_candidates))
-
-        all_cycles = (
-            PassCycles.Total,
-            PassCycles.Npu,
-            PassCycles.SramAccess,
-            PassCycles.DramAccess,
-            PassCycles.OnChipFlashAccess,
-            PassCycles.OffChipFlashAccess,
-        )
-        writer.writerow(
-            [
-                "name",
-                "operators",
-                "placement",
-                "streaming_strategy",
-                "block_config_height",
-                "block_config_width",
-                "block_config_input_channels",
-                "block_config_output_channels",
-            ]
-            + ["cycles_" + v.identifier_name() for v in all_cycles]
-            + ["nn_macs"]
-            + bandwidth_names
-            + ["sram_used"]
-        )
-
-        def write_subgraph(sg):
-            for cps in sg.cascaded_passes:
-                if cps.placement == PassPlacement.StartupInit:
-                    continue  # skip the dummy init pass
-
-                for ps in cps.passes:
-                    if len(ps.ops) == 1 and ps.ops[0].type == Op.CustomNpuOp:
-                        # just treat this as a call, unroll it
-                        write_subgraph(ps.ops[0].attrs["subgraph"])
-                        continue
-                    stats = [ps.name, " ".join(op.type.name for op in ps.ops)]
-                    stats += [ps.placement.name]
-                    stats += [cps.strategy.name]
-                    stats += list(ps.block_config)
-                    stats += [round_up_to_int(ps.cycles[v]) for v in all_cycles]
-                    stats += [round_up_to_int(ps.macs)]
-                    for indices in bandwidth_indices:
-                        res = 0
-                        i = indices[0]
-                        for j in indices[1]:
-                            for k in indices[2]:
-                                res += round_up_to_int(ps.bandwidths[i, j, k])
-                        stats.append(res)
-                    try:
-                        stats += [ps.sram_used]
-                    except AttributeError:
-                        stats += [0]
-
-                    writer.writerow(stats)
-
-        write_subgraph(nng.get_root_subgraph())
 
 
 def print_performance_metrics_common(
@@ -386,60 +281,6 @@ def print_performance_metrics_common(
     print(file=f)
 
 
-def print_performance_metrics(
-    nng, arch, show_cpu_operations=False, verbose_weights=False, verbose_cycle_estimate=False, f=sys.stdout
-):
-    cpu_operations = []
-    npu_operations = []
-    ir_only_ops = (
-        Op.Const,
-        Op.Placeholder,
-        Op.CustomNpuOp,
-        Op.SubgraphInput,
-    )
-
-    def format_tens_list(lst):
-        return " ".join(str(list(tens.shape)) for tens in lst if tens is not None)
-
-    for sg in nng.subgraphs:
-        if sg.placement == PassPlacement.Cpu:
-            for op in sg.get_all_ops_from_passes():
-                if op.type not in ir_only_ops:
-                    cpu_operations.append(
-                        f"{op.type} = {op.name} "
-                        f"(inputs {format_tens_list(op.inputs)}, outputs {format_tens_list(op.outputs)})"
-                    )
-        elif sg.placement == PassPlacement.Npu:
-            for op in sg.get_all_ops_from_passes():
-                if op.type not in ir_only_ops:
-                    npu_operations.append(
-                        f"{op.type} = {op.name} "
-                        f"(inputs {format_tens_list(op.inputs)}, outputs {format_tens_list(op.outputs)})"
-                    )
-
-    weights_data = (
-        {"original": nng.total_original_weights, "npu_encoded": nng.total_npu_encoded_weights}
-        if verbose_weights
-        else None
-    )
-
-    return print_performance_metrics_common(
-        arch,
-        nng.name,
-        nng.cycles,
-        nng.macs,
-        nng.bandwidths,
-        nng.batch_size,
-        nng.memory_used,
-        cpu_operations,
-        npu_operations,
-        show_cpu_operations,
-        weights_data,
-        verbose_cycle_estimate,
-        f,
-    )
-
-
 def regor_operations_from_database(opt_database):
     def find_in_header(names, header):
         idx = []
@@ -455,15 +296,12 @@ def regor_operations_from_database(opt_database):
         else:
             return int(value)
 
-    # set of optimised_ids that ended up on NPU
     npu_optimised_ids = set()
     group_ids = set()
-    # maps src-id to ofm-shape
     ofm_shapes = dict()
     cpu_operations = []
     npu_operations = []
 
-    # prerequisite checks
     required_tables = ["source", "group", "perf", "queue"]
     for table in required_tables:
         if table not in opt_database.tables:
@@ -471,7 +309,6 @@ def regor_operations_from_database(opt_database):
             print("Table: {} was not in opt_database".format(table))
             return cpu_operations, npu_operations
 
-    # build ofm_shapes from source table
     src = opt_database.tables["source"]
     fields = ["id", "ofm_w", "ofm_h", "ofm_d"]
     ids = find_in_header(fields, src.header)
@@ -488,7 +325,6 @@ def regor_operations_from_database(opt_database):
         d = parse_dim(entry[d_idx])
         ofm_shapes[src_id] = [1, w, h, d]
 
-    # build npu_optimised_ids from queue table
     qt = opt_database.tables["queue"]
     id_idx = find_in_header(["optimised_id"], qt.header)[0]
     if id_idx == -1:
@@ -498,7 +334,6 @@ def regor_operations_from_database(opt_database):
     for entry in qt.data:
         npu_optimised_ids.add(entry[id_idx])
 
-    # add fused/chained operation ids from group table to group_ids
     group = opt_database.tables["group"]
     id_idx = find_in_header(["id"], group.header)[0]
     if id_idx == -1:
@@ -508,7 +343,6 @@ def regor_operations_from_database(opt_database):
     for entry in group.data:
         group_ids.add(entry[id_idx])
 
-    # build cpu/npu operations from perf-table
     perf = opt_database.tables["perf"]
     fields = ["id", "optimised_id", "source_id", "name", "operator"]
     ids = find_in_header(fields, perf.header)
@@ -523,7 +357,6 @@ def regor_operations_from_database(opt_database):
         name = entry[name_idx]
         operator = entry[operator_idx]
         ofm_shape = ofm_shapes[src_id]
-        # TODO add ifm shapes
         op_desc = f"{operator} = {name} (outputs {ofm_shape})"
         if opt_id in npu_optimised_ids or op_id in group_ids:
             npu_operations.append(op_desc)
@@ -542,7 +375,6 @@ def print_regor_performance_metrics(
     verbose_cycle_estimate=False,
     show_cpu_operations=False,
 ):
-    # Map from Regor memory names to Vela MemArea
     memory_mapping = {
         "sram": MemArea.Sram,
         "dram": MemArea.Dram,
@@ -552,7 +384,6 @@ def print_regor_performance_metrics(
         "shram": MemArea.Shram,
     }
 
-    # Map from Regor memory names to Vela PassCycles
     cycles_mapping = {
         "sram": PassCycles.SramAccess,
         "dram": PassCycles.DramAccess,
@@ -560,7 +391,6 @@ def print_regor_performance_metrics(
         "offchipflash": PassCycles.OffChipFlashAccess,
     }
 
-    # Map from Regor access_type to Vela TensorPurpose
     purpose_mapping = {
         "lut": TensorPurpose.LUT,
         "featuremap": TensorPurpose.FeatureMap,
@@ -576,7 +406,6 @@ def print_regor_performance_metrics(
     for mem_name, memory in report.memories.items():
         mem_name_lower = str(mem_name).lower()
 
-        # skip shram/lutram in performance report
         if mem_name_lower in ["lutram", "shram"]:
             continue
 
@@ -589,12 +418,10 @@ def print_regor_performance_metrics(
 
         for _, a in memory.accesses.items():
             purpose = purpose_mapping.get(str(a.accessType).lower(), TensorPurpose.Unknown)
-
             bandwidths[mem_area][purpose][BandwidthDirection.Read] = a.bytesRead
             bandwidths[mem_area][purpose][BandwidthDirection.Write] = a.bytesWritten
 
     read_only_area = arch.tensor_storage_mem_area[TensorPurpose.Weights]
-    # Split read-only and staging/feature-map usage when const shares SRAM (OnChipFlash alias).
     if (
         report.readOnlyPeakUsage > 0
         and read_only_area == MemArea.OnChipFlash
@@ -676,7 +503,6 @@ def postprocess_regor_performance_database(arch, opt_database, performance_repor
             return 100
         return (x * 100) / y
 
-    # Set of operations in the optimised-table that ended up as commands
     npu_operators = set()
     if "queue" in opt_database.tables:
         queue_table = opt_database.tables["queue"]
@@ -691,7 +517,6 @@ def postprocess_regor_performance_database(arch, opt_database, performance_repor
     perf_header = perf_table.header
     perf_rows = perf_table.data
 
-    # populate id -> name map for source operations
     source_names = {}
 
     if "source" in opt_database.tables:
@@ -706,7 +531,6 @@ def postprocess_regor_performance_database(arch, opt_database, performance_repor
                 op_name = row[op_name_idx]
                 source_names[op_id] = op_name
 
-    # maps vela-columns to columns in the regor performance-database
     col_map = {
         "SourceId": find_in_header("source_id", perf_header),
         "OptId": find_in_header("optimised_id", perf_header),
@@ -722,7 +546,6 @@ def postprocess_regor_performance_database(arch, opt_database, performance_repor
         "Name": find_in_header("name", perf_header),
     }
 
-    # generate new header and data that aligns with vela format
     new_header = [
         "Original Operator",
         "NNG Operator",
@@ -751,7 +574,6 @@ def postprocess_regor_performance_database(arch, opt_database, performance_repor
                     new_row.append("0")
                 else:
                     new_row.append(row[idx])
-            # post-processing for things not contained in regors performance-database
             else:
                 if col == "Target":
                     nng_op_idx = col_map["NNG Operator"]
@@ -861,7 +683,6 @@ def print_regor_perlayer_performance(arch, opt_database, performance_report, out
 
     perf_header, perf_rows = postprocess_regor_performance_database(arch, opt_database, performance_report)
 
-    # header -> (align, width, precision)
     header = {
         "Original Operator": ("<", 20, -1),
         "NNG Operator": ("<", 20, -1),

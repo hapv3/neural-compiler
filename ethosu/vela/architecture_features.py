@@ -39,8 +39,6 @@ from .tensor import MemArea
 from .tensor import MemType
 from .tensor import TensorFormat
 from .tensor import TensorPurpose
-from .tflite_supported_operators import TFLiteSupportedOperators
-from .tosa_supported_operators import TosaSupportedOperators
 
 CONFIG_FILES_PATH = os.path.normpath(os.path.join(__file__, "..", "..", "config_files"))
 
@@ -407,10 +405,7 @@ class ArchitectureFeatures:
             NpuBlockType.ReduceSum: (8, 8),
         }
 
-        # weights for scheduler search
-        from .npu_performance import make_bandwidth_array
-
-        self.bandwidth_weights = make_bandwidth_array()
+        self.bandwidth_weights = np.zeros((MemArea.Size, TensorPurpose.Size, BandwidthDirection.Size))
         self.bandwidth_weights[MemArea.Sram] = 1.0
         self.bandwidth_weights[MemArea.Dram] = 10.0
         self.bandwidth_weights[MemArea.OnChipFlash] = 2.0
@@ -434,9 +429,6 @@ class ArchitectureFeatures:
         # SHRAM base address of the activation lookup table
         self.shram_lut_address = self.shram_bank_size * self.available_shram_banks(True)
 
-        # Setup supported operators and restriction checkers class
-        self.tflite_supported_operators = TFLiteSupportedOperators()
-        self.tosa_supported_operators = TosaSupportedOperators()
 
     # Returns available number of SHRAM banks depending on activation lookup table
     # being used or not
