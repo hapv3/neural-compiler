@@ -71,7 +71,7 @@ cmake --build build-unit-tests -t check
 ---
 
 ## References & Documentation
-* [Vela Original README](README.vela.md)
+* [Vela Original README](docs/vela/README.vela.md)
 * **Neural-AI NPU Cluster Architecture** (refer to sibling `neural-ai` workspace repository)
-* [CLI Options & Setup](OPTIONS.md)
-* [Supported Operators](SUPPORTED_OPS.md)
+* [CLI Options & Setup](docs/vela/OPTIONS.md)
+* [Supported Operators](docs/vela/SUPPORTED_OPS.md)
