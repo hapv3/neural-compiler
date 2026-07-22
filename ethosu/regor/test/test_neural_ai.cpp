@@ -10,6 +10,8 @@
 #include "architecture/neuralai/neural_ai_performance.hpp"
 #include "architecture/neuralai/neural_ai_weight_encoder.hpp"
 #include "compiler/neural_ai_graph_optimiser.hpp"
+#include "compiler/scheduler.hpp"
+#include "compiler/scheduler_packing.hpp"
 #include "util.hpp"
 
 #include <catch_all.hpp>
@@ -248,6 +250,60 @@ TEST_CASE("Neural-AI performance model estimates GEMM and DMA costs")
     REQUIRE(performance->MeasureCycleCost(query).opCycles == 0);
     REQUIRE(performance->MemToMemCycles(
         arch.FeatureMapMemory().memory, arch.ReadonlyMemory().memory, 64) == 3);
+}
+
+TEST_CASE("Neural-AI scheduler lowers a complete FullyConnected graph")
+{
+    constexpr int depthK = 33;
+    constexpr int depthN = 34;
+    ArchNeuralAI arch;
+    auto input = CreateTensor("input", Shape(1, 1, 1, depthK), DataType::Int8);
+    auto output = CreateTensor("output", Shape(1, 1, 1, depthN), DataType::Int8);
+    auto weights = CreateTensor(
+        "weights", Shape(depthN, 1, 1, depthK), DataType::Int8,
+        std::vector<int8_t>(depthK * depthN, 1));
+    auto scales = CreateTensor(
+        "scales", Shape(1, 1, 1, depthN), DataType::Int32,
+        std::vector<int32_t>(depthN, 0));
+    auto matrix = CreateOperation(
+        OpType::FullyConnected, TensorUsage::IFM0, input, TensorUsage::OFM, output);
+    matrix->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
+    matrix->ConnectInput(TensorUsage::Scales, scales).Set(Quantization::Unit());
+    std::vector<std::shared_ptr<Operation>> sourceOps = {matrix};
+    auto graph = CreateGraph(sourceOps);
+
+    GraphOptimiserOptions graphOptions;
+    NeuralAIGraphOptimiser optimiser(arch.Constraints(), graphOptions, nullptr);
+    optimiser.Process(graph.get());
+
+    const std::unordered_map<UniqueId, UniqueId> equivalenceIds;
+    SchedulerPacking packing(&arch, false, equivalenceIds);
+    auto scheduleOps = packing.Process(graph.get());
+    REQUIRE(scheduleOps.size() == 3);
+
+    SchedulerOptions schedulerOptions;
+    schedulerOptions.disabled.Set(SchedulerFeature::Cascading);
+    schedulerOptions.disabled.Set(SchedulerFeature::WeightBuffering);
+    Scheduler scheduler(
+        &arch, schedulerOptions, "neural-ai", scheduleOps, packing.OpConfigCompatablility());
+    auto schedule = scheduler.Process();
+
+    REQUIRE(schedule != nullptr);
+    REQUIRE(schedule->Costs().size() == 3);
+    REQUIRE(schedule->memoryUsage.at(arch.FeatureMapMemory()) % ArchNeuralAI::DMAAlignment == 0);
+    REQUIRE(scheduleOps[0]->OFM()->tensor->format == TensorFormat::Row32);
+    REQUIRE(scheduleOps[1]->OFM()->tensor->format == TensorFormat::Row32);
+    REQUIRE(scheduleOps[2]->OFM()->tensor->format == TensorFormat::NHWC);
+    const SchedulerOpInfo *matrixCost = schedule->Cost(scheduleOps[1].get());
+    REQUIRE(matrixCost->npuWeightsTensor != nullptr);
+    REQUIRE(matrixCost->npuWeightsTensor->totalWeightBytes == 4 * 32 * 32);
+    REQUIRE(matrixCost->npuWeightsTensor->AllocationSizeBytes() == 6 * 32 * 32);
+    REQUIRE(matrixCost->npuWeightsTensor->encodedRanges.size() == 1);
+    const WeightRange &range = matrixCost->npuWeightsTensor->encodedRanges.begin()->second;
+    REQUIRE(range.scaleBytes == 2 * 32 * 32);
+    REQUIRE(range.weightOffset == 2 * 32 * 32);
+    REQUIRE(range.weightBytes == 4 * 32 * 32);
+    REQUIRE(matrixCost->npuScalesTensor == nullptr);
 }
 
 TEST_CASE("Neural-AI op groups do not fuse matrix operations")
