@@ -7,6 +7,7 @@
 #include "architecture/neuralai/neural_ai.hpp"
 #include "architecture/neuralai/neural_ai_constraints.hpp"
 #include "architecture/neuralai/neural_ai_op_config.hpp"
+#include "architecture/neuralai/neural_ai_performance.hpp"
 #include "architecture/neuralai/neural_ai_weight_encoder.hpp"
 #include "compiler/neural_ai_graph_optimiser.hpp"
 #include "util.hpp"
@@ -213,6 +214,40 @@ TEST_CASE("Neural-AI matrix op configuration exposes GEMM granules")
     REQUIRE(config->OptimalDepthGranule() == 32);
     REQUIRE(config->MinimumDepthGranule() == 32);
     REQUIRE_FALSE(arch.GetOpConfig(OpType::Conv2D, query));
+}
+
+TEST_CASE("Neural-AI performance model estimates GEMM and DMA costs")
+{
+    ArchNeuralAI arch;
+    PerformanceQuery query{};
+    query.type = OpType::FullyConnected;
+    query.ifm[0].shape = Shape(1, 1, 1, 33);
+    query.ifm[0].type = DataType::Int8;
+    query.ifm[0].memory = arch.FeatureMapMemory().memory;
+    query.ofm.shape = Shape(1, 1, 1, 34);
+    query.ofm.type = DataType::Int8;
+    query.ofm.memory = arch.FeatureMapMemory().memory;
+    query.constMemory = arch.ReadonlyMemory().memory;
+    query.encodedWeightSize = 4096;
+    query.encodedScaleSize = 1024;
+
+    auto *performance = arch.Performance();
+    REQUIRE(performance != nullptr);
+    const CycleCost gemm = performance->MeasureCycleCost(query);
+    REQUIRE(gemm.macs == 33 * 34);
+    REQUIRE(gemm.opCycles == 2);
+
+    const ElementAccess elements = performance->MeasureElementAccess(query);
+    const ElementAccess bytes = performance->ElementTransferToBytes(query, elements);
+    REQUIRE(bytes.ifmRead[0] == 33);
+    REQUIRE(bytes.ofmWrite == 34);
+    REQUIRE(bytes.constRead[0] == 4096);
+    REQUIRE(bytes.constRead[1] == 1024);
+
+    query.type = OpType::MemoryCopy;
+    REQUIRE(performance->MeasureCycleCost(query).opCycles == 0);
+    REQUIRE(performance->MemToMemCycles(
+        arch.FeatureMapMemory().memory, arch.ReadonlyMemory().memory, 64) == 3);
 }
 
 TEST_CASE("Neural-AI op groups do not fuse matrix operations")

@@ -245,6 +245,7 @@ regor_lib(
         "architecture/neuralai/neural_ai.cpp"
         "architecture/neuralai/neural_ai_constraints.cpp"
         "architecture/neuralai/neural_ai_op_config.cpp"
+        "architecture/neuralai/neural_ai_performance.cpp"
         "architecture/neuralai/neural_ai_weight_encoder.cpp"
         "architecture/ethosu55/ethos_u55.cpp"
         "architecture/ethosu55/ethos_u55_constraints.cpp"
