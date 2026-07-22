@@ -7,6 +7,7 @@
 #include "architecture/neuralai/neural_ai.hpp"
 #include "architecture/neuralai/neural_ai_constraints.hpp"
 #include "architecture/neuralai/neural_ai_op_config.hpp"
+#include "architecture/neuralai/neural_ai_weight_encoder.hpp"
 
 #include <catch_all.hpp>
 
@@ -160,4 +161,38 @@ TEST_CASE("Neural-AI op groups do not fuse matrix operations")
     REQUIRE(group);
     REQUIRE(group->NeedsAllocation(1));
     REQUIRE(group->Add(query) == 0);
+}
+
+TEST_CASE("Neural-AI GEMM weight packing follows K-lane N-lane tile order")
+{
+    constexpr int depthK = 33;
+    constexpr int depthN = 34;
+    std::vector<int8_t> weights(depthK * depthN);
+    for ( int k = 0; k < depthK; ++k )
+    {
+        for ( int n = 0; n < depthN; ++n )
+        {
+            weights[k * depthN + n] = int8_t((k * 17 + n * 3) & 0x7f);
+        }
+    }
+
+    const auto packed = neuralai::PackGEMM32Weights(weights.data(), depthK, depthN);
+    REQUIRE(packed.size() == 4 * 32 * 32);
+    for ( int nGroup = 0; nGroup < 2; ++nGroup )
+    {
+        for ( int kGroup = 0; kGroup < 2; ++kGroup )
+        {
+            for ( int kLane = 0; kLane < 32; ++kLane )
+            {
+                for ( int nLane = 0; nLane < 32; ++nLane )
+                {
+                    const int k = kGroup * 32 + kLane;
+                    const int n = nGroup * 32 + nLane;
+                    const size_t index = size_t(((nGroup * 2 + kGroup) * 32 + kLane) * 32 + nLane);
+                    const uint8_t expected = k < depthK && n < depthN ? uint8_t(weights[k * depthN + n]) : 0;
+                    REQUIRE(packed[index] == expected);
+                }
+            }
+        }
+    }
 }
