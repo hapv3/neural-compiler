@@ -215,6 +215,15 @@ struct CommandHeaderV2
     uint32_t tileId;
 };
 
+struct CommandRQLoadV2
+{
+    CommandHeaderV2 header;
+    uint32_t qparamIndex;
+    uint32_t qparamCount;
+    uint32_t qparamBlock;
+    uint32_t reserved;
+};
+
 struct CommandDMA1DV2
 {
     CommandHeaderV2 header;
@@ -300,6 +309,9 @@ static_assert(sizeof(BindingV1) == 64);
 static_assert(sizeof(BindingAddressV1) == 16);
 static_assert(sizeof(QParamV1) == 32);
 static_assert(sizeof(CommandHeaderV2) == 16);
+static_assert(sizeof(CommandRQLoadV2) == 32);
+static_assert(offsetof(CommandRQLoadV2, qparamIndex) == 16);
+static_assert(offsetof(CommandRQLoadV2, qparamBlock) == 24);
 static_assert(sizeof(CommandDMA1DV2) == 64);
 static_assert(sizeof(CommandDMA2DV2) == 64);
 static_assert(sizeof(CommandDMA3DV2) == 64);

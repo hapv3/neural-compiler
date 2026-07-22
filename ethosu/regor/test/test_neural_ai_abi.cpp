@@ -54,6 +54,23 @@ TEST_CASE("neural_ai_abi validates ranges without integer overflow")
         std::numeric_limits<uint32_t>::max()));
 }
 
+TEST_CASE("neural_ai_abi freezes RQ load command layout")
+{
+    CommandRQLoadV2 command{};
+    command.header.type = uint16_t(CommandType::RQLoad);
+    command.header.sizeBytes = sizeof(command);
+    command.qparamIndex = 64;
+    command.qparamCount = 32;
+    command.qparamBlock = 2;
+
+    REQUIRE(command.header.type == 5);
+    REQUIRE(command.header.sizeBytes == 32);
+    REQUIRE(command.qparamIndex == 64);
+    REQUIRE(command.qparamCount == 32);
+    REQUIRE(command.qparamBlock == 2);
+    REQUIRE(command.reserved == 0);
+}
+
 TEST_CASE("neural_ai_abi validates section alignment and bounds")
 {
     ModelHeaderV1 header{};

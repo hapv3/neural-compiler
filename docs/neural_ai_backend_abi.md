@@ -92,6 +92,13 @@ It divides by `2^shift`, rounds halfway cases away from zero, adds output zero
 point, and applies the shared clamp bounds. No implementation-defined signed
 right shift is part of the reference semantics.
 
+`RQ_LOAD` is a 32-byte command containing a qparam-section element index, a
+channel count, and a compiler-assigned block identifier. ABI 1.0 requires
+exactly 32 consecutive `nai_qparam_v1_t` records. The runtime validates and
+copies the block into DTCM before programming the shared per-channel requant
+registers. Requantizing compute commands name the loaded block identifier;
+using a different or unloaded block fails dispatch.
+
 ## Compatibility
 
 The legacy `NPUC` command table remains ABI v1 and is dispatched unchanged.
