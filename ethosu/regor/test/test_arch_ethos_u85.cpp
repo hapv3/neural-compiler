@@ -126,6 +126,8 @@ TEST_CASE("architecture layout hooks preserve Ethos defaults")
     REQUIRE(arch->StorageShape(logical, TensorFormat::NHWC) == logical);
     REQUIRE(arch->StorageBytes(logical, TensorFormat::NHCWB16, DataType::Int8) == 192);
     REQUIRE(arch->StorageBytes(logical, TensorFormat::NHWC, DataType::Int8) == 112);
+    REQUIRE(arch->TensorStrides(logical, TensorFormat::NHWC, DataType::Int8) == Shape(102, 51, 17, 1));
+    REQUIRE(arch->TensorStrides(logical, TensorFormat::NHCWB16, DataType::Int8) == Shape(192, 96, 16, 48));
     REQUIRE(arch->CanAliasDepthOffset(TensorFormat::NHCWB16, 16));
     REQUIRE_FALSE(arch->CanAliasDepthOffset(TensorFormat::NHCWB16, 1));
     REQUIRE(arch->RollingBufferShape(Shape(1, 3, 4, 17), Shape(1, 2, 4, 17),

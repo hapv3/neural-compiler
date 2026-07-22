@@ -166,7 +166,7 @@ bool Compiler::ParseOptions(const char *text, size_t size)
         }
         else if ( section == "scheduler" )
         {
-            if ( !ParseSchedulerOptions(_schedulerOptions, reader) )
+            if ( !ParseSchedulerOptions(_schedulerOptions, reader, _architecture.get()) )
             {
                 SetLastError(fmt::format("Error parsing [{}]", section));
                 return false;

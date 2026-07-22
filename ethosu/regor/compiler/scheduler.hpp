@@ -476,6 +476,6 @@ private:
         Shape &ofmShape, Flags<WeightFormat> supportedFormats);
 };
 
-bool ParseSchedulerOptions(SchedulerOptions &opt, IniReader &reader);
+bool ParseSchedulerOptions(SchedulerOptions &opt, IniReader &reader, const Architecture *arch);
 
 }  // namespace regor

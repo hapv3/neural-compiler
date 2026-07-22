@@ -43,9 +43,12 @@ class BufferMap
     };
 
 private:
+    const Architecture *_arch;
     std::unordered_map<Key, CascadeBuffer, KeyHash> _cache;
 
 public:
+    BufferMap(const Architecture *arch) : _arch(arch) { assert(_arch); }
+
     CascadeBuffer GetBuffer(SchedulerOperation *producer, SchedulerOperation *consumer, const Schedule *refSchedule)
     {
         auto key = Key(producer ? *producer : 0, consumer ? *consumer : 0);
@@ -89,39 +92,35 @@ public:
                 auto producerCost = refSchedule->Cost(producer);
                 auto consumerCost = refSchedule->Cost(consumer);
 
-                bufferShape = RollingBufferShape(producerCost->stripe, consumerCost->stripeInput[0]);
-                bufferSize = DataTypeStorageSizeBytes(ofm->Type(), bufferShape.Elements());
+                bufferShape = _arch->RollingBufferShape(
+                    producerCost->stripe, consumerCost->stripeInput[0], ofm->tensor->format);
+                const int64_t size = _arch->StorageBytes(bufferShape, ofm->tensor->format, ofm->Type());
+                assert(size <= std::numeric_limits<int>::max());
+                bufferSize = int(size);
             }
         }
         _cache.emplace(key, CascadeBuffer(bufferShape, bufferSize));
 
         return CascadeBuffer(bufferShape, bufferSize);
     }
-
-    Shape RollingBufferShape(const Shape &producerStripeShape, const Shape &consumerStripeShape)
-    {
-        // Calculates the storage shape of the rolling buffer between two SchedulerOperations in a Cascade
-        int buffer_height = RoundAway(producerStripeShape.Height() + consumerStripeShape.Height(), consumerStripeShape.Height());
-        // Rolling buffers have to conform to NHCWB16 alignment
-        return consumerStripeShape.With(-3, buffer_height).With(-1, RoundAway(producerStripeShape.Depth(), 16));
-    }
 };
 
 
-CascadeBuilder::CascadeBuilder(vector_span<std::unique_ptr<SchedulerOperation>> ops,
+CascadeBuilder::CascadeBuilder(const Architecture *arch, vector_span<std::unique_ptr<SchedulerOperation>> ops,
     const std::unordered_map<UniqueId, int> &nonLocalMemUsage, const std::unordered_map<UniqueId, int> &opLocalMemUsage,
     const std::unordered_map<UniqueId, LiveRangeSummary> &tensorLiveRanges, bool spilling) :
-        _ops(ops),
+        _arch(arch), _ops(ops),
         _nonLocalMemUsage(nonLocalMemUsage), _opLocalMemUsage(opLocalMemUsage), _tensorLiveRanges(tensorLiveRanges)
 
 {
+    assert(_arch);
     _spilling = spilling;
 }
 
 
 void CascadeBuilder::BuildCascades(Schedule *refSchedule, Schedule *fallbackSchedule, Address guidingStagingLimit)
 {
-    BufferMap buffers;
+    BufferMap buffers(_arch);
     SchedulerCostMap costs;
     std::unordered_map<int, CascadeInfo> cascadeMap;
 

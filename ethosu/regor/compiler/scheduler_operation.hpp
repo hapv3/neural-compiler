@@ -97,6 +97,7 @@ private:
     Address allocatedAddress = -1;
 
 public:
+    const Architecture *architecture = nullptr;
     std::shared_ptr<Tensor> srcTensor;
     std::string internalName;
     TensorFormat format = TensorFormat::Unknown;
@@ -173,7 +174,14 @@ public:
 
     int AllocationSizeBytes() const
     {
-        return (allocatedSize > 0) ? allocatedSize : TensorAllocationBytes(storageShape, format, dataType);
+        if ( allocatedSize > 0 ) return allocatedSize;
+        if ( architecture )
+        {
+            const int64_t size = architecture->StorageBytes(storageShape, format, dataType);
+            assert(size <= std::numeric_limits<int>::max());
+            return int(size);
+        }
+        return TensorAllocationBytes(storageShape, format, dataType);
     }
 
     void SetInternalName(std::string name) { internalName = std::move(name); }
@@ -219,7 +227,16 @@ public:
     bool preBuffer = false;
     Buffering buffering = Buffering::None;
 
-    int PartialAllocationSizeBytes() const { return TensorAllocationBytes(shape, tensor->format, tensor->dataType); }
+    int PartialAllocationSizeBytes() const
+    {
+        if ( tensor->architecture )
+        {
+            const int64_t size = tensor->architecture->StorageBytes(shape, tensor->format, tensor->dataType);
+            assert(size <= std::numeric_limits<int>::max());
+            return int(size);
+        }
+        return TensorAllocationBytes(shape, tensor->format, tensor->dataType);
+    }
     const Shape &SliceShape() const { return slice.shape.IsEmpty() ? shape : slice.shape; }
     void SetType(DataType dt) { dataType = dt; }
     DataType Type() const { return dataType == DataType::None ? tensor->dataType : dataType; }

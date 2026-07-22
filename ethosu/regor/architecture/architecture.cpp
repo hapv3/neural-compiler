@@ -71,16 +71,39 @@ int64_t Architecture::StorageBytes(const Shape &logicalShape, TensorFormat forma
     return RoundAway(DataTypeStorageSizeBytes(dataType, storageShape.Elements64()), int64_t(AllocationQuantum()));
 }
 
+Shape Architecture::TensorStrides(const Shape &logicalShape, TensorFormat format, DataType dataType) const
+{
+    const int elementBytes = DataTypeSizeBits(dataType) / 8;
+    if ( format == TensorFormat::NHWC )
+    {
+        const int strideC = elementBytes;
+        const int strideX = logicalShape.Depth() * strideC;
+        const int strideY = logicalShape.Width() * strideX;
+        const int strideN = logicalShape.Height() * strideY;
+        return Shape(strideN, strideY, strideX, strideC);
+    }
+    if ( format == TensorFormat::NHCWB16 )
+    {
+        const int strideX = 16 * elementBytes;
+        const int strideC = strideX * logicalShape.Width();
+        const int strideY = elementBytes * logicalShape.Width() * RoundAway(logicalShape.Depth(), 16);
+        const int strideN = logicalShape.Height() * strideY;
+        return Shape(strideN, strideY, strideX, strideC);
+    }
+    assert(false && "Unsupported tensor format");
+    return Shape(0, 0, 0, 0);
+}
+
 bool Architecture::CanAliasDepthOffset(TensorFormat format, int depthOffset) const
 {
     return format != TensorFormat::NHCWB16 || (depthOffset & 15) == 0;
 }
 
 Shape Architecture::RollingBufferShape(const Shape &producerShape, const Shape &consumerShape,
-    TensorFormat format) const
+    TensorFormat) const
 {
     const int bufferHeight = RoundAway(producerShape.Height() + consumerShape.Height(), consumerShape.Height());
-    return StorageShape(consumerShape.With(-3, bufferHeight).WithDepth(producerShape.Depth()), format);
+    return consumerShape.With(-3, bufferHeight).WithDepth(RoundAway(producerShape.Depth(), 16));
 }
 
 MemArea Architecture::ReadonlyMemory()

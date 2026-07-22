@@ -78,11 +78,15 @@ struct HLCFeatureMap
     Quantization quantization;
     Point2i stepXY = {1, 1};
     Address address = -1;
+    int allocationBytes = 0;
     UniqueId uid = ~0u;
     HLCRoundMode rounding = HLCRoundMode::AUTO;
     ArchResampling resamplingMode = ArchResampling::None;
 
-    int AllocationSizeBytes() const { return TensorAllocationBytes(shape, format, dataType); }
+    int AllocationSizeBytes() const
+    {
+        return allocationBytes > 0 ? allocationBytes : TensorAllocationBytes(shape, format, dataType);
+    }
 
     std::string ToString() const
     {

@@ -175,7 +175,7 @@ TEST_CASE("Cascade builder requests rolling-buffer reuse for binary op with prim
 
     const int rollingBufferSize = DataTypeStorageSizeBytes(
         tensB->dataType, Shape(2, fullStripe.Width(), fullStripe.Depth()).Elements());
-    CascadeBuilder cascadeBuilder(ops, nonLocalMemUsage, opLocalMemUsage, liveRanges, true);
+    CascadeBuilder cascadeBuilder(arch.get(), ops, nonLocalMemUsage, opLocalMemUsage, liveRanges, true);
     cascadeBuilder.BuildCascades(refSchedule.get(), fallbackSchedule.get(), rollingBufferSize);
 
     REQUIRE(refSchedule->Cost(ops[1].get())->ofmEquivalenceId == tensB->equivalenceId);

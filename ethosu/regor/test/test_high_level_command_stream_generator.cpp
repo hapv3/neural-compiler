@@ -32,9 +32,15 @@ using namespace regor;
 namespace
 {
 
+Architecture *TestArchitecture()
+{
+    static auto s_arch = CreateArchDefault<ArchEthosU85>(1024);
+    return s_arch.get();
+}
+
 std::unique_ptr<ArchitectureOpConfig> GetOpConfig(std::unique_ptr<SchedulerOperation> &schedOp)
 {
-    auto arch = CreateArchDefault<ArchEthosU85>(1024);
+    auto *arch = TestArchitecture();
     auto ifm = schedOp->IFM(0);
     auto ofm = schedOp->OFM();
     ArchitectureConfigQuery query{};
@@ -88,6 +94,8 @@ CreateSchedulerOperation(OpType opType, Kernel kernel, Shape ifmShape, Shape ofm
 {
     auto ifm = CreateSchedulerTensor("ifm", ifmShape, DataType::Int8);
     auto ofm = CreateSchedulerTensor("ofm", ofmShape, DataType::Int8);
+    ifm->architecture = TestArchitecture();
+    ofm->architecture = TestArchitecture();
     std::unique_ptr<SchedulerOperation> schedOp = ::CreateSchedulerOperation(opType, TensorUsage::IFM0, ifm, TensorUsage::OFM, ofm);
     schedOp->IFM(0)->stepXY = ifmStep;
     schedOp->OFM()->stepXY = ofmStep;

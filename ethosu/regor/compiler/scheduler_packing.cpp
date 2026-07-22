@@ -838,6 +838,7 @@ void SchedulerPacking::InitSchedulerTensor(SchedulerTensor *schedTensor, Tensor 
 {
     const auto type = tensor->Type();
     // Take scheduler-local copies of graph tensor parameters.
+    schedTensor->architecture = _arch;
     schedTensor->srcTensor = tensor->shared_from_this();
     schedTensor->format = TensorFormat::NHWC;
     schedTensor->memArea = tensor->IsConstant() ? _arch->ReadonlyMemory() : _arch->FeatureMapMemory();

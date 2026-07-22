@@ -34,33 +34,6 @@
 namespace regor
 {
 
-// Calculates STRIDE_C/Y/X
-static Shape GetStrides(const HLCFeatureMap &fm)
-{
-    auto elemSize = DataTypeSizeBits(fm.dataType) / 8;
-    if ( fm.format == TensorFormat::NHWC )
-    {
-        int strideC = elemSize;
-        int strideX = fm.shape.Depth() * strideC;
-        int strideY = fm.shape.Width() * strideX;
-        int strideN = fm.shape.Height() * strideY;
-        return Shape(strideN, strideY, strideX, strideC);
-    }
-    else if ( fm.format == TensorFormat::NHCWB16 )
-    {
-        int strideX = 16 * elemSize;
-        int strideC = strideX * fm.shape.Width();
-        int strideY = elemSize * fm.shape.Width() * RoundAway(fm.shape.Depth(), 16);
-        int strideN = fm.shape.Height() * strideY;
-        return Shape(strideN, strideY, strideX, strideC);
-    }
-    else
-    {
-        assert(false && "Unsupported tensor format");
-        return Shape(0, 0, 0, 0);
-    }
-}
-
 static void MakeFeatureMap(TensorUsage usage, const SchedulerConnection *schedConn, HLCFeatureMap &fm, Address base,
     std::unordered_map<UniqueId, Address> &addresses)
 {
@@ -71,6 +44,10 @@ static void MakeFeatureMap(TensorUsage usage, const SchedulerConnection *schedCo
     fm.memArea = schedTens->memArea;
     fm.format = schedTens->format;
     fm.usage = usage;
+    assert(schedTens->architecture);
+    const int64_t allocationBytes = schedTens->architecture->StorageBytes(fm.shape, fm.format, fm.dataType);
+    assert(allocationBytes <= std::numeric_limits<int>::max());
+    fm.allocationBytes = int(allocationBytes);
     // Calculate address of this FeatureMap
     auto address = schedTens->AllocatedAddress();
     if ( address != -1 )
@@ -85,7 +62,7 @@ static void MakeFeatureMap(TensorUsage usage, const SchedulerConnection *schedCo
     {
         fm.constBuffer = schedTens->bufferView.Buffer()->shared_from_this();
     }
-    fm.strides = GetStrides(fm);
+    fm.strides = schedTens->architecture->TensorStrides(fm.shape, fm.format, fm.dataType);
     fm.stepXY = schedConn->stepXY;
     fm.transpose = schedConn->transpose;
     fm.reverse = schedConn->reverse;
@@ -577,10 +554,10 @@ void HLCStreamGenerator::GenerateHLCDMACommands(SchedulerOperation *op, const st
         auto dma = std::make_unique<HLCDMA>();
         dma->srcMemArea = ifm.memArea;
         dma->srcAddress = ifm.address;
-        dma->srcStrides = GetStrides(ifm);
+        dma->srcStrides = ifm.strides;
         dma->destMemArea = ofm.memArea;
         dma->destAddress = ofm.address;
-        dma->destStrides = GetStrides(ofm);
+        dma->destStrides = ofm.strides;
         dma->length = ifm.AllocationSizeBytes();
 
         cmds.push_back(std::move(dma));
@@ -608,8 +585,8 @@ void HLCStreamGenerator::GenerateHLCDMACommands(SchedulerOperation *op, const st
     dma->length = DataTypeStorageSizeBytes(srcFm.dataType, srcFm.shape[-1]);
     dma->idxMax = valFm.shape[-2] - 1;
 
-    auto srcStrides = GetStrides(srcFm);
-    auto destStrides = GetStrides(ofm);
+    auto srcStrides = srcFm.strides;
+    auto destStrides = ofm.strides;
 
     if ( opType == OpType::Scatter && idxFm.dataType == DataType::Int64 )
     {

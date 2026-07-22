@@ -33,6 +33,7 @@
 
 #include <cassert>
 #include <memory>
+#include <numeric>
 #include <optional>
 #include <vector>
 
@@ -50,8 +51,7 @@ END_ENUM_TABLE()
 namespace regor
 {
 
-constexpr int AllocationQuantum = 16;
-constexpr int NPUTensorAlignment = 16;
+constexpr int DefaultAllocationQuantum = 16;
 
 static Shape GetShapeForFormat(const Shape &shape, TensorFormat format)
 {
@@ -66,7 +66,7 @@ int TensorAllocationBytes(const Shape &shape, TensorFormat format, DataType dtyp
 {
     if ( !shape ) return 0;
     Shape storageShape = GetShapeForFormat(shape, format);
-    return RoundAway(DataTypeStorageSizeBytes(dtype, storageShape.Elements()), AllocationQuantum);
+    return RoundAway(DataTypeStorageSizeBytes(dtype, storageShape.Elements()), DefaultAllocationQuantum);
 }
 
 const LRMemory &Schedule::MemoryAt(int timeIndex) const
@@ -123,7 +123,7 @@ std::shared_ptr<Schedule> Scheduler::Process()
         std::unordered_map<UniqueId, int> opLocalMemUsage;
         auto nonLocal = ComputeNonLocalUsage(minSchedule.get(), &liveRanges, &opLocalMemUsage);
 
-        CascadeBuilder cascadeBuilder(_ops, nonLocal, opLocalMemUsage, liveRanges, _spilling);
+        CascadeBuilder cascadeBuilder(_arch, _ops, nonLocal, opLocalMemUsage, liveRanges, _spilling);
         cascadeBuilder.BuildCascades(minSchedule.get(), _maxSchedule.get(), initialStagingLimit);
         UpdateOpMemorySnapshot(minSchedule.get());
 
@@ -192,18 +192,16 @@ Point2i Scheduler::GetStripeInputRequirement(const Shape &ofmShape, const Kernel
     return Point2i(w, h);
 }
 
-// Returns true if NHWC format must be used for the given tensor
-static bool CheckLinearFormatForConcatSplit(SchedulerTensor *tensor)
+// Returns true if the architecture's linear format must be used for the given tensor.
+static bool CheckLinearFormatForConcatSplit(const Architecture *arch, TensorFormat format, SchedulerTensor *tensor)
 {
     for ( const auto &prod : tensor->producers )
     {
-        // If axis corresponds to C-dimension, NHCWB16 can only be used in the output if all the concat_start's
-        // are a multiple of 16. This as, it is only then the address offset for the ofm, for all operations,
-        // will be 16 byte aligned. For other values of axis the address offsets will be 16 byte aligned, as they
-        // are all based on c = 0 and those addresses are always 16 byte aligned due to the NHCWB16 format.
+        // Depth slices can only alias a native-format output at offsets supported by the architecture.
         for ( auto &conn : prod->outputs )
         {
-            if ( conn.tensor.get() == tensor && conn.slice.offset.Size() > 0 && (conn.slice.offset.Depth() & 15) != 0 )
+            if ( conn.tensor.get() == tensor && conn.slice.offset.Size() > 0 &&
+                 !arch->CanAliasDepthOffset(format, conn.slice.offset.Depth()) )
             {
                 return true;
             }
@@ -211,10 +209,11 @@ static bool CheckLinearFormatForConcatSplit(SchedulerTensor *tensor)
     }
     for ( const auto &cons : tensor->consumers )
     {
-        // If read offset is not a multiple of 16 in the C-dimension, NHCWB16 need to be avoided in the input.
+        // Depth slices can only alias a native-format input at offsets supported by the architecture.
         for ( auto &conn : cons->inputs )
         {
-            if ( conn.tensor.get() == tensor && conn.slice.offset.Size() > 0 && (conn.slice.offset.Depth() & 15) != 0 )
+            if ( conn.tensor.get() == tensor && conn.slice.offset.Size() > 0 &&
+                 !arch->CanAliasDepthOffset(format, conn.slice.offset.Depth()) )
             {
                 return true;
             }
@@ -242,11 +241,13 @@ Shape Scheduler::AlignStripe(const SchedulerOperation *schedOp, const Shape &str
 int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *conn, std::unordered_set<UniqueId> &visited)
 {
     auto tensor = conn->tensor.get();
+    tensor->architecture = _arch;
     if ( visited.insert(tensor->uid).second )
     {
+        const TensorFormat internalFormat = _arch->DefaultInternalTensorFormat(usage, false);
         // Force linear format if number of elements overflows in brick format
         if ( tensor->storageShape &&
-             Shape::RoundAway(tensor->storageShape, Shape(1, 1, 1, 16)).Elements64() > std::numeric_limits<int>::max() )
+             _arch->StorageShape(tensor->storageShape, internalFormat).Elements64() > std::numeric_limits<int>::max() )
         {
             tensor->needsLinearFormat = true;
         }
@@ -256,7 +257,7 @@ int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *con
         {
             tensor->needsLinearFormat = true;
         }
-        if ( CheckLinearFormatForConcatSplit(tensor) )
+        if ( CheckLinearFormatForConcatSplit(_arch, internalFormat, tensor) )
         {
             tensor->needsLinearFormat = true;
         }
@@ -448,10 +449,18 @@ int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *con
         tensor->memArea = tensor->hasNPUWriters ? _arch->OutputFeatureMapMemory() : _arch->InputFeatureMapMemory();
     }
 
-    // Set tensor format to NHCWB16 for FeatureMaps, if possible
+    // Select public binding and internal feature-map formats independently.
     if ( IsIFM(usage) || IsOFM(usage) )
     {
-        tensor->format = tensor->needsLinearFormat ? TensorFormat::NHWC : TensorFormat::NHCWB16;
+        if ( tensor->isGraphInput || tensor->isGraphOutput )
+        {
+            const TensorUsage bindingUsage = tensor->isGraphOutput ? TensorUsage::OFM : TensorUsage::IFM;
+            tensor->format = _arch->ModelBindingFormat(bindingUsage);
+        }
+        else
+        {
+            tensor->format = _arch->DefaultInternalTensorFormat(usage, tensor->needsLinearFormat);
+        }
     }
 
     return tensor->IsConstant() ? 0 : tensor->AllocationSizeBytes();
@@ -899,16 +908,20 @@ bool Scheduler::AllocateAddresses(Schedule *schedule)
 {
     const auto verbose = _options.verboseAllocation;
     const auto reuseIfms = !_options.disabled.All(SchedulerFeature::ReuseIFM);
+    const int featureMapAlignment = std::max(
+        _arch->TensorAlignment(TensorUsage::IFM, TensorFormat::Unknown),
+        _arch->TensorAlignment(TensorUsage::OFM, TensorFormat::Unknown));
+    const int sharedAlignment = std::lcm(_options.cpuTensorAlignment, featureMapAlignment);
     schedule->featureMapLRGraph = std::make_unique<LiveRangeGraph>(reuseIfms);
     // If graph input/outputs tensors are in FeatureMap memory, allocate with user-specified tensor alignment
     AllocateTensors(_ops, schedule, *schedule->featureMapLRGraph, _arch->FeatureMapMemory(), _options.tensorAllocator,
-        _options.separateIORegions ? NPUTensorAlignment : _options.cpuTensorAlignment, verbose);
+        _options.separateIORegions ? featureMapAlignment : sharedAlignment, verbose);
     if ( _spilling )
     {
         const auto limit = _options.optimizationStagingLimit;
         schedule->stagingLRGraph = std::make_unique<LiveRangeGraph>(reuseIfms);
         AllocateTensors(_ops, schedule, *schedule->stagingLRGraph, _arch->StagingMemory(), _options.tensorAllocator,
-            NPUTensorAlignment, verbose, limit);
+            featureMapAlignment, verbose, limit);
         return schedule->memoryUsage[_arch->StagingMemory()] <= limit;
     }
     return true;
@@ -919,7 +932,8 @@ void Scheduler::AllocateReadOnlyAddresses(Schedule *schedule, IncrementalLinearA
 {
     LiveRangeGraph lrGraph{false};
     lrGraph.ExtractLiveRangesFromCascades(_ops, schedule, _arch->ReadonlyMemory(), false);
-    auto totalSize = readOnlyAllocator.Allocate(&lrGraph, NPUTensorAlignment, _options.verboseAllocation);
+    const int alignment = _arch->TensorAlignment(TensorUsage::Weights, TensorFormat::WeightsEncoded);
+    auto totalSize = readOnlyAllocator.Allocate(&lrGraph, alignment, _options.verboseAllocation);
     schedule->memoryUsage[_arch->ReadonlyMemory()] = int(totalSize);
 }
 
@@ -934,10 +948,15 @@ void Scheduler::AllocateIOAddresses(Schedule *schedule, const std::vector<std::u
         assert(_arch->InputFeatureMapMemory() != _arch->OutputFeatureMapMemory());
 
         LiveRangeGraph inputLRGraph(false);
-        AllocateTensors(ops, schedule, inputLRGraph, _arch->InputFeatureMapMemory(), TensorAllocator::LinearAlloc, NPUTensorAlignment, verbose);
+        const TensorFormat inputFormat = _arch->ModelBindingFormat(TensorUsage::IFM);
+        const int inputAlignment = _arch->TensorAlignment(TensorUsage::IFM, inputFormat);
+        AllocateTensors(
+            ops, schedule, inputLRGraph, _arch->InputFeatureMapMemory(), TensorAllocator::LinearAlloc, inputAlignment, verbose);
         LiveRangeGraph outputLRGraph{false};
+        const TensorFormat outputFormat = _arch->ModelBindingFormat(TensorUsage::OFM);
+        const int outputAlignment = _arch->TensorAlignment(TensorUsage::OFM, outputFormat);
         AllocateTensors(ops, schedule, outputLRGraph, _arch->OutputFeatureMapMemory(), TensorAllocator::LinearAlloc,
-            NPUTensorAlignment, verbose);
+            outputAlignment, verbose);
     }
 }
 
@@ -969,7 +988,7 @@ void Scheduler::PopulateLiveRanges(const LiveRangeGraph &lrGraph, std::unordered
         LiveRangeSummary summary;
         summary.startTime = lr->startTime;
         summary.endTime = lr->endTime;
-        summary.size = RoundAway(lr->size, AllocationQuantum);
+        summary.size = RoundAway(lr->size, _arch->AllocationQuantum());
         UniqueId rangeId = INVALID_UID;
         for ( const auto *tensor : lr->tensors )
         {
@@ -2081,7 +2100,7 @@ std::shared_ptr<Schedule> Scheduler::OptimizeSubSchedule(const CascadeInfo &casc
     std::unordered_map<UniqueId, LiveRangeSummary> liveRanges;
     std::unordered_map<UniqueId, int> opLocalMemUsage;
     ComputeNonLocalUsage(refSchedule, &liveRanges, &opLocalMemUsage);
-    CascadeBuilder cascadeBuilder(subOps, nonLocalMemUsage, opLocalMemUsage, liveRanges, _spilling);
+    CascadeBuilder cascadeBuilder(_arch, subOps, nonLocalMemUsage, opLocalMemUsage, liveRanges, _spilling);
 
     // Start by adding buffering
     auto bufferedSubSchedule = ProposeScheduleBuffering(subSchedule.get(), stagingLimitBytes);
@@ -2442,8 +2461,9 @@ void Scheduler::PrintSchedule(Schedule *schedule)
 }
 
 
-bool ParseSchedulerOptions(SchedulerOptions &opt, IniReader &reader)
+bool ParseSchedulerOptions(SchedulerOptions &opt, IniReader &reader, const Architecture *arch)
 {
+    assert(arch);
     // Parse debug settings
     std::string key;
     while ( reader.Begin(key) )
@@ -2530,9 +2550,12 @@ bool ParseSchedulerOptions(SchedulerOptions &opt, IniReader &reader)
         reader.End();
     }
 
-    if ( opt.cpuTensorAlignment <= 0 || opt.cpuTensorAlignment % NPUTensorAlignment != 0 )
+    const int requiredAlignment = std::max(
+        arch->TensorAlignment(TensorUsage::IFM, arch->ModelBindingFormat(TensorUsage::IFM)),
+        arch->TensorAlignment(TensorUsage::OFM, arch->ModelBindingFormat(TensorUsage::OFM)));
+    if ( opt.cpuTensorAlignment <= 0 || opt.cpuTensorAlignment % requiredAlignment != 0 )
     {
-        LOG_ERROR("CPU tensor alignment ({}) must be a multiple of {}\n", opt.cpuTensorAlignment, NPUTensorAlignment);
+        LOG_ERROR("CPU tensor alignment ({}) must be a multiple of {}\n", opt.cpuTensorAlignment, requiredAlignment);
         return false;
     }
 

@@ -390,6 +390,7 @@ public:
     virtual TensorFormat DefaultInternalTensorFormat(TensorUsage usage, bool linearRequired) const;
     virtual Shape StorageShape(const Shape &logicalShape, TensorFormat format) const;
     virtual int64_t StorageBytes(const Shape &logicalShape, TensorFormat format, DataType dataType) const;
+    virtual Shape TensorStrides(const Shape &logicalShape, TensorFormat format, DataType dataType) const;
     virtual bool CanAliasDepthOffset(TensorFormat format, int depthOffset) const;
     virtual Shape RollingBufferShape(const Shape &producerShape, const Shape &consumerShape,
         TensorFormat format) const;
