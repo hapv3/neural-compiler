@@ -29,6 +29,7 @@ private:
     ArchitectureMemory *_modelMemory = nullptr;
     ArchitectureMemory *_tcdmMemory = nullptr;
     std::unique_ptr<IArchitectureConstraints> _constraints;
+    std::unique_ptr<class WeightEncoder> _weightEncoder;
 
 public:
     ArchNeuralAI();
@@ -38,7 +39,7 @@ public:
     bool CheckConfiguration(std::string &error) override;
     std::unique_ptr<ArchitectureOpConfig> GetOpConfig(OpType opType, const ArchitectureConfigQuery &query) override;
     std::unique_ptr<ArchitectureOpGroup> CreateOpGroup(const ArchitectureOpGroupQuery &op) override;
-    class WeightEncoder *WeightEncoder() override { return nullptr; }
+    class WeightEncoder *WeightEncoder() override { return _weightEncoder.get(); }
     ArchitecturePerformance *Performance() override { return nullptr; }
     IRegisterCommandStreamGenerator *RegisterCommandStreamGenerator() override { return nullptr; }
     IArchitectureConstraints *Constraints() override { return _constraints.get(); }

@@ -11,6 +11,7 @@
 #include "architecture/neuralai/neural_ai_abi.hpp"
 #include "architecture/neuralai/neural_ai_constraints.hpp"
 #include "architecture/neuralai/neural_ai_op_config.hpp"
+#include "architecture/neuralai/neural_ai_weight_encoder.hpp"
 #include "include/regor.h"
 
 namespace regor
@@ -34,6 +35,7 @@ bool ReadFixedConfigValue(IniReader *reader, const std::string &key, int expecte
 ArchNeuralAI::ArchNeuralAI()
 {
     _constraints = std::make_unique<NeuralAIConstraints>();
+    _weightEncoder = std::make_unique<NeuralAIWeightEncoder>();
     auto modelMemory = std::make_unique<ArchitectureMemory>("model", MaxAddress());
     modelMemory->SetParameters(DMAAlignment, 1, 1, DMAAlignment, 1, 1, 1);
     _modelMemory = modelMemory.get();

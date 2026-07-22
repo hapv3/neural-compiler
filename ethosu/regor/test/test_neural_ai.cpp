@@ -15,6 +15,17 @@
 
 using namespace regor;
 
+namespace
+{
+
+uint32_t Read32(const std::vector<uint8_t> &data, size_t offset)
+{
+    return uint32_t(data[offset]) | (uint32_t(data[offset + 1]) << 8) |
+           (uint32_t(data[offset + 2]) << 16) | (uint32_t(data[offset + 3]) << 24);
+}
+
+}  // namespace
+
 TEST_CASE("Neural-AI architecture factory")
 {
     regor_context_t context = 0;
@@ -195,4 +206,68 @@ TEST_CASE("Neural-AI GEMM weight packing follows K-lane N-lane tile order")
             }
         }
     }
+}
+
+TEST_CASE("Neural-AI Regor weight encoder packs OHWI matrix constants")
+{
+    constexpr int depthK = 33;
+    constexpr int depthN = 34;
+    ArchNeuralAI arch;
+    NeuralAIOpConfig opConfig;
+    auto *encoder = arch.WeightEncoder();
+    auto config = encoder->GetEncodingConfig(
+        &opConfig, nullptr, DataType::Int8, Flags<WeightFormat>(WeightFormat::Default));
+    auto source = encoder->GetWeightSource(config.get(), DataType::Int8, nullptr, nullptr);
+
+    std::vector<int8_t> ohwi(depthN * depthK);
+    std::vector<int8_t> matrixKN(depthK * depthN);
+    for ( int n = 0; n < depthN; ++n )
+    {
+        for ( int k = 0; k < depthK; ++k )
+        {
+            const int8_t value = int8_t(((n * 11 + k * 5) & 0x7f) - 64);
+            ohwi[n * depthK + k] = value;
+            matrixKN[k * depthN + n] = value;
+        }
+    }
+    source->SetSource(ohwi.data(), 0, Shape(depthN, 1, 1, depthK),
+        Shape(depthK, depthK, depthK, 1), 0);
+
+    std::vector<uint8_t> encoded;
+    const WeightsInfo info = encoder->EncodeWeights(config.get(), source.get(), encoded);
+    REQUIRE(info.sourceSize == depthK * depthN);
+    REQUIRE(encoded == neuralai::PackGEMM32Weights(matrixKN.data(), depthK, depthN));
+}
+
+TEST_CASE("Neural-AI Regor weight encoder emits ABI qparam lanes")
+{
+    constexpr int channels = 3;
+    ArchNeuralAI arch;
+    NeuralAIOpConfig opConfig;
+    auto *encoder = arch.WeightEncoder();
+    auto config = encoder->GetEncodingConfig(
+        &opConfig, nullptr, DataType::Int8, Flags<WeightFormat>(WeightFormat::Default));
+    Quantization quantization;
+    quantization.scales = {QuantizedScale(101, 3), QuantizedScale(202, 4), QuantizedScale(303, 5)};
+    quantization.zeroPoints = {-7, 2, 11};
+    quantization.quantMin = {-100};
+    quantization.quantMax = {99};
+    std::vector<int32_t> biases = {1001, -2002, 3003};
+    auto source = encoder->GetScaleSource(config.get(), DataType::Int32, quantization);
+    source->SetSource(biases.data(), channels, 0, channels, 0);
+
+    std::vector<uint8_t> encoded;
+    REQUIRE(encoder->EncodeScales(config.get(), source.get(), encoded, false) == 32 * 32);
+    REQUIRE(encoded.size() == 32 * 32);
+    for ( int channel = 0; channel < channels; ++channel )
+    {
+        const size_t offset = size_t(channel) * 32;
+        REQUIRE(int32_t(Read32(encoded, offset)) == biases[channel]);
+        REQUIRE(int32_t(Read32(encoded, offset + 4)) == quantization.scales[channel].scale);
+        REQUIRE(Read32(encoded, offset + 8) == uint32_t(quantization.scales[channel].shift));
+        REQUIRE(int32_t(Read32(encoded, offset + 12)) == quantization.zeroPoints[channel]);
+        REQUIRE(int32_t(Read32(encoded, offset + 16)) == -100);
+        REQUIRE(int32_t(Read32(encoded, offset + 20)) == 99);
+    }
+    REQUIRE(Read32(encoded, 3 * 32 + 4) == 0);
 }
