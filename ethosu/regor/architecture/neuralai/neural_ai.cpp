@@ -95,7 +95,7 @@ bool ArchNeuralAI::CheckConfiguration(std::string &error)
 
 std::unique_ptr<ArchitectureOpConfig> ArchNeuralAI::GetOpConfig(OpType opType, const ArchitectureConfigQuery &query)
 {
-    if ( opType != OpType::FullyConnected && opType != OpType::MatMul ) return nullptr;
+    if ( opType != OpType::FullyConnected && opType != OpType::MatMul && opType != OpType::MemoryCopy ) return nullptr;
     if ( query.ifmBits != 8 || query.ofmBits != 8 || query.transpose != TransposeType::None ||
          query.reverse != ReverseType::None )
     {

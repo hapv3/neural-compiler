@@ -24,6 +24,7 @@
 #include "graph.hpp"
 #include "graphir_optimiser.hpp"
 #include "live_range.hpp"
+#include "neural_ai_graph_optimiser.hpp"
 #include "op_type.hpp"
 #include "operation.hpp"
 #include "optimiser_utils.hpp"
@@ -72,6 +73,12 @@ std::vector<std::unique_ptr<GraphOptimiser>> GraphOptimiser::MakeGraphOptimiser(
             assert(false);
     }
     graphOptimisers.emplace_back(std::make_unique<GraphIrOptimiser>(arch->Constraints(), options, db));
+    std::string target;
+    arch->Call([&target](const std::string &name) { target = name; });
+    if ( target == REGOR_ARCH_NEURALAI )
+    {
+        graphOptimisers.emplace_back(std::make_unique<NeuralAIGraphOptimiser>(arch->Constraints(), options, db));
+    }
     return graphOptimisers;
 }
 

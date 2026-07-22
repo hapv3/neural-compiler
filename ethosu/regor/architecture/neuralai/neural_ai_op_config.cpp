@@ -23,7 +23,8 @@ std::string NeuralAIOpConfig::ToString(bool full)
 
 int NeuralAIOpGroup::Add(const ArchitectureOpGroupQuery &op, const std::vector<int> &dependsOn)
 {
-    if ( _hasOp || !dependsOn.empty() || (op.type != OpType::FullyConnected && op.type != OpType::MatMul) )
+    if ( _hasOp || !dependsOn.empty() ||
+         (op.type != OpType::FullyConnected && op.type != OpType::MatMul && op.type != OpType::MemoryCopy) )
     {
         return 0;
     }

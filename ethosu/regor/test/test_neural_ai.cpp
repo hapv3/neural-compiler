@@ -8,6 +8,8 @@
 #include "architecture/neuralai/neural_ai_constraints.hpp"
 #include "architecture/neuralai/neural_ai_op_config.hpp"
 #include "architecture/neuralai/neural_ai_weight_encoder.hpp"
+#include "compiler/neural_ai_graph_optimiser.hpp"
+#include "util.hpp"
 
 #include <catch_all.hpp>
 
@@ -130,6 +132,57 @@ TEST_CASE("Neural-AI constraints accept only initial INT8 matrix operations")
     query.weightFormat = WeightFormat::Default;
     query.ifm[0].shape = Shape(2, 1, 31);
     REQUIRE(constraints->OperatorQuery(OpType::MatMul, &query) == QueryResult::Unsupported);
+}
+
+TEST_CASE("Neural-AI constraints accept shape-preserving memory copies")
+{
+    ArchNeuralAI arch;
+    auto *constraints = arch.Constraints();
+
+    REQUIRE(constraints->OperatorQuery(OpType::MemoryCopy) == QueryResult::NativeConstrained);
+
+    ArchOperatorQuery query;
+    query.ifm[0].type = DataType::Int8;
+    query.ifm[0].shape = Shape(1, 1, 1, 33);
+    query.ofm.type = DataType::Int8;
+    query.ofm.shape = query.ifm[0].shape;
+    REQUIRE(constraints->OperatorQuery(OpType::MemoryCopy, &query) == QueryResult::Native);
+
+    query.ofm.shape = Shape(1, 1, 1, 34);
+    REQUIRE(constraints->OperatorQuery(OpType::MemoryCopy, &query) == QueryResult::Unsupported);
+}
+
+TEST_CASE("Neural-AI graph optimiser inserts ROW32 boundary conversions")
+{
+    ArchNeuralAI arch;
+    auto input = CreateTensor("input", Shape(1, 1, 1, 33), DataType::Int8);
+    auto output = CreateTensor("output", Shape(1, 1, 1, 34), DataType::Int8);
+    auto matrix = CreateOperation(
+        OpType::FullyConnected, TensorUsage::IFM0, input, TensorUsage::OFM, output);
+    std::vector<std::shared_ptr<Operation>> sourceOps = {matrix};
+    auto graph = CreateGraph(sourceOps);
+
+    GraphOptimiserOptions options;
+    NeuralAIGraphOptimiser optimiser(arch.Constraints(), options, nullptr);
+    optimiser.Process(graph.get());
+
+    REQUIRE(graph->IsInput(input.get()));
+    REQUIRE(graph->IsOutput(output.get()));
+    REQUIRE(matrix->IFM(0) != input.get());
+    REQUIRE(matrix->OFM() != output.get());
+    REQUIRE(matrix->IFM(0)->Name() == "input/row32");
+    REQUIRE(matrix->OFM()->Name() == "output/row32");
+
+    REQUIRE(input->Readers().size() == 1);
+    REQUIRE(input->Readers().front()->Type() == OpType::MemoryCopy);
+    REQUIRE(input->Readers().front()->OFM() == matrix->IFM(0));
+    REQUIRE(output->Writers().size() == 1);
+    REQUIRE(output->Writers().front()->Type() == OpType::MemoryCopy);
+    REQUIRE(output->Writers().front()->IFM(0) == matrix->OFM());
+
+    std::vector<Operation *> operations;
+    graph->GetAllOperations(operations);
+    REQUIRE(operations.size() == 3);
 }
 
 TEST_CASE("Neural-AI constraints enforce signed matrix zero points")

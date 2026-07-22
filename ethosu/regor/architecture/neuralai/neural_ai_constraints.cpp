@@ -29,7 +29,7 @@ bool HasBatchOne(const Shape &shape)
 
 bool NeuralAIConstraints::IsSupportedOp(OpType opType)
 {
-    return opType == OpType::FullyConnected || opType == OpType::MatMul;
+    return opType == OpType::FullyConnected || opType == OpType::MatMul || opType == OpType::MemoryCopy;
 }
 
 bool NeuralAIConstraints::SupportsQuantization(OpType opType, const Quantization &, DataType ifmType,
@@ -53,6 +53,12 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
     UNUSED(req);
     if ( !IsSupportedOp(opType) ) return QueryResult::Unsupported;
     if ( !query ) return QueryResult::NativeConstrained;
+
+    if ( opType == OpType::MemoryCopy )
+    {
+        return query->ifm[0].type == query->ofm.type && query->ifm[0].shape == query->ofm.shape ?
+            QueryResult::Native : QueryResult::Unsupported;
+    }
 
     if ( query->ifm[0].type != DataType::Int8 || query->ofm.type != DataType::Int8 )
     {
