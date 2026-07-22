@@ -5,6 +5,7 @@
 //
 
 #include "architecture/neuralai/neural_ai.hpp"
+#include "architecture/neuralai/neural_ai_constraints.hpp"
 
 #include <catch_all.hpp>
 
@@ -87,4 +88,45 @@ TEST_CASE("Neural-AI architecture accepts the fixed RTL limits")
     REQUIRE(reader.Begin(section));
     REQUIRE(section == "architecture");
     REQUIRE(arch.ParseSection(section, &reader) == IniParseResult::Done);
+}
+
+TEST_CASE("Neural-AI constraints accept only initial INT8 matrix operations")
+{
+    ArchNeuralAI arch;
+    auto *constraints = arch.Constraints();
+
+    REQUIRE(constraints->OperatorQuery(OpType::FullyConnected) == QueryResult::NativeConstrained);
+    REQUIRE(constraints->OperatorQuery(OpType::MatMul) == QueryResult::NativeConstrained);
+    REQUIRE(constraints->OperatorQuery(OpType::Conv2D) == QueryResult::Unsupported);
+
+    ArchOperatorQuery query;
+    query.ifm[0].type = DataType::Int8;
+    query.ifm[0].shape = Shape(1, 31);
+    query.weights.type = DataType::Int8;
+    query.weights.shape = Shape(31, 33);
+    query.ofm.type = DataType::Int8;
+    query.ofm.shape = Shape(1, 33);
+    query.weightFormat = WeightFormat::Default;
+    REQUIRE(constraints->OperatorQuery(OpType::MatMul, &query) == QueryResult::Native);
+
+    query.ofm.type = DataType::UInt8;
+    REQUIRE(constraints->OperatorQuery(OpType::MatMul, &query) == QueryResult::Unsupported);
+    query.ofm.type = DataType::Int8;
+    query.weightFormat = WeightFormat::None;
+    REQUIRE(constraints->OperatorQuery(OpType::MatMul, &query) == QueryResult::Unsupported);
+    query.weightFormat = WeightFormat::Default;
+    query.ifm[0].shape = Shape(2, 1, 31);
+    REQUIRE(constraints->OperatorQuery(OpType::MatMul, &query) == QueryResult::Unsupported);
+}
+
+TEST_CASE("Neural-AI constraints enforce signed matrix zero points")
+{
+    ArchNeuralAI arch;
+    auto *constraints = arch.Constraints();
+
+    REQUIRE(constraints->SupportedZeroPoint(0, TensorUsage::IFM, DataType::Int8, OpType::MatMul));
+    REQUIRE_FALSE(constraints->SupportedZeroPoint(1, TensorUsage::IFM, DataType::Int8, OpType::MatMul));
+    REQUIRE(constraints->SupportedZeroPoint(-128, TensorUsage::OFM, DataType::Int8, OpType::MatMul));
+    REQUIRE(constraints->SupportedZeroPoint(127, TensorUsage::OFM, DataType::Int8, OpType::MatMul));
+    REQUIRE_FALSE(constraints->SupportedZeroPoint(128, TensorUsage::OFM, DataType::Int8, OpType::MatMul));
 }

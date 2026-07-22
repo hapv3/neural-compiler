@@ -9,6 +9,7 @@
 #include "common/logging.hpp"
 
 #include "architecture/neuralai/neural_ai_abi.hpp"
+#include "architecture/neuralai/neural_ai_constraints.hpp"
 #include "include/regor.h"
 
 namespace regor
@@ -31,6 +32,7 @@ bool ReadFixedConfigValue(IniReader *reader, const std::string &key, int expecte
 
 ArchNeuralAI::ArchNeuralAI()
 {
+    _constraints = std::make_unique<NeuralAIConstraints>();
     auto modelMemory = std::make_unique<ArchitectureMemory>("model", MaxAddress());
     modelMemory->SetParameters(DMAAlignment, 1, 1, DMAAlignment, 1, 1, 1);
     _modelMemory = modelMemory.get();
@@ -46,6 +48,8 @@ ArchNeuralAI::ArchNeuralAI()
     _stagingMemory = _tcdmMemory;
     _lutMemory = _tcdmMemory;
 }
+
+ArchNeuralAI::~ArchNeuralAI() = default;
 
 bool ArchNeuralAI::ParseConfig(IniReader *reader)
 {

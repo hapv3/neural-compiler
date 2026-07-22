@@ -28,9 +28,11 @@ public:
 private:
     ArchitectureMemory *_modelMemory = nullptr;
     ArchitectureMemory *_tcdmMemory = nullptr;
+    std::unique_ptr<IArchitectureConstraints> _constraints;
 
 public:
     ArchNeuralAI();
+    ~ArchNeuralAI() override;
 
     bool ParseConfig(IniReader *reader) override;
     bool CheckConfiguration(std::string &error) override;
@@ -39,7 +41,7 @@ public:
     class WeightEncoder *WeightEncoder() override { return nullptr; }
     ArchitecturePerformance *Performance() override { return nullptr; }
     IRegisterCommandStreamGenerator *RegisterCommandStreamGenerator() override { return nullptr; }
-    IArchitectureConstraints *Constraints() override { return nullptr; }
+    IArchitectureConstraints *Constraints() override { return _constraints.get(); }
     TensorFormat IdealBufferingFormat() override { return TensorFormat::Row32; }
     int AllocationQuantum() const override { return DMAAlignment; }
     int TensorAlignment(TensorUsage usage, TensorFormat format) const override;
