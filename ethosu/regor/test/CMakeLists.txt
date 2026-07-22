@@ -53,6 +53,8 @@ add_catch_test(
         test_graph_packing.cpp
         test_ordered_map.cpp
         test_arch_ethos_u85.cpp
+        test_neural_ai_abi.cpp
+        test_neural_ai_writer.cpp
         test_arch_constraints.cpp
         test_hash.cpp
         test_scheduler_decompose.cpp
