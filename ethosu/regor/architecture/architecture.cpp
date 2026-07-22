@@ -27,10 +27,61 @@ BEGIN_ENUM_TABLE(regor::TensorFormat)
     ADD_ENUM_NAME(NHWC)
     ADD_ENUM_NAME(NHCWB16)
     ADD_ENUM_NAME(WeightsEncoded)
+    ADD_ENUM_NAME(Row32)
+    ADD_ENUM_NAME(C32Blocked)
 END_ENUM_TABLE()
 
 namespace regor
 {
+
+int Architecture::AllocationQuantum() const
+{
+    return 16;
+}
+
+int Architecture::TensorAlignment(TensorUsage, TensorFormat) const
+{
+    return 16;
+}
+
+TensorFormat Architecture::ModelBindingFormat(TensorUsage) const
+{
+    return TensorFormat::NHWC;
+}
+
+TensorFormat Architecture::DefaultInternalTensorFormat(TensorUsage usage, bool linearRequired) const
+{
+    return IsIFM(usage) || IsOFM(usage) ?
+        (linearRequired ? TensorFormat::NHWC : TensorFormat::NHCWB16) : TensorFormat::Unknown;
+}
+
+Shape Architecture::StorageShape(const Shape &logicalShape, TensorFormat format) const
+{
+    if ( format == TensorFormat::NHCWB16 )
+    {
+        return logicalShape.With(-1, RoundAway(logicalShape.Depth(), 16));
+    }
+    return logicalShape;
+}
+
+int64_t Architecture::StorageBytes(const Shape &logicalShape, TensorFormat format, DataType dataType) const
+{
+    if ( !logicalShape ) return 0;
+    const Shape storageShape = StorageShape(logicalShape, format);
+    return RoundAway(DataTypeStorageSizeBytes(dataType, storageShape.Elements64()), int64_t(AllocationQuantum()));
+}
+
+bool Architecture::CanAliasDepthOffset(TensorFormat format, int depthOffset) const
+{
+    return format != TensorFormat::NHCWB16 || (depthOffset & 15) == 0;
+}
+
+Shape Architecture::RollingBufferShape(const Shape &producerShape, const Shape &consumerShape,
+    TensorFormat format) const
+{
+    const int bufferHeight = RoundAway(producerShape.Height() + consumerShape.Height(), consumerShape.Height());
+    return StorageShape(consumerShape.With(-3, bufferHeight).WithDepth(producerShape.Depth()), format);
+}
 
 MemArea Architecture::ReadonlyMemory()
 {

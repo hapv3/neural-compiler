@@ -53,6 +53,8 @@ enum class TensorFormat : uint16_t
     NHWC = 1,
     NHCWB16 = 2,
     WeightsEncoded = 3,
+    Row32 = 4,
+    C32Blocked = 5,
 };
 
 /// <summary>
@@ -382,6 +384,15 @@ public:
     virtual IRegisterCommandStreamGenerator *RegisterCommandStreamGenerator() = 0;
     virtual IArchitectureConstraints *Constraints() = 0;
     virtual TensorFormat IdealBufferingFormat() { return TensorFormat::Unknown; }
+    virtual int AllocationQuantum() const;
+    virtual int TensorAlignment(TensorUsage usage, TensorFormat format) const;
+    virtual TensorFormat ModelBindingFormat(TensorUsage usage) const;
+    virtual TensorFormat DefaultInternalTensorFormat(TensorUsage usage, bool linearRequired) const;
+    virtual Shape StorageShape(const Shape &logicalShape, TensorFormat format) const;
+    virtual int64_t StorageBytes(const Shape &logicalShape, TensorFormat format, DataType dataType) const;
+    virtual bool CanAliasDepthOffset(TensorFormat format, int depthOffset) const;
+    virtual Shape RollingBufferShape(const Shape &producerShape, const Shape &consumerShape,
+        TensorFormat format) const;
     virtual Address MaxAddress() = 0;
     virtual std::vector<uint32_t> ConfigRegisters() = 0;
     virtual uint32_t Version() = 0;

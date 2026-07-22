@@ -111,3 +111,23 @@ TEST_CASE("arch_ethos_u85 UpscaleAndRounding")
         REQUIRE(upscale == 2);
     }
 }
+
+TEST_CASE("architecture layout hooks preserve Ethos defaults")
+{
+    auto arch = CreateArchDefault<ArchEthosU85>(1024);
+    const Shape logical(1, 2, 3, 17);
+
+    REQUIRE(arch->AllocationQuantum() == 16);
+    REQUIRE(arch->TensorAlignment(TensorUsage::IFM, TensorFormat::NHCWB16) == 16);
+    REQUIRE(arch->ModelBindingFormat(TensorUsage::IFM) == TensorFormat::NHWC);
+    REQUIRE(arch->DefaultInternalTensorFormat(TensorUsage::IFM, false) == TensorFormat::NHCWB16);
+    REQUIRE(arch->DefaultInternalTensorFormat(TensorUsage::OFM, true) == TensorFormat::NHWC);
+    REQUIRE(arch->StorageShape(logical, TensorFormat::NHCWB16) == Shape(1, 2, 3, 32));
+    REQUIRE(arch->StorageShape(logical, TensorFormat::NHWC) == logical);
+    REQUIRE(arch->StorageBytes(logical, TensorFormat::NHCWB16, DataType::Int8) == 192);
+    REQUIRE(arch->StorageBytes(logical, TensorFormat::NHWC, DataType::Int8) == 112);
+    REQUIRE(arch->CanAliasDepthOffset(TensorFormat::NHCWB16, 16));
+    REQUIRE_FALSE(arch->CanAliasDepthOffset(TensorFormat::NHCWB16, 1));
+    REQUIRE(arch->RollingBufferShape(Shape(1, 3, 4, 17), Shape(1, 2, 4, 17),
+        TensorFormat::NHCWB16) == Shape(1, 6, 4, 32));
+}
