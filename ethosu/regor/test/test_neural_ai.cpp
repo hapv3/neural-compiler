@@ -10,6 +10,8 @@
 #include "architecture/neuralai/neural_ai_performance.hpp"
 #include "architecture/neuralai/neural_ai_weight_encoder.hpp"
 #include "compiler/neural_ai_graph_optimiser.hpp"
+#include "compiler/neural_ai_command_generator.hpp"
+#include "compiler/neural_ai_writer.hpp"
 #include "compiler/scheduler.hpp"
 #include "compiler/scheduler_packing.hpp"
 #include "util.hpp"
@@ -27,6 +29,11 @@ uint32_t Read32(const std::vector<uint8_t> &data, size_t offset)
 {
     return uint32_t(data[offset]) | (uint32_t(data[offset + 1]) << 8) |
            (uint32_t(data[offset + 2]) << 16) | (uint32_t(data[offset + 3]) << 24);
+}
+
+uint16_t Read16(const std::vector<uint8_t> &data, size_t offset)
+{
+    return uint16_t(data[offset]) | (uint16_t(data[offset + 1]) << 8);
 }
 
 }  // namespace
@@ -304,6 +311,101 @@ TEST_CASE("Neural-AI scheduler lowers a complete FullyConnected graph")
     REQUIRE(range.weightOffset == 2 * 32 * 32);
     REQUIRE(range.weightBytes == 4 * 32 * 32);
     REQUIRE(matrixCost->npuScalesTensor == nullptr);
+
+    CompiledNeuralAIArtifact artifact;
+    std::string error;
+    NeuralAICommandGenerator commandGenerator;
+    REQUIRE(commandGenerator.Generate(graph.get(), scheduleOps, schedule.get(), artifact, error));
+    REQUIRE(error.empty());
+    REQUIRE(artifact.commandCount == 12);
+    REQUIRE(artifact.commands.size() == 928);
+    REQUIRE(artifact.constants.size() == 4 * 32 * 32);
+    REQUIRE(artifact.qparams.size() == 2 * 32);
+    REQUIRE(artifact.bindings.size() == 2);
+    REQUIRE(artifact.requiredTCDMBytes % ArchNeuralAI::DMAAlignment == 0);
+
+    const std::vector<uint16_t> expectedTypes = {
+        uint16_t(neuralai::CommandType::CopyLayout),
+        uint16_t(neuralai::CommandType::RQLoad),
+        uint16_t(neuralai::CommandType::DMA2D),
+        uint16_t(neuralai::CommandType::Gemm32),
+        uint16_t(neuralai::CommandType::DMA2D),
+        uint16_t(neuralai::CommandType::Gemm32Requant),
+        uint16_t(neuralai::CommandType::RQLoad),
+        uint16_t(neuralai::CommandType::DMA2D),
+        uint16_t(neuralai::CommandType::Gemm32),
+        uint16_t(neuralai::CommandType::DMA2D),
+        uint16_t(neuralai::CommandType::Gemm32Requant),
+        uint16_t(neuralai::CommandType::CopyLayout),
+        uint16_t(neuralai::CommandType::End),
+    };
+    size_t commandOffset = 0;
+    for ( uint16_t expected : expectedTypes )
+    {
+        REQUIRE(Read16(artifact.commands, commandOffset) == expected);
+        commandOffset += Read16(artifact.commands, commandOffset + 2);
+    }
+    REQUIRE(commandOffset == artifact.commands.size());
+    REQUIRE(Read32(artifact.commands, 60) == depthK);
+    REQUIRE(Read32(artifact.commands, 64) == 64);
+    REQUIRE(Read32(artifact.commands, 96 + 16) == 0);
+    REQUIRE(Read32(artifact.commands, 352 + 20) == 32 * 32);
+    REQUIRE(Read32(artifact.commands, 448 + 16) == 32);
+    REQUIRE(Read32(artifact.commands, 704 + 20) == 3 * 32 * 32);
+    REQUIRE(Read32(artifact.commands, 800 + 60) == 64);
+    REQUIRE(Read32(artifact.commands, 800 + 64) == depthN);
+
+    std::vector<uint8_t> package;
+    REQUIRE(WriteNeuralAIModel(artifact, package, error));
+    REQUIRE(Read32(package, 0) == neuralai::ModelMagic);
+}
+
+TEST_CASE("Neural-AI command generator emits direct single-tile requant")
+{
+    constexpr int depthK = 31;
+    constexpr int depthN = 17;
+    ArchNeuralAI arch;
+    auto input = CreateTensor("input", Shape(1, 1, 1, depthK), DataType::Int8);
+    auto output = CreateTensor("output", Shape(1, 1, 1, depthN), DataType::Int8);
+    auto weights = CreateTensor("weights", Shape(depthN, 1, 1, depthK), DataType::Int8,
+        std::vector<int8_t>(depthK * depthN, 1));
+    auto scales = CreateTensor("scales", Shape(1, 1, 1, depthN), DataType::Int32,
+        std::vector<int32_t>(depthN, 0));
+    auto matrix = CreateOperation(
+        OpType::FullyConnected, TensorUsage::IFM0, input, TensorUsage::OFM, output);
+    matrix->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
+    matrix->ConnectInput(TensorUsage::Scales, scales).Set(Quantization::Unit());
+    std::vector<std::shared_ptr<Operation>> sourceOps = {matrix};
+    auto graph = CreateGraph(sourceOps);
+
+    GraphOptimiserOptions graphOptions;
+    NeuralAIGraphOptimiser optimiser(arch.Constraints(), graphOptions, nullptr);
+    optimiser.Process(graph.get());
+    const std::unordered_map<UniqueId, UniqueId> equivalenceIds;
+    SchedulerPacking packing(&arch, false, equivalenceIds);
+    auto scheduleOps = packing.Process(graph.get());
+    SchedulerOptions schedulerOptions;
+    schedulerOptions.disabled.Set(SchedulerFeature::Cascading);
+    schedulerOptions.disabled.Set(SchedulerFeature::WeightBuffering);
+    Scheduler scheduler(
+        &arch, schedulerOptions, "neural-ai-direct", scheduleOps, packing.OpConfigCompatablility());
+    auto schedule = scheduler.Process();
+
+    CompiledNeuralAIArtifact artifact;
+    std::string error;
+    NeuralAICommandGenerator commandGenerator;
+    REQUIRE(commandGenerator.Generate(graph.get(), scheduleOps, schedule.get(), artifact, error));
+    REQUIRE(artifact.commandCount == 4);
+    REQUIRE(artifact.commands.size() == 352);
+    REQUIRE(artifact.constants.size() == 32 * 32);
+    REQUIRE(artifact.qparams.size() == 32);
+    REQUIRE(Read16(artifact.commands, 0) == uint16_t(neuralai::CommandType::CopyLayout));
+    REQUIRE(Read16(artifact.commands, 96) == uint16_t(neuralai::CommandType::RQLoad));
+    REQUIRE(Read16(artifact.commands, 128) == uint16_t(neuralai::CommandType::Gemm32Requant));
+    REQUIRE(Read16(artifact.commands, 128 + 32) == 0);
+    REQUIRE(Read32(artifact.commands, 128 + 52) == 32);
+    REQUIRE(Read16(artifact.commands, 224) == uint16_t(neuralai::CommandType::CopyLayout));
+    REQUIRE(Read16(artifact.commands, 320) == uint16_t(neuralai::CommandType::End));
 }
 
 TEST_CASE("Neural-AI op groups do not fuse matrix operations")
