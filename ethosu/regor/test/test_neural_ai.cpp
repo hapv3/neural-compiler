@@ -6,6 +6,7 @@
 
 #include "architecture/neuralai/neural_ai.hpp"
 #include "architecture/neuralai/neural_ai_constraints.hpp"
+#include "architecture/neuralai/neural_ai_op_config.hpp"
 
 #include <catch_all.hpp>
 
@@ -129,4 +130,34 @@ TEST_CASE("Neural-AI constraints enforce signed matrix zero points")
     REQUIRE(constraints->SupportedZeroPoint(-128, TensorUsage::OFM, DataType::Int8, OpType::MatMul));
     REQUIRE(constraints->SupportedZeroPoint(127, TensorUsage::OFM, DataType::Int8, OpType::MatMul));
     REQUIRE_FALSE(constraints->SupportedZeroPoint(128, TensorUsage::OFM, DataType::Int8, OpType::MatMul));
+}
+
+TEST_CASE("Neural-AI matrix op configuration exposes GEMM granules")
+{
+    ArchNeuralAI arch;
+    ArchitectureConfigQuery query{};
+    query.ifmBits = 8;
+    query.ofmBits = 8;
+    query.transpose = TransposeType::None;
+    query.reverse = ReverseType::None;
+
+    auto config = arch.GetOpConfig(OpType::MatMul, query);
+    REQUIRE(config);
+    REQUIRE(config->OptimalStripeGranule() == Point2i(32, 1));
+    REQUIRE(config->MinimalStripeGranule() == Point2i(1, 1));
+    REQUIRE(config->OptimalDepthGranule() == 32);
+    REQUIRE(config->MinimumDepthGranule() == 32);
+    REQUIRE_FALSE(arch.GetOpConfig(OpType::Conv2D, query));
+}
+
+TEST_CASE("Neural-AI op groups do not fuse matrix operations")
+{
+    ArchNeuralAI arch;
+    ArchitectureOpGroupQuery query{};
+    query.type = OpType::FullyConnected;
+
+    auto group = arch.CreateOpGroup(query);
+    REQUIRE(group);
+    REQUIRE(group->NeedsAllocation(1));
+    REQUIRE(group->Add(query) == 0);
 }

@@ -10,6 +10,7 @@
 
 #include "architecture/neuralai/neural_ai_abi.hpp"
 #include "architecture/neuralai/neural_ai_constraints.hpp"
+#include "architecture/neuralai/neural_ai_op_config.hpp"
 #include "include/regor.h"
 
 namespace regor
@@ -90,14 +91,21 @@ bool ArchNeuralAI::CheckConfiguration(std::string &error)
     return true;
 }
 
-std::unique_ptr<ArchitectureOpConfig> ArchNeuralAI::GetOpConfig(OpType, const ArchitectureConfigQuery &)
+std::unique_ptr<ArchitectureOpConfig> ArchNeuralAI::GetOpConfig(OpType opType, const ArchitectureConfigQuery &query)
 {
-    return nullptr;
+    if ( opType != OpType::FullyConnected && opType != OpType::MatMul ) return nullptr;
+    if ( query.ifmBits != 8 || query.ofmBits != 8 || query.transpose != TransposeType::None ||
+         query.reverse != ReverseType::None )
+    {
+        return nullptr;
+    }
+    return std::make_unique<NeuralAIOpConfig>();
 }
 
-std::unique_ptr<ArchitectureOpGroup> ArchNeuralAI::CreateOpGroup(const ArchitectureOpGroupQuery &)
+std::unique_ptr<ArchitectureOpGroup> ArchNeuralAI::CreateOpGroup(const ArchitectureOpGroupQuery &op)
 {
-    return nullptr;
+    auto group = std::make_unique<NeuralAIOpGroup>();
+    return group->Add(op) ? std::move(group) : nullptr;
 }
 
 int ArchNeuralAI::TensorAlignment(TensorUsage, TensorFormat) const
