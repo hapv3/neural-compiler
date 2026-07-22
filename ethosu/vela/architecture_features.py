@@ -159,6 +159,7 @@ class SharedBufferArea(enum.IntEnum):
 
 
 class Accelerator(enum.Enum):
+    Neural_AI = "neural-ai"
     Ethos_U55_32 = "ethos-u55-32"
     Ethos_U55_64 = "ethos-u55-64"
     Ethos_U55_128 = "ethos-u55-128"
@@ -795,6 +796,35 @@ class ArchitectureFeatures:
         return result
 
 
+class NeuralAIArchitectureFeatures:
+    """CLI and reporting features for the fixed single-cluster Neural-AI target."""
+
+    DEFAULT_CONFIG = ArchitectureFeatures.DEFAULT_CONFIG
+    MAX_BLOCKDEP = 0
+
+    def __init__(self, vela_config_files, system_config, memory_mode, arena_cache_size):
+        self.accelerator_config = Accelerator.Neural_AI
+        self.system_config = "Neural_AI" if system_config == self.DEFAULT_CONFIG else system_config
+        self.memory_mode = "Neural_AI_TCDM" if memory_mode == self.DEFAULT_CONFIG else memory_mode
+        default_config = os.path.join(CONFIG_FILES_PATH, "NeuralAI", "neural-ai.ini")
+        self.vela_config_files = vela_config_files if vela_config_files is not None else [default_config]
+        self.num_macs_per_cycle = 32 * 32
+        self.ncores = 1
+        self.core_clock = 500e6
+        self.max_address_offset = 1 << 32
+        self.arena_cache_size = arena_cache_size if arena_cache_size is not None else 512 * 1024 - 4 * 1024
+        self.memory_bandwidths_per_second = np.zeros(MemArea.Size)
+        self.memory_bandwidths_per_second[MemArea.Sram] = 32 * self.core_clock
+        self.memory_bandwidths_per_second[MemArea.Dram] = 32 * self.core_clock
+        self.tensor_storage_mem_area = {
+            TensorPurpose.Weights: MemArea.Dram,
+            TensorPurpose.FeatureMap: MemArea.Sram,
+        }
+        self.is_ethos_u55_system = False
+        self.is_ethos_u65_system = False
+        self.is_ethos_u85_system = False
+
+
 # Cache for default arch instances, as these are expensive to create
 default_arch_cache = dict()
 
@@ -802,13 +832,21 @@ default_arch_cache = dict()
 def create_default_arch(accelerator: Accelerator) -> ArchitectureFeatures:
     """Creates architecture features object using default settings"""
     if accelerator not in default_arch_cache:
-        default_arch_cache[accelerator] = ArchitectureFeatures(
-            vela_config_files=None,
-            accelerator_config=accelerator.value,
-            system_config=ArchitectureFeatures.DEFAULT_CONFIG,
-            memory_mode=ArchitectureFeatures.DEFAULT_CONFIG,
-            max_blockdep=ArchitectureFeatures.MAX_BLOCKDEP,
-            verbose_config=False,
-            arena_cache_size=None,
-        )
+        if accelerator == Accelerator.Neural_AI:
+            default_arch_cache[accelerator] = NeuralAIArchitectureFeatures(
+                vela_config_files=None,
+                system_config=ArchitectureFeatures.DEFAULT_CONFIG,
+                memory_mode=ArchitectureFeatures.DEFAULT_CONFIG,
+                arena_cache_size=None,
+            )
+        else:
+            default_arch_cache[accelerator] = ArchitectureFeatures(
+                vela_config_files=None,
+                accelerator_config=accelerator.value,
+                system_config=ArchitectureFeatures.DEFAULT_CONFIG,
+                memory_mode=ArchitectureFeatures.DEFAULT_CONFIG,
+                max_blockdep=ArchitectureFeatures.MAX_BLOCKDEP,
+                verbose_config=False,
+                arena_cache_size=None,
+            )
     return default_arch_cache[accelerator]

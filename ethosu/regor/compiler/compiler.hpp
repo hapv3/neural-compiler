@@ -48,6 +48,7 @@ enum class OutputFormat : uint16_t
     None,
     TFLite,
     Raw,
+    NeuralAI,
 };
 
 enum class COPFormat : uint16_t

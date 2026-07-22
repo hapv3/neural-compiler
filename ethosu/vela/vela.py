@@ -87,6 +87,11 @@ def process_regor(
     elif output_format == "raw":
         assert isinstance(compiled_model, regor.CompiledRawModel)
         rawdata_writer.write_rawdata_output_from_model(output_basename, compiled_model)
+    elif output_format == "nai":
+        assert isinstance(compiled_model, regor.CompiledNeuralAIModel)
+        output_name = output_basename + ".nai"
+        with open(output_name, "wb") as f:
+            f.write(compiled_model.package)
     else:
         assert False, f"Unsupported output_format = {output_format}"
 
@@ -664,6 +669,8 @@ def get_compiler_config(
     ignore_ops: str = "",
 ) -> str:
     """Build compiler config file."""
+    if isinstance(optimize, enum.Enum):
+        optimize = optimize.name
     config = "\n[compiler]\n"
     if verbose_high_level_command_stream:
         config += "verbose_high_level_command_stream=true\n"
@@ -673,6 +680,8 @@ def get_compiler_config(
         config += "enable_db=true\n"
     if output_format == "raw":
         config += "output_format=Raw\n"
+    elif output_format == "nai":
+        config += "output_format=NeuralAI\n"
     else:
         config += "output_format=TFLite\n"
     config += f"cop_format={cop_format}\n"
@@ -820,7 +829,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--output-format",
         type=str,
         default="tflite",
-        choices=["tflite", "raw"],
+        choices=["tflite", "raw", "nai"],
         help="Output format (default: %(default)s).",
     )
     parser.add_argument(
@@ -1072,6 +1081,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     # check all config files exist because they will be read as a group
     config_files = [_parse_config(cfg) for cfg in args.config] if args.config else None
 
+    is_neural_ai = args.accelerator_config == architecture_features.Accelerator.Neural_AI.value
+    if is_neural_ai and args.cpu_tensor_alignment == Tensor.AllocationQuantum:
+        args.cpu_tensor_alignment = 32
+
     if args.cpu_tensor_alignment < 16 or args.cpu_tensor_alignment & (args.cpu_tensor_alignment - 1) != 0:
         parser.error(
             "Invalid argument to --cpu-tensor-alignment = {} (must be greater than or equal to 16 and a power of 2)"
@@ -1091,19 +1104,33 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     sys.setrecursionlimit(args.recursion_limit)
 
-    arch = architecture_features.ArchitectureFeatures(
-        vela_config_files=config_files,
-        system_config=args.system_config,
-        memory_mode=args.memory_mode,
-        accelerator_config=args.accelerator_config,
-        max_blockdep=args.max_block_dependency,
-        verbose_config=args.verbose_config,
-        arena_cache_size=args.arena_cache_size,
-    )
+    if is_neural_ai:
+        if args.output_format != "nai":
+            parser.error("Neural-AI requires --output-format=nai")
+        arch = architecture_features.NeuralAIArchitectureFeatures(
+            vela_config_files=config_files,
+            system_config=args.system_config,
+            memory_mode=args.memory_mode,
+            arena_cache_size=args.arena_cache_size,
+        )
+    else:
+        if args.output_format == "nai":
+            parser.error("--output-format=nai requires --accelerator-config=neural-ai")
+        arch = architecture_features.ArchitectureFeatures(
+            vela_config_files=config_files,
+            system_config=args.system_config,
+            memory_mode=args.memory_mode,
+            accelerator_config=args.accelerator_config,
+            max_blockdep=args.max_block_dependency,
+            verbose_config=args.verbose_config,
+            arena_cache_size=args.arena_cache_size,
+        )
 
-    system_config = "[architecture]\n"
-    system_config += f"macs={arch.num_macs_per_cycle}\n"
-    system_config += f"cores={arch.ncores}\n"
+    system_config = ""
+    if not is_neural_ai:
+        system_config += "[architecture]\n"
+        system_config += f"macs={arch.num_macs_per_cycle}\n"
+        system_config += f"cores={arch.ncores}\n"
 
     system_config += "[vela]\n"
     system_config += f"system_config_name={arch.system_config}\n"
@@ -1116,9 +1143,12 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # Transform Vela accelerator config string format to Regor format
     accelerator_config = args.accelerator_config
-    substrings = accelerator_config.split("-")
-    substrings = [substring.capitalize() for substring in substrings[:-1]]
-    accelerator = "".join(substrings)
+    if is_neural_ai:
+        accelerator = "NeuralAI"
+    else:
+        substrings = accelerator_config.split("-")
+        substrings = [substring.capitalize() for substring in substrings[:-1]]
+        accelerator = "".join(substrings)
 
     try:
         args.ignore_ops = normalise_ignore_ops(args.ignore_ops)

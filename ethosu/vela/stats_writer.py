@@ -382,6 +382,8 @@ def print_regor_performance_metrics(
         "offchipflash": MemArea.OffChipFlash,
         "lutram": MemArea.Shram,
         "shram": MemArea.Shram,
+        "tcdm": MemArea.Sram,
+        "model": MemArea.Dram,
     }
 
     cycles_mapping = {
@@ -389,6 +391,8 @@ def print_regor_performance_metrics(
         "dram": PassCycles.DramAccess,
         "onchipflash": PassCycles.OnChipFlashAccess,
         "offchipflash": PassCycles.OffChipFlashAccess,
+        "tcdm": PassCycles.SramAccess,
+        "model": PassCycles.DramAccess,
     }
 
     purpose_mapping = {

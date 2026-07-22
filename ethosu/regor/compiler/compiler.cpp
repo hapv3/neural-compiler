@@ -45,6 +45,7 @@ BEGIN_ENUM_TABLE(regor::OutputFormat)
     ADD_ENUM_NAME(None)
     ADD_ENUM_NAME(TFLite)
     ADD_ENUM_NAME(Raw)
+    ADD_ENUM_NAME(NeuralAI)
 END_ENUM_TABLE()
 
 BEGIN_ENUM_TABLE(regor::COPFormat)

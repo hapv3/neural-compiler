@@ -21,6 +21,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <algorithm>
+#include <cstring>
 #include <iostream>
 #include <limits>
 #include <unordered_map>
@@ -189,6 +190,13 @@ struct PyRegorCompiledTFLiteModel : PyRegorCompiledModel
     PyRegorCompiledTFLiteModel(py::object model_) : PyRegorCompiledModel(), model(std::move(model_)) {}
 
     py::object model;
+};
+
+struct PyRegorCompiledNeuralAIModel : PyRegorCompiledModel
+{
+    PyRegorCompiledNeuralAIModel() : PyRegorCompiledModel(), package(py::none()) {}
+
+    py::object package;
 };
 
 class PyRegor
@@ -422,15 +430,27 @@ private:
 
         if ( blobs.size() == 1 )
         {
-            // Likely TFLite output
+            int64_t size;
+            void *buf = blobs[0]->Map(size);
+            assert(size >= 0 && size <= int64_t(std::numeric_limits<py::ssize_t>::max()));
+            const bool isNeuralAI = size >= 4 && std::memcmp(buf, "NAIM", 4) == 0;
+            if ( isNeuralAI )
+            {
+                PyRegorCompiledNeuralAIModel neuralAI;
+                neuralAI.SetPerfReport(GetPerfReport());
+                neuralAI.SetOptDatabase(GetOptDatabase());
+                neuralAI.package = py::bytes(reinterpret_cast<char *>(buf), py::ssize_t(size));
+                blobs[0]->Unmap(buf);
+                blobs[0]->Release();
+                return py::cast(neuralAI);
+            }
+
+            // TFLite output
 
             PyRegorCompiledTFLiteModel tfl;
             tfl.SetPerfReport(GetPerfReport());
             tfl.SetOptDatabase(GetOptDatabase());
 
-            int64_t size;
-            void *buf = blobs[0]->Map(size);
-            assert(size >= 0 && size <= int64_t(std::numeric_limits<py::ssize_t>::max()));
             tfl.model = py::bytes(reinterpret_cast<char *>(buf), py::ssize_t(size));
             blobs[0]->Unmap(buf);
             blobs[0]->Release();
@@ -659,6 +679,11 @@ PYBIND11_MODULE(regor, m)
     py::class_<PyRegorCompiledTFLiteModel, PyRegorCompiledModel>(m, "CompiledTFLiteModel", "A Regor-compiled TFLite model")
         .def(py::init<>())
         .def_readwrite("model", &PyRegorCompiledTFLiteModel::model, "The compiled model TFLite blob");
+
+    py::class_<PyRegorCompiledNeuralAIModel, PyRegorCompiledModel>(
+        m, "CompiledNeuralAIModel", "A Regor-compiled Neural-AI model package")
+        .def(py::init<>())
+        .def_readwrite("package", &PyRegorCompiledNeuralAIModel::package, "The compiled .nai model package");
 
     m.def(
         "compile",
