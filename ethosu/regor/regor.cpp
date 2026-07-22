@@ -25,6 +25,7 @@
 #include "architecture/ethosu55/ethos_u55.hpp"
 #include "architecture/ethosu65/ethos_u65.hpp"
 #include "architecture/ethosu85/ethos_u85.hpp"
+#include "architecture/neuralai/neural_ai.hpp"
 #include "common/numeric_util.hpp"
 #include "common/shape.hpp"
 #include "compiler/compiler.hpp"
@@ -240,6 +241,10 @@ DLL_EXPORT int regor_create(regor_context_t *ctx, const char *archName)
     else if ( strcmp(archName, REGOR_ARCH_ETHOSU85) == 0 )
     {
         arch = std::make_unique<ArchEthosU85>();
+    }
+    else if ( strcmp(archName, REGOR_ARCH_NEURALAI) == 0 )
+    {
+        arch = std::make_unique<ArchNeuralAI>();
     }
 
     if ( arch )

@@ -211,6 +211,7 @@ typedef struct regor_raw_quantization_t
 #define REGOR_ARCH_ETHOSU55 "EthosU55"
 #define REGOR_ARCH_ETHOSU65 "EthosU65"
 #define REGOR_ARCH_ETHOSU85 "EthosU85"
+#define REGOR_ARCH_NEURALAI "NeuralAI"
 
 #if defined __cplusplus
 extern "C" {

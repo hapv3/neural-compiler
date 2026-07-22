@@ -242,6 +242,7 @@ regor_lib(
         "architecture/ethos_u_scaling.cpp"
         "architecture/mlw_encode.cpp"
         "architecture/neuralai/neural_ai_abi.cpp"
+        "architecture/neuralai/neural_ai.cpp"
         "architecture/ethosu55/ethos_u55.cpp"
         "architecture/ethosu55/ethos_u55_constraints.cpp"
         "architecture/ethosu55/ethos_u55_weight_encoder.cpp"
