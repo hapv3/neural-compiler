@@ -28,6 +28,8 @@
 #include "graph_validator.hpp"
 #include "high_level_command_stream_generator.hpp"
 #include "network_performance.hpp"
+#include "neural_ai_command_generator.hpp"
+#include "neural_ai_writer.hpp"
 #include "raw_writer.hpp"
 #include "scheduler_packing.hpp"
 #include "tensor_allocator.hpp"
@@ -52,6 +54,18 @@ END_ENUM_TABLE()
 
 namespace regor
 {
+
+namespace
+{
+
+bool IsNeuralAI(Architecture *architecture)
+{
+    std::string target;
+    architecture->Call([&target](const std::string &name) { target = name; });
+    return target == REGOR_ARCH_NEURALAI;
+}
+
+}  // namespace
 
 Compiler::Compiler(std::unique_ptr<Architecture> &arch)
 {
@@ -315,6 +329,33 @@ bool Compiler::Compile()
 
     // Reset network performance report
     _perfResult = {};
+
+    if ( IsNeuralAI(_architecture.get()) )
+    {
+        if ( _graphs.size() != 1 )
+        {
+            SetLastError("Neural-AI output currently requires exactly one entry graph");
+            return false;
+        }
+        std::unordered_map<std::string, Graph *> graphs;
+        graphs.emplace(_entryPoint->Name(), _entryPoint);
+        auto compiled = CompileGraph(_entryPoint, graphs, readOnlyAllocator);
+        if ( !compiled || !compiled->neuralAIArtifact ) return false;
+
+        std::vector<uint8_t> package;
+        if ( !WriteNeuralAIModel(*compiled->neuralAIArtifact, package, error) )
+        {
+            SetLastError("Neural-AI output error: " + error);
+            return false;
+        }
+        auto bytes = std::make_unique<uint8_t[]>(package.size());
+        std::copy(package.begin(), package.end(), bytes.get());
+        _output.push_back(new RawBlob(
+            std::unique_ptr<const uint8_t[]>(bytes.release()), 0, int64_t(package.size())));
+        _optDb.reset();
+        _builders.clear();
+        return true;
+    }
 
     // Compile each graph/subgraph separately
     std::vector<std::unique_ptr<Graph>> newGraphs;
@@ -673,6 +714,21 @@ std::unique_ptr<CompiledGraph> Compiler::CompileGraph(
     {
         NetworkPerformance perf(_architecture.get(), scheduleOps);
         _perfResult += perf.Measure(schedule.get(), _optDb.get());
+    }
+
+    if ( IsNeuralAI(_architecture.get()) )
+    {
+        auto artifact = std::make_unique<CompiledNeuralAIArtifact>();
+        NeuralAICommandGenerator generator;
+        std::string error;
+        if ( !generator.Generate(graph, scheduleOps, schedule.get(), *artifact, error) )
+        {
+            SetLastError(error);
+            return nullptr;
+        }
+        return std::make_unique<CompiledGraph>(std::move(schedule),
+            std::vector<std::pair<Operation *, std::unique_ptr<NPUOperation>>>{}, nullptr,
+            TensorAddressMap{}, std::move(compiledSubgraphs), std::move(artifact));
     }
 
     // Get a new graph and NPU operations from the scheduled operations

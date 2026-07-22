@@ -306,6 +306,7 @@ regor_lib(
         "tflite/tflite_mapping.cpp"
         "tflite/tflite_model_semantics.cpp"
         "tflite/tflite_supported_operators.cpp"
+        "tflite/tflite_supported_operators_neural_ai.cpp"
         "tflite/tflite_supported_operators_u85.cpp"
         "tflite/tflite_supported_operators_u55.cpp"
         "tflite/tflite_scaling.cpp"

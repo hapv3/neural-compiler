@@ -9,14 +9,18 @@
 #include "architecture/neuralai/neural_ai_op_config.hpp"
 #include "architecture/neuralai/neural_ai_performance.hpp"
 #include "architecture/neuralai/neural_ai_weight_encoder.hpp"
-#include "compiler/neural_ai_graph_optimiser.hpp"
+#include "compiler/compiler.hpp"
 #include "compiler/neural_ai_command_generator.hpp"
+#include "compiler/neural_ai_graph_optimiser.hpp"
 #include "compiler/neural_ai_writer.hpp"
 #include "compiler/scheduler.hpp"
 #include "compiler/scheduler_packing.hpp"
+#include "tflite/tflite_schema_generated.hpp"
 #include "util.hpp"
 
 #include <catch_all.hpp>
+
+#include <cstring>
 
 #include "regor.h"
 
@@ -25,15 +29,76 @@ using namespace regor;
 namespace
 {
 
+uint32_t Read32(const uint8_t *data)
+{
+    return uint32_t(data[0]) | (uint32_t(data[1]) << 8) |
+           (uint32_t(data[2]) << 16) | (uint32_t(data[3]) << 24);
+}
+
 uint32_t Read32(const std::vector<uint8_t> &data, size_t offset)
 {
-    return uint32_t(data[offset]) | (uint32_t(data[offset + 1]) << 8) |
-           (uint32_t(data[offset + 2]) << 16) | (uint32_t(data[offset + 3]) << 24);
+    return Read32(data.data() + offset);
 }
 
 uint16_t Read16(const std::vector<uint8_t> &data, size_t offset)
 {
     return uint16_t(data[offset]) | (uint16_t(data[offset + 1]) << 8);
+}
+
+flatbuffers::DetachedBuffer BuildFullyConnectedModel(int depthK, int depthN)
+{
+    flatbuffers::FlatBufferBuilder builder;
+    const std::vector<float> scale = {1.0f};
+    const std::vector<int64_t> zeroPoint = {0};
+    const auto inputQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &scale, &zeroPoint);
+    const auto weightQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &scale, &zeroPoint);
+    const auto biasQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &scale, &zeroPoint);
+    const auto outputQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &scale, &zeroPoint);
+
+    std::vector<uint8_t> weightData(depthK * depthN, 1);
+    std::vector<int32_t> bias(depthN, 0);
+    std::vector<uint8_t> biasData(bias.size() * sizeof(int32_t));
+    std::memcpy(biasData.data(), bias.data(), biasData.size());
+    std::vector<flatbuffers::Offset<tflite::Buffer>> buffers = {
+        tflite::CreateBufferDirect(builder),
+        tflite::CreateBufferDirect(builder, &weightData),
+        tflite::CreateBufferDirect(builder, &biasData),
+    };
+    const std::vector<int32_t> inputShape = {1, depthK};
+    const std::vector<int32_t> weightShape = {depthN, depthK};
+    const std::vector<int32_t> biasShape = {depthN};
+    const std::vector<int32_t> outputShape = {1, depthN};
+    std::vector<flatbuffers::Offset<tflite::Tensor>> tensors = {
+        tflite::CreateTensorDirect(builder, &inputShape, tflite::TensorType::INT8, 0, "input", inputQuant),
+        tflite::CreateTensorDirect(builder, &weightShape, tflite::TensorType::INT8, 1, "weights", weightQuant),
+        tflite::CreateTensorDirect(builder, &biasShape, tflite::TensorType::INT32, 2, "bias", biasQuant),
+        tflite::CreateTensorDirect(builder, &outputShape, tflite::TensorType::INT8, 0, "output", outputQuant),
+    };
+    const auto options = tflite::CreateFullyConnectedOptions(builder);
+    const std::vector<int32_t> opInputs = {0, 1, 2};
+    const std::vector<int32_t> opOutputs = {3};
+    const std::vector<flatbuffers::Offset<tflite::Operator>> operations = {
+        tflite::CreateOperatorDirect(builder, 0, &opInputs, &opOutputs,
+            tflite::BuiltinOptions::FullyConnectedOptions, options.Union()),
+    };
+    const std::vector<int32_t> graphInputs = {0};
+    const std::vector<int32_t> graphOutputs = {3};
+    const std::vector<flatbuffers::Offset<tflite::SubGraph>> subgraphs = {
+        tflite::CreateSubGraphDirect(
+            builder, &tensors, &graphInputs, &graphOutputs, &operations, "main"),
+    };
+    const std::vector<flatbuffers::Offset<tflite::OperatorCode>> operatorCodes = {
+        tflite::CreateOperatorCodeDirect(builder, int8_t(tflite::BuiltinOperator::FULLY_CONNECTED),
+            nullptr, 1, tflite::BuiltinOperator::FULLY_CONNECTED),
+    };
+    const auto model = tflite::CreateModelDirect(builder, 3, &operatorCodes, &subgraphs,
+        "Neural-AI FullyConnected test", &buffers);
+    tflite::FinishModelBuffer(builder, model);
+    return builder.Release();
 }
 
 }  // namespace
@@ -406,6 +471,30 @@ TEST_CASE("Neural-AI command generator emits direct single-tile requant")
     REQUIRE(Read32(artifact.commands, 128 + 52) == 32);
     REQUIRE(Read16(artifact.commands, 224) == uint16_t(neuralai::CommandType::CopyLayout));
     REQUIRE(Read16(artifact.commands, 320) == uint16_t(neuralai::CommandType::End));
+}
+
+TEST_CASE("Neural-AI compiler emits a native model package")
+{
+    constexpr int depthK = 33;
+    constexpr int depthN = 34;
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildFullyConnectedModel(depthK, depthN);
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+
+    const bool compiled = compiler.Compile();
+    INFO(compiler.LastError());
+    REQUIRE(compiled);
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    REQUIRE(size > int64_t(sizeof(neuralai::ModelHeaderV1)));
+    REQUIRE(Read32(data) == neuralai::ModelMagic);
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
 }
 
 TEST_CASE("Neural-AI op groups do not fuse matrix operations")

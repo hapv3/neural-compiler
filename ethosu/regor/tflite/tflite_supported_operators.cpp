@@ -23,6 +23,7 @@
 
 #include "compiler/op_type.hpp"
 #include "compiler/operation_util.hpp"
+#include "tflite_supported_operators_neural_ai.hpp"
 #include "tflite_supported_operators_u55.hpp"
 #include "tflite_supported_operators_u85.hpp"
 
@@ -1209,6 +1210,10 @@ std::unique_ptr<TfLiteSupportedOperators> MakeSupportedOpsChecker(const std::str
     if ( target == REGOR_ARCH_ETHOSU85 )
     {
         return std::make_unique<TfLiteSupportedOperatorsU85>();
+    }
+    else if ( target == REGOR_ARCH_NEURALAI )
+    {
+        return std::make_unique<TfLiteSupportedOperatorsNeuralAI>();
     }
     else
     {

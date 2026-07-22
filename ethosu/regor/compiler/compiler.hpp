@@ -30,6 +30,7 @@
 #include "graph_packing.hpp"
 #include "include/regor_interface.hpp"
 #include "network_performance.hpp"
+#include "neural_ai_writer.hpp"
 #include "scheduler.hpp"
 #include "tensor_allocator.hpp"
 
@@ -75,13 +76,16 @@ struct CompiledGraph
     std::unique_ptr<Graph> newGraph;
     TensorAddressMap tensorAddressMap;
     std::vector<std::unique_ptr<CompiledGraph>> compiledSubGraphs;
+    std::unique_ptr<CompiledNeuralAIArtifact> neuralAIArtifact;
 
     CompiledGraph() {}
 
     CompiledGraph(std::shared_ptr<Schedule> &&s, std::vector<std::pair<Operation *, std::unique_ptr<NPUOperation>>> &&o,
-        std::unique_ptr<Graph> &&g, TensorAddressMap &&tam, std::vector<std::unique_ptr<CompiledGraph>> &&cc) :
+        std::unique_ptr<Graph> &&g, TensorAddressMap &&tam, std::vector<std::unique_ptr<CompiledGraph>> &&cc,
+        std::unique_ptr<CompiledNeuralAIArtifact> &&nai = {}) :
             schedule(std::move(s)),
-            npuOps(std::move(o)), newGraph(std::move(g)), tensorAddressMap(std::move(tam)), compiledSubGraphs(std::move(cc))
+            npuOps(std::move(o)), newGraph(std::move(g)), tensorAddressMap(std::move(tam)),
+            compiledSubGraphs(std::move(cc)), neuralAIArtifact(std::move(nai))
     {
     }
 };
