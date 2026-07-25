@@ -64,12 +64,41 @@ TFLite/TOSA frontend and Graph IR (logical NHWC)
 `NHCWB16` remains an Ethos-only physical format. It is neither a TFLite format
 nor a Neural-AI intermediate format.
 
+### 2.1. Current Implementation Status
+
+At the current commit, `neural-compiler` already contains a partial Neural-AI
+target. The plan must not describe the codebase as if no Neural-AI support
+exists. The following status matrix reflects what has been audited:
+
+| Feature | RTL primitive | HAL / runtime | Compiler lowering | RTL E2E |
+|---|---|---|---|---|
+| DMA package | Yes | Yes | Yes | Yes |
+| GEMM32 | Yes | Yes | Yes | Yes |
+| RQ load | Yes | Yes | Partial | Incomplete model matrix |
+| NHWC↔ROW32 | Not a primitive | Scalar path (incorrect with L2) | Yes | No |
+| NHWC↔C32 | Not a primitive | Scalar host-only | Not emitted | No |
+| Linebuffer Conv | Yes | Legacy HAL exists | No | Not through .nai |
+| AFU commands | Hardware modes exist | No v2 dispatch | No | No |
+| Spatz commands | Engine exists | Incomplete kernels | No | No |
+
+`ArchNeuralAI` currently exposes only `FullyConnected`, `MatMul`, and
+`MemoryCopy`.
+
+The plan should record the hardware commit and compiler commit at which the
+contract was audited.
+
 ## 3. Definition of Full Support
 
 In this document, full support for the Neural-AI NPU means:
 
 - The input is a static-shape, batch-1 TFLite or TOSA model.
 - Main activations and weights are signed INT8; bias and partial sums are INT32.
+- Native GEMM, FullyConnected, Conv, and pointwise paths require symmetric
+  quantization: IFM zero point == 0 and weight zero point == 0. OFM zero point
+  is arbitrary INT8, applied by requantization. Nonzero IFM zero point is
+  unsupported unless an explicit, tested affine-to-symmetric conversion is
+  inserted before the native operation. The operator checker must reject
+  violations before scheduling.
 - The graph only uses operators and parameter combinations covered by the
   Neural-AI contract.
 - The compiler produces one `.nai` file without requiring a model-specific
@@ -301,7 +330,10 @@ The existing contract includes:
 - A 32x32 INT8 systolic array for GEMM and Conv.
 - Spatz for vector, memory, and elementwise kernels.
 - An AFU for LUT operations and selected fused post-processing modes.
-- iDMA 1D, 2D, and 3D transfers between L2 and local memory.
+- iDMA with AXI↔OBI datapaths for transfers between L2 (external) and local
+  memory (TCDM). iDMA does not support local-to-local (OBI→OBI) transfers;
+  `idma_L1ToL1()` is implemented as a CPU copy. 1D, 2D, and 3D transfer modes
+  are available for external↔local only.
 - A 256-bit-wide shared TCDM path.
 - Command-control MMIO and interrupt completion.
 
@@ -316,8 +348,39 @@ RTL defines:
 - 32 KB ITCM.
 - 32 KB DTCM.
 - 16 TCDM banks x 32 KB, for 512 KB of physical local memory.
-- 12 logical input-side banks and 4 logical output-side banks.
 - A 256-bit AXI data path, equivalent to 32 bytes per beat.
+
+`npu_cluster_pkg.sv` declares `I_TCDM_NUM_BANKS = 12` and
+`O_TCDM_NUM_BANKS = 4`, but these constants are not used to partition SRAM.
+`tcdm_interconnect` selects the bank from `address[8:5]` and all 13 masters
+connect to a single 16-bank interconnect with identical SRAM banks. There is
+no range check or master-to-bank restriction between "input" and "output".
+Each SRAM bank uses 10 bits of bank-local word address, which produces the
+following alias model:
+
+```text
+bank          = (address >> 5) & 0xF
+bank_row      = (address >> 9) & 0x3FF
+alias_period  = 32 bytes × 16 banks × 1024 rows
+              = 0x80000 bytes
+```
+
+Addresses `0x1010_0000`, `0x1018_0000`, and `0x1020_0000` therefore map to the
+same physical SRAM location. Snitch D-bus only decodes `0x1010_0000` with mask
+`0xFFF0_0000` (window `0x1010_0000`–`0x101F_FFFF`); it does not decode
+`0x1020_0000`. Engine ports access TCDM directly and can issue `0x102...`
+addresses, but these are aliases, not a separate physical output TCDM.
+
+The canonical TCDM model for the compiler and runtime is:
+
+```text
+Canonical TCDM base     0x1010_0000
+Physical TCDM bytes     0x0008_0000
+Allocatable bytes       0x0007_F000
+Command staging         [0x0007_F000, 0x0008_0000)
+Physical alias period   0x0008_0000
+Bank selection          offset[8:5]
+```
 
 Software defines command staging as:
 
@@ -327,11 +390,16 @@ Software defines command staging as:
 
 The compiler allocator must:
 
+- Emit addresses only as `0x1010_0000 + physical_offset`.
+- Reject any TCDM offset >= `0x80000`.
+- Reserve staging by physical offset, not by an alias address.
 - Use 32-byte alignment for tensors, commands, and constant transfers.
 - Never allocate over command staging.
-- Model one physical TCDM arena rather than adding logical aliases as separate
-  physical memories.
-- Respect access restrictions for IFM, weights, partial sums, and OFM.
+- Model one physical TCDM arena; there are no separate physical "input banks"
+  and "output banks". IFM, weight, OFM, DMA, AFU, and Spatz all contend on
+  the same 16 banks.
+- If bank-conflict optimization is needed, use bank coloring based on
+  `base_offset[8:5]`, not separate address windows.
 - Reserve runtime scratch explicitly or make all scratch allocator-owned.
 - Fail compilation when peak local memory exceeds the target contract.
 
@@ -560,14 +628,49 @@ command staging          4 KB in the reserved top window
 linebuffer max kernel    5
 linebuffer max stride    2
 linebuffer max input W   640
-preferred partial-sum M  <= 256
 requant shift            0..31
 runtime address width    32 bits after relocation
 ```
 
+M dimension limits are not a single constant. The compiler must track separate
+limits per mode:
+
+```text
+MaxGemmCommandMCurrentV2       = 256   (runtime v2 hard-rejects M > 256)
+MaxOnChipPartialSumM           = 256   (RTL PSUM_BUF_M for group-stationary
+                                        multi-K; larger M falls back to
+                                        external TCDM partial-sum path)
+MaxHalPlainGemmSoftwareTileM   = 1024  (HAL software tiling helper, not a
+                                        command ABI limit)
+MaxExternalPsumM               = mode- and TCDM-dependent
+```
+
+Because the plan requires compiler-owned tile planning, the runtime must not
+tile M internally. The compiler must emit multiple commands with M values valid
+for each specific mode.
+
 System configuration may change clocks, bandwidth, and latency for performance
 estimation. It must not override hard RTL limits. `CheckConfiguration()` must
 reject conflicting values.
+
+32-byte alignment is a safe software ABI policy for section layout, binding
+bases, DMA endpoints, and GEMM tiles. It is not a universal RTL necessity for
+all operations:
+
+```text
+ABI section alignment         32 bytes (software contract)
+binding base alignment        32 bytes (software contract)
+DMA endpoint alignment        32 bytes (hardware requirement)
+GEMM tile alignment           32 bytes (hardware requirement)
+COPY_LAYOUT / scalar kernel   1 byte (no hardware alignment constraint)
+row / pixel stride             depends on layout and element size
+```
+
+The compiler may retain 32-byte public base alignment as an ABI simplification,
+but internal allocations for generic layout buffers that do not pass through DMA
+or GEMM need not waste TCDM on 32-byte padding. The plan must document this
+distinction to avoid the allocator rejecting valid models or over-allocating
+TCDM.
 
 ### 6.3. Logical Shapes, Boundary Layout, and Native Tensor Formats
 
@@ -730,9 +833,13 @@ typedef struct {
     uint32_t binding_table_base;
     uint32_t binding_count;
     uint32_t flags;
-    uint32_t reserved[7];
+    uint32_t reserved[8];
 } nai_invocation_v1_t;
 ```
+
+Note: the implementation uses 8 reserved words (total struct size 64 bytes).
+The runtime validates the full 64-byte header. Any new serializer must match
+this size.
 
 Every command reference uses:
 
@@ -793,6 +900,29 @@ ROLLING_PRODUCE
 ROLLING_CONSUME_RELEASE
 ```
 
+Each command type must have a clear readiness status:
+
+- Reserved enum ID.
+- Wire ABI frozen.
+- Runtime parser implemented.
+- Hardware path implemented.
+- Compiler emission implemented.
+- RTL end-to-end verified.
+
+The compiler must not emit a command solely because the enum exists. As of the
+current audit, only `END`, `BARRIER`, `RQ_LOAD`, `DMA_1D/2D/3D`, `GEMM32`,
+`GEMM32_ACCUM`, `GEMM32_REQUANT`, and `COPY_LAYOUT` have runtime dispatch.
+Remaining types are reserved with `UNSUPPORTED` unless marked optional and
+skippable.
+
+Composite commands (e.g. `POINTWISE_C32`, `DEPTHWISE_C32`, `LINEBUF_JOB`) may
+only exist in the ABI when:
+
+- Semantics are fully fixed.
+- The command does not select tile, layout, or mode at runtime.
+- All addresses, strides, counts, and modes are compiler-provided.
+- A corresponding ABI minor/capability bit exists.
+
 Rules:
 
 - Preserve `type`, `size`, `flags`, `layer_id`, and `tile_id` in each command
@@ -800,16 +930,54 @@ Rules:
 - Every command size is divisible by 32 and every reserved field is zero.
 - The runtime rejects unknown required command types.
 - A minor-version command may be skipped only when marked optional and skippable.
-- `RQ_LOAD` loads one quantization block into DTCM or runtime arrays, allowing
-  several compute commands to reuse it.
-- `LINEBUF_JOB` should initially embed one job descriptor for parser simplicity.
+- `RQ_LOAD` loads one quantization block (32 × 32 = 1024 bytes) into DTCM or
+  runtime arrays, allowing several compute commands to reuse it. The load
+  involves 1 KB DMA plus 132 MMIO writes (1 disable + 2 clamp + 128
+  per-channel register writes + 1 enable). The scheduler should reuse qparam
+  blocks across M stripes and treat the RQ register state as a machine resource.
+- `LINEBUF_JOB` embeds one job descriptor. The wire format is 160 bytes:
+  16-byte command header + 124-byte payload (`systolic_linebuf_cfg_t` 80 bytes +
+  `systolic_gemm32_req_t` 36 bytes + `rows` 4 bytes + `k_tiles` 4 bytes) +
+  20 bytes zero-reserved padding to satisfy the 32-byte size divisibility rule:
+  ```c
+  typedef struct {
+      nai_cmd_header_v2_t header;    // 16
+      nai_linebuf_job_wire_v1_t job; // 124
+      uint8_t reserved[20];          // 20
+  } nai_cmd_linebuf_job_v2_t;        // 160
+  ```
+  The runtime command buffer must be large enough to hold 160 bytes.
   Constant deduplication may be added later.
 - `COPY_LAYOUT` carries source and destination formats, logical dimensions,
   valid channel count, and target-computed strides. Initial modes are
   `NHWC_TO_ROW32`, `ROW32_TO_NHWC`, `NHWC_TO_C32`, and `C32_TO_NHWC`.
-- The runtime implements `COPY_LAYOUT` through a zero-fill plus iDMA 2D/3D plan
-  when regular, with a Spatz fallback for gather/scatter cases. The command
-  semantics do not expose which engine performs the conversion.
+- `COPY_LAYOUT` must be implemented according to the memory spaces involved,
+  because Snitch does not have an L2/AXI data path on D-bus. Concrete modes:
+  - **NHWC→ROW32, L2→TCDM**: Zero-fill destination native buffer in TCDM, then
+    iDMA 2D with `length = C * element_bytes`, `source_stride = C *
+    element_bytes`, `dest_stride = round_up(C, 32) * element_bytes`,
+    `repetitions = N * H * W`.
+  - **ROW32→NHWC, TCDM→L2**: iDMA 2D with reversed source and destination
+    strides; padded lanes are not copied.
+  - **NHWC↔C32 with multiple channel groups**: Requires one transfer per
+    channel group, or a verified Spatz gather/scatter kernel. Multi-group C32
+    cannot be expressed with a single affine row stride.
+  - **TCDM→TCDM (local-to-local)**: Must use Spatz kernel or CPU copy
+    correctness path; iDMA cannot perform OBI→OBI transfers. Performance cost
+    must be calculated as CPU or Spatz cycles, not as `ceil(bytes/32)`.
+  The command semantics do not expose which engine performs the conversion.
+- AFU commands must encode the exact hardware mode (`E8`, `E16`, `E32`,
+  `MUL_Q7`, `ADD_I8`, `DFL4_ROW32_Q8`, `CLASS_SIGMOID_ROW32_HIGH16`,
+  `GLOBAL_AVGPOOL_C32`). `AFU_BINARY` does not imply generic TFLite Add/Mul
+  with arbitrary scales and zero points; the runtime must validate the
+  quantization contract of each mode.
+- Spatz commands are only supported when a tested kernel exists. Spatz is an
+  integer-only configuration with two VLSU TCDM ports, not a generic
+  high-bandwidth fallback for arbitrary gather/scatter.
+- DMA commands: the runtime must derive transfer direction from the resolved
+  region of source and destination references. The runtime must reject L2→L2
+  transfers and reject a direction field that contradicts the resolved regions.
+  Do not create a DMA event ID for local CPU copies.
 - The correctness phase uses blocking DMA. Asynchronous commands are added only
   after dependency semantics and regression coverage are stable.
 
@@ -871,24 +1039,58 @@ enum class NeuralAIOpMode {
     Unsupported,
     View,
     DmaCopy,
-    Gemm32,
-    FullyConnected,
-    RgbStem3x3S2P1,
-    PointwiseC32,
-    Conv3x3C32S1P1,
-    Conv3x3C32S2P1,
-    Depthwise3x3C32S1P1,
-    Depthwise3x3C32S2P1,
-    AfuLut,
-    AfuBinary,
-    SpatzElementwise,
-    MaxPool5x5S1P2,
-    UpsampleNearest2x,
-    GlobalAvgPoolC32,
-    DflSoftmax4,
-    ClassSigmoidHigh16,
+    SystolicGemm32,
+    SystolicGemm32Requant,
+    Conv2DPointwiseC32Requant,
+    Conv2DRgbLinebufRequant,
+    Conv2DC32Linebuf,
+    Conv2DC32LinebufRequant,
+    Conv2DC32DownsampleLinebufRequant,
+    Conv2DDualSourceC32LinebufRequantL2,
+    Conv2DC32MultiLinebufRequant,
+    DepthwiseConv2DC32Requant,
+    DepthwiseConv2DC32DownsampleRequant,
+    LogisticLutI8,
+    ClampI8,
+    AddI8,
+    MulI8,
+    DflSoftmaxI8Q8,
+    ClassSigmoidRow32High16I8,
+    SpatzRequant,
+    MaxPool2DI8,
+    UpsampleNearestI8,
+    GlobalAvgPoolC32Reduce,
 };
 ```
+
+C32 Conv modes must be separated because RTL only enables multi-K
+group-stationary fast mode when all of the following conditions are true
+simultaneously:
+
+- `linebuffer enabled`
+- `coalesce enabled`
+- `kgen enabled`
+- `c32_fast enabled`
+- `lane_base == 0`
+- `block_valid_bytes == 32`
+- `input_c >= 32`
+- `input_c % 32 == 0`
+- `k_tiles > 1`
+
+When these hold, RTL derives `linebuf_c32_group_stationary =
+linebuf_kgen_multi`. The `cfg_linebuf_c32_group_stationary_i` field exists in
+the config but is not the actual mode selector. A channel tail makes
+`block_valid_bytes < 32` and disables the fast multi-K path. Setting
+`c32_group_stationary = 1` in the descriptor alone is insufficient.
+
+Consequently, `c32_group_stationary` in the wire descriptor should either be
+removed (derived state) or treated as an assertion that the runtime validates
+and rejects if the predicate does not match. Different performance formulas
+must be used for full-group and tail paths.
+
+AFU mode names must map directly to hardware modes (`E8`, `E16`, `E32`,
+`MUL_Q7`, `ADD_I8`, `DFL4_ROW32_Q8`, `CLASS_SIGMOID_ROW32_HIGH16`,
+`GLOBAL_AVGPOOL_C32`), not generic TFLite operator names.
 
 Classifier inputs:
 
@@ -1330,9 +1532,46 @@ gemm_cycles = weight_load_cost
             + M pipeline cycles
             + drain and requant overhead
 linebuffer_cycles = function(M, kernel taps, K groups, mode)
-total_blocking = sum(dma + compute)
+rq_load_cycles = qparam_dma_cycles(1024)
+               + 132 * mmio_write_cost
+               + decode_cost
+total_blocking = sum(dma + compute + rq_load)
 total_overlap = critical_path(max(dma_stage, compute_stage))
 ```
+
+RTL TCDM arbitration uses strict priority: HWPE > DMA > CORE, with round-robin
+within each traffic class. Systolic, Spatz, and AFU are all HWPE class. All
+masters share the same 16-bank memory with bank selection from `address[8:5]`.
+
+Consequences for the performance model:
+
+- DMA does not achieve 32 bytes/cycle when compute accesses the same bank.
+- CPU layout loops may be delayed under sustained HWPE traffic.
+- Two streams with the same base bank phase can conflict continuously.
+- Using `max(dma, compute)` for overlap prediction can be overly optimistic.
+
+The performance phase must add:
+
+```text
+bank_phase(buffer) = (base >> 5) & 0xF
+contention_penalty(engine_a, engine_b, access_pattern)
+priority_penalty(HWPE, DMA, CORE)
+measured_effective_dma_bandwidth(concurrent_mode)
+```
+
+The allocator should prefer different bank phases for IFM, weight, OFM, and
+ping-pong DMA buffers. PMU calibration must occur before the cost model is used
+for tile-shape decisions, not only as a final optimization step.
+
+For local-to-local copies (Spatz or CPU), the cost model must use CPU or Spatz
+cycles, not `ceil(bytes/32)` which assumes iDMA bandwidth.
+
+RQ_LOAD cost is non-trivial for small M with many output-channel groups. The
+scheduler should reuse qparam blocks as long as possible, avoid reloading the
+same block between M stripes, and treat RQ register state as a machine
+resource. When adding async command prefetch, avoid concurrent use of the 4 KB
+staging window for command reads and qparam loads unless dependencies are
+explicit.
 
 Calibrate with PMU regression for:
 
@@ -1343,6 +1582,7 @@ Calibrate with PMU regression for:
 - Depthwise channel and tail sweeps.
 - DMA 1D, 2D, and 3D size and stride sweeps.
 - AFU and Spatz element-count sweeps.
+- Concurrent DMA + compute bank-conflict measurements.
 
 The performance model must not claim overlap while the command runtime remains
 blocking.
@@ -1383,6 +1623,9 @@ neural-ai/sw/lib/npu_memory_map.h
 - Serializer byte-golden tests.
 - Invalid offset, overflow, and alignment cases.
 - A cross-repository ABI manifest and version comparison.
+- TCDM alias verification: write at `0x1010_0000`, read at `0x1018_0000` and
+  `0x1020_0000` to confirm physical aliasing per RTL bank decode. Then ensure
+  runtime and compiler use only canonical addresses.
 
 ### Exit Criteria
 
@@ -1425,8 +1668,13 @@ neural-ai/sw/test/compiler_runtime/*
 - The unchanged legacy v1 MatMul test still passes.
 - Malformed v2 header, section, and reference tests.
 - V2 DMA in -> GEMM32 -> DMA out end-to-end test.
-- M values 1, 31, 32, 33, and 256.
+- M values 1, 31, 32, 33, 255, 256, 257, and 511.
+- K values 1, 31, 32, 33, 63, 64, and 65.
+- N values 1, 31, 32, 33, 63, 64, and 65.
 - Misaligned or out-of-range bindings fail with the expected error code.
+- DMA direction validation: reject L2->L2 and direction/region mismatch.
+- Quantization rejection: IFM zp != 0, weight zp != 0, shift > 31, invalid
+  clamp, mismatched qparam block.
 - Firmware text plus read-only data remains at or below 32 KB.
 
 ### Exit Criteria
@@ -1483,6 +1731,10 @@ using the Phase 1 runtime.
 - Contiguous frontend-order input and output buffers with no host-side packing.
 - Per-channel bias and output clamp.
 - Compiler output loads directly without patching absolute command addresses.
+- NHWC L2 -> ROW32 TCDM -> NHWC L2 boundary layout round-trip with
+  C = 3, 31, 32, 33, 63, 64, 65 and H/W > 1.
+- M = 257 to verify compiler tiling across the v2 command M limit.
+- Multi-K accumulation with K tail not divisible by 32.
 
 ### Exit Criteria
 
@@ -1500,11 +1752,28 @@ using the Phase 1 runtime.
 Support CNN backbones containing an RGB stem, pointwise Conv, C32 Conv, and
 depthwise Conv.
 
+### Prerequisite Gate
+
+The following must be complete before Conv compiler lowering begins:
+
+1. Physical memory contract frozen: one canonical 512 KB TCDM, no physical
+   12/4 partition.
+2. `COPY_LAYOUT` L2-aware: iDMA for external↔local transfer; Spatz or CPU for
+   local repack.
+3. DMA validation by memory region: reject L2→L2 and direction mismatch.
+4. Symmetric IFM/weight quantization elevated to target invariant.
+5. Hard M limits defined per GEMM/linebuffer mode, not a single `M<=256`
+   preferred constant.
+6. `LINEBUF_JOB` wire size frozen at 160 bytes (or referenced descriptor
+   alternative).
+7. C32 generic, fast, group-stationary, and tail modes separated in the
+   classifier.
+
 ### Work Items
 
 1. Implement the Neural-AI Conv classifier and constraints.
 2. Port the linebuffer tile planner from Python to C++.
-3. Implement RGB, pointwise, Conv3x3, and depthwise weight encoders.
+3. Implement RGB, pointwise, generic Conv2D, and depthwise weight encoders.
 4. Implement per-channel multiplier and shift search plus the RTL rounding model.
 5. Add `RQ_LOAD`, linebuffer, pointwise, and depthwise commands.
 6. Extract runtime operation handlers from `npu_graph_run()` where appropriate.
@@ -1522,8 +1791,12 @@ depthwise Conv.
 - Weight byte-golden tests for all four formats.
 - Randomized quantization tests against an RTL-compatible reference.
 - Border and interior linebuffer descriptor byte-golden tests.
+- 160-byte `LINEBUF_JOB` command serialization golden tests.
 - Tile-fit and overflow tests at the TCDM boundary.
 - C33, C48, C64, C65, and C96 channel cases.
+- Full C32 group and tail C32 cases with separate performance validation.
+- M = 256 and M > 256 external-psum path tests.
+- NHWC L2 → C32 TCDM → NHWC L2 boundary layout round-trip.
 - NHWC input and output byte-order tests across H/W/C and channel-tail cases.
 
 ### End-to-End Order
