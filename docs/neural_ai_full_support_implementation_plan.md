@@ -229,9 +229,11 @@ Exact names and signatures may follow local style, but ownership must remain in
 `Architecture`, not `scheduler.cpp`.
 
 Default implementations must preserve current Ethos behavior. Neural-AI should
-override 32-byte alignment and its own storage and layout rules. Binding format
-selection and internal format selection must remain separate calls so a scheduler
-default cannot accidentally expose a native padded format at the model boundary.
+override the per-engine alignment, storage, and layout rules defined in Section
+6.2, including 32-byte alignment for GEMM/C32-fast buffers and byte alignment
+for generic layout/scalar-only buffers. Binding format selection and internal
+format selection must remain separate calls so a scheduler default cannot
+accidentally expose a native padded format at the model boundary.
 
 ### 4.4. Ethos Assumptions in Shared Code
 
@@ -393,7 +395,10 @@ The compiler allocator must:
 - Emit addresses only as `0x1010_0000 + physical_offset`.
 - Reject any TCDM offset >= `0x80000`.
 - Reserve staging by physical offset, not by an alias address.
-- Use 32-byte alignment for tensors, commands, and constant transfers.
+- Use 32-byte alignment for ABI sections, command records, GEMM tiles, and
+  constant-section bases. Tensor bases, strides, and transfer lengths follow
+  the per-engine alignment contract in Section 6.2; do not impose a 32-byte
+  requirement on every iDMA row or generic layout buffer.
 - Never allocate over command staging.
 - Model one physical TCDM arena; there are no separate physical "input banks"
   and "output banks". IFM, weight, OFM, DMA, AFU, and Spatz all contend on
@@ -622,7 +627,8 @@ target name              NeuralAI
 architecture ABI         1.x
 clusters                 1
 array dimension          32
-DMA beat and alignment   32 bytes
+DMA data beat            32 bytes
+alignment                per-engine contract below
 physical TCDM            512 KB
 command staging          4 KB in the reserved top window
 linebuffer max kernel    5
@@ -653,24 +659,33 @@ System configuration may change clocks, bandwidth, and latency for performance
 estimation. It must not override hard RTL limits. `CheckConfiguration()` must
 reject conflicting values.
 
-32-byte alignment is a safe software ABI policy for section layout, binding
-bases, DMA endpoints, and GEMM tiles. It is not a universal RTL necessity for
-all operations:
+Alignment is a property of an address or operation, not of the whole target.
+ABI section alignment and engine-specific tensor alignment must remain separate.
+The initial contract is:
 
-```text
-ABI section alignment         32 bytes (software contract)
-binding base alignment        32 bytes (software contract)
-DMA endpoint alignment        32 bytes (hardware requirement)
-GEMM tile alignment           32 bytes (hardware requirement)
-COPY_LAYOUT / scalar kernel   1 byte (no hardware alignment constraint)
-row / pixel stride             depends on layout and element size
-```
+| Path | Base address | Row/plane stride | Transfer length | Contract |
+|---|---:|---:|---:|---|
+| `.nai` section and command record | 32 bytes | N/A | command/section size is a multiple of 32 | Software wire ABI |
+| Public input/output binding | 32 bytes | Compact logical byte stride; may be non-32 | Exact logical byte size; may be non-32 | Software ABI simplification |
+| iDMA 1D/2D/3D external↔local | Byte-addressed; unaligned behavior must pass the Phase 0 RTL gate | Byte units; may be non-32 | Byte units; may be non-32 | Required by NHWC boundary copies; not frozen as a 32-byte hardware rule |
+| Systolic GEMM32/psum/requant | 32 bytes | OFM/psum strides obey the command validator and are multiples of 32 | K/N tiles are 32 lanes | Hardware and command ABI |
+| Linebuffer RGB/generic | Byte-addressed descriptor fields | Pixel and row strides are byte counts and may be non-32 | Internally reads 32-byte beats and merges crossing beats | Hardware descriptor contract |
+| Linebuffer C32 fast/group-stationary | 32-byte C32 group base and group span | C32 pixel/group strides | Full 32-byte channel groups | Hardware fast-path contract |
+| AFU | 32-byte base policy for compiler-generated tensors | No tensor row stride in the current job ABI | Length is a byte count and tails use byte enables | Compiler/runtime policy |
+| Spatz or Snitch scalar layout kernel | Element aligned | Layout-dependent byte stride | Byte count | Software-kernel contract |
 
-The compiler may retain 32-byte public base alignment as an ABI simplification,
-but internal allocations for generic layout buffers that do not pass through DMA
-or GEMM need not waste TCDM on 32-byte padding. The plan must document this
-distinction to avoid the allocator rejecting valid models or over-allocating
-TCDM.
+Before the ABI is frozen, RTL tests must verify iDMA 1D, 2D, and 3D transfers in
+both directions with unaligned bases, non-32-byte lengths, and non-32-byte
+strides, including rows that cross a 32-byte beat boundary. In particular, test
+the C=3 and C=31 NHWC patterns required by `COPY_LAYOUT`. If an iDMA case is not
+supported, the runtime must use an aligned bounce-buffer, Spatz, or Snitch
+correctness path; the compiler must not reject a valid compact model binding
+merely because its logical row stride is not 32-byte aligned.
+
+The compiler may retain 32-byte public base alignment as an ABI simplification.
+Internal buffers used only by generic layout or scalar kernels may use byte
+alignment. Buffers consumed by GEMM, C32-fast linebuffer, or another
+32-byte-aligned engine must retain that engine's alignment.
 
 ### 6.3. Logical Shapes, Boundary Layout, and Native Tensor Formats
 
@@ -1173,8 +1188,12 @@ NHWC metadata when the target consumer can calculate the native address directly
 
 Reuse the Regor live-range allocator with these changes:
 
-- Obtain allocation quantum and alignment from the architecture; Neural-AI uses
-  32 bytes.
+- Obtain allocation quantum and per-live-range alignment from the architecture.
+  Neural-AI must not use one global 32-byte tensor alignment: use the smallest
+  allocator quantum supported by the live-range allocator and apply 32-byte
+  alignment only to ABI, GEMM, C32-fast, AFU, and other buffers that require it
+  under the Section 6.2 contract. Generic layout/scalar-only buffers may be byte
+  aligned.
 - Obtain storage size from layout-aware APIs.
 - Keep constants in `.nai` and L2; stage only the current tile in TCDM.
 - Keep contiguous NHWC input and output bindings in L2. Native local tiles and
@@ -1599,7 +1618,8 @@ Remove ambiguity between compiler, software, and RTL before backend development.
 
 1. Specify ABI version 1 for `.nai`, invocation records, references, and commands.
 2. Freeze the initial target as one cluster, INT8, static shape, and batch 1.
-3. Freeze physical TCDM size, 4 KB staging, and 32-byte alignment.
+3. Freeze physical TCDM size, 4 KB staging, and the per-engine base/stride/length
+   alignment contract after the unaligned iDMA RTL gate passes.
 4. Correct the software DTCM constant from 8 KB to 32 KB.
 5. Freeze logical NHWC semantics, contiguous NHWC model bindings, native ROW32
    and C32 formulas, boundary conversions, and aliasing rules.
@@ -1622,6 +1642,9 @@ neural-ai/sw/lib/npu_memory_map.h
 - C and C++ `static_assert` checks for every wire structure size and offset.
 - Serializer byte-golden tests.
 - Invalid offset, overflow, and alignment cases.
+- iDMA 1D/2D/3D unaligned-base, non-32-byte length, and non-32-byte stride
+  tests in both external↔local directions, including C=3 and C=31
+  `COPY_LAYOUT` row patterns and 32-byte beat crossings.
 - A cross-repository ABI manifest and version comparison.
 - TCDM alias verification: write at `0x1010_0000`, read at `0x1018_0000` and
   `0x1020_0000` to confirm physical aliasing per RTL bank decode. Then ensure
@@ -1668,7 +1691,9 @@ neural-ai/sw/test/compiler_runtime/*
 - The unchanged legacy v1 MatMul test still passes.
 - Malformed v2 header, section, and reference tests.
 - V2 DMA in -> GEMM32 -> DMA out end-to-end test.
-- M values 1, 31, 32, 33, 255, 256, 257, and 511.
+- Positive single-command M values 1, 31, 32, 33, 255, and 256.
+- Negative single-command M values 257 and 511; each must be rejected with the
+  expected bad-command status because runtime v2 does not tile M.
 - K values 1, 31, 32, 33, 63, 64, and 65.
 - N values 1, 31, 32, 33, 63, 64, and 65.
 - Misaligned or out-of-range bindings fail with the expected error code.
@@ -1713,7 +1738,8 @@ using the Phase 1 runtime.
 ### Compiler Tests
 
 - Factory and configuration parsing.
-- 32-byte allocation and alignment.
+- Per-engine allocation alignment: 32-byte GEMM/C32-fast buffers and byte-aligned
+  generic layout/scalar-only buffers.
 - ROW32 storage size and tail padding.
 - NHWC logical shape preservation through legalization and scheduling.
 - Contiguous model input pack to ROW32 and ROW32 output unpack with K/N tails.
@@ -1733,7 +1759,9 @@ using the Phase 1 runtime.
 - Compiler output loads directly without patching absolute command addresses.
 - NHWC L2 -> ROW32 TCDM -> NHWC L2 boundary layout round-trip with
   C = 3, 31, 32, 33, 63, 64, 65 and H/W > 1.
-- M = 257 to verify compiler tiling across the v2 command M limit.
+- M = 257 and M = 511 to verify that the compiler emits multiple commands, each
+  with M <= 256, and that the complete tiled execution succeeds and matches the
+  reference.
 - Multi-K accumulation with K tail not divisible by 32.
 
 ### Exit Criteria
