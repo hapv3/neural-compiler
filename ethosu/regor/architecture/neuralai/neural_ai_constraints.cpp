@@ -6,10 +6,16 @@
 
 #include "neural_ai_constraints.hpp"
 
+#include "architecture/architecture.hpp"
+
+#include <array>
+
 namespace regor
 {
 namespace
 {
+
+thread_local std::array<ArchTensorRequirement, 2> s_pointwiseTensorRequirements;
 
 bool IsStaticPositiveShape(const Shape &shape)
 {
@@ -96,6 +102,15 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
              weightsShape.Depth() != query->ifm[0].shape.Depth() )
         {
             return QueryResult::Unsupported;
+        }
+        if ( req != nullptr )
+        {
+            Set(s_pointwiseTensorRequirements[0], TensorUsage::IFM0, TensorFormat::C32Blocked);
+            Set(s_pointwiseTensorRequirements[1], TensorUsage::OFM, TensorFormat::C32Blocked);
+            s_pointwiseTensorRequirements[0].next = &s_pointwiseTensorRequirements[1];
+            req->tensor = s_pointwiseTensorRequirements[0];
+            req->req.Set(ArchRequirement::Tensor);
+            return QueryResult::NativeHasReq;
         }
     }
     return QueryResult::Native;

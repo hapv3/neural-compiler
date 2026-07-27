@@ -457,7 +457,7 @@ int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *con
             const TensorUsage bindingUsage = tensor->isGraphOutput ? TensorUsage::OFM : TensorUsage::IFM;
             tensor->format = _arch->ModelBindingFormat(bindingUsage);
         }
-        else
+        else if ( tensor->format == TensorFormat::NHWC )
         {
             tensor->format = _arch->DefaultInternalTensorFormat(usage, tensor->needsLinearFormat);
         }

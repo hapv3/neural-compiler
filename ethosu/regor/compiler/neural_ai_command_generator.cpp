@@ -218,6 +218,27 @@ struct GeneratorContext
         ++artifact->commandCount;
     }
 
+    void AppendPointwiseC32(const RefV1 &weights, const RefV1 &ifm,
+        const RefV1 &partial, const RefV1 &ofm, uint32_t rows,
+        uint32_t inputGroups, uint32_t outputGroups, uint32_t qparamBlock,
+        uint32_t inputGroupStride, uint32_t outputGroupStride,
+        uint32_t layerId, uint32_t tileId)
+    {
+        AppendHeader(artifact->commands, CommandType::PointwiseC32, 96, layerId, tileId);
+        AppendRef(artifact->commands, weights);
+        AppendRef(artifact->commands, ifm);
+        AppendRef(artifact->commands, partial);
+        AppendRef(artifact->commands, ofm);
+        Append32(artifact->commands, rows);
+        Append32(artifact->commands, inputGroups);
+        Append32(artifact->commands, outputGroups);
+        Append32(artifact->commands, qparamBlock);
+        Append32(artifact->commands, inputGroupStride);
+        Append32(artifact->commands, outputGroupStride);
+        AppendZeros(artifact->commands, 6);
+        ++artifact->commandCount;
+    }
+
     bool AppendCopy(const SchedulerOperation *operation, std::string &error)
     {
         const SchedulerConnection *ifm = operation->IFM(0);
@@ -227,7 +248,11 @@ struct GeneratorContext
             mode = CopyLayoutMode::NHWCToRow32;
         else if ( ifm->tensor->format == TensorFormat::Row32 && ofm->tensor->format == TensorFormat::NHWC )
             mode = CopyLayoutMode::Row32ToNHWC;
-        else return SetError(error, "Neural-AI MemoryCopy requires an NHWC/ROW32 boundary");
+        else if ( ifm->tensor->format == TensorFormat::NHWC && ofm->tensor->format == TensorFormat::C32Blocked )
+            mode = CopyLayoutMode::NHWCToC32;
+        else if ( ifm->tensor->format == TensorFormat::C32Blocked && ofm->tensor->format == TensorFormat::NHWC )
+            mode = CopyLayoutMode::C32ToNHWC;
+        else return SetError(error, "Neural-AI MemoryCopy requires an NHWC/ROW32/C32 boundary");
 
         const auto dimensions = Dimensions(ofm->shape);
         const uint16_t dataType = ABIDataType(ofm->Type());
@@ -299,6 +324,39 @@ struct GeneratorContext
         const uint32_t weightBase = uint32_t(artifact->constants.size());
         const uint8_t *weightData = data + range.weightOffset;
         artifact->constants.insert(artifact->constants.end(), weightData, weightData + range.weightBytes);
+
+        if ( operation->Type() == OpType::Conv2D &&
+             ifm->tensor->format == TensorFormat::C32Blocked &&
+             ofm->tensor->format == TensorFormat::C32Blocked )
+        {
+            uint32_t tileId = 0;
+            const uint32_t groupStride = rows * 32u;
+            for ( uint32_t nGroup = 0; nGroup < nGroups; ++nGroup )
+            {
+                for ( uint32_t rowBase = 0; rowBase < rows; rowBase += 256 )
+                {
+                    const uint32_t dimM = std::min<uint32_t>(256, rows - rowBase);
+                    AppendRQLoad(qparamBase + nGroup * 32, uint32_t(operation->Index()), tileId++);
+                    RefV1 ifmRef = TensorRef(ifm->tensor.get(), rowBase * 32u, error);
+                    if ( !error.empty() ) return false;
+                    RefV1 weights{};
+                    weights.region = uint16_t(Region::ModelConstants);
+                    weights.offset = weightBase + nGroup * kGroups * 32u * 32u;
+                    RefV1 partial{};
+                    if ( kGroups > 1 )
+                    {
+                        partial.region = uint16_t(Region::TCDMScratch);
+                        partial.offset = partialOffset;
+                    }
+                    RefV1 output = TensorRef(ofm->tensor.get(), nGroup * rows * 32u + rowBase * 32u, error);
+                    if ( !error.empty() ) return false;
+                    AppendPointwiseC32(weights, ifmRef, partial, output, dimM,
+                        kGroups, 1, nGroup, groupStride, groupStride,
+                        uint32_t(operation->Index()), tileId++);
+                }
+            }
+            return true;
+        }
 
         uint32_t tileId = 0;
         for ( uint32_t nGroup = 0; nGroup < nGroups; ++nGroup )

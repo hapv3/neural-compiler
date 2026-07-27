@@ -620,7 +620,7 @@ TEST_CASE("Neural-AI compiler tiles oversized M dimensions")
     }
 }
 
-TEST_CASE("Neural-AI compiler lowers pointwise Conv2D through GEMM32")
+TEST_CASE("Neural-AI compiler lowers pointwise Conv2D through C32 GEMM32")
 {
     std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
     Compiler compiler(architecture);
@@ -638,16 +638,25 @@ TEST_CASE("Neural-AI compiler lowers pointwise Conv2D through GEMM32")
     REQUIRE(size > int64_t(sizeof(neuralai::ModelHeaderV1)));
     const uint32_t commandBytes = Read32(data + 64 + 12);
     uint32_t offset = 224;
-    bool sawGemm = false;
+    bool sawPointwiseC32 = false;
     while ( offset < 224 + commandBytes )
     {
         const uint16_t type = uint16_t(data[offset]) | (uint16_t(data[offset + 1]) << 8);
         const uint16_t commandSize = uint16_t(data[offset + 2]) | (uint16_t(data[offset + 3]) << 8);
-        if ( type == uint16_t(neuralai::CommandType::Gemm32Requant) ) sawGemm = true;
+        if ( type == uint16_t(neuralai::CommandType::PointwiseC32) )
+        {
+            sawPointwiseC32 = true;
+            REQUIRE(commandSize == 96);
+            REQUIRE(Read32(data + offset + 48) <= 256);
+            REQUIRE(Read32(data + offset + 52) > 0);
+            REQUIRE(Read32(data + offset + 56) == 1);
+            REQUIRE(Read32(data + offset + 64) % 32 == 0);
+            REQUIRE(Read32(data + offset + 68) % 32 == 0);
+        }
         offset += commandSize;
     }
     REQUIRE(offset == 224 + commandBytes);
-    REQUIRE(sawGemm);
+    REQUIRE(sawPointwiseC32);
     blob->Unmap(const_cast<uint8_t *>(data));
     blob->Release();
 }
