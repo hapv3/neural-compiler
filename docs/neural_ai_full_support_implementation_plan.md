@@ -76,16 +76,17 @@ exists. The following status matrix reflects what has been audited:
 | GEMM32 | Yes | Yes | Yes | Yes |
 | RQ load | Yes | Yes | Partial | Incomplete model matrix |
 | NHWC↔ROW32 | Not a primitive | iDMA for external↔local, scalar/Spatz for local↔local | Yes | Focused boundary regression |
-| NHWC↔C32 | Not a primitive | iDMA for external↔local, scalar/Spatz for local↔local | Runtime ABI available; compiler not emitted | Focused boundary regression |
-| Pointwise Conv1x1 | GEMM32 primitive | v2 GEMM32 path | Constrained 1x1/S1/P0 lowering | Package-generation regression |
+| NHWC↔C32 | Not a primitive | iDMA for external↔local, scalar/Spatz for local↔local | Emitted for pointwise Conv boundaries | Focused boundary regression |
+| Pointwise Conv1x1 | GEMM32 primitive | v2 `POINTWISE_C32` path | Constrained 1x1/S1/P0 lowering with C32 group/tail padding | Runtime package regression + compiler golden |
 | Linebuffer Conv | Yes | Legacy HAL exists | No | Not through .nai |
 | AFU commands | Hardware modes exist | No v2 dispatch | No | No |
 | Spatz commands | Engine exists | Incomplete kernels | No | No |
 
 `ArchNeuralAI` exposes `FullyConnected`, `MatMul`, `MemoryCopy`, and a
 constrained pointwise `Conv2D` path (`1x1`, stride 1, dilation 1, zero padding)
-that lowers to GEMM32. RGB, generic C32, and depthwise Conv remain outside the
-compiler target until Phase 3 work items are completed.
+that lowers to C32-grouped GEMM32 commands. RGB, generic C32 3x3, and depthwise
+Conv remain outside the compiler target until their Phase 3 work items are
+completed.
 
 The plan should record the hardware commit and compiler commit at which the
 contract was audited.
@@ -930,10 +931,9 @@ Each command type must have a clear readiness status:
 - RTL end-to-end verified.
 
 The compiler must not emit a command solely because the enum exists. As of the
-current audit, only `END`, `BARRIER`, `RQ_LOAD`, `DMA_1D/2D/3D`, `GEMM32`,
-`GEMM32_ACCUM`, `GEMM32_REQUANT`, and `COPY_LAYOUT` have runtime dispatch.
-Remaining types are reserved with `UNSUPPORTED` unless marked optional and
-skippable.
+current audit, `POINTWISE_C32` also has runtime dispatch and a verified package
+path. Remaining composite types are reserved with `UNSUPPORTED` unless marked
+optional and skippable.
 
 Composite commands (e.g. `POINTWISE_C32`, `DEPTHWISE_C32`, `LINEBUF_JOB`) may
 only exist in the ABI when:
