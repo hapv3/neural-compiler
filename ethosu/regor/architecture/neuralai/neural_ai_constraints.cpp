@@ -27,7 +27,8 @@ bool HasBatchOne(const Shape &shape)
 
 bool NeuralAIConstraints::IsSupportedOp(OpType opType)
 {
-    return opType == OpType::FullyConnected || opType == OpType::MatMul || opType == OpType::MemoryCopy;
+    return opType == OpType::FullyConnected || opType == OpType::MatMul || opType == OpType::Conv2D ||
+           opType == OpType::MemoryCopy;
 }
 
 bool NeuralAIConstraints::SupportsQuantization(OpType opType, const Quantization &, DataType ifmType,
@@ -81,6 +82,21 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
     if ( !HasBatchOne(query->ifm[0].shape) || !HasBatchOne(query->ofm.shape) )
     {
         return QueryResult::Unsupported;
+    }
+    if ( opType == OpType::Conv2D )
+    {
+        if ( query->kernel == nullptr || query->kernel->Size() != Point2i(1, 1) ||
+             query->kernel->Stride() != Point2i(1, 1) || query->kernel->Dilation() != Point2i(1, 1) ||
+             !query->kernel->Padding().IsZero() )
+        {
+            return QueryResult::Unsupported;
+        }
+        if ( weightsShape.Batch() != query->ofm.shape.Depth() ||
+             weightsShape.Height() != 1 || weightsShape.Width() != 1 ||
+             weightsShape.Depth() != query->ifm[0].shape.Depth() )
+        {
+            return QueryResult::Unsupported;
+        }
     }
     return QueryResult::Native;
 }

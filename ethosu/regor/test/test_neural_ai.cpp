@@ -108,6 +108,64 @@ flatbuffers::DetachedBuffer BuildFullyConnectedModel(int depthK, int depthN)
     return BuildFullyConnectedModel(1, depthK, depthN);
 }
 
+flatbuffers::DetachedBuffer BuildPointwiseConvModel(int height, int width, int depthK, int depthN)
+{
+    flatbuffers::FlatBufferBuilder builder;
+    const std::vector<float> scale = {1.0f};
+    const std::vector<int64_t> zeroPoint = {0};
+    const auto inputQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &scale, &zeroPoint);
+    const auto weightQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &scale, &zeroPoint);
+    const auto biasQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &scale, &zeroPoint);
+    const auto outputQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &scale, &zeroPoint);
+
+    std::vector<uint8_t> weightData(size_t(depthK) * depthN, 1);
+    std::vector<int32_t> bias(depthN, 0);
+    std::vector<uint8_t> biasData(bias.size() * sizeof(int32_t));
+    std::memcpy(biasData.data(), bias.data(), biasData.size());
+    std::vector<flatbuffers::Offset<tflite::Buffer>> buffers = {
+        tflite::CreateBufferDirect(builder),
+        tflite::CreateBufferDirect(builder, &weightData),
+        tflite::CreateBufferDirect(builder, &biasData),
+    };
+    const std::vector<int32_t> inputShape = {1, height, width, depthK};
+    const std::vector<int32_t> weightShape = {depthN, 1, 1, depthK};
+    const std::vector<int32_t> biasShape = {depthN};
+    const std::vector<int32_t> outputShape = {1, height, width, depthN};
+    std::vector<flatbuffers::Offset<tflite::Tensor>> tensors = {
+        tflite::CreateTensorDirect(builder, &inputShape, tflite::TensorType::INT8, 0, "input", inputQuant),
+        tflite::CreateTensorDirect(builder, &weightShape, tflite::TensorType::INT8, 1, "weights", weightQuant),
+        tflite::CreateTensorDirect(builder, &biasShape, tflite::TensorType::INT32, 2, "bias", biasQuant),
+        tflite::CreateTensorDirect(builder, &outputShape, tflite::TensorType::INT8, 0, "output", outputQuant),
+    };
+    const auto options = tflite::CreateConv2DOptions(
+        builder, tflite::Padding::VALID, 1, 1, tflite::ActivationFunctionType::NONE, 1, 1,
+        tflite::TensorType::INT32);
+    const std::vector<int32_t> opInputs = {0, 1, 2};
+    const std::vector<int32_t> opOutputs = {3};
+    const std::vector<flatbuffers::Offset<tflite::Operator>> operations = {
+        tflite::CreateOperatorDirect(builder, 0, &opInputs, &opOutputs,
+            tflite::BuiltinOptions::Conv2DOptions, options.Union()),
+    };
+    const std::vector<int32_t> graphInputs = {0};
+    const std::vector<int32_t> graphOutputs = {3};
+    const std::vector<flatbuffers::Offset<tflite::SubGraph>> subgraphs = {
+        tflite::CreateSubGraphDirect(
+            builder, &tensors, &graphInputs, &graphOutputs, &operations, "main"),
+    };
+    const std::vector<flatbuffers::Offset<tflite::OperatorCode>> operatorCodes = {
+        tflite::CreateOperatorCodeDirect(builder, int8_t(tflite::BuiltinOperator::CONV_2D),
+            nullptr, 1, tflite::BuiltinOperator::CONV_2D),
+    };
+    const auto model = tflite::CreateModelDirect(builder, 3, &operatorCodes, &subgraphs,
+        "Neural-AI pointwise Conv test", &buffers);
+    tflite::FinishModelBuffer(builder, model);
+    return builder.Release();
+}
+
 }  // namespace
 
 TEST_CASE("Neural-AI architecture factory")
@@ -187,14 +245,14 @@ TEST_CASE("Neural-AI architecture accepts the fixed RTL limits")
     REQUIRE(arch.ParseSection(section, &reader) == IniParseResult::Done);
 }
 
-TEST_CASE("Neural-AI constraints accept only initial INT8 matrix operations")
+TEST_CASE("Neural-AI constraints accept INT8 matrix and pointwise operations")
 {
     ArchNeuralAI arch;
     auto *constraints = arch.Constraints();
 
     REQUIRE(constraints->OperatorQuery(OpType::FullyConnected) == QueryResult::NativeConstrained);
     REQUIRE(constraints->OperatorQuery(OpType::MatMul) == QueryResult::NativeConstrained);
-    REQUIRE(constraints->OperatorQuery(OpType::Conv2D) == QueryResult::Unsupported);
+    REQUIRE(constraints->OperatorQuery(OpType::Conv2D) == QueryResult::NativeConstrained);
 
     ArchOperatorQuery query;
     query.ifm[0].type = DataType::Int8;
@@ -214,6 +272,20 @@ TEST_CASE("Neural-AI constraints accept only initial INT8 matrix operations")
     query.weightFormat = WeightFormat::Default;
     query.ifm[0].shape = Shape(2, 1, 31);
     REQUIRE(constraints->OperatorQuery(OpType::MatMul, &query) == QueryResult::Unsupported);
+
+    ArchOperatorQuery pointwise;
+    pointwise.ifm[0].type = DataType::Int8;
+    pointwise.ifm[0].shape = Shape(1, 2, 3, 33);
+    pointwise.weights.type = DataType::Int8;
+    pointwise.weights.shape = Shape(34, 1, 1, 33);
+    pointwise.ofm.type = DataType::Int8;
+    pointwise.ofm.shape = Shape(1, 2, 3, 34);
+    pointwise.weightFormat = WeightFormat::Default;
+    pointwise.kernel = &Kernel::UnitKernel();
+    REQUIRE(constraints->OperatorQuery(OpType::Conv2D, &pointwise) == QueryResult::Native);
+    const Kernel nonPointwiseKernel({3, 3}, {1, 1}, {1, 1});
+    pointwise.kernel = &nonPointwiseKernel;
+    REQUIRE(constraints->OperatorQuery(OpType::Conv2D, &pointwise) == QueryResult::Unsupported);
 }
 
 TEST_CASE("Neural-AI constraints accept shape-preserving memory copies")
@@ -294,7 +366,7 @@ TEST_CASE("Neural-AI matrix op configuration exposes GEMM granules")
     REQUIRE(config->MinimalStripeGranule() == Point2i(1, 1));
     REQUIRE(config->OptimalDepthGranule() == 32);
     REQUIRE(config->MinimumDepthGranule() == 32);
-    REQUIRE_FALSE(arch.GetOpConfig(OpType::Conv2D, query));
+    REQUIRE(arch.GetOpConfig(OpType::Conv2D, query));
 }
 
 TEST_CASE("Neural-AI performance model estimates GEMM and DMA costs")
@@ -546,6 +618,38 @@ TEST_CASE("Neural-AI compiler tiles oversized M dimensions")
         blob->Unmap(const_cast<uint8_t *>(data));
         blob->Release();
     }
+}
+
+TEST_CASE("Neural-AI compiler lowers pointwise Conv2D through GEMM32")
+{
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildPointwiseConvModel(2, 3, 33, 34);
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+
+    INFO(compiler.LastError());
+    REQUIRE(compiler.Compile());
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    REQUIRE(size > int64_t(sizeof(neuralai::ModelHeaderV1)));
+    const uint32_t commandBytes = Read32(data + 64 + 12);
+    uint32_t offset = 224;
+    bool sawGemm = false;
+    while ( offset < 224 + commandBytes )
+    {
+        const uint16_t type = uint16_t(data[offset]) | (uint16_t(data[offset + 1]) << 8);
+        const uint16_t commandSize = uint16_t(data[offset + 2]) | (uint16_t(data[offset + 3]) << 8);
+        if ( type == uint16_t(neuralai::CommandType::Gemm32Requant) ) sawGemm = true;
+        offset += commandSize;
+    }
+    REQUIRE(offset == 224 + commandBytes);
+    REQUIRE(sawGemm);
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
 }
 
 TEST_CASE("Neural-AI op groups do not fuse matrix operations")

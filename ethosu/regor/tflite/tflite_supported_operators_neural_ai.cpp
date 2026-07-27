@@ -16,6 +16,7 @@ namespace
 
 const std::set<OpType> s_supportedOpTypes = {
     OpType::FullyConnected,
+    OpType::Conv2D,
 };
 
 const std::set<DataType> s_supportedDataTypes = {

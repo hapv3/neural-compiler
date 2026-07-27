@@ -475,7 +475,8 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
     context.scratchEnd = uint32_t(RoundAway(int(scratchBytes), ArchNeuralAI::DMAAlignment));
     for ( const auto &operation : operations )
     {
-        if ( operation->Type() != OpType::FullyConnected && operation->Type() != OpType::MatMul ) continue;
+        if ( operation->Type() != OpType::FullyConnected && operation->Type() != OpType::MatMul &&
+             operation->Type() != OpType::Conv2D ) continue;
         const uint32_t rows = uint32_t(operation->OFM()->shape.Elements64() / operation->OFM()->shape.Depth());
         const uint32_t paddedK = uint32_t(RoundAway(operation->IFM(0)->shape.Depth(), 32));
         const uint32_t stripeRows = std::min<uint32_t>(rows, 256);
@@ -492,7 +493,8 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         {
             if ( !context.AppendCopy(operation.get(), error) ) return false;
         }
-        else if ( operation->Type() == OpType::FullyConnected || operation->Type() == OpType::MatMul )
+        else if ( operation->Type() == OpType::FullyConnected || operation->Type() == OpType::MatMul ||
+                  operation->Type() == OpType::Conv2D )
         {
             if ( !context.AppendMatrix(operation.get(), error) ) return false;
         }

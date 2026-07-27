@@ -75,14 +75,17 @@ exists. The following status matrix reflects what has been audited:
 | DMA package | Yes | Yes | Yes | Yes |
 | GEMM32 | Yes | Yes | Yes | Yes |
 | RQ load | Yes | Yes | Partial | Incomplete model matrix |
-| NHWC↔ROW32 | Not a primitive | Scalar path (incorrect with L2) | Yes | No |
-| NHWC↔C32 | Not a primitive | Scalar host-only | Not emitted | No |
+| NHWC↔ROW32 | Not a primitive | iDMA for external↔local, scalar/Spatz for local↔local | Yes | Focused boundary regression |
+| NHWC↔C32 | Not a primitive | iDMA for external↔local, scalar/Spatz for local↔local | Runtime ABI available; compiler not emitted | Focused boundary regression |
+| Pointwise Conv1x1 | GEMM32 primitive | v2 GEMM32 path | Constrained 1x1/S1/P0 lowering | Package-generation regression |
 | Linebuffer Conv | Yes | Legacy HAL exists | No | Not through .nai |
 | AFU commands | Hardware modes exist | No v2 dispatch | No | No |
 | Spatz commands | Engine exists | Incomplete kernels | No | No |
 
-`ArchNeuralAI` currently exposes only `FullyConnected`, `MatMul`, and
-`MemoryCopy`.
+`ArchNeuralAI` exposes `FullyConnected`, `MatMul`, `MemoryCopy`, and a
+constrained pointwise `Conv2D` path (`1x1`, stride 1, dilation 1, zero padding)
+that lowers to GEMM32. RGB, generic C32, and depthwise Conv remain outside the
+compiler target until Phase 3 work items are completed.
 
 The plan should record the hardware commit and compiler commit at which the
 contract was audited.
@@ -497,7 +500,7 @@ The current contract in `neural-ai/docs/operator_support_matrix.md` is:
 | DMA | iDMA 1D/2D/3D | Existing graph path is primarily blocking |
 | MatMul/GEMM | Systolic GEMM32 | K and N in groups of 32; M is tiled |
 | RGB Conv | Linebuffer plus systolic | C3, OC32, K3, S2, P1 |
-| Pointwise Conv | Direct GEMM32 | IC and OC are multiples of 32 |
+| Pointwise Conv | Direct GEMM32 | RTL supports grouped C32 operation; compiler currently lowers only 1x1/S1/P0 and pads IC/OC tails |
 | C32 Conv | Multi-C32 linebuffer | K3, S1/S2, P1; IC/OC multiples of 32 |
 | Depthwise Conv | Depthwise linebuffer | K3, S1/S2, P1; tail lanes masked |
 | Requant | Per-channel systolic or Spatz | Shift range 0..31 |

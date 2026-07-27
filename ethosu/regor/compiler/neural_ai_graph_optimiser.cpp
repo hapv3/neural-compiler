@@ -62,7 +62,8 @@ void NeuralAIGraphOptimiser::OptimiseGraph(Graph *graph)
     graph->GetAllOperations(operations);
     for ( const auto &operation : operations )
     {
-        if ( operation->Type() != OpType::FullyConnected && operation->Type() != OpType::MatMul ) continue;
+        if ( operation->Type() != OpType::FullyConnected && operation->Type() != OpType::MatMul &&
+             operation->Type() != OpType::Conv2D ) continue;
         InsertInputConversion(graph, operation.get(), TensorUsage::IFM0);
         InsertOutputConversion(graph, operation.get());
     }

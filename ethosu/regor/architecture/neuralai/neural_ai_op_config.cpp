@@ -18,13 +18,15 @@ std::unique_ptr<ArchitectureOpConfig> NeuralAIOpConfig::Clone()
 
 std::string NeuralAIOpConfig::ToString(bool full)
 {
-    return full ? fmt::format("Neural-AI GEMM32, max rows {}, depth granule 32", _maxRows) : "GEMM32";
+    return full ? fmt::format("Neural-AI GEMM32/pointwise Conv, max rows {}, depth granule 32", _maxRows) :
+                  "GEMM32";
 }
 
 int NeuralAIOpGroup::Add(const ArchitectureOpGroupQuery &op, const std::vector<int> &dependsOn)
 {
     if ( _hasOp || !dependsOn.empty() ||
-         (op.type != OpType::FullyConnected && op.type != OpType::MatMul && op.type != OpType::MemoryCopy) )
+         (op.type != OpType::FullyConnected && op.type != OpType::MatMul && op.type != OpType::Conv2D &&
+             op.type != OpType::MemoryCopy) )
     {
         return 0;
     }
