@@ -176,12 +176,12 @@ struct GeneratorContext
         AppendZeros(artifact->commands, 4);
     }
 
-    void AppendRQLoad(uint32_t qparamIndex, uint32_t layerId, uint32_t tileId)
+    void AppendRQLoad(uint32_t qparamIndex, uint32_t qparamBlock, uint32_t layerId, uint32_t tileId)
     {
         AppendHeader(artifact->commands, CommandType::RQLoad, 32, layerId, tileId);
         Append32(artifact->commands, qparamIndex);
         Append32(artifact->commands, 32);
-        Append32(artifact->commands, 0);
+        Append32(artifact->commands, qparamBlock);
         Append32(artifact->commands, 0);
         ++artifact->commandCount;
     }
@@ -203,7 +203,7 @@ struct GeneratorContext
 
     void AppendGEMM(CommandType type, const RefV1 &weights, const RefV1 &ifm,
         const RefV1 &partial, const RefV1 &ofm, uint32_t dimM, uint32_t ofmStride,
-        uint32_t layerId, uint32_t tileId)
+        uint32_t qparamBlock, uint32_t layerId, uint32_t tileId)
     {
         AppendHeader(artifact->commands, type, 96, layerId, tileId);
         AppendRef(artifact->commands, weights);
@@ -213,7 +213,7 @@ struct GeneratorContext
         Append32(artifact->commands, dimM);
         Append32(artifact->commands, ofmStride);
         Append32(artifact->commands, 32 * 4);
-        Append32(artifact->commands, 0);
+        Append32(artifact->commands, qparamBlock);
         AppendZeros(artifact->commands, 8);
         ++artifact->commandCount;
     }
@@ -336,7 +336,8 @@ struct GeneratorContext
                 for ( uint32_t rowBase = 0; rowBase < rows; rowBase += 256 )
                 {
                     const uint32_t dimM = std::min<uint32_t>(256, rows - rowBase);
-                    AppendRQLoad(qparamBase + nGroup * 32, uint32_t(operation->Index()), tileId++);
+                    AppendRQLoad(qparamBase + nGroup * 32, nGroup,
+                        uint32_t(operation->Index()), tileId++);
                     RefV1 ifmRef = TensorRef(ifm->tensor.get(), rowBase * 32u, error);
                     if ( !error.empty() ) return false;
                     RefV1 weights{};
@@ -361,7 +362,8 @@ struct GeneratorContext
         uint32_t tileId = 0;
         for ( uint32_t nGroup = 0; nGroup < nGroups; ++nGroup )
         {
-            AppendRQLoad(qparamBase + nGroup * 32, uint32_t(operation->Index()), tileId++);
+            AppendRQLoad(qparamBase + nGroup * 32, nGroup,
+                uint32_t(operation->Index()), tileId++);
             for ( uint32_t rowBase = 0; rowBase < rows; rowBase += 256 )
             {
                 const uint32_t dimM = std::min<uint32_t>(256, rows - rowBase);
@@ -396,7 +398,7 @@ struct GeneratorContext
                         if ( kGroup == 0 ) partial = {};
                     }
                     AppendGEMM(type, weights, ifmRef, partial, output, dimM, outputStride,
-                        uint32_t(operation->Index()), tileId++);
+                        nGroup, uint32_t(operation->Index()), tileId++);
                 }
             }
         }
