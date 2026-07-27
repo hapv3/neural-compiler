@@ -45,7 +45,7 @@ uint16_t Read16(const std::vector<uint8_t> &data, size_t offset)
     return uint16_t(data[offset]) | (uint16_t(data[offset + 1]) << 8);
 }
 
-flatbuffers::DetachedBuffer BuildFullyConnectedModel(int depthK, int depthN)
+flatbuffers::DetachedBuffer BuildFullyConnectedModel(int rows, int depthK, int depthN)
 {
     flatbuffers::FlatBufferBuilder builder;
     const std::vector<float> scale = {1.0f};
@@ -68,10 +68,12 @@ flatbuffers::DetachedBuffer BuildFullyConnectedModel(int depthK, int depthN)
         tflite::CreateBufferDirect(builder, &weightData),
         tflite::CreateBufferDirect(builder, &biasData),
     };
-    const std::vector<int32_t> inputShape = {1, depthK};
+    const std::vector<int32_t> inputShape = rows == 1 ?
+        std::vector<int32_t>{1, depthK} : std::vector<int32_t>{1, rows, depthK};
     const std::vector<int32_t> weightShape = {depthN, depthK};
     const std::vector<int32_t> biasShape = {depthN};
-    const std::vector<int32_t> outputShape = {1, depthN};
+    const std::vector<int32_t> outputShape = rows == 1 ?
+        std::vector<int32_t>{1, depthN} : std::vector<int32_t>{1, rows, depthN};
     std::vector<flatbuffers::Offset<tflite::Tensor>> tensors = {
         tflite::CreateTensorDirect(builder, &inputShape, tflite::TensorType::INT8, 0, "input", inputQuant),
         tflite::CreateTensorDirect(builder, &weightShape, tflite::TensorType::INT8, 1, "weights", weightQuant),
@@ -99,6 +101,11 @@ flatbuffers::DetachedBuffer BuildFullyConnectedModel(int depthK, int depthN)
         "Neural-AI FullyConnected test", &buffers);
     tflite::FinishModelBuffer(builder, model);
     return builder.Release();
+}
+
+flatbuffers::DetachedBuffer BuildFullyConnectedModel(int depthK, int depthN)
+{
+    return BuildFullyConnectedModel(1, depthK, depthN);
 }
 
 }  // namespace
@@ -484,9 +491,7 @@ TEST_CASE("Neural-AI compiler emits a native model package")
     const auto model = BuildFullyConnectedModel(depthK, depthN);
     REQUIRE(compiler.LoadTflite(model.data(), model.size()));
 
-    const bool compiled = compiler.Compile();
-    INFO(compiler.LastError());
-    REQUIRE(compiled);
+    REQUIRE(compiler.Compile());
     IRegorBlob *blob = compiler.Output();
     REQUIRE(blob != nullptr);
     int64_t size = 0;
@@ -495,6 +500,52 @@ TEST_CASE("Neural-AI compiler emits a native model package")
     REQUIRE(Read32(data) == neuralai::ModelMagic);
     blob->Unmap(const_cast<uint8_t *>(data));
     blob->Release();
+}
+
+TEST_CASE("Neural-AI compiler tiles oversized M dimensions")
+{
+    for ( const int rows : {257, 511} )
+    {
+        INFO("rows=" << rows);
+        std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+        Compiler compiler(architecture);
+        const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+        REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+        const auto model = BuildFullyConnectedModel(rows, 32, 32);
+        REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+        const bool compiled = compiler.Compile();
+        INFO(compiler.LastError());
+        REQUIRE(compiled);
+
+        IRegorBlob *blob = compiler.Output();
+        REQUIRE(blob != nullptr);
+        int64_t size = 0;
+        const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+        REQUIRE(size > 224 + 32);
+        const uint32_t commandBytes = Read32(data + 64 + 12);
+        uint32_t offset = 224;
+        uint32_t gemmCommands = 0;
+        while ( offset < 224 + commandBytes )
+        {
+            const uint16_t type = uint16_t(data[offset]) | (uint16_t(data[offset + 1]) << 8);
+            const uint16_t commandSize = uint16_t(data[offset + 2]) |
+                (uint16_t(data[offset + 3]) << 8);
+            REQUIRE(commandSize >= 32);
+            if ( type == uint16_t(neuralai::CommandType::Gemm32) ||
+                 type == uint16_t(neuralai::CommandType::Gemm32Accum) ||
+                 type == uint16_t(neuralai::CommandType::Gemm32Requant) )
+            {
+                REQUIRE(Read32(data + offset + 48) > 0);
+                REQUIRE(Read32(data + offset + 48) <= 256);
+                ++gemmCommands;
+            }
+            offset += commandSize;
+        }
+        REQUIRE(offset == 224 + commandBytes);
+        REQUIRE(gemmCommands == uint32_t((rows + 255) / 256));
+        blob->Unmap(const_cast<uint8_t *>(data));
+        blob->Release();
+    }
 }
 
 TEST_CASE("Neural-AI op groups do not fuse matrix operations")

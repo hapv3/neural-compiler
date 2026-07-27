@@ -18,11 +18,9 @@ bool IsStaticPositiveShape(const Shape &shape)
 
 bool HasBatchOne(const Shape &shape)
 {
-    for ( int i = 0; i < shape.Size() - 2; ++i )
-    {
-        if ( shape[i] != 1 ) return false;
-    }
-    return true;
+    // Matrix M may be represented by one or more spatial dimensions after
+    // the leading batch axis.  Only the batch dimension is fixed to one.
+    return shape.Size() <= 2 || shape[0] == 1;
 }
 
 }  // namespace
