@@ -482,7 +482,9 @@ Limitations:
 - Descriptors contain absolute 32-bit addresses.
 - There is no model, binding, or constant region abstraction.
 - There is no per-channel quantization command.
-- There are no complete linebuffer, pointwise, depthwise, AFU, or Spatz commands.
+- There are no complete linebuffer, depthwise, AFU, or Spatz commands; the
+  current pointwise path reuses GEMM32 rather than introducing a separate
+  pointwise command.
 - DMA handlers wait immediately after submission, so DMA and compute do not
   overlap.
 - Rolling-buffer commands primarily validate bookkeeping and do not create
@@ -1716,8 +1718,8 @@ neural-ai/sw/test/compiler_runtime/*
 
 ### Objective
 
-Compile an INT8 TFLite FullyConnected or MatMul model into `.nai` and execute it
-using the Phase 1 runtime.
+Compile an INT8 TFLite FullyConnected, MatMul, or constrained pointwise Conv2D
+model into `.nai` and execute it using the Phase 1 runtime.
 
 ### Work Items
 
@@ -1726,7 +1728,8 @@ using the Phase 1 runtime.
    scheduler.
 3. Add `REGOR_ARCH_NEURALAI` and the architecture factory entry.
 4. Add the Neural-AI memory and configuration object.
-5. Add initial MatMul and FullyConnected constraints and reject all other NPU
+5. Add initial MatMul, FullyConnected, and constrained pointwise Conv2D
+   constraints (`1x1`, stride 1, dilation 1, zero padding); reject other NPU
    operations.
 6. Keep frontend shapes and public bindings in NHWC or their original lower-rank
    contiguous order.
@@ -1734,7 +1737,10 @@ using the Phase 1 runtime.
 8. Add the initial Neural-AI weight encoder.
 9. Implement the minimal v2 `COPY_LAYOUT` runtime handler for contiguous-to-ROW32
    pack and ROW32-to-contiguous unpack, including zero-filled tails.
-10. Add DMA, layout-conversion, and GEMM command generation.
+10. Add DMA, layout-conversion, and GEMM command generation. Stage each model
+    constant tile in the reserved local TCDM command window before invoking the
+    systolic engine; the engine does not consume L2 model-constant addresses
+    directly.
 11. Add the `.nai` writer, Python result type, and CLI output.
 12. Add a Neural-AI config file and explicit CLI target mapping.
 
