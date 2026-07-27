@@ -77,7 +77,7 @@ exists. The following status matrix reflects what has been audited:
 | RQ load | Yes | Yes | Partial | Incomplete model matrix |
 | NHWC↔ROW32 | Not a primitive | iDMA for external↔local, scalar/Spatz for local↔local | Yes | Focused boundary regression |
 | NHWC↔C32 | Not a primitive | iDMA for external↔local, scalar/Spatz for local↔local | Emitted for pointwise Conv boundaries | Focused boundary regression |
-| Pointwise Conv1x1 | GEMM32 primitive | v2 `POINTWISE_C32` path | Constrained 1x1/S1/P0 lowering with C32 group/tail padding | Runtime package regression + compiler golden |
+| Pointwise Conv1x1 | GEMM32 primitive | v2 `POINTWISE_C32` path | Constrained 1x1/S1/P0 lowering with C32 group/tail padding | Compiler-generated Conv package on Verilator |
 | Linebuffer Conv | Yes | Legacy HAL exists | No | Not through .nai |
 | AFU commands | Hardware modes exist | No v2 dispatch | No | No |
 | Spatz commands | Engine exists | Incomplete kernels | No | No |
@@ -1788,6 +1788,11 @@ model into `.nai` and execute it using the Phase 1 runtime.
 
 Support CNN backbones containing an RGB stem, pointwise Conv, C32 Conv, and
 depthwise Conv.
+
+Current progress: constrained pointwise Conv1x1 is implemented through
+`POINTWISE_C32`, including NHWC↔C32 boundaries, multi-group accumulation, and a
+compiler-generated Verilator E2E. RGB stem, generic 3x3 C32, and depthwise
+lowering remain open work in this phase.
 
 ### Prerequisite Gate
 
