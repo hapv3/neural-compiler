@@ -36,6 +36,11 @@ uint32_t Read32(const uint8_t *data)
            (uint32_t(data[2]) << 16) | (uint32_t(data[3]) << 24);
 }
 
+uint16_t Read16(const uint8_t *data)
+{
+    return uint16_t(data[0]) | (uint16_t(data[1]) << 8);
+}
+
 uint32_t Read32(const std::vector<uint8_t> &data, size_t offset)
 {
     return Read32(data.data() + offset);
@@ -164,6 +169,53 @@ flatbuffers::DetachedBuffer BuildPointwiseConvModel(int height, int width, int d
     };
     const auto model = tflite::CreateModelDirect(builder, 3, &operatorCodes, &subgraphs,
         "Neural-AI pointwise Conv test", &buffers);
+    tflite::FinishModelBuffer(builder, model);
+    return builder.Release();
+}
+
+flatbuffers::DetachedBuffer BuildAddModel(float lhsScale = 1.0f, float rhsScale = 1.0f,
+    float outputScale = 1.0f, int64_t zeroPoint = 0,
+    tflite::ActivationFunctionType activation = tflite::ActivationFunctionType::NONE)
+{
+    flatbuffers::FlatBufferBuilder builder;
+    const std::vector<int64_t> zeroPoints = {zeroPoint};
+    const std::vector<float> lhsScales = {lhsScale};
+    const std::vector<float> rhsScales = {rhsScale};
+    const std::vector<float> outputScales = {outputScale};
+    const auto lhsQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &lhsScales, &zeroPoints);
+    const auto rhsQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &rhsScales, &zeroPoints);
+    const auto outputQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &outputScales, &zeroPoints);
+    std::vector<flatbuffers::Offset<tflite::Buffer>> buffers = {
+        tflite::CreateBufferDirect(builder),
+    };
+    const std::vector<int32_t> shape = {1, 2, 2, 32};
+    std::vector<flatbuffers::Offset<tflite::Tensor>> tensors = {
+        tflite::CreateTensorDirect(builder, &shape, tflite::TensorType::INT8, 0, "lhs", lhsQuant),
+        tflite::CreateTensorDirect(builder, &shape, tflite::TensorType::INT8, 0, "rhs", rhsQuant),
+        tflite::CreateTensorDirect(builder, &shape, tflite::TensorType::INT8, 0, "output", outputQuant),
+    };
+    const auto options = tflite::CreateAddOptions(builder, activation, false);
+    const std::vector<int32_t> opInputs = {0, 1};
+    const std::vector<int32_t> opOutputs = {2};
+    const std::vector<flatbuffers::Offset<tflite::Operator>> operations = {
+        tflite::CreateOperatorDirect(builder, 0, &opInputs, &opOutputs,
+            tflite::BuiltinOptions::AddOptions, options.Union()),
+    };
+    const std::vector<int32_t> graphInputs = {0, 1};
+    const std::vector<int32_t> graphOutputs = {2};
+    const std::vector<flatbuffers::Offset<tflite::SubGraph>> subgraphs = {
+        tflite::CreateSubGraphDirect(
+            builder, &tensors, &graphInputs, &graphOutputs, &operations, "main"),
+    };
+    const std::vector<flatbuffers::Offset<tflite::OperatorCode>> operatorCodes = {
+        tflite::CreateOperatorCodeDirect(builder, int8_t(tflite::BuiltinOperator::ADD),
+            nullptr, 1, tflite::BuiltinOperator::ADD),
+    };
+    const auto model = tflite::CreateModelDirect(
+        builder, 3, &operatorCodes, &subgraphs, "Neural-AI Add test", &buffers);
     tflite::FinishModelBuffer(builder, model);
     return builder.Release();
 }
@@ -427,6 +479,38 @@ TEST_CASE("Neural-AI constraints accept shape-preserving memory copies")
 
     query.ofm.shape = Shape(1, 1, 1, 34);
     REQUIRE(constraints->OperatorQuery(OpType::MemoryCopy, &query) == QueryResult::Unsupported);
+}
+
+TEST_CASE("Neural-AI constraints accept only raw-safe Add quantization")
+{
+    ArchNeuralAI arch;
+    auto *constraints = arch.Constraints();
+    Quantization inputQuant;
+    inputQuant.scales = {QuantizedScale(32768.0)};
+    inputQuant.zeroPoints = {0};
+    Quantization outputQuant;
+    outputQuant.scales = {QuantizedScale(1.0 / 32768.0)};
+    outputQuant.zeroPoints = {0};
+    outputQuant.quantMin = {-128};
+    outputQuant.quantMax = {127};
+
+    ArchOperatorQuery query;
+    for ( ArchFM &ifm : query.ifm )
+    {
+        ifm.type = DataType::Int8;
+        ifm.shape = Shape(1, 2, 2, 32);
+        ifm.quantization = &inputQuant;
+    }
+    query.ofm.type = DataType::Int8;
+    query.ofm.shape = Shape(1, 2, 2, 32);
+    query.ofm.quantization = &outputQuant;
+    REQUIRE(constraints->OperatorQuery(OpType::Add, &query) == QueryResult::Native);
+
+    inputQuant.zeroPoints = {1};
+    REQUIRE(constraints->OperatorQuery(OpType::Add, &query) == QueryResult::Unsupported);
+    inputQuant.zeroPoints = {0};
+    outputQuant.quantMin = {0};
+    REQUIRE(constraints->OperatorQuery(OpType::Add, &query) == QueryResult::Unsupported);
 }
 
 TEST_CASE("Neural-AI graph optimiser inserts ROW32 boundary conversions")
@@ -783,6 +867,79 @@ TEST_CASE("Neural-AI compiler lowers pointwise Conv2D through C32 GEMM32")
     REQUIRE(sawPointwiseC32);
     blob->Unmap(const_cast<uint8_t *>(data));
     blob->Release();
+}
+
+TEST_CASE("Neural-AI compiler lowers quantization-safe Add through AFU binary")
+{
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildAddModel();
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+
+    const bool compiled = compiler.Compile();
+    INFO(compiler.LastError());
+    REQUIRE(compiled);
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    const uint32_t commandBytes = Read32(data + 64 + 12);
+    uint32_t offset = 224;
+    uint32_t addCommands = 0;
+    while ( offset < 224 + commandBytes )
+    {
+        const uint16_t type = uint16_t(data[offset]) | (uint16_t(data[offset + 1]) << 8);
+        const uint16_t commandSize = uint16_t(data[offset + 2]) |
+            (uint16_t(data[offset + 3]) << 8);
+        REQUIRE(commandSize >= 32);
+        if ( type == uint16_t(neuralai::CommandType::AFUBinary) )
+        {
+            REQUIRE(commandSize == sizeof(neuralai::CommandAFUBinaryV2));
+            REQUIRE(Read16(data + offset + 16) == uint16_t(neuralai::Region::TCDMScratch));
+            REQUIRE(Read16(data + offset + 24) == uint16_t(neuralai::Region::TCDMScratch));
+            REQUIRE(Read16(data + offset + 32) == uint16_t(neuralai::Region::TCDMScratch));
+            const uint32_t lhsOffset = Read32(data + offset + 20);
+            const uint32_t rhsOffset = Read32(data + offset + 28);
+            const uint32_t ofmOffset = Read32(data + offset + 36);
+            REQUIRE((ofmOffset + 128 <= lhsOffset || lhsOffset + 128 <= ofmOffset));
+            REQUIRE((ofmOffset + 128 <= rhsOffset || rhsOffset + 128 <= ofmOffset));
+            REQUIRE(Read32(data + offset + 40) == 128);
+            REQUIRE(Read32(data + offset + 44) == uint32_t(neuralai::AFUBinaryMode::AddI8));
+            ++addCommands;
+        }
+        offset += commandSize;
+    }
+    REQUIRE(offset == 224 + commandBytes);
+    REQUIRE(addCommands == 1);
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
+}
+
+TEST_CASE("Neural-AI compiler rejects Add modes that need requantization or activation")
+{
+    const auto rejects = [](flatbuffers::DetachedBuffer model)
+    {
+        std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+        Compiler compiler(architecture);
+        const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+        REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+        REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+        bool rejected = false;
+        try
+        {
+            rejected = !compiler.Compile();
+        }
+        catch ( const std::runtime_error & )
+        {
+            rejected = true;
+        }
+        REQUIRE(rejected);
+    };
+
+    rejects(BuildAddModel(1.0f, 0.5f, 1.0f));
+    rejects(BuildAddModel(1.0f, 1.0f, 1.0f, 0, tflite::ActivationFunctionType::RELU));
 }
 
 TEST_CASE("Neural-AI compiler splits pointwise M stripes at the 256-row ABI limit")

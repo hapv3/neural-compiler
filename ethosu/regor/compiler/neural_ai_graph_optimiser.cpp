@@ -86,8 +86,11 @@ void NeuralAIGraphOptimiser::OptimiseGraph(Graph *graph)
     for ( const auto &operation : operations )
     {
         if ( operation->Type() != OpType::FullyConnected && operation->Type() != OpType::MatMul &&
-             operation->Type() != OpType::Conv2D && operation->Type() != OpType::DepthwiseConv2D ) continue;
+             operation->Type() != OpType::Conv2D && operation->Type() != OpType::DepthwiseConv2D &&
+             operation->Type() != OpType::Add ) continue;
         if ( !IsDirectRgbStem(operation.get()) ) InsertInputConversion(graph, operation.get(), TensorUsage::IFM0);
+        if ( operation->Type() == OpType::Add )
+            InsertInputConversion(graph, operation.get(), TensorUsage::IFM1);
         InsertOutputConversion(graph, operation.get());
     }
 }

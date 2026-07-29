@@ -22,6 +22,7 @@ namespace regor
 namespace
 {
 
+using neuralai::AFUBinaryMode;
 using neuralai::BindingDirection;
 using neuralai::CommandType;
 using neuralai::CopyLayoutMode;
@@ -431,6 +432,55 @@ struct GeneratorContext
         return true;
     }
 
+    bool AppendAFUAdd(const SchedulerOperation *operation, std::string &error)
+    {
+        const SchedulerOpInfo *cost = schedule->Cost(operation);
+        if ( cost == nullptr || cost->Config() == nullptr )
+            return SetError(error, "Neural-AI Add operation has no validated target mode");
+        const auto *config = static_cast<const NeuralAIOpConfig *>(cost->Config());
+        if ( config->Mode() != NeuralAIOpMode::AFUBinaryAddI8 )
+            return SetError(error, "Neural-AI Add operation has no validated AFU binary mode");
+        const SchedulerConnection *lhs = operation->IFM(0);
+        const SchedulerConnection *rhs = operation->IFM(1);
+        const SchedulerConnection *ofm = operation->OFM();
+        if ( lhs == nullptr || rhs == nullptr || ofm == nullptr ||
+             lhs->tensor->format != TensorFormat::C32Blocked ||
+             rhs->tensor->format != TensorFormat::C32Blocked ||
+             ofm->tensor->format != TensorFormat::C32Blocked ||
+             lhs->shape != rhs->shape || lhs->shape != ofm->shape )
+            return SetError(error, "Neural-AI AFU Add requires equal C32-blocked tensors");
+        const int64_t lhsBytes = lhs->tensor->AllocationSizeBytes();
+        const int64_t rhsBytes = rhs->tensor->AllocationSizeBytes();
+        const int64_t ofmBytes = ofm->tensor->AllocationSizeBytes();
+        if ( lhsBytes <= 0 || lhsBytes != rhsBytes || lhsBytes != ofmBytes ||
+             lhsBytes > std::numeric_limits<uint32_t>::max() )
+            return SetError(error, "Neural-AI AFU Add tensor storage size is invalid");
+        RefV1 lhsRef = TensorRef(lhs->tensor.get(), 0, error);
+        if ( !error.empty() ) return false;
+        RefV1 rhsRef = TensorRef(rhs->tensor.get(), 0, error);
+        if ( !error.empty() ) return false;
+        RefV1 ofmRef = TensorRef(ofm->tensor.get(), 0, error);
+        if ( !error.empty() ) return false;
+        const auto overlaps = [lhsBytes](const RefV1 &first, const RefV1 &second)
+        {
+            if ( first.region != second.region || first.index != second.index ) return false;
+            return uint64_t(first.offset) < uint64_t(second.offset) + uint64_t(lhsBytes) &&
+                   uint64_t(second.offset) < uint64_t(first.offset) + uint64_t(lhsBytes);
+        };
+        if ( overlaps(lhsRef, ofmRef) || overlaps(rhsRef, ofmRef) )
+            return SetError(error, "Neural-AI AFU Add requires out-of-place output storage");
+        AppendHeader(artifact->commands, CommandType::AFUBinary, 64,
+            uint32_t(operation->Index()), 0);
+        AppendRef(artifact->commands, lhsRef);
+        AppendRef(artifact->commands, rhsRef);
+        AppendRef(artifact->commands, ofmRef);
+        Append32(artifact->commands, uint32_t(lhsBytes));
+        Append32(artifact->commands, uint32_t(AFUBinaryMode::AddI8));
+        AppendZeros(artifact->commands, 4);
+        ++artifact->commandCount;
+        return true;
+    }
+
     bool AppendMatrix(const SchedulerOperation *operation, std::string &error)
     {
         const SchedulerOpInfo *cost = schedule->Cost(operation);
@@ -836,6 +886,10 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         else if ( operation->Type() == OpType::DepthwiseConv2D )
         {
             if ( !context.AppendDepthwise(operation.get(), error) ) return false;
+        }
+        else if ( operation->Type() == OpType::Add )
+        {
+            if ( !context.AppendAFUAdd(operation.get(), error) ) return false;
         }
         else if ( operation->Type() == OpType::FullyConnected || operation->Type() == OpType::MatMul ||
                   operation->Type() == OpType::Conv2D )

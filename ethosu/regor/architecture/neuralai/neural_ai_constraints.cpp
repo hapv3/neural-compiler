@@ -16,7 +16,7 @@ namespace regor
 namespace
 {
 
-thread_local std::array<ArchTensorRequirement, 2> s_pointwiseTensorRequirements;
+thread_local std::array<ArchTensorRequirement, 3> s_tensorRequirements;
 
 bool IsStaticPositiveShape(const Shape &shape)
 {
@@ -37,11 +37,43 @@ bool HasSymmetricZeroPoint(const ArchFM &fm)
                [](int64_t value) { return value == 0; });
 }
 
+bool HasFullInt8Clamp(const ArchFM &fm)
+{
+    if ( fm.quantization == nullptr ) return false;
+    const auto &quantization = *fm.quantization;
+    return (quantization.quantMin.empty() ||
+            std::all_of(quantization.quantMin.begin(), quantization.quantMin.end(),
+                [](int64_t value) { return value <= -128; })) &&
+           (quantization.quantMax.empty() ||
+            std::all_of(quantization.quantMax.begin(), quantization.quantMax.end(),
+                [](int64_t value) { return value >= 127; }));
+}
+
+bool HasRawAddScales(const ArchFM &lhs, const ArchFM &rhs, const ArchFM &ofm)
+{
+    if ( lhs.quantization == nullptr || rhs.quantization == nullptr || ofm.quantization == nullptr )
+        return false;
+    const auto &lhsScales = lhs.quantization->scales;
+    const auto &rhsScales = rhs.quantization->scales;
+    const auto &ofmScales = ofm.quantization->scales;
+    if ( lhsScales.size() != 1 || rhsScales.size() != 1 || ofmScales.size() != 1 )
+        return false;
+
+    // TFLite graph optimisation represents equal-scale INT8 Add as two
+    // 2^15 input rescales followed by a 2^-15 output rescale.  This exact
+    // identity is the only form whose stored values can be added directly.
+    const QuantizedScale inputIdentity(32768.0);
+    const QuantizedScale outputIdentity(1.0 / 32768.0);
+    return lhsScales[0] == inputIdentity && rhsScales[0] == inputIdentity &&
+           ofmScales[0] == outputIdentity;
+}
+
 }  // namespace
 
 bool NeuralAIConstraints::IsSupportedOp(OpType opType)
 {
     return opType == OpType::FullyConnected || opType == OpType::MatMul || opType == OpType::Conv2D ||
+           opType == OpType::Add ||
            opType == OpType::DepthwiseConv2D || opType == OpType::MemoryCopy;
 }
 
@@ -181,7 +213,6 @@ bool NeuralAIConstraints::SupportsQuantization(OpType opType, const Quantization
 Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
     OpType opType, const ArchOperatorQuery *query, ArchRequirements *req)
 {
-    UNUSED(req);
     if ( !IsSupportedOp(opType) ) return QueryResult::Unsupported;
     if ( !query ) return QueryResult::NativeConstrained;
 
@@ -195,19 +226,54 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
     {
         return QueryResult::Unsupported;
     }
+    if ( query->transposeMask != TransposeType::None || query->reverseMask != ReverseType::None ||
+         query->accSrc != ArchAccumulatorSource::Reset ||
+         !IsStaticPositiveShape(query->ifm[0].shape) ||
+         !IsStaticPositiveShape(query->ofm.shape) )
+    {
+        return QueryResult::Unsupported;
+    }
+    if ( opType == OpType::Add )
+    {
+        if ( query->ifm[1].type != DataType::Int8 ||
+             !IsStaticPositiveShape(query->ifm[1].shape) ||
+             !HasBatchOne(query->ifm[0].shape) ||
+             !HasBatchOne(query->ifm[1].shape) ||
+             !HasBatchOne(query->ofm.shape) ||
+             query->ifm[0].shape != query->ifm[1].shape ||
+             query->ifm[0].shape != query->ofm.shape ||
+             query->ifm[0].quantization == nullptr ||
+             query->ifm[1].quantization == nullptr ||
+             query->ofm.quantization == nullptr ||
+             !HasRawAddScales(query->ifm[0], query->ifm[1], query->ofm) ||
+             !HasSymmetricZeroPoint(query->ifm[0]) ||
+             !HasSymmetricZeroPoint(query->ifm[1]) ||
+             !HasSymmetricZeroPoint(query->ofm) ||
+             !HasFullInt8Clamp(query->ofm) )
+        {
+            return QueryResult::Unsupported;
+        }
+        if ( req != nullptr )
+        {
+            Set(s_tensorRequirements[0], TensorUsage::IFM0, TensorFormat::C32Blocked);
+            Set(s_tensorRequirements[1], TensorUsage::IFM1, TensorFormat::C32Blocked);
+            Set(s_tensorRequirements[2], TensorUsage::OFM, TensorFormat::C32Blocked);
+            s_tensorRequirements[0].next = &s_tensorRequirements[1];
+            s_tensorRequirements[1].next = &s_tensorRequirements[2];
+            s_tensorRequirements[2].next = nullptr;
+            req->tensor = s_tensorRequirements[0];
+            req->req.Set(ArchRequirement::Tensor);
+            return QueryResult::NativeHasReq;
+        }
+        return QueryResult::Native;
+    }
     const DataType weightsType = query->weights.type != DataType::None ? query->weights.type : query->ifm[1].type;
     if ( weightsType != DataType::Int8 || query->weightFormat == WeightFormat::None )
     {
         return QueryResult::Unsupported;
     }
     const Shape &weightsShape = query->weights.shape ? query->weights.shape : query->ifm[1].shape;
-    if ( !IsStaticPositiveShape(query->ifm[0].shape) || !IsStaticPositiveShape(weightsShape) ||
-         !IsStaticPositiveShape(query->ofm.shape) )
-    {
-        return QueryResult::Unsupported;
-    }
-    if ( query->transposeMask != TransposeType::None || query->reverseMask != ReverseType::None ||
-         query->accSrc != ArchAccumulatorSource::Reset )
+    if ( !IsStaticPositiveShape(weightsShape) )
     {
         return QueryResult::Unsupported;
     }
@@ -224,11 +290,12 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
              !HasSymmetricZeroPoint(weightFm) ) return QueryResult::Unsupported;
         if ( req != nullptr )
         {
-            Set(s_pointwiseTensorRequirements[0], TensorUsage::IFM0,
+            Set(s_tensorRequirements[0], TensorUsage::IFM0,
                 classification.directNhwcInput ? TensorFormat::NHWC : TensorFormat::C32Blocked);
-            Set(s_pointwiseTensorRequirements[1], TensorUsage::OFM, TensorFormat::C32Blocked);
-            s_pointwiseTensorRequirements[0].next = &s_pointwiseTensorRequirements[1];
-            req->tensor = s_pointwiseTensorRequirements[0];
+            Set(s_tensorRequirements[1], TensorUsage::OFM, TensorFormat::C32Blocked);
+            s_tensorRequirements[0].next = &s_tensorRequirements[1];
+            s_tensorRequirements[1].next = nullptr;
+            req->tensor = s_tensorRequirements[0];
             req->req.Set(ArchRequirement::Tensor);
             return QueryResult::NativeHasReq;
         }
@@ -239,6 +306,7 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
 bool NeuralAIConstraints::SupportedZeroPoint(int64_t zeroPoint, TensorUsage usage, DataType dataType, OpType opType)
 {
     if ( !IsSupportedOp(opType) || dataType != DataType::Int8 ) return false;
+    if ( opType == OpType::Add ) return (IsIFM(usage) || IsOFM(usage)) && zeroPoint == 0;
     if ( IsIFM(usage) || usage == TensorUsage::Weights ) return zeroPoint == 0;
     return IsOFM(usage) && zeroPoint >= -128 && zeroPoint <= 127;
 }

@@ -187,6 +187,7 @@ public:
     virtual ~ArchitectureOpGroup() = default;
     virtual int Add(const ArchitectureOpGroupQuery &op, const std::vector<int> &dependsOn = {}) = 0;
     virtual bool NeedsAllocation(UniqueId tensorUID) = 0;
+    virtual bool AllowsIFMReuse() const { return true; }
     virtual Flags<Requirement> Requirements() = 0;
 };
 

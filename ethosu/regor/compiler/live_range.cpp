@@ -345,6 +345,10 @@ SchedulerTensor *LiveRangeGraph::ReusableIFM(
     const std::unique_ptr<SchedulerOperation> &schedOp, const SchedulerTensor *ofmTens, const MemArea &targetMemory)
 {
     SchedulerTensor *reusableIfm = nullptr;
+    if ( schedOp->OpGroup() != nullptr && !schedOp->OpGroup()->AllowsIFMReuse() )
+    {
+        return reusableIfm;
+    }
     const auto *ofm = schedOp->Output(TensorUsage::OFM);
     if ( IsOp1To1(schedOp.get()) )
     {

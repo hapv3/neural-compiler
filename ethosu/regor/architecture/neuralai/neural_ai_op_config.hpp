@@ -22,6 +22,7 @@ enum class NeuralAIOpMode
     Conv2DLinebufC32S2Requant,
     DepthwiseC32S1Requant,
     DepthwiseC32S2Requant,
+    AFUBinaryAddI8,
 };
 
 const char *NeuralAIOpModeName(NeuralAIOpMode mode);
@@ -58,10 +59,12 @@ class NeuralAIOpGroup final : public ArchitectureOpGroup
 {
 private:
     bool _hasOp = false;
+    bool _allowsIFMReuse = true;
 
 public:
     int Add(const ArchitectureOpGroupQuery &op, const std::vector<int> &dependsOn = {}) override;
     bool NeedsAllocation(UniqueId) override { return true; }
+    bool AllowsIFMReuse() const override { return _allowsIFMReuse; }
     Flags<Requirement> Requirements() override { return Requirement::None; }
 };
 

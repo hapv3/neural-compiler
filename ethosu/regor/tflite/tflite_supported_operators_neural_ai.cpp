@@ -15,6 +15,7 @@ namespace
 {
 
 const std::set<OpType> s_supportedOpTypes = {
+    OpType::Add,
     OpType::FullyConnected,
     OpType::Conv2D,
     OpType::DepthwiseConv2D,
