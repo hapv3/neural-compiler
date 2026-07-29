@@ -674,7 +674,7 @@ The initial contract is:
 |---|---:|---:|---:|---|
 | `.nai` section and command record | 32 bytes | N/A | command/section size is a multiple of 32 | Software wire ABI |
 | Public input/output binding | 32 bytes | Compact logical byte stride; may be non-32 | Exact logical byte size; may be non-32 | Software ABI simplification |
-| iDMA 1D/2D/3D external↔local | Byte-addressed; unaligned behavior must pass the Phase 0 RTL gate | Byte units; may be non-32 | Byte units; may be non-32 | Required by NHWC boundary copies; not frozen as a 32-byte hardware rule |
+| iDMA 1D/2D/3D external↔local | Compact L2 endpoint is byte-addressed and may be unaligned; compiler-generated native TCDM endpoint remains 32-byte aligned | Compact L2 stride may be non-32; native ROW32/C32 TCDM stride remains 32-byte aligned | Byte units; may be non-32 | Required by NHWC boundary copies; endpoint requirements are asymmetric |
 | Systolic GEMM32/psum/requant | 32 bytes | OFM/psum strides obey the command validator and are multiples of 32 | K/N tiles are 32 lanes | Hardware and command ABI |
 | Linebuffer RGB/generic | Byte-addressed descriptor fields | Pixel and row strides are byte counts and may be non-32 | Internally reads 32-byte beats and merges crossing beats | Hardware descriptor contract |
 | Linebuffer C32 fast/group-stationary | 32-byte C32 group base and group span | C32 pixel/group strides | Full 32-byte channel groups | Hardware fast-path contract |
@@ -682,12 +682,14 @@ The initial contract is:
 | Spatz or Snitch scalar layout kernel | Element aligned | Layout-dependent byte stride | Byte count | Software-kernel contract |
 
 Before the ABI is frozen, RTL tests must verify iDMA 1D, 2D, and 3D transfers in
-both directions with unaligned bases, non-32-byte lengths, and non-32-byte
-strides, including rows that cross a 32-byte beat boundary. In particular, test
-the C=3 and C=31 NHWC patterns required by `COPY_LAYOUT`. If an iDMA case is not
-supported, the runtime must use an aligned bounce-buffer, Spatz, or Snitch
-correctness path; the compiler must not reject a valid compact model binding
-merely because its logical row stride is not 32-byte aligned.
+both directions with unaligned compact L2 endpoints, non-32-byte lengths, and
+non-32-byte compact strides, including rows that cross a 32-byte beat boundary.
+The native TCDM endpoint used by compiler-generated ROW32/C32 boundary
+transfers remains base- and stride-aligned. In particular, test the C=3 and
+C=31 NHWC patterns required by `COPY_LAYOUT`. Arbitrary local-unaligned ND
+transfers are not part of the frozen compiler contract; if a future lowering
+requires one, the runtime must first add a verified aligned bounce-buffer,
+Spatz, or Snitch correctness path.
 
 The compiler may retain 32-byte public base alignment as an ABI simplification.
 Internal buffers used only by generic layout or scalar kernels may use byte
@@ -1648,9 +1650,10 @@ neural-ai/sw/lib/npu_memory_map.h
 - C and C++ `static_assert` checks for every wire structure size and offset.
 - Serializer byte-golden tests.
 - Invalid offset, overflow, and alignment cases.
-- iDMA 1D/2D/3D unaligned-base, non-32-byte length, and non-32-byte stride
-  tests in both external↔local directions, including C=3 and C=31
-  `COPY_LAYOUT` row patterns and 32-byte beat crossings.
+- iDMA 1D/2D/3D tests with unaligned compact L2 endpoints, non-32-byte length,
+  and non-32-byte compact stride in both external↔local directions, including
+  C=3 and C=31 `COPY_LAYOUT` row patterns and 32-byte beat crossings. Native
+  ROW32/C32 TCDM endpoints remain aligned.
 - A cross-repository ABI manifest and version comparison.
 - TCDM alias verification: write at `0x1010_0000`, read at `0x1018_0000` and
   `0x1020_0000` to confirm physical aliasing per RTL bank decode. Then ensure
@@ -1662,6 +1665,20 @@ neural-ai/sw/lib/npu_memory_map.h
 - Memory constants agree with RTL and linker scripts.
 - There is no source diff under `neural-ai/hw`.
 - Existing software and RTL tests still pass.
+
+### Current Verification Evidence
+
+- Raw v2 DMA endpoint resolution is byte-addressed; section and command-record
+  alignment remains unchanged.
+- Host dispatcher tests cover non-32-byte lengths, offsets, and compact strides
+  for DMA 1D/2D/3D.
+- A Verilator round-trip regression executes external-to-local and
+  local-to-external DMA for 1D length 37, 2D C=3, and 3D C=31, then checks the
+  sparse output byte-exactly. It passes at 278,888 simulated ns.
+- The existing `COPY_LAYOUT` C=3/C=31 regression with unaligned L2 bindings
+  passes at 199,932 simulated ns.
+- The runtime firmware remains 23,596 bytes of `.text`; no RTL source was
+  changed.
 
 ## Phase 1 - Runtime ABI v2 and GEMM Execution Skeleton
 
