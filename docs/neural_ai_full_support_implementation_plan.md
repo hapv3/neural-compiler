@@ -74,19 +74,20 @@ exists. The following status matrix reflects what has been audited:
 |---|---|---|---|---|
 | DMA package | Yes | Yes | Yes | Yes |
 | GEMM32 | Yes | Yes | Yes | Yes |
-| RQ load | Yes | Yes | Partial | Incomplete model matrix |
+| RQ load | Yes | Yes | Yes for implemented Conv modes | Focused compiler-generated packages |
 | NHWC↔ROW32 | Not a primitive | iDMA for external↔local, scalar/Spatz for local↔local | Yes | Focused boundary regression |
-| NHWC↔C32 | Not a primitive | iDMA for external↔local, scalar/Spatz for local↔local | Emitted for pointwise Conv boundaries | Focused boundary regression |
+| NHWC↔C32 | Not a primitive | iDMA for external↔local, scalar/Spatz for local↔local | Emitted for Conv, depthwise, and constrained Add boundaries | Focused boundary regression |
 | Pointwise Conv1x1 | GEMM32 primitive | v2 `POINTWISE_C32` path | Constrained 1x1/S1/P0 lowering with C32 group/tail padding | Compiler-generated Conv package on Verilator |
-| Linebuffer Conv | Yes | Legacy HAL exists | No | Not through .nai |
-| AFU commands | Hardware modes exist | No v2 dispatch | No | No |
+| Linebuffer Conv | Yes | v2 linebuffer and depthwise dispatch | RGB K3 S2, generic full-group C32 K3, and depthwise K3 S1/S2 | Compiler-generated `.nai` packages |
+| AFU commands | Hardware modes exist | v2 constrained `ADD_I8` dispatch | Equal-shape, symmetric, raw-safe INT8 Add | Compiler-generated Add package on Verilator |
 | Spatz commands | Engine exists | Incomplete kernels | No | No |
 
 `ArchNeuralAI` exposes `FullyConnected`, `MatMul`, `MemoryCopy`, and a
-constrained pointwise `Conv2D` path (`1x1`, stride 1, dilation 1, zero padding)
-that lowers to C32-grouped GEMM32 commands. RGB, generic C32 3x3, and depthwise
-Conv remain outside the compiler target until their Phase 3 work items are
-completed.
+constrained CNN path containing pointwise Conv, RGB K3 S2, generic full-group
+C32 K3, and depthwise K3 S1/S2. It also exposes raw-safe `AddI8` only when
+Regor's normalized quantization proves equal source/output scales, all zero
+points are zero, the clamp spans the full INT8 range, shapes are equal, and the
+AFU output allocation does not overlap either input.
 
 The plan should record the hardware commit and compiler commit at which the
 contract was audited.
@@ -1858,13 +1859,13 @@ The following must be complete before Conv compiler lowering begins:
 
 ### Current Verification Evidence
 
-- Compiler C++ tests: 172/172 pass.
+- Compiler C++ tests: 176/176 pass.
 - Neural-AI compiler-runtime host ABI/layout/quantization checks pass.
 - Compiler-generated Verilator packages pass byte-exactly:
   - RGB K3 S2 C3 -> C32: 194,651 simulated ns.
   - Generic K3 S1 C32 -> C32: 492,662 simulated ns.
   - Depthwise K3 S2 C33 tail: 228,121 simulated ns.
-- Runtime firmware `.text` is 22,724 bytes, below the 32 KB limit.
+- Runtime firmware `.text` is 23,268 bytes, below the 32 KB limit.
 - The focused package times include boot, section CRC, command loading,
   boundary layout DMA, and output checking. They must not be compared as
   operator latency against the PMU-only Micro-MobileNet and Micro-YOLO records.
@@ -1886,6 +1887,20 @@ The following must be complete before Conv compiler lowering begins:
 ### Objective
 
 Support the non-Conv operations in the current Neural-AI operator matrix.
+
+Current progress: the 64-byte v2 `AFU_BINARY` ABI and runtime `ADD_I8`
+dispatcher are implemented. The compiler lowers only equal-shape, batch-1,
+raw-safe symmetric INT8 Add to this mode, keeps tensors in C32 blocked storage,
+and disables allocator IFM reuse so the AFU output remains out-of-place.
+Requantized Add, nonzero zero points, broadcasting, and fused activation clamps
+remain unsupported and are rejected. The compiler-generated Add package passes
+byte-exactly on Verilator at 127,826 simulated ns. The equivalent hand-written
+package passes at 113,958 simulated ns; the 13,868 ns (12.17%) difference is
+consistent with additional parsing/validation overhead for a 1,184-byte
+compiler artifact versus an 800-byte fixture, while both execute four commands
+over the same 128-byte tensors. These focused completion times include boot and
+runtime overhead and are not substitutes for the 347,992-cycle
+Micro-MobileNet or 388,146-cycle Micro-YOLO full-graph PMU gates.
 
 ### Work Items
 
