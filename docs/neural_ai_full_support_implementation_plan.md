@@ -1859,7 +1859,7 @@ The following must be complete before Conv compiler lowering begins:
 
 ### Current Verification Evidence
 
-- Compiler C++ tests: 179/179 pass.
+- Compiler C++ tests: 180/180 pass.
 - Neural-AI compiler-runtime host ABI/layout/quantization checks pass.
 - Compiler-generated Verilator packages pass byte-exactly:
   - RGB K3 S2 C3 -> C32: 194,651 simulated ns.
@@ -1896,6 +1896,9 @@ Requantized Add, nonzero zero points, broadcasting, and fused activation clamps
 remain unsupported and are rejected. Internal `Reshape`, `Squeeze`, and
 `ExpandDims` are admitted to Regor's existing reshape-removal pass; a
 view-to-Add regression verifies that none of the three adds a runtime command.
+The admitted zero-copy subset must preserve the innermost channel depth, which
+keeps the existing ROW32/C32 physical interpretation stable; depth-changing
+views are rejected until an explicit materialization path is implemented.
 When one of these views is a public graph output, the compiler materializes it
 through two `DMA1D` commands and a TCDM bounce buffer, because the current
 runtime cannot issue a direct L2-to-L2 copy. C++ tests cover public `Reshape`,
