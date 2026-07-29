@@ -1674,6 +1674,9 @@ neural-ai/sw/lib/npu_memory_map.h
   alignment remains unchanged.
 - Host dispatcher tests cover non-32-byte lengths, offsets, and compact strides
   for DMA 1D/2D/3D.
+- `make check` compares compiler and runtime ABI headers through a
+  cross-repository manifest covering 6 constants/version fields, 57 enum
+  values, and 20 wire-structure sizes.
 - A Verilator round-trip regression executes external-to-local and
   local-to-external DMA for 1D length 37, 2D C=3, and 3D C=31, then checks the
   sparse output byte-exactly. It passes at 278,888 simulated ns.
