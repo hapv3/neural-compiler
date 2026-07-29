@@ -10,6 +10,7 @@
 #include "architecture/neuralai/neural_ai_performance.hpp"
 #include "architecture/neuralai/neural_ai_weight_encoder.hpp"
 #include "compiler/compiler.hpp"
+#include "compiler/graphir_optimiser.hpp"
 #include "compiler/neural_ai_command_generator.hpp"
 #include "compiler/neural_ai_graph_optimiser.hpp"
 #include "compiler/neural_ai_writer.hpp"
@@ -644,6 +645,31 @@ TEST_CASE("Neural-AI admits only native-depth-preserving reshape-like views")
         REQUIRE_FALSE(checker->Check(view.get()));
         view->Disconnect();
     }
+}
+
+TEST_CASE("Neural-AI Graph IR keeps depth-changing views for explicit rejection")
+{
+    ArchNeuralAI arch;
+    GraphOptimiserOptions options;
+    GraphIrOptimiser optimiser(arch.Constraints(), options, nullptr);
+
+    const auto optimise = [&](const Shape &outputShape)
+    {
+        auto input = CreateTensor("input", Shape(1, 2, 2, 32), DataType::Int8);
+        auto output = CreateTensor("output", outputShape, DataType::Int8);
+        auto reshape = CreateOperation(
+            OpType::Reshape, TensorUsage::IFM0, input, TensorUsage::OFM, output);
+        std::vector<std::shared_ptr<Operation>> sourceOps = {reshape};
+        auto graph = CreateGraph(sourceOps);
+        optimiser.Process(graph.get());
+        std::vector<std::shared_ptr<Operation>> operations;
+        graph->GetAllOperations(operations);
+        REQUIRE(operations.size() == 1);
+        return operations[0]->Type();
+    };
+
+    REQUIRE(optimise(Shape(1, 1, 4, 32)) == OpType::MemoryCopy);
+    REQUIRE(optimise(Shape(1, 2, 32, 2)) == OpType::Reshape);
 }
 
 TEST_CASE("Neural-AI graph optimiser inserts ROW32 boundary conversions")

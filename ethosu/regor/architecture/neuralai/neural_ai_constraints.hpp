@@ -43,6 +43,11 @@ public:
     bool SupportsRescale(DataType, DataType) override { return false; }
     bool SupportsDoubleBroadcast() override { return false; }
     bool SupportsFusedActivationClamping() const override { return true; }
+    bool CanAliasReshape(const Shape &ifmShape, const Shape &ofmShape) const override
+    {
+        return ifmShape.Elements64() == ofmShape.Elements64() &&
+               ifmShape.Depth() == ofmShape.Depth();
+    }
     Flags<QueryResult> OperatorQuery(OpType opType, const ArchOperatorQuery *query = nullptr,
         ArchRequirements *req = nullptr) override;
     bool SupportedZeroPoint(int64_t zeroPoint, TensorUsage usage, DataType dataType, OpType opType) override;

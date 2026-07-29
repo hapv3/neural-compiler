@@ -133,6 +133,9 @@ public:
     virtual bool SupportsDoubleBroadcast() = 0;
     // Whether clipping activations may be represented by the producer's requantization bounds.
     virtual bool SupportsFusedActivationClamping() const { return false; }
+    // Whether a reshape-like operation can alias storage without changing its
+    // architecture-specific physical interpretation.
+    virtual bool CanAliasReshape(const Shape &, const Shape &) const { return true; }
     virtual Flags<QueryResult> OperatorQuery(OpType opType, const ArchOperatorQuery *query = nullptr, ArchRequirements *req = nullptr) = 0;
     virtual bool SupportedZeroPoint(int64_t zp, TensorUsage usage, DataType dType, OpType opType) = 0;
 };

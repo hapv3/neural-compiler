@@ -1726,6 +1726,8 @@ Operation *GraphIrOptimiser::RemoveReshape(Graph *const graph, Operation *const 
     {
         auto *ifmConn = operation->Input(TensorUsage::IFM0);
         auto *ofmConn = operation->Output(TensorUsage::OFM);
+        if ( !_constraints->CanAliasReshape(ifmConn->shape, ofmConn->shape) )
+            return operation;
         auto *ifm = ifmConn->tensor.get();
         auto *ofm = ofmConn->tensor.get();
 
