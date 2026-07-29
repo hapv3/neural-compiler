@@ -70,7 +70,11 @@ LinebufferJob MakeJob(const LinebufferPlannerInput &input, int ohBase, int owBas
     const bool c32Fast = inputCStride == C32 && input.ic >= C32 && input.ic % C32 == 0 &&
                          valid == C32 && groupBase % C32 == 0 &&
                          (input.ifmBase % C32) == 0;
-    const bool coalesce = c32Fast && input.kernelH * input.kernelW > 1;
+    /* Coalescing is also required for NHWC direct-RGB kernels: without it
+       the formatter emits only one kernel tap per systolic input vector.
+       C32-fast remains the additional predicate for the optimized KGEN and
+       group-stationary paths. */
+    const bool coalesce = input.kernelH * input.kernelW > 1;
     const bool kgen = coalesce && kTiles64 > 1;
     const bool groupStationary = c32Fast && coalesce && kgen && input.logicalIfm.Depth() >= C32 &&
                                  inputGroup >= 0;

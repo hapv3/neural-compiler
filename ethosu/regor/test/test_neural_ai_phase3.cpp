@@ -172,6 +172,8 @@ TEST_CASE("Neural-AI Phase 3 planner respects M and C32 group predicates")
     const auto rgb = LinebufferPlanner().Plan(input);
     REQUIRE(rgb.size() == 1);
     REQUIRE(rgb[0].linebuf.c32Fast == 0);
+    REQUIRE(rgb[0].linebuf.coalesce == 1);
+    REQUIRE(rgb[0].linebuf.kgen == 0);
     REQUIRE(rgb[0].linebuf.c32GroupStationary == 0);
     REQUIRE(rgb[0].linebuf.blockValidBytes == 3);
 
