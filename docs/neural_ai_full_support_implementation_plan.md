@@ -1859,7 +1859,7 @@ The following must be complete before Conv compiler lowering begins:
 
 ### Current Verification Evidence
 
-- Compiler C++ tests: 176/176 pass.
+- Compiler C++ tests: 177/177 pass.
 - Neural-AI compiler-runtime host ABI/layout/quantization checks pass.
 - Compiler-generated Verilator packages pass byte-exactly:
   - RGB K3 S2 C3 -> C32: 194,651 simulated ns.
@@ -1893,14 +1893,19 @@ dispatcher are implemented. The compiler lowers only equal-shape, batch-1,
 raw-safe symmetric INT8 Add to this mode, keeps tensors in C32 blocked storage,
 and disables allocator IFM reuse so the AFU output remains out-of-place.
 Requantized Add, nonzero zero points, broadcasting, and fused activation clamps
-remain unsupported and are rejected. The compiler-generated Add package passes
-byte-exactly on Verilator at 127,826 simulated ns. The equivalent hand-written
-package passes at 113,958 simulated ns; the 13,868 ns (12.17%) difference is
-consistent with additional parsing/validation overhead for a 1,184-byte
-compiler artifact versus an 800-byte fixture, while both execute four commands
-over the same 128-byte tensors. These focused completion times include boot and
-runtime overhead and are not substitutes for the 347,992-cycle
-Micro-MobileNet or 388,146-cycle Micro-YOLO full-graph PMU gates.
+remain unsupported and are rejected. Internal `Reshape`, `Squeeze`, and
+`ExpandDims` are admitted to Regor's existing reshape-removal pass; a
+view-to-Add regression verifies that none of the three adds a runtime command.
+Public-output materialization and view offset/slice cases remain open.
+
+The compiler-generated Add package passes byte-exactly on Verilator at 127,826
+simulated ns. The equivalent hand-written package passes at 113,958 simulated
+ns; the 13,868 ns (12.17%) difference is consistent with additional
+parsing/validation overhead for a 1,184-byte compiler artifact versus an
+800-byte fixture, while both execute four commands over the same 128-byte
+tensors. These focused completion times include boot and runtime overhead and
+are not substitutes for the 347,992-cycle Micro-MobileNet or 388,146-cycle
+Micro-YOLO full-graph PMU gates.
 
 ### Work Items
 
