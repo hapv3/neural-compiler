@@ -16,6 +16,7 @@
 #include "compiler/scheduler.hpp"
 #include "compiler/scheduler_packing.hpp"
 #include "tflite/tflite_schema_generated.hpp"
+#include "tflite/tflite_supported_operators.hpp"
 #include "util.hpp"
 
 #include <catch_all.hpp>
@@ -623,6 +624,26 @@ TEST_CASE("Neural-AI constraints accept only raw-safe Add quantization")
     inputQuant.zeroPoints = {0};
     outputQuant.quantMin = {0};
     REQUIRE(constraints->OperatorQuery(OpType::Add, &query) == QueryResult::Unsupported);
+}
+
+TEST_CASE("Neural-AI admits only native-depth-preserving reshape-like views")
+{
+    auto checker = MakeSupportedOpsChecker(REGOR_ARCH_NEURALAI);
+    for ( const OpType opType : {OpType::Reshape, OpType::Squeeze, OpType::ExpandDims} )
+    {
+        INFO("opType=" << OpTypeToString(opType));
+        auto input = CreateTensor("input", Shape(1, 2, 2, 32), DataType::Int8);
+        auto output = CreateTensor("output", Shape(1, 1, 4, 32), DataType::Int8);
+        auto view = CreateOperation(
+            opType, TensorUsage::IFM0, input, TensorUsage::OFM, output);
+        view->Input(TensorUsage::IFM0)->Set(Quantization::Unit());
+        view->Output(TensorUsage::OFM)->Set(Quantization::Unit());
+        REQUIRE(checker->Check(view.get()));
+
+        view->Output(TensorUsage::OFM)->Set(Shape(1, 2, 32, 2));
+        REQUIRE_FALSE(checker->Check(view.get()));
+        view->Disconnect();
+    }
 }
 
 TEST_CASE("Neural-AI graph optimiser inserts ROW32 boundary conversions")

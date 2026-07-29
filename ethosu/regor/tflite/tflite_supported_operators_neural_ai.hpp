@@ -15,6 +15,9 @@ class TfLiteSupportedOperatorsNeuralAI : public TfLiteSupportedOperators
 {
 public:
     TfLiteSupportedOperatorsNeuralAI();
+
+private:
+    ConstraintCheck viewPreservesDepth;
 };
 
 }  // namespace regor
