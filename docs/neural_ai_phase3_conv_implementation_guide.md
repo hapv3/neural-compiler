@@ -1433,15 +1433,15 @@ RTL .sv diff: empty
 Known limitations:
 ```
 
-Current implementation increment (uncommitted):
+Latest implementation increment:
 
 ```text
-Task: Oversized pointwise M stripes, C96 depthwise groups, Conv chain runtime proof, and unaligned layout contract
-Compiler commit: none (working tree increment)
-neural-ai commit: none (working tree increment)
+Task: Oversized pointwise M stripes, C96 depthwise groups, Conv chain runtime proof, unaligned layout contract, and C++ planner golden coverage
+Compiler commit: `9b706dff` plus planner verification commit `f3f61488`
+neural-ai commit: `a1a6c254`
 ABI major/minor: 1/0
-Compiler unit scenarios passed / required: 170 / 170 CTest cases
-Host C scenarios passed / required: 4 / 4 compiler-runtime checks
+Compiler unit scenarios passed / required: 149 / 149 CTest cases (Phase 3 minimum: 147; 8 planner cases, 104 planner assertions)
+Host C scenarios passed / required: 4 / 4 compiler-runtime test binaries; detailed 52-scenario accounting remains open
 Verilator scenarios passed / required: M257, M511, C96/S2, pointwise->depthwise chain, unaligned C3/C31 ROW32 round-trip (5 / 5 focused)
 Functional seed: deterministic byte patterns and signed per-pixel references
 Peak TCDM: 32704 bytes (M511 compiler package)
@@ -1449,8 +1449,9 @@ Firmware text + rodata bytes: 22628 text bytes (30156 total image)
 Performance counters/baseline: M511 302448 cycles; C96/S2 245500 cycles; independent chain 206210 cycles; compiler-generated chain 217516 cycles
 RTL .sv diff: empty
 Known limitations: full E2E-01..08 order, Micro-MobileNet compiler-generated
-package, Python-golden parity, complete byte-golden matrix, and broad
-randomized/layout coverage remain open.
+package, multi-group C65 compiler-runtime boundary simulation, Python-golden
+parity, complete byte-golden matrix, detailed host/Verilator scenario
+accounting, and broad randomized/layout coverage remain open.
 ```
 
 A task is not complete when:
