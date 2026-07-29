@@ -112,9 +112,11 @@ std::unique_ptr<ArchitectureOpConfig> ArchNeuralAI::GetOpConfig(OpType opType, c
     else if ( opType == OpType::Conv2D && query.kernel != nullptr )
     {
         const auto &kernel = *query.kernel;
-        if ( kernel.Size() == Point2i(1, 1) && kernel.Stride() == Point2i(1, 1) && kernel.Padding().IsZero() )
+        if ( kernel.Size() == Point2i(1, 1) && kernel.Stride() == Point2i(1, 1) &&
+             kernel.Dilation() == Point2i(1, 1) && kernel.Padding().IsZero() )
             mode = NeuralAIOpMode::Conv2DPointwiseC32Requant;
         else if ( kernel.Size() == Point2i(3, 3) && kernel.Stride() == Point2i(2, 2) &&
+                  kernel.Dilation() == Point2i(1, 1) &&
                   query.ifmShape[0].Depth() == 3 && query.ofmShape.Depth() == 32 &&
                   kernel.Padding().Top() == 1 && kernel.Padding().Left() == 1 &&
                   kernel.Padding().Bottom() == 1 && kernel.Padding().Right() == 1 )
@@ -123,18 +125,26 @@ std::unique_ptr<ArchitectureOpConfig> ArchNeuralAI::GetOpConfig(OpType opType, c
             directNhwcInput = true;
         }
         else if ( kernel.Size() == Point2i(3, 3) &&
+                  (kernel.Stride() == Point2i(1, 1) || kernel.Stride() == Point2i(2, 2)) &&
+                  kernel.Dilation() == Point2i(1, 1) &&
                   kernel.Padding().Top() == 1 && kernel.Padding().Left() == 1 &&
                   kernel.Padding().Bottom() == 1 && kernel.Padding().Right() == 1 )
         {
             const bool hasChannelTail = ( query.ifmShape[0].Depth() % ArrayDimension ) != 0 ||
                                          ( query.ofmShape.Depth() % ArrayDimension ) != 0;
-            mode = hasChannelTail ? NeuralAIOpMode::Conv2DLinebufC32TailRequant :
-                ( kernel.Stride() == Point2i(1, 1) ? NeuralAIOpMode::Conv2DLinebufC32S1Requant :
-                                                     NeuralAIOpMode::Conv2DLinebufC32S2Requant );
+            if ( !hasChannelTail )
+                mode = kernel.Stride() == Point2i(1, 1) ? NeuralAIOpMode::Conv2DLinebufC32S1Requant :
+                                                         NeuralAIOpMode::Conv2DLinebufC32S2Requant;
         }
     }
     else if ( opType == OpType::DepthwiseConv2D && query.kernel != nullptr &&
-              query.kernel->Size() == Point2i(3, 3) )
+              query.kernel->Size() == Point2i(3, 3) &&
+              (query.kernel->Stride() == Point2i(1, 1) ||
+               query.kernel->Stride() == Point2i(2, 2)) &&
+              query.kernel->Dilation() == Point2i(1, 1) &&
+              query.kernel->Padding().Top() == 1 && query.kernel->Padding().Left() == 1 &&
+              query.kernel->Padding().Bottom() == 1 && query.kernel->Padding().Right() == 1 &&
+              query.ifmShape[0].Depth() == query.ofmShape.Depth() )
     {
         mode = query.kernel->Stride() == Point2i(2, 2) ? NeuralAIOpMode::DepthwiseC32S2Requant :
                                                          NeuralAIOpMode::DepthwiseC32S1Requant;

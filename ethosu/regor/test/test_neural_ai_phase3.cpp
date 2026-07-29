@@ -31,14 +31,25 @@ TEST_CASE("Neural-AI Phase 3 classifier selects the stable Conv modes")
     const Kernel generic({3, 3}, {1, 1}, {1, 1}, Margin(1, 1, 1, 1));
     classification = NeuralAIConstraints::Classify(OpType::Conv2D,
         Shape(1, 8, 8, 64), Shape(33, 3, 3, 64), Shape(1, 8, 8, 33), &generic);
-    REQUIRE(classification.mode == NeuralAIOpMode::Conv2DLinebufC32TailRequant);
+    REQUIRE(classification.mode == NeuralAIOpMode::Unsupported);
     REQUIRE(classification.hasIcTail == false);
     REQUIRE(classification.hasOcTail);
     REQUIRE_FALSE(classification.groupStationary);
+    REQUIRE(classification.diagnostic.find("divisible by 32") != std::string::npos);
+
+    classification = NeuralAIConstraints::Classify(OpType::Conv2D,
+        Shape(1, 8, 8, 64), Shape(64, 3, 3, 64), Shape(1, 8, 8, 64), &generic);
+    REQUIRE(classification.mode == NeuralAIOpMode::Conv2DLinebufC32S1Requant);
+    REQUIRE(classification.groupStationary);
 
     classification = NeuralAIConstraints::Classify(OpType::DepthwiseConv2D,
         Shape(1, 8, 8, 33), Shape(1, 3, 3, 33), Shape(1, 4, 4, 33), &rgb);
     REQUIRE(classification.mode == NeuralAIOpMode::DepthwiseC32S2Requant);
+
+    classification = NeuralAIConstraints::Classify(OpType::DepthwiseConv2D,
+        Shape(1, 8, 8, 33), Shape(1, 3, 3, 1), Shape(1, 4, 4, 33), &rgb);
+    REQUIRE(classification.mode == NeuralAIOpMode::Unsupported);
+    REQUIRE(classification.diagnostic.find("Phase 3") != std::string::npos);
 
     const Kernel invalid({3, 3}, {3, 3}, {1, 1}, Margin(1, 1, 1, 1));
     classification = NeuralAIConstraints::Classify(OpType::Conv2D,

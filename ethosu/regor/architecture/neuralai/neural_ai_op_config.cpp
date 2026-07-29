@@ -22,7 +22,6 @@ const char *NeuralAIOpModeName(NeuralAIOpMode mode)
     case NeuralAIOpMode::Conv2DPointwiseC32Requant: return "Conv2DPointwiseC32Requant";
     case NeuralAIOpMode::Conv2DLinebufC32S1Requant: return "Conv2DLinebufC32S1Requant";
     case NeuralAIOpMode::Conv2DLinebufC32S2Requant: return "Conv2DLinebufC32S2Requant";
-    case NeuralAIOpMode::Conv2DLinebufC32TailRequant: return "Conv2DLinebufC32TailRequant";
     case NeuralAIOpMode::DepthwiseC32S1Requant: return "DepthwiseC32S1Requant";
     case NeuralAIOpMode::DepthwiseC32S2Requant: return "DepthwiseC32S2Requant";
     default: return "Unsupported";

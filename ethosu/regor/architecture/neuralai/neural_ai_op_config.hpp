@@ -20,7 +20,6 @@ enum class NeuralAIOpMode
     Conv2DPointwiseC32Requant,
     Conv2DLinebufC32S1Requant,
     Conv2DLinebufC32S2Requant,
-    Conv2DLinebufC32TailRequant,
     DepthwiseC32S1Requant,
     DepthwiseC32S2Requant,
 };

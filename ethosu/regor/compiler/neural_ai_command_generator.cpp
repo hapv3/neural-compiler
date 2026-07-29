@@ -9,6 +9,7 @@
 #include "common/numeric_util.hpp"
 
 #include "architecture/neuralai/neural_ai.hpp"
+#include "architecture/neuralai/neural_ai_op_config.hpp"
 #include "compiler/shape_util.hpp"
 
 #include <algorithm>
@@ -28,6 +29,19 @@ using neuralai::DataType;
 using neuralai::RefV1;
 using neuralai::Region;
 using neuralai::TensorLayout;
+
+bool IsLinebufferConvMode(NeuralAIOpMode mode)
+{
+    return mode == NeuralAIOpMode::Conv2DRgbLinebufRequant ||
+           mode == NeuralAIOpMode::Conv2DLinebufC32S1Requant ||
+           mode == NeuralAIOpMode::Conv2DLinebufC32S2Requant;
+}
+
+bool IsDepthwiseMode(NeuralAIOpMode mode)
+{
+    return mode == NeuralAIOpMode::DepthwiseC32S1Requant ||
+           mode == NeuralAIOpMode::DepthwiseC32S2Requant;
+}
 
 void Append16(std::vector<uint8_t> &output, uint16_t value)
 {
@@ -339,8 +353,11 @@ struct GeneratorContext
     bool AppendDepthwise(const SchedulerOperation *operation, std::string &error)
     {
         const SchedulerOpInfo *cost = schedule->Cost(operation);
-        if ( cost == nullptr || cost->npuWeightsTensor == nullptr )
+        if ( cost == nullptr || cost->Config() == nullptr || cost->npuWeightsTensor == nullptr )
             return SetError(error, "Neural-AI depthwise operation has no encoded constant tensor");
+        const auto *config = static_cast<const NeuralAIOpConfig *>(cost->Config());
+        if ( !IsDepthwiseMode(config->Mode()) )
+            return SetError(error, "Neural-AI depthwise operation has no validated depthwise mode");
         const NpuWeightTensor *encoded = cost->npuWeightsTensor.get();
         if ( encoded->encodedRanges.size() != 1 || !encoded->bufferView.HasBuffer() )
             return SetError(error, "Neural-AI depthwise operation requires one encoded constant range");
@@ -417,8 +434,15 @@ struct GeneratorContext
     bool AppendMatrix(const SchedulerOperation *operation, std::string &error)
     {
         const SchedulerOpInfo *cost = schedule->Cost(operation);
-        if ( cost == nullptr || cost->npuWeightsTensor == nullptr )
+        if ( cost == nullptr || cost->Config() == nullptr || cost->npuWeightsTensor == nullptr )
             return SetError(error, "Neural-AI matrix operation has no encoded constant tensor");
+        const auto *config = static_cast<const NeuralAIOpConfig *>(cost->Config());
+        const NeuralAIOpMode mode = config->Mode();
+        if ( mode != NeuralAIOpMode::FullyConnectedRow32 &&
+             mode != NeuralAIOpMode::MatMulRow32 &&
+             mode != NeuralAIOpMode::Conv2DPointwiseC32Requant &&
+             !IsLinebufferConvMode(mode) )
+            return SetError(error, "Neural-AI matrix operation has no validated matrix or Conv mode");
         const NpuWeightTensor *encoded = cost->npuWeightsTensor.get();
         if ( encoded->encodedRanges.size() != 1 || !encoded->bufferView.HasBuffer() )
             return SetError(error, "Neural-AI matrix operation requires one encoded constant range");
@@ -431,8 +455,7 @@ struct GeneratorContext
         const SchedulerConnection *ifm = operation->IFM(0);
         const SchedulerConnection *ofm = operation->OFM();
         const uint32_t channelK = uint32_t(ifm->shape.Depth());
-        const bool isK3Conv = operation->Type() == OpType::Conv2D && operation->Kernel() != nullptr &&
-            operation->Kernel()->Size() == Point2i(3, 3);
+        const bool isK3Conv = IsLinebufferConvMode(mode);
         const uint32_t depthK = channelK * (isK3Conv ? 9u : 1u);
         const uint32_t depthN = uint32_t(ofm->shape.Depth());
         const uint32_t rows = uint32_t(ofm->shape.Elements64() / depthN);
@@ -464,13 +487,12 @@ struct GeneratorContext
         const uint8_t *weightData = data + range.weightOffset;
         artifact->constants.insert(artifact->constants.end(), weightData, weightData + range.weightBytes);
 
-        if ( operation->Type() == OpType::Conv2D && operation->Kernel() != nullptr &&
-             operation->Kernel()->Size() == Point2i(3, 3) )
+        if ( isK3Conv )
         {
-            const bool directRgb = ifm->tensor->format == TensorFormat::NHWC && channelK == 3 && depthN == 32;
+            const bool directRgb = config->DirectNhwcInput();
             if ( (!directRgb && ifm->tensor->format != TensorFormat::C32Blocked) ||
                  ofm->tensor->format != TensorFormat::C32Blocked )
-                return SetError(error, "Neural-AI linebuffer currently requires one C32 input and output group");
+                return SetError(error, "Neural-AI linebuffer Conv requires C32-blocked input and output");
             const uint32_t weightBytes = uint32_t(range.weightBytes);
             if ( weightBytes == 0 || (weightBytes % 32u) != 0u )
                 return SetError(error, "Neural-AI linebuffer weights are not 32-byte tiled");
@@ -546,10 +568,11 @@ struct GeneratorContext
             return true;
         }
 
-        if ( operation->Type() == OpType::Conv2D &&
-             ifm->tensor->format == TensorFormat::C32Blocked &&
-             ofm->tensor->format == TensorFormat::C32Blocked )
+        if ( mode == NeuralAIOpMode::Conv2DPointwiseC32Requant )
         {
+            if ( ifm->tensor->format != TensorFormat::C32Blocked ||
+                 ofm->tensor->format != TensorFormat::C32Blocked )
+                return SetError(error, "Neural-AI pointwise Conv requires C32-blocked input and output");
             uint32_t tileId = 0;
             const uint32_t groupStride = rows * 32u;
             for ( uint32_t nGroup = 0; nGroup < nGroups; ++nGroup )
@@ -761,19 +784,24 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
     {
         if ( operation->Type() != OpType::FullyConnected && operation->Type() != OpType::MatMul &&
              operation->Type() != OpType::Conv2D && operation->Type() != OpType::DepthwiseConv2D ) continue;
+        const SchedulerOpInfo *cost = schedule->Cost(operation.get());
+        if ( cost == nullptr || cost->Config() == nullptr )
+        {
+            error = "Neural-AI scheduled operation has no validated target mode";
+            return false;
+        }
+        const auto *config = static_cast<const NeuralAIOpConfig *>(cost->Config());
+        const NeuralAIOpMode mode = config->Mode();
         const uint32_t rows = uint32_t(operation->OFM()->shape.Elements64() / operation->OFM()->shape.Depth());
-        const bool isK3Conv = operation->Type() == OpType::Conv2D && operation->Kernel() != nullptr &&
-            operation->Kernel()->Size() == Point2i(3, 3);
+        const bool isK3Conv = IsLinebufferConvMode(mode);
         const uint32_t logicalK = uint32_t(operation->IFM(0)->shape.Depth()) * (isK3Conv ? 9u : 1u);
         const uint32_t paddedK = uint32_t(RoundAway(int(logicalK), 32));
         const uint32_t stripeRows = std::min<uint32_t>(rows, 256);
         if ( paddedK != 32 ) context.stageBytes = std::max(context.stageBytes, stripeRows * 32);
         if ( paddedK > 32 ) context.partialBytes = std::max(context.partialBytes, stripeRows * 32 * 4);
-        if ( operation->Type() == OpType::Conv2D && operation->Kernel() != nullptr &&
-             operation->Kernel()->Size() == Point2i(3, 3) )
+        if ( isK3Conv )
         {
-            const bool directRgb = operation->IFM(0)->tensor->format == TensorFormat::NHWC &&
-                operation->IFM(0)->shape.Depth() == 3 && operation->OFM()->shape.Depth() == 32;
+            const bool directRgb = config->DirectNhwcInput();
             if ( directRgb )
             {
                 const auto inputShape = ReshapeToNHWC(operation->IFM(0)->shape);

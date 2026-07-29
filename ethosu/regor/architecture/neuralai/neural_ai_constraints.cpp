@@ -135,18 +135,23 @@ NeuralAIConstraints::Classification NeuralAIConstraints::Classify(OpType opType,
          weightShape.Batch() == ofmC && weightShape.Height() == 3 && weightShape.Width() == 3 &&
          weightShape.Depth() == ifmC )
     {
-        result.mode = result.hasIcTail || result.hasOcTail ? NeuralAIOpMode::Conv2DLinebufC32TailRequant :
-            (kernel->Stride() == Point2i(1, 1) ? NeuralAIOpMode::Conv2DLinebufC32S1Requant :
-                                                 NeuralAIOpMode::Conv2DLinebufC32S2Requant);
-        result.groupStationary = !result.hasIcTail && !result.hasOcTail && ifmC > 32;
+        if ( result.hasIcTail || result.hasOcTail )
+        {
+            result.diagnostic = "generic C32 Conv requires input and output channels divisible by 32";
+            return result;
+        }
+        result.mode = kernel->Stride() == Point2i(1, 1) ? NeuralAIOpMode::Conv2DLinebufC32S1Requant :
+                                                          NeuralAIOpMode::Conv2DLinebufC32S2Requant;
+        result.groupStationary = ifmC > 32;
         return result;
     }
 
     if ( opType == OpType::DepthwiseConv2D && kernel->Size() == Point2i(3, 3) &&
          kernel->Padding().Top() == 1 && kernel->Padding().Left() == 1 &&
          kernel->Padding().Bottom() == 1 && kernel->Padding().Right() == 1 &&
-         ifmC == ofmC && (weightShape.Batch() == 1 || weightShape.Batch() == ifmC) &&
-         (weightShape.Depth() == 1 || weightShape.Depth() == ifmC) )
+         weightShape.Height() == 3 && weightShape.Width() == 3 && ifmC == ofmC &&
+         ((weightShape.Batch() == 1 && weightShape.Depth() == ifmC) ||
+          (weightShape.Batch() == ifmC && weightShape.Depth() == 1)) )
     {
         result.mode = kernel->Stride() == Point2i(1, 1) ? NeuralAIOpMode::DepthwiseC32S1Requant :
                                                            NeuralAIOpMode::DepthwiseC32S2Requant;

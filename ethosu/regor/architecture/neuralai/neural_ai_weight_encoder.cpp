@@ -435,8 +435,7 @@ std::unique_ptr<IVolumeWeightSource> NeuralAIWeightEncoder::GetWeightSource(
     const NeuralAIOpMode mode = encoding->Mode();
     const bool linebufferK3 = mode == NeuralAIOpMode::Conv2DRgbLinebufRequant ||
         mode == NeuralAIOpMode::Conv2DLinebufC32S1Requant ||
-        mode == NeuralAIOpMode::Conv2DLinebufC32S2Requant ||
-        mode == NeuralAIOpMode::Conv2DLinebufC32TailRequant;
+        mode == NeuralAIOpMode::Conv2DLinebufC32S2Requant;
     return std::make_unique<MatrixWeightSource>(func, param, linebufferK3);
 }
 

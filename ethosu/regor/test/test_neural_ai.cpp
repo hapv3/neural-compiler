@@ -944,50 +944,6 @@ TEST_CASE("Neural-AI compiler splits a width-641 Conv into legal linebuffer jobs
     blob->Release();
 }
 
-TEST_CASE("Neural-AI compiler masks generic K3 channel tails")
-{
-    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
-    Compiler compiler(architecture);
-    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
-    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
-    const auto model = BuildK3ConvModel(7, 7, 33, 34, 2);
-    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
-    const bool compiled = compiler.Compile();
-    INFO(compiler.LastError());
-    REQUIRE(compiled);
-    IRegorBlob *blob = compiler.Output();
-    REQUIRE(blob != nullptr);
-    int64_t size = 0;
-    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
-    const uint32_t commandBytes = Read32(data + 64 + 12);
-    uint32_t offset = 224;
-    uint32_t linebufferJobs = 0;
-    bool sawInputTail = false;
-    uint32_t rqLoads = 0;
-    while ( offset < 224 + commandBytes )
-    {
-        const uint16_t type = uint16_t(data[offset]) | (uint16_t(data[offset + 1]) << 8);
-        const uint16_t commandSize = uint16_t(data[offset + 2]) |
-            (uint16_t(data[offset + 3]) << 8);
-        if ( type == uint16_t(neuralai::CommandType::RQLoad) ) ++rqLoads;
-        if ( type == uint16_t(neuralai::CommandType::LineBufferJob) )
-        {
-            ++linebufferJobs;
-            const size_t payload = size_t(offset) + 16;
-            const uint16_t blockValidBytes = uint16_t(data[payload + 56]) |
-                (uint16_t(data[payload + 57]) << 8);
-            sawInputTail |= blockValidBytes == 1;
-        }
-        offset += commandSize;
-    }
-    REQUIRE(offset == 224 + commandBytes);
-    REQUIRE(linebufferJobs == 4);
-    REQUIRE(sawInputTail);
-    REQUIRE(rqLoads == 2);
-    blob->Unmap(const_cast<uint8_t *>(data));
-    blob->Release();
-}
-
 TEST_CASE("Neural-AI compiler stages direct RGB input for the K3 stem")
 {
     std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
