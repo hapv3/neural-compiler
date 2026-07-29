@@ -16,9 +16,12 @@ namespace
 
 const std::set<OpType> s_supportedOpTypes = {
     OpType::Add,
-    OpType::FullyConnected,
     OpType::Conv2D,
     OpType::DepthwiseConv2D,
+    OpType::ExpandDims,
+    OpType::FullyConnected,
+    OpType::Reshape,
+    OpType::Squeeze,
 };
 
 const std::set<DataType> s_supportedDataTypes = {
