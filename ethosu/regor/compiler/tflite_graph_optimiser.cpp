@@ -2697,7 +2697,13 @@ Operation *TFLiteGraphOptimiser::LegalizeAsymmetricQuantization(Graph *const gra
         }
         else
         {
-            assert(opType == OpType::FullyConnected && "Unexpected OpType");
+            if ( opType != OpType::FullyConnected )
+            {
+                // This pass only knows how to legalize asymmetric FullyConnected
+                // inputs. Leave all other operations unchanged so the target
+                // constraint query can reject them without aborting compilation.
+                return returnOp;
+            }
             // Subtract the weight-adjusted ifm zero-point after the FullyConnected operation.
             // Rationale (note, the '*' are vector products):
             //  (ifm - zp) * w == ifm * w - zp * w
@@ -2763,7 +2769,11 @@ Operation *TFLiteGraphOptimiser::LegalizeAsymmetricQuantization(Graph *const gra
     DataType ofmDType = ofmConn->tensor->Type();
     if ( !_constraints->SupportedZeroPoint(ofmZeroPoint, TensorUsage::OFM, ofmDType, opType) )
     {
-        assert(opType == OpType::Mul && "Unexcpected OpType");
+        if ( opType != OpType::Mul )
+        {
+            // Asymmetric OFM legalization is implemented only for Mul.
+            return returnOp;
+        }
 
         Quantization unitQuant = Quantization::Unit();
         unitQuant.type = QuantizationType::TFLITE;

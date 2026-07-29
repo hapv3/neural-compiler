@@ -939,6 +939,7 @@ TEST_CASE("Neural-AI compiler rejects Add modes that need requantization or acti
     };
 
     rejects(BuildAddModel(1.0f, 0.5f, 1.0f));
+    rejects(BuildAddModel(1.0f, 1.0f, 1.0f, 1));
     rejects(BuildAddModel(1.0f, 1.0f, 1.0f, 0, tflite::ActivationFunctionType::RELU));
 }
 
