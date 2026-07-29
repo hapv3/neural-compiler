@@ -712,6 +712,8 @@ TEST_CASE("Neural-AI constraints enforce signed matrix zero points")
 
     REQUIRE(constraints->SupportedZeroPoint(0, TensorUsage::IFM, DataType::Int8, OpType::MatMul));
     REQUIRE_FALSE(constraints->SupportedZeroPoint(1, TensorUsage::IFM, DataType::Int8, OpType::MatMul));
+    REQUIRE(constraints->SupportedZeroPoint(0, TensorUsage::Weights, DataType::Int8, OpType::MatMul));
+    REQUIRE_FALSE(constraints->SupportedZeroPoint(-1, TensorUsage::Weights, DataType::Int8, OpType::MatMul));
     REQUIRE(constraints->SupportedZeroPoint(-128, TensorUsage::OFM, DataType::Int8, OpType::MatMul));
     REQUIRE(constraints->SupportedZeroPoint(127, TensorUsage::OFM, DataType::Int8, OpType::MatMul));
     REQUIRE_FALSE(constraints->SupportedZeroPoint(128, TensorUsage::OFM, DataType::Int8, OpType::MatMul));
