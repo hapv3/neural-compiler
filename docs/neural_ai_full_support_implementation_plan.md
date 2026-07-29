@@ -1789,10 +1789,14 @@ model into `.nai` and execute it using the Phase 1 runtime.
 Support CNN backbones containing an RGB stem, pointwise Conv, C32 Conv, and
 depthwise Conv.
 
-Current progress: constrained pointwise Conv1x1 is implemented through
-`POINTWISE_C32`, including NHWC↔C32 boundaries, multi-group accumulation, and a
-compiler-generated Verilator E2E. RGB stem, generic 3x3 C32, and depthwise
-lowering remain open work in this phase.
+Current progress: constrained pointwise Conv1x1, RGB K3 S2, generic full-group
+C32 K3, and depthwise K3 S1/S2 lowering are implemented. The generated command
+streams include NHWC↔C32 boundaries, multi-group accumulation, per-channel
+requantization, and fused ReLU/ReLU6 clamps. Generic K3 requires both IC and OC
+to be divisible by 32; pointwise and depthwise retain C32 tail support. Focused
+compiler-generated Verilator E2E tests pass for RGB, generic C32, depthwise C33
+S2, and a pointwise-plus-depthwise chain. Full Micro-MobileNet compilation
+remains open.
 
 ### Prerequisite Gate
 
@@ -1851,6 +1855,23 @@ The following must be complete before Conv compiler lowering begins:
 6. Pointwise plus depthwise chain.
 7. C32 -> NHWC graph output.
 8. Full Micro-MobileNet graph with NHWC host buffers.
+
+### Current Verification Evidence
+
+- Compiler C++ tests: 172/172 pass.
+- Neural-AI compiler-runtime host ABI/layout/quantization checks pass.
+- Compiler-generated Verilator packages pass byte-exactly:
+  - RGB K3 S2 C3 -> C32: 194,651 simulated ns.
+  - Generic K3 S1 C32 -> C32: 492,662 simulated ns.
+  - Depthwise K3 S2 C33 tail: 228,121 simulated ns.
+- Runtime firmware `.text` is 22,724 bytes, below the 32 KB limit.
+- The focused package times include boot, section CRC, command loading,
+  boundary layout DMA, and output checking. They must not be compared as
+  operator latency against the PMU-only Micro-MobileNet and Micro-YOLO records.
+  The current native baselines remain 347,992 total cycles for Micro-MobileNet
+  and 388,146 total cycles for the Micro-YOLO raw-head graph. The compiler path
+  is performance-acceptable only after equivalent full-graph PMU counters are
+  collected; focused simulator completion alone does not close that gate.
 
 ### Exit Criteria
 
