@@ -871,6 +871,39 @@ TEST_CASE("Neural-AI command generator emits direct single-tile requant")
     REQUIRE(Read16(artifact.commands, 320) == uint16_t(neuralai::CommandType::End));
 }
 
+TEST_CASE("Neural-AI command generator rejects sliced MemoryCopy")
+{
+    ArchNeuralAI arch;
+    const Shape shape(1, 1, 2, 32);
+    auto input = CreateTensor("input", shape, DataType::Int8);
+    auto output = CreateTensor("output", shape, DataType::Int8);
+    auto copy = CreateOperation(
+        OpType::MemoryCopy, TensorUsage::IFM0, input, TensorUsage::OFM, output);
+    const TensorSlice slice(Shape(0, 0, 1, 0), Shape(1, 1, 1, 32));
+    copy->Input(TensorUsage::IFM0)->Set(slice);
+    copy->Output(TensorUsage::OFM)->Set(slice);
+    std::vector<std::shared_ptr<Operation>> sourceOps = {copy};
+    auto graph = CreateGraph(sourceOps);
+
+    const std::unordered_map<UniqueId, UniqueId> equivalenceIds;
+    SchedulerPacking packing(&arch, false, equivalenceIds);
+    auto scheduleOps = packing.Process(graph.get());
+    SchedulerOptions schedulerOptions;
+    schedulerOptions.disabled.Set(SchedulerFeature::Cascading);
+    schedulerOptions.disabled.Set(SchedulerFeature::WeightBuffering);
+    Scheduler scheduler(
+        &arch, schedulerOptions, "neural-ai-sliced-copy", scheduleOps,
+        packing.OpConfigCompatablility());
+    auto schedule = scheduler.Process();
+
+    CompiledNeuralAIArtifact artifact;
+    std::string error;
+    NeuralAICommandGenerator commandGenerator;
+    REQUIRE_FALSE(commandGenerator.Generate(
+        graph.get(), scheduleOps, schedule.get(), artifact, error));
+    REQUIRE(error == "Neural-AI sliced MemoryCopy is not implemented");
+}
+
 TEST_CASE("Neural-AI compiler emits a native model package")
 {
     constexpr int depthK = 33;

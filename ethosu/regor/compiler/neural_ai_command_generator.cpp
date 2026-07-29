@@ -44,6 +44,14 @@ bool IsDepthwiseMode(NeuralAIOpMode mode)
            mode == NeuralAIOpMode::DepthwiseC32S2Requant;
 }
 
+bool IsFullTensorConnection(const SchedulerConnection *connection)
+{
+    const Shape &shape = connection->shape;
+    return connection->SliceShape() == shape &&
+           (!connection->slice.offset || connection->slice.offset == shape.WithZeros()) &&
+           (!connection->slice.stride || connection->slice.stride == shape.WithOnes());
+}
+
 void Append16(std::vector<uint8_t> &output, uint16_t value)
 {
     output.push_back(uint8_t(value));
@@ -324,6 +332,8 @@ struct GeneratorContext
     {
         const SchedulerConnection *ifm = operation->IFM(0);
         const SchedulerConnection *ofm = operation->OFM();
+        if ( !IsFullTensorConnection(ifm) || !IsFullTensorConnection(ofm) )
+            return SetError(error, "Neural-AI sliced MemoryCopy is not implemented");
         if ( ifm->tensor->format == TensorFormat::NHWC &&
              ofm->tensor->format == TensorFormat::NHWC )
         {
