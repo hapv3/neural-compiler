@@ -98,13 +98,53 @@ bool ArchNeuralAI::CheckConfiguration(std::string &error)
 std::unique_ptr<ArchitectureOpConfig> ArchNeuralAI::GetOpConfig(OpType opType, const ArchitectureConfigQuery &query)
 {
     if ( opType != OpType::FullyConnected && opType != OpType::MatMul && opType != OpType::Conv2D &&
+         opType != OpType::DepthwiseConv2D &&
          opType != OpType::MemoryCopy ) return nullptr;
     if ( query.ifmBits != 8 || query.ofmBits != 8 || query.transpose != TransposeType::None ||
          query.reverse != ReverseType::None )
     {
         return nullptr;
     }
-    return std::make_unique<NeuralAIOpConfig>();
+    NeuralAIOpMode mode = NeuralAIOpMode::Unsupported;
+    bool directNhwcInput = false;
+    if ( opType == OpType::FullyConnected ) mode = NeuralAIOpMode::FullyConnectedRow32;
+    else if ( opType == OpType::MatMul ) mode = NeuralAIOpMode::MatMulRow32;
+    else if ( opType == OpType::Conv2D && query.kernel != nullptr )
+    {
+        const auto &kernel = *query.kernel;
+        if ( kernel.Size() == Point2i(1, 1) && kernel.Stride() == Point2i(1, 1) && kernel.Padding().IsZero() )
+            mode = NeuralAIOpMode::Conv2DPointwiseC32Requant;
+        else if ( kernel.Size() == Point2i(3, 3) && kernel.Stride() == Point2i(2, 2) &&
+                  query.ifmShape[0].Depth() == 3 && query.ofmShape.Depth() == 32 &&
+                  kernel.Padding().Top() == 1 && kernel.Padding().Left() == 1 &&
+                  kernel.Padding().Bottom() == 1 && kernel.Padding().Right() == 1 )
+        {
+            mode = NeuralAIOpMode::Conv2DRgbLinebufRequant;
+            directNhwcInput = true;
+        }
+        else if ( kernel.Size() == Point2i(3, 3) &&
+                  kernel.Padding().Top() == 1 && kernel.Padding().Left() == 1 &&
+                  kernel.Padding().Bottom() == 1 && kernel.Padding().Right() == 1 )
+        {
+            const bool hasChannelTail = ( query.ifmShape[0].Depth() % ArrayDimension ) != 0 ||
+                                         ( query.ofmShape.Depth() % ArrayDimension ) != 0;
+            mode = hasChannelTail ? NeuralAIOpMode::Conv2DLinebufC32TailRequant :
+                ( kernel.Stride() == Point2i(1, 1) ? NeuralAIOpMode::Conv2DLinebufC32S1Requant :
+                                                     NeuralAIOpMode::Conv2DLinebufC32S2Requant );
+        }
+    }
+    else if ( opType == OpType::DepthwiseConv2D && query.kernel != nullptr &&
+              query.kernel->Size() == Point2i(3, 3) )
+    {
+        mode = query.kernel->Stride() == Point2i(2, 2) ? NeuralAIOpMode::DepthwiseC32S2Requant :
+                                                         NeuralAIOpMode::DepthwiseC32S1Requant;
+    }
+    const bool groupStationary = (mode == NeuralAIOpMode::Conv2DLinebufC32S1Requant ||
+                                  mode == NeuralAIOpMode::Conv2DLinebufC32S2Requant) &&
+                                 query.ifmShape[0].Depth() > ArrayDimension &&
+                                 query.ifmShape[0].Depth() % ArrayDimension == 0 &&
+                                 query.ofmShape.Depth() % ArrayDimension == 0;
+    return std::make_unique<NeuralAIOpConfig>(256, mode, directNhwcInput, groupStationary);
 }
 
 std::unique_ptr<ArchitectureOpGroup> ArchNeuralAI::CreateOpGroup(const ArchitectureOpGroupQuery &op)
@@ -113,9 +153,13 @@ std::unique_ptr<ArchitectureOpGroup> ArchNeuralAI::CreateOpGroup(const Architect
     return group->Add(op) ? std::move(group) : nullptr;
 }
 
-int ArchNeuralAI::TensorAlignment(TensorUsage, TensorFormat) const
+int ArchNeuralAI::TensorAlignment(TensorUsage, TensorFormat format) const
 {
-    return DMAAlignment;
+    // Compact public NHWC (and scalar/layout-only temporaries represented in
+    // that format) may start at any byte address.  Native ROW32/C32 and
+    // encoded weights are consumed by 32-byte engines and retain the DMA
+    // alignment requirement.
+    return format == TensorFormat::NHWC ? 1 : DMAAlignment;
 }
 
 TensorFormat ArchNeuralAI::ModelBindingFormat(TensorUsage) const

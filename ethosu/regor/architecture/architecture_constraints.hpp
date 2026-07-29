@@ -131,6 +131,8 @@ public:
     virtual bool SupportsElementwiseLeakyRelu(bool quantized, DataType type) = 0;
     virtual bool SupportsRescale(DataType fromType, DataType toType) = 0;
     virtual bool SupportsDoubleBroadcast() = 0;
+    // Whether clipping activations may be represented by the producer's requantization bounds.
+    virtual bool SupportsFusedActivationClamping() const { return false; }
     virtual Flags<QueryResult> OperatorQuery(OpType opType, const ArchOperatorQuery *query = nullptr, ArchRequirements *req = nullptr) = 0;
     virtual bool SupportedZeroPoint(int64_t zp, TensorUsage usage, DataType dType, OpType opType) = 0;
 };

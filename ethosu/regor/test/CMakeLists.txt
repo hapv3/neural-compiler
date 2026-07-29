@@ -55,6 +55,8 @@ add_catch_test(
         test_arch_ethos_u85.cpp
         test_neural_ai_abi.cpp
         test_neural_ai.cpp
+        test_neural_ai_linebuffer_planner.cpp
+        test_neural_ai_phase3.cpp
         test_neural_ai_writer.cpp
         test_arch_constraints.cpp
         test_hash.cpp

@@ -110,6 +110,8 @@ struct GeneratorContext
     uint32_t nextTensorId = 0;
     uint32_t scratchEnd = 0;
     uint32_t stageOffset = 0;
+    uint32_t inputStageOffset = 0;
+    uint32_t weightStageOffset = 0;
     uint32_t partialOffset = 0;
     uint32_t stageBytes = 0;
     uint32_t partialBytes = 0;
@@ -186,15 +188,16 @@ struct GeneratorContext
         ++artifact->commandCount;
     }
 
-    void AppendDMA2D(const RefV1 &source, const RefV1 &destination, uint32_t sourceStride,
-        uint32_t repetitions, uint32_t layerId, uint32_t tileId)
+    void AppendDMA2D(const RefV1 &source, const RefV1 &destination, uint32_t length,
+        uint32_t sourceStride, uint32_t destinationStride, uint32_t repetitions,
+        uint32_t layerId, uint32_t tileId)
     {
         AppendHeader(artifact->commands, CommandType::DMA2D, 64, layerId, tileId);
         AppendRef(artifact->commands, source);
         AppendRef(artifact->commands, destination);
-        Append32(artifact->commands, 32);
+        Append32(artifact->commands, length);
         Append32(artifact->commands, sourceStride);
-        Append32(artifact->commands, 32);
+        Append32(artifact->commands, destinationStride);
         Append32(artifact->commands, repetitions);
         Append32(artifact->commands, 2);
         AppendZeros(artifact->commands, 3);
@@ -239,6 +242,57 @@ struct GeneratorContext
         ++artifact->commandCount;
     }
 
+    void AppendLineBufferJob(const neuralai::LinebufferJob &job, uint32_t layerId, uint32_t tileId)
+    {
+        const auto &cfg = job.linebuf;
+        const auto &gemm = job.gemm;
+        AppendHeader(artifact->commands, CommandType::LineBufferJob, 160, layerId, tileId);
+        Append32(artifact->commands, cfg.inputBase);
+        Append16(artifact->commands, cfg.inputH);
+        Append16(artifact->commands, cfg.inputW);
+        Append16(artifact->commands, cfg.inputC);
+        Append16(artifact->commands, cfg.outputW);
+        Append16(artifact->commands, cfg.strideH);
+        Append16(artifact->commands, cfg.strideW);
+        Append16(artifact->commands, cfg.padH);
+        Append16(artifact->commands, cfg.padW);
+        Append32(artifact->commands, cfg.rowStrideBytes);
+        Append32(artifact->commands, cfg.pixelStrideBytes);
+        Append32(artifact->commands, cfg.owStepBytes);
+        Append32(artifact->commands, cfg.ohStepBytes);
+        Append16(artifact->commands, cfg.kernelH);
+        Append16(artifact->commands, cfg.kernelW);
+        Append16(artifact->commands, cfg.cBase);
+        Append16(artifact->commands, cfg.laneBase);
+        Append16(artifact->commands, cfg.coalesce);
+        Append16(artifact->commands, cfg.kgen);
+        Append16(artifact->commands, cfg.pool);
+        Append16(artifact->commands, cfg.c32Fast);
+        Append16(artifact->commands, cfg.depthwise);
+        Append16(artifact->commands, cfg.c32GroupStationary);
+        Append16(artifact->commands, cfg.blockValidBytes);
+        Append16(artifact->commands, cfg.kSeedKh);
+        Append16(artifact->commands, cfg.kSeedKw);
+        Append16(artifact->commands, cfg.kSeedIc);
+        Append32(artifact->commands, cfg.kTiles);
+        Append32(artifact->commands, cfg.spatialM);
+        Append32(artifact->commands, cfg.channelAddrOffset);
+        Append32(artifact->commands, cfg.coalesceKBytes);
+        Append32(artifact->commands, gemm.weightAddr);
+        Append32(artifact->commands, gemm.ifmAddr);
+        Append32(artifact->commands, gemm.psumAddr);
+        Append32(artifact->commands, gemm.ofmAddr);
+        Append32(artifact->commands, gemm.dimM);
+        Append32(artifact->commands, gemm.accumEn);
+        Append32(artifact->commands, gemm.ofmRowStrideBytes);
+        Append32(artifact->commands, gemm.ofmTileCols);
+        Append32(artifact->commands, gemm.psumRowStrideBytes);
+        Append32(artifact->commands, job.rows);
+        Append32(artifact->commands, job.kTiles);
+        AppendZeros(artifact->commands, 5);
+        ++artifact->commandCount;
+    }
+
     bool AppendCopy(const SchedulerOperation *operation, std::string &error)
     {
         const SchedulerConnection *ifm = operation->IFM(0);
@@ -274,10 +328,89 @@ struct GeneratorContext
         const uint32_t elementBytes = dataType == uint16_t(DataType::Int32) ? 4 : 1;
         const uint32_t compactStride = dimensions[3] * elementBytes;
         const uint32_t nativeStride = uint32_t(RoundAway(int(dimensions[3]), 32)) * elementBytes;
-        Append32(artifact->commands, mode == CopyLayoutMode::NHWCToRow32 ? compactStride : nativeStride);
-        Append32(artifact->commands, mode == CopyLayoutMode::NHWCToRow32 ? nativeStride : compactStride);
+        const bool toNative = mode == CopyLayoutMode::NHWCToRow32 || mode == CopyLayoutMode::NHWCToC32;
+        Append32(artifact->commands, toNative ? compactStride : nativeStride);
+        Append32(artifact->commands, toNative ? nativeStride : compactStride);
         AppendZeros(artifact->commands, 7);
         ++artifact->commandCount;
+        return true;
+    }
+
+    bool AppendDepthwise(const SchedulerOperation *operation, std::string &error)
+    {
+        const SchedulerOpInfo *cost = schedule->Cost(operation);
+        if ( cost == nullptr || cost->npuWeightsTensor == nullptr )
+            return SetError(error, "Neural-AI depthwise operation has no encoded constant tensor");
+        const NpuWeightTensor *encoded = cost->npuWeightsTensor.get();
+        if ( encoded->encodedRanges.size() != 1 || !encoded->bufferView.HasBuffer() )
+            return SetError(error, "Neural-AI depthwise operation requires one encoded constant range");
+        const WeightRange &range = encoded->encodedRanges.begin()->second;
+        const SchedulerConnection *ifm = operation->IFM(0);
+        const SchedulerConnection *ofm = operation->OFM();
+        const uint32_t channels = uint32_t(ifm->shape.Depth());
+        const uint32_t groups = (channels + 31u) / 32u;
+        const uint32_t paddedChannels = groups * 32u;
+        if ( channels == 0 || ifm->shape.Height() == 0 || ifm->shape.Width() == 0 ||
+             ofm->shape.Height() == 0 || ofm->shape.Width() == 0 ||
+             range.scaleBytes != int(paddedChannels * sizeof(neuralai::QParamV1)) ||
+             range.weightBytes != int(groups * 3u * 3u * 32u) )
+            return SetError(error, "Neural-AI depthwise constants do not match C32 group dimensions");
+        const Kernel *kernel = operation->Kernel();
+        if ( kernel == nullptr || kernel->Size() != Point2i(3, 3) || kernel->Dilation() != Point2i(1, 1) ||
+             kernel->Padding().Top() != 1 || kernel->Padding().Left() != 1 ||
+             kernel->Padding().Bottom() != 1 || kernel->Padding().Right() != 1 ||
+             (kernel->Stride() != Point2i(1, 1) && kernel->Stride() != Point2i(2, 2)) )
+            return SetError(error, "Neural-AI depthwise requires K3, P1, S1/S2, D1");
+
+        const uint8_t *data = encoded->bufferView.RawData<uint8_t>() + range.offset;
+        const uint32_t qparamBase = uint32_t(artifact->qparams.size());
+        for ( uint32_t channel = 0; channel < paddedChannels; ++channel )
+        {
+            const uint8_t *source = data + channel * sizeof(neuralai::QParamV1);
+            neuralai::QParamV1 qparam{};
+            qparam.bias = int32_t(Read32(source));
+            qparam.multiplier = int32_t(Read32(source + 4));
+            qparam.shift = Read32(source + 8);
+            qparam.zeroPoint = int32_t(Read32(source + 12));
+            qparam.clampMin = int32_t(Read32(source + 16));
+            qparam.clampMax = int32_t(Read32(source + 20));
+            artifact->qparams.push_back(qparam);
+        }
+        const uint32_t weightBase = uint32_t(artifact->constants.size());
+        const uint8_t *weightData = data + range.weightOffset;
+        artifact->constants.insert(artifact->constants.end(), weightData, weightData + range.weightBytes);
+
+        const uint32_t inputPixels = uint32_t(ifm->shape.Height() * ifm->shape.Width());
+        const uint32_t outputPixels = uint32_t(ofm->shape.Height() * ofm->shape.Width());
+        for ( uint32_t group = 0; group < groups; ++group )
+        {
+            const uint32_t validChannels = std::min(32u, channels - group * 32u);
+            AppendRQLoad(qparamBase + group * 32u, group, uint32_t(operation->Index()), group * 2u);
+            RefV1 weights{};
+            weights.region = uint16_t(Region::ModelConstants);
+            weights.offset = weightBase + group * 3u * 3u * 32u;
+            RefV1 ifmRef = TensorRef(ifm->tensor.get(), group * inputPixels * 32u, error);
+            if ( !error.empty() ) return false;
+            RefV1 ofmRef = TensorRef(ofm->tensor.get(), group * outputPixels * 32u, error);
+            if ( !error.empty() ) return false;
+            AppendHeader(artifact->commands, CommandType::DepthwiseC32, 96,
+                uint32_t(operation->Index()), group * 2u + 1u);
+            AppendRef(artifact->commands, weights);
+            AppendRef(artifact->commands, ifmRef);
+            AppendRef(artifact->commands, ofmRef);
+            Append32(artifact->commands, uint32_t(ifm->shape.Height()));
+            Append32(artifact->commands, uint32_t(ifm->shape.Width()));
+            Append32(artifact->commands, uint32_t(ofm->shape.Height()));
+            Append32(artifact->commands, uint32_t(ofm->shape.Width()));
+            Append32(artifact->commands, validChannels);
+            Append32(artifact->commands, uint32_t(kernel->Stride().y));
+            Append32(artifact->commands, uint32_t(kernel->Stride().x));
+            Append32(artifact->commands, 1);
+            Append32(artifact->commands, 1);
+            Append32(artifact->commands, group);
+            AppendZeros(artifact->commands, 4);
+            ++artifact->commandCount;
+        }
         return true;
     }
 
@@ -297,15 +430,21 @@ struct GeneratorContext
 
         const SchedulerConnection *ifm = operation->IFM(0);
         const SchedulerConnection *ofm = operation->OFM();
-        const uint32_t depthK = uint32_t(ifm->shape.Depth());
+        const uint32_t channelK = uint32_t(ifm->shape.Depth());
+        const bool isK3Conv = operation->Type() == OpType::Conv2D && operation->Kernel() != nullptr &&
+            operation->Kernel()->Size() == Point2i(3, 3);
+        const uint32_t depthK = channelK * (isK3Conv ? 9u : 1u);
         const uint32_t depthN = uint32_t(ofm->shape.Depth());
         const uint32_t rows = uint32_t(ofm->shape.Elements64() / depthN);
         const uint32_t paddedK = uint32_t(RoundAway(int(depthK), 32));
         const uint32_t paddedN = uint32_t(RoundAway(int(depthN), 32));
         const uint32_t kGroups = paddedK / 32;
         const uint32_t nGroups = paddedN / 32;
+        const bool linebufferK3 = isK3Conv;
+        const uint32_t linebufferKGroups = linebufferK3 && channelK > 32 ?
+            9u * uint32_t(RoundAway(int(channelK), 32)) / 32u : kGroups;
         if ( rows == 0 || range.scaleBytes != int(paddedN * sizeof(neuralai::QParamV1)) ||
-             range.weightBytes != int(kGroups * nGroups * 32 * 32) )
+             range.weightBytes != int(linebufferKGroups * nGroups * 32 * 32) )
             return SetError(error, "Neural-AI encoded matrix dimensions do not match the scheduled operation");
 
         const uint32_t qparamBase = uint32_t(artifact->qparams.size());
@@ -324,6 +463,88 @@ struct GeneratorContext
         const uint32_t weightBase = uint32_t(artifact->constants.size());
         const uint8_t *weightData = data + range.weightOffset;
         artifact->constants.insert(artifact->constants.end(), weightData, weightData + range.weightBytes);
+
+        if ( operation->Type() == OpType::Conv2D && operation->Kernel() != nullptr &&
+             operation->Kernel()->Size() == Point2i(3, 3) )
+        {
+            const bool directRgb = ifm->tensor->format == TensorFormat::NHWC && channelK == 3 && depthN == 32;
+            if ( (!directRgb && ifm->tensor->format != TensorFormat::C32Blocked) ||
+                 ofm->tensor->format != TensorFormat::C32Blocked )
+                return SetError(error, "Neural-AI linebuffer currently requires one C32 input and output group");
+            const uint32_t weightBytes = uint32_t(range.weightBytes);
+            if ( weightBytes == 0 || (weightBytes % 32u) != 0u )
+                return SetError(error, "Neural-AI linebuffer weights are not 32-byte tiled");
+            RefV1 modelWeights{};
+            modelWeights.region = uint16_t(Region::ModelConstants);
+            modelWeights.offset = weightBase;
+            RefV1 stagedWeights{};
+            stagedWeights.region = uint16_t(Region::TCDMScratch);
+            stagedWeights.offset = weightStageOffset;
+            AppendDMA2D(modelWeights, stagedWeights, 32, 32, 32, weightBytes / 32u,
+                uint32_t(operation->Index()), 1);
+
+            if ( directRgb )
+            {
+                RefV1 inputSource = TensorRef(ifm->tensor.get(), 0, error);
+                if ( !error.empty() ) return false;
+                RefV1 inputStage{};
+                inputStage.region = uint16_t(Region::TCDMScratch);
+                inputStage.offset = inputStageOffset;
+                const auto inputShape = ReshapeToNHWC(ifm->shape);
+                const uint32_t pixels = uint32_t(inputShape.Height() * inputShape.Width());
+                AppendDMA2D(inputSource, inputStage, 3, 3, 3, pixels,
+                    uint32_t(operation->Index()), 2);
+            }
+
+            const auto logicalIfm = ReshapeToNHWC(ifm->shape);
+            const auto logicalOfm = ReshapeToNHWC(ofm->shape);
+            const uint32_t paddedInputChannels = uint32_t(RoundAway(int(channelK), 32));
+            const uint32_t inputGroups = directRgb ? 1u : paddedInputChannels / 32u;
+            const uint32_t outputGroups = uint32_t(RoundAway(int(depthN), 32)) / 32u;
+            const uint32_t kernelTilesPerInputGroup =
+                uint32_t(operation->Kernel()->Size().x * operation->Kernel()->Size().y);
+            uint32_t tileId = 2;
+            for ( uint32_t outputGroup = 0; outputGroup < outputGroups; ++outputGroup )
+            {
+                AppendRQLoad(qparamBase + outputGroup * 32u, outputGroup,
+                    uint32_t(operation->Index()), tileId++);
+                for ( uint32_t inputGroup = 0; inputGroup < inputGroups; ++inputGroup )
+                {
+                    neuralai::LinebufferPlannerInput plannerInput{};
+                    plannerInput.logicalIfm = logicalIfm;
+                    plannerInput.logicalOfm = logicalOfm;
+                    plannerInput.ifmBase = uint32_t(directRgb ? inputStageOffset : ifm->tensor->AllocatedAddress());
+                    plannerInput.ofmBase = uint32_t(ofm->tensor->AllocatedAddress());
+                    plannerInput.weightBase = uint32_t(weightStageOffset +
+                        (outputGroup * inputGroups + inputGroup) * kernelTilesPerInputGroup * 32u * 32u);
+                    plannerInput.psumBase = uint32_t(partialOffset);
+                    plannerInput.kernelH = operation->Kernel()->Size().y;
+                    plannerInput.kernelW = operation->Kernel()->Size().x;
+                    plannerInput.strideH = operation->Kernel()->Stride().y;
+                    plannerInput.strideW = operation->Kernel()->Stride().x;
+                    plannerInput.padTop = operation->Kernel()->Padding().Top();
+                    plannerInput.padLeft = operation->Kernel()->Padding().Left();
+                    plannerInput.padBottom = operation->Kernel()->Padding().Bottom();
+                    plannerInput.padRight = operation->Kernel()->Padding().Right();
+                    plannerInput.ic = directRgb ? int(channelK) : 32;
+                    plannerInput.oc = 32;
+                    plannerInput.groupIndex = int(inputGroup);
+                    plannerInput.inputGroupIndex = int(inputGroup);
+                    plannerInput.outputGroupIndex = int(outputGroup);
+                    plannerInput.validLaneCount = directRgb ? int(channelK) :
+                        std::min(32u, channelK - inputGroup * 32u);
+                    plannerInput.ifmPixelStride = directRgb ? 3 : 32;
+                    plannerInput.maxM = 256;
+                    plannerInput.tcdmBudget = ArchNeuralAI::AllocatableTCDMBytes;
+                    plannerInput.accumMode = inputGroups == 1u ? 0 :
+                        (inputGroup == 0u ? 1 : (inputGroup + 1u == inputGroups ? 2 : 1));
+                    const auto jobs = neuralai::LinebufferPlanner().Plan(plannerInput);
+                    for ( const auto &job : jobs ) AppendLineBufferJob(job,
+                        uint32_t(operation->Index()), tileId++);
+                }
+            }
+            return true;
+        }
 
         if ( operation->Type() == OpType::Conv2D &&
              ifm->tensor->format == TensorFormat::C32Blocked &&
@@ -376,7 +597,8 @@ struct GeneratorContext
                         RefV1 staged{};
                         staged.region = uint16_t(Region::TCDMScratch);
                         staged.offset = stageOffset;
-                        AppendDMA2D(ifmRef, staged, paddedK, dimM, uint32_t(operation->Index()), tileId++);
+                        AppendDMA2D(ifmRef, staged, 32, paddedK, 32, dimM,
+                            uint32_t(operation->Index()), tileId++);
                         ifmRef = staged;
                     }
                     RefV1 weights{};
@@ -462,7 +684,7 @@ struct GeneratorContext
                 description.rank = binding.rank;
                 std::copy(dimensions.begin(), dimensions.end(), description.dimensions);
                 description.byteSize = binding.byteSize;
-                description.alignment = ArchNeuralAI::DMAAlignment;
+                description.alignment = 1u;  // Public bindings are compact NHWC.
                 artifact->tensors.push_back(description);
             }
             return true;
@@ -490,7 +712,7 @@ struct GeneratorContext
             const auto dimensions = Dimensions(tensor->storageShape);
             std::copy(dimensions.begin(), dimensions.end(), description.dimensions);
             description.byteSize = uint32_t(tensor->AllocationSizeBytes());
-            description.alignment = ArchNeuralAI::DMAAlignment;
+            description.alignment = tensor->format == TensorFormat::NHWC ? 1u : ArchNeuralAI::DMAAlignment;
             description.scratchOffset = uint32_t(tensor->AllocatedAddress());
             artifact->tensors.push_back(description);
         }
@@ -533,17 +755,47 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         }
     }
     context.scratchEnd = uint32_t(RoundAway(int(scratchBytes), ArchNeuralAI::DMAAlignment));
+    uint32_t directRgbInputBytes = 0;
+    uint32_t linebufferWeightBytes = 0;
     for ( const auto &operation : operations )
     {
         if ( operation->Type() != OpType::FullyConnected && operation->Type() != OpType::MatMul &&
-             operation->Type() != OpType::Conv2D ) continue;
+             operation->Type() != OpType::Conv2D && operation->Type() != OpType::DepthwiseConv2D ) continue;
         const uint32_t rows = uint32_t(operation->OFM()->shape.Elements64() / operation->OFM()->shape.Depth());
-        const uint32_t paddedK = uint32_t(RoundAway(operation->IFM(0)->shape.Depth(), 32));
+        const bool isK3Conv = operation->Type() == OpType::Conv2D && operation->Kernel() != nullptr &&
+            operation->Kernel()->Size() == Point2i(3, 3);
+        const uint32_t logicalK = uint32_t(operation->IFM(0)->shape.Depth()) * (isK3Conv ? 9u : 1u);
+        const uint32_t paddedK = uint32_t(RoundAway(int(logicalK), 32));
         const uint32_t stripeRows = std::min<uint32_t>(rows, 256);
         if ( paddedK != 32 ) context.stageBytes = std::max(context.stageBytes, stripeRows * 32);
         if ( paddedK > 32 ) context.partialBytes = std::max(context.partialBytes, stripeRows * 32 * 4);
+        if ( operation->Type() == OpType::Conv2D && operation->Kernel() != nullptr &&
+             operation->Kernel()->Size() == Point2i(3, 3) )
+        {
+            const bool directRgb = operation->IFM(0)->tensor->format == TensorFormat::NHWC &&
+                operation->IFM(0)->shape.Depth() == 3 && operation->OFM()->shape.Depth() == 32;
+            if ( directRgb )
+            {
+                const auto inputShape = ReshapeToNHWC(operation->IFM(0)->shape);
+                directRgbInputBytes = std::max(directRgbInputBytes,
+                    uint32_t(RoundAway(int(inputShape.Height() * inputShape.Width() * 3),
+                        ArchNeuralAI::DMAAlignment)));
+            }
+            if ( directRgb || paddedK > 0 )
+            {
+                const uint32_t paddedN = uint32_t(RoundAway(int(operation->OFM()->shape.Depth()), 32));
+                const uint32_t kGroups = directRgb ? 1u : paddedK / 32u;
+                linebufferWeightBytes = std::max(linebufferWeightBytes,
+                    uint32_t(kGroups * (paddedN / 32u) * 32u * 32u));
+            }
+            context.partialBytes = std::max(context.partialBytes, stripeRows * 32 * 4);
+        }
     }
+    context.stageBytes = std::max(context.stageBytes, directRgbInputBytes + linebufferWeightBytes);
     context.stageOffset = context.scratchEnd;
+    context.inputStageOffset = context.stageOffset;
+    context.weightStageOffset = uint32_t(RoundAway(
+        int(context.inputStageOffset + directRgbInputBytes), ArchNeuralAI::DMAAlignment));
     context.partialOffset = uint32_t(RoundAway(
         int(context.stageOffset + context.stageBytes), ArchNeuralAI::DMAAlignment));
 
@@ -552,6 +804,10 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         if ( operation->Type() == OpType::MemoryCopy )
         {
             if ( !context.AppendCopy(operation.get(), error) ) return false;
+        }
+        else if ( operation->Type() == OpType::DepthwiseConv2D )
+        {
+            if ( !context.AppendDepthwise(operation.get(), error) ) return false;
         }
         else if ( operation->Type() == OpType::FullyConnected || operation->Type() == OpType::MatMul ||
                   operation->Type() == OpType::Conv2D )

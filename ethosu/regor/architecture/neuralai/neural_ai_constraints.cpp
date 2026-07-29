@@ -8,6 +8,7 @@
 
 #include "architecture/architecture.hpp"
 
+#include <algorithm>
 #include <array>
 
 namespace regor
@@ -29,12 +30,132 @@ bool HasBatchOne(const Shape &shape)
     return shape.Size() <= 2 || shape[0] == 1;
 }
 
+bool HasSymmetricZeroPoint(const ArchFM &fm)
+{
+    return fm.quantization == nullptr || fm.quantization->zeroPoints.empty() ||
+           std::all_of(fm.quantization->zeroPoints.begin(), fm.quantization->zeroPoints.end(),
+               [](int64_t value) { return value == 0; });
+}
+
 }  // namespace
 
 bool NeuralAIConstraints::IsSupportedOp(OpType opType)
 {
     return opType == OpType::FullyConnected || opType == OpType::MatMul || opType == OpType::Conv2D ||
-           opType == OpType::MemoryCopy;
+           opType == OpType::DepthwiseConv2D || opType == OpType::MemoryCopy;
+}
+
+NeuralAIConstraints::Classification NeuralAIConstraints::Classify(OpType opType, const Shape &ifmShape,
+    const Shape &weightShape, const Shape &ofmShape, const Kernel *kernel)
+{
+    Classification result;
+    if ( opType != OpType::Conv2D && opType != OpType::DepthwiseConv2D )
+    {
+        result.diagnostic = "not a Conv operation";
+        return result;
+    }
+    if ( !IsStaticPositiveShape(ifmShape) || !IsStaticPositiveShape(weightShape) ||
+         !IsStaticPositiveShape(ofmShape) )
+    {
+        result.diagnostic = "requires static positive tensor shapes";
+        return result;
+    }
+    if ( !HasBatchOne(ifmShape) || !HasBatchOne(ofmShape) )
+    {
+        result.diagnostic = "batch must be one";
+        return result;
+    }
+    if ( kernel == nullptr )
+    {
+        result.diagnostic = "missing kernel";
+        return result;
+    }
+    if ( kernel->Dilation() != Point2i(1, 1) )
+    {
+        result.diagnostic = "dilation must be 1x1";
+        return result;
+    }
+    if ( kernel->Size() != Point2i(1, 1) && kernel->Size() != Point2i(3, 3) )
+    {
+        result.diagnostic = "kernel must be 1x1 or 3x3";
+        return result;
+    }
+    if ( kernel->Stride() != Point2i(1, 1) && kernel->Stride() != Point2i(2, 2) )
+    {
+        result.diagnostic = "stride must be 1x1 or 2x2";
+        return result;
+    }
+    if ( !kernel->Padding().IsZero() &&
+         (kernel->Padding().Top() != 1 || kernel->Padding().Left() != 1 ||
+          kernel->Padding().Bottom() != 1 || kernel->Padding().Right() != 1) )
+    {
+        result.diagnostic = "padding must be zero or one on every side";
+        return result;
+    }
+
+    const int ifmC = ifmShape.Depth();
+    const int ofmC = ofmShape.Depth();
+    const int64_t expectedOfmH = (int64_t(ifmShape.Height()) + kernel->Padding().Top() +
+        kernel->Padding().Bottom() - kernel->Size().y) / kernel->Stride().y + 1;
+    const int64_t expectedOfmW = (int64_t(ifmShape.Width()) + kernel->Padding().Left() +
+        kernel->Padding().Right() - kernel->Size().x) / kernel->Stride().x + 1;
+    if ( expectedOfmH <= 0 || expectedOfmW <= 0 || ofmShape.Height() != expectedOfmH ||
+         ofmShape.Width() != expectedOfmW )
+    {
+        result.diagnostic = "output spatial shape does not match kernel, stride, and padding";
+        return result;
+    }
+    result.hasIcTail = (ifmC % 32) != 0;
+    result.hasOcTail = (ofmC % 32) != 0;
+
+    if ( opType == OpType::Conv2D && kernel->Size() == Point2i(3, 3) &&
+         kernel->Stride() == Point2i(2, 2) && ifmC == 3 && ofmC == 32 &&
+         kernel->Padding().Top() == 1 && kernel->Padding().Left() == 1 &&
+         kernel->Padding().Bottom() == 1 && kernel->Padding().Right() == 1 &&
+         weightShape.Batch() == ofmC && weightShape.Height() == 3 && weightShape.Width() == 3 &&
+         weightShape.Depth() == ifmC )
+    {
+        result.mode = NeuralAIOpMode::Conv2DRgbLinebufRequant;
+        result.directNhwcInput = true;
+        return result;
+    }
+
+    if ( opType == OpType::Conv2D && kernel->Size() == Point2i(1, 1) &&
+         kernel->Stride() == Point2i(1, 1) && kernel->Padding().IsZero() &&
+         weightShape.Batch() == ofmC && weightShape.Height() == 1 && weightShape.Width() == 1 &&
+         weightShape.Depth() == ifmC )
+    {
+        result.mode = NeuralAIOpMode::Conv2DPointwiseC32Requant;
+        return result;
+    }
+
+    if ( opType == OpType::Conv2D && kernel->Size() == Point2i(3, 3) &&
+         kernel->Padding().Top() == 1 && kernel->Padding().Left() == 1 &&
+         kernel->Padding().Bottom() == 1 && kernel->Padding().Right() == 1 &&
+         weightShape.Batch() == ofmC && weightShape.Height() == 3 && weightShape.Width() == 3 &&
+         weightShape.Depth() == ifmC )
+    {
+        result.mode = result.hasIcTail || result.hasOcTail ? NeuralAIOpMode::Conv2DLinebufC32TailRequant :
+            (kernel->Stride() == Point2i(1, 1) ? NeuralAIOpMode::Conv2DLinebufC32S1Requant :
+                                                 NeuralAIOpMode::Conv2DLinebufC32S2Requant);
+        result.groupStationary = !result.hasIcTail && !result.hasOcTail && ifmC > 32;
+        return result;
+    }
+
+    if ( opType == OpType::DepthwiseConv2D && kernel->Size() == Point2i(3, 3) &&
+         kernel->Padding().Top() == 1 && kernel->Padding().Left() == 1 &&
+         kernel->Padding().Bottom() == 1 && kernel->Padding().Right() == 1 &&
+         ifmC == ofmC && (weightShape.Batch() == 1 || weightShape.Batch() == ifmC) &&
+         (weightShape.Depth() == 1 || weightShape.Depth() == ifmC) )
+    {
+        result.mode = kernel->Stride() == Point2i(1, 1) ? NeuralAIOpMode::DepthwiseC32S1Requant :
+                                                           NeuralAIOpMode::DepthwiseC32S2Requant;
+        result.groupStationary = !result.hasIcTail && !result.hasOcTail && ifmC > 32;
+        return result;
+    }
+
+    result.diagnostic = "shape does not match a Phase 3 Conv datapath";
+    return result;
 }
 
 bool NeuralAIConstraints::SupportsQuantization(OpType opType, const Quantization &, DataType ifmType,
@@ -89,23 +210,17 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
     {
         return QueryResult::Unsupported;
     }
-    if ( opType == OpType::Conv2D )
+    if ( opType == OpType::Conv2D || opType == OpType::DepthwiseConv2D )
     {
-        if ( query->kernel == nullptr || query->kernel->Size() != Point2i(1, 1) ||
-             query->kernel->Stride() != Point2i(1, 1) || query->kernel->Dilation() != Point2i(1, 1) ||
-             !query->kernel->Padding().IsZero() )
-        {
-            return QueryResult::Unsupported;
-        }
-        if ( weightsShape.Batch() != query->ofm.shape.Depth() ||
-             weightsShape.Height() != 1 || weightsShape.Width() != 1 ||
-             weightsShape.Depth() != query->ifm[0].shape.Depth() )
-        {
-            return QueryResult::Unsupported;
-        }
+        const Classification classification = Classify(opType, query->ifm[0].shape, weightsShape,
+            query->ofm.shape, query->kernel);
+        const ArchFM &weightFm = query->weights.type != DataType::None ? query->weights : query->ifm[1];
+        if ( !classification || !HasSymmetricZeroPoint(query->ifm[0]) ||
+             !HasSymmetricZeroPoint(weightFm) ) return QueryResult::Unsupported;
         if ( req != nullptr )
         {
-            Set(s_pointwiseTensorRequirements[0], TensorUsage::IFM0, TensorFormat::C32Blocked);
+            Set(s_pointwiseTensorRequirements[0], TensorUsage::IFM0,
+                classification.directNhwcInput ? TensorFormat::NHWC : TensorFormat::C32Blocked);
             Set(s_pointwiseTensorRequirements[1], TensorUsage::OFM, TensorFormat::C32Blocked);
             s_pointwiseTensorRequirements[0].next = &s_pointwiseTensorRequirements[1];
             req->tensor = s_pointwiseTensorRequirements[0];

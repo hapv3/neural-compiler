@@ -11,9 +11,27 @@
 namespace regor
 {
 
+const char *NeuralAIOpModeName(NeuralAIOpMode mode)
+{
+    switch ( mode )
+    {
+    case NeuralAIOpMode::Unsupported: return "Unsupported";
+    case NeuralAIOpMode::FullyConnectedRow32: return "FullyConnectedRow32";
+    case NeuralAIOpMode::MatMulRow32: return "MatMulRow32";
+    case NeuralAIOpMode::Conv2DRgbLinebufRequant: return "Conv2DRgbLinebufRequant";
+    case NeuralAIOpMode::Conv2DPointwiseC32Requant: return "Conv2DPointwiseC32Requant";
+    case NeuralAIOpMode::Conv2DLinebufC32S1Requant: return "Conv2DLinebufC32S1Requant";
+    case NeuralAIOpMode::Conv2DLinebufC32S2Requant: return "Conv2DLinebufC32S2Requant";
+    case NeuralAIOpMode::Conv2DLinebufC32TailRequant: return "Conv2DLinebufC32TailRequant";
+    case NeuralAIOpMode::DepthwiseC32S1Requant: return "DepthwiseC32S1Requant";
+    case NeuralAIOpMode::DepthwiseC32S2Requant: return "DepthwiseC32S2Requant";
+    default: return "Unsupported";
+    }
+}
+
 std::unique_ptr<ArchitectureOpConfig> NeuralAIOpConfig::Clone()
 {
-    return std::make_unique<NeuralAIOpConfig>(_maxRows);
+    return std::make_unique<NeuralAIOpConfig>(_maxRows, _mode, _directNhwcInput, _groupStationary);
 }
 
 std::string NeuralAIOpConfig::ToString(bool full)
@@ -26,6 +44,7 @@ int NeuralAIOpGroup::Add(const ArchitectureOpGroupQuery &op, const std::vector<i
 {
     if ( _hasOp || !dependsOn.empty() ||
          (op.type != OpType::FullyConnected && op.type != OpType::MatMul && op.type != OpType::Conv2D &&
+             op.type != OpType::DepthwiseConv2D &&
              op.type != OpType::MemoryCopy) )
     {
         return 0;

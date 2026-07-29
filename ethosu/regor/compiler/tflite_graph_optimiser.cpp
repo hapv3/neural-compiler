@@ -3155,7 +3155,42 @@ static std::shared_ptr<Tensor> SliceConstTensor1D(
 
 namespace
 {
-void DisconnectActivation(Operation *const op)
+void PreserveActivationClamp(Operation *const op)
+{
+    assert(op->Outputs().size() == 1);
+    assert(op->OFM()->Readers().size() == 1);
+    auto activation = op->OFM()->Readers().front();
+    auto &quant = activation->Output(TensorUsage::OFM)->quantization;
+    if ( !quant.quantMin.empty() || !quant.quantMax.empty() ) return;
+    const auto quantize = [](float value, const Quantization &q)
+    {
+        const float scale = q.scales.empty() ? 1.0f : float(q.scales[0].Dequantize());
+        const int64_t zeroPoint = q.zeroPoints.empty() ? 0 : q.zeroPoints[0];
+        return zeroPoint + int64_t(std::round(double(value / scale)));
+    };
+    switch ( activation->Type() )
+    {
+        case OpType::Relu:
+            quant.quantMin = {quantize(0, quant)};
+            break;
+        case OpType::Relu0To1:
+            quant.quantMin = {quantize(0, quant)};
+            quant.quantMax = {quantize(1, quant)};
+            break;
+        case OpType::Relu6:
+            quant.quantMin = {quantize(0, quant)};
+            quant.quantMax = {quantize(6, quant)};
+            break;
+        case OpType::ReluN1To1:
+            quant.quantMin = {quantize(-1, quant)};
+            quant.quantMax = {quantize(1, quant)};
+            break;
+        default:
+            break;
+    }
+}
+
+void DisconnectActivation(Operation *const op, bool preserveClamp = false)
 {
     assert(TfLiteMapping::CanFuseActivationFunction(op));
     // Op originally had a fused activation
@@ -3164,6 +3199,7 @@ void DisconnectActivation(Operation *const op)
     auto activation = op->OFM()->Readers().front();
     auto actOfm = activation->Output(TensorUsage::OFM);
     assert(actOfm);
+    if ( preserveClamp ) PreserveActivationClamp(op);
     // bypass and disconnect the activation
     op->CopyOutput(TensorUsage::OFM, *actOfm);
     activation->SetPassthroughOp();
@@ -3193,9 +3229,12 @@ Operation *TFLiteGraphOptimiser::SupportedOperatorChecks(Graph *const graph, Ope
             auto pred = operation->IFM(0)->Writers().front();
             if ( TfLiteMapping::CanFuseActivationFunction(pred.get()) )
             {
-                // op is an activation function, disconnect op and set pred to passthrough
-                DisconnectActivation(pred.get());
-                pred->SetPassthroughOp();
+                // op is an activation function; disconnect it and retain the producer for targets
+                // that implement clipping in requantization.
+                DisconnectActivation(pred.get(), _constraints->SupportsFusedActivationClamping());
+                // Neural-AI implements clipping as part of the producer's requantization. Other targets
+                // retain the source operator as a CPU passthrough when the activation is unsupported.
+                if ( !_constraints->SupportsFusedActivationClamping() ) pred->SetPassthroughOp();
                 // return pred instead of the disconnected activation
                 returnOp = pred.get();
             }

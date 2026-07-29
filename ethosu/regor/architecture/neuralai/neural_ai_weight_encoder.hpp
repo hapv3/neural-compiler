@@ -7,6 +7,7 @@
 #pragma once
 
 #include "architecture/weight_encoder.hpp"
+#include "architecture/neuralai/neural_ai_op_config.hpp"
 
 #include <cstdint>
 #include <vector>
@@ -29,12 +30,18 @@ public:
     private:
         DataType _ifmType;
         Flags<WeightFormat> _format;
+        NeuralAIOpMode _mode;
 
     public:
-        EncodingConfig(DataType ifmType, Flags<WeightFormat> format) : _ifmType(ifmType), _format(format) {}
+        EncodingConfig(DataType ifmType, Flags<WeightFormat> format,
+            NeuralAIOpMode mode = NeuralAIOpMode::Unsupported) :
+                _ifmType(ifmType), _format(format), _mode(mode)
+        {
+        }
         uint32_t Hash() override;
         bool Equals(IWeightEncodingConfig *other) override;
         Flags<WeightFormat> Format() override { return _format; }
+        NeuralAIOpMode Mode() const { return _mode; }
     };
 
     std::unique_ptr<IWeightEncodingConfig> GetEncodingConfig(

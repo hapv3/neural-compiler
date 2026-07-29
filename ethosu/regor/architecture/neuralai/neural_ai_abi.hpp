@@ -11,6 +11,8 @@
 #include <cstdint>
 #include <string>
 
+#include "architecture/neuralai/neural_ai_linebuffer_planner.hpp"
+
 namespace regor::neuralai
 {
 
@@ -276,6 +278,56 @@ struct CommandGemm32V2
     uint32_t reserved[8];
 };
 
+struct CommandPointwiseC32V2
+{
+    CommandHeaderV2 header;
+    RefV1 weights;
+    RefV1 ifm;
+    RefV1 partialSums;
+    RefV1 ofm;
+    uint32_t rows;
+    uint32_t inputC32Groups;
+    uint32_t outputC32Groups;
+    uint32_t qparamBlock;
+    uint32_t inputGroupStrideBytes;
+    uint32_t outputGroupStrideBytes;
+    uint32_t reserved[6];
+};
+
+struct CommandDepthwiseC32V2
+{
+    CommandHeaderV2 header;
+    RefV1 weights;
+    RefV1 ifm;
+    RefV1 ofm;
+    uint32_t inputH;
+    uint32_t inputW;
+    uint32_t outputH;
+    uint32_t outputW;
+    uint32_t channels;
+    uint32_t strideH;
+    uint32_t strideW;
+    uint32_t padH;
+    uint32_t padW;
+    uint32_t qparamBlock;
+    uint32_t reserved[4];
+};
+
+struct LinebufJobWireV1
+{
+    SystolicLinebufCfg linebuf;
+    SystolicGemm32Req gemm;
+    uint32_t rows;
+    uint32_t kTiles;
+};
+
+struct CommandLineBufferJobV2
+{
+    CommandHeaderV2 header;
+    LinebufJobWireV1 job;
+    uint8_t reserved[20];
+};
+
 enum class CopyLayoutMode : uint16_t
 {
     NHWCToRow32 = 1,
@@ -316,6 +368,10 @@ static_assert(sizeof(CommandDMA1DV2) == 64);
 static_assert(sizeof(CommandDMA2DV2) == 64);
 static_assert(sizeof(CommandDMA3DV2) == 64);
 static_assert(sizeof(CommandGemm32V2) == 96);
+static_assert(sizeof(CommandPointwiseC32V2) == 96);
+static_assert(sizeof(CommandDepthwiseC32V2) == 96);
+static_assert(sizeof(LinebufJobWireV1) == 124);
+static_assert(sizeof(CommandLineBufferJobV2) == 160);
 static_assert(sizeof(CommandCopyLayoutV2) == 96);
 
 using SerializedModelHeaderV1 = std::array<uint8_t, sizeof(ModelHeaderV1)>;

@@ -6,8 +6,31 @@
 
 #include "neural_ai_graph_optimiser.hpp"
 
+#include "kernel.hpp"
+
 namespace regor
 {
+
+namespace
+{
+
+bool IsDirectRgbStem(const Operation *operation)
+{
+    if ( operation == nullptr || operation->Type() != OpType::Conv2D || operation->Kernel() == nullptr ) return false;
+    const TensorConnection *ifm = operation->Input(TensorUsage::IFM0);
+    const TensorConnection *ofm = operation->Output(TensorUsage::OFM);
+    if ( ifm == nullptr || ofm == nullptr || !ifm->tensor || !ofm->tensor ) return false;
+    const Shape ifmShape = ifm->shape.IsEmpty() ? ifm->tensor->StorageShape() : ifm->shape;
+    const Shape ofmShape = ofm->shape.IsEmpty() ? ofm->tensor->StorageShape() : ofm->shape;
+    const Kernel *kernel = operation->Kernel();
+    return ifmShape.Depth() == 3 && ofmShape.Depth() == 32 &&
+        kernel->Size() == Point2i(3, 3) && kernel->Stride() == Point2i(2, 2) &&
+        kernel->Dilation() == Point2i(1, 1) && kernel->Padding().Top() == 1 &&
+        kernel->Padding().Left() == 1 && kernel->Padding().Bottom() == 1 &&
+        kernel->Padding().Right() == 1 && ifm->tensor->Writers().empty();
+}
+
+}  // namespace
 
 void NeuralAIGraphOptimiser::InsertInputConversion(Graph *graph, Operation *operation, TensorUsage usage)
 {
@@ -63,8 +86,8 @@ void NeuralAIGraphOptimiser::OptimiseGraph(Graph *graph)
     for ( const auto &operation : operations )
     {
         if ( operation->Type() != OpType::FullyConnected && operation->Type() != OpType::MatMul &&
-             operation->Type() != OpType::Conv2D ) continue;
-        InsertInputConversion(graph, operation.get(), TensorUsage::IFM0);
+             operation->Type() != OpType::Conv2D && operation->Type() != OpType::DepthwiseConv2D ) continue;
+        if ( !IsDirectRgbStem(operation.get()) ) InsertInputConversion(graph, operation.get(), TensorUsage::IFM0);
         InsertOutputConversion(graph, operation.get());
     }
 }

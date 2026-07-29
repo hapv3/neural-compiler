@@ -21,6 +21,7 @@
 #include <catch_all.hpp>
 
 #include <cstring>
+#include <limits>
 
 #include "regor.h"
 
@@ -108,7 +109,8 @@ flatbuffers::DetachedBuffer BuildFullyConnectedModel(int depthK, int depthN)
     return BuildFullyConnectedModel(1, depthK, depthN);
 }
 
-flatbuffers::DetachedBuffer BuildPointwiseConvModel(int height, int width, int depthK, int depthN)
+flatbuffers::DetachedBuffer BuildPointwiseConvModel(int height, int width, int depthK, int depthN,
+    tflite::ActivationFunctionType activation = tflite::ActivationFunctionType::NONE)
 {
     flatbuffers::FlatBufferBuilder builder;
     const std::vector<float> scale = {1.0f};
@@ -142,7 +144,7 @@ flatbuffers::DetachedBuffer BuildPointwiseConvModel(int height, int width, int d
         tflite::CreateTensorDirect(builder, &outputShape, tflite::TensorType::INT8, 0, "output", outputQuant),
     };
     const auto options = tflite::CreateConv2DOptions(
-        builder, tflite::Padding::VALID, 1, 1, tflite::ActivationFunctionType::NONE, 1, 1,
+        builder, tflite::Padding::VALID, 1, 1, activation, 1, 1,
         tflite::TensorType::INT32);
     const std::vector<int32_t> opInputs = {0, 1, 2};
     const std::vector<int32_t> opOutputs = {3};
@@ -166,6 +168,124 @@ flatbuffers::DetachedBuffer BuildPointwiseConvModel(int height, int width, int d
     return builder.Release();
 }
 
+flatbuffers::DetachedBuffer BuildK3ConvModel(int height, int width, int depthK, int depthN, int stride)
+{
+    flatbuffers::FlatBufferBuilder builder;
+    const std::vector<float> scale = {1.0f};
+    const std::vector<int64_t> zeroPoint = {0};
+    const auto inputQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &scale, &zeroPoint);
+    const auto weightQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &scale, &zeroPoint);
+    const auto biasQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &scale, &zeroPoint);
+    const auto outputQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &scale, &zeroPoint);
+    std::vector<uint8_t> weightData(size_t(depthK) * depthN * 9, 1);
+    std::vector<int32_t> bias(depthN, 0);
+    std::vector<uint8_t> biasData(bias.size() * sizeof(int32_t));
+    std::memcpy(biasData.data(), bias.data(), biasData.size());
+    std::vector<flatbuffers::Offset<tflite::Buffer>> buffers = {
+        tflite::CreateBufferDirect(builder),
+        tflite::CreateBufferDirect(builder, &weightData),
+        tflite::CreateBufferDirect(builder, &biasData),
+    };
+    const int outputHeight = (height + stride - 1) / stride;
+    const int outputWidth = (width + stride - 1) / stride;
+    const std::vector<int32_t> inputShape = {1, height, width, depthK};
+    const std::vector<int32_t> weightShape = {depthN, 3, 3, depthK};
+    const std::vector<int32_t> biasShape = {depthN};
+    const std::vector<int32_t> outputShape = {1, outputHeight, outputWidth, depthN};
+    std::vector<flatbuffers::Offset<tflite::Tensor>> tensors = {
+        tflite::CreateTensorDirect(builder, &inputShape, tflite::TensorType::INT8, 0, "input", inputQuant),
+        tflite::CreateTensorDirect(builder, &weightShape, tflite::TensorType::INT8, 1, "weights", weightQuant),
+        tflite::CreateTensorDirect(builder, &biasShape, tflite::TensorType::INT32, 2, "bias", biasQuant),
+        tflite::CreateTensorDirect(builder, &outputShape, tflite::TensorType::INT8, 0, "output", outputQuant),
+    };
+    const auto options = tflite::CreateConv2DOptions(
+        builder, tflite::Padding::SAME, stride, stride, tflite::ActivationFunctionType::NONE,
+        1, 1, tflite::TensorType::INT32);
+    const std::vector<int32_t> opInputs = {0, 1, 2};
+    const std::vector<int32_t> opOutputs = {3};
+    const std::vector<flatbuffers::Offset<tflite::Operator>> operations = {
+        tflite::CreateOperatorDirect(builder, 0, &opInputs, &opOutputs,
+            tflite::BuiltinOptions::Conv2DOptions, options.Union()),
+    };
+    const std::vector<int32_t> graphInputs = {0};
+    const std::vector<int32_t> graphOutputs = {3};
+    const std::vector<flatbuffers::Offset<tflite::SubGraph>> subgraphs = {
+        tflite::CreateSubGraphDirect(builder, &tensors, &graphInputs, &graphOutputs,
+            &operations, "main"),
+    };
+    const std::vector<flatbuffers::Offset<tflite::OperatorCode>> operatorCodes = {
+        tflite::CreateOperatorCodeDirect(builder, int8_t(tflite::BuiltinOperator::CONV_2D),
+            nullptr, 1, tflite::BuiltinOperator::CONV_2D),
+    };
+    const auto model = tflite::CreateModelDirect(builder, 3, &operatorCodes, &subgraphs,
+        "Neural-AI K3 Conv test", &buffers);
+    tflite::FinishModelBuffer(builder, model);
+    return builder.Release();
+}
+
+flatbuffers::DetachedBuffer BuildDepthwiseConvModel(int height, int width, int channels, int stride)
+{
+    flatbuffers::FlatBufferBuilder builder;
+    const std::vector<float> scale = {1.0f};
+    const std::vector<int64_t> zeroPoint = {0};
+    const auto inputQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &scale, &zeroPoint);
+    const auto weightQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &scale, &zeroPoint);
+    const auto biasQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &scale, &zeroPoint);
+    const auto outputQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &scale, &zeroPoint);
+    std::vector<uint8_t> weightData(size_t(channels) * 9, 1);
+    std::vector<int32_t> bias(channels, 0);
+    std::vector<uint8_t> biasData(bias.size() * sizeof(int32_t));
+    std::memcpy(biasData.data(), bias.data(), biasData.size());
+    std::vector<flatbuffers::Offset<tflite::Buffer>> buffers = {
+        tflite::CreateBufferDirect(builder),
+        tflite::CreateBufferDirect(builder, &weightData),
+        tflite::CreateBufferDirect(builder, &biasData),
+    };
+    const int outputHeight = (height + stride - 1) / stride;
+    const int outputWidth = (width + stride - 1) / stride;
+    const std::vector<int32_t> inputShape = {1, height, width, channels};
+    const std::vector<int32_t> weightShape = {1, 3, 3, channels};
+    const std::vector<int32_t> biasShape = {channels};
+    const std::vector<int32_t> outputShape = {1, outputHeight, outputWidth, channels};
+    std::vector<flatbuffers::Offset<tflite::Tensor>> tensors = {
+        tflite::CreateTensorDirect(builder, &inputShape, tflite::TensorType::INT8, 0, "input", inputQuant),
+        tflite::CreateTensorDirect(builder, &weightShape, tflite::TensorType::INT8, 1, "weights", weightQuant),
+        tflite::CreateTensorDirect(builder, &biasShape, tflite::TensorType::INT32, 2, "bias", biasQuant),
+        tflite::CreateTensorDirect(builder, &outputShape, tflite::TensorType::INT8, 0, "output", outputQuant),
+    };
+    const auto options = tflite::CreateDepthwiseConv2DOptions(
+        builder, tflite::Padding::SAME, stride, stride, 1,
+        tflite::ActivationFunctionType::NONE, 1, 1);
+    const std::vector<int32_t> opInputs = {0, 1, 2};
+    const std::vector<int32_t> opOutputs = {3};
+    const std::vector<flatbuffers::Offset<tflite::Operator>> operations = {
+        tflite::CreateOperatorDirect(builder, 0, &opInputs, &opOutputs,
+            tflite::BuiltinOptions::DepthwiseConv2DOptions, options.Union()),
+    };
+    const std::vector<int32_t> graphInputs = {0};
+    const std::vector<int32_t> graphOutputs = {3};
+    const std::vector<flatbuffers::Offset<tflite::SubGraph>> subgraphs = {
+        tflite::CreateSubGraphDirect(builder, &tensors, &graphInputs, &graphOutputs,
+            &operations, "main"),
+    };
+    const std::vector<flatbuffers::Offset<tflite::OperatorCode>> operatorCodes = {
+        tflite::CreateOperatorCodeDirect(builder, int8_t(tflite::BuiltinOperator::DEPTHWISE_CONV_2D),
+            nullptr, 1, tflite::BuiltinOperator::DEPTHWISE_CONV_2D),
+    };
+    const auto model = tflite::CreateModelDirect(builder, 3, &operatorCodes, &subgraphs,
+        "Neural-AI depthwise Conv test", &buffers);
+    tflite::FinishModelBuffer(builder, model);
+    return builder.Release();
+}
+
 }  // namespace
 
 TEST_CASE("Neural-AI architecture factory")
@@ -185,6 +305,9 @@ TEST_CASE("Neural-AI architecture exposes fixed hardware configuration")
     REQUIRE(error.empty());
     REQUIRE(arch.AllocationQuantum() == 32);
     REQUIRE(arch.TensorAlignment(TensorUsage::IFM, TensorFormat::Row32) == 32);
+    REQUIRE(arch.TensorAlignment(TensorUsage::IFM, TensorFormat::C32Blocked) == 32);
+    REQUIRE(arch.TensorAlignment(TensorUsage::IFM, TensorFormat::WeightsEncoded) == 32);
+    REQUIRE(arch.TensorAlignment(TensorUsage::IFM, TensorFormat::NHWC) == 1);
     REQUIRE(arch.FeatureMapMemory().memory->Name() == "tcdm");
     REQUIRE(arch.FeatureMapMemory().memory->SizeBytes() == ArchNeuralAI::AllocatableTCDMBytes);
     REQUIRE(arch.ReadonlyMemory().memory->Name() == "model");
@@ -629,8 +752,9 @@ TEST_CASE("Neural-AI compiler lowers pointwise Conv2D through C32 GEMM32")
     const auto model = BuildPointwiseConvModel(2, 3, 33, 34);
     REQUIRE(compiler.LoadTflite(model.data(), model.size()));
 
+    const bool compiled = compiler.Compile();
     INFO(compiler.LastError());
-    REQUIRE(compiler.Compile());
+    REQUIRE(compiled);
     IRegorBlob *blob = compiler.Output();
     REQUIRE(blob != nullptr);
     int64_t size = 0;
@@ -659,6 +783,342 @@ TEST_CASE("Neural-AI compiler lowers pointwise Conv2D through C32 GEMM32")
     REQUIRE(sawPointwiseC32);
     blob->Unmap(const_cast<uint8_t *>(data));
     blob->Release();
+}
+
+TEST_CASE("Neural-AI compiler splits pointwise M stripes at the 256-row ABI limit")
+{
+    for ( const int width : {257, 511} )
+    {
+        std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+        Compiler compiler(architecture);
+        const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+        REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+        const auto model = BuildPointwiseConvModel(1, width, 32, 32);
+        REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+        const bool compiled = compiler.Compile();
+        INFO(compiler.LastError());
+        REQUIRE(compiled);
+        IRegorBlob *blob = compiler.Output();
+        REQUIRE(blob != nullptr);
+        int64_t size = 0;
+        const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+        const uint32_t commandBytes = Read32(data + 64 + 12);
+        uint32_t offset = 224;
+        uint32_t pointwiseCommands = 0;
+        while ( offset < 224 + commandBytes )
+        {
+            const uint16_t type = uint16_t(data[offset]) | (uint16_t(data[offset + 1]) << 8);
+            const uint16_t commandSize = uint16_t(data[offset + 2]) |
+                (uint16_t(data[offset + 3]) << 8);
+            if ( type == uint16_t(neuralai::CommandType::PointwiseC32) )
+            {
+                ++pointwiseCommands;
+                REQUIRE(Read32(data + offset + 48) > 0);
+                REQUIRE(Read32(data + offset + 48) <= 256);
+            }
+            offset += commandSize;
+        }
+        REQUIRE(offset == 224 + commandBytes);
+        REQUIRE(pointwiseCommands == uint32_t((width + 255) / 256));
+        blob->Unmap(const_cast<uint8_t *>(data));
+        blob->Release();
+    }
+}
+
+TEST_CASE("Neural-AI compiler fuses ReLU and ReLU6 into qparam clamps")
+{
+    const auto checkClamp = [](tflite::ActivationFunctionType activation, int32_t expectedMin,
+                               int32_t expectedMax)
+    {
+        std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+        Compiler compiler(architecture);
+        const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+        REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+        const auto model = BuildPointwiseConvModel(1, 1, 32, 32, activation);
+        REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+        const bool compiled = compiler.Compile();
+        INFO(compiler.LastError());
+        REQUIRE(compiled);
+        IRegorBlob *blob = compiler.Output();
+        REQUIRE(blob != nullptr);
+        int64_t size = 0;
+        const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+        const uint32_t qparamOffset = Read32(data + 64 + 4 * 32 + 8);
+        REQUIRE(int32_t(Read32(data + qparamOffset + 16)) == expectedMin);
+        REQUIRE(int32_t(Read32(data + qparamOffset + 20)) == expectedMax);
+        blob->Unmap(const_cast<uint8_t *>(data));
+        blob->Release();
+    };
+
+    checkClamp(tflite::ActivationFunctionType::RELU, 0, 127);
+    checkClamp(tflite::ActivationFunctionType::RELU6, 0, 6);
+}
+
+TEST_CASE("Neural-AI compiler emits grouped linebuffer jobs for generic K3 Conv2D")
+{
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildK3ConvModel(8, 8, 64, 64, 1);
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+    const bool compiled = compiler.Compile();
+    INFO(compiler.LastError());
+    REQUIRE(compiled);
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    REQUIRE(size > int64_t(sizeof(neuralai::ModelHeaderV1)));
+    const uint32_t commandBytes = Read32(data + 64 + 12);
+    uint32_t offset = 224;
+    uint32_t linebufferJobs = 0;
+    uint32_t firstAccumMode = 0xffffffffu;
+    uint32_t finalAccumMode = 0xffffffffu;
+    std::vector<uint32_t> weightOffsets;
+    while ( offset < 224 + commandBytes )
+    {
+        const uint16_t type = uint16_t(data[offset]) | (uint16_t(data[offset + 1]) << 8);
+        const uint16_t commandSize = uint16_t(data[offset + 2]) |
+            (uint16_t(data[offset + 3]) << 8);
+        if ( type == uint16_t(neuralai::CommandType::LineBufferJob) )
+        {
+            REQUIRE(commandSize == 160);
+            ++linebufferJobs;
+            const uint32_t mode = Read32(data + offset + 16 + 80 + 20);
+            if ( firstAccumMode == 0xffffffffu ) firstAccumMode = mode;
+            finalAccumMode = mode;
+            REQUIRE(Read32(data + offset + 16 + 80 + 16) <= 256);
+            weightOffsets.push_back(Read32(data + offset + 16 + 80));
+        }
+        offset += commandSize;
+    }
+    REQUIRE(offset == 224 + commandBytes);
+    REQUIRE(linebufferJobs == 4);
+    REQUIRE(firstAccumMode == 1);
+    REQUIRE(finalAccumMode == 2);
+    REQUIRE(weightOffsets.size() == 4);
+    REQUIRE(weightOffsets[1] - weightOffsets[0] == 9u * 32u * 32u);
+    REQUIRE(weightOffsets[2] - weightOffsets[1] == 9u * 32u * 32u);
+    REQUIRE(weightOffsets[3] - weightOffsets[2] == 9u * 32u * 32u);
+    REQUIRE(Read32(data + 36) >= weightOffsets.front() + 4u * 9u * 32u * 32u);
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
+}
+
+TEST_CASE("Neural-AI compiler splits a width-641 Conv into legal linebuffer jobs")
+{
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildK3ConvModel(1, 641, 32, 32, 1);
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+    REQUIRE(compiler.Compile());
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    const uint32_t commandBytes = Read32(data + 64 + 12);
+    uint32_t offset = 224;
+    uint32_t jobs = 0;
+    while ( offset < 224 + commandBytes )
+    {
+        const uint16_t type = uint16_t(data[offset]) | (uint16_t(data[offset + 1]) << 8);
+        const uint16_t commandSize = uint16_t(data[offset + 2]) |
+            (uint16_t(data[offset + 3]) << 8);
+        if ( type == uint16_t(neuralai::CommandType::LineBufferJob) )
+        {
+            ++jobs;
+            REQUIRE(Read32(data + offset + 16 + 80 + 16) <= 256u);
+            const uint16_t inputW = uint16_t(data[offset + 16 + 8]) |
+                (uint16_t(data[offset + 16 + 9]) << 8);
+            REQUIRE(inputW <= 640u);
+        }
+        offset += commandSize;
+    }
+    REQUIRE(offset == 224 + commandBytes);
+    REQUIRE(jobs == 3);
+    REQUIRE(Read32(data + 36) <= ArchNeuralAI::AllocatableTCDMBytes);
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
+}
+
+TEST_CASE("Neural-AI compiler masks generic K3 channel tails")
+{
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildK3ConvModel(7, 7, 33, 34, 2);
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+    const bool compiled = compiler.Compile();
+    INFO(compiler.LastError());
+    REQUIRE(compiled);
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    const uint32_t commandBytes = Read32(data + 64 + 12);
+    uint32_t offset = 224;
+    uint32_t linebufferJobs = 0;
+    bool sawInputTail = false;
+    uint32_t rqLoads = 0;
+    while ( offset < 224 + commandBytes )
+    {
+        const uint16_t type = uint16_t(data[offset]) | (uint16_t(data[offset + 1]) << 8);
+        const uint16_t commandSize = uint16_t(data[offset + 2]) |
+            (uint16_t(data[offset + 3]) << 8);
+        if ( type == uint16_t(neuralai::CommandType::RQLoad) ) ++rqLoads;
+        if ( type == uint16_t(neuralai::CommandType::LineBufferJob) )
+        {
+            ++linebufferJobs;
+            const size_t payload = size_t(offset) + 16;
+            const uint16_t blockValidBytes = uint16_t(data[payload + 56]) |
+                (uint16_t(data[payload + 57]) << 8);
+            sawInputTail |= blockValidBytes == 1;
+        }
+        offset += commandSize;
+    }
+    REQUIRE(offset == 224 + commandBytes);
+    REQUIRE(linebufferJobs == 4);
+    REQUIRE(sawInputTail);
+    REQUIRE(rqLoads == 2);
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
+}
+
+TEST_CASE("Neural-AI compiler stages direct RGB input for the K3 stem")
+{
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildK3ConvModel(7, 7, 3, 32, 2);
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+    REQUIRE(compiler.Compile());
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    const uint32_t commandBytes = Read32(data + 64 + 12);
+    uint32_t offset = 224;
+    uint32_t linebufferJobs = 0;
+    uint32_t copyLayouts = 0;
+    bool sawShortDma = false;
+    while ( offset < 224 + commandBytes )
+    {
+        const uint16_t type = uint16_t(data[offset]) | (uint16_t(data[offset + 1]) << 8);
+        const uint16_t commandSize = uint16_t(data[offset + 2]) |
+            (uint16_t(data[offset + 3]) << 8);
+        if ( type == uint16_t(neuralai::CommandType::LineBufferJob) ) ++linebufferJobs;
+        if ( type == uint16_t(neuralai::CommandType::CopyLayout) ) ++copyLayouts;
+        if ( type == uint16_t(neuralai::CommandType::DMA2D) )
+        {
+            sawShortDma |= Read32(data + offset + 32) == 3;
+        }
+        offset += commandSize;
+    }
+    REQUIRE(offset == 224 + commandBytes);
+    REQUIRE(linebufferJobs == 1);
+    REQUIRE(copyLayouts == 1);
+    REQUIRE(sawShortDma);
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
+}
+
+TEST_CASE("Neural-AI compiler emits group-scoped depthwise C32 commands")
+{
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildDepthwiseConvModel(7, 7, 33, 2);
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+    const bool compiled = compiler.Compile();
+    INFO(compiler.LastError());
+    REQUIRE(compiled);
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    const uint32_t commandBytes = Read32(data + 64 + 12);
+    uint32_t offset = 224;
+    uint32_t depthwiseCommands = 0;
+    uint32_t rqLoads = 0;
+    bool sawTail = false;
+    while ( offset < 224 + commandBytes )
+    {
+        const uint16_t type = uint16_t(data[offset]) | (uint16_t(data[offset + 1]) << 8);
+        const uint16_t commandSize = uint16_t(data[offset + 2]) |
+            (uint16_t(data[offset + 3]) << 8);
+        if ( type == uint16_t(neuralai::CommandType::RQLoad) ) ++rqLoads;
+        if ( type == uint16_t(neuralai::CommandType::DepthwiseC32) )
+        {
+            ++depthwiseCommands;
+            REQUIRE(commandSize == 96);
+            sawTail |= Read32(data + offset + 56) == 1;
+            REQUIRE(Read32(data + offset + 56) <= 32);
+        }
+        offset += commandSize;
+    }
+    REQUIRE(offset == 224 + commandBytes);
+    REQUIRE(depthwiseCommands == 2);
+    REQUIRE(rqLoads == 2);
+    REQUIRE(sawTail);
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
+}
+
+TEST_CASE("Neural-AI compiler emits all depthwise C32 group and tail variants")
+{
+    for ( const int channels : {31, 32, 33, 48, 64, 65, 96} )
+    {
+        INFO("channels=" << channels);
+        std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+        Compiler compiler(architecture);
+        const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+        REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+        const auto model = BuildDepthwiseConvModel(3, 3, channels, 2);
+        REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+        REQUIRE(compiler.Compile());
+
+        IRegorBlob *blob = compiler.Output();
+        REQUIRE(blob != nullptr);
+        int64_t size = 0;
+        const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+        const uint32_t commandBytes = Read32(data + 64 + 12);
+        uint32_t offset = 224;
+        uint32_t depthwiseCommands = 0;
+        uint32_t rqLoads = 0;
+        while ( offset < 224 + commandBytes )
+        {
+            const uint16_t type = uint16_t(data[offset]) | (uint16_t(data[offset + 1]) << 8);
+            const uint16_t commandSize = uint16_t(data[offset + 2]) |
+                (uint16_t(data[offset + 3]) << 8);
+            if ( type == uint16_t(neuralai::CommandType::RQLoad) )
+            {
+                REQUIRE(Read32(data + offset + 24) == rqLoads);
+                ++rqLoads;
+            }
+            if ( type == uint16_t(neuralai::CommandType::DepthwiseC32) )
+            {
+                ++depthwiseCommands;
+                const uint32_t validChannels = Read32(data + offset + 56);
+                REQUIRE(commandSize == 96);
+                REQUIRE(validChannels > 0);
+                REQUIRE(validChannels <= 32);
+                if ( channels % 32 != 0 && depthwiseCommands == uint32_t((channels + 31) / 32) )
+                    REQUIRE(validChannels == uint32_t(channels % 32));
+            }
+            offset += commandSize;
+        }
+        REQUIRE(offset == 224 + commandBytes);
+        REQUIRE(depthwiseCommands == uint32_t((channels + 31) / 32));
+        REQUIRE(rqLoads == depthwiseCommands);
+        blob->Unmap(const_cast<uint8_t *>(data));
+        blob->Release();
+    }
 }
 
 TEST_CASE("Neural-AI op groups do not fuse matrix operations")
@@ -738,6 +1198,37 @@ TEST_CASE("Neural-AI Regor weight encoder packs OHWI matrix constants")
     REQUIRE(encoded == neuralai::PackGEMM32Weights(matrixKN.data(), depthK, depthN));
 }
 
+TEST_CASE("Neural-AI generic K3 weights are grouped by IC before kernel taps")
+{
+    constexpr int depthK = 64;
+    constexpr int depthN = 32;
+    constexpr int kernel = 3;
+    ArchNeuralAI arch;
+    NeuralAIOpConfig opConfig(256, NeuralAIOpMode::Conv2DLinebufC32S1Requant);
+    auto *encoder = arch.WeightEncoder();
+    auto config = encoder->GetEncodingConfig(
+        &opConfig, nullptr, DataType::Int8, Flags<WeightFormat>(WeightFormat::Default));
+    auto source = encoder->GetWeightSource(config.get(), DataType::Int8, nullptr, nullptr);
+    std::vector<int8_t> weights(depthN * kernel * kernel * depthK);
+    for ( int o = 0; o < depthN; ++o )
+        for ( int h = 0; h < kernel; ++h )
+            for ( int w = 0; w < kernel; ++w )
+                for ( int i = 0; i < depthK; ++i )
+                    weights[((o * kernel + h) * kernel + w) * depthK + i] =
+                        int8_t((h * kernel + w) * 2 + (i / 32));
+    source->SetSource(weights.data(), 0, Shape(depthN, kernel, kernel, depthK),
+        Shape(kernel * kernel * depthK, kernel * depthK, depthK, 1), 0);
+    std::vector<uint8_t> encoded;
+    REQUIRE(encoder->EncodeWeights(config.get(), source.get(), encoded).encodedSize ==
+        2 * 9 * 32 * 32);
+    // Tile 1 is the second kernel tap of IC group 0, while tile 9 starts
+    // kernel tap 0 of IC group 1.  A linear K pack would interleave these.
+    REQUIRE(int8_t(encoded[0]) == 0);
+    REQUIRE(int8_t(encoded[32 * 32]) == 2);
+    REQUIRE(int8_t(encoded[8 * 32 * 32]) == 16);
+    REQUIRE(int8_t(encoded[9 * 32 * 32]) == 1);
+}
+
 TEST_CASE("Neural-AI Regor weight encoder emits ABI qparam lanes")
 {
     constexpr int channels = 3;
@@ -769,4 +1260,51 @@ TEST_CASE("Neural-AI Regor weight encoder emits ABI qparam lanes")
         REQUIRE(int32_t(Read32(encoded, offset + 20)) == 99);
     }
     REQUIRE(Read32(encoded, 3 * 32 + 4) == 0);
+    REQUIRE(int32_t(Read32(encoded, 3 * 32 + 16)) == -100);
+    REQUIRE(int32_t(Read32(encoded, 3 * 32 + 20)) == 99);
+}
+
+TEST_CASE("Neural-AI qparam clamps saturate to the INT8 output domain")
+{
+    ArchNeuralAI arch;
+    NeuralAIOpConfig opConfig;
+    auto *encoder = arch.WeightEncoder();
+    auto config = encoder->GetEncodingConfig(
+        &opConfig, nullptr, DataType::Int8, Flags<WeightFormat>(WeightFormat::Default));
+    Quantization quantization;
+    quantization.scales = {QuantizedScale(1, 0)};
+    quantization.quantMin = {std::numeric_limits<int64_t>::min()};
+    quantization.quantMax = {std::numeric_limits<int64_t>::max()};
+    int32_t bias = 0;
+    auto source = encoder->GetScaleSource(config.get(), DataType::Int32, quantization);
+    source->SetSource(&bias, 1, 0, 1, 0);
+    std::vector<uint8_t> encoded;
+    REQUIRE(encoder->EncodeScales(config.get(), source.get(), encoded, false) == 32 * 32);
+    REQUIRE(int32_t(Read32(encoded, 16)) == -128);
+    REQUIRE(int32_t(Read32(encoded, 20)) == 127);
+
+    quantization.quantMin = {10};
+    quantization.quantMax = {-10};
+    source = encoder->GetScaleSource(config.get(), DataType::Int32, quantization);
+    source->SetSource(&bias, 1, 0, 1, 0);
+    encoded.clear();
+    REQUIRE_THROWS_AS(encoder->EncodeScales(config.get(), source.get(), encoded, false), WeightEncodeException);
+}
+
+TEST_CASE("Neural-AI rejects non-uniform clamp bounds within one C32 block")
+{
+    ArchNeuralAI arch;
+    NeuralAIOpConfig opConfig;
+    auto *encoder = arch.WeightEncoder();
+    auto config = encoder->GetEncodingConfig(
+        &opConfig, nullptr, DataType::Int8, Flags<WeightFormat>(WeightFormat::Default));
+    Quantization quantization;
+    quantization.scales = {QuantizedScale(1, 0)};
+    quantization.quantMin = {0, -1};
+    quantization.quantMax = {127, 127};
+    int32_t bias = 0;
+    auto source = encoder->GetScaleSource(config.get(), DataType::Int32, quantization);
+    source->SetSource(&bias, 1, 0, 32, 0);
+    std::vector<uint8_t> encoded;
+    REQUIRE_THROWS_AS(encoder->EncodeScales(config.get(), source.get(), encoded, false), WeightEncodeException);
 }

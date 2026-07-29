@@ -84,16 +84,16 @@ The implementation is partial:
 
 | Phase 3 task | Current state |
 |---|---|
-| T3.1 Classifier and constraints | Phase 3 mode classifier and shape/stride/padding/quantization gates are implemented; scheduler lowering for linebuffer modes remains open |
-| T3.2 C++ linebuffer planner | C++ planner object and M/TCDM/predicate checks exist; Python-golden parity and command/runtime integration remain open |
-| T3.3 Weight encoders | GEMM/pointwise packing exists; RGB, generic K3, and depthwise are incomplete |
-| T3.4 Per-channel quantization | RTL-independent multiplier search and INT64 reference rounding helpers exist; emitted Conv qparams and host/RTL randomized parity remain open |
-| T3.5 Commands | `RQ_LOAD` and `POINTWISE_C32` are emitted; depthwise runtime ABI exists but its multi-group qparam contract and compiler emission are incomplete; `LINEBUF_JOB` is incomplete |
-| T3.6 Runtime handlers | Pointwise and depthwise handlers exist; generic linebuffer v2 path and full validation are incomplete |
-| T3.7 Layout and TCDM | Pointwise C32 layout and partial scratch allocation exist; general Conv liveness is incomplete |
-| T3.8 Boundary materialization | Pointwise NHWC-to/from-C32 exists; direct RGB and all multi-group cases are incomplete |
-| T3.9 IC/OC loops and tails | Pointwise grouping/tails exist; generic Conv and compiled depthwise grouping remain incomplete |
-| T3.10 Activation fusion | Not complete for all Phase 3 modes |
+| T3.1 Classifier and constraints | Phase 3 mode classifier, shape/stride/padding/quantization gates, and scheduler lowering for the supported linebuffer modes are implemented; unsupported-shape diagnostics remain part of the negative-test matrix |
+| T3.2 C++ linebuffer planner | C++ planner, M/width tiling, border geometry, checked ABI arithmetic, immutable golden vectors, TCDM checks, and grouped job integration are implemented; Python-golden parity remains open |
+| T3.3 Weight encoders | GEMM, depthwise C32, and generic K3 grouped linebuffer packing are integrated with deterministic marker/golden tests; the complete byte-golden matrix remains open |
+| T3.4 Per-channel quantization | Multiplier search, INT64 reference rounding, emitted per-channel qparams, activation clamp propagation, a deterministic 10,000-seed C++ reference check, and a 32-lane Verilator qparam check are implemented; broader randomized RTL parity remains open |
+| T3.5 Commands | `RQ_LOAD`, `POINTWISE_C32`, group-scoped depthwise, and grouped RGB/generic K3 `LINEBUF_JOB` records are emitted; host and focused Verilator malformed-record validation are covered |
+| T3.6 Runtime handlers | Pointwise/depthwise handlers and linebuffer HAL dispatch with TCDM offset relocation and accumulation modes are implemented; compiler-generated pointwise, RGB, generic-K3, depthwise, oversized-M packages, C96 grouped runtime package, and a pointwise-to-depthwise chain execute in Verilator; full E2E coverage remains open |
+| T3.7 Layout and TCDM | Pointwise C32 layout, public-NHWC byte alignment, and partial scratch allocation exist; general Conv liveness is incomplete |
+| T3.8 Boundary materialization | Pointwise NHWC-to/from-C32, direct-RGB input staging, and RTL unaligned compact-row iDMA execution are implemented; compiler-generated RGB boundary execution and the C3/C31 round-trip pass, while multi-group boundary cases and complete E2E proof remain open |
+| T3.9 IC/OC loops and tails | Pointwise, generic K3 Conv, and depthwise group/tail command loops are implemented; compiler-generated generic-K3/depthwise and M257/M511 stripe packages plus independent C65/S2 and C96 grouped runtime tests execute in Verilator; full functional/performance E2E coverage remains open |
+| T3.10 Activation fusion | Neural-AI fused ReLU/ReLU0To1/ReLU6/ReLU-1..1 activations are bypassed into producer qparam clamps; focused ReLU/ReLU6 compiler and pointwise ReLU6 Verilator coverage pass, while the complete clamp matrix and E2E coverage remain open |
 
 No task is complete merely because its enum value, structure, or HAL function
 exists. The compiler emission, runtime validation, hardware execution, and
@@ -124,13 +124,21 @@ Evidence:
   contract permits.
 - Local-to-local repacks use a Spatz or Snitch correctness path.
 - L2-to-L2 is rejected.
-- Compact NHWC rows are not required to have a 32-byte length or stride.
+- Compact NHWC rows are not required to have a 32-byte length or stride. Public
+  NHWC bindings use byte alignment; ROW32/C32 and encoded-weight allocations
+  retain 32-byte alignment.
 
 Evidence:
 
-- C=3 and C=31 unaligned iDMA tests in both directions.
-- A row crossing a 32-byte AXI beat.
+- Host C=3/C=31 unaligned layout tests in both directions and a row crossing a
+  32-byte AXI beat pass.
+- The corresponding compiler-runtime Verilator test passes with unaligned
+  public bases and compact rows whose later rows cross 32-byte beats.
 - A local-to-local layout test proving no invalid iDMA event is created.
+
+The host layout oracle covers C=3/C=31 compact rows, C32 grouping, unaligned
+source/destination offsets, and INT32 elements. The Verilator compiled-package
+matrix still needs the corresponding all-offset L2 tests.
 
 ### G3.0.3 Symmetric native Conv quantization
 
@@ -164,6 +172,14 @@ Evidence:
 - Its payload contains the 80-byte `systolic_linebuf_cfg_t`, 36-byte
   `systolic_gemm32_req_t`, 4-byte rows, and 4-byte K-tile count.
 - The final 20 bytes are zero.
+- Address fields are compiler-owned offsets within the shared TCDM window; the
+  firmware handler resolves them against `NPU_TCDM_BASE` immediately before
+  programming the HAL. The handler applies the HAL's virtual top-padding-row
+  subtraction to `input_base` after relocation, so the wire ABI never carries
+  a negative offset.
+- For linebuffer GEMM requests, `accum_en=0` means direct final requantization,
+  `accum_en=1` means an intermediate PSum accumulation without requantization,
+  and `accum_en=2` means the final PSum accumulation with requantization.
 - The runtime command staging buffer accepts a complete 160-byte record.
 
 Evidence:
@@ -870,6 +886,10 @@ Handlers:
 
 ### Verilator scenarios: 10
 
+The compact-row/non-32-byte endpoint cases are part of the ABI evidence.  The
+host-side oracle and the compiler-runtime cocotb case cover their byte mapping
+and execution with unaligned public bases.
+
 | ID | Operation | Expected |
 |---|---|---|
 | RH-S01 | Pointwise C32 one group | PASS, exact output |
@@ -937,8 +957,8 @@ offset = (((c / 32) * (H * W) + pixel) * 32 + (c % 32)) * element_bytes
 - INT8 OFM storage and INT32 PSum storage are separate live ranges.
 - PSum bytes are `tile_M * 32 * 4` per active output group.
 - PSum may be reused after the final requant command for that output group.
-- C32 fast consumers retain 32-byte alignment; scalar-only temporary buffers
-  may use the smaller tested alignment.
+- C32 fast consumers retain 32-byte alignment. No scalar temporary alignment
+  exception is frozen in the ABI until the RTL endpoint test passes.
 
 ### Compiler unit scenarios: 18
 
@@ -1079,7 +1099,7 @@ layout.
 - N=1, H=1, W=1.
 - C=1, 3, 31, 32, 33, 63, 64, and 65.
 - Engine-level test bases at every byte offset 0 through 31. These test iDMA
-  behavior and do not relax the default 32-byte public binding base policy.
+  behavior and do not by themselves freeze an ABI alignment exception.
 - A final short row at the end of the binding.
 - Overlapping local source and destination.
 
@@ -1164,7 +1184,7 @@ Rules:
 | GL-19 | Same layer with a channel tail | Group-stationary predicate false |
 | GL-20 | Command/reference offset near UINT32_MAX | Checked failure, no wrap |
 
-### Verilator scenarios: 14
+### Verilator scenarios: 16
 
 | ID | Compiled model | Expected |
 |---|---|---|
@@ -1182,6 +1202,8 @@ Rules:
 | GL-S12 | Depthwise S2 C65 | Exact three-group output |
 | GL-S13 | Full C32 multi-K M256 | Exact output and group-stationary active |
 | GL-S14 | Tail variant | Exact output and group-stationary inactive |
+| GL-S15 | Depthwise S2 C96 | Exact three-group output |
+| GL-S16 | Pointwise -> depthwise chain | Exact final NHWC output |
 
 Host C runtime scenarios: 0. Runtime command validation is covered by T3.5 and
 T3.6; loop ownership is verified in compiler command streams and E2E execution.
@@ -1199,7 +1221,7 @@ T3.6; loop ownership is verified in compiler command streams and E2E execution.
 
 ### Exit criteria
 
-- All 20 compiler and 14 simulation scenarios pass.
+- All 20 compiler and 16 simulation scenarios pass.
 - M257 and M511 compile and execute successfully as multiple legal commands.
 - No final requant occurs before the final IC group.
 - C33, C48, C64, C65, and C96 are covered.
@@ -1225,6 +1247,8 @@ Modify:
 - `neural_ai_quantization.*`
 - `neural_ai_op_config.*`
 - `neural_ai_command_generator.cpp`
+- `tflite_graph_optimiser.cpp` and `architecture_constraints.hpp` for target-gated
+  activation bypass and clamp preservation
 - compiler tests and `test_compiled_model.py`
 
 Clamp conversion:
@@ -1236,6 +1260,13 @@ Clamp conversion:
 4. Store bounds in every logical channel's qparam.
 5. Give padded lanes safe bounds.
 6. Emit no standalone ReLU/ReLU6/Clamp command when fused.
+
+The TFLite reader materializes a fused activation as a producer plus an
+activation operation. The Neural-AI constraints advertise clamp-capable
+requantization, so the supported-operator pass preserves the producer as an
+NPU operation, copies the activation output quantization, and records the
+activation bounds before disconnecting the standalone activation. Other
+architectures retain their existing CPU-passthrough behavior.
 
 ### Compiler unit scenarios: 12
 
@@ -1280,6 +1311,32 @@ Clamp conversion:
 - All 12 compiler and 9 simulation scenarios pass.
 - No redundant activation command is emitted.
 - Clamp values match the independent reference for every output channel.
+
+### Compiler-generated package evidence (current increment)
+
+The following tests compile TFLite fixtures with the Regor Neural-AI backend,
+load the generated package and weights, and compare the Verilator result with
+an independent integer reference:
+
+| Test | Coverage | Result |
+|---|---|---|
+| `test_compiler_generated_rgb_k3_conv_package` | NHWC C3 -> C32, K3/S2/P1 direct-RGB boundary | Pass |
+| `test_compiler_generated_generic_k3_conv_package` | K3/S1, IC64 -> OC64 grouped linebuffer path | Pass |
+| `test_compiler_generated_depthwise_k3_conv_package` | Depthwise K3/S2, C33 group/tail path | Pass |
+| `test_compiler_runtime_unaligned_row32_c3_c31` | RTL iDMA round-trip with C3/C31 compact rows, unaligned public bases, and 32-byte beat crossings | Pass |
+| `test_compiler_runtime_depthwise_c65_stride2_tail` | Independent runtime package, C65, three C32 groups, final one-lane tail, S2 | Pass |
+| `test_compiler_runtime_pointwise_per_channel_requant` | 32 distinct bias/multiplier/zero-point lanes with signed values | Pass |
+| `test_compiler_generated_pointwise_m257_stripes` | Compiler package, M=257, non-overlapping public bindings, M256+M1 exact output | Pass |
+| `test_compiler_generated_pointwise_m511_stripes` | Compiler package, M=511, non-overlapping public bindings, M256+M255 exact output | Pass |
+| `test_compiler_runtime_depthwise_c96_stride2_groups` | Independent runtime package, C96, three full C32 groups, S2 | Pass |
+| `test_compiler_runtime_pointwise_depthwise_chain` | Independent runtime package, internal C32 pointwise -> depthwise chain | Pass |
+| `test_compiler_generated_pointwise_depthwise_chain` | Regor-generated TFLite pointwise -> depthwise package, exact public NHWC output | Pass |
+
+These focused results do not close the complete matrix below: the full
+Micro-MobileNet model and the remaining broad randomized/layout matrix remain
+required for the Phase 3 exit. The oversized-M tests also use deliberately
+non-overlapping public L2 bindings; this is required when a single input or
+output exceeds the legacy 4 KiB fixture spacing.
 
 ## 18. Phase 3 End-to-End Acceptance Order
 
@@ -1376,6 +1433,26 @@ RTL .sv diff: empty
 Known limitations:
 ```
 
+Current implementation increment (uncommitted):
+
+```text
+Task: Oversized pointwise M stripes, C96 depthwise groups, Conv chain runtime proof, and unaligned layout contract
+Compiler commit: none (working tree increment)
+neural-ai commit: none (working tree increment)
+ABI major/minor: 1/0
+Compiler unit scenarios passed / required: 170 / 170 CTest cases
+Host C scenarios passed / required: 4 / 4 compiler-runtime checks
+Verilator scenarios passed / required: M257, M511, C96/S2, pointwise->depthwise chain, unaligned C3/C31 ROW32 round-trip (5 / 5 focused)
+Functional seed: deterministic byte patterns and signed per-pixel references
+Peak TCDM: 32704 bytes (M511 compiler package)
+Firmware text + rodata bytes: 22628 text bytes (30156 total image)
+Performance counters/baseline: M511 302448 cycles; C96/S2 245500 cycles; independent chain 206210 cycles; compiler-generated chain 217516 cycles
+RTL .sv diff: empty
+Known limitations: full E2E-01..08 order, Micro-MobileNet compiler-generated
+package, Python-golden parity, complete byte-golden matrix, and broad
+randomized/layout coverage remain open.
+```
+
 A task is not complete when:
 
 - A required test is skipped.
@@ -1390,7 +1467,7 @@ A task is not complete when:
 Phase 3 is complete only when:
 
 - T3.1 through T3.10 meet their individual exit criteria.
-- All 147 compiler, 52 host C, and 73 Verilator scenarios pass.
+- All 170 current compiler, 52 host C, and 73 Verilator scenarios pass.
 - E2E-01 through E2E-08 pass in order.
 - Micro-MobileNet needs no hand-written graph, weight, qparam, or linebuffer
   descriptor.
