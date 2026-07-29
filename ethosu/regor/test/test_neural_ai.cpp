@@ -220,7 +220,8 @@ flatbuffers::DetachedBuffer BuildAddModel(float lhsScale = 1.0f, float rhsScale 
     return builder.Release();
 }
 
-flatbuffers::DetachedBuffer BuildViewAddModel(tflite::BuiltinOperator viewOperator)
+flatbuffers::DetachedBuffer BuildViewModel(
+    tflite::BuiltinOperator viewOperator, bool followedByAdd)
 {
     flatbuffers::FlatBufferBuilder builder;
     const std::vector<int64_t> zeroPoints = {0};
@@ -299,24 +300,32 @@ flatbuffers::DetachedBuffer BuildViewAddModel(tflite::BuiltinOperator viewOperat
     const std::vector<int32_t> viewOutputs = {2};
     const std::vector<int32_t> addInputs = {2, 1};
     const std::vector<int32_t> addOutputs = {3};
-    const std::vector<flatbuffers::Offset<tflite::Operator>> operations = {
+    std::vector<flatbuffers::Offset<tflite::Operator>> operations = {
         tflite::CreateOperatorDirect(builder, 0, &viewInputs, &viewOutputs,
             viewOptionsType, viewOptions),
-        tflite::CreateOperatorDirect(builder, 1, &addInputs, &addOutputs,
-            tflite::BuiltinOptions::AddOptions, addOptions.Union()),
     };
-    const std::vector<int32_t> graphInputs = {0, 1};
-    const std::vector<int32_t> graphOutputs = {3};
+    if ( followedByAdd )
+    {
+        operations.push_back(tflite::CreateOperatorDirect(builder, 1, &addInputs, &addOutputs,
+            tflite::BuiltinOptions::AddOptions, addOptions.Union()));
+    }
+    const std::vector<int32_t> graphInputs = followedByAdd ?
+        std::vector<int32_t>{0, 1} : std::vector<int32_t>{0};
+    const std::vector<int32_t> graphOutputs = followedByAdd ?
+        std::vector<int32_t>{3} : std::vector<int32_t>{2};
     const std::vector<flatbuffers::Offset<tflite::SubGraph>> subgraphs = {
         tflite::CreateSubGraphDirect(
             builder, &tensors, &graphInputs, &graphOutputs, &operations, "main"),
     };
-    const std::vector<flatbuffers::Offset<tflite::OperatorCode>> operatorCodes = {
+    std::vector<flatbuffers::Offset<tflite::OperatorCode>> operatorCodes = {
         tflite::CreateOperatorCodeDirect(
             builder, int8_t(viewOperator), nullptr, 1, viewOperator),
-        tflite::CreateOperatorCodeDirect(builder, int8_t(tflite::BuiltinOperator::ADD),
-            nullptr, 1, tflite::BuiltinOperator::ADD),
     };
+    if ( followedByAdd )
+    {
+        operatorCodes.push_back(tflite::CreateOperatorCodeDirect(builder,
+            int8_t(tflite::BuiltinOperator::ADD), nullptr, 1, tflite::BuiltinOperator::ADD));
+    }
     const auto model = tflite::CreateModelDirect(
         builder, 3, &operatorCodes, &subgraphs, "Neural-AI view Add test", &buffers);
     tflite::FinishModelBuffer(builder, model);
@@ -1059,7 +1068,7 @@ TEST_CASE("Neural-AI compiler removes internal reshape-like views without adding
         Compiler compiler(architecture);
         const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
         REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
-        const auto model = BuildViewAddModel(viewOperator);
+        const auto model = BuildViewModel(viewOperator, true);
         REQUIRE(compiler.LoadTflite(model.data(), model.size()));
         const bool compiled = compiler.Compile();
         INFO(compiler.LastError());
@@ -1086,6 +1095,44 @@ TEST_CASE("Neural-AI compiler removes internal reshape-like views without adding
         REQUIRE(offset == 224 + commandBytes);
         REQUIRE(copyCommands == 3);
         REQUIRE(addCommands == 1);
+        blob->Unmap(const_cast<uint8_t *>(data));
+        blob->Release();
+    }
+}
+
+TEST_CASE("Neural-AI compiler materializes reshape-like graph outputs")
+{
+    for ( const tflite::BuiltinOperator viewOperator : {
+              tflite::BuiltinOperator::RESHAPE,
+              tflite::BuiltinOperator::SQUEEZE,
+              tflite::BuiltinOperator::EXPAND_DIMS,
+          } )
+    {
+        INFO("viewOperator=" << int(viewOperator));
+        std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+        Compiler compiler(architecture);
+        const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+        REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+        const auto model = BuildViewModel(viewOperator, false);
+        REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+        const bool compiled = compiler.Compile();
+        INFO(compiler.LastError());
+        REQUIRE(compiled);
+
+        IRegorBlob *blob = compiler.Output();
+        REQUIRE(blob != nullptr);
+        int64_t size = 0;
+        const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+        REQUIRE(Read32(data + 32) == 2);
+        const uint32_t commandBytes = Read32(data + 64 + 12);
+        REQUIRE(commandBytes == 160);
+        REQUIRE(Read16(data + 224) == uint16_t(neuralai::CommandType::DMA1D));
+        REQUIRE(Read32(data + 224 + 32) == 128);
+        REQUIRE(Read32(data + 224 + 36) == 0);
+        REQUIRE(Read16(data + 224 + 64) == uint16_t(neuralai::CommandType::DMA1D));
+        REQUIRE(Read32(data + 224 + 64 + 32) == 128);
+        REQUIRE(Read32(data + 224 + 64 + 36) == 1);
+        REQUIRE(Read16(data + 224 + 128) == uint16_t(neuralai::CommandType::End));
         blob->Unmap(const_cast<uint8_t *>(data));
         blob->Release();
     }

@@ -219,6 +219,18 @@ struct GeneratorContext
         ++artifact->commandCount;
     }
 
+    void AppendDMA1D(const RefV1 &source, const RefV1 &destination, uint32_t length,
+        uint32_t direction, uint32_t layerId, uint32_t tileId)
+    {
+        AppendHeader(artifact->commands, CommandType::DMA1D, 64, layerId, tileId);
+        AppendRef(artifact->commands, source);
+        AppendRef(artifact->commands, destination);
+        Append32(artifact->commands, length);
+        Append32(artifact->commands, direction);
+        AppendZeros(artifact->commands, 6);
+        ++artifact->commandCount;
+    }
+
     void AppendGEMM(CommandType type, const RefV1 &weights, const RefV1 &ifm,
         const RefV1 &partial, const RefV1 &ofm, uint32_t dimM, uint32_t ofmStride,
         uint32_t qparamBlock, uint32_t layerId, uint32_t tileId)
@@ -312,6 +324,31 @@ struct GeneratorContext
     {
         const SchedulerConnection *ifm = operation->IFM(0);
         const SchedulerConnection *ofm = operation->OFM();
+        if ( ifm->tensor->format == TensorFormat::NHWC &&
+             ofm->tensor->format == TensorFormat::NHWC )
+        {
+            if ( ifm->Type() != ofm->Type() ||
+                 ifm->shape.Elements64() != ofm->shape.Elements64() )
+                return SetError(error, "Neural-AI compact copy requires equal element counts and types");
+            const uint16_t dataType = ABIDataType(ofm->Type());
+            if ( dataType == 0 )
+                return SetError(error, "Neural-AI compact copy supports only INT8 and INT32");
+            const uint32_t elementBytes = dataType == uint16_t(DataType::Int32) ? 4u : 1u;
+            const int64_t bytes = ofm->shape.Elements64() * elementBytes;
+            if ( bytes <= 0 || bytes > std::numeric_limits<uint32_t>::max() )
+                return SetError(error, "Neural-AI compact copy size is invalid");
+            RefV1 source = TensorRef(ifm->tensor.get(), 0, error);
+            if ( !error.empty() ) return false;
+            RefV1 destination = TensorRef(ofm->tensor.get(), 0, error);
+            if ( !error.empty() ) return false;
+            RefV1 bounce{};
+            bounce.region = uint16_t(Region::TCDMScratch);
+            bounce.offset = stageOffset;
+            const uint32_t layerId = uint32_t(operation->Index());
+            AppendDMA1D(source, bounce, uint32_t(bytes), 0, layerId, 0);
+            AppendDMA1D(bounce, destination, uint32_t(bytes), 1, layerId, 1);
+            return true;
+        }
         CopyLayoutMode mode;
         if ( ifm->tensor->format == TensorFormat::NHWC && ofm->tensor->format == TensorFormat::Row32 )
             mode = CopyLayoutMode::NHWCToRow32;
@@ -832,6 +869,19 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
     uint32_t linebufferWeightBytes = 0;
     for ( const auto &operation : operations )
     {
+        if ( operation->Type() == OpType::MemoryCopy &&
+             operation->IFM(0)->tensor->format == TensorFormat::NHWC &&
+             operation->OFM()->tensor->format == TensorFormat::NHWC )
+        {
+            const uint32_t elementBytes = operation->OFM()->Type() == regor::DataType::Int32 ? 4u : 1u;
+            const int64_t bytes = operation->OFM()->shape.Elements64() * elementBytes;
+            if ( bytes <= 0 || bytes > std::numeric_limits<uint32_t>::max() )
+            {
+                error = "Neural-AI compact copy staging size is invalid";
+                return false;
+            }
+            context.stageBytes = std::max(context.stageBytes, uint32_t(bytes));
+        }
         if ( operation->Type() != OpType::FullyConnected && operation->Type() != OpType::MatMul &&
              operation->Type() != OpType::Conv2D && operation->Type() != OpType::DepthwiseConv2D ) continue;
         const SchedulerOpInfo *cost = schedule->Cost(operation.get());
