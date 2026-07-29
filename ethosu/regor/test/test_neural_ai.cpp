@@ -1549,32 +1549,44 @@ TEST_CASE("Neural-AI op groups do not fuse matrix operations")
 
 TEST_CASE("Neural-AI GEMM weight packing follows K-lane N-lane tile order")
 {
-    constexpr int depthK = 33;
-    constexpr int depthN = 34;
-    std::vector<int8_t> weights(depthK * depthN);
-    for ( int k = 0; k < depthK; ++k )
+    constexpr int dimensions[][2] = {
+        {1, 65}, {31, 64}, {32, 63}, {33, 34},
+        {33, 1}, {63, 33}, {64, 32}, {65, 31},
+    };
+    for ( const auto &dimension : dimensions )
     {
-        for ( int n = 0; n < depthN; ++n )
+        const int depthK = dimension[0];
+        const int depthN = dimension[1];
+        const int kGroups = (depthK + 31) / 32;
+        const int nGroups = (depthN + 31) / 32;
+        INFO("K=" << depthK << ", N=" << depthN);
+        std::vector<int8_t> weights(depthK * depthN);
+        for ( int k = 0; k < depthK; ++k )
         {
-            weights[k * depthN + n] = int8_t((k * 17 + n * 3) & 0x7f);
-        }
-    }
-
-    const auto packed = neuralai::PackGEMM32Weights(weights.data(), depthK, depthN);
-    REQUIRE(packed.size() == 4 * 32 * 32);
-    for ( int nGroup = 0; nGroup < 2; ++nGroup )
-    {
-        for ( int kGroup = 0; kGroup < 2; ++kGroup )
-        {
-            for ( int kLane = 0; kLane < 32; ++kLane )
+            for ( int n = 0; n < depthN; ++n )
             {
-                for ( int nLane = 0; nLane < 32; ++nLane )
+                weights[k * depthN + n] = int8_t((k * 17 + n * 3) & 0x7f);
+            }
+        }
+
+        const auto packed = neuralai::PackGEMM32Weights(weights.data(), depthK, depthN);
+        REQUIRE(packed.size() == size_t(kGroups * nGroups * 32 * 32));
+        for ( int nGroup = 0; nGroup < nGroups; ++nGroup )
+        {
+            for ( int kGroup = 0; kGroup < kGroups; ++kGroup )
+            {
+                for ( int kLane = 0; kLane < 32; ++kLane )
                 {
-                    const int k = kGroup * 32 + kLane;
-                    const int n = nGroup * 32 + nLane;
-                    const size_t index = size_t(((nGroup * 2 + kGroup) * 32 + kLane) * 32 + nLane);
-                    const uint8_t expected = k < depthK && n < depthN ? uint8_t(weights[k * depthN + n]) : 0;
-                    REQUIRE(packed[index] == expected);
+                    for ( int nLane = 0; nLane < 32; ++nLane )
+                    {
+                        const int k = kGroup * 32 + kLane;
+                        const int n = nGroup * 32 + nLane;
+                        const size_t index =
+                            size_t(((nGroup * kGroups + kGroup) * 32 + kLane) * 32 + nLane);
+                        const uint8_t expected =
+                            k < depthK && n < depthN ? uint8_t(weights[k * depthN + n]) : 0;
+                        REQUIRE(packed[index] == expected);
+                    }
                 }
             }
         }
