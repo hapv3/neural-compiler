@@ -1750,6 +1750,8 @@ neural-ai/sw/test/compiler_runtime/*
   tests cover matching external-to-local, local-to-external, and
   local-to-local commands, plus direction mismatch and L2-to-L2 rejection
   through both direct and streaming dispatch.
+- Runtime host tests reject raw single-command GEMM `M=257` and `M=511` with
+  `NAI_DISPATCH_BAD_COMMAND` before invoking the GEMM operation callback.
 - Compiler C++ tests pass 182/182 and the Neural-AI compiler-runtime host checks
   pass.
 - Compiler-generated Verilator regressions still pass after adding the runtime
@@ -1824,6 +1826,16 @@ model into `.nai` and execute it using the Phase 1 runtime.
 - The model API exposes no ROW32 padding and requires no layout knowledge from
   the host.
 - The compiler E2E test contains no manual command builder.
+
+### Current Verification Evidence
+
+- Compiler C++ tests compile pointwise M=257 and M=511 into multiple
+  `POINTWISE_C32` commands and assert every command has `0 < M <= 256`.
+- Compiler-generated pointwise packages execute byte-exactly on Verilator:
+  M=257 passes at 286,687 simulated ns and M=511 passes at 369,129 simulated
+  ns.
+- This evidence does not relax the Phase 1 command limit: a raw command with
+  either oversized M value remains invalid.
 
 ## Phase 3 - Conv, Linebuffer, and Per-Channel Quantization
 
