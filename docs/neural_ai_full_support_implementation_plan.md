@@ -1859,7 +1859,7 @@ The following must be complete before Conv compiler lowering begins:
 
 ### Current Verification Evidence
 
-- Compiler C++ tests: 178/178 pass.
+- Compiler C++ tests: 179/179 pass.
 - Neural-AI compiler-runtime host ABI/layout/quantization checks pass.
 - Compiler-generated Verilator packages pass byte-exactly:
   - RGB K3 S2 C3 -> C32: 194,651 simulated ns.
@@ -1904,7 +1904,8 @@ passes byte-exactly on Verilator at 97,150 simulated ns. The existing two-DMA
 runtime fixture passes on the same simulator build at 91,973 simulated ns. The
 5,177 ns (5.63%) difference is only a focused sanity check because the public
 view moves 128 bytes while the fixture moves 32 bytes. View offset/slice cases
-remain open.
+remain open; command generation now rejects sliced `MemoryCopy` connections
+instead of incorrectly treating them as full-volume copies.
 
 The compiler-generated Add package passes byte-exactly on Verilator at 127,826
 simulated ns. The equivalent hand-written package passes at 113,958 simulated
