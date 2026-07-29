@@ -1761,7 +1761,7 @@ neural-ai/sw/test/compiler_runtime/*
 - A Verilator negative package loads qparam block 0 and requests block 1 from
   `POINTWISE_C32`; it fails before compute with the expected operation status
   at 176,665 simulated ns and leaves output untouched.
-- Compiler C++ tests pass 182/182 and the Neural-AI compiler-runtime host checks
+- Compiler C++ tests pass 183/183 and the Neural-AI compiler-runtime host checks
   pass.
 - Compiler-generated Verilator regressions still pass after adding the runtime
   validation: public Reshape at 97,644 simulated ns, generic K3 at 493,826
@@ -1845,6 +1845,8 @@ model into `.nai` and execute it using the Phase 1 runtime.
 - Compiler-generated pointwise packages execute byte-exactly on Verilator:
   M=257 passes at 286,687 simulated ns and M=511 passes at 369,129 simulated
   ns.
+- Two independent compiler instances produce byte-identical `.nai` blobs for
+  the same FullyConnected K33/N34 model and configuration.
 - This evidence does not relax the Phase 1 command limit: a raw command with
   either oversized M value remains invalid.
 
@@ -1924,7 +1926,7 @@ The following must be complete before Conv compiler lowering begins:
 
 ### Current Verification Evidence
 
-- Compiler C++ tests: 182/182 pass.
+- Compiler C++ tests: 183/183 pass.
 - Neural-AI compiler-runtime host ABI/layout/quantization checks pass.
 - Compiler-generated Verilator packages pass byte-exactly:
   - RGB K3 S2 C3 -> C32: 195,851 simulated ns after DMA direction validation;
