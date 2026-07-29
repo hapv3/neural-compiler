@@ -1715,6 +1715,23 @@ neural-ai/sw/test/compiler_runtime/*
 - Runtime performs no tile planning.
 - `neural-ai/hw` remains unchanged.
 
+### Current Verification Evidence
+
+- The compiler derives `DMA_1D` and `DMA_2D` direction from source and
+  destination regions. External-to-external region pairs are rejected during
+  command generation.
+- The runtime independently validates `DMA_1D`, `DMA_2D`, and `DMA_3D`
+  direction against the referenced regions before address resolution. Host
+  tests cover matching external-to-local, local-to-external, and
+  local-to-local commands, plus direction mismatch and L2-to-L2 rejection
+  through both direct and streaming dispatch.
+- Compiler C++ tests pass 182/182 and the Neural-AI compiler-runtime host checks
+  pass.
+- Compiler-generated Verilator regressions still pass after adding the runtime
+  validation: public Reshape at 97,644 simulated ns, generic K3 at 493,826
+  simulated ns, and RGB K3 at 195,851 simulated ns.
+- Runtime firmware `.text` is 23,596 bytes, below the 32 KB limit.
+
 ## Phase 2 - Neural-AI Target Skeleton in Regor
 
 ### Objective
@@ -1859,13 +1876,15 @@ The following must be complete before Conv compiler lowering begins:
 
 ### Current Verification Evidence
 
-- Compiler C++ tests: 181/181 pass.
+- Compiler C++ tests: 182/182 pass.
 - Neural-AI compiler-runtime host ABI/layout/quantization checks pass.
 - Compiler-generated Verilator packages pass byte-exactly:
-  - RGB K3 S2 C3 -> C32: 194,651 simulated ns.
-  - Generic K3 S1 C32 -> C32: 492,662 simulated ns.
+  - RGB K3 S2 C3 -> C32: 195,851 simulated ns after DMA direction validation;
+    the previous record was 194,651 ns (+0.62%).
+  - Generic K3 S1 C32 -> C32: 493,826 simulated ns after DMA direction
+    validation; the previous record was 492,662 ns (+0.24%).
   - Depthwise K3 S2 C33 tail: 228,121 simulated ns.
-- Runtime firmware `.text` is 23,268 bytes, below the 32 KB limit.
+- Runtime firmware `.text` is 23,596 bytes, below the 32 KB limit.
 - The focused package times include boot, section CRC, command loading,
   boundary layout DMA, and output checking. They must not be compared as
   operator latency against the PMU-only Micro-MobileNet and Micro-YOLO records.
@@ -1904,12 +1923,14 @@ When one of these views is a public graph output, the compiler materializes it
 through two `DMA1D` commands and a TCDM bounce buffer, because the current
 runtime cannot issue a direct L2-to-L2 copy. C++ tests cover public `Reshape`,
 `Squeeze`, and `ExpandDims`; a compiler-generated public `Reshape` package also
-passes byte-exactly on Verilator at 97,150 simulated ns. The existing two-DMA
-runtime fixture passes on the same simulator build at 91,973 simulated ns. The
-5,177 ns (5.63%) difference is only a focused sanity check because the public
-view moves 128 bytes while the fixture moves 32 bytes. View offset/slice cases
-remain open; command generation now rejects sliced `MemoryCopy` connections
-instead of incorrectly treating them as full-volume copies.
+passes byte-exactly on Verilator at 97,644 simulated ns after DMA direction
+validation, versus the previous 97,150 ns (+0.51%). The existing two-DMA
+runtime fixture previously passed on the same simulator build at 91,973
+simulated ns. That fixture moves 32 bytes while the public view moves 128 bytes,
+so their completion times are only focused sanity checks and not an
+operator-latency comparison. View offset/slice cases remain open; command
+generation now rejects sliced `MemoryCopy` connections instead of incorrectly
+treating them as full-volume copies.
 
 The compiler-generated Add package passes byte-exactly on Verilator at 127,826
 simulated ns. The equivalent hand-written package passes at 113,958 simulated
