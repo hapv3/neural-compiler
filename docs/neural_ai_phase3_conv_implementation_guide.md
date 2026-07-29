@@ -1440,7 +1440,7 @@ Task: Oversized pointwise M stripes, C96 depthwise groups, Conv chain runtime pr
 Compiler commit: `9b706dff` plus planner verification commit `f3f61488`
 neural-ai commit: `a1a6c254`
 ABI major/minor: 1/0
-Compiler unit scenarios passed / required: 149 / 149 CTest cases (Phase 3 minimum: 147; 8 planner cases, 104 planner assertions)
+Compiler unit scenarios passed / required: 173 / 173 CTest cases (Phase 3 minimum: 147; 8 planner cases, 104 planner assertions)
 Host C scenarios passed / required: 4 / 4 compiler-runtime test binaries; detailed 52-scenario accounting remains open
 Verilator scenarios passed / required: M257, M511, C96/S2, pointwise->depthwise chain, unaligned C3/C31 ROW32 round-trip (5 / 5 focused)
 Functional seed: deterministic byte patterns and signed per-pixel references
