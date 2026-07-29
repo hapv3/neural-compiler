@@ -998,6 +998,33 @@ TEST_CASE("Neural-AI compiler emits a native model package")
     blob->Release();
 }
 
+TEST_CASE("Neural-AI compiler emits deterministic model packages")
+{
+    const auto model = BuildFullyConnectedModel(33, 34);
+    std::vector<uint8_t> packages[2];
+
+    for ( int run = 0; run < 2; ++run )
+    {
+        std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+        Compiler compiler(architecture);
+        const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+        REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+        REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+        REQUIRE(compiler.Compile());
+
+        IRegorBlob *blob = compiler.Output();
+        REQUIRE(blob != nullptr);
+        int64_t size = 0;
+        const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+        REQUIRE(size > 0);
+        packages[run].assign(data, data + size);
+        blob->Unmap(const_cast<uint8_t *>(data));
+        blob->Release();
+    }
+
+    REQUIRE(packages[0] == packages[1]);
+}
+
 TEST_CASE("Neural-AI compiler tiles oversized M dimensions")
 {
     for ( const int rows : {257, 511} )
