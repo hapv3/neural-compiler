@@ -1754,6 +1754,13 @@ neural-ai/sw/test/compiler_runtime/*
   `NAI_DISPATCH_BAD_COMMAND` before invoking the GEMM operation callback.
 - Runtime host tests accept raw single-command GEMM M values 1, 31, 32, 33,
   255, and 256 and pass the exact M value to the operation callback.
+- Compiler constraints reject nonzero IFM and weight zero points for native
+  matrix operations while accepting the full signed INT8 OFM zero-point range.
+- Runtime quant-buffer tests reject shift 32, clamps outside `[-128, 127]`,
+  inverted clamps, and non-uniform clamp values within one C32 block.
+- A Verilator negative package loads qparam block 0 and requests block 1 from
+  `POINTWISE_C32`; it fails before compute with the expected operation status
+  at 176,665 simulated ns and leaves output untouched.
 - Compiler C++ tests pass 182/182 and the Neural-AI compiler-runtime host checks
   pass.
 - Compiler-generated Verilator regressions still pass after adding the runtime
