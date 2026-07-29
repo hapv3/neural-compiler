@@ -850,12 +850,35 @@ TEST_CASE("Neural-AI scheduler lowers a complete FullyConnected graph")
         uint16_t(neuralai::CommandType::End),
     };
     size_t commandOffset = 0;
+    uint32_t externalToLocalDMAs = 0;
+    uint32_t localToLocalDMAs = 0;
     for ( uint16_t expected : expectedTypes )
     {
         REQUIRE(Read16(artifact.commands, commandOffset) == expected);
+        if ( expected == uint16_t(neuralai::CommandType::DMA2D) )
+        {
+            const uint16_t sourceRegion = Read16(artifact.commands, commandOffset + 16);
+            const uint16_t destinationRegion = Read16(artifact.commands, commandOffset + 24);
+            const uint32_t direction = Read32(artifact.commands, commandOffset + 48);
+            if ( sourceRegion == uint16_t(neuralai::Region::ModelConstants) )
+            {
+                REQUIRE(destinationRegion == uint16_t(neuralai::Region::TCDMScratch));
+                REQUIRE(direction == uint32_t(neuralai::DMADirection::ExternalToLocal));
+                ++externalToLocalDMAs;
+            }
+            else
+            {
+                REQUIRE(sourceRegion == uint16_t(neuralai::Region::TCDMScratch));
+                REQUIRE(destinationRegion == uint16_t(neuralai::Region::TCDMScratch));
+                REQUIRE(direction == uint32_t(neuralai::DMADirection::LocalToLocal));
+                ++localToLocalDMAs;
+            }
+        }
         commandOffset += Read16(artifact.commands, commandOffset + 2);
     }
     REQUIRE(commandOffset == artifact.commands.size());
+    REQUIRE(externalToLocalDMAs == 0);
+    REQUIRE(localToLocalDMAs == 4);
     REQUIRE(Read32(artifact.commands, 60) == depthK);
     REQUIRE(Read32(artifact.commands, 64) == 64);
     REQUIRE(Read32(artifact.commands, 96 + 16) == 0);
@@ -1404,6 +1427,8 @@ TEST_CASE("Neural-AI compiler stages direct RGB input for the K3 stem")
         if ( type == uint16_t(neuralai::CommandType::CopyLayout) ) ++copyLayouts;
         if ( type == uint16_t(neuralai::CommandType::DMA2D) )
         {
+            REQUIRE(Read32(data + offset + 48) ==
+                    uint32_t(neuralai::DMADirection::ExternalToLocal));
             sawShortDma |= Read32(data + offset + 32) == 3;
         }
         offset += commandSize;

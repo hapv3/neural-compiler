@@ -64,6 +64,13 @@ enum class Region : uint16_t
     DTCMRuntime = 7,
 };
 
+enum class DMADirection : uint32_t
+{
+    ExternalToLocal = 0,
+    LocalToExternal = 1,
+    LocalToLocal = 2,
+};
+
 enum class CommandType : uint16_t
 {
     End = 0,

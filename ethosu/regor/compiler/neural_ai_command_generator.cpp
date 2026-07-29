@@ -27,6 +27,7 @@ using neuralai::BindingDirection;
 using neuralai::CommandType;
 using neuralai::CopyLayoutMode;
 using neuralai::DataType;
+using neuralai::DMADirection;
 using neuralai::RefV1;
 using neuralai::Region;
 using neuralai::TensorLayout;
@@ -50,6 +51,35 @@ bool IsFullTensorConnection(const SchedulerConnection *connection)
     return connection->SliceShape() == shape &&
            (!connection->slice.offset || connection->slice.offset == shape.WithZeros()) &&
            (!connection->slice.stride || connection->slice.stride == shape.WithOnes());
+}
+
+bool IsLocalDMARegion(uint16_t region)
+{
+    return region == uint16_t(Region::TCDMScratch) ||
+           region == uint16_t(Region::DTCMRuntime);
+}
+
+bool IsExternalDMARegion(uint16_t region)
+{
+    return region == uint16_t(Region::ModelConstants) ||
+           region == uint16_t(Region::ModelCommands) ||
+           region == uint16_t(Region::InputBinding) ||
+           region == uint16_t(Region::OutputBinding) ||
+           region == uint16_t(Region::L2TemporaryBinding);
+}
+
+bool ResolveDMADirection(const RefV1 &source, const RefV1 &destination, DMADirection &direction)
+{
+    const bool sourceLocal = IsLocalDMARegion(source.region);
+    const bool destinationLocal = IsLocalDMARegion(destination.region);
+    if ( (!sourceLocal && !IsExternalDMARegion(source.region)) ||
+         (!destinationLocal && !IsExternalDMARegion(destination.region)) )
+        return false;
+    if ( !sourceLocal && !destinationLocal ) return false;
+    direction = sourceLocal ?
+        (destinationLocal ? DMADirection::LocalToLocal : DMADirection::LocalToExternal) :
+        DMADirection::ExternalToLocal;
+    return true;
 }
 
 void Append16(std::vector<uint8_t> &output, uint16_t value)
@@ -211,10 +241,13 @@ struct GeneratorContext
         ++artifact->commandCount;
     }
 
-    void AppendDMA2D(const RefV1 &source, const RefV1 &destination, uint32_t length,
+    bool AppendDMA2D(const RefV1 &source, const RefV1 &destination, uint32_t length,
         uint32_t sourceStride, uint32_t destinationStride, uint32_t repetitions,
-        uint32_t layerId, uint32_t tileId)
+        uint32_t layerId, uint32_t tileId, std::string &error)
     {
+        DMADirection direction;
+        if ( !ResolveDMADirection(source, destination, direction) )
+            return SetError(error, "Neural-AI DMA2D requires a local source or destination");
         AppendHeader(artifact->commands, CommandType::DMA2D, 64, layerId, tileId);
         AppendRef(artifact->commands, source);
         AppendRef(artifact->commands, destination);
@@ -222,21 +255,26 @@ struct GeneratorContext
         Append32(artifact->commands, sourceStride);
         Append32(artifact->commands, destinationStride);
         Append32(artifact->commands, repetitions);
-        Append32(artifact->commands, 2);
+        Append32(artifact->commands, uint32_t(direction));
         AppendZeros(artifact->commands, 3);
         ++artifact->commandCount;
+        return true;
     }
 
-    void AppendDMA1D(const RefV1 &source, const RefV1 &destination, uint32_t length,
-        uint32_t direction, uint32_t layerId, uint32_t tileId)
+    bool AppendDMA1D(const RefV1 &source, const RefV1 &destination, uint32_t length,
+        uint32_t layerId, uint32_t tileId, std::string &error)
     {
+        DMADirection direction;
+        if ( !ResolveDMADirection(source, destination, direction) )
+            return SetError(error, "Neural-AI DMA1D requires a local source or destination");
         AppendHeader(artifact->commands, CommandType::DMA1D, 64, layerId, tileId);
         AppendRef(artifact->commands, source);
         AppendRef(artifact->commands, destination);
         Append32(artifact->commands, length);
-        Append32(artifact->commands, direction);
+        Append32(artifact->commands, uint32_t(direction));
         AppendZeros(artifact->commands, 6);
         ++artifact->commandCount;
+        return true;
     }
 
     void AppendGEMM(CommandType type, const RefV1 &weights, const RefV1 &ifm,
@@ -355,8 +393,9 @@ struct GeneratorContext
             bounce.region = uint16_t(Region::TCDMScratch);
             bounce.offset = stageOffset;
             const uint32_t layerId = uint32_t(operation->Index());
-            AppendDMA1D(source, bounce, uint32_t(bytes), 0, layerId, 0);
-            AppendDMA1D(bounce, destination, uint32_t(bytes), 1, layerId, 1);
+            if ( !AppendDMA1D(source, bounce, uint32_t(bytes), layerId, 0, error) ||
+                 !AppendDMA1D(bounce, destination, uint32_t(bytes), layerId, 1, error) )
+                return false;
             return true;
         }
         CopyLayoutMode mode;
@@ -599,8 +638,9 @@ struct GeneratorContext
             RefV1 stagedWeights{};
             stagedWeights.region = uint16_t(Region::TCDMScratch);
             stagedWeights.offset = weightStageOffset;
-            AppendDMA2D(modelWeights, stagedWeights, 32, 32, 32, weightBytes / 32u,
-                uint32_t(operation->Index()), 1);
+            if ( !AppendDMA2D(modelWeights, stagedWeights, 32, 32, 32, weightBytes / 32u,
+                     uint32_t(operation->Index()), 1, error) )
+                return false;
 
             if ( directRgb )
             {
@@ -611,8 +651,9 @@ struct GeneratorContext
                 inputStage.offset = inputStageOffset;
                 const auto inputShape = ReshapeToNHWC(ifm->shape);
                 const uint32_t pixels = uint32_t(inputShape.Height() * inputShape.Width());
-                AppendDMA2D(inputSource, inputStage, 3, 3, 3, pixels,
-                    uint32_t(operation->Index()), 2);
+                if ( !AppendDMA2D(inputSource, inputStage, 3, 3, 3, pixels,
+                         uint32_t(operation->Index()), 2, error) )
+                    return false;
             }
 
             const auto logicalIfm = ReshapeToNHWC(ifm->shape);
@@ -717,8 +758,9 @@ struct GeneratorContext
                         RefV1 staged{};
                         staged.region = uint16_t(Region::TCDMScratch);
                         staged.offset = stageOffset;
-                        AppendDMA2D(ifmRef, staged, 32, paddedK, 32, dimM,
-                            uint32_t(operation->Index()), tileId++);
+                        if ( !AppendDMA2D(ifmRef, staged, 32, paddedK, 32, dimM,
+                                 uint32_t(operation->Index()), tileId++, error) )
+                            return false;
                         ifmRef = staged;
                     }
                     RefV1 weights{};

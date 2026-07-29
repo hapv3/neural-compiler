@@ -91,6 +91,13 @@ TEST_CASE("neural_ai_abi freezes AFU binary command layout")
     REQUIRE(command.mode == 1);
 }
 
+TEST_CASE("neural_ai_abi freezes DMA direction values")
+{
+    REQUIRE(uint32_t(DMADirection::ExternalToLocal) == 0);
+    REQUIRE(uint32_t(DMADirection::LocalToExternal) == 1);
+    REQUIRE(uint32_t(DMADirection::LocalToLocal) == 2);
+}
+
 TEST_CASE("neural_ai_abi validates section alignment and bounds")
 {
     ModelHeaderV1 header{};
