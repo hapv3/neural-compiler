@@ -313,6 +313,22 @@ struct CommandDepthwiseC32V2
     uint32_t reserved[4];
 };
 
+enum class AFUBinaryMode : uint32_t
+{
+    AddI8 = 1,
+};
+
+struct CommandAFUBinaryV2
+{
+    CommandHeaderV2 header;
+    RefV1 lhs;
+    RefV1 rhs;
+    RefV1 ofm;
+    uint32_t length;
+    uint32_t mode;
+    uint32_t reserved[4];
+};
+
 struct LinebufJobWireV1
 {
     SystolicLinebufCfg linebuf;
@@ -370,6 +386,7 @@ static_assert(sizeof(CommandDMA3DV2) == 64);
 static_assert(sizeof(CommandGemm32V2) == 96);
 static_assert(sizeof(CommandPointwiseC32V2) == 96);
 static_assert(sizeof(CommandDepthwiseC32V2) == 96);
+static_assert(sizeof(CommandAFUBinaryV2) == 64);
 static_assert(sizeof(LinebufJobWireV1) == 124);
 static_assert(sizeof(CommandLineBufferJobV2) == 160);
 static_assert(sizeof(CommandCopyLayoutV2) == 96);

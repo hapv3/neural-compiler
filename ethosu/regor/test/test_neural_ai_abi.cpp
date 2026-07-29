@@ -71,6 +71,26 @@ TEST_CASE("neural_ai_abi freezes RQ load command layout")
     REQUIRE(command.reserved == 0);
 }
 
+TEST_CASE("neural_ai_abi freezes AFU binary command layout")
+{
+    CommandAFUBinaryV2 command{};
+    command.header.type = uint16_t(CommandType::AFUBinary);
+    command.header.sizeBytes = sizeof(command);
+    command.lhs = {uint16_t(Region::TCDMScratch), 0, 0};
+    command.rhs = {uint16_t(Region::TCDMScratch), 0, 0x100};
+    command.ofm = {uint16_t(Region::TCDMScratch), 0, 0x200};
+    command.length = 64;
+    command.mode = uint32_t(AFUBinaryMode::AddI8);
+
+    REQUIRE(command.header.type == 13);
+    REQUIRE(command.header.sizeBytes == 64);
+    REQUIRE(command.lhs.offset == 0);
+    REQUIRE(command.rhs.offset == 0x100);
+    REQUIRE(command.ofm.offset == 0x200);
+    REQUIRE(command.length == 64);
+    REQUIRE(command.mode == 1);
+}
+
 TEST_CASE("neural_ai_abi validates section alignment and bounds")
 {
     ModelHeaderV1 header{};
