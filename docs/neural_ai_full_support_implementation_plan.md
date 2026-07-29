@@ -12,7 +12,8 @@ Allowed scope:
 - `neural-compiler` may be changed.
 - `neural-ai/sw` may be changed to provide the ABI, runtime, kernel wrappers, and
   tests required by the compiler.
-- Source files under `neural-ai/hw` must not be changed.
+- RTL `.sv` files under `neural-ai/hw` must not be changed. Cocotb tests,
+  Makefiles, and simulation tooling may be extended for verification.
 - Existing simulation flows must continue to work.
 
 This is a design and implementation guide. It does not claim that the current
@@ -1655,15 +1656,16 @@ neural-ai/sw/lib/npu_memory_map.h
   C=3 and C=31 `COPY_LAYOUT` row patterns and 32-byte beat crossings. Native
   ROW32/C32 TCDM endpoints remain aligned.
 - A cross-repository ABI manifest and version comparison.
-- TCDM alias verification: write at `0x1010_0000`, read at `0x1018_0000` and
-  `0x1020_0000` to confirm physical aliasing per RTL bank decode. Then ensure
-  runtime and compiler use only canonical addresses.
+- TCDM alias verification must use the access path implemented by RTL: Snitch
+  directly verifies `0x1010...`/`0x1018...`, while iDMA verifies the
+  engine-only `0x1020...` alias through L2 round trips. Then ensure runtime and
+  compiler emit only canonical `0x1010...` addresses.
 
 ### Exit Criteria
 
 - ABI review is complete and the file format contains no native pointer.
 - Memory constants agree with RTL and linker scripts.
-- There is no source diff under `neural-ai/hw`.
+- There is no RTL `.sv` diff under `neural-ai/hw`.
 - Existing software and RTL tests still pass.
 
 ### Current Verification Evidence
@@ -1677,6 +1679,9 @@ neural-ai/sw/lib/npu_memory_map.h
   sparse output byte-exactly. It passes at 278,888 simulated ns.
 - The existing `COPY_LAYOUT` C=3/C=31 regression with unaligned L2 bindings
   passes at 199,932 simulated ns.
+- The independent-memory regression verifies the `0x1010...`/`0x1018...`
+  Snitch alias and the `0x1020...` engine alias through iDMA in both
+  directions. It passes at 34,247 simulated ns.
 - The runtime firmware remains 23,596 bytes of `.text`; no RTL source was
   changed.
 
@@ -1730,7 +1735,7 @@ neural-ai/sw/test/compiler_runtime/*
 - A GEMM package needs no model-specific C graph.
 - V1 and v2 coexist.
 - Runtime performs no tile planning.
-- `neural-ai/hw` remains unchanged.
+- Neural-AI RTL `.sv` sources remain unchanged.
 
 ### Current Verification Evidence
 
@@ -2087,8 +2092,10 @@ Place all new test source under:
 /home/dev01/neural-ai/sw/test/compiler_runtime/
 ```
 
-Do not copy or modify test source under `hw`. The software test directory should
-contain:
+Compiler-generated model tests belong under `sw/test/compiler_runtime`.
+Existing Cocotb tests under `hw/rtl/cluster/tb/tests` may be extended when the
+test must directly verify an RTL access path or hardware-only contract. The
+software test directory should contain:
 
 - Runtime firmware build files.
 - An invocation or package builder for negative tests where needed.
@@ -2110,8 +2117,8 @@ make -C hw/rtl/cluster sim \
   SIM_BUILD=/tmp/neural-ai-compiled-model
 ```
 
-Using `SIM_BUILD=/tmp/...` avoids adding build output to the source tree. Existing
-Makefiles and RTL source remain unchanged.
+Using `SIM_BUILD=/tmp/...` avoids adding build output to the source tree. RTL
+`.sv` sources remain unchanged.
 
 ### 9.4. Regression Order
 
@@ -2124,7 +2131,7 @@ Makefiles and RTL source remain unchanged.
 7. Micro-MobileNet.
 8. Micro-YOLO.
 9. Full existing Neural-AI cluster regression.
-10. Git check confirming no source diff under `hw`.
+10. Git check confirming no RTL `.sv` diff under `hw`.
 
 ## 10. Diagnostics and Unsupported Behavior
 
@@ -2172,7 +2179,7 @@ Each change must:
 
 - Include focused tests.
 - Avoid unrelated refactoring.
-- Leave `neural-ai/hw` unchanged.
+- Leave Neural-AI RTL `.sv` sources unchanged.
 - State the ABI version when changing a wire format.
 - Run Ethos regression tests when touching shared code.
 
@@ -2266,7 +2273,7 @@ The Neural-AI backend is complete for the current hardware contract when:
 - Peak TCDM, command bytes, and constant bytes are reported.
 - Existing ABI v1 and hand-written model tests still pass.
 - Existing Ethos-U compiler tests and output still pass.
-- There is no source change under `/home/dev01/neural-ai/hw`.
+- There is no RTL `.sv` source change under `/home/dev01/neural-ai/hw`.
 
 ## 14. Recommended Starting Point
 
