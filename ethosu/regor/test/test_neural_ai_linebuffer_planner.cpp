@@ -8,6 +8,8 @@
 
 #include <catch_all.hpp>
 
+#include <algorithm>
+#include <cstdint>
 #include <stdexcept>
 
 using namespace regor;
@@ -38,6 +40,74 @@ LinebufferPlannerInput GoldenInput()
     input.outputGroupIndex = 0;
     input.validLaneCount = 32;
     input.ifmPixelStride = 32;
+    input.maxM = 256;
+    input.tcdmBudget = 512 * 1024;
+    return input;
+}
+
+}  // namespace
+
+namespace
+{
+
+void RequireStableJobFields(const LinebufferJob &job, uint32_t inputBase, uint16_t inputH,
+    uint16_t inputW, uint16_t inputC, uint16_t outputW, uint32_t rowStride,
+    uint32_t pixelStride, uint32_t owStep, uint32_t ohStep, uint16_t padH, uint16_t padW,
+    uint16_t c32Fast, uint16_t groupStationary, uint16_t validBytes, uint32_t kTiles,
+    uint32_t spatialM, uint32_t channelOffset, uint32_t coalesceKBytes,
+    uint32_t weightAddr, uint32_t ofmAddr, uint32_t dimM, uint32_t accumEn,
+    uint32_t ofmRowStride, uint32_t ofmTileCols, uint32_t psumRowStride)
+{
+    REQUIRE(job.linebuf.inputBase == inputBase);
+    REQUIRE(job.linebuf.inputH == inputH);
+    REQUIRE(job.linebuf.inputW == inputW);
+    REQUIRE(job.linebuf.inputC == inputC);
+    REQUIRE(job.linebuf.outputW == outputW);
+    REQUIRE(job.linebuf.rowStrideBytes == rowStride);
+    REQUIRE(job.linebuf.pixelStrideBytes == pixelStride);
+    REQUIRE(job.linebuf.owStepBytes == owStep);
+    REQUIRE(job.linebuf.ohStepBytes == ohStep);
+    REQUIRE(job.linebuf.padH == padH);
+    REQUIRE(job.linebuf.padW == padW);
+    REQUIRE(job.linebuf.c32Fast == c32Fast);
+    REQUIRE(job.linebuf.c32GroupStationary == groupStationary);
+    REQUIRE(job.linebuf.blockValidBytes == validBytes);
+    REQUIRE(job.linebuf.kTiles == kTiles);
+    REQUIRE(job.linebuf.spatialM == spatialM);
+    REQUIRE(job.linebuf.channelAddrOffset == channelOffset);
+    REQUIRE(job.linebuf.coalesceKBytes == coalesceKBytes);
+    REQUIRE(job.gemm.weightAddr == weightAddr);
+    REQUIRE(job.gemm.ofmAddr == ofmAddr);
+    REQUIRE(job.gemm.dimM == dimM);
+    REQUIRE(job.gemm.accumEn == accumEn);
+    REQUIRE(job.gemm.ofmRowStrideBytes == ofmRowStride);
+    REQUIRE(job.gemm.ofmTileCols == ofmTileCols);
+    REQUIRE(job.gemm.psumRowStrideBytes == psumRowStride);
+    REQUIRE(job.rows == spatialM);
+    REQUIRE(job.kTiles == kTiles);
+}
+
+LinebufferPlannerInput GoldenInputForShape(int ifmH, int ifmW, int ifmC, int ofmH, int ofmW,
+    int ofmC = 32)
+{
+    LinebufferPlannerInput input{};
+    input.logicalIfm = Shape(1, ifmH, ifmW, ifmC);
+    input.logicalOfm = Shape(1, ofmH, ofmW, ofmC);
+    input.ifmBase = 0x1000;
+    input.ofmBase = 0x3000;
+    input.weightBase = 0x2000;
+    input.kernelH = 3;
+    input.kernelW = 3;
+    input.strideH = 1;
+    input.strideW = 1;
+    input.padTop = 1;
+    input.padLeft = 1;
+    input.padBottom = 1;
+    input.padRight = 1;
+    input.ic = ifmC;
+    input.oc = ofmC;
+    input.validLaneCount = std::min(ifmC, 32);
+    input.ifmPixelStride = ifmC;
     input.maxM = 256;
     input.tcdmBudget = 512 * 1024;
     return input;
@@ -129,4 +199,38 @@ TEST_CASE("Neural-AI linebuffer planner rejects an invalid lane count")
     auto input = GoldenInput();
     input.validLaneCount = 33;
     REQUIRE_THROWS_AS(LinebufferPlanner().Plan(input), std::invalid_argument);
+}
+
+TEST_CASE("Neural-AI linebuffer planner matches the interior Python golden fields")
+{
+    auto input = GoldenInputForShape(8, 8, 32, 4, 4);
+    input.padTop = input.padLeft = input.padBottom = input.padRight = 0;
+    const auto jobs = LinebufferPlanner().Plan(input);
+    REQUIRE(jobs.size() == 1);
+    RequireStableJobFields(jobs.front(), 0x1000u, 6u, 6u, 32u, 4u,
+        256u, 32u, 32u, 256u, 0u, 0u, 1u, 1u, 32u, 9u, 16u,
+        2048u, 288u, 0x2000u, 0x3000u, 16u, 0u, 128u, 4u, 512u);
+}
+
+TEST_CASE("Neural-AI linebuffer planner matches the C31 tail golden fields")
+{
+    auto input = GoldenInputForShape(8, 8, 31, 8, 8);
+    input.ifmPixelStride = 31;
+    const auto jobs = LinebufferPlanner().Plan(input);
+    REQUIRE(jobs.size() == 1);
+    RequireStableJobFields(jobs.front(), 0x1000u, 8u, 8u, 31u, 8u,
+        248u, 31u, 31u, 248u, 1u, 1u, 0u, 0u, 31u, 9u, 64u,
+        0u, 279u, 0x2000u, 0x3000u, 64u, 0u, 256u, 8u, 1024u);
+}
+
+TEST_CASE("Neural-AI linebuffer planner disables fast mode for an unaligned base")
+{
+    auto input = GoldenInputForShape(8, 8, 64, 8, 8);
+    input.ifmPixelStride = 32;
+    input.ifmBase = 0x1003;
+    const auto jobs = LinebufferPlanner().Plan(input);
+    REQUIRE(jobs.size() == 1);
+    REQUIRE(jobs.front().linebuf.c32Fast == 0u);
+    REQUIRE(jobs.front().linebuf.c32GroupStationary == 0u);
+    REQUIRE(jobs.front().linebuf.channelAddrOffset == 0u);
 }
