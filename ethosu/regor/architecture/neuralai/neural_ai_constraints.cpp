@@ -133,9 +133,10 @@ NeuralAIConstraints::Classification NeuralAIConstraints::Classify(OpType opType,
         result.diagnostic = "stride must be 1x1 or 2x2";
         return result;
     }
-    if ( !kernel->Padding().IsZero() &&
-         (kernel->Padding().Top() != 1 || kernel->Padding().Left() != 1 ||
-          kernel->Padding().Bottom() != 1 || kernel->Padding().Right() != 1) )
+    if ( kernel->Padding().Top() < 0 || kernel->Padding().Top() > 1 ||
+         kernel->Padding().Left() < 0 || kernel->Padding().Left() > 1 ||
+         kernel->Padding().Bottom() < 0 || kernel->Padding().Bottom() > 1 ||
+         kernel->Padding().Right() < 0 || kernel->Padding().Right() > 1 )
     {
         result.diagnostic = "padding must be zero or one on every side";
         return result;
@@ -155,11 +156,12 @@ NeuralAIConstraints::Classification NeuralAIConstraints::Classify(OpType opType,
     }
     result.hasIcTail = (ifmC % 32) != 0;
     result.hasOcTail = (ofmC % 32) != 0;
+    const bool sameSpatial =
+        ofmShape.Height() == (ifmShape.Height() + kernel->Stride().y - 1) / kernel->Stride().y &&
+        ofmShape.Width() == (ifmShape.Width() + kernel->Stride().x - 1) / kernel->Stride().x;
 
     if ( opType == OpType::Conv2D && kernel->Size() == Point2i(3, 3) &&
-         kernel->Stride() == Point2i(2, 2) && ifmC == 3 && ofmC == 32 &&
-         kernel->Padding().Top() == 1 && kernel->Padding().Left() == 1 &&
-         kernel->Padding().Bottom() == 1 && kernel->Padding().Right() == 1 &&
+         kernel->Stride() == Point2i(2, 2) && sameSpatial && ifmC == 3 && ofmC == 32 &&
          weightShape.Batch() == ofmC && weightShape.Height() == 3 && weightShape.Width() == 3 &&
          weightShape.Depth() == ifmC )
     {
@@ -178,8 +180,7 @@ NeuralAIConstraints::Classification NeuralAIConstraints::Classify(OpType opType,
     }
 
     if ( opType == OpType::Conv2D && kernel->Size() == Point2i(3, 3) &&
-         kernel->Padding().Top() == 1 && kernel->Padding().Left() == 1 &&
-         kernel->Padding().Bottom() == 1 && kernel->Padding().Right() == 1 &&
+         sameSpatial &&
          weightShape.Batch() == ofmC && weightShape.Height() == 3 && weightShape.Width() == 3 &&
          weightShape.Depth() == ifmC )
     {
@@ -195,8 +196,7 @@ NeuralAIConstraints::Classification NeuralAIConstraints::Classify(OpType opType,
     }
 
     if ( opType == OpType::DepthwiseConv2D && kernel->Size() == Point2i(3, 3) &&
-         kernel->Padding().Top() == 1 && kernel->Padding().Left() == 1 &&
-         kernel->Padding().Bottom() == 1 && kernel->Padding().Right() == 1 &&
+         sameSpatial &&
          weightShape.Height() == 3 && weightShape.Width() == 3 && ifmC == ofmC &&
          ((weightShape.Batch() == 1 && weightShape.Depth() == ifmC) ||
           (weightShape.Batch() == ifmC && weightShape.Depth() == 1)) )

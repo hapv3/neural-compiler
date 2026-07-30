@@ -461,10 +461,13 @@ struct GeneratorContext
             return SetError(error, "Neural-AI depthwise constants do not match C32 group dimensions");
         const Kernel *kernel = operation->Kernel();
         if ( kernel == nullptr || kernel->Size() != Point2i(3, 3) || kernel->Dilation() != Point2i(1, 1) ||
-             kernel->Padding().Top() != 1 || kernel->Padding().Left() != 1 ||
-             kernel->Padding().Bottom() != 1 || kernel->Padding().Right() != 1 ||
+             kernel->Padding().Top() < 0 || kernel->Padding().Top() > 1 ||
+             kernel->Padding().Left() < 0 || kernel->Padding().Left() > 1 ||
+             kernel->Padding().Bottom() < 0 || kernel->Padding().Bottom() > 1 ||
+             kernel->Padding().Right() < 0 || kernel->Padding().Right() > 1 ||
              (kernel->Stride() != Point2i(1, 1) && kernel->Stride() != Point2i(2, 2)) )
-            return SetError(error, "Neural-AI depthwise requires K3, P1, S1/S2, D1");
+            return SetError(
+                error, "Neural-AI depthwise requires K3 SAME with each padding side P0/P1, S1/S2, D1");
 
         const uint8_t *data = encoded->bufferView.RawData<uint8_t>() + range.offset;
         const uint32_t qparamBase = uint32_t(artifact->qparams.size());

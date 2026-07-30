@@ -116,23 +116,32 @@ std::unique_ptr<ArchitectureOpConfig> ArchNeuralAI::GetOpConfig(OpType opType, c
     else if ( opType == OpType::Conv2D && query.kernel != nullptr )
     {
         const auto &kernel = *query.kernel;
+        const bool sameSpatial = kernel.Stride().x > 0 && kernel.Stride().y > 0 &&
+            query.ofmShape.Height() ==
+                (query.ifmShape[0].Height() + kernel.Stride().y - 1) / kernel.Stride().y &&
+            query.ofmShape.Width() ==
+                (query.ifmShape[0].Width() + kernel.Stride().x - 1) / kernel.Stride().x;
         if ( kernel.Size() == Point2i(1, 1) && kernel.Stride() == Point2i(1, 1) &&
              kernel.Dilation() == Point2i(1, 1) && kernel.Padding().IsZero() )
             mode = NeuralAIOpMode::Conv2DPointwiseC32Requant;
         else if ( kernel.Size() == Point2i(3, 3) && kernel.Stride() == Point2i(2, 2) &&
                   kernel.Dilation() == Point2i(1, 1) &&
-                  query.ifmShape[0].Depth() == 3 && query.ofmShape.Depth() == 32 &&
-                  kernel.Padding().Top() == 1 && kernel.Padding().Left() == 1 &&
-                  kernel.Padding().Bottom() == 1 && kernel.Padding().Right() == 1 )
+                  sameSpatial && query.ifmShape[0].Depth() == 3 && query.ofmShape.Depth() == 32 &&
+                  kernel.Padding().Top() >= 0 && kernel.Padding().Top() <= 1 &&
+                  kernel.Padding().Left() >= 0 && kernel.Padding().Left() <= 1 &&
+                  kernel.Padding().Bottom() >= 0 && kernel.Padding().Bottom() <= 1 &&
+                  kernel.Padding().Right() >= 0 && kernel.Padding().Right() <= 1 )
         {
             mode = NeuralAIOpMode::Conv2DRgbLinebufRequant;
             directNhwcInput = true;
         }
         else if ( kernel.Size() == Point2i(3, 3) &&
                   (kernel.Stride() == Point2i(1, 1) || kernel.Stride() == Point2i(2, 2)) &&
-                  kernel.Dilation() == Point2i(1, 1) &&
-                  kernel.Padding().Top() == 1 && kernel.Padding().Left() == 1 &&
-                  kernel.Padding().Bottom() == 1 && kernel.Padding().Right() == 1 )
+                  kernel.Dilation() == Point2i(1, 1) && sameSpatial &&
+                  kernel.Padding().Top() >= 0 && kernel.Padding().Top() <= 1 &&
+                  kernel.Padding().Left() >= 0 && kernel.Padding().Left() <= 1 &&
+                  kernel.Padding().Bottom() >= 0 && kernel.Padding().Bottom() <= 1 &&
+                  kernel.Padding().Right() >= 0 && kernel.Padding().Right() <= 1 )
         {
             const bool hasChannelTail = ( query.ifmShape[0].Depth() % ArrayDimension ) != 0 ||
                                          ( query.ofmShape.Depth() % ArrayDimension ) != 0;
@@ -146,8 +155,16 @@ std::unique_ptr<ArchitectureOpConfig> ArchNeuralAI::GetOpConfig(OpType opType, c
               (query.kernel->Stride() == Point2i(1, 1) ||
                query.kernel->Stride() == Point2i(2, 2)) &&
               query.kernel->Dilation() == Point2i(1, 1) &&
-              query.kernel->Padding().Top() == 1 && query.kernel->Padding().Left() == 1 &&
-              query.kernel->Padding().Bottom() == 1 && query.kernel->Padding().Right() == 1 &&
+              query.ofmShape.Height() ==
+                  (query.ifmShape[0].Height() + query.kernel->Stride().y - 1) /
+                      query.kernel->Stride().y &&
+              query.ofmShape.Width() ==
+                  (query.ifmShape[0].Width() + query.kernel->Stride().x - 1) /
+                      query.kernel->Stride().x &&
+              query.kernel->Padding().Top() >= 0 && query.kernel->Padding().Top() <= 1 &&
+              query.kernel->Padding().Left() >= 0 && query.kernel->Padding().Left() <= 1 &&
+              query.kernel->Padding().Bottom() >= 0 && query.kernel->Padding().Bottom() <= 1 &&
+              query.kernel->Padding().Right() >= 0 && query.kernel->Padding().Right() <= 1 &&
               query.ifmShape[0].Depth() == query.ofmShape.Depth() )
     {
         mode = query.kernel->Stride() == Point2i(2, 2) ? NeuralAIOpMode::DepthwiseC32S2Requant :

@@ -504,6 +504,179 @@ flatbuffers::DetachedBuffer BuildDepthwiseConvModel(int height, int width, int c
     return builder.Release();
 }
 
+flatbuffers::DetachedBuffer BuildMicroMobileNetModel(int stageCount = 13)
+{
+    flatbuffers::FlatBufferBuilder builder;
+    const std::vector<float> scale = {1.0f};
+    const std::vector<int64_t> zeroPoint = {0};
+    const auto int8Quant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &scale, &zeroPoint);
+    const auto int32Quant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &scale, &zeroPoint);
+    std::vector<flatbuffers::Offset<tflite::Buffer>> buffers = {
+        tflite::CreateBufferDirect(builder),
+    };
+    std::vector<flatbuffers::Offset<tflite::Tensor>> tensors;
+    std::vector<flatbuffers::Offset<tflite::Operator>> operations;
+
+    const auto addActivation = [&](const std::vector<int32_t> &shape)
+    {
+        const int index = int(tensors.size());
+        tensors.push_back(tflite::CreateTensorDirect(
+            builder, &shape, tflite::TensorType::INT8, 0, "activation", int8Quant));
+        return index;
+    };
+    const auto addWeights = [&](const std::vector<int32_t> &shape, int elements)
+    {
+        std::vector<uint8_t> data(elements, 1);
+        const int buffer = int(buffers.size());
+        buffers.push_back(tflite::CreateBufferDirect(builder, &data));
+        const int index = int(tensors.size());
+        tensors.push_back(tflite::CreateTensorDirect(
+            builder, &shape, tflite::TensorType::INT8, buffer, "weights", int8Quant));
+        return index;
+    };
+    const auto addBias = [&](int channels)
+    {
+        std::vector<int32_t> values(channels, 0);
+        std::vector<uint8_t> data(values.size() * sizeof(int32_t));
+        std::memcpy(data.data(), values.data(), data.size());
+        const int buffer = int(buffers.size());
+        buffers.push_back(tflite::CreateBufferDirect(builder, &data));
+        const int index = int(tensors.size());
+        const std::vector<int32_t> shape = {channels};
+        tensors.push_back(tflite::CreateTensorDirect(
+            builder, &shape, tflite::TensorType::INT32, buffer, "bias", int32Quant));
+        return index;
+    };
+    const auto addConv = [&](int input, int height, int width, int depthK, int depthN,
+                             int kernel, int stride, tflite::ActivationFunctionType activation)
+    {
+        const int outputHeight = (height + stride - 1) / stride;
+        const int outputWidth = (width + stride - 1) / stride;
+        const std::vector<int32_t> weightShape = {depthN, kernel, kernel, depthK};
+        const std::vector<int32_t> outputShape = {1, outputHeight, outputWidth, depthN};
+        const int weights = addWeights(
+            weightShape, kernel * kernel * depthK * depthN);
+        const int bias = addBias(depthN);
+        const int output = addActivation(outputShape);
+        const auto options = tflite::CreateConv2DOptions(
+            builder, tflite::Padding::SAME, stride, stride, activation, 1, 1,
+            tflite::TensorType::INT32);
+        const std::vector<int32_t> inputs = {input, weights, bias};
+        const std::vector<int32_t> outputs = {output};
+        operations.push_back(tflite::CreateOperatorDirect(
+            builder, 0, &inputs, &outputs, tflite::BuiltinOptions::Conv2DOptions,
+            options.Union()));
+        return output;
+    };
+    const auto addDepthwise = [&](int input, int height, int width, int channels,
+                                  int stride, tflite::ActivationFunctionType activation)
+    {
+        const int outputHeight = (height + stride - 1) / stride;
+        const int outputWidth = (width + stride - 1) / stride;
+        const std::vector<int32_t> weightShape = {1, 3, 3, channels};
+        const std::vector<int32_t> outputShape = {1, outputHeight, outputWidth, channels};
+        const int weights = addWeights(weightShape, 9 * channels);
+        const int bias = addBias(channels);
+        const int output = addActivation(outputShape);
+        const auto options = tflite::CreateDepthwiseConv2DOptions(
+            builder, tflite::Padding::SAME, stride, stride, 1, activation, 1, 1);
+        const std::vector<int32_t> inputs = {input, weights, bias};
+        const std::vector<int32_t> outputs = {output};
+        operations.push_back(tflite::CreateOperatorDirect(
+            builder, 1, &inputs, &outputs,
+            tflite::BuiltinOptions::DepthwiseConv2DOptions, options.Union()));
+        return output;
+    };
+    const auto addResidual = [&](int lhs, int rhs, int height, int width, int channels)
+    {
+        const std::vector<int32_t> outputShape = {1, height, width, channels};
+        const int output = addActivation(outputShape);
+        const auto options = tflite::CreateAddOptions(
+            builder, tflite::ActivationFunctionType::NONE, false);
+        const std::vector<int32_t> inputs = {lhs, rhs};
+        const std::vector<int32_t> outputs = {output};
+        operations.push_back(tflite::CreateOperatorDirect(
+            builder, 2, &inputs, &outputs, tflite::BuiltinOptions::AddOptions,
+            options.Union()));
+        return output;
+    };
+
+    const int input = addActivation({1, 96, 96, 3});
+    int output = input;
+    int stem = -1;
+    int pw1 = -1;
+    if ( stageCount >= 1 )
+        output = stem = addConv(output, 96, 96, 3, 32, 3, 2,
+            tflite::ActivationFunctionType::RELU6);
+    if ( stageCount >= 2 )
+        output = addDepthwise(output, 48, 48, 32, 1,
+            tflite::ActivationFunctionType::RELU6);
+    if ( stageCount >= 3 )
+        output = addConv(output, 48, 48, 32, 32, 1, 1,
+            tflite::ActivationFunctionType::NONE);
+    if ( stageCount >= 4 ) output = addResidual(output, stem, 48, 48, 32);
+    if ( stageCount >= 5 )
+        output = addDepthwise(output, 48, 48, 32, 2,
+            tflite::ActivationFunctionType::NONE);
+    if ( stageCount >= 6 )
+        output = pw1 = addConv(output, 24, 24, 32, 64, 1, 1,
+            tflite::ActivationFunctionType::RELU6);
+    if ( stageCount >= 7 )
+        output = addConv(output, 24, 24, 64, 128, 1, 1,
+            tflite::ActivationFunctionType::NONE);
+    if ( stageCount >= 8 )
+        output = addDepthwise(output, 24, 24, 128, 1,
+            tflite::ActivationFunctionType::NONE);
+    if ( stageCount >= 9 )
+        output = addConv(output, 24, 24, 128, 64, 1, 1,
+            tflite::ActivationFunctionType::NONE);
+    if ( stageCount >= 10 ) output = addResidual(output, pw1, 24, 24, 64);
+    if ( stageCount >= 11 )
+        output = addConv(output, 24, 24, 64, 64, 3, 1,
+            tflite::ActivationFunctionType::NONE);
+    if ( stageCount >= 12 )
+    {
+        const int pooled = addActivation({1, 1, 1, 64});
+        const auto poolOptions = tflite::CreatePool2DOptions(
+            builder, tflite::Padding::VALID, 1, 1, 24, 24,
+            tflite::ActivationFunctionType::NONE);
+        const std::vector<int32_t> poolInputs = {output};
+        const std::vector<int32_t> poolOutputs = {pooled};
+        operations.push_back(tflite::CreateOperatorDirect(
+            builder, 3, &poolInputs, &poolOutputs, tflite::BuiltinOptions::Pool2DOptions,
+            poolOptions.Union()));
+        output = pooled;
+    }
+    if ( stageCount >= 13 )
+        output = addConv(output, 1, 1, 64, 32, 1, 1,
+            tflite::ActivationFunctionType::NONE);
+
+    const std::vector<int32_t> graphInputs = {input};
+    const std::vector<int32_t> graphOutputs = {output};
+    const std::vector<flatbuffers::Offset<tflite::SubGraph>> subgraphs = {
+        tflite::CreateSubGraphDirect(
+            builder, &tensors, &graphInputs, &graphOutputs, &operations, "main"),
+    };
+    const std::vector<flatbuffers::Offset<tflite::OperatorCode>> operatorCodes = {
+        tflite::CreateOperatorCodeDirect(builder, int8_t(tflite::BuiltinOperator::CONV_2D),
+            nullptr, 1, tflite::BuiltinOperator::CONV_2D),
+        tflite::CreateOperatorCodeDirect(
+            builder, int8_t(tflite::BuiltinOperator::DEPTHWISE_CONV_2D),
+            nullptr, 1, tflite::BuiltinOperator::DEPTHWISE_CONV_2D),
+        tflite::CreateOperatorCodeDirect(builder, int8_t(tflite::BuiltinOperator::ADD),
+            nullptr, 1, tflite::BuiltinOperator::ADD),
+        tflite::CreateOperatorCodeDirect(
+            builder, int8_t(tflite::BuiltinOperator::AVERAGE_POOL_2D),
+            nullptr, 1, tflite::BuiltinOperator::AVERAGE_POOL_2D),
+    };
+    const auto model = tflite::CreateModelDirect(builder, 3, &operatorCodes, &subgraphs,
+        "Neural-AI Micro-MobileNet compiler test", &buffers);
+    tflite::FinishModelBuffer(builder, model);
+    return builder.Release();
+}
+
 }  // namespace
 
 TEST_CASE("Neural-AI architecture factory")
@@ -1357,6 +1530,61 @@ TEST_CASE("Neural-AI compiler admits MobileNet-scale global AvgPool")
     blob->Release();
 }
 
+TEST_CASE("Neural-AI compiler lowers the complete Micro-MobileNet topology")
+{
+    for ( int stage = 1; stage <= 13; ++stage )
+    {
+        std::unique_ptr<Architecture> prefixArchitecture = std::make_unique<ArchNeuralAI>();
+        Compiler prefixCompiler(prefixArchitecture);
+        const std::string prefixOptions = "[scheduler]\ncpu_tensor_alignment=32\n";
+        REQUIRE(prefixCompiler.ParseOptions(prefixOptions.c_str(), prefixOptions.size()));
+        const auto prefixModel = BuildMicroMobileNetModel(stage);
+        REQUIRE(prefixCompiler.LoadTflite(prefixModel.data(), prefixModel.size()));
+        INFO("Micro-MobileNet stage " << stage);
+        REQUIRE(prefixCompiler.Compile());
+    }
+
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildMicroMobileNetModel();
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+    const bool compiled = compiler.Compile();
+    INFO(compiler.LastError());
+    REQUIRE(compiled);
+
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    const uint32_t commandBytes = Read32(data + 64 + 12);
+    uint32_t offset = 224;
+    uint32_t addCommands = 0;
+    uint32_t averageCommands = 0;
+    uint32_t convCommands = 0;
+    while ( offset < 224 + commandBytes )
+    {
+        const auto type = neuralai::CommandType(Read16(data + offset));
+        const uint16_t commandSize = Read16(data + offset + 2);
+        REQUIRE(commandSize >= sizeof(neuralai::CommandHeaderV2));
+        REQUIRE(type != neuralai::CommandType::AFULut);
+        if ( type == neuralai::CommandType::AFUBinary ) ++addCommands;
+        if ( type == neuralai::CommandType::AFUGlobalAvgPool ) ++averageCommands;
+        if ( type == neuralai::CommandType::PointwiseC32 ||
+             type == neuralai::CommandType::DepthwiseC32 ||
+             type == neuralai::CommandType::LineBufferJob )
+            ++convCommands;
+        offset += commandSize;
+    }
+    REQUIRE(offset == 224 + commandBytes);
+    REQUIRE(addCommands == 2);
+    REQUIRE(averageCommands == 1);
+    REQUIRE(convCommands > 10);
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
+}
+
 TEST_CASE("Neural-AI compiler removes internal reshape-like views without adding commands")
 {
     for ( const tflite::BuiltinOperator viewOperator : {
@@ -1734,16 +1962,21 @@ TEST_CASE("Neural-AI compiler emits all depthwise C32 group and tail variants")
     }
 }
 
-TEST_CASE("Neural-AI op groups do not fuse matrix operations")
+TEST_CASE("Neural-AI op groups fuse one clipping activation only")
 {
     ArchNeuralAI arch;
     ArchitectureOpGroupQuery query{};
     query.type = OpType::FullyConnected;
+    ArchitectureOpGroupQuery activation{};
+    activation.type = OpType::Relu6;
 
     auto group = arch.CreateOpGroup(query);
     REQUIRE(group);
     REQUIRE(group->NeedsAllocation(1));
     REQUIRE(group->Add(query) == 0);
+    REQUIRE(group->Add(activation, {-1}) == -2);
+    REQUIRE(group->Add(activation, {-1}) == 0);
+    REQUIRE(arch.CreateOpGroup(activation) == nullptr);
 }
 
 TEST_CASE("Neural-AI GEMM weight packing follows K-lane N-lane tile order")

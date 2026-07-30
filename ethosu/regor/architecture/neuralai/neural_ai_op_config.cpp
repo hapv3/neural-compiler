@@ -43,11 +43,18 @@ std::string NeuralAIOpConfig::ToString(bool full)
 
 int NeuralAIOpGroup::Add(const ArchitectureOpGroupQuery &op, const std::vector<int> &dependsOn)
 {
-    if ( _hasOp || !dependsOn.empty() ||
-         (op.type != OpType::FullyConnected && op.type != OpType::MatMul && op.type != OpType::Conv2D &&
-             op.type != OpType::DepthwiseConv2D &&
-             op.type != OpType::Add &&
-             op.type != OpType::AvgPool &&
+    if ( _hasOp )
+    {
+        if ( _hasActivation || !IsClipping(op.type) ||
+             dependsOn.size() != 1 || dependsOn[0] != -1 )
+            return 0;
+        _hasActivation = true;
+        return -2;
+    }
+    if ( !dependsOn.empty() ||
+         (op.type != OpType::FullyConnected && op.type != OpType::MatMul &&
+             op.type != OpType::Conv2D && op.type != OpType::DepthwiseConv2D &&
+             op.type != OpType::Add && op.type != OpType::AvgPool &&
              op.type != OpType::MemoryCopy) )
     {
         return 0;

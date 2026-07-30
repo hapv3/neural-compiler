@@ -60,6 +60,7 @@ class NeuralAIOpGroup final : public ArchitectureOpGroup
 {
 private:
     bool _hasOp = false;
+    bool _hasActivation = false;
     bool _allowsIFMReuse = true;
 
 public:
