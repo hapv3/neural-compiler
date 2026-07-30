@@ -1,4 +1,4 @@
-# Neural-AI Model and Runtime ABI v1.0
+# Neural-AI Model and Runtime ABI v1.1
 
 ## Scope
 

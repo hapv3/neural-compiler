@@ -1966,8 +1966,8 @@ The following must be complete before Conv compiler lowering begins:
     versus 493,826 ns immediately before it (+0.04%) and 492,662 ns before DMA
     direction validation (+0.27% cumulative).
   - Depthwise K3 S2 C33 tail: 228,121 simulated ns.
-- Runtime firmware `.text` is 24,276 bytes after the GlobalAvgPool runtime
-  addition, below the 32 KB limit.
+- Runtime firmware `.text` is 23,936 bytes with the ABI 1.1 section layout,
+  below the 32 KB limit.
 - The focused package times include boot, command loading,
   boundary layout DMA, and output checking. They must not be compared as
   operator latency against the PMU-only Micro-MobileNet and Micro-YOLO records.
