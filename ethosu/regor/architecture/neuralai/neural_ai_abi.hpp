@@ -336,6 +336,17 @@ struct CommandAFUBinaryV2
     uint32_t reserved[4];
 };
 
+struct CommandAFUGlobalAvgPoolV2
+{
+    CommandHeaderV2 header;
+    RefV1 ifm;
+    RefV1 ofm;
+    uint32_t inputH;
+    uint32_t inputW;
+    uint32_t channels;
+    uint32_t reserved[5];
+};
+
 struct LinebufJobWireV1
 {
     SystolicLinebufCfg linebuf;
@@ -394,6 +405,7 @@ static_assert(sizeof(CommandGemm32V2) == 96);
 static_assert(sizeof(CommandPointwiseC32V2) == 96);
 static_assert(sizeof(CommandDepthwiseC32V2) == 96);
 static_assert(sizeof(CommandAFUBinaryV2) == 64);
+static_assert(sizeof(CommandAFUGlobalAvgPoolV2) == 64);
 static_assert(sizeof(LinebufJobWireV1) == 124);
 static_assert(sizeof(CommandLineBufferJobV2) == 160);
 static_assert(sizeof(CommandCopyLayoutV2) == 96);

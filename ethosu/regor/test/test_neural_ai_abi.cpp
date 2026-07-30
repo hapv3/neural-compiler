@@ -91,6 +91,26 @@ TEST_CASE("neural_ai_abi freezes AFU binary command layout")
     REQUIRE(command.mode == 1);
 }
 
+TEST_CASE("neural_ai_abi freezes AFU global AvgPool command layout")
+{
+    CommandAFUGlobalAvgPoolV2 command{};
+    command.header.type = uint16_t(CommandType::AFUGlobalAvgPool);
+    command.header.sizeBytes = sizeof(command);
+    command.ifm = {uint16_t(Region::TCDMScratch), 0, 0};
+    command.ofm = {uint16_t(Region::TCDMScratch), 0, 0x200};
+    command.inputH = 24;
+    command.inputW = 24;
+    command.channels = 64;
+
+    REQUIRE(command.header.type == 14);
+    REQUIRE(command.header.sizeBytes == 64);
+    REQUIRE(command.ifm.offset == 0);
+    REQUIRE(command.ofm.offset == 0x200);
+    REQUIRE(command.inputH == 24);
+    REQUIRE(command.inputW == 24);
+    REQUIRE(command.channels == 64);
+}
+
 TEST_CASE("neural_ai_abi freezes DMA direction values")
 {
     REQUIRE(uint32_t(DMADirection::ExternalToLocal) == 0);

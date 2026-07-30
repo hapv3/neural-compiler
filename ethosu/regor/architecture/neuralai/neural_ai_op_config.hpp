@@ -23,6 +23,7 @@ enum class NeuralAIOpMode
     DepthwiseC32S1Requant,
     DepthwiseC32S2Requant,
     AFUBinaryAddI8,
+    AFUGlobalAvgPoolC32,
 };
 
 const char *NeuralAIOpModeName(NeuralAIOpMode mode);

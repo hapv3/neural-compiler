@@ -567,6 +567,50 @@ struct GeneratorContext
         return true;
     }
 
+    bool AppendAFUGlobalAvgPool(const SchedulerOperation *operation, std::string &error)
+    {
+        const SchedulerOpInfo *cost = schedule->Cost(operation);
+        if ( cost == nullptr || cost->Config() == nullptr )
+            return SetError(error, "Neural-AI AvgPool operation has no validated target mode");
+        const auto *config = static_cast<const NeuralAIOpConfig *>(cost->Config());
+        if ( config->Mode() != NeuralAIOpMode::AFUGlobalAvgPoolC32 )
+            return SetError(error, "Neural-AI AvgPool operation has no validated AFU global mode");
+        const SchedulerConnection *ifm = operation->IFM(0);
+        const SchedulerConnection *ofm = operation->OFM();
+        const Kernel *kernel = operation->Kernel();
+        if ( ifm == nullptr || ofm == nullptr || kernel == nullptr ||
+             !IsFullTensorConnection(ifm) || !IsFullTensorConnection(ofm) ||
+             ifm->tensor->format != TensorFormat::C32Blocked ||
+             ofm->tensor->format != TensorFormat::C32Blocked )
+            return SetError(error, "Neural-AI global AvgPool requires full C32-blocked tensors");
+        const Shape inputShape = ReshapeToNHWC(ifm->shape);
+        const Shape outputShape = ReshapeToNHWC(ofm->shape);
+        if ( inputShape.Batch() != 1 || inputShape.Height() <= 0 || inputShape.Width() <= 0 ||
+             inputShape.Depth() <= 0 || outputShape != Shape(1, 1, 1, inputShape.Depth()) ||
+             kernel->Size() != Point2i(inputShape.Width(), inputShape.Height()) ||
+             kernel->Stride() != Point2i(1, 1) || kernel->Dilation() != Point2i(1, 1) ||
+             !kernel->Padding().IsZero() )
+            return SetError(error, "Neural-AI AFU AvgPool requires a full-spatial 1x1 reduction");
+        RefV1 ifmRef = TensorRef(ifm->tensor.get(), 0, error);
+        if ( !error.empty() ) return false;
+        RefV1 ofmRef = TensorRef(ofm->tensor.get(), 0, error);
+        if ( !error.empty() ) return false;
+        if ( ifmRef.region != uint16_t(Region::TCDMScratch) ||
+             ofmRef.region != uint16_t(Region::TCDMScratch) )
+            return SetError(error, "Neural-AI AFU AvgPool requires internal TCDM tensors");
+
+        AppendHeader(artifact->commands, CommandType::AFUGlobalAvgPool, 64,
+            uint32_t(operation->Index()), 0);
+        AppendRef(artifact->commands, ifmRef);
+        AppendRef(artifact->commands, ofmRef);
+        Append32(artifact->commands, uint32_t(inputShape.Height()));
+        Append32(artifact->commands, uint32_t(inputShape.Width()));
+        Append32(artifact->commands, uint32_t(inputShape.Depth()));
+        AppendZeros(artifact->commands, 5);
+        ++artifact->commandCount;
+        return true;
+    }
+
     bool AppendMatrix(const SchedulerOperation *operation, std::string &error)
     {
         const SchedulerOpInfo *cost = schedule->Cost(operation);
@@ -992,6 +1036,10 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         else if ( operation->Type() == OpType::Add )
         {
             if ( !context.AppendAFUAdd(operation.get(), error) ) return false;
+        }
+        else if ( operation->Type() == OpType::AvgPool )
+        {
+            if ( !context.AppendAFUGlobalAvgPool(operation.get(), error) ) return false;
         }
         else if ( operation->Type() == OpType::FullyConnected || operation->Type() == OpType::MatMul ||
                   operation->Type() == OpType::Conv2D )

@@ -47,6 +47,13 @@ CycleCost NeuralAIPerformance::MeasureCycleCost(const PerformanceQuery &query)
     if ( query.type == OpType::MemoryCopy ) return cost;
 
     const int64_t depthK = query.ifm[0].shape.Depth();
+    if ( query.type == OpType::AvgPool )
+    {
+        const int64_t spatial = depthK > 0 ? query.ifm[0].shape.Elements64() / depthK : 0;
+        const int64_t groups = depthK > 0 ? (depthK + 31) / 32 : 0;
+        cost.opCycles = std::max<int64_t>(1, spatial * groups);
+        return cost;
+    }
     const int64_t depthN = query.ofm.shape.Depth();
     const int64_t rows = depthN > 0 ? query.ofm.shape.Elements64() / depthN : 0;
     cost.macs = rows * depthK * depthN;

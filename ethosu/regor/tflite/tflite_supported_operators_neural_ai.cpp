@@ -16,6 +16,7 @@ namespace
 
 const std::set<OpType> s_supportedOpTypes = {
     OpType::Add,
+    OpType::AvgPool,
     OpType::Conv2D,
     OpType::DepthwiseConv2D,
     OpType::ExpandDims,

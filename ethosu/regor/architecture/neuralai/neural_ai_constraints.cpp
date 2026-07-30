@@ -68,12 +68,28 @@ bool HasRawAddScales(const ArchFM &lhs, const ArchFM &rhs, const ArchFM &ofm)
            ofmScales[0] == outputIdentity;
 }
 
+int64_t ScalarZeroPoint(const Quantization &quantization)
+{
+    return quantization.zeroPoints.empty() ? 0 : quantization.zeroPoints[0];
+}
+
+bool HasRawAverageQuantization(const ArchFM &ifm, const ArchFM &ofm)
+{
+    if ( ifm.quantization == nullptr || ofm.quantization == nullptr ||
+         ifm.quantization->zeroPoints.size() > 1 || ofm.quantization->zeroPoints.size() > 1 ||
+         ScalarZeroPoint(*ifm.quantization) != ScalarZeroPoint(*ofm.quantization) ||
+         ofm.quantization->scales.size() != 1 ||
+         ofm.quantization->scales[0] != QuantizedScale(1.0) )
+        return false;
+    return HasFullInt8Clamp(ofm);
+}
+
 }  // namespace
 
 bool NeuralAIConstraints::IsSupportedOp(OpType opType)
 {
     return opType == OpType::FullyConnected || opType == OpType::MatMul || opType == OpType::Conv2D ||
-           opType == OpType::Add ||
+           opType == OpType::Add || opType == OpType::AvgPool ||
            opType == OpType::DepthwiseConv2D || opType == OpType::MemoryCopy;
 }
 
@@ -267,6 +283,33 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
         }
         return QueryResult::Native;
     }
+    if ( opType == OpType::AvgPool )
+    {
+        const Kernel *kernel = query->kernel;
+        const Shape &ifmShape = query->ifm[0].shape;
+        const Shape &ofmShape = query->ofm.shape;
+        if ( kernel == nullptr || !HasBatchOne(ifmShape) || !HasBatchOne(ofmShape) ||
+             kernel->Size() != Point2i(ifmShape.Width(), ifmShape.Height()) ||
+             kernel->Stride() != Point2i(1, 1) ||
+             kernel->Dilation() != Point2i(1, 1) || !kernel->Padding().IsZero() ||
+             ofmShape.Height() != 1 || ofmShape.Width() != 1 ||
+             ofmShape.Depth() != ifmShape.Depth() ||
+             !HasRawAverageQuantization(query->ifm[0], query->ofm) )
+        {
+            return QueryResult::Unsupported;
+        }
+        if ( req != nullptr )
+        {
+            Set(s_tensorRequirements[0], TensorUsage::IFM0, TensorFormat::C32Blocked);
+            Set(s_tensorRequirements[1], TensorUsage::OFM, TensorFormat::C32Blocked);
+            s_tensorRequirements[0].next = &s_tensorRequirements[1];
+            s_tensorRequirements[1].next = nullptr;
+            req->tensor = s_tensorRequirements[0];
+            req->req.Set(ArchRequirement::Tensor);
+            return QueryResult::NativeHasReq;
+        }
+        return QueryResult::Native;
+    }
     const DataType weightsType = query->weights.type != DataType::None ? query->weights.type : query->ifm[1].type;
     if ( weightsType != DataType::Int8 || query->weightFormat == WeightFormat::None )
     {
@@ -307,6 +350,8 @@ bool NeuralAIConstraints::SupportedZeroPoint(int64_t zeroPoint, TensorUsage usag
 {
     if ( !IsSupportedOp(opType) || dataType != DataType::Int8 ) return false;
     if ( opType == OpType::Add ) return (IsIFM(usage) || IsOFM(usage)) && zeroPoint == 0;
+    if ( opType == OpType::AvgPool )
+        return (IsIFM(usage) || IsOFM(usage)) && zeroPoint >= -128 && zeroPoint <= 127;
     if ( IsIFM(usage) || usage == TensorUsage::Weights ) return zeroPoint == 0;
     return IsOFM(usage) && zeroPoint >= -128 && zeroPoint <= 127;
 }

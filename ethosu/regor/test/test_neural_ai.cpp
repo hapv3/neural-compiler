@@ -222,6 +222,58 @@ flatbuffers::DetachedBuffer BuildAddModel(float lhsScale = 1.0f, float rhsScale 
     return builder.Release();
 }
 
+flatbuffers::DetachedBuffer BuildGlobalAvgPoolModel(
+    int height = 2, int width = 3, int channels = 33,
+    float inputScale = 0.25f, float outputScale = 0.25f, int64_t zeroPoint = -3,
+    tflite::ActivationFunctionType activation = tflite::ActivationFunctionType::NONE,
+    int filterHeight = 0, int filterWidth = 0)
+{
+    flatbuffers::FlatBufferBuilder builder;
+    const std::vector<int64_t> zeroPoints = {zeroPoint};
+    const std::vector<float> inputScales = {inputScale};
+    const std::vector<float> outputScales = {outputScale};
+    const auto inputQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &inputScales, &zeroPoints);
+    const auto outputQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &outputScales, &zeroPoints);
+    std::vector<flatbuffers::Offset<tflite::Buffer>> buffers = {
+        tflite::CreateBufferDirect(builder),
+    };
+    const std::vector<int32_t> inputShape = {1, height, width, channels};
+    const std::vector<int32_t> outputShape = {1, 1, 1, channels};
+    std::vector<flatbuffers::Offset<tflite::Tensor>> tensors = {
+        tflite::CreateTensorDirect(
+            builder, &inputShape, tflite::TensorType::INT8, 0, "input", inputQuant),
+        tflite::CreateTensorDirect(
+            builder, &outputShape, tflite::TensorType::INT8, 0, "output", outputQuant),
+    };
+    if ( filterHeight == 0 ) filterHeight = height;
+    if ( filterWidth == 0 ) filterWidth = width;
+    const auto options = tflite::CreatePool2DOptions(
+        builder, tflite::Padding::VALID, 1, 1, filterWidth, filterHeight, activation);
+    const std::vector<int32_t> opInputs = {0};
+    const std::vector<int32_t> opOutputs = {1};
+    const std::vector<flatbuffers::Offset<tflite::Operator>> operations = {
+        tflite::CreateOperatorDirect(builder, 0, &opInputs, &opOutputs,
+            tflite::BuiltinOptions::Pool2DOptions, options.Union()),
+    };
+    const std::vector<int32_t> graphInputs = {0};
+    const std::vector<int32_t> graphOutputs = {1};
+    const std::vector<flatbuffers::Offset<tflite::SubGraph>> subgraphs = {
+        tflite::CreateSubGraphDirect(
+            builder, &tensors, &graphInputs, &graphOutputs, &operations, "main"),
+    };
+    const std::vector<flatbuffers::Offset<tflite::OperatorCode>> operatorCodes = {
+        tflite::CreateOperatorCodeDirect(
+            builder, int8_t(tflite::BuiltinOperator::AVERAGE_POOL_2D),
+            nullptr, 1, tflite::BuiltinOperator::AVERAGE_POOL_2D),
+    };
+    const auto model = tflite::CreateModelDirect(
+        builder, 3, &operatorCodes, &subgraphs, "Neural-AI global AvgPool test", &buffers);
+    tflite::FinishModelBuffer(builder, model);
+    return builder.Release();
+}
+
 flatbuffers::DetachedBuffer BuildViewModel(
     tflite::BuiltinOperator viewOperator, bool followedByAdd)
 {
@@ -758,6 +810,16 @@ TEST_CASE("Neural-AI performance model estimates GEMM and DMA costs")
     REQUIRE(gemm.macs == 33 * 34);
     REQUIRE(gemm.opCycles == 2);
 
+    query.type = OpType::AvgPool;
+    query.ifm[0].shape = Shape(1, 2, 3, 33);
+    query.ofm.shape = Shape(1, 1, 1, 33);
+    const CycleCost globalAverage = performance->MeasureCycleCost(query);
+    REQUIRE(globalAverage.macs == 0);
+    REQUIRE(globalAverage.opCycles == 12);
+
+    query.type = OpType::FullyConnected;
+    query.ifm[0].shape = Shape(1, 1, 1, 33);
+    query.ofm.shape = Shape(1, 1, 1, 34);
     const ElementAccess elements = performance->MeasureElementAccess(query);
     const ElementAccess bytes = performance->ElementTransferToBytes(query, elements);
     REQUIRE(bytes.ifmRead[0] == 33);
@@ -1185,6 +1247,114 @@ TEST_CASE("Neural-AI compiler rejects Add modes that need requantization or acti
     rejects(BuildAddModel(1.0f, 0.5f, 1.0f));
     rejects(BuildAddModel(1.0f, 1.0f, 1.0f, 1));
     rejects(BuildAddModel(1.0f, 1.0f, 1.0f, 0, tflite::ActivationFunctionType::RELU));
+}
+
+TEST_CASE("Neural-AI compiler lowers full-spatial AvgPool through AFU C32 reduction")
+{
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildGlobalAvgPoolModel();
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+    const bool compiled = compiler.Compile();
+    INFO(compiler.LastError());
+    REQUIRE(compiled);
+
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    const uint32_t commandBytes = Read32(data + 64 + 12);
+    uint32_t offset = 224;
+    uint32_t avgPoolCommands = 0;
+    while ( offset < 224 + commandBytes )
+    {
+        const uint16_t type = Read16(data + offset);
+        const uint16_t commandSize = Read16(data + offset + 2);
+        REQUIRE(commandSize >= 32);
+        if ( type == uint16_t(neuralai::CommandType::AFUGlobalAvgPool) )
+        {
+            REQUIRE(commandSize == sizeof(neuralai::CommandAFUGlobalAvgPoolV2));
+            REQUIRE(Read16(data + offset + 16) == uint16_t(neuralai::Region::TCDMScratch));
+            REQUIRE(Read16(data + offset + 24) == uint16_t(neuralai::Region::TCDMScratch));
+            REQUIRE(Read32(data + offset + 32) == 2);
+            REQUIRE(Read32(data + offset + 36) == 3);
+            REQUIRE(Read32(data + offset + 40) == 33);
+            ++avgPoolCommands;
+        }
+        offset += commandSize;
+    }
+    REQUIRE(offset == 224 + commandBytes);
+    REQUIRE(avgPoolCommands == 1);
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
+}
+
+TEST_CASE("Neural-AI compiler rejects non-global or requantized AvgPool")
+{
+    const auto rejects = [](flatbuffers::DetachedBuffer model)
+    {
+        std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+        Compiler compiler(architecture);
+        const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+        REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+        REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+        bool rejected = false;
+        try
+        {
+            rejected = !compiler.Compile();
+        }
+        catch ( const std::runtime_error & )
+        {
+            rejected = true;
+        }
+        REQUIRE(rejected);
+    };
+
+    rejects(BuildGlobalAvgPoolModel(2, 3, 33, 0.25f, 0.5f));
+    rejects(BuildGlobalAvgPoolModel(2, 3, 33, 0.25f, 0.25f, -3,
+        tflite::ActivationFunctionType::RELU));
+    rejects(BuildGlobalAvgPoolModel(2, 3, 33, 0.25f, 0.25f, -3,
+        tflite::ActivationFunctionType::NONE, 1, 3));
+}
+
+TEST_CASE("Neural-AI compiler admits MobileNet-scale global AvgPool")
+{
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildGlobalAvgPoolModel(24, 24, 64);
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+    const bool compiled = compiler.Compile();
+    INFO(compiler.LastError());
+    REQUIRE(compiled);
+
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    const uint32_t commandBytes = Read32(data + 64 + 12);
+    uint32_t offset = 224;
+    bool sawGlobalAverage = false;
+    while ( offset < 224 + commandBytes )
+    {
+        const uint16_t type = Read16(data + offset);
+        const uint16_t commandSize = Read16(data + offset + 2);
+        if ( type == uint16_t(neuralai::CommandType::AFUGlobalAvgPool) )
+        {
+            REQUIRE(Read32(data + offset + 32) == 24);
+            REQUIRE(Read32(data + offset + 36) == 24);
+            REQUIRE(Read32(data + offset + 40) == 64);
+            sawGlobalAverage = true;
+        }
+        offset += commandSize;
+    }
+    REQUIRE(offset == 224 + commandBytes);
+    REQUIRE(sawGlobalAverage);
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
 }
 
 TEST_CASE("Neural-AI compiler removes internal reshape-like views without adding commands")
