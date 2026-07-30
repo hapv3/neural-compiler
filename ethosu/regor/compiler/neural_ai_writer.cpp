@@ -79,21 +79,6 @@ void Pad32(std::vector<uint8_t> &data)
     data.resize(RoundAway(int(data.size()), int(neuralai::Alignment)), 0);
 }
 
-uint32_t CRC32(const std::vector<uint8_t> &data)
-{
-    uint32_t crc = 0xFFFFFFFFU;
-    for ( uint8_t byte : data )
-    {
-        crc ^= byte;
-        for ( int bit = 0; bit < 8; ++bit )
-        {
-            const uint32_t mask = 0U - (crc & 1U);
-            crc = (crc >> 1) ^ (0xEDB88320U & mask);
-        }
-    }
-    return ~crc;
-}
-
 bool ProductBytes(const neuralai::BindingV1 &binding, uint32_t &bytes)
 {
     if ( binding.rank == 0 || binding.rank > 4 ) return false;
@@ -180,8 +165,8 @@ bool WriteNeuralAIModel(const CompiledNeuralAIArtifact &artifact, std::vector<ui
             error = "NeuralAI package exceeds the 32-bit ABI size";
             return false;
         }
-        sections[index] = {uint32_t(payload.type), 0, offset, uint32_t(payload.bytes.size()), neuralai::Alignment,
-            payload.elementCount, CRC32(payload.bytes), 0};
+        sections[index] = {uint32_t(payload.type), 0, offset, uint32_t(payload.bytes.size()),
+            neuralai::Alignment, payload.elementCount, {0, 0}};
         offset += uint32_t(payload.bytes.size());
     }
 

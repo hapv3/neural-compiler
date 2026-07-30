@@ -19,7 +19,7 @@ namespace regor::neuralai
 constexpr uint32_t ModelMagic = 0x4D49414EU;       // "NAIM" in little-endian storage
 constexpr uint32_t InvocationMagic = 0x5649414EU;  // "NAIV" in little-endian storage
 constexpr uint16_t AbiMajor = 1;
-constexpr uint16_t AbiMinor = 0;
+constexpr uint16_t AbiMinor = 1;
 constexpr uint32_t TargetId = 1;
 constexpr uint32_t Alignment = 32;
 
@@ -137,8 +137,7 @@ struct SectionV1
     uint32_t size;
     uint32_t alignment;
     uint32_t elementCount;
-    uint32_t crc32;
-    uint32_t reserved;
+    uint32_t reserved[2];
 };
 
 struct InvocationV1

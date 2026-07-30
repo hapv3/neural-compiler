@@ -63,8 +63,7 @@ SerializedSectionV1 Serialize(const SectionV1 &value)
     Write32(output, offset, value.size);
     Write32(output, offset, value.alignment);
     Write32(output, offset, value.elementCount);
-    Write32(output, offset, value.crc32);
-    Write32(output, offset, value.reserved);
+    for ( uint32_t reserved : value.reserved ) Write32(output, offset, reserved);
     return output;
 }
 
@@ -145,7 +144,7 @@ bool ValidateModelLayout(const ModelHeaderV1 &header, const SectionV1 *sections,
             error = "section " + std::to_string(index) + " is out of range or misaligned";
             return false;
         }
-        if ( section.reserved != 0 )
+        if ( section.reserved[0] != 0 || section.reserved[1] != 0 )
         {
             error = "section " + std::to_string(index) + " has non-zero reserved fields";
             return false;

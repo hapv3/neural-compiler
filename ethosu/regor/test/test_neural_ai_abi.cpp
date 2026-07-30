@@ -33,7 +33,7 @@ TEST_CASE("neural_ai_abi model header has deterministic little-endian bytes")
 
     const auto bytes = Serialize(header);
     const SerializedModelHeaderV1 expected = {
-        0x4E, 0x41, 0x49, 0x4D, 0x01, 0x00, 0x00, 0x00,
+        0x4E, 0x41, 0x49, 0x4D, 0x01, 0x00, 0x01, 0x00,
         0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x04, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00,
         0x40, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
@@ -153,7 +153,7 @@ TEST_CASE("neural_ai_abi validates section alignment and bounds")
     }
     SECTION("non-zero reserved field")
     {
-        section.reserved = 1;
+        section.reserved[1] = 1;
         REQUIRE_FALSE(ValidateModelLayout(header, &section, 1, error));
         REQUIRE(error.find("reserved") != std::string::npos);
     }

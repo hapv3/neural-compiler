@@ -31,10 +31,11 @@ The wire contract is represented in C++ by
 
 `nai_model_header_v1_t` is 64 bytes and is followed by a table of 32-byte
 `nai_section_v1_t` entries. Required section types are COMMANDS, CONSTANTS,
-TENSORS, BINDINGS, and QPARAMS; DEBUG_MAP is optional. CRC32 covers section
-payload bytes exactly, including deterministic zero padding.
+TENSORS, BINDINGS, and QPARAMS; DEBUG_MAP is optional. ABI 1.1 does not carry
+or validate section checksums; the last two words of each section entry are
+reserved and must be zero.
 
-The header identifies target 1 (single-cluster Neural-AI), ABI 1.0, the first
+The header identifies target 1 (single-cluster Neural-AI), ABI 1.1, the first
 command, command count, model TCDM requirement, and public input/output counts.
 TCDM requirements exclude the fixed command staging window.
 

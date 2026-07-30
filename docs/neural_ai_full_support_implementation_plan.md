@@ -816,10 +816,14 @@ typedef struct {
     uint32_t size;
     uint32_t alignment;
     uint32_t element_count;
-    uint32_t crc32;
-    uint32_t reserved;
+    uint32_t reserved[2];
 } nai_section_v1_t;
 ```
+
+ABI 1.1 assigns both trailing section words as reserved zero. The package does
+not carry or validate a checksum; firmware validates version, target, reserved
+fields, alignment, overflow-safe ranges, required sections, bindings, and
+commands without scanning every section payload before dispatch.
 
 Minimum section types:
 
@@ -1964,7 +1968,7 @@ The following must be complete before Conv compiler lowering begins:
   - Depthwise K3 S2 C33 tail: 228,121 simulated ns.
 - Runtime firmware `.text` is 24,276 bytes after the GlobalAvgPool runtime
   addition, below the 32 KB limit.
-- The focused package times include boot, section CRC, command loading,
+- The focused package times include boot, command loading,
   boundary layout DMA, and output checking. They must not be compared as
   operator latency against the PMU-only Micro-MobileNet and Micro-YOLO records.
   The current native baselines remain 347,992 total cycles for Micro-MobileNet
