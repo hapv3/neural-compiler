@@ -978,11 +978,16 @@ Rules:
 - `COPY_LAYOUT` must be implemented according to the memory spaces involved,
   because Snitch does not have an L2/AXI data path on D-bus. Concrete modes:
   - **NHWC→ROW32, L2→TCDM**: Zero-fill destination native buffer in TCDM, then
-    iDMA 2D with `length = C * element_bytes`, `source_stride = C *
-    element_bytes`, `dest_stride = round_up(C, 32) * element_bytes`,
-    `repetitions = N * H * W`.
+    transfer the logical `C * element_bytes` row span with iDMA 2D,
+    `source_stride = C * element_bytes`, `dest_stride = round_up(C, 32) *
+    element_bytes`, and `repetitions = N * H * W`. The runtime decomposes a
+    row span wider than one 32-byte data beat into at-most-32-byte affine 2D
+    segments while preserving those strides. This is required by the current
+    RTL iDMA path: a wide row combined with a non-32-byte compact stride can
+    otherwise leave the engine busy indefinitely.
   - **ROW32→NHWC, TCDM→L2**: iDMA 2D with reversed source and destination
-    strides; padded lanes are not copied.
+    strides and the same at-most-32-byte row segmentation; padded lanes are not
+    copied.
   - **NHWC↔C32 with multiple channel groups**: Requires one transfer per
     channel group, or a verified Spatz gather/scatter kernel. Multi-group C32
     cannot be expressed with a single affine row stride.
@@ -1680,12 +1685,19 @@ neural-ai/sw/lib/npu_memory_map.h
 - A Verilator round-trip regression executes external-to-local and
   local-to-external DMA for 1D length 37, 2D C=3, and 3D C=31, then checks the
   sparse output byte-exactly. It passes at 278,888 simulated ns.
-- The existing `COPY_LAYOUT` C=3/C=31 regression with unaligned L2 bindings
-  passes at 199,932 simulated ns.
+- The `COPY_LAYOUT` C=3/C=31 regression with unaligned L2 bindings passes at
+  198,258 simulated ns after wide-row chunking, versus 199,932 ns before it
+  (-0.84%).
+- The ROW32 boundary matrix round-trips `H=2`, `W=3`, and
+  `C=3,31,32,33,63,64,65` byte-exactly. C=63 exposed a pre-fix iDMA busy
+  timeout; with row spans split into 32-byte segments, all seven cases pass in
+  702,378 aggregate simulated ns. Individual runtime completion is
+  97,692-101,628 ns and PMU cycles are 67,574-71,510 as the segment count
+  increases.
 - The independent-memory regression verifies the `0x1010...`/`0x1018...`
   Snitch alias and the `0x1020...` engine alias through iDMA in both
   directions. It passes at 34,247 simulated ns.
-- The runtime firmware remains 23,596 bytes of `.text`; no RTL source was
+- The runtime firmware is 23,684 bytes of `.text`; no RTL source was
   changed.
 
 ## Phase 1 - Runtime ABI v2 and GEMM Execution Skeleton
@@ -1764,9 +1776,10 @@ neural-ai/sw/test/compiler_runtime/*
 - Compiler C++ tests pass 183/183 and the Neural-AI compiler-runtime host checks
   pass.
 - Compiler-generated Verilator regressions still pass after adding the runtime
-  validation: public Reshape at 97,644 simulated ns, generic K3 at 493,826
-  simulated ns, and RGB K3 at 195,851 simulated ns.
-- Runtime firmware `.text` is 23,596 bytes, below the 32 KB limit.
+  validation and wide-row layout chunking: public Reshape at 97,644 simulated
+  ns before the chunking change, generic K3 at 494,008 simulated ns, and RGB K3
+  at 195,997 simulated ns.
+- Runtime firmware `.text` is 23,684 bytes, below the 32 KB limit.
 
 ## Phase 2 - Neural-AI Target Skeleton in Regor
 
@@ -1847,6 +1860,10 @@ model into `.nai` and execute it using the Phase 1 runtime.
   ns.
 - Two independent compiler instances produce byte-identical `.nai` blobs for
   the same FullyConnected K33/N34 model and configuration.
+- A Verilator ROW32 boundary package round-trips contiguous public data through
+  native TCDM storage for `H=2`, `W=3`, and
+  `C=3,31,32,33,63,64,65`, including the wide compact-stride cases that require
+  multiple iDMA row segments.
 - This evidence does not relax the Phase 1 command limit: a raw command with
   either oversized M value remains invalid.
 
@@ -1929,12 +1946,14 @@ The following must be complete before Conv compiler lowering begins:
 - Compiler C++ tests: 183/183 pass.
 - Neural-AI compiler-runtime host ABI/layout/quantization checks pass.
 - Compiler-generated Verilator packages pass byte-exactly:
-  - RGB K3 S2 C3 -> C32: 195,851 simulated ns after DMA direction validation;
-    the previous record was 194,651 ns (+0.62%).
-  - Generic K3 S1 C32 -> C32: 493,826 simulated ns after DMA direction
-    validation; the previous record was 492,662 ns (+0.24%).
+  - RGB K3 S2 C3 -> C32: 195,997 simulated ns after wide-row chunking, versus
+    195,851 ns immediately before it (+0.07%) and 194,651 ns before DMA
+    direction validation (+0.69% cumulative).
+  - Generic K3 S1 C32 -> C32: 494,008 simulated ns after wide-row chunking,
+    versus 493,826 ns immediately before it (+0.04%) and 492,662 ns before DMA
+    direction validation (+0.27% cumulative).
   - Depthwise K3 S2 C33 tail: 228,121 simulated ns.
-- Runtime firmware `.text` is 23,596 bytes, below the 32 KB limit.
+- Runtime firmware `.text` is 23,684 bytes, below the 32 KB limit.
 - The focused package times include boot, section CRC, command loading,
   boundary layout DMA, and output checking. They must not be compared as
   operator latency against the PMU-only Micro-MobileNet and Micro-YOLO records.
