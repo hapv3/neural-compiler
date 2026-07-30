@@ -1943,7 +1943,7 @@ The following must be complete before Conv compiler lowering begins:
 
 ### Current Verification Evidence
 
-- Compiler C++ tests: 183/183 pass.
+- Compiler C++ tests: 187/187 pass.
 - Neural-AI compiler-runtime host ABI/layout/quantization checks pass.
 - Compiler-generated Verilator packages pass byte-exactly:
   - RGB K3 S2 C3 -> C32: 195,997 simulated ns after wide-row chunking, versus
@@ -1953,7 +1953,8 @@ The following must be complete before Conv compiler lowering begins:
     versus 493,826 ns immediately before it (+0.04%) and 492,662 ns before DMA
     direction validation (+0.27% cumulative).
   - Depthwise K3 S2 C33 tail: 228,121 simulated ns.
-- Runtime firmware `.text` is 23,684 bytes, below the 32 KB limit.
+- Runtime firmware `.text` is 24,276 bytes after the GlobalAvgPool runtime
+  addition, below the 32 KB limit.
 - The focused package times include boot, section CRC, command loading,
   boundary layout DMA, and output checking. They must not be compared as
   operator latency against the PMU-only Micro-MobileNet and Micro-YOLO records.
@@ -2009,6 +2010,29 @@ parsing/validation overhead for a 1,184-byte compiler artifact versus an
 tensors. These focused completion times include boot and runtime overhead and
 are not substitutes for the 347,992-cycle Micro-MobileNet or 388,146-cycle
 Micro-YOLO full-graph PMU gates.
+
+Full-spatial INT8 AvgPool is now lowered through a separate 64-byte
+`AFU_GLOBAL_AVGPOOL` command. The supported subset is batch 1, output 1x1,
+stride and dilation 1, zero padding, equal scalar IFM/OFM quantization, no
+fused clamp, and C32-blocked internal input/output. Asymmetric INT8 zero points
+are valid when they are equal because averaging preserves the stored-value zero
+point. Other AvgPool shapes and any required requantization are rejected.
+Compiler tests cover positive C33 and MobileNet-scale H24/W24/C64 cases plus
+non-global, requantized, and fused-ReLU rejection. Host runtime tests cover
+dispatch, zero dimensions, overflow-safe ranges, and input/output overlap.
+
+The compiler-generated H2/W3/C33 package passes byte-exactly on Verilator at
+114,570 simulated ns and 83,712 PMU cycles. It observes 14 AFU TCDM requests,
+which matches 6 pixels times 2 C32 groups plus 2 output groups. The existing
+native H7/W5/C65 AFU regression remains byte-exact at 514 PMU cycles and 108
+AFU TCDM requests, exactly 35 pixels times 3 groups plus 3 output groups. The
+native regression starts with tensors already in TCDM, while the compiler
+package includes boot, package validation, 21 DMA operations, two boundary
+layout conversions, and public L2 I/O. Their cycle counts are therefore
+datapath and integration checks, not an operator-speed ratio. Equivalent
+compiler-generated full-graph PMU runs are still required before comparing
+against the 347,992-cycle Micro-MobileNet and 388,146-cycle Micro-YOLO
+baselines.
 
 ### Work Items
 
