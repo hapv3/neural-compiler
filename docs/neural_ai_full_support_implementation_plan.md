@@ -1880,8 +1880,13 @@ streams include NHWC↔C32 boundaries, multi-group accumulation, per-channel
 requantization, and fused ReLU/ReLU6 clamps. Generic K3 requires both IC and OC
 to be divisible by 32; pointwise and depthwise retain C32 tail support. Focused
 compiler-generated Verilator E2E tests pass for RGB, generic C32, depthwise C33
-S2, and a pointwise-plus-depthwise chain. Full Micro-MobileNet compilation
-remains open.
+S2, and a pointwise-plus-depthwise chain. A 13-stage, native-like
+Micro-MobileNet topology now compiles through RGB K3 S2, depthwise and
+pointwise Conv, two residual Adds, generic K3, GlobalAvgPool, and the
+classifier. This required TFLite SAME padding with asymmetric 0/1 sides for
+even-sized K3 S2 inputs. ReLU6 is fused into the producing Conv's existing
+per-channel requantization, so this graph does not emit a standalone AFU LUT
+command. Full-graph numerical execution and PMU comparison remain open.
 
 ### Prerequisite Gate
 
@@ -1943,7 +1948,11 @@ The following must be complete before Conv compiler lowering begins:
 
 ### Current Verification Evidence
 
-- Compiler C++ tests: 187/187 pass.
+- Compiler C++ tests: 188/188 pass.
+- The complete 13-stage Micro-MobileNet compiler test passes every graph prefix
+  and the full graph. The full package contains two `AFU_BINARY` residual Adds,
+  one `AFU_GLOBAL_AVGPOOL`, and the expected Conv/linebuffer commands, with no
+  `AFU_LUT` activation command.
 - Neural-AI compiler-runtime host ABI/layout/quantization checks pass.
 - Compiler-generated Verilator packages pass byte-exactly:
   - RGB K3 S2 C3 -> C32: 195,997 simulated ns after wide-row chunking, versus
@@ -2033,6 +2042,21 @@ datapath and integration checks, not an operator-speed ratio. Equivalent
 compiler-generated full-graph PMU runs are still required before comparing
 against the 347,992-cycle Micro-MobileNet and 388,146-cycle Micro-YOLO
 baselines.
+
+The Neural-AI AFU is covered by standalone `afu_ops` tests and by the native
+Micro-MobileNet/Micro-YOLO graphs; lack of tests is not the current limitation.
+On the current RTL, `test_afu_op_clamp_relu6` times out after consuming all
+21,216 input bytes and remains in `ST_READ_IN`. The generic E8 stream path tests
+the 32-byte destination boundary before the final-element condition, selects a
+mid-stream flush on an aligned final byte, and then waits for a nonexistent
+next RFIFO beat. This ordering entered with AFU refactor `41cce28`; the recorded
+347,992-cycle Micro-MobileNet result predates that refactor and therefore does
+not establish that the current RTL still passes its three standalone clamp
+layers. `ADD_I8` and `GLOBAL_AVGPOOL_C32` pass their current focused tests, so
+this finding is specific to the generic E8 clamp/LUT stream rather than the
+whole AFU. RTL is frozen for this compiler plan; Conv clamps must remain fused
+into requantization, and standalone AFU LUT lowering cannot close until the
+native clamp regression passes again.
 
 ### Work Items
 
