@@ -767,11 +767,11 @@ struct GeneratorContext
             const uint32_t groupStride = rows * 32u;
             for ( uint32_t nGroup = 0; nGroup < nGroups; ++nGroup )
             {
+                AppendRQLoad(qparamBase + nGroup * 32, nGroup,
+                    uint32_t(operation->Index()), tileId++);
                 for ( uint32_t rowBase = 0; rowBase < rows; rowBase += 256 )
                 {
                     const uint32_t dimM = std::min<uint32_t>(256, rows - rowBase);
-                    AppendRQLoad(qparamBase + nGroup * 32, nGroup,
-                        uint32_t(operation->Index()), tileId++);
                     RefV1 ifmRef = TensorRef(ifm->tensor.get(), rowBase * 32u, error);
                     if ( !error.empty() ) return false;
                     RefV1 weights{};

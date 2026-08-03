@@ -1734,6 +1734,7 @@ TEST_CASE("Neural-AI compiler splits pointwise M stripes at the 256-row ABI limi
         const uint32_t commandBytes = Read32(data + 64 + 12);
         uint32_t offset = 224;
         uint32_t pointwiseCommands = 0;
+        uint32_t rqLoads = 0;
         while ( offset < 224 + commandBytes )
         {
             const uint16_t type = uint16_t(data[offset]) | (uint16_t(data[offset + 1]) << 8);
@@ -1745,10 +1746,12 @@ TEST_CASE("Neural-AI compiler splits pointwise M stripes at the 256-row ABI limi
                 REQUIRE(Read32(data + offset + 48) > 0);
                 REQUIRE(Read32(data + offset + 48) <= 256);
             }
+            if ( type == uint16_t(neuralai::CommandType::RQLoad) ) ++rqLoads;
             offset += commandSize;
         }
         REQUIRE(offset == 224 + commandBytes);
         REQUIRE(pointwiseCommands == uint32_t((width + 255) / 256));
+        REQUIRE(rqLoads == 1);
         blob->Unmap(const_cast<uint8_t *>(data));
         blob->Release();
     }
