@@ -166,7 +166,6 @@ struct GeneratorContext
     uint32_t nextTensorId = 0;
     uint32_t scratchEnd = 0;
     uint32_t stageOffset = 0;
-    uint32_t inputStageOffset = 0;
     uint32_t weightStageOffset = 0;
     uint32_t partialOffset = 0;
     uint32_t stageBytes = 0;
@@ -392,10 +391,12 @@ struct GeneratorContext
             if ( !error.empty() ) return false;
             RefV1 destination = TensorRef(ofm->tensor.get(), 0, error);
             if ( !error.empty() ) return false;
+            const uint32_t layerId = uint32_t(operation->Index());
+            if ( IsLocalDMARegion(source.region) || IsLocalDMARegion(destination.region) )
+                return AppendDMA1D(source, destination, uint32_t(bytes), layerId, 0, error);
             RefV1 bounce{};
             bounce.region = uint16_t(Region::TCDMScratch);
             bounce.offset = stageOffset;
-            const uint32_t layerId = uint32_t(operation->Index());
             if ( !AppendDMA1D(source, bounce, uint32_t(bytes), layerId, 0, error) ||
                  !AppendDMA1D(bounce, destination, uint32_t(bytes), layerId, 1, error) )
                 return false;
@@ -692,20 +693,6 @@ struct GeneratorContext
                      uint32_t(operation->Index()), 1, error) )
                 return false;
 
-            if ( directRgb )
-            {
-                RefV1 inputSource = TensorRef(ifm->tensor.get(), 0, error);
-                if ( !error.empty() ) return false;
-                RefV1 inputStage{};
-                inputStage.region = uint16_t(Region::TCDMScratch);
-                inputStage.offset = inputStageOffset;
-                const auto inputShape = ReshapeToNHWC(ifm->shape);
-                const uint32_t pixels = uint32_t(inputShape.Height() * inputShape.Width());
-                if ( !AppendDMA2D(inputSource, inputStage, 3, 3, 3, pixels,
-                         uint32_t(operation->Index()), 2, error) )
-                    return false;
-            }
-
             const auto logicalIfm = ReshapeToNHWC(ifm->shape);
             const auto logicalOfm = ReshapeToNHWC(ofm->shape);
             const uint32_t paddedInputChannels = uint32_t(RoundAway(int(channelK), 32));
@@ -725,7 +712,7 @@ struct GeneratorContext
                     neuralai::LinebufferPlannerInput plannerInput{};
                     plannerInput.logicalIfm = logicalIfm;
                     plannerInput.logicalOfm = logicalOfm;
-                    plannerInput.ifmBase = uint32_t(directRgb ? inputStageOffset : ifm->tensor->AllocatedAddress());
+                    plannerInput.ifmBase = uint32_t(ifm->tensor->AllocatedAddress());
                     plannerInput.ofmBase = uint32_t(ofm->tensor->AllocatedAddress());
                     plannerInput.weightBase = uint32_t(weightStageOffset +
                         (outputGroup * inputGroups + inputGroup) * kernelTilesPerInputGroup * 32u * 32u);
@@ -982,7 +969,6 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         }
     }
     context.scratchEnd = uint32_t(RoundAway(int(scratchBytes), ArchNeuralAI::DMAAlignment));
-    uint32_t directRgbInputBytes = 0;
     uint32_t linebufferWeightBytes = 0;
     for ( const auto &operation : operations )
     {
@@ -1019,13 +1005,6 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         if ( isK3Conv )
         {
             const bool directRgb = config->DirectNhwcInput();
-            if ( directRgb )
-            {
-                const auto inputShape = ReshapeToNHWC(operation->IFM(0)->shape);
-                directRgbInputBytes = std::max(directRgbInputBytes,
-                    uint32_t(RoundAway(int(inputShape.Height() * inputShape.Width() * 3),
-                        ArchNeuralAI::DMAAlignment)));
-            }
             if ( directRgb || paddedK > 0 )
             {
                 const uint32_t paddedN = uint32_t(RoundAway(int(operation->OFM()->shape.Depth()), 32));
@@ -1036,11 +1015,9 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
             context.partialBytes = std::max(context.partialBytes, stripeRows * 32 * 4);
         }
     }
-    context.stageBytes = std::max(context.stageBytes, directRgbInputBytes + linebufferWeightBytes);
+    context.stageBytes = std::max(context.stageBytes, linebufferWeightBytes);
     context.stageOffset = context.scratchEnd;
-    context.inputStageOffset = context.stageOffset;
-    context.weightStageOffset = uint32_t(RoundAway(
-        int(context.inputStageOffset + directRgbInputBytes), ArchNeuralAI::DMAAlignment));
+    context.weightStageOffset = context.stageOffset;
     context.partialOffset = uint32_t(RoundAway(
         int(context.stageOffset + context.stageBytes), ArchNeuralAI::DMAAlignment));
 

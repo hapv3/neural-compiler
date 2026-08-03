@@ -1892,7 +1892,7 @@ TEST_CASE("Neural-AI compiler splits a width-641 Conv into legal linebuffer jobs
     blob->Release();
 }
 
-TEST_CASE("Neural-AI compiler stages direct RGB input for the K3 stem")
+TEST_CASE("Neural-AI compiler consumes compact TCDM RGB input directly")
 {
     std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
     Compiler compiler(architecture);
@@ -1909,6 +1909,8 @@ TEST_CASE("Neural-AI compiler stages direct RGB input for the K3 stem")
     uint32_t offset = 224;
     uint32_t linebufferJobs = 0;
     uint32_t copyLayouts = 0;
+    uint32_t dma2dCommands = 0;
+    uint32_t localCopies = 0;
     bool sawShortDma = false;
     bool sawWideM = false;
     while ( offset < 224 + commandBytes )
@@ -1924,8 +1926,12 @@ TEST_CASE("Neural-AI compiler stages direct RGB input for the K3 stem")
             sawWideM |= rows > 256u;
         }
         if ( type == uint16_t(neuralai::CommandType::CopyLayout) ) ++copyLayouts;
+        if ( type == uint16_t(neuralai::CommandType::DMA1D) )
+            localCopies += Read32(data + offset + 36) ==
+                uint32_t(neuralai::DMADirection::LocalToLocal);
         if ( type == uint16_t(neuralai::CommandType::DMA2D) )
         {
+            ++dma2dCommands;
             const uint32_t length = Read32(data + offset + 32);
             sawShortDma |= length == 3;
         }
@@ -1934,7 +1940,9 @@ TEST_CASE("Neural-AI compiler stages direct RGB input for the K3 stem")
     REQUIRE(offset == 224 + commandBytes);
     REQUIRE(linebufferJobs == 3);
     REQUIRE(copyLayouts == 1);
-    REQUIRE(sawShortDma);
+    REQUIRE(localCopies == 0);
+    REQUIRE(dma2dCommands == 1);
+    REQUIRE_FALSE(sawShortDma);
     REQUIRE(sawWideM);
     blob->Unmap(const_cast<uint8_t *>(data));
     blob->Release();
