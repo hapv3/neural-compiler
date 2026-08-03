@@ -746,7 +746,7 @@ struct GeneratorContext
                     plannerInput.maxM = 256;
                     plannerInput.tcdmBudget = ArchNeuralAI::AllocatableTCDMBytes;
                     plannerInput.accumMode = inputGroups == 1u ? 0 :
-                        (inputGroup == 0u ? 1 : (inputGroup + 1u == inputGroups ? 2 : 1));
+                        (inputGroup == 0u ? 1 : (inputGroup + 1u == inputGroups ? 2 : 3));
                     groupJobs.push_back(neuralai::LinebufferPlanner().Plan(plannerInput));
                 }
                 const int spatialJobs = int(groupJobs.front().size());

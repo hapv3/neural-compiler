@@ -143,7 +143,7 @@ std::vector<LinebufferJob> LinebufferPlanner::Plan(const LinebufferPlannerInput 
          input.oc <= 0 || input.logicalIfm.Height() <= 0 || input.logicalIfm.Width() <= 0 ||
          input.logicalOfm.Height() <= 0 || input.logicalOfm.Width() <= 0 || input.maxM <= 0 ||
          input.groupIndex < 0 || input.inputGroupIndex < 0 || input.outputGroupIndex < 0 ||
-         input.accumMode < 0 || input.accumMode > 2 || input.validLaneCount <= 0 ||
+         input.accumMode < 0 || input.accumMode > 3 || input.validLaneCount <= 0 ||
          input.validLaneCount > C32 )
         throw std::invalid_argument("Invalid Neural-AI linebuffer planner input");
 

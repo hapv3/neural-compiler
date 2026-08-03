@@ -97,8 +97,9 @@ struct LinebufferPlannerInput
     int tcdmBudget = 0;
     int alreadyLiveBytes = 0;
     bool isDepthwise = false;
-    // 0 = first/direct requant, 1 = intermediate accumulation, 2 = final
-    // accumulation with requantization.  This is carried in GEMM32 accum_en.
+    // 0 = direct requant, 1 = initialize partial sums, 2 = final accumulation
+    // with requantization, 3 = intermediate partial-sum accumulation.  This is
+    // carried in GEMM32 accum_en.
     int accumMode = 0;
 };
 
