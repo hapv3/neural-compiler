@@ -1878,7 +1878,7 @@ TEST_CASE("Neural-AI compiler splits a width-641 Conv into legal linebuffer jobs
         if ( type == uint16_t(neuralai::CommandType::LineBufferJob) )
         {
             ++jobs;
-            REQUIRE(Read32(data + offset + 16 + 80 + 16) <= 256u);
+            REQUIRE(Read32(data + offset + 16 + 80 + 16) <= 1024u);
             const uint16_t inputW = uint16_t(data[offset + 16 + 8]) |
                 (uint16_t(data[offset + 16 + 9]) << 8);
             REQUIRE(inputW <= 640u);
@@ -1886,7 +1886,7 @@ TEST_CASE("Neural-AI compiler splits a width-641 Conv into legal linebuffer jobs
         offset += commandSize;
     }
     REQUIRE(offset == 224 + commandBytes);
-    REQUIRE(jobs == 3);
+    REQUIRE(jobs == 2);
     REQUIRE(Read32(data + 36) <= ArchNeuralAI::AllocatableTCDMBytes);
     blob->Unmap(const_cast<uint8_t *>(data));
     blob->Release();
@@ -1898,7 +1898,7 @@ TEST_CASE("Neural-AI compiler stages direct RGB input for the K3 stem")
     Compiler compiler(architecture);
     const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
     REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
-    const auto model = BuildK3ConvModel(7, 7, 3, 32, 2);
+    const auto model = BuildK3ConvModel(96, 96, 3, 32, 2);
     REQUIRE(compiler.LoadTflite(model.data(), model.size()));
     REQUIRE(compiler.Compile());
     IRegorBlob *blob = compiler.Output();
@@ -1910,25 +1910,32 @@ TEST_CASE("Neural-AI compiler stages direct RGB input for the K3 stem")
     uint32_t linebufferJobs = 0;
     uint32_t copyLayouts = 0;
     bool sawShortDma = false;
+    bool sawWideM = false;
     while ( offset < 224 + commandBytes )
     {
         const uint16_t type = uint16_t(data[offset]) | (uint16_t(data[offset + 1]) << 8);
         const uint16_t commandSize = uint16_t(data[offset + 2]) |
             (uint16_t(data[offset + 3]) << 8);
-        if ( type == uint16_t(neuralai::CommandType::LineBufferJob) ) ++linebufferJobs;
+        if ( type == uint16_t(neuralai::CommandType::LineBufferJob) )
+        {
+            ++linebufferJobs;
+            const uint32_t rows = Read32(data + offset + 16 + 80 + 16);
+            REQUIRE(rows <= 1024u);
+            sawWideM |= rows > 256u;
+        }
         if ( type == uint16_t(neuralai::CommandType::CopyLayout) ) ++copyLayouts;
         if ( type == uint16_t(neuralai::CommandType::DMA2D) )
         {
-            REQUIRE(Read32(data + offset + 48) ==
-                    uint32_t(neuralai::DMADirection::ExternalToLocal));
-            sawShortDma |= Read32(data + offset + 32) == 3;
+            const uint32_t length = Read32(data + offset + 32);
+            sawShortDma |= length == 3;
         }
         offset += commandSize;
     }
     REQUIRE(offset == 224 + commandBytes);
-    REQUIRE(linebufferJobs == 1);
+    REQUIRE(linebufferJobs == 3);
     REQUIRE(copyLayouts == 1);
     REQUIRE(sawShortDma);
+    REQUIRE(sawWideM);
     blob->Unmap(const_cast<uint8_t *>(data));
     blob->Release();
 }

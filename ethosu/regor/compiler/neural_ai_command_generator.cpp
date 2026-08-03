@@ -32,6 +32,9 @@ using neuralai::RefV1;
 using neuralai::Region;
 using neuralai::TensorLayout;
 
+constexpr int MaxDirectLinebufferM = 1024;
+constexpr int MaxExternalPsumLinebufferM = 256;
+
 bool IsLinebufferConvMode(NeuralAIOpMode mode)
 {
     return mode == NeuralAIOpMode::Conv2DRgbLinebufRequant ||
@@ -743,7 +746,8 @@ struct GeneratorContext
                     plannerInput.validLaneCount = directRgb ? int(channelK) :
                         std::min(32u, channelK - inputGroup * 32u);
                     plannerInput.ifmPixelStride = directRgb ? 3 : 32;
-                    plannerInput.maxM = 256;
+                    plannerInput.maxM = inputGroups == 1u ?
+                        MaxDirectLinebufferM : MaxExternalPsumLinebufferM;
                     plannerInput.tcdmBudget = ArchNeuralAI::AllocatableTCDMBytes;
                     plannerInput.accumMode = inputGroups == 1u ? 0 :
                         (inputGroup == 0u ? 1 : (inputGroup + 1u == inputGroups ? 2 : 3));
