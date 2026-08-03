@@ -715,6 +715,8 @@ struct GeneratorContext
             {
                 AppendRQLoad(qparamBase + outputGroup * 32u, outputGroup,
                     uint32_t(operation->Index()), tileId++);
+                std::vector<std::vector<neuralai::LinebufferJob>> groupJobs;
+                groupJobs.reserve(inputGroups);
                 for ( uint32_t inputGroup = 0; inputGroup < inputGroups; ++inputGroup )
                 {
                     neuralai::LinebufferPlannerInput plannerInput{};
@@ -745,9 +747,21 @@ struct GeneratorContext
                     plannerInput.tcdmBudget = ArchNeuralAI::AllocatableTCDMBytes;
                     plannerInput.accumMode = inputGroups == 1u ? 0 :
                         (inputGroup == 0u ? 1 : (inputGroup + 1u == inputGroups ? 2 : 1));
-                    const auto jobs = neuralai::LinebufferPlanner().Plan(plannerInput);
-                    for ( const auto &job : jobs ) AppendLineBufferJob(job,
-                        uint32_t(operation->Index()), tileId++);
+                    groupJobs.push_back(neuralai::LinebufferPlanner().Plan(plannerInput));
+                }
+                const int spatialJobs = int(groupJobs.front().size());
+                for ( const auto &jobs : groupJobs )
+                {
+                    if ( int(jobs.size()) != spatialJobs )
+                        return SetError(error, "Neural-AI linebuffer input groups have inconsistent tiling");
+                }
+                for ( int jobIndex = 0; jobIndex < spatialJobs; ++jobIndex )
+                {
+                    for ( uint32_t inputGroup = 0; inputGroup < inputGroups; ++inputGroup )
+                    {
+                        AppendLineBufferJob(groupJobs[inputGroup][jobIndex],
+                            uint32_t(operation->Index()), tileId++);
+                    }
                 }
             }
             return true;

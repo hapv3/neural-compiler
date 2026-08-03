@@ -1743,7 +1743,7 @@ TEST_CASE("Neural-AI compiler emits grouped linebuffer jobs for generic K3 Conv2
     Compiler compiler(architecture);
     const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
     REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
-    const auto model = BuildK3ConvModel(8, 8, 64, 64, 1);
+    const auto model = BuildK3ConvModel(24, 24, 64, 64, 1);
     REQUIRE(compiler.LoadTflite(model.data(), model.size()));
     const bool compiled = compiler.Compile();
     INFO(compiler.LastError());
@@ -1758,7 +1758,10 @@ TEST_CASE("Neural-AI compiler emits grouped linebuffer jobs for generic K3 Conv2
     uint32_t linebufferJobs = 0;
     uint32_t firstAccumMode = 0xffffffffu;
     uint32_t finalAccumMode = 0xffffffffu;
+    std::vector<uint32_t> accumModes;
     std::vector<uint32_t> weightOffsets;
+    std::vector<uint32_t> psumOffsets;
+    std::vector<uint32_t> ofmOffsets;
     while ( offset < 224 + commandBytes )
     {
         const uint16_t type = uint16_t(data[offset]) | (uint16_t(data[offset + 1]) << 8);
@@ -1772,18 +1775,30 @@ TEST_CASE("Neural-AI compiler emits grouped linebuffer jobs for generic K3 Conv2
             if ( firstAccumMode == 0xffffffffu ) firstAccumMode = mode;
             finalAccumMode = mode;
             REQUIRE(Read32(data + offset + 16 + 80 + 16) <= 256);
+            accumModes.push_back(mode);
             weightOffsets.push_back(Read32(data + offset + 16 + 80));
+            psumOffsets.push_back(Read32(data + offset + 16 + 80 + 4));
+            ofmOffsets.push_back(Read32(data + offset + 16 + 80 + 12));
         }
         offset += commandSize;
     }
     REQUIRE(offset == 224 + commandBytes);
-    REQUIRE(linebufferJobs == 4);
+    REQUIRE(linebufferJobs == 12);
     REQUIRE(firstAccumMode == 1);
     REQUIRE(finalAccumMode == 2);
-    REQUIRE(weightOffsets.size() == 4);
-    REQUIRE(weightOffsets[1] - weightOffsets[0] == 9u * 32u * 32u);
-    REQUIRE(weightOffsets[2] - weightOffsets[1] == 9u * 32u * 32u);
-    REQUIRE(weightOffsets[3] - weightOffsets[2] == 9u * 32u * 32u);
+    REQUIRE(weightOffsets.size() == 12);
+    const uint32_t inputGroupWeightBytes = 9u * 32u * 32u;
+    for ( int job = 0; job < int(weightOffsets.size()); job += 2 )
+    {
+        const int outputGroup = job / 6;
+        REQUIRE(accumModes[job] == 1);
+        REQUIRE(accumModes[job + 1] == 2);
+        REQUIRE(weightOffsets[job] ==
+            weightOffsets.front() + uint32_t(outputGroup * 2) * inputGroupWeightBytes);
+        REQUIRE(weightOffsets[job + 1] == weightOffsets[job] + inputGroupWeightBytes);
+        REQUIRE(psumOffsets[job] == psumOffsets[job + 1]);
+        REQUIRE(ofmOffsets[job] == ofmOffsets[job + 1]);
+    }
     REQUIRE(Read32(data + 36) >= weightOffsets.front() + 4u * 9u * 32u * 32u);
     blob->Unmap(const_cast<uint8_t *>(data));
     blob->Release();
