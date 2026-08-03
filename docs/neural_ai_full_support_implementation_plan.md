@@ -1890,7 +1890,10 @@ pointwise Conv, two residual Adds, generic K3, GlobalAvgPool, and the
 classifier. This required TFLite SAME padding with asymmetric 0/1 sides for
 even-sized K3 S2 inputs. ReLU6 is fused into the producing Conv's existing
 per-channel requantization, so this graph does not emit a standalone AFU LUT
-command. Full-graph numerical execution and PMU comparison remain open.
+command. The full compiler-generated graph now passes byte-exactly on the
+current Verilator model. Its PMU result is 522,900 cycles, so correctness is
+closed for this topology while the performance gate remains open against the
+347,992-cycle native Micro-MobileNet record.
 
 ### Prerequisite Gate
 
@@ -1954,9 +1957,9 @@ The following must be complete before Conv compiler lowering begins:
 
 - Compiler C++ tests: 188/188 pass.
 - The complete 13-stage Micro-MobileNet compiler test passes every graph prefix
-  and the full graph. The full package contains two `AFU_BINARY` residual Adds,
-  one `AFU_GLOBAL_AVGPOOL`, and the expected Conv/linebuffer commands, with no
-  `AFU_LUT` activation command.
+  and the full graph byte-exactly. The full package contains two `AFU_BINARY`
+  residual Adds, one `AFU_GLOBAL_AVGPOOL`, and the expected Conv/linebuffer
+  commands, with no `AFU_LUT` activation command.
 - Neural-AI compiler-runtime host ABI/layout/quantization checks pass.
 - Compiler-generated Verilator packages pass byte-exactly:
   - RGB K3 S2 C3 -> C32: 195,997 simulated ns after wide-row chunking, versus
@@ -1966,15 +1969,26 @@ The following must be complete before Conv compiler lowering begins:
     versus 493,826 ns immediately before it (+0.04%) and 492,662 ns before DMA
     direction validation (+0.27% cumulative).
   - Depthwise K3 S2 C33 tail: 228,121 simulated ns.
-- Runtime firmware `.text` is 23,936 bytes with the ABI 1.1 section layout,
+- The current full package is 89,312 bytes, contains 81 runtime commands, and
+  has a 290,816-byte peak TCDM allocation. Direct external-to-local compact
+  tensor transfers avoid CPU-backed local-to-local bounce copies, and one
+  pointwise `RQ_LOAD` is reused by every M stripe in the same output group.
+- The equivalent full-graph PMU run completes byte-exactly at 522,900 cycles.
+  The principal counters are 261,093 Snitch instructions, 35,714 systolic
+  compute cycles, 6,959 iDMA busy cycles, 350,281 AFU done events, and 5,482
+  TCDM stall cycles.
+- Runtime firmware `.text` is 23,988 bytes with the ABI 1.1 section layout,
   below the 32 KB limit.
 - The focused package times include boot, command loading,
   boundary layout DMA, and output checking. They must not be compared as
   operator latency against the PMU-only Micro-MobileNet and Micro-YOLO records.
   The current native baselines remain 347,992 total cycles for Micro-MobileNet
-  and 388,146 total cycles for the Micro-YOLO raw-head graph. The compiler path
-  is performance-acceptable only after equivalent full-graph PMU counters are
-  collected; focused simulator completion alone does not close that gate.
+  and 388,146 total cycles for the Micro-YOLO raw-head graph. The measured
+  compiler graph is therefore 1.503x the Micro-MobileNet record and 1.347x the
+  Micro-YOLO record. These are equivalent full-graph PMU comparisons, but the
+  50.3% gap to the matching MobileNet record does not close the performance
+  gate. Further work must attribute the remaining command/runtime overhead
+  without weakening byte-exact correctness or changing frozen RTL.
 
 ### Exit Criteria
 
@@ -2042,10 +2056,11 @@ AFU TCDM requests, exactly 35 pixels times 3 groups plus 3 output groups. The
 native regression starts with tensors already in TCDM, while the compiler
 package includes boot, package validation, 21 DMA operations, two boundary
 layout conversions, and public L2 I/O. Their cycle counts are therefore
-datapath and integration checks, not an operator-speed ratio. Equivalent
-compiler-generated full-graph PMU runs are still required before comparing
-against the 347,992-cycle Micro-MobileNet and 388,146-cycle Micro-YOLO
-baselines.
+datapath and integration checks, not an operator-speed ratio. The complete
+compiler-generated graph now supplies the missing full-graph comparison:
+522,900 cycles, or 1.503x the 347,992-cycle Micro-MobileNet record and 1.347x
+the 388,146-cycle Micro-YOLO record. Focused AFU results remain useful for
+attribution but do not replace that end-to-end gate.
 
 The Neural-AI AFU is covered by standalone `afu_ops` tests and by the native
 Micro-MobileNet/Micro-YOLO graphs; lack of tests is not the current limitation.
