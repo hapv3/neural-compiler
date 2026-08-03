@@ -512,8 +512,8 @@ struct GeneratorContext
             Append32(artifact->commands, validChannels);
             Append32(artifact->commands, uint32_t(kernel->Stride().y));
             Append32(artifact->commands, uint32_t(kernel->Stride().x));
-            Append32(artifact->commands, 1);
-            Append32(artifact->commands, 1);
+            Append32(artifact->commands, uint32_t(kernel->Padding().Top()));
+            Append32(artifact->commands, uint32_t(kernel->Padding().Left()));
             Append32(artifact->commands, group);
             AppendZeros(artifact->commands, 4);
             ++artifact->commandCount;

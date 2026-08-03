@@ -1889,7 +1889,7 @@ TEST_CASE("Neural-AI compiler emits group-scoped depthwise C32 commands")
     Compiler compiler(architecture);
     const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
     REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
-    const auto model = BuildDepthwiseConvModel(7, 7, 33, 2);
+    const auto model = BuildDepthwiseConvModel(8, 8, 33, 2);
     REQUIRE(compiler.LoadTflite(model.data(), model.size()));
     const bool compiled = compiler.Compile();
     INFO(compiler.LastError());
@@ -1915,6 +1915,8 @@ TEST_CASE("Neural-AI compiler emits group-scoped depthwise C32 commands")
             REQUIRE(commandSize == 96);
             sawTail |= Read32(data + offset + 56) == 1;
             REQUIRE(Read32(data + offset + 56) <= 32);
+            REQUIRE(Read32(data + offset + 68) == 0);
+            REQUIRE(Read32(data + offset + 72) == 0);
         }
         offset += commandSize;
     }
@@ -1964,6 +1966,8 @@ TEST_CASE("Neural-AI compiler emits all depthwise C32 group and tail variants")
                 REQUIRE(commandSize == 96);
                 REQUIRE(validChannels > 0);
                 REQUIRE(validChannels <= 32);
+                REQUIRE(Read32(data + offset + 68) == 1);
+                REQUIRE(Read32(data + offset + 72) == 1);
                 if ( channels % 32 != 0 && depthwiseCommands == uint32_t((channels + 31) / 32) )
                     REQUIRE(validChannels == uint32_t(channels % 32));
             }
