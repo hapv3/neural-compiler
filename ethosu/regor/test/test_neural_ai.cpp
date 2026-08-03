@@ -526,15 +526,32 @@ flatbuffers::DetachedBuffer BuildMicroMobileNetModel(int stageCount = 13)
             builder, &shape, tflite::TensorType::INT8, 0, "activation", int8Quant));
         return index;
     };
-    const auto addWeights = [&](const std::vector<int32_t> &shape, int elements)
+    const auto addWeights = [&](const std::vector<int32_t> &shape, const std::vector<uint8_t> &data)
     {
-        std::vector<uint8_t> data(elements, 1);
         const int buffer = int(buffers.size());
         buffers.push_back(tflite::CreateBufferDirect(builder, &data));
         const int index = int(tensors.size());
         tensors.push_back(tflite::CreateTensorDirect(
             builder, &shape, tflite::TensorType::INT8, buffer, "weights", int8Quant));
         return index;
+    };
+    const auto weightByte = [](int value) { return uint8_t(value & 0xFF); };
+    const auto stemWeight = [&](int kh, int kw, int ic, int oc)
+    {
+        return weightByte(((kh * 2 + kw * 3 + ic * 5 + oc * 7 + 2) % 3) - 1);
+    };
+    const auto pointwiseWeight = [&](int tag, int ic, int oc)
+    {
+        if ( tag == 5 ) return weightByte(ic == oc ? 1 : 0);
+        return weightByte(((tag * 5 + ic * 3 + oc * 7 + 4) % 3) - 1);
+    };
+    const auto convWeight = [&](int tag, int kh, int kw, int ic, int oc)
+    {
+        return weightByte(((tag * 11 + kh * 3 + kw * 5 + ic * 7 + oc * 2 + 6) % 3) - 1);
+    };
+    const auto depthwiseWeight = [&](int tag, int kh, int kw, int channel)
+    {
+        return weightByte(((tag * 3 + kh * 5 + kw * 7 + channel * 2 + 1) % 3) - 1);
     };
     const auto addBias = [&](int channels)
     {
@@ -550,14 +567,32 @@ flatbuffers::DetachedBuffer BuildMicroMobileNetModel(int stageCount = 13)
         return index;
     };
     const auto addConv = [&](int input, int height, int width, int depthK, int depthN,
-                             int kernel, int stride, tflite::ActivationFunctionType activation)
+                             int kernel, int stride, int tag,
+                             tflite::ActivationFunctionType activation)
     {
         const int outputHeight = (height + stride - 1) / stride;
         const int outputWidth = (width + stride - 1) / stride;
         const std::vector<int32_t> weightShape = {depthN, kernel, kernel, depthK};
         const std::vector<int32_t> outputShape = {1, outputHeight, outputWidth, depthN};
-        const int weights = addWeights(
-            weightShape, kernel * kernel * depthK * depthN);
+        std::vector<uint8_t> weightData;
+        weightData.reserve(kernel * kernel * depthK * depthN);
+        for ( int oc = 0; oc < depthN; ++oc )
+        {
+            for ( int kh = 0; kh < kernel; ++kh )
+            {
+                for ( int kw = 0; kw < kernel; ++kw )
+                {
+                    for ( int ic = 0; ic < depthK; ++ic )
+                    {
+                        weightData.push_back(
+                            depthK == 3 && kernel == 3 ? stemWeight(kh, kw, ic, oc) :
+                            kernel == 1 ? pointwiseWeight(tag, ic, oc) :
+                                          convWeight(tag, kh, kw, ic, oc));
+                    }
+                }
+            }
+        }
+        const int weights = addWeights(weightShape, weightData);
         const int bias = addBias(depthN);
         const int output = addActivation(outputShape);
         const auto options = tflite::CreateConv2DOptions(
@@ -571,13 +606,24 @@ flatbuffers::DetachedBuffer BuildMicroMobileNetModel(int stageCount = 13)
         return output;
     };
     const auto addDepthwise = [&](int input, int height, int width, int channels,
-                                  int stride, tflite::ActivationFunctionType activation)
+                                  int stride, int tag,
+                                  tflite::ActivationFunctionType activation)
     {
         const int outputHeight = (height + stride - 1) / stride;
         const int outputWidth = (width + stride - 1) / stride;
         const std::vector<int32_t> weightShape = {1, 3, 3, channels};
         const std::vector<int32_t> outputShape = {1, outputHeight, outputWidth, channels};
-        const int weights = addWeights(weightShape, 9 * channels);
+        std::vector<uint8_t> weightData;
+        weightData.reserve(9 * channels);
+        for ( int kh = 0; kh < 3; ++kh )
+        {
+            for ( int kw = 0; kw < 3; ++kw )
+            {
+                for ( int channel = 0; channel < channels; ++channel )
+                    weightData.push_back(depthwiseWeight(tag, kh, kw, channel));
+            }
+        }
+        const int weights = addWeights(weightShape, weightData);
         const int bias = addBias(channels);
         const int output = addActivation(outputShape);
         const auto options = tflite::CreateDepthwiseConv2DOptions(
@@ -608,33 +654,33 @@ flatbuffers::DetachedBuffer BuildMicroMobileNetModel(int stageCount = 13)
     int stem = -1;
     int pw1 = -1;
     if ( stageCount >= 1 )
-        output = stem = addConv(output, 96, 96, 3, 32, 3, 2,
+        output = stem = addConv(output, 96, 96, 3, 32, 3, 2, 0,
             tflite::ActivationFunctionType::RELU6);
     if ( stageCount >= 2 )
-        output = addDepthwise(output, 48, 48, 32, 1,
+        output = addDepthwise(output, 48, 48, 32, 1, 0,
             tflite::ActivationFunctionType::RELU6);
     if ( stageCount >= 3 )
-        output = addConv(output, 48, 48, 32, 32, 1, 1,
+        output = addConv(output, 48, 48, 32, 32, 1, 1, 0,
             tflite::ActivationFunctionType::NONE);
     if ( stageCount >= 4 ) output = addResidual(output, stem, 48, 48, 32);
     if ( stageCount >= 5 )
-        output = addDepthwise(output, 48, 48, 32, 2,
+        output = addDepthwise(output, 48, 48, 32, 2, 1,
             tflite::ActivationFunctionType::NONE);
     if ( stageCount >= 6 )
-        output = pw1 = addConv(output, 24, 24, 32, 64, 1, 1,
+        output = pw1 = addConv(output, 24, 24, 32, 64, 1, 1, 1,
             tflite::ActivationFunctionType::RELU6);
     if ( stageCount >= 7 )
-        output = addConv(output, 24, 24, 64, 128, 1, 1,
+        output = addConv(output, 24, 24, 64, 128, 1, 1, 2,
             tflite::ActivationFunctionType::NONE);
     if ( stageCount >= 8 )
-        output = addDepthwise(output, 24, 24, 128, 1,
+        output = addDepthwise(output, 24, 24, 128, 1, 2,
             tflite::ActivationFunctionType::NONE);
     if ( stageCount >= 9 )
-        output = addConv(output, 24, 24, 128, 64, 1, 1,
+        output = addConv(output, 24, 24, 128, 64, 1, 1, 3,
             tflite::ActivationFunctionType::NONE);
     if ( stageCount >= 10 ) output = addResidual(output, pw1, 24, 24, 64);
     if ( stageCount >= 11 )
-        output = addConv(output, 24, 24, 64, 64, 3, 1,
+        output = addConv(output, 24, 24, 64, 64, 3, 1, 4,
             tflite::ActivationFunctionType::NONE);
     if ( stageCount >= 12 )
     {
@@ -650,7 +696,7 @@ flatbuffers::DetachedBuffer BuildMicroMobileNetModel(int stageCount = 13)
         output = pooled;
     }
     if ( stageCount >= 13 )
-        output = addConv(output, 1, 1, 64, 32, 1, 1,
+        output = addConv(output, 1, 1, 64, 32, 1, 1, 5,
             tflite::ActivationFunctionType::NONE);
 
     const std::vector<int32_t> graphInputs = {input};
