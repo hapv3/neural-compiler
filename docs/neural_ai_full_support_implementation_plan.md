@@ -1891,7 +1891,7 @@ classifier. This required TFLite SAME padding with asymmetric 0/1 sides for
 even-sized K3 S2 inputs. ReLU6 is fused into the producing Conv's existing
 per-channel requantization, so this graph does not emit a standalone AFU LUT
 command. The full compiler-generated graph now passes byte-exactly on the
-current Verilator model. Its PMU result is 522,900 cycles, so correctness is
+current Verilator model. Its PMU result is 443,524 cycles, so correctness is
 closed for this topology while the performance gate remains open against the
 347,992-cycle native Micro-MobileNet record.
 
@@ -1972,21 +1972,23 @@ The following must be complete before Conv compiler lowering begins:
 - The current full package is 89,312 bytes, contains 81 runtime commands, and
   has a 290,816-byte peak TCDM allocation. Direct external-to-local compact
   tensor transfers avoid CPU-backed local-to-local bounce copies, and one
-  pointwise `RQ_LOAD` is reused by every M stripe in the same output group.
-- The equivalent full-graph PMU run completes byte-exactly at 522,900 cycles.
-  The principal counters are 261,093 Snitch instructions, 35,714 systolic
-  compute cycles, 6,959 iDMA busy cycles, 350,281 AFU done events, and 5,482
+  pointwise `RQ_LOAD` is reused by every M stripe in the same output group. The
+  model reader copies aligned ABI records as 32-bit words while retaining a
+  byte-copy fallback for unaligned reads.
+- The equivalent full-graph PMU run completes byte-exactly at 443,524 cycles.
+  The principal counters are 221,405 Snitch instructions, 35,714 systolic
+  compute cycles, 6,959 iDMA busy cycles, 292,531 AFU done events, and 5,482
   TCDM stall cycles.
-- Runtime firmware `.text` is 23,988 bytes with the ABI 1.1 section layout,
+- Runtime firmware `.text` is 24,064 bytes with the ABI 1.1 section layout,
   below the 32 KB limit.
 - The focused package times include boot, command loading,
   boundary layout DMA, and output checking. They must not be compared as
   operator latency against the PMU-only Micro-MobileNet and Micro-YOLO records.
   The current native baselines remain 347,992 total cycles for Micro-MobileNet
   and 388,146 total cycles for the Micro-YOLO raw-head graph. The measured
-  compiler graph is therefore 1.503x the Micro-MobileNet record and 1.347x the
+  compiler graph is therefore 1.275x the Micro-MobileNet record and 1.143x the
   Micro-YOLO record. These are equivalent full-graph PMU comparisons, but the
-  50.3% gap to the matching MobileNet record does not close the performance
+  27.5% gap to the matching MobileNet record does not close the performance
   gate. Further work must attribute the remaining command/runtime overhead
   without weakening byte-exact correctness or changing frozen RTL.
 
@@ -2058,7 +2060,7 @@ package includes boot, package validation, 21 DMA operations, two boundary
 layout conversions, and public L2 I/O. Their cycle counts are therefore
 datapath and integration checks, not an operator-speed ratio. The complete
 compiler-generated graph now supplies the missing full-graph comparison:
-522,900 cycles, or 1.503x the 347,992-cycle Micro-MobileNet record and 1.347x
+443,524 cycles, or 1.275x the 347,992-cycle Micro-MobileNet record and 1.143x
 the 388,146-cycle Micro-YOLO record. Focused AFU results remain useful for
 attribution but do not replace that end-to-end gate.
 
