@@ -678,6 +678,65 @@ struct GeneratorContext
         return true;
     }
 
+    bool AppendUpsampleNearest(const SchedulerOperation *operation, std::string &error)
+    {
+        const SchedulerOpInfo *cost = schedule->Cost(operation);
+        if ( cost == nullptr || cost->Config() == nullptr )
+            return SetError(error, "Neural-AI upsample operation has no validated target mode");
+        const auto *config = static_cast<const NeuralAIOpConfig *>(cost->Config());
+        if ( config->Mode() != NeuralAIOpMode::UpsampleNearestC32 )
+            return SetError(error, "Neural-AI upsample operation has no validated nearest mode");
+        const SchedulerConnection *ifm = operation->IFM(0);
+        const SchedulerConnection *ofm = operation->OFM();
+        if ( ifm == nullptr || ofm == nullptr )
+            return SetError(error, "Neural-AI upsample is missing an IFM or OFM connection");
+        if ( !IsFullTensorConnection(ifm) || !IsFullTensorConnection(ofm) )
+            return SetError(error, "Neural-AI upsample requires full tensor connections");
+        if ( ifm->Type() != regor::DataType::Int8 || ofm->Type() != regor::DataType::Int8 )
+            return SetError(error, "Neural-AI upsample requires INT8 tensors");
+        if ( ifm->tensor->format != TensorFormat::C32Blocked ||
+             ofm->tensor->format != TensorFormat::C32Blocked )
+            return SetError(error, "Neural-AI upsample requires C32-blocked tensors");
+        if ( ifm->resamplingMode != ArchResampling::Nearest )
+            return SetError(error, "Neural-AI upsample requires nearest resampling metadata");
+        if ( ifm->shape.Depth() != 32 || ofm->shape.Depth() != 32 )
+            return SetError(error, "Neural-AI upsample requires exactly 32 channels");
+        if ( ofm->shape.Height() % 2 != 0 ||
+             ofm->shape.Height() / 2 != ifm->shape.Height() ||
+             ofm->shape.Width() % 2 != 0 ||
+             ofm->shape.Width() / 2 != ifm->shape.Width() )
+            return SetError(error, "Neural-AI upsample requires an exact 2x spatial shape");
+        const int64_t inputBytes = ifm->tensor->AllocationSizeBytes();
+        const int64_t outputBytes = ofm->tensor->AllocationSizeBytes();
+        if ( inputBytes <= 0 ||
+             inputBytes > std::numeric_limits<uint32_t>::max() / 4 ||
+             outputBytes != inputBytes * 4 || outputBytes > std::numeric_limits<uint32_t>::max() )
+            return SetError(error, "Neural-AI upsample tensor storage size is invalid");
+        RefV1 ifmRef = TensorRef(ifm->tensor.get(), 0, error);
+        if ( !error.empty() ) return false;
+        RefV1 ofmRef = TensorRef(ofm->tensor.get(), 0, error);
+        if ( !error.empty() ) return false;
+        if ( ifmRef.region != uint16_t(Region::TCDMScratch) ||
+             ofmRef.region != uint16_t(Region::TCDMScratch) )
+            return SetError(error, "Neural-AI upsample requires internal TCDM tensors");
+        if ( ifmRef.offset < ofmRef.offset + uint32_t(outputBytes) &&
+             ofmRef.offset < ifmRef.offset + uint32_t(inputBytes) )
+            return SetError(error, "Neural-AI upsample requires out-of-place output storage");
+
+        AppendHeader(artifact->commands, CommandType::UpsampleNearest, 64,
+            uint32_t(operation->Index()), 0);
+        AppendRef(artifact->commands, ifmRef);
+        AppendRef(artifact->commands, ofmRef);
+        Append32(artifact->commands, uint32_t(ifm->shape.Height()));
+        Append32(artifact->commands, uint32_t(ifm->shape.Width()));
+        Append32(artifact->commands, 32);
+        Append32(artifact->commands, 2);
+        Append32(artifact->commands, 2);
+        AppendZeros(artifact->commands, 3);
+        ++artifact->commandCount;
+        return true;
+    }
+
     bool AppendMatrix(const SchedulerOperation *operation, std::string &error)
     {
         const SchedulerOpInfo *cost = schedule->Cost(operation);
@@ -1101,7 +1160,14 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         }
         else if ( operation->Type() == OpType::AvgPool )
         {
-            if ( !context.AppendAFUGlobalAvgPool(operation.get(), error) ) return false;
+            const SchedulerOpInfo *cost = schedule->Cost(operation.get());
+            const auto *config = cost != nullptr && cost->Config() != nullptr ?
+                static_cast<const NeuralAIOpConfig *>(cost->Config()) : nullptr;
+            if ( config != nullptr && config->Mode() == NeuralAIOpMode::UpsampleNearestC32 )
+            {
+                if ( !context.AppendUpsampleNearest(operation.get(), error) ) return false;
+            }
+            else if ( !context.AppendAFUGlobalAvgPool(operation.get(), error) ) return false;
         }
         else if ( operation->Type() == OpType::FullyConnected || operation->Type() == OpType::MatMul ||
                   operation->Type() == OpType::Conv2D )

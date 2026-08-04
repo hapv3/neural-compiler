@@ -91,7 +91,8 @@ bool NeuralAIConstraints::IsSupportedOp(OpType opType)
     return opType == OpType::FullyConnected || opType == OpType::MatMul || opType == OpType::Conv2D ||
            opType == OpType::Add || opType == OpType::AvgPool || opType == OpType::LUT ||
            opType == OpType::Sigmoid || IsClipping(opType) ||
-           opType == OpType::DepthwiseConv2D || opType == OpType::MemoryCopy;
+           opType == OpType::DepthwiseConv2D || opType == OpType::Resize ||
+           opType == OpType::MemoryCopy;
 }
 
 NeuralAIConstraints::Classification NeuralAIConstraints::Classify(OpType opType, const Shape &ifmShape,
@@ -254,6 +255,30 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
             QueryResult::Native : QueryResult::Unsupported;
     }
 
+    if ( opType == OpType::Resize )
+    {
+        const Shape &ifmShape = query->ifm[0].shape;
+        const Shape &ofmShape = query->ofm.shape;
+        if ( query->ifm[0].type != DataType::Int8 || query->ofm.type != DataType::Int8 ||
+             !IsStaticPositiveShape(ifmShape) || !IsStaticPositiveShape(ofmShape) ||
+             !HasBatchOne(ifmShape) || !HasBatchOne(ofmShape) ||
+             ifmShape.Depth() != 32 || ofmShape.Depth() != 32 ||
+             ofmShape.Height() % 2 != 0 || ofmShape.Height() / 2 != ifmShape.Height() ||
+             ofmShape.Width() % 2 != 0 || ofmShape.Width() / 2 != ifmShape.Width() )
+            return QueryResult::Unsupported;
+        if ( req != nullptr )
+        {
+            Set(s_tensorRequirements[0], TensorUsage::IFM0, TensorFormat::C32Blocked);
+            Set(s_tensorRequirements[1], TensorUsage::OFM, TensorFormat::C32Blocked);
+            s_tensorRequirements[0].next = &s_tensorRequirements[1];
+            s_tensorRequirements[1].next = nullptr;
+            req->tensor = s_tensorRequirements[0];
+            req->req.Set(ArchRequirement::OpSubstitution, ArchRequirement::Decompose);
+            req->req.Set(ArchRequirement::Tensor);
+        }
+        return req != nullptr ? QueryResult::NativeHasReq : QueryResult::Native;
+    }
+
     if ( query->ifm[0].type != DataType::Int8 || query->ofm.type != DataType::Int8 )
     {
         return QueryResult::Unsupported;
@@ -323,6 +348,25 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
         const Kernel *kernel = query->kernel;
         const Shape &ifmShape = query->ifm[0].shape;
         const Shape &ofmShape = query->ofm.shape;
+        const bool nearest2x = kernel != nullptr && kernel->Size() == Point2i(1, 1) &&
+                               kernel->Stride() == Point2i(1, 1) && kernel->Padding().IsZero() &&
+                               ifmShape.Depth() == 32 && ofmShape.Depth() == 32 &&
+                               ofmShape.Height() % 2 == 0 && ofmShape.Height() / 2 == ifmShape.Height() &&
+                               ofmShape.Width() % 2 == 0 && ofmShape.Width() / 2 == ifmShape.Width();
+        if ( nearest2x )
+        {
+            if ( req != nullptr )
+            {
+                Set(s_tensorRequirements[0], TensorUsage::IFM0, TensorFormat::C32Blocked);
+                Set(s_tensorRequirements[1], TensorUsage::OFM, TensorFormat::C32Blocked);
+                s_tensorRequirements[0].next = &s_tensorRequirements[1];
+                s_tensorRequirements[1].next = nullptr;
+                req->tensor = s_tensorRequirements[0];
+                req->req.Set(ArchRequirement::Tensor);
+                return QueryResult::NativeHasReq;
+            }
+            return QueryResult::Native;
+        }
         if ( kernel == nullptr || !HasBatchOne(ifmShape) || !HasBatchOne(ofmShape) ||
              kernel->Size() != Point2i(ifmShape.Width(), ifmShape.Height()) ||
              kernel->Stride() != Point2i(1, 1) ||
@@ -384,7 +428,8 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
 bool NeuralAIConstraints::SupportedZeroPoint(int64_t zeroPoint, TensorUsage usage, DataType dataType, OpType opType)
 {
     if ( !IsSupportedOp(opType) || dataType != DataType::Int8 ) return false;
-    if ( opType == OpType::LUT || opType == OpType::Sigmoid || IsClipping(opType) )
+    if ( opType == OpType::LUT || opType == OpType::Sigmoid || opType == OpType::Resize ||
+         IsClipping(opType) )
         return (IsIFM(usage) || IsOFM(usage)) && zeroPoint >= -128 && zeroPoint <= 127;
     if ( opType == OpType::Add ) return (IsIFM(usage) || IsOFM(usage)) && zeroPoint == 0;
     if ( opType == OpType::AvgPool )

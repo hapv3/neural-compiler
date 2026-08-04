@@ -114,7 +114,9 @@ std::unique_ptr<ArchitectureOpConfig> ArchNeuralAI::GetOpConfig(OpType opType, c
     else if ( opType == OpType::MatMul ) mode = NeuralAIOpMode::MatMulRow32;
     else if ( opType == OpType::LUT ) mode = NeuralAIOpMode::AFULutI8;
     else if ( opType == OpType::Add ) mode = NeuralAIOpMode::AFUBinaryAddI8;
-    else if ( opType == OpType::AvgPool ) mode = NeuralAIOpMode::AFUGlobalAvgPoolC32;
+    else if ( opType == OpType::AvgPool )
+        mode = query.ifmResampling == ArchResampling::Nearest ?
+            NeuralAIOpMode::UpsampleNearestC32 : NeuralAIOpMode::AFUGlobalAvgPoolC32;
     else if ( opType == OpType::Conv2D && query.kernel != nullptr )
     {
         const auto &kernel = *query.kernel;

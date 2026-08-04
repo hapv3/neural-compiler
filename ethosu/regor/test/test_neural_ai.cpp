@@ -352,6 +352,60 @@ flatbuffers::DetachedBuffer BuildGlobalAvgPoolModel(
     return builder.Release();
 }
 
+flatbuffers::DetachedBuffer BuildResizeNearestModel(
+    int height = 2, int width = 3, int channels = 32,
+    int outputHeight = 4, int outputWidth = 6, float outputScale = 0.25f)
+{
+    flatbuffers::FlatBufferBuilder builder;
+    const std::vector<float> inputScales = {0.25f};
+    const std::vector<float> outputScales = {outputScale};
+    const std::vector<int64_t> zeroPoints = {-3};
+    const auto inputQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &inputScales, &zeroPoints);
+    const auto outputQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &outputScales, &zeroPoints);
+    const std::vector<int32_t> outputSize = {outputHeight, outputWidth};
+    std::vector<uint8_t> outputSizeData(sizeof(int32_t) * outputSize.size());
+    std::memcpy(outputSizeData.data(), outputSize.data(), outputSizeData.size());
+    std::vector<flatbuffers::Offset<tflite::Buffer>> buffers = {
+        tflite::CreateBufferDirect(builder),
+        tflite::CreateBufferDirect(builder, &outputSizeData),
+    };
+    const std::vector<int32_t> inputShape = {1, height, width, channels};
+    const std::vector<int32_t> sizeShape = {2};
+    const std::vector<int32_t> outputShape = {1, outputHeight, outputWidth, channels};
+    std::vector<flatbuffers::Offset<tflite::Tensor>> tensors = {
+        tflite::CreateTensorDirect(
+            builder, &inputShape, tflite::TensorType::INT8, 0, "input", inputQuant),
+        tflite::CreateTensorDirect(
+            builder, &sizeShape, tflite::TensorType::INT32, 1, "output_size"),
+        tflite::CreateTensorDirect(
+            builder, &outputShape, tflite::TensorType::INT8, 0, "output", outputQuant),
+    };
+    const auto options = tflite::CreateResizeNearestNeighborOptions(builder, false, false);
+    const std::vector<int32_t> opInputs = {0, 1};
+    const std::vector<int32_t> opOutputs = {2};
+    const std::vector<flatbuffers::Offset<tflite::Operator>> operations = {
+        tflite::CreateOperatorDirect(builder, 0, &opInputs, &opOutputs,
+            tflite::BuiltinOptions::ResizeNearestNeighborOptions, options.Union()),
+    };
+    const std::vector<int32_t> graphInputs = {0};
+    const std::vector<int32_t> graphOutputs = {2};
+    const std::vector<flatbuffers::Offset<tflite::SubGraph>> subgraphs = {
+        tflite::CreateSubGraphDirect(
+            builder, &tensors, &graphInputs, &graphOutputs, &operations, "main"),
+    };
+    const std::vector<flatbuffers::Offset<tflite::OperatorCode>> operatorCodes = {
+        tflite::CreateOperatorCodeDirect(
+            builder, int8_t(tflite::BuiltinOperator::RESIZE_NEAREST_NEIGHBOR),
+            nullptr, 1, tflite::BuiltinOperator::RESIZE_NEAREST_NEIGHBOR),
+    };
+    const auto model = tflite::CreateModelDirect(
+        builder, 3, &operatorCodes, &subgraphs, "Neural-AI nearest resize test", &buffers);
+    tflite::FinishModelBuffer(builder, model);
+    return builder.Release();
+}
+
 flatbuffers::DetachedBuffer BuildViewModel(
     tflite::BuiltinOperator viewOperator, bool followedByAdd)
 {
@@ -1804,6 +1858,77 @@ TEST_CASE("Neural-AI compiler admits MobileNet-scale global AvgPool")
     REQUIRE(sawGlobalAverage);
     blob->Unmap(const_cast<uint8_t *>(data));
     blob->Release();
+}
+
+TEST_CASE("Neural-AI compiler lowers nearest 2x C32 resize through Spatz upsample")
+{
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildResizeNearestModel();
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+    const bool compiled = compiler.Compile();
+    INFO(compiler.LastError());
+    REQUIRE(compiled);
+
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    const uint32_t commandBytes = Read32(data + 64 + 12);
+    uint32_t offset = 224;
+    uint32_t upsampleCommands = 0;
+    while ( offset < 224 + commandBytes )
+    {
+        const uint16_t type = Read16(data + offset);
+        const uint16_t commandSize = Read16(data + offset + 2);
+        REQUIRE(commandSize >= 32);
+        if ( type == uint16_t(neuralai::CommandType::UpsampleNearest) )
+        {
+            REQUIRE(commandSize == sizeof(neuralai::CommandUpsampleNearestV2));
+            REQUIRE(Read16(data + offset + 16) == uint16_t(neuralai::Region::TCDMScratch));
+            REQUIRE(Read16(data + offset + 24) == uint16_t(neuralai::Region::TCDMScratch));
+            REQUIRE(Read32(data + offset + 16 + 4) != Read32(data + offset + 24 + 4));
+            REQUIRE(Read32(data + offset + 32) == 2);
+            REQUIRE(Read32(data + offset + 36) == 3);
+            REQUIRE(Read32(data + offset + 40) == 32);
+            REQUIRE(Read32(data + offset + 44) == 2);
+            REQUIRE(Read32(data + offset + 48) == 2);
+            ++upsampleCommands;
+        }
+        offset += commandSize;
+    }
+    REQUIRE(offset == 224 + commandBytes);
+    REQUIRE(upsampleCommands == 1);
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
+}
+
+TEST_CASE("Neural-AI compiler rejects resize outside nearest 2x C32 contract")
+{
+    const auto rejects = [](flatbuffers::DetachedBuffer model)
+    {
+        std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+        Compiler compiler(architecture);
+        const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+        REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+        REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+        bool rejected = false;
+        try
+        {
+            rejected = !compiler.Compile();
+        }
+        catch ( const std::runtime_error & )
+        {
+            rejected = true;
+        }
+        REQUIRE(rejected);
+    };
+
+    rejects(BuildResizeNearestModel(2, 3, 33, 4, 6));
+    rejects(BuildResizeNearestModel(2, 3, 32, 6, 9));
+    rejects(BuildResizeNearestModel(2, 3, 32, 4, 6, 0.5f));
 }
 
 TEST_CASE("Neural-AI compiler lowers the complete Micro-MobileNet topology")

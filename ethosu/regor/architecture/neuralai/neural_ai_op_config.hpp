@@ -25,6 +25,7 @@ enum class NeuralAIOpMode
     AFULutI8,
     AFUBinaryAddI8,
     AFUGlobalAvgPoolC32,
+    UpsampleNearestC32,
 };
 
 const char *NeuralAIOpModeName(NeuralAIOpMode mode);
