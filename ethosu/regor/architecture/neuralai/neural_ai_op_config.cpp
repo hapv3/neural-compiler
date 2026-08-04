@@ -24,6 +24,7 @@ const char *NeuralAIOpModeName(NeuralAIOpMode mode)
     case NeuralAIOpMode::Conv2DLinebufC32S2Requant: return "Conv2DLinebufC32S2Requant";
     case NeuralAIOpMode::DepthwiseC32S1Requant: return "DepthwiseC32S1Requant";
     case NeuralAIOpMode::DepthwiseC32S2Requant: return "DepthwiseC32S2Requant";
+    case NeuralAIOpMode::AFULutI8: return "AFULutI8";
     case NeuralAIOpMode::AFUBinaryAddI8: return "AFUBinaryAddI8";
     case NeuralAIOpMode::AFUGlobalAvgPoolC32: return "AFUGlobalAvgPoolC32";
     default: return "Unsupported";
@@ -45,7 +46,7 @@ int NeuralAIOpGroup::Add(const ArchitectureOpGroupQuery &op, const std::vector<i
 {
     if ( _hasOp )
     {
-        if ( _hasActivation || !IsClipping(op.type) ||
+        if ( !_allowsActivation || _hasActivation || !IsClipping(op.type) ||
              dependsOn.size() != 1 || dependsOn[0] != -1 )
             return 0;
         _hasActivation = true;
@@ -54,13 +55,15 @@ int NeuralAIOpGroup::Add(const ArchitectureOpGroupQuery &op, const std::vector<i
     if ( !dependsOn.empty() ||
          (op.type != OpType::FullyConnected && op.type != OpType::MatMul &&
              op.type != OpType::Conv2D && op.type != OpType::DepthwiseConv2D &&
-             op.type != OpType::Add && op.type != OpType::AvgPool &&
+             op.type != OpType::LUT && op.type != OpType::Add && op.type != OpType::AvgPool &&
              op.type != OpType::MemoryCopy) )
     {
         return 0;
     }
     _hasOp = true;
-    _allowsIFMReuse = op.type != OpType::Add;
+    _allowsActivation = op.type == OpType::FullyConnected || op.type == OpType::MatMul ||
+                        op.type == OpType::Conv2D || op.type == OpType::DepthwiseConv2D;
+    _allowsIFMReuse = op.type != OpType::Add && op.type != OpType::LUT;
     return -1;
 }
 

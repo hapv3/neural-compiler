@@ -89,7 +89,8 @@ bool HasRawAverageQuantization(const ArchFM &ifm, const ArchFM &ofm)
 bool NeuralAIConstraints::IsSupportedOp(OpType opType)
 {
     return opType == OpType::FullyConnected || opType == OpType::MatMul || opType == OpType::Conv2D ||
-           opType == OpType::Add || opType == OpType::AvgPool ||
+           opType == OpType::Add || opType == OpType::AvgPool || opType == OpType::LUT ||
+           opType == OpType::Sigmoid ||
            opType == OpType::DepthwiseConv2D || opType == OpType::MemoryCopy;
 }
 
@@ -232,6 +233,21 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
     if ( !IsSupportedOp(opType) ) return QueryResult::Unsupported;
     if ( !query ) return QueryResult::NativeConstrained;
 
+    if ( opType == OpType::Sigmoid )
+    {
+        if ( query->ifm[0].type != DataType::Int8 || query->ofm.type != DataType::Int8 ||
+             !IsStaticPositiveShape(query->ifm[0].shape) ||
+             !HasBatchOne(query->ifm[0].shape) ||
+             query->ifm[0].shape != query->ofm.shape )
+            return QueryResult::Unsupported;
+        if ( req != nullptr )
+        {
+            req->req.Set(ArchRequirement::OpSubstitution);
+            req->substitution = OpType::LUT;
+        }
+        return QueryResult::NativeHasReq;
+    }
+
     if ( opType == OpType::MemoryCopy )
     {
         return query->ifm[0].type == query->ofm.type && query->ifm[0].shape == query->ofm.shape ?
@@ -241,6 +257,25 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
     if ( query->ifm[0].type != DataType::Int8 || query->ofm.type != DataType::Int8 )
     {
         return QueryResult::Unsupported;
+    }
+    if ( opType == OpType::LUT )
+    {
+        if ( query->transposeMask != TransposeType::None || query->reverseMask != ReverseType::None ||
+             query->accSrc != ArchAccumulatorSource::Reset ||
+             !IsStaticPositiveShape(query->ifm[0].shape) ||
+             query->ifm[0].shape != query->ofm.shape || !HasBatchOne(query->ifm[0].shape) )
+            return QueryResult::Unsupported;
+        if ( req != nullptr )
+        {
+            Set(s_tensorRequirements[0], TensorUsage::IFM0, TensorFormat::C32Blocked);
+            Set(s_tensorRequirements[1], TensorUsage::OFM, TensorFormat::C32Blocked);
+            s_tensorRequirements[0].next = &s_tensorRequirements[1];
+            s_tensorRequirements[1].next = nullptr;
+            req->tensor = s_tensorRequirements[0];
+            req->req.Set(ArchRequirement::Tensor);
+            return QueryResult::NativeHasReq;
+        }
+        return QueryResult::Native;
     }
     if ( query->transposeMask != TransposeType::None || query->reverseMask != ReverseType::None ||
          query->accSrc != ArchAccumulatorSource::Reset ||
@@ -349,6 +384,8 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
 bool NeuralAIConstraints::SupportedZeroPoint(int64_t zeroPoint, TensorUsage usage, DataType dataType, OpType opType)
 {
     if ( !IsSupportedOp(opType) || dataType != DataType::Int8 ) return false;
+    if ( opType == OpType::LUT || opType == OpType::Sigmoid )
+        return (IsIFM(usage) || IsOFM(usage)) && zeroPoint >= -128 && zeroPoint <= 127;
     if ( opType == OpType::Add ) return (IsIFM(usage) || IsOFM(usage)) && zeroPoint == 0;
     if ( opType == OpType::AvgPool )
         return (IsIFM(usage) || IsOFM(usage)) && zeroPoint >= -128 && zeroPoint <= 127;

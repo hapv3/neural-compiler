@@ -22,6 +22,7 @@
 
 #include <catch_all.hpp>
 
+#include <cmath>
 #include <cstring>
 #include <limits>
 
@@ -218,6 +219,46 @@ flatbuffers::DetachedBuffer BuildAddModel(float lhsScale = 1.0f, float rhsScale 
     };
     const auto model = tflite::CreateModelDirect(
         builder, 3, &operatorCodes, &subgraphs, "Neural-AI Add test", &buffers);
+    tflite::FinishModelBuffer(builder, model);
+    return builder.Release();
+}
+
+flatbuffers::DetachedBuffer BuildSigmoidModel()
+{
+    flatbuffers::FlatBufferBuilder builder;
+    const std::vector<float> inputScales = {0.125f};
+    const std::vector<float> outputScales = {1.0f / 256.0f};
+    const std::vector<int64_t> inputZeroPoints = {0};
+    const std::vector<int64_t> outputZeroPoints = {-128};
+    const auto inputQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &inputScales, &inputZeroPoints);
+    const auto outputQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &outputScales, &outputZeroPoints);
+    std::vector<flatbuffers::Offset<tflite::Buffer>> buffers = {
+        tflite::CreateBufferDirect(builder),
+    };
+    const std::vector<int32_t> shape = {1, 2, 3, 33};
+    std::vector<flatbuffers::Offset<tflite::Tensor>> tensors = {
+        tflite::CreateTensorDirect(builder, &shape, tflite::TensorType::INT8, 0, "input", inputQuant),
+        tflite::CreateTensorDirect(builder, &shape, tflite::TensorType::INT8, 0, "output", outputQuant),
+    };
+    const std::vector<int32_t> opInputs = {0};
+    const std::vector<int32_t> opOutputs = {1};
+    const std::vector<flatbuffers::Offset<tflite::Operator>> operations = {
+        tflite::CreateOperatorDirect(builder, 0, &opInputs, &opOutputs),
+    };
+    const std::vector<int32_t> graphInputs = {0};
+    const std::vector<int32_t> graphOutputs = {1};
+    const std::vector<flatbuffers::Offset<tflite::SubGraph>> subgraphs = {
+        tflite::CreateSubGraphDirect(
+            builder, &tensors, &graphInputs, &graphOutputs, &operations, "main"),
+    };
+    const std::vector<flatbuffers::Offset<tflite::OperatorCode>> operatorCodes = {
+        tflite::CreateOperatorCodeDirect(builder, int8_t(tflite::BuiltinOperator::LOGISTIC),
+            nullptr, 1, tflite::BuiltinOperator::LOGISTIC),
+    };
+    const auto model = tflite::CreateModelDirect(
+        builder, 3, &operatorCodes, &subgraphs, "Neural-AI Sigmoid test", &buffers);
     tflite::FinishModelBuffer(builder, model);
     return builder.Release();
 }
@@ -866,6 +907,43 @@ TEST_CASE("Neural-AI constraints accept shape-preserving memory copies")
     REQUIRE(constraints->OperatorQuery(OpType::MemoryCopy, &query) == QueryResult::Unsupported);
 }
 
+TEST_CASE("Neural-AI constraints substitute INT8 Sigmoid with an AFU LUT")
+{
+    ArchNeuralAI arch;
+    auto *constraints = arch.Constraints();
+    ArchOperatorQuery query;
+    query.ifm[0].type = DataType::Int8;
+    query.ifm[0].shape = Shape(1, 2, 3, 33);
+    query.ofm.type = DataType::Int8;
+    query.ofm.shape = query.ifm[0].shape;
+    ArchRequirements sigmoidRequirements;
+    REQUIRE(constraints->OperatorQuery(OpType::Sigmoid, &query, &sigmoidRequirements) ==
+        QueryResult::NativeHasReq);
+    REQUIRE(sigmoidRequirements.req.Any(ArchRequirement::OpSubstitution));
+    REQUIRE(sigmoidRequirements.substitution == OpType::LUT);
+
+    ArchRequirements lutRequirements;
+    REQUIRE(constraints->OperatorQuery(OpType::LUT, &query, &lutRequirements) ==
+        QueryResult::NativeHasReq);
+    REQUIRE(lutRequirements.req.Any(ArchRequirement::Tensor));
+    REQUIRE(lutRequirements.tensor.usage == TensorUsage::IFM0);
+    REQUIRE(lutRequirements.tensor.format == TensorFormat::C32Blocked);
+    REQUIRE(lutRequirements.tensor.next != nullptr);
+    REQUIRE(lutRequirements.tensor.next->usage == TensorUsage::OFM);
+    REQUIRE(lutRequirements.tensor.next->format == TensorFormat::C32Blocked);
+
+    query.transposeMask = TransposeType::NCHW;
+    REQUIRE(constraints->OperatorQuery(OpType::LUT, &query) == QueryResult::Unsupported);
+    query.transposeMask = TransposeType::None;
+    query.ofm.shape = Shape(1, 2, 3, 32);
+    REQUIRE(constraints->OperatorQuery(OpType::Sigmoid, &query) == QueryResult::Unsupported);
+    REQUIRE(constraints->OperatorQuery(OpType::LUT, &query) == QueryResult::Unsupported);
+    query.ifm[0].shape = Shape(2, 2, 3, 33);
+    query.ofm.shape = query.ifm[0].shape;
+    REQUIRE(constraints->OperatorQuery(OpType::Sigmoid, &query) == QueryResult::Unsupported);
+    REQUIRE(constraints->OperatorQuery(OpType::LUT, &query) == QueryResult::Unsupported);
+}
+
 TEST_CASE("Neural-AI constraints accept only raw-safe Add quantization")
 {
     ArchNeuralAI arch;
@@ -1466,6 +1544,64 @@ TEST_CASE("Neural-AI compiler rejects Add modes that need requantization or acti
     rejects(BuildAddModel(1.0f, 0.5f, 1.0f));
     rejects(BuildAddModel(1.0f, 1.0f, 1.0f, 1));
     rejects(BuildAddModel(1.0f, 1.0f, 1.0f, 0, tflite::ActivationFunctionType::RELU));
+}
+
+TEST_CASE("Neural-AI compiler lowers INT8 Sigmoid through a raw-byte AFU LUT")
+{
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildSigmoidModel();
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+    const bool compiled = compiler.Compile();
+    INFO(compiler.LastError());
+    REQUIRE(compiled);
+
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    const uint32_t commandBytes = Read32(data + 64 + 12);
+    const uint32_t constantsOffset = Read32(data + 96 + 8);
+    const uint32_t constantsBytes = Read32(data + 96 + 12);
+    uint32_t offset = 224;
+    uint32_t lutCommands = 0;
+    while ( offset < 224 + commandBytes )
+    {
+        const uint16_t type = Read16(data + offset);
+        const uint16_t commandSize = Read16(data + offset + 2);
+        REQUIRE(commandSize >= 32);
+        if ( type == uint16_t(neuralai::CommandType::AFULut) )
+        {
+            REQUIRE(commandSize == sizeof(neuralai::CommandAFULutV2));
+            REQUIRE(Read16(data + offset + 16) == uint16_t(neuralai::Region::TCDMScratch));
+            REQUIRE(Read16(data + offset + 24) == uint16_t(neuralai::Region::TCDMScratch));
+            REQUIRE(Read16(data + offset + 32) == uint16_t(neuralai::Region::ModelConstants));
+            const uint32_t ifmOffset = Read32(data + offset + 20);
+            const uint32_t ofmOffset = Read32(data + offset + 28);
+            const uint32_t lutOffset = Read32(data + offset + 36);
+            REQUIRE((ifmOffset + 384 <= ofmOffset || ofmOffset + 384 <= ifmOffset));
+            REQUIRE(Read32(data + offset + 40) == 384);
+            REQUIRE(lutOffset <= constantsBytes);
+            REQUIRE(256 <= constantsBytes - lutOffset);
+            for ( uint32_t raw = 0; raw < 256; ++raw )
+            {
+                const int32_t input = raw < 128 ? int32_t(raw) : int32_t(raw) - 256;
+                const double real = std::max(-8.0, std::min(8.0, 0.125 * double(input)));
+                const double sigmoid = 1.0 / (1.0 + std::exp(-real));
+                const int32_t quantized = std::max(-128,
+                    std::min(127, int32_t(std::round(-128.0 + 256.0 * sigmoid))));
+                REQUIRE(data[constantsOffset + lutOffset + raw] == uint8_t(quantized));
+            }
+            ++lutCommands;
+        }
+        offset += commandSize;
+    }
+    REQUIRE(offset == 224 + commandBytes);
+    REQUIRE(lutCommands == 1);
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
 }
 
 TEST_CASE("Neural-AI compiler lowers full-spatial AvgPool through AFU C32 reduction")

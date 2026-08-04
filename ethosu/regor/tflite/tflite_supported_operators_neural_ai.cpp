@@ -21,7 +21,9 @@ const std::set<OpType> s_supportedOpTypes = {
     OpType::DepthwiseConv2D,
     OpType::ExpandDims,
     OpType::FullyConnected,
+    OpType::LUT,
     OpType::Reshape,
+    OpType::Sigmoid,
     OpType::Squeeze,
 };
 

@@ -22,6 +22,7 @@ enum class NeuralAIOpMode
     Conv2DLinebufC32S2Requant,
     DepthwiseC32S1Requant,
     DepthwiseC32S2Requant,
+    AFULutI8,
     AFUBinaryAddI8,
     AFUGlobalAvgPoolC32,
 };
@@ -61,6 +62,7 @@ class NeuralAIOpGroup final : public ArchitectureOpGroup
 private:
     bool _hasOp = false;
     bool _hasActivation = false;
+    bool _allowsActivation = false;
     bool _allowsIFMReuse = true;
 
 public:

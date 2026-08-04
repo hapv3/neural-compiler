@@ -574,6 +574,66 @@ struct GeneratorContext
         return true;
     }
 
+    bool AppendAFULut(const SchedulerOperation *operation, std::string &error)
+    {
+        const SchedulerOpInfo *cost = schedule->Cost(operation);
+        if ( cost == nullptr || cost->Config() == nullptr )
+            return SetError(error, "Neural-AI LUT operation has no validated target mode");
+        const auto *config = static_cast<const NeuralAIOpConfig *>(cost->Config());
+        if ( config->Mode() != NeuralAIOpMode::AFULutI8 )
+            return SetError(error, "Neural-AI LUT operation has no validated AFU mode");
+        const SchedulerConnection *ifm = operation->IFM(0);
+        const SchedulerConnection *ofm = operation->OFM();
+        const SchedulerConnection *lut = operation->TryInput(TensorUsage::LUT);
+        if ( ifm == nullptr || ofm == nullptr || lut == nullptr ||
+             !IsFullTensorConnection(ifm) || !IsFullTensorConnection(ofm) ||
+             ifm->Type() != regor::DataType::Int8 || ofm->Type() != regor::DataType::Int8 ||
+             ifm->shape != ofm->shape ||
+             ifm->tensor->format != TensorFormat::C32Blocked ||
+             ofm->tensor->format != TensorFormat::C32Blocked ||
+             !lut->tensor->IsConstant() || lut->tensor->dataType != regor::DataType::Int8 ||
+             lut->tensor->bufferView.Elements() != 256 )
+            return SetError(error, "Neural-AI AFU LUT requires equal C32 INT8 tensors and a 256-byte LUT");
+        const int64_t bytes = ifm->tensor->AllocationSizeBytes();
+        if ( bytes <= 0 || bytes != ofm->tensor->AllocationSizeBytes() ||
+             bytes > std::numeric_limits<uint32_t>::max() )
+            return SetError(error, "Neural-AI AFU LUT tensor storage size is invalid");
+        RefV1 ifmRef = TensorRef(ifm->tensor.get(), 0, error);
+        if ( !error.empty() ) return false;
+        RefV1 ofmRef = TensorRef(ofm->tensor.get(), 0, error);
+        if ( !error.empty() ) return false;
+        if ( ifmRef.region != uint16_t(Region::TCDMScratch) ||
+             ofmRef.region != uint16_t(Region::TCDMScratch) )
+            return SetError(error, "Neural-AI AFU LUT requires internal TCDM tensors");
+        if ( ifmRef.offset < ofmRef.offset + uint32_t(bytes) &&
+             ofmRef.offset < ifmRef.offset + uint32_t(bytes) )
+            return SetError(error, "Neural-AI AFU LUT requires out-of-place output storage");
+
+        while ( artifact->constants.size() % ArchNeuralAI::DMAAlignment != 0 )
+            artifact->constants.push_back(0);
+        RefV1 lutRef{};
+        lutRef.region = uint16_t(Region::ModelConstants);
+        lutRef.offset = uint32_t(artifact->constants.size());
+        const uint8_t *lutBytes = lut->tensor->bufferView.RawData<uint8_t>();
+        // Regor LUT tensors are ordered by signed INT8 value (-128..127),
+        // whereas the AFU indexes the table with the input's raw byte.
+        for ( uint32_t raw = 0; raw < 256; ++raw )
+        {
+            const int32_t signedValue = raw < 128 ? int32_t(raw) : int32_t(raw) - 256;
+            artifact->constants.push_back(lutBytes[signedValue + 128]);
+        }
+
+        AppendHeader(artifact->commands, CommandType::AFULut, 64,
+            uint32_t(operation->Index()), 0);
+        AppendRef(artifact->commands, ifmRef);
+        AppendRef(artifact->commands, ofmRef);
+        AppendRef(artifact->commands, lutRef);
+        Append32(artifact->commands, uint32_t(bytes));
+        AppendZeros(artifact->commands, 5);
+        ++artifact->commandCount;
+        return true;
+    }
+
     bool AppendAFUGlobalAvgPool(const SchedulerOperation *operation, std::string &error)
     {
         const SchedulerOpInfo *cost = schedule->Cost(operation);
@@ -1034,6 +1094,10 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         else if ( operation->Type() == OpType::Add )
         {
             if ( !context.AppendAFUAdd(operation.get(), error) ) return false;
+        }
+        else if ( operation->Type() == OpType::LUT )
+        {
+            if ( !context.AppendAFULut(operation.get(), error) ) return false;
         }
         else if ( operation->Type() == OpType::AvgPool )
         {
