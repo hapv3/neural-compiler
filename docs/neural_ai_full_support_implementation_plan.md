@@ -2145,6 +2145,29 @@ must not be interpreted as a 11.7x kernel slowdown. An equivalent
 compiler-generated full YOLO graph remains the performance gate against the
 388,146-cycle native record.
 
+The model-required materialized Concat fallback is implemented for exactly two
+static batch-1 INT8 inputs on the channel axis. Both input depths must be C32
+aligned, spatial shapes and quantization must match exactly, and the output
+depth must be their sum. The compiler preserves this subset as a native
+operation, assigns C32-blocked storage, requires an out-of-place output, and
+emits two existing local-to-local `DMA1D` commands. N-way, non-channel,
+requantized, and channel-tail forms remain rejected. No Concat command or ABI
+extension is added.
+
+The compiler-generated H24/W24/C32+C32 package contains three public boundary
+layout conversions and two 18,432-byte local copies. It passes byte-exactly on
+Verilator at 192,093 simulated ns, with 115,789 ns measured invocation time and
+81,006 PMU cycles. Firmware uses the existing Spatz vector copy and zero
+primitives for local materialization and C32 boundary initialization; this
+removes the scalar byte loops without increasing the 27,416-byte firmware text
+baseline. The focused package moves 110,592 tensor bytes across its three
+boundary conversions and two local copies. Native Micro-YOLO instead fuses the
+logical H48/W48/C64 Concat into its dual-source head Conv, avoiding a 147,456-byte
+materialized tensor and contributing to the 388,146-cycle full-graph record.
+Therefore the measured materialized path is an appropriate correctness fallback
+for standalone or non-fusible Concat, while concat-consumer Conv fusion remains
+the required Phase 5 performance path for YOLO heads.
+
 ### Work Items
 
 1. Implement zero-copy reshape, flatten, squeeze, and unsqueeze views.
@@ -2152,7 +2175,8 @@ compiler-generated full YOLO graph remains the performance gate against the
 3. Implement DMA 2D/3D tensor copies and regular layout movement.
 4. Optimize the four boundary `COPY_LAYOUT` modes and add native-to-native
    materialization required by view, concat, and vector operations.
-5. Implement concat fusion and a Spatz concat fallback where required.
+5. Maintain the implemented two-input C32 materialized Concat fallback and add
+   concat-consumer Conv fusion for YOLO head performance in Phase 5.
 6. Implement quantization-correct Add, Mul, and Requant software kernels.
 7. Maintain AFU LUT lowering for standalone Sigmoid and clipping while keeping
    source-fused activation clamps in final requantization.
@@ -2168,7 +2192,9 @@ compiler-generated full YOLO graph remains the performance gate against the
   native C32 and ROW32 producers.
 - Add and Mul randomized scale, zero-point, and reference tests.
 - Exhaustive 256-value LUT tests.
-- Aligned, unaligned, fused, and materialized concat cases.
+- Two-input aligned materialized Concat plus rejection tests for channel tails,
+  non-channel axes, and mismatched quantization; fused-consumer coverage belongs
+  to Phase 5.
 - Multi-operation chains that expose lifetime and aliasing bugs.
 
 ### Exit Criteria
