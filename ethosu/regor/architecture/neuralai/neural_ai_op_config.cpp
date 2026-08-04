@@ -28,6 +28,7 @@ const char *NeuralAIOpModeName(NeuralAIOpMode mode)
     case NeuralAIOpMode::AFUBinaryAddI8: return "AFUBinaryAddI8";
     case NeuralAIOpMode::AFUGlobalAvgPoolC32: return "AFUGlobalAvgPoolC32";
     case NeuralAIOpMode::UpsampleNearestC32: return "UpsampleNearestC32";
+    case NeuralAIOpMode::MaxPoolK5S1P2C32: return "MaxPoolK5S1P2C32";
     default: return "Unsupported";
     }
 }
@@ -57,6 +58,7 @@ int NeuralAIOpGroup::Add(const ArchitectureOpGroupQuery &op, const std::vector<i
          (op.type != OpType::FullyConnected && op.type != OpType::MatMul &&
              op.type != OpType::Conv2D && op.type != OpType::DepthwiseConv2D &&
              op.type != OpType::LUT && op.type != OpType::Add && op.type != OpType::AvgPool &&
+             op.type != OpType::MaxPool &&
              op.type != OpType::MemoryCopy) )
     {
         return 0;
@@ -64,7 +66,8 @@ int NeuralAIOpGroup::Add(const ArchitectureOpGroupQuery &op, const std::vector<i
     _hasOp = true;
     _allowsActivation = op.type == OpType::FullyConnected || op.type == OpType::MatMul ||
                         op.type == OpType::Conv2D || op.type == OpType::DepthwiseConv2D;
-    _allowsIFMReuse = op.type != OpType::Add && op.type != OpType::LUT && op.type != OpType::AvgPool;
+    _allowsIFMReuse = op.type != OpType::Add && op.type != OpType::LUT &&
+                      op.type != OpType::AvgPool && op.type != OpType::MaxPool;
     return -1;
 }
 

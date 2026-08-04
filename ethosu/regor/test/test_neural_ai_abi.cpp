@@ -153,6 +153,38 @@ TEST_CASE("neural_ai_abi freezes nearest upsample command layout")
     REQUIRE(command.scaleW == 2);
 }
 
+TEST_CASE("neural_ai_abi freezes MaxPool command layout")
+{
+    CommandMaxPoolV2 command{};
+    command.header.type = uint16_t(CommandType::MaxPool);
+    command.header.sizeBytes = sizeof(command);
+    command.ifm = {uint16_t(Region::TCDMScratch), 0, 0};
+    command.ofm = {uint16_t(Region::TCDMScratch), 0, 0x4800};
+    command.inputH = 24;
+    command.inputW = 24;
+    command.channels = 32;
+    command.kernelH = 5;
+    command.kernelW = 5;
+    command.strideH = 1;
+    command.strideW = 1;
+    command.padH = 2;
+    command.padW = 2;
+
+    REQUIRE(command.header.type == 19);
+    REQUIRE(command.header.sizeBytes == 96);
+    REQUIRE(command.ifm.offset == 0);
+    REQUIRE(command.ofm.offset == 0x4800);
+    REQUIRE(command.inputH == 24);
+    REQUIRE(command.inputW == 24);
+    REQUIRE(command.channels == 32);
+    REQUIRE(command.kernelH == 5);
+    REQUIRE(command.kernelW == 5);
+    REQUIRE(command.strideH == 1);
+    REQUIRE(command.strideW == 1);
+    REQUIRE(command.padH == 2);
+    REQUIRE(command.padW == 2);
+}
+
 TEST_CASE("neural_ai_abi freezes DMA direction values")
 {
     REQUIRE(uint32_t(DMADirection::ExternalToLocal) == 0);

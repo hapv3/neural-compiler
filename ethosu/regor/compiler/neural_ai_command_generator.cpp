@@ -737,6 +737,64 @@ struct GeneratorContext
         return true;
     }
 
+    bool AppendMaxPool(const SchedulerOperation *operation, std::string &error)
+    {
+        const SchedulerOpInfo *cost = schedule->Cost(operation);
+        if ( cost == nullptr || cost->Config() == nullptr )
+            return SetError(error, "Neural-AI MaxPool operation has no validated target mode");
+        const auto *config = static_cast<const NeuralAIOpConfig *>(cost->Config());
+        if ( config->Mode() != NeuralAIOpMode::MaxPoolK5S1P2C32 )
+            return SetError(error, "Neural-AI MaxPool operation has no validated C32 mode");
+        const SchedulerConnection *ifm = operation->IFM(0);
+        const SchedulerConnection *ofm = operation->OFM();
+        const Kernel *kernel = operation->Kernel();
+        if ( ifm == nullptr || ofm == nullptr || kernel == nullptr ||
+             !IsFullTensorConnection(ifm) || !IsFullTensorConnection(ofm) ||
+             ifm->Type() != regor::DataType::Int8 || ofm->Type() != regor::DataType::Int8 ||
+             ifm->tensor->format != TensorFormat::C32Blocked ||
+             ofm->tensor->format != TensorFormat::C32Blocked )
+            return SetError(error, "Neural-AI MaxPool requires full C32-blocked INT8 tensors");
+        const Shape inputShape = ReshapeToNHWC(ifm->shape);
+        const Shape outputShape = ReshapeToNHWC(ofm->shape);
+        if ( inputShape.Batch() != 1 || inputShape.Depth() != 32 || outputShape != inputShape ||
+             kernel->Size() != Point2i(5, 5) || kernel->Stride() != Point2i(1, 1) ||
+             kernel->Dilation() != Point2i(1, 1) ||
+             kernel->Padding().Top() != 2 || kernel->Padding().Bottom() != 2 ||
+             kernel->Padding().Left() != 2 || kernel->Padding().Right() != 2 )
+            return SetError(error, "Neural-AI MaxPool requires batch-1 K5/S1/P2 C32 shape");
+        const int64_t bytes = ifm->tensor->AllocationSizeBytes();
+        if ( bytes <= 0 || bytes != ofm->tensor->AllocationSizeBytes() ||
+             bytes > std::numeric_limits<uint32_t>::max() )
+            return SetError(error, "Neural-AI MaxPool tensor storage size is invalid");
+        RefV1 ifmRef = TensorRef(ifm->tensor.get(), 0, error);
+        if ( !error.empty() ) return false;
+        RefV1 ofmRef = TensorRef(ofm->tensor.get(), 0, error);
+        if ( !error.empty() ) return false;
+        if ( ifmRef.region != uint16_t(Region::TCDMScratch) ||
+             ofmRef.region != uint16_t(Region::TCDMScratch) )
+            return SetError(error, "Neural-AI MaxPool requires internal TCDM tensors");
+        if ( ifmRef.offset < ofmRef.offset + uint32_t(bytes) &&
+             ofmRef.offset < ifmRef.offset + uint32_t(bytes) )
+            return SetError(error, "Neural-AI MaxPool requires out-of-place output storage");
+
+        AppendHeader(artifact->commands, CommandType::MaxPool, 96,
+            uint32_t(operation->Index()), 0);
+        AppendRef(artifact->commands, ifmRef);
+        AppendRef(artifact->commands, ofmRef);
+        Append32(artifact->commands, uint32_t(inputShape.Height()));
+        Append32(artifact->commands, uint32_t(inputShape.Width()));
+        Append32(artifact->commands, 32);
+        Append32(artifact->commands, 5);
+        Append32(artifact->commands, 5);
+        Append32(artifact->commands, 1);
+        Append32(artifact->commands, 1);
+        Append32(artifact->commands, 2);
+        Append32(artifact->commands, 2);
+        AppendZeros(artifact->commands, 7);
+        ++artifact->commandCount;
+        return true;
+    }
+
     bool AppendMatrix(const SchedulerOperation *operation, std::string &error)
     {
         const SchedulerOpInfo *cost = schedule->Cost(operation);
@@ -1168,6 +1226,10 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
                 if ( !context.AppendUpsampleNearest(operation.get(), error) ) return false;
             }
             else if ( !context.AppendAFUGlobalAvgPool(operation.get(), error) ) return false;
+        }
+        else if ( operation->Type() == OpType::MaxPool )
+        {
+            if ( !context.AppendMaxPool(operation.get(), error) ) return false;
         }
         else if ( operation->Type() == OpType::FullyConnected || operation->Type() == OpType::MatMul ||
                   operation->Type() == OpType::Conv2D )

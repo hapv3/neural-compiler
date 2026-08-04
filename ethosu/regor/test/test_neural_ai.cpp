@@ -406,6 +406,54 @@ flatbuffers::DetachedBuffer BuildResizeNearestModel(
     return builder.Release();
 }
 
+flatbuffers::DetachedBuffer BuildMaxPoolModel(
+    int height = 4, int width = 4, int channels = 32,
+    int filterHeight = 5, int filterWidth = 5,
+    float outputScale = 0.25f,
+    tflite::ActivationFunctionType activation = tflite::ActivationFunctionType::NONE)
+{
+    flatbuffers::FlatBufferBuilder builder;
+    const std::vector<float> inputScales = {0.25f};
+    const std::vector<float> outputScales = {outputScale};
+    const std::vector<int64_t> zeroPoints = {-3};
+    const auto inputQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &inputScales, &zeroPoints);
+    const auto outputQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &outputScales, &zeroPoints);
+    std::vector<flatbuffers::Offset<tflite::Buffer>> buffers = {
+        tflite::CreateBufferDirect(builder),
+    };
+    const std::vector<int32_t> shape = {1, height, width, channels};
+    std::vector<flatbuffers::Offset<tflite::Tensor>> tensors = {
+        tflite::CreateTensorDirect(
+            builder, &shape, tflite::TensorType::INT8, 0, "input", inputQuant),
+        tflite::CreateTensorDirect(
+            builder, &shape, tflite::TensorType::INT8, 0, "output", outputQuant),
+    };
+    const auto options = tflite::CreatePool2DOptions(
+        builder, tflite::Padding::SAME, 1, 1, filterWidth, filterHeight, activation);
+    const std::vector<int32_t> opInputs = {0};
+    const std::vector<int32_t> opOutputs = {1};
+    const std::vector<flatbuffers::Offset<tflite::Operator>> operations = {
+        tflite::CreateOperatorDirect(builder, 0, &opInputs, &opOutputs,
+            tflite::BuiltinOptions::Pool2DOptions, options.Union()),
+    };
+    const std::vector<int32_t> graphInputs = {0};
+    const std::vector<int32_t> graphOutputs = {1};
+    const std::vector<flatbuffers::Offset<tflite::SubGraph>> subgraphs = {
+        tflite::CreateSubGraphDirect(
+            builder, &tensors, &graphInputs, &graphOutputs, &operations, "main"),
+    };
+    const std::vector<flatbuffers::Offset<tflite::OperatorCode>> operatorCodes = {
+        tflite::CreateOperatorCodeDirect(builder, int8_t(tflite::BuiltinOperator::MAX_POOL_2D),
+            nullptr, 1, tflite::BuiltinOperator::MAX_POOL_2D),
+    };
+    const auto model = tflite::CreateModelDirect(
+        builder, 3, &operatorCodes, &subgraphs, "Neural-AI MaxPool test", &buffers);
+    tflite::FinishModelBuffer(builder, model);
+    return builder.Release();
+}
+
 flatbuffers::DetachedBuffer BuildViewModel(
     tflite::BuiltinOperator viewOperator, bool followedByAdd)
 {
@@ -1929,6 +1977,83 @@ TEST_CASE("Neural-AI compiler rejects resize outside nearest 2x C32 contract")
     rejects(BuildResizeNearestModel(2, 3, 33, 4, 6));
     rejects(BuildResizeNearestModel(2, 3, 32, 6, 9));
     rejects(BuildResizeNearestModel(2, 3, 32, 4, 6, 0.5f));
+}
+
+TEST_CASE("Neural-AI compiler lowers K5 S1 P2 C32 MaxPool through systolic linebuffer")
+{
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildMaxPoolModel();
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+    const bool compiled = compiler.Compile();
+    INFO(compiler.LastError());
+    REQUIRE(compiled);
+
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    const uint32_t commandBytes = Read32(data + 64 + 12);
+    uint32_t offset = 224;
+    uint32_t maxPoolCommands = 0;
+    while ( offset < 224 + commandBytes )
+    {
+        const uint16_t type = Read16(data + offset);
+        const uint16_t commandSize = Read16(data + offset + 2);
+        REQUIRE(commandSize >= 32);
+        if ( type == uint16_t(neuralai::CommandType::MaxPool) )
+        {
+            REQUIRE(commandSize == sizeof(neuralai::CommandMaxPoolV2));
+            REQUIRE(Read16(data + offset + 16) == uint16_t(neuralai::Region::TCDMScratch));
+            REQUIRE(Read16(data + offset + 24) == uint16_t(neuralai::Region::TCDMScratch));
+            REQUIRE(Read32(data + offset + 20) != Read32(data + offset + 28));
+            REQUIRE(Read32(data + offset + 32) == 4);
+            REQUIRE(Read32(data + offset + 36) == 4);
+            REQUIRE(Read32(data + offset + 40) == 32);
+            REQUIRE(Read32(data + offset + 44) == 5);
+            REQUIRE(Read32(data + offset + 48) == 5);
+            REQUIRE(Read32(data + offset + 52) == 1);
+            REQUIRE(Read32(data + offset + 56) == 1);
+            REQUIRE(Read32(data + offset + 60) == 2);
+            REQUIRE(Read32(data + offset + 64) == 2);
+            ++maxPoolCommands;
+        }
+        offset += commandSize;
+    }
+    REQUIRE(offset == 224 + commandBytes);
+    REQUIRE(maxPoolCommands == 1);
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
+}
+
+TEST_CASE("Neural-AI compiler rejects MaxPool outside K5 S1 P2 C32 contract")
+{
+    const auto rejects = [](flatbuffers::DetachedBuffer model)
+    {
+        std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+        Compiler compiler(architecture);
+        const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+        REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+        REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+        bool rejected = false;
+        try
+        {
+            rejected = !compiler.Compile();
+        }
+        catch ( const std::runtime_error & )
+        {
+            rejected = true;
+        }
+        REQUIRE(rejected);
+    };
+
+    rejects(BuildMaxPoolModel(4, 4, 33));
+    rejects(BuildMaxPoolModel(4, 4, 32, 3, 3));
+    rejects(BuildMaxPoolModel(4, 4, 32, 5, 5, 0.5f));
+    rejects(BuildMaxPoolModel(4, 4, 32, 5, 5, 0.25f,
+        tflite::ActivationFunctionType::RELU));
 }
 
 TEST_CASE("Neural-AI compiler lowers the complete Micro-MobileNet topology")

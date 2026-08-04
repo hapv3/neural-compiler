@@ -88,7 +88,8 @@ void NeuralAIGraphOptimiser::OptimiseGraph(Graph *graph)
         if ( operation->Type() != OpType::FullyConnected && operation->Type() != OpType::MatMul &&
              operation->Type() != OpType::Conv2D && operation->Type() != OpType::DepthwiseConv2D &&
              operation->Type() != OpType::LUT && operation->Type() != OpType::Add &&
-             operation->Type() != OpType::AvgPool && operation->Type() != OpType::Resize ) continue;
+             operation->Type() != OpType::AvgPool && operation->Type() != OpType::Resize &&
+             operation->Type() != OpType::MaxPool ) continue;
         if ( !IsDirectRgbStem(operation.get()) ) InsertInputConversion(graph, operation.get(), TensorUsage::IFM0);
         if ( operation->Type() == OpType::Add )
             InsertInputConversion(graph, operation.get(), TensorUsage::IFM1);

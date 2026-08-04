@@ -22,6 +22,7 @@ const std::set<OpType> s_supportedOpTypes = {
     OpType::ExpandDims,
     OpType::FullyConnected,
     OpType::LUT,
+    OpType::MaxPool,
     OpType::Reshape,
     OpType::ResizeNearestNeighbor,
     OpType::Sigmoid,
@@ -48,14 +49,14 @@ bool ViewPreservesDepth(const Operation *operation)
     return true;
 }
 
-bool ResizePreservesQuantization(const Operation *operation)
+bool PreservesQuantization(const Operation *operation)
 {
     const TensorConnection *ifm = operation->Input(TensorUsage::IFM0);
     const TensorConnection *ofm = operation->Output(TensorUsage::OFM);
     if ( ifm == nullptr || ofm == nullptr || ifm->quantization != ofm->quantization )
     {
         Failure(operation,
-            "Neural-AI nearest resize requires identical IFM and OFM quantization");
+            "Neural-AI raw-value operation requires identical IFM and OFM quantization");
         return false;
     }
     return true;
@@ -71,9 +72,10 @@ TfLiteSupportedOperatorsNeuralAI::TfLiteSupportedOperatorsNeuralAI() :
         "Reshape, Squeeze, and ExpandDims must preserve the innermost channel dimension."};
     for ( const OpType opType : {OpType::Reshape, OpType::Squeeze, OpType::ExpandDims} )
         opConstraints[opType].push_back(&viewPreservesDepth);
-    static ConstraintCheck s_resizePreservesQuantization = {&ResizePreservesQuantization,
-        "ResizeNearestNeighbor must preserve quantization."};
-    opConstraints[OpType::ResizeNearestNeighbor].push_back(&s_resizePreservesQuantization);
+    static ConstraintCheck s_preservesQuantization = {&PreservesQuantization,
+        "The operation must preserve quantization."};
+    opConstraints[OpType::ResizeNearestNeighbor].push_back(&s_preservesQuantization);
+    opConstraints[OpType::MaxPool].push_back(&s_preservesQuantization);
 }
 
 }  // namespace regor

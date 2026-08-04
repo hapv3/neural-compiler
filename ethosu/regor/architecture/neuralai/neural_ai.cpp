@@ -102,6 +102,7 @@ std::unique_ptr<ArchitectureOpConfig> ArchNeuralAI::GetOpConfig(OpType opType, c
          opType != OpType::LUT &&
          opType != OpType::Add &&
          opType != OpType::AvgPool &&
+         opType != OpType::MaxPool &&
          opType != OpType::MemoryCopy ) return nullptr;
     if ( query.ifmBits != 8 || query.ofmBits != 8 || query.transpose != TransposeType::None ||
          query.reverse != ReverseType::None )
@@ -117,6 +118,7 @@ std::unique_ptr<ArchitectureOpConfig> ArchNeuralAI::GetOpConfig(OpType opType, c
     else if ( opType == OpType::AvgPool )
         mode = query.ifmResampling == ArchResampling::Nearest ?
             NeuralAIOpMode::UpsampleNearestC32 : NeuralAIOpMode::AFUGlobalAvgPoolC32;
+    else if ( opType == OpType::MaxPool ) mode = NeuralAIOpMode::MaxPoolK5S1P2C32;
     else if ( opType == OpType::Conv2D && query.kernel != nullptr )
     {
         const auto &kernel = *query.kernel;

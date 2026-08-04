@@ -92,7 +92,7 @@ bool NeuralAIConstraints::IsSupportedOp(OpType opType)
            opType == OpType::Add || opType == OpType::AvgPool || opType == OpType::LUT ||
            opType == OpType::Sigmoid || IsClipping(opType) ||
            opType == OpType::DepthwiseConv2D || opType == OpType::Resize ||
-           opType == OpType::MemoryCopy;
+           opType == OpType::MaxPool || opType == OpType::MemoryCopy;
 }
 
 NeuralAIConstraints::Classification NeuralAIConstraints::Classify(OpType opType, const Shape &ifmShape,
@@ -389,6 +389,30 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
         }
         return QueryResult::Native;
     }
+    if ( opType == OpType::MaxPool )
+    {
+        const Kernel *kernel = query->kernel;
+        const Shape &ifmShape = query->ifm[0].shape;
+        const Shape &ofmShape = query->ofm.shape;
+        if ( kernel == nullptr || !HasBatchOne(ifmShape) || !HasBatchOne(ofmShape) ||
+             ifmShape.Depth() != 32 || ofmShape != ifmShape ||
+             kernel->Size() != Point2i(5, 5) || kernel->Stride() != Point2i(1, 1) ||
+             kernel->Dilation() != Point2i(1, 1) ||
+             kernel->Padding().Top() != 2 || kernel->Padding().Bottom() != 2 ||
+             kernel->Padding().Left() != 2 || kernel->Padding().Right() != 2 )
+            return QueryResult::Unsupported;
+        if ( req != nullptr )
+        {
+            Set(s_tensorRequirements[0], TensorUsage::IFM0, TensorFormat::C32Blocked);
+            Set(s_tensorRequirements[1], TensorUsage::OFM, TensorFormat::C32Blocked);
+            s_tensorRequirements[0].next = &s_tensorRequirements[1];
+            s_tensorRequirements[1].next = nullptr;
+            req->tensor = s_tensorRequirements[0];
+            req->req.Set(ArchRequirement::Tensor);
+            return QueryResult::NativeHasReq;
+        }
+        return QueryResult::Native;
+    }
     const DataType weightsType = query->weights.type != DataType::None ? query->weights.type : query->ifm[1].type;
     if ( weightsType != DataType::Int8 || query->weightFormat == WeightFormat::None )
     {
@@ -433,6 +457,8 @@ bool NeuralAIConstraints::SupportedZeroPoint(int64_t zeroPoint, TensorUsage usag
         return (IsIFM(usage) || IsOFM(usage)) && zeroPoint >= -128 && zeroPoint <= 127;
     if ( opType == OpType::Add ) return (IsIFM(usage) || IsOFM(usage)) && zeroPoint == 0;
     if ( opType == OpType::AvgPool )
+        return (IsIFM(usage) || IsOFM(usage)) && zeroPoint >= -128 && zeroPoint <= 127;
+    if ( opType == OpType::MaxPool )
         return (IsIFM(usage) || IsOFM(usage)) && zeroPoint >= -128 && zeroPoint <= 127;
     if ( IsIFM(usage) || usage == TensorUsage::Weights ) return zeroPoint == 0;
     return IsOFM(usage) && zeroPoint >= -128 && zeroPoint <= 127;
