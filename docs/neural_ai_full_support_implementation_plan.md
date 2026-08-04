@@ -1955,7 +1955,7 @@ The following must be complete before Conv compiler lowering begins:
 
 ### Current Verification Evidence
 
-- Compiler C++ tests: 191/191 pass.
+- Compiler C++ tests: 192/192 pass.
 - The complete 13-stage Micro-MobileNet compiler test passes every graph prefix
   and the full graph byte-exactly. The full package contains two `AFU_BINARY`
   residual Adds, one `AFU_GLOBAL_AVGPOOL`, and the expected Conv/linebuffer
@@ -2075,26 +2075,30 @@ Clamp layers. Conv clamps remain fused into requantization because that is the
 more efficient graph lowering.
 
 The 64-byte v2 `AFU_LUT` command path is implemented for standalone INT8
-Sigmoid. The compiler substitutes Sigmoid with a 256-entry LUT, requires equal
-static batch-1 IFM/OFM shapes, inserts C32 boundary conversions, allocates the
-output out-of-place, and rotates Regor's signed `-128..127` LUT order into the
-AFU's raw-byte `0..255` index order. Runtime dispatch accepts LUT data in model
-constants or TCDM. Model-constant LUTs are copied from L2 into the reserved TCDM
-command-staging window with iDMA before firmware programs the AFU MMIO entries;
-the control core does not directly load L2 bytes.
+Sigmoid and clipping. The compiler substitutes Sigmoid, ReLU, ReLU0To1, ReLU6,
+ReLUN1To1, and explicitly bounded Clamp with a 256-entry LUT when the clipping
+operation is standalone. A source-fused activation remains attached to its
+producer and uses the existing final-requantization clamp. LUT lowering requires
+equal static batch-1 IFM/OFM shapes, inserts C32 boundary conversions, allocates
+the output out-of-place, and rotates Regor's signed `-128..127` LUT order into
+the AFU's raw-byte `0..255` index order. Runtime dispatch accepts LUT data in
+model constants or TCDM. Model-constant LUTs are copied from L2 into the
+reserved TCDM command-staging window with iDMA before firmware programs the AFU
+MMIO entries; the control core does not directly load L2 bytes.
 
-Compiler tests validate all 256 LUT entries and reject invalid shape, batch,
-and transform cases. Command generation and op-group rules enforce out-of-place
-storage and prevent unsupported activation fusion. The compiler-generated
-H2/W3/C33 Sigmoid package passes byte-exactly on Verilator at 88,766 simulated
-ns. This focused time includes boot, package parsing, boundary copies, LUT DMA
-staging, 256 MMIO writes, and output transfer. It is not comparable to the
-full-graph PMU records. The current compiler Micro-MobileNet graph fuses Conv
-clamps and emits no LUT, while the native Micro-YOLO record uses its specialized
-raw-head class-sigmoid path. The relevant full-graph performance comparison
-therefore remains 443,524 compiler Micro-MobileNet cycles versus the 347,992
-Micro-MobileNet and 388,146 Micro-YOLO records. Standalone Clamp compiler
-lowering remains open.
+Compiler tests validate all 256 Sigmoid and ReLU6 LUT entries and reject invalid
+shape, batch, and transform cases. They also verify that source-fused Conv ReLU
+and ReLU6 remain in qparams and emit no `AFU_LUT`. Command generation and
+op-group rules enforce out-of-place storage and prevent unsupported activation
+fusion. The compiler-generated H2/W3/C33 Sigmoid and ReLU6 packages both pass
+byte-exactly on Verilator at 88,766 simulated ns. This focused time includes
+boot, package parsing, boundary copies, LUT DMA staging, 256 MMIO writes, and
+output transfer. It is not comparable to the full-graph PMU records. The
+current compiler Micro-MobileNet graph fuses Conv clamps and emits no LUT, while
+the native Micro-YOLO record uses its specialized raw-head class-sigmoid path.
+The relevant full-graph performance comparison therefore remains 443,524
+compiler Micro-MobileNet cycles versus the 347,992 Micro-MobileNet and 388,146
+Micro-YOLO records.
 
 ### Work Items
 
@@ -2105,8 +2109,8 @@ lowering remains open.
    materialization required by view, concat, and vector operations.
 5. Implement concat fusion and a Spatz concat fallback where required.
 6. Implement quantization-correct Add, Mul, and Requant software kernels.
-7. Complete standalone Clamp AFU LUT lowering; standalone Sigmoid is
-   implemented.
+7. Maintain AFU LUT lowering for standalone Sigmoid and clipping while keeping
+   source-fused activation clamps in final requantization.
 8. Implement MaxPool K5 S1 P2, nearest-neighbor 2x, and global average pool.
 9. Add out-of-place and liveness constraints for AFU operations.
 
