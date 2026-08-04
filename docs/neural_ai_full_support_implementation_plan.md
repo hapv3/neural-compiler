@@ -2065,19 +2065,15 @@ the 388,146-cycle Micro-YOLO record. Focused AFU results remain useful for
 attribution but do not replace that end-to-end gate.
 
 The Neural-AI AFU is covered by standalone `afu_ops` tests and by the native
-Micro-MobileNet/Micro-YOLO graphs; lack of tests is not the current limitation.
-On the current RTL, `test_afu_op_clamp_relu6` times out after consuming all
-21,216 input bytes and remains in `ST_READ_IN`. The generic E8 stream path tests
-the 32-byte destination boundary before the final-element condition, selects a
-mid-stream flush on an aligned final byte, and then waits for a nonexistent
-next RFIFO beat. This ordering entered with AFU refactor `41cce28`; the recorded
-347,992-cycle Micro-MobileNet result predates that refactor and therefore does
-not establish that the current RTL still passes its three standalone clamp
-layers. `ADD_I8` and `GLOBAL_AVGPOOL_C32` pass their current focused tests, so
-this finding is specific to the generic E8 clamp/LUT stream rather than the
-whole AFU. RTL is frozen for this compiler plan; Conv clamps must remain fused
-into requantization, and standalone AFU LUT lowering cannot close until the
-native clamp regression passes again.
+Micro-MobileNet/Micro-YOLO graphs. The generic stream FSM prioritizes final
+tensor completion over a coincident 32-byte destination boundary, so an aligned
+final E8, E16, or E32 beat performs the final flush instead of requesting a
+nonexistent next input beat. Block-level final-boundary cases pass in all three
+element widths. Focused full-length Clamp/ReLU6 and Logistic tests pass, and the
+native Micro-MobileNet graph passes byte-exactly with its three standalone
+Clamp layers. Conv clamps remain fused into requantization because that is the
+more efficient graph lowering. The remaining standalone LUT gate is compiler
+emission and runtime-v2 dispatch for `AFU_LUT`, not RTL functionality.
 
 ### Work Items
 
