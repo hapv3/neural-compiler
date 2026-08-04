@@ -1955,7 +1955,7 @@ The following must be complete before Conv compiler lowering begins:
 
 ### Current Verification Evidence
 
-- Compiler C++ tests: 188/188 pass.
+- Compiler C++ tests: 191/191 pass.
 - The complete 13-stage Micro-MobileNet compiler test passes every graph prefix
   and the full graph byte-exactly. The full package contains two `AFU_BINARY`
   residual Adds, one `AFU_GLOBAL_AVGPOOL`, and the expected Conv/linebuffer
@@ -1979,7 +1979,7 @@ The following must be complete before Conv compiler lowering begins:
   The principal counters are 221,405 Snitch instructions, 35,714 systolic
   compute cycles, 6,959 iDMA busy cycles, 292,531 AFU done events, and 5,482
   TCDM stall cycles.
-- Runtime firmware `.text` is 24,064 bytes with the ABI 1.1 section layout,
+- Runtime firmware `.text` is 24,780 bytes with the ABI 1.1 section layout,
   below the 32 KB limit.
 - The focused package times include boot, command loading,
   boundary layout DMA, and output checking. They must not be compared as
@@ -2072,8 +2072,29 @@ nonexistent next input beat. Block-level final-boundary cases pass in all three
 element widths. Focused full-length Clamp/ReLU6 and Logistic tests pass, and the
 native Micro-MobileNet graph passes byte-exactly with its three standalone
 Clamp layers. Conv clamps remain fused into requantization because that is the
-more efficient graph lowering. The remaining standalone LUT gate is compiler
-emission and runtime-v2 dispatch for `AFU_LUT`, not RTL functionality.
+more efficient graph lowering.
+
+The 64-byte v2 `AFU_LUT` command path is implemented for standalone INT8
+Sigmoid. The compiler substitutes Sigmoid with a 256-entry LUT, requires equal
+static batch-1 IFM/OFM shapes, inserts C32 boundary conversions, allocates the
+output out-of-place, and rotates Regor's signed `-128..127` LUT order into the
+AFU's raw-byte `0..255` index order. Runtime dispatch accepts LUT data in model
+constants or TCDM. Model-constant LUTs are copied from L2 into the reserved TCDM
+command-staging window with iDMA before firmware programs the AFU MMIO entries;
+the control core does not directly load L2 bytes.
+
+Compiler tests validate all 256 LUT entries and reject invalid shape, batch,
+and transform cases. Command generation and op-group rules enforce out-of-place
+storage and prevent unsupported activation fusion. The compiler-generated
+H2/W3/C33 Sigmoid package passes byte-exactly on Verilator at 88,766 simulated
+ns. This focused time includes boot, package parsing, boundary copies, LUT DMA
+staging, 256 MMIO writes, and output transfer. It is not comparable to the
+full-graph PMU records. The current compiler Micro-MobileNet graph fuses Conv
+clamps and emits no LUT, while the native Micro-YOLO record uses its specialized
+raw-head class-sigmoid path. The relevant full-graph performance comparison
+therefore remains 443,524 compiler Micro-MobileNet cycles versus the 347,992
+Micro-MobileNet and 388,146 Micro-YOLO records. Standalone Clamp compiler
+lowering remains open.
 
 ### Work Items
 
@@ -2084,7 +2105,8 @@ emission and runtime-v2 dispatch for `AFU_LUT`, not RTL functionality.
    materialization required by view, concat, and vector operations.
 5. Implement concat fusion and a Spatz concat fallback where required.
 6. Implement quantization-correct Add, Mul, and Requant software kernels.
-7. Generate AFU LUTs for Sigmoid and Clamp.
+7. Complete standalone Clamp AFU LUT lowering; standalone Sigmoid is
+   implemented.
 8. Implement MaxPool K5 S1 P2, nearest-neighbor 2x, and global average pool.
 9. Add out-of-place and liveness constraints for AFU operations.
 
