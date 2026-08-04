@@ -82,6 +82,7 @@ exists. The following status matrix reflects what has been audited:
 | Linebuffer Conv | Yes | v2 linebuffer and depthwise dispatch | RGB K3 S2, generic full-group C32 K3, and depthwise K3 S1/S2 | Compiler-generated `.nai` packages |
 | AFU commands | Hardware modes exist | v2 constrained `ADD_I8` dispatch | Equal-shape, symmetric, raw-safe INT8 Add | Compiler-generated Add package on Verilator |
 | Spatz commands | Engine exists | v2 nearest-upsample dispatch to the existing C32 kernel | Nearest-neighbor 2x, batch 1, INT8 C32 | Compiler-generated upsample package on Verilator |
+| MaxPool | Systolic linebuffer pool mode | v2 constrained MaxPool dispatch | K5/S1/P2, batch 1, INT8 C32, out-of-place | Compiler-generated H24/W24/C32 package on Verilator |
 
 `ArchNeuralAI` exposes `FullyConnected`, `MatMul`, `MemoryCopy`, and a
 constrained CNN path containing pointwise Conv, RGB K3 S2, generic full-group
@@ -2123,6 +2124,27 @@ integration rather than establishing an operator-speed regression. A
 compiler-generated full YOLO graph is still required for an equivalent
 comparison with the 388,146-cycle native full-graph record.
 
+YOLO-style MaxPool is implemented through the 96-byte v2 `MAXPOOL` command.
+The supported subset is static batch-1 INT8, exactly 32 channels, K5/S1/P2,
+same input/output shape and quantization, no fused activation, C32-blocked
+internal tensors, and out-of-place output. The runtime validates all fixed
+kernel fields, overflow-safe tensor ranges, TCDM references, reserved fields,
+and non-overlap before calling
+`systolic_maxpool5x5s1p2_c32_linebuf()`, the same linebuffer pool fast path used
+by native Micro-YOLO. C33, K3, requantized, and fused-ReLU forms are rejected.
+
+The compiler-generated H24/W24/C32 operator package passes byte-exactly on
+Verilator at 289,729 simulated ns, with 251,203 ns measured invocation time and
+216,420 PMU cycles. The equivalent native Micro-YOLO MaxPool layer record is
+18,474 PMU cycles. The isolated compiler package contains two full 18,432-byte
+public boundary conversions plus package parsing and L2 I/O; the native layer
+starts and ends in internal C32 storage. In a YOLO graph, adjacent native C32
+operators remove those public boundary conversions. Because both paths invoke
+the same systolic helper, this result verifies compiler/runtime integration but
+must not be interpreted as a 11.7x kernel slowdown. An equivalent
+compiler-generated full YOLO graph remains the performance gate against the
+388,146-cycle native record.
+
 ### Work Items
 
 1. Implement zero-copy reshape, flatten, squeeze, and unsqueeze views.
@@ -2134,8 +2156,8 @@ comparison with the 388,146-cycle native full-graph record.
 6. Implement quantization-correct Add, Mul, and Requant software kernels.
 7. Maintain AFU LUT lowering for standalone Sigmoid and clipping while keeping
    source-fused activation clamps in final requantization.
-8. Implement the remaining MaxPool K5 S1 P2 path; nearest-neighbor 2x C32 and
-   global average pool are implemented.
+8. Maintain the implemented MaxPool K5 S1 P2, nearest-neighbor 2x C32, and
+   global average pool paths while expanding only model-required shapes.
 9. Add out-of-place and liveness constraints for AFU operations.
 
 ### Tests
