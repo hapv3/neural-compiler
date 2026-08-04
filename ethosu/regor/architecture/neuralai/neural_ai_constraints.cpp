@@ -92,7 +92,8 @@ bool NeuralAIConstraints::IsSupportedOp(OpType opType)
            opType == OpType::Add || opType == OpType::AvgPool || opType == OpType::LUT ||
            opType == OpType::Sigmoid || IsClipping(opType) ||
            opType == OpType::DepthwiseConv2D || opType == OpType::Resize ||
-           opType == OpType::MaxPool || opType == OpType::MemoryCopy;
+           opType == OpType::MaxPool || opType == OpType::Concat ||
+           opType == OpType::MemoryCopy;
 }
 
 NeuralAIConstraints::Classification NeuralAIConstraints::Classify(OpType opType, const Shape &ifmShape,
@@ -253,6 +254,36 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
     {
         return query->ifm[0].type == query->ofm.type && query->ifm[0].shape == query->ofm.shape ?
             QueryResult::Native : QueryResult::Unsupported;
+    }
+
+    if ( opType == OpType::Concat )
+    {
+        const Shape &lhsShape = query->ifm[0].shape;
+        const Shape &rhsShape = query->ifm[1].shape;
+        const Shape &ofmShape = query->ofm.shape;
+        if ( query->ifm[0].type != DataType::Int8 || query->ifm[1].type != DataType::Int8 ||
+             query->ofm.type != DataType::Int8 || query->axis != -1 ||
+             !IsStaticPositiveShape(lhsShape) || !IsStaticPositiveShape(rhsShape) ||
+             !IsStaticPositiveShape(ofmShape) || !HasBatchOne(lhsShape) ||
+             lhsShape.Size() != rhsShape.Size() || lhsShape.Size() != ofmShape.Size() ||
+             lhsShape.WithDepth(1) != rhsShape.WithDepth(1) ||
+             lhsShape.WithDepth(1) != ofmShape.WithDepth(1) ||
+             lhsShape.Depth() % 32 != 0 || rhsShape.Depth() % 32 != 0 ||
+             ofmShape.Depth() != lhsShape.Depth() + rhsShape.Depth() )
+            return QueryResult::Unsupported;
+        if ( req != nullptr )
+        {
+            Set(s_tensorRequirements[0], TensorUsage::IFM0, TensorFormat::C32Blocked);
+            Set(s_tensorRequirements[1], TensorUsage::IFM1, TensorFormat::C32Blocked);
+            Set(s_tensorRequirements[2], TensorUsage::OFM, TensorFormat::C32Blocked);
+            s_tensorRequirements[0].next = &s_tensorRequirements[1];
+            s_tensorRequirements[1].next = &s_tensorRequirements[2];
+            s_tensorRequirements[2].next = nullptr;
+            req->tensor = s_tensorRequirements[0];
+            req->req.Set(ArchRequirement::Tensor);
+            return QueryResult::NativeHasReq;
+        }
+        return QueryResult::Native;
     }
 
     if ( opType == OpType::Resize )
@@ -453,6 +484,7 @@ bool NeuralAIConstraints::SupportedZeroPoint(int64_t zeroPoint, TensorUsage usag
 {
     if ( !IsSupportedOp(opType) || dataType != DataType::Int8 ) return false;
     if ( opType == OpType::LUT || opType == OpType::Sigmoid || opType == OpType::Resize ||
+         opType == OpType::Concat ||
          IsClipping(opType) )
         return (IsIFM(usage) || IsOFM(usage)) && zeroPoint >= -128 && zeroPoint <= 127;
     if ( opType == OpType::Add ) return (IsIFM(usage) || IsOFM(usage)) && zeroPoint == 0;

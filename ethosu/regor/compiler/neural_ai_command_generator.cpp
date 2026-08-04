@@ -795,6 +795,65 @@ struct GeneratorContext
         return true;
     }
 
+    bool AppendConcat(const SchedulerOperation *operation, std::string &error)
+    {
+        const SchedulerOpInfo *cost = schedule->Cost(operation);
+        if ( cost == nullptr || cost->Config() == nullptr )
+            return SetError(error, "Neural-AI Concat operation has no validated target mode");
+        const auto *config = static_cast<const NeuralAIOpConfig *>(cost->Config());
+        if ( config->Mode() != NeuralAIOpMode::ConcatC32 )
+            return SetError(error, "Neural-AI Concat operation has no validated C32 mode");
+        const SchedulerConnection *lhs = operation->IFM(0);
+        const SchedulerConnection *rhs = operation->IFM(1);
+        const SchedulerConnection *ofm = operation->OFM();
+        if ( lhs == nullptr || rhs == nullptr || ofm == nullptr ||
+             !IsFullTensorConnection(lhs) || !IsFullTensorConnection(rhs) ||
+             !IsFullTensorConnection(ofm) || lhs->Type() != regor::DataType::Int8 ||
+             rhs->Type() != regor::DataType::Int8 || ofm->Type() != regor::DataType::Int8 ||
+             lhs->tensor->format != TensorFormat::C32Blocked ||
+             rhs->tensor->format != TensorFormat::C32Blocked ||
+             ofm->tensor->format != TensorFormat::C32Blocked )
+            return SetError(error, "Neural-AI Concat requires full C32-blocked INT8 tensors");
+        const Shape lhsShape = ReshapeToNHWC(lhs->shape);
+        const Shape rhsShape = ReshapeToNHWC(rhs->shape);
+        const Shape ofmShape = ReshapeToNHWC(ofm->shape);
+        if ( lhsShape.Batch() != 1 || lhsShape.WithDepth(1) != rhsShape.WithDepth(1) ||
+             lhsShape.WithDepth(1) != ofmShape.WithDepth(1) ||
+             lhsShape.Depth() % 32 != 0 || rhsShape.Depth() % 32 != 0 ||
+             ofmShape.Depth() != lhsShape.Depth() + rhsShape.Depth() )
+            return SetError(error, "Neural-AI Concat requires two aligned channel-axis inputs");
+        const int64_t lhsBytes = lhs->tensor->AllocationSizeBytes();
+        const int64_t rhsBytes = rhs->tensor->AllocationSizeBytes();
+        const int64_t ofmBytes = ofm->tensor->AllocationSizeBytes();
+        if ( lhsBytes <= 0 || rhsBytes <= 0 || ofmBytes != lhsBytes + rhsBytes ||
+             ofmBytes > std::numeric_limits<uint32_t>::max() )
+            return SetError(error, "Neural-AI Concat tensor storage size is invalid");
+        RefV1 lhsRef = TensorRef(lhs->tensor.get(), 0, error);
+        if ( !error.empty() ) return false;
+        RefV1 rhsRef = TensorRef(rhs->tensor.get(), 0, error);
+        if ( !error.empty() ) return false;
+        RefV1 ofmLhsRef = TensorRef(ofm->tensor.get(), 0, error);
+        if ( !error.empty() ) return false;
+        RefV1 ofmRhsRef = TensorRef(ofm->tensor.get(), uint32_t(lhsBytes), error);
+        if ( !error.empty() ) return false;
+        if ( lhsRef.region != uint16_t(Region::TCDMScratch) ||
+             rhsRef.region != uint16_t(Region::TCDMScratch) ||
+             ofmLhsRef.region != uint16_t(Region::TCDMScratch) )
+            return SetError(error, "Neural-AI Concat requires internal TCDM tensors");
+        const auto overlaps = [](const RefV1 &source, uint32_t sourceBytes,
+                                  const RefV1 &destination, uint32_t destinationBytes)
+        {
+            return source.offset < destination.offset + destinationBytes &&
+                   destination.offset < source.offset + sourceBytes;
+        };
+        if ( overlaps(lhsRef, uint32_t(lhsBytes), ofmLhsRef, uint32_t(ofmBytes)) ||
+             overlaps(rhsRef, uint32_t(rhsBytes), ofmLhsRef, uint32_t(ofmBytes)) )
+            return SetError(error, "Neural-AI Concat requires out-of-place output storage");
+        const uint32_t layerId = uint32_t(operation->Index());
+        return AppendDMA1D(lhsRef, ofmLhsRef, uint32_t(lhsBytes), layerId, 0, error) &&
+               AppendDMA1D(rhsRef, ofmRhsRef, uint32_t(rhsBytes), layerId, 1, error);
+    }
+
     bool AppendMatrix(const SchedulerOperation *operation, std::string &error)
     {
         const SchedulerOpInfo *cost = schedule->Cost(operation);
@@ -1230,6 +1289,10 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         else if ( operation->Type() == OpType::MaxPool )
         {
             if ( !context.AppendMaxPool(operation.get(), error) ) return false;
+        }
+        else if ( operation->Type() == OpType::Concat )
+        {
+            if ( !context.AppendConcat(operation.get(), error) ) return false;
         }
         else if ( operation->Type() == OpType::FullyConnected || operation->Type() == OpType::MatMul ||
                   operation->Type() == OpType::Conv2D )

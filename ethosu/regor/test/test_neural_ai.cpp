@@ -454,6 +454,60 @@ flatbuffers::DetachedBuffer BuildMaxPoolModel(
     return builder.Release();
 }
 
+flatbuffers::DetachedBuffer BuildConcatModel(
+    int lhsChannels = 32, int rhsChannels = 32, int axis = 3,
+    float outputScale = 0.25f)
+{
+    flatbuffers::FlatBufferBuilder builder;
+    const std::vector<float> inputScales = {0.25f};
+    const std::vector<float> outputScales = {outputScale};
+    const std::vector<int64_t> zeroPoints = {-3};
+    const auto lhsQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &inputScales, &zeroPoints);
+    const auto rhsQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &inputScales, &zeroPoints);
+    const auto outputQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &outputScales, &zeroPoints);
+    std::vector<flatbuffers::Offset<tflite::Buffer>> buffers = {
+        tflite::CreateBufferDirect(builder),
+    };
+    const std::vector<int32_t> lhsShape = {1, 2, 3, lhsChannels};
+    const std::vector<int32_t> rhsShape = {1, 2, 3, rhsChannels};
+    const std::vector<int32_t> outputShape = axis == 2 ?
+        std::vector<int32_t>{1, 2, 6, lhsChannels} :
+        std::vector<int32_t>{1, 2, 3, lhsChannels + rhsChannels};
+    std::vector<flatbuffers::Offset<tflite::Tensor>> tensors = {
+        tflite::CreateTensorDirect(
+            builder, &lhsShape, tflite::TensorType::INT8, 0, "lhs", lhsQuant),
+        tflite::CreateTensorDirect(
+            builder, &rhsShape, tflite::TensorType::INT8, 0, "rhs", rhsQuant),
+        tflite::CreateTensorDirect(
+            builder, &outputShape, tflite::TensorType::INT8, 0, "output", outputQuant),
+    };
+    const auto options = tflite::CreateConcatenationOptions(
+        builder, axis, tflite::ActivationFunctionType::NONE);
+    const std::vector<int32_t> opInputs = {0, 1};
+    const std::vector<int32_t> opOutputs = {2};
+    const std::vector<flatbuffers::Offset<tflite::Operator>> operations = {
+        tflite::CreateOperatorDirect(builder, 0, &opInputs, &opOutputs,
+            tflite::BuiltinOptions::ConcatenationOptions, options.Union()),
+    };
+    const std::vector<int32_t> graphInputs = {0, 1};
+    const std::vector<int32_t> graphOutputs = {2};
+    const std::vector<flatbuffers::Offset<tflite::SubGraph>> subgraphs = {
+        tflite::CreateSubGraphDirect(
+            builder, &tensors, &graphInputs, &graphOutputs, &operations, "main"),
+    };
+    const std::vector<flatbuffers::Offset<tflite::OperatorCode>> operatorCodes = {
+        tflite::CreateOperatorCodeDirect(builder, int8_t(tflite::BuiltinOperator::CONCATENATION),
+            nullptr, 1, tflite::BuiltinOperator::CONCATENATION),
+    };
+    const auto model = tflite::CreateModelDirect(
+        builder, 3, &operatorCodes, &subgraphs, "Neural-AI Concat test", &buffers);
+    tflite::FinishModelBuffer(builder, model);
+    return builder.Release();
+}
+
 flatbuffers::DetachedBuffer BuildViewModel(
     tflite::BuiltinOperator viewOperator, bool followedByAdd)
 {
@@ -2054,6 +2108,77 @@ TEST_CASE("Neural-AI compiler rejects MaxPool outside K5 S1 P2 C32 contract")
     rejects(BuildMaxPoolModel(4, 4, 32, 5, 5, 0.5f));
     rejects(BuildMaxPoolModel(4, 4, 32, 5, 5, 0.25f,
         tflite::ActivationFunctionType::RELU));
+}
+
+TEST_CASE("Neural-AI compiler materializes two-input C32 channel Concat with DMA")
+{
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildConcatModel();
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+    const bool compiled = compiler.Compile();
+    INFO(compiler.LastError());
+    REQUIRE(compiled);
+
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    const uint32_t commandBytes = Read32(data + 64 + 12);
+    uint32_t offset = 224;
+    uint32_t concatCopies = 0;
+    std::vector<uint32_t> destinationOffsets;
+    while ( offset < 224 + commandBytes )
+    {
+        const uint16_t type = Read16(data + offset);
+        const uint16_t commandSize = Read16(data + offset + 2);
+        REQUIRE(commandSize >= 32);
+        if ( type == uint16_t(neuralai::CommandType::DMA1D) &&
+             Read16(data + offset + 16) == uint16_t(neuralai::Region::TCDMScratch) &&
+             Read16(data + offset + 24) == uint16_t(neuralai::Region::TCDMScratch) )
+        {
+            REQUIRE(commandSize == sizeof(neuralai::CommandDMA1DV2));
+            REQUIRE(Read32(data + offset + 32) == 2 * 3 * 32);
+            REQUIRE(Read32(data + offset + 36) == uint32_t(neuralai::DMADirection::LocalToLocal));
+            destinationOffsets.push_back(Read32(data + offset + 28));
+            ++concatCopies;
+        }
+        offset += commandSize;
+    }
+    REQUIRE(offset == 224 + commandBytes);
+    REQUIRE(concatCopies == 2);
+    std::sort(destinationOffsets.begin(), destinationOffsets.end());
+    REQUIRE(destinationOffsets[1] - destinationOffsets[0] == 2 * 3 * 32);
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
+}
+
+TEST_CASE("Neural-AI compiler rejects Concat outside two-input C32 channel contract")
+{
+    const auto rejects = [](flatbuffers::DetachedBuffer model)
+    {
+        std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+        Compiler compiler(architecture);
+        const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+        REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+        REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+        bool rejected = false;
+        try
+        {
+            rejected = !compiler.Compile();
+        }
+        catch ( const std::runtime_error & )
+        {
+            rejected = true;
+        }
+        REQUIRE(rejected);
+    };
+
+    rejects(BuildConcatModel(31, 32));
+    rejects(BuildConcatModel(32, 32, 2));
+    rejects(BuildConcatModel(32, 32, 3, 0.5f));
 }
 
 TEST_CASE("Neural-AI compiler lowers the complete Micro-MobileNet topology")

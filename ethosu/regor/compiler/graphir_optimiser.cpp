@@ -2037,6 +2037,15 @@ Operation *GraphIrOptimiser::RewriteConcat(Graph *const graph, Operation *const 
         auto axis = attr->axis;
         if ( axis < 0 ) axis = ofmConn->shape.Size() + axis;
 
+        ArchOperatorQuery query{};
+        Set(query.ifm[0], operation->Input(TensorUsage::IFM0));
+        Set(query.ifm[1], operation->Input(TensorUsage::IFM1));
+        Set(query.ofm, ofmConn);
+        query.axis = axis - ofmConn->shape.Size();
+        const auto concatResult = _constraints->OperatorQuery(opType, &query, nullptr);
+        if ( concatResult.Any(QueryResult::Native) )
+            return operation;
+
         // Replace CONCAT with a memory copy per IFM that copies IFM to an offset into OFM
         Shape ofmSliceOffset = ofmConn->shape.WithZeros();
         for ( auto [usage, ifmConn] : operation->Inputs().pairs() )
