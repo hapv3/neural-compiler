@@ -319,6 +319,16 @@ struct CommandDepthwiseC32V2
     uint32_t reserved[4];
 };
 
+struct CommandAFULutV2
+{
+    CommandHeaderV2 header;
+    RefV1 ifm;
+    RefV1 ofm;
+    RefV1 lut;
+    uint32_t length;
+    uint32_t reserved[5];
+};
+
 enum class AFUBinaryMode : uint32_t
 {
     AddI8 = 1,
@@ -403,6 +413,7 @@ static_assert(sizeof(CommandDMA3DV2) == 64);
 static_assert(sizeof(CommandGemm32V2) == 96);
 static_assert(sizeof(CommandPointwiseC32V2) == 96);
 static_assert(sizeof(CommandDepthwiseC32V2) == 96);
+static_assert(sizeof(CommandAFULutV2) == 64);
 static_assert(sizeof(CommandAFUBinaryV2) == 64);
 static_assert(sizeof(CommandAFUGlobalAvgPoolV2) == 64);
 static_assert(sizeof(LinebufJobWireV1) == 124);
