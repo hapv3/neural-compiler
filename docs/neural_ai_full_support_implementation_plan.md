@@ -81,7 +81,7 @@ exists. The following status matrix reflects what has been audited:
 | Pointwise Conv1x1 | GEMM32 primitive | v2 `POINTWISE_C32` path | Constrained 1x1/S1/P0 lowering with C32 group/tail padding | Compiler-generated Conv package on Verilator |
 | Linebuffer Conv | Yes | v2 linebuffer and depthwise dispatch | RGB K3 S2, generic full-group C32 K3, and depthwise K3 S1/S2 | Compiler-generated `.nai` packages |
 | AFU commands | Hardware modes exist | v2 constrained `ADD_I8` dispatch | Equal-shape, symmetric, raw-safe INT8 Add | Compiler-generated Add package on Verilator |
-| Spatz commands | Engine exists | Incomplete kernels | No | No |
+| Spatz commands | Engine exists | v2 nearest-upsample dispatch to the existing C32 kernel | Nearest-neighbor 2x, batch 1, INT8 C32 | Compiler-generated upsample package on Verilator |
 
 `ArchNeuralAI` exposes `FullyConnected`, `MatMul`, `MemoryCopy`, and a
 constrained CNN path containing pointwise Conv, RGB K3 S2, generic full-group
@@ -2100,6 +2100,29 @@ The relevant full-graph performance comparison therefore remains 443,524
 compiler Micro-MobileNet cycles versus the 347,992 Micro-MobileNet and 388,146
 Micro-YOLO records.
 
+Nearest-neighbor 2x upsample is implemented through the 64-byte v2
+`UPSAMPLE_NEAREST` command. The supported subset is static batch-1 INT8 with
+exactly 32 channels, equal input/output quantization, and an exact 2x increase
+in both spatial dimensions. The compiler legalizes TFLite
+`ResizeNearestNeighbor` into the existing nearest-resampling AvgPool form,
+keeps both internal tensors C32 blocked, and requires an out-of-place output.
+The runtime validates the C32/2x contract, overflow-safe input/output ranges,
+TCDM references, and non-overlap before calling the existing
+`spatz_upsample_nearest2x_c32_i8` assembly kernel used by native Micro-YOLO.
+C33 and non-2x shapes are intentionally rejected rather than routed through an
+untested generic fallback.
+
+The compiler-generated H2/W3/C32 package passes byte-exactly on Verilator at
+86,036 simulated ns, with 83,998 ns measured invocation time and 50,260 PMU
+cycles. The native Micro-YOLO upsample layer record is 35,462 PMU cycles. The
+compiler package is 14,798 cycles higher (+41.7%), but includes package
+parsing, public L2 I/O, and two boundary layout conversions, whereas the native
+layer record measures the already-internal C32 path. Because both paths call
+the same assembly kernel, this focused result confirms datapath reuse and
+integration rather than establishing an operator-speed regression. A
+compiler-generated full YOLO graph is still required for an equivalent
+comparison with the 388,146-cycle native full-graph record.
+
 ### Work Items
 
 1. Implement zero-copy reshape, flatten, squeeze, and unsqueeze views.
@@ -2111,7 +2134,8 @@ Micro-YOLO records.
 6. Implement quantization-correct Add, Mul, and Requant software kernels.
 7. Maintain AFU LUT lowering for standalone Sigmoid and clipping while keeping
    source-fused activation clamps in final requantization.
-8. Implement MaxPool K5 S1 P2, nearest-neighbor 2x, and global average pool.
+8. Implement the remaining MaxPool K5 S1 P2 path; nearest-neighbor 2x C32 and
+   global average pool are implemented.
 9. Add out-of-place and liveness constraints for AFU operations.
 
 ### Tests
