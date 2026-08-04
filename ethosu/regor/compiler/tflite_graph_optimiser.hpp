@@ -136,6 +136,7 @@ private:
 
     // Converts int8/uint8 Sigmoid and Tanh to a LUT based solution
     Operation *ConvertTanhSigmoidToLUT(Graph *const, Operation *const operation);
+    Operation *ConvertStandaloneClippingToLUT(Graph *const, Operation *const operation);
 
     // Convert PReLU to (ReLU + Minimum + Mul + Add)
     Operation *ConvertPrelu(Graph *const graph, Operation *const operation);
@@ -262,6 +263,7 @@ public:
                 &TFLiteGraphOptimiser::ConvertExpToLUT,
                 &TFLiteGraphOptimiser::ConvertLogToLUT,
                 &TFLiteGraphOptimiser::ConvertTanhSigmoidToLUT,
+                &TFLiteGraphOptimiser::ConvertStandaloneClippingToLUT,
                 &TFLiteGraphOptimiser::ConvertSoftmaxOps,
                 &TFLiteGraphOptimiser::ConvertLstmOps,
                 &TFLiteGraphOptimiser::ConvertMeanOps,

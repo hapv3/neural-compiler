@@ -90,7 +90,7 @@ bool NeuralAIConstraints::IsSupportedOp(OpType opType)
 {
     return opType == OpType::FullyConnected || opType == OpType::MatMul || opType == OpType::Conv2D ||
            opType == OpType::Add || opType == OpType::AvgPool || opType == OpType::LUT ||
-           opType == OpType::Sigmoid ||
+           opType == OpType::Sigmoid || IsClipping(opType) ||
            opType == OpType::DepthwiseConv2D || opType == OpType::MemoryCopy;
 }
 
@@ -233,7 +233,7 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
     if ( !IsSupportedOp(opType) ) return QueryResult::Unsupported;
     if ( !query ) return QueryResult::NativeConstrained;
 
-    if ( opType == OpType::Sigmoid )
+    if ( opType == OpType::Sigmoid || IsClipping(opType) )
     {
         if ( query->ifm[0].type != DataType::Int8 || query->ofm.type != DataType::Int8 ||
              !IsStaticPositiveShape(query->ifm[0].shape) ||
@@ -384,7 +384,7 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
 bool NeuralAIConstraints::SupportedZeroPoint(int64_t zeroPoint, TensorUsage usage, DataType dataType, OpType opType)
 {
     if ( !IsSupportedOp(opType) || dataType != DataType::Int8 ) return false;
-    if ( opType == OpType::LUT || opType == OpType::Sigmoid )
+    if ( opType == OpType::LUT || opType == OpType::Sigmoid || IsClipping(opType) )
         return (IsIFM(usage) || IsOFM(usage)) && zeroPoint >= -128 && zeroPoint <= 127;
     if ( opType == OpType::Add ) return (IsIFM(usage) || IsOFM(usage)) && zeroPoint == 0;
     if ( opType == OpType::AvgPool )

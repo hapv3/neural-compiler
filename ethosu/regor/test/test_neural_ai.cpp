@@ -263,6 +263,43 @@ flatbuffers::DetachedBuffer BuildSigmoidModel()
     return builder.Release();
 }
 
+flatbuffers::DetachedBuffer BuildClippingModel(tflite::BuiltinOperator activation)
+{
+    flatbuffers::FlatBufferBuilder builder;
+    const std::vector<float> scales = {0.25f};
+    const std::vector<int64_t> zeroPoints = {-3};
+    const auto inputQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &scales, &zeroPoints);
+    const auto outputQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &scales, &zeroPoints);
+    std::vector<flatbuffers::Offset<tflite::Buffer>> buffers = {
+        tflite::CreateBufferDirect(builder),
+    };
+    const std::vector<int32_t> shape = {1, 2, 3, 33};
+    std::vector<flatbuffers::Offset<tflite::Tensor>> tensors = {
+        tflite::CreateTensorDirect(builder, &shape, tflite::TensorType::INT8, 0, "input", inputQuant),
+        tflite::CreateTensorDirect(builder, &shape, tflite::TensorType::INT8, 0, "output", outputQuant),
+    };
+    const std::vector<int32_t> opInputs = {0};
+    const std::vector<int32_t> opOutputs = {1};
+    const std::vector<flatbuffers::Offset<tflite::Operator>> operations = {
+        tflite::CreateOperatorDirect(builder, 0, &opInputs, &opOutputs),
+    };
+    const std::vector<int32_t> graphInputs = {0};
+    const std::vector<int32_t> graphOutputs = {1};
+    const std::vector<flatbuffers::Offset<tflite::SubGraph>> subgraphs = {
+        tflite::CreateSubGraphDirect(
+            builder, &tensors, &graphInputs, &graphOutputs, &operations, "main"),
+    };
+    const std::vector<flatbuffers::Offset<tflite::OperatorCode>> operatorCodes = {
+        tflite::CreateOperatorCodeDirect(builder, int8_t(activation), nullptr, 1, activation),
+    };
+    const auto model = tflite::CreateModelDirect(
+        builder, 3, &operatorCodes, &subgraphs, "Neural-AI clipping test", &buffers);
+    tflite::FinishModelBuffer(builder, model);
+    return builder.Release();
+}
+
 flatbuffers::DetachedBuffer BuildGlobalAvgPoolModel(
     int height = 2, int width = 3, int channels = 33,
     float inputScale = 0.25f, float outputScale = 0.25f, int64_t zeroPoint = -3,
@@ -921,6 +958,11 @@ TEST_CASE("Neural-AI constraints substitute INT8 Sigmoid with an AFU LUT")
         QueryResult::NativeHasReq);
     REQUIRE(sigmoidRequirements.req.Any(ArchRequirement::OpSubstitution));
     REQUIRE(sigmoidRequirements.substitution == OpType::LUT);
+    ArchRequirements clippingRequirements;
+    REQUIRE(constraints->OperatorQuery(OpType::Relu6, &query, &clippingRequirements) ==
+        QueryResult::NativeHasReq);
+    REQUIRE(clippingRequirements.req.Any(ArchRequirement::OpSubstitution));
+    REQUIRE(clippingRequirements.substitution == OpType::LUT);
 
     ArchRequirements lutRequirements;
     REQUIRE(constraints->OperatorQuery(OpType::LUT, &query, &lutRequirements) ==
@@ -1604,6 +1646,58 @@ TEST_CASE("Neural-AI compiler lowers INT8 Sigmoid through a raw-byte AFU LUT")
     blob->Release();
 }
 
+TEST_CASE("Neural-AI compiler lowers standalone INT8 ReLU6 through an AFU LUT")
+{
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildClippingModel(tflite::BuiltinOperator::RELU6);
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+    const bool compiled = compiler.Compile();
+    INFO(compiler.LastError());
+    REQUIRE(compiled);
+
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    const uint32_t commandBytes = Read32(data + 64 + 12);
+    const uint32_t constantsOffset = Read32(data + 96 + 8);
+    const uint32_t constantsBytes = Read32(data + 96 + 12);
+    uint32_t offset = 224;
+    uint32_t lutCommands = 0;
+    while ( offset < 224 + commandBytes )
+    {
+        const uint16_t type = Read16(data + offset);
+        const uint16_t commandSize = Read16(data + offset + 2);
+        REQUIRE(commandSize >= 32);
+        if ( type == uint16_t(neuralai::CommandType::AFULut) )
+        {
+            REQUIRE(commandSize == sizeof(neuralai::CommandAFULutV2));
+            const uint32_t lutOffset = Read32(data + offset + 36);
+            REQUIRE(Read32(data + offset + 40) == 384);
+            REQUIRE(lutOffset <= constantsBytes);
+            REQUIRE(256 <= constantsBytes - lutOffset);
+            for ( uint32_t raw = 0; raw < 256; ++raw )
+            {
+                const int32_t input = raw < 128 ? int32_t(raw) : int32_t(raw) - 256;
+                const double real = 0.25 * double(input + 3);
+                const double clamped = std::max(0.0, std::min(6.0, real));
+                const int32_t quantized = std::max(-128,
+                    std::min(127, int32_t(std::round(-3.0 + clamped / 0.25))));
+                REQUIRE(data[constantsOffset + lutOffset + raw] == uint8_t(quantized));
+            }
+            ++lutCommands;
+        }
+        offset += commandSize;
+    }
+    REQUIRE(offset == 224 + commandBytes);
+    REQUIRE(lutCommands == 1);
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
+}
+
 TEST_CASE("Neural-AI compiler lowers full-spatial AvgPool through AFU C32 reduction")
 {
     std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
@@ -1914,6 +2008,14 @@ TEST_CASE("Neural-AI compiler fuses ReLU and ReLU6 into qparam clamps")
         const uint32_t qparamOffset = Read32(data + 64 + 4 * 32 + 8);
         REQUIRE(int32_t(Read32(data + qparamOffset + 16)) == expectedMin);
         REQUIRE(int32_t(Read32(data + qparamOffset + 20)) == expectedMax);
+        const uint32_t commandBytes = Read32(data + 64 + 12);
+        uint32_t commandOffset = 224;
+        while ( commandOffset < 224 + commandBytes )
+        {
+            REQUIRE(Read16(data + commandOffset) != uint16_t(neuralai::CommandType::AFULut));
+            commandOffset += Read16(data + commandOffset + 2);
+        }
+        REQUIRE(commandOffset == 224 + commandBytes);
         blob->Unmap(const_cast<uint8_t *>(data));
         blob->Release();
     };

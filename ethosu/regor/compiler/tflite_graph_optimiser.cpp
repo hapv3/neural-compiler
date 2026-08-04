@@ -2054,6 +2054,45 @@ Operation *TFLiteGraphOptimiser::ConvertTanhSigmoidToLUT(Graph *const, Operation
     return returnOp;
 }
 
+Operation *TFLiteGraphOptimiser::ConvertStandaloneClippingToLUT(
+    Graph *const, Operation *const operation)
+{
+    if ( !IsClipping(operation->Type()) ) return operation;
+
+    auto ifmConn = operation->Input(TensorUsage::IFM0);
+    const auto &writers = operation->IFM(0)->Writers();
+    if ( writers.size() == 1 && TfLiteMapping::CanFuseActivationFunction(writers.front().get()) )
+        return operation;
+
+    ArchOperatorQuery query;
+    Set(query.ifm[0], ifmConn);
+    auto ofmConn = operation->Output(TensorUsage::OFM);
+    Set(query.ofm, ofmConn);
+    ArchRequirements req;
+    const auto qresult = _constraints->OperatorQuery(operation->Type(), &query, &req);
+    if ( !qresult.Any(QueryResult::Native) ||
+         !req.req.Any(ArchRequirement::OpSubstitution) || req.substitution != OpType::LUT )
+        return operation;
+
+    const Quantization &quantization = ofmConn->quantization;
+    if ( quantization.scales.empty() || quantization.zeroPoints.empty() ) return operation;
+    const double scale = quantization.scales[0].Dequantize();
+    const int64_t zeroPoint = quantization.zeroPoints[0];
+    const int64_t quantMin = quantization.quantMin.empty() ? -128 : quantization.quantMin[0];
+    const int64_t quantMax = quantization.quantMax.empty() ? 127 : quantization.quantMax[0];
+    const double realMin = scale * double(quantMin - zeroPoint);
+    const double realMax = scale * double(quantMax - zeroPoint);
+    Operation *returnOp = ConvertToLUT8(operation,
+        [realMin, realMax](double value) { return std::min(realMax, std::max(realMin, value)); },
+        "clamp");
+    if ( returnOp != operation )
+    {
+        RecordOptimisation(*operation, returnOp);
+        operation->Disconnect();
+    }
+    return returnOp;
+}
+
 
 Operation *TFLiteGraphOptimiser::ConvertPrelu(Graph *const graph, Operation *const operation)
 {
@@ -3225,8 +3264,24 @@ Operation *TFLiteGraphOptimiser::SupportedOperatorChecks(Graph *const graph, Ope
         return operation;
     }
 
+    bool substituteStandaloneClipping = false;
+    if ( IsClipping(operation->Type()) )
+    {
+        const auto &writers = operation->IFM(0)->Writers();
+        const bool sourceFusedActivation =
+            writers.size() == 1 && TfLiteMapping::CanFuseActivationFunction(writers.front().get());
+        ArchOperatorQuery query;
+        Set(query.ifm[0], operation->Input(TensorUsage::IFM0));
+        Set(query.ofm, operation->Output(TensorUsage::OFM));
+        ArchRequirements req;
+        const auto result = _constraints->OperatorQuery(operation->Type(), &query, &req);
+        substituteStandaloneClipping = !sourceFusedActivation && result.Any(QueryResult::Native) &&
+                                      req.req.Any(ArchRequirement::OpSubstitution) &&
+                                      req.substitution == OpType::LUT;
+    }
+
     Operation *returnOp = operation;
-    if ( !_supportedOps->Check(operation) )
+    if ( !substituteStandaloneClipping && !_supportedOps->Check(operation) )
     {
         if ( TfLiteMapping::CanFuseActivationFunction(operation) )
         {
