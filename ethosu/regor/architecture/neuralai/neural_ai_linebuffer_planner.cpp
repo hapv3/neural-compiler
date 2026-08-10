@@ -79,8 +79,12 @@ LinebufferJob MakeJob(const LinebufferPlannerInput &input, int ohBase, int owBas
     const bool groupStationary = c32Fast && coalesce && kgen && input.logicalIfm.Depth() >= C32 &&
                                  inputGroup >= 0;
     const uint64_t groupPlaneBytes = uint64_t(ifmH) * uint64_t(ifmW) * C32;
-    const uint64_t inputGroupOffset = c32Fast ? uint64_t(std::max(0, inputGroup)) * groupPlaneBytes :
-                                               uint64_t(groupBase);
+    // C32-blocked tensors store each channel group as a complete H*W plane,
+    // including a masked tail group.  The direct NHWC path is the only path
+    // where the channel base is a byte offset within one pixel.
+    const bool c32BlockedInput = inputCStride == C32;
+    const uint64_t inputGroupOffset = c32BlockedInput ?
+        uint64_t(std::max(0, inputGroup)) * groupPlaneBytes : uint64_t(groupBase);
     const uint64_t inputAddress = uint64_t(input.ifmBase) + inputGroupOffset +
         uint64_t(firstY) * inputRowStride64 + uint64_t(firstX) * uint64_t(inputCStride);
     const uint64_t outputGroupOffset = uint64_t(outputGroup) *

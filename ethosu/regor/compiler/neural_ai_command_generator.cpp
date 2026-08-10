@@ -1362,67 +1362,61 @@ struct GeneratorContext
             const uint32_t outputGroups = uint32_t(RoundAway(int(depthN), 32)) / 32u;
             const uint32_t kernelTilesPerInputGroup =
                 uint32_t(operation->Kernel()->Size().x * operation->Kernel()->Size().y);
-            const bool decomposeC16Taps = !directRgb && channelK == 16u;
             uint32_t tileId = 2;
             for ( uint32_t outputGroup = 0; outputGroup < outputGroups; ++outputGroup )
             {
                 AppendRQLoad(qparamBase + outputGroup * 32u, outputGroup,
                     uint32_t(operation->Index()), tileId++);
-                if ( decomposeC16Taps )
-                {
-                    std::vector<std::vector<neuralai::LinebufferJob>> tapJobs;
-                    tapJobs.reserve(kernelTilesPerInputGroup);
-                    for ( uint32_t tap = 0; tap < kernelTilesPerInputGroup; ++tap )
-                    {
-                        const uint32_t tapH = tap / uint32_t(operation->Kernel()->Size().x);
-                        const uint32_t tapW = tap % uint32_t(operation->Kernel()->Size().x);
-                        neuralai::LinebufferPlannerInput plannerInput{};
-                        plannerInput.logicalIfm = logicalIfm;
-                        plannerInput.logicalOfm = logicalOfm;
-                        plannerInput.ifmBase = uint32_t(ifm->tensor->AllocatedAddress()) +
-                            tapH * uint32_t(logicalIfm.Width()) * 32u + tapW * 32u;
-                        plannerInput.ofmBase = uint32_t(ofm->tensor->AllocatedAddress());
-                        plannerInput.weightBase = uint32_t(weightStageOffset +
-                            (outputGroup * kernelTilesPerInputGroup + tap) * 32u * 32u);
-                        plannerInput.psumBase = uint32_t(partialOffset);
-                        plannerInput.kernelH = 1;
-                        plannerInput.kernelW = 1;
-                        plannerInput.strideH = operation->Kernel()->Stride().y;
-                        plannerInput.strideW = operation->Kernel()->Stride().x;
-                        plannerInput.ic = int(channelK);
-                        plannerInput.oc = 32;
-                        plannerInput.groupIndex = 0;
-                        plannerInput.inputGroupIndex = 0;
-                        plannerInput.outputGroupIndex = int(outputGroup);
-                        plannerInput.validLaneCount = int(channelK);
-                        plannerInput.ifmPixelStride = 32;
-                        plannerInput.maxM = MaxExternalPsumLinebufferM;
-                        plannerInput.tcdmBudget = ArchNeuralAI::AllocatableTCDMBytes;
-                        plannerInput.accumMode = tap == 0u ? 1 :
-                            (tap + 1u == kernelTilesPerInputGroup ? 2 : 3);
-                        tapJobs.push_back(neuralai::LinebufferPlanner().Plan(plannerInput));
-                    }
-                    const int spatialJobs = int(tapJobs.front().size());
-                    for ( const auto &jobs : tapJobs )
-                    {
-                        if ( int(jobs.size()) != spatialJobs )
-                            return SetError(error,
-                                "Neural-AI C16 linebuffer taps have inconsistent spatial tiling");
-                    }
-                    for ( int jobIndex = 0; jobIndex < spatialJobs; ++jobIndex )
-                    {
-                        for ( auto &jobs : tapJobs )
-                        {
-                            AppendLineBufferJob(jobs[jobIndex],
-                                uint32_t(operation->Index()), tileId++);
-                        }
-                    }
-                    continue;
-                }
-                std::vector<std::vector<neuralai::LinebufferJob>> groupJobs;
-                groupJobs.reserve(inputGroups);
+                std::vector<std::vector<neuralai::LinebufferJob>> groupJobs(inputGroups);
+                std::vector<std::vector<std::vector<neuralai::LinebufferJob>>> tailTapJobs(inputGroups);
+                std::vector<bool> decomposeTail(inputGroups, false);
                 for ( uint32_t inputGroup = 0; inputGroup < inputGroups; ++inputGroup )
                 {
+                    const uint32_t validLanes = directRgb ? channelK :
+                        std::min(32u, channelK - inputGroup * 32u);
+                    const bool decompose = !directRgb && validLanes == 16u;
+                    decomposeTail[inputGroup] = decompose;
+                    if ( decompose )
+                    {
+                        auto &tapJobs = tailTapJobs[inputGroup];
+                        tapJobs.reserve(kernelTilesPerInputGroup);
+                        for ( uint32_t tap = 0; tap < kernelTilesPerInputGroup; ++tap )
+                        {
+                            const uint32_t tapH = tap / uint32_t(operation->Kernel()->Size().x);
+                            const uint32_t tapW = tap % uint32_t(operation->Kernel()->Size().x);
+                            neuralai::LinebufferPlannerInput plannerInput{};
+                            plannerInput.logicalIfm = logicalIfm;
+                            plannerInput.logicalOfm = logicalOfm;
+                            const uint32_t groupPlaneBytes = uint32_t(logicalIfm.Height()) *
+                                uint32_t(logicalIfm.Width()) * 32u;
+                            plannerInput.ifmBase = uint32_t(ifm->tensor->AllocatedAddress()) +
+                                inputGroup * groupPlaneBytes +
+                                tapH * uint32_t(logicalIfm.Width()) * 32u + tapW * 32u;
+                            plannerInput.ofmBase = uint32_t(ofm->tensor->AllocatedAddress());
+                            plannerInput.weightBase = uint32_t(weightStageOffset +
+                                (outputGroup * inputGroups + inputGroup) *
+                                    kernelTilesPerInputGroup * 32u * 32u + tap * 32u * 32u);
+                            plannerInput.psumBase = uint32_t(partialOffset);
+                            plannerInput.kernelH = 1;
+                            plannerInput.kernelW = 1;
+                            plannerInput.strideH = operation->Kernel()->Stride().y;
+                            plannerInput.strideW = operation->Kernel()->Stride().x;
+                            plannerInput.ic = 16;
+                            plannerInput.oc = 32;
+                            plannerInput.groupIndex = 0;
+                            plannerInput.inputGroupIndex = 0;
+                            plannerInput.outputGroupIndex = int(outputGroup);
+                            plannerInput.validLaneCount = 16;
+                            plannerInput.ifmPixelStride = 32;
+                            plannerInput.maxM = MaxExternalPsumLinebufferM;
+                            plannerInput.tcdmBudget = ArchNeuralAI::AllocatableTCDMBytes;
+                            const uint32_t firstAccumMode = inputGroups == 1u || inputGroup == 0u ? 1u : 3u;
+                            plannerInput.accumMode = tap == 0u ? firstAccumMode :
+                                (tap + 1u == kernelTilesPerInputGroup ? 2 : 3);
+                            tapJobs.push_back(neuralai::LinebufferPlanner().Plan(plannerInput));
+                        }
+                        continue;
+                    }
                     neuralai::LinebufferPlannerInput plannerInput{};
                     plannerInput.logicalIfm = logicalIfm;
                     plannerInput.logicalOfm = logicalOfm;
@@ -1444,28 +1438,48 @@ struct GeneratorContext
                     plannerInput.groupIndex = int(inputGroup);
                     plannerInput.inputGroupIndex = int(inputGroup);
                     plannerInput.outputGroupIndex = int(outputGroup);
-                    plannerInput.validLaneCount = directRgb ? int(channelK) :
-                        std::min(32u, channelK - inputGroup * 32u);
+                    plannerInput.validLaneCount = int(validLanes);
                     plannerInput.ifmPixelStride = directRgb ? 3 : 32;
                     plannerInput.maxM = inputGroups == 1u ?
                         MaxDirectLinebufferM : MaxExternalPsumLinebufferM;
                     plannerInput.tcdmBudget = ArchNeuralAI::AllocatableTCDMBytes;
                     plannerInput.accumMode = inputGroups == 1u ? 0 :
                         (inputGroup == 0u ? 1 : (inputGroup + 1u == inputGroups ? 2 : 3));
-                    groupJobs.push_back(neuralai::LinebufferPlanner().Plan(plannerInput));
+                    groupJobs[inputGroup] = neuralai::LinebufferPlanner().Plan(plannerInput);
                 }
-                const int spatialJobs = int(groupJobs.front().size());
-                for ( const auto &jobs : groupJobs )
+                int spatialJobs = -1;
+                for ( uint32_t inputGroup = 0; inputGroup < inputGroups; ++inputGroup )
                 {
-                    if ( int(jobs.size()) != spatialJobs )
+                    const int groupSpatialJobs = decomposeTail[inputGroup] ?
+                        int(tailTapJobs[inputGroup].front().size()) : int(groupJobs[inputGroup].size());
+                    if ( spatialJobs < 0 ) spatialJobs = groupSpatialJobs;
+                    if ( groupSpatialJobs != spatialJobs )
                         return SetError(error, "Neural-AI linebuffer input groups have inconsistent tiling");
+                    if ( decomposeTail[inputGroup] )
+                    {
+                        for ( const auto &jobs : tailTapJobs[inputGroup] )
+                        {
+                            if ( int(jobs.size()) != spatialJobs )
+                                return SetError(error,
+                                    "Neural-AI C16 tail taps have inconsistent spatial tiling");
+                        }
+                    }
                 }
                 for ( int jobIndex = 0; jobIndex < spatialJobs; ++jobIndex )
                 {
                     for ( uint32_t inputGroup = 0; inputGroup < inputGroups; ++inputGroup )
                     {
-                        AppendLineBufferJob(groupJobs[inputGroup][jobIndex],
-                            uint32_t(operation->Index()), tileId++);
+                        if ( decomposeTail[inputGroup] )
+                        {
+                            for ( const auto &jobs : tailTapJobs[inputGroup] )
+                                AppendLineBufferJob(jobs[jobIndex],
+                                    uint32_t(operation->Index()), tileId++);
+                        }
+                        else
+                        {
+                            AppendLineBufferJob(groupJobs[inputGroup][jobIndex],
+                                uint32_t(operation->Index()), tileId++);
+                        }
                     }
                 }
             }

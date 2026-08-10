@@ -1145,7 +1145,7 @@ TEST_CASE("Neural-AI constraints accept INT8 matrix and pointwise operations")
     REQUIRE(constraints->OperatorQuery(OpType::Conv2D, &pointwise) == QueryResult::Unsupported);
 }
 
-TEST_CASE("Neural-AI constraints admit only corpus-required generic K3 channel tails")
+TEST_CASE("Neural-AI constraints admit only 16-lane generic K3 channel tails")
 {
     const Kernel kernel({3, 3}, {2, 2}, {1, 1});
     const auto ic16 = NeuralAIConstraints::Classify(OpType::Conv2D,
@@ -1157,7 +1157,17 @@ TEST_CASE("Neural-AI constraints admit only corpus-required generic K3 channel t
 
     const auto ic48 = NeuralAIConstraints::Classify(OpType::Conv2D,
         Shape(1, 18, 18, 48), Shape(32, 3, 3, 48), Shape(1, 8, 8, 32), &kernel);
-    REQUIRE_FALSE(ic48);
+    REQUIRE(ic48.mode == NeuralAIOpMode::Conv2DLinebufC32S2Requant);
+    REQUIRE(ic48.hasIcTail);
+    REQUIRE_FALSE(ic48.hasOcTail);
+    REQUIRE_FALSE(ic48.groupStationary);
+
+    const auto ic80 = NeuralAIConstraints::Classify(OpType::Conv2D,
+        Shape(1, 18, 18, 80), Shape(32, 3, 3, 80), Shape(1, 8, 8, 32), &kernel);
+    REQUIRE(ic80.mode == NeuralAIOpMode::Conv2DLinebufC32S2Requant);
+    REQUIRE(ic80.hasIcTail);
+    REQUIRE_FALSE(ic80.hasOcTail);
+    REQUIRE_FALSE(ic80.groupStationary);
 
     const auto oc48 = NeuralAIConstraints::Classify(OpType::Conv2D,
         Shape(1, 18, 18, 32), Shape(48, 3, 3, 32), Shape(1, 8, 8, 48), &kernel);
@@ -1169,7 +1179,7 @@ TEST_CASE("Neural-AI constraints admit only corpus-required generic K3 channel t
         Shape(1, 18, 18, 24), Shape(32, 3, 3, 24), Shape(1, 8, 8, 32), &kernel);
     REQUIRE_FALSE(unsupported);
     REQUIRE(unsupported.diagnostic ==
-        "generic C32 Conv supports full input groups or corpus C16, plus 16-lane output tails");
+        "generic C32 Conv supports full input groups or 16-lane tails only");
 }
 
 TEST_CASE("Neural-AI constraints accept shape-preserving memory copies")
@@ -2908,6 +2918,84 @@ TEST_CASE("Neural-AI compiler emits a zero-padded C16 linebuffer group for YOLO 
     REQUIRE(tailCopies > 0);
     blob->Unmap(const_cast<uint8_t *>(data));
     blob->Release();
+}
+
+TEST_CASE("Neural-AI compiler emits full and masked C32 groups for IC48 and IC80 K3 Conv")
+{
+    for ( const int inputChannels : {48, 80} )
+    {
+        std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+        Compiler compiler(architecture);
+        const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+        REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+        const auto model = BuildK3ConvModel(8, 8, inputChannels, 32, 1, 0, tflite::Padding::VALID);
+        REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+        REQUIRE(compiler.Compile());
+        IRegorBlob *blob = compiler.Output();
+        REQUIRE(blob != nullptr);
+        int64_t size = 0;
+        const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+        const uint32_t commandBytes = Read32(data + 64 + 12);
+        uint32_t offset = 224;
+        uint32_t linebufferJobs = 0;
+        std::vector<uint32_t> accumModes;
+        std::vector<uint16_t> validBytes;
+        std::vector<uint16_t> groupStationary;
+        std::vector<uint32_t> inputBases;
+        std::vector<uint32_t> channelOffsets;
+        while ( offset < 224 + commandBytes )
+        {
+            const uint16_t type = Read16(data + offset);
+            const uint16_t commandSize = Read16(data + offset + 2);
+            if ( type == uint16_t(neuralai::CommandType::LineBufferJob) )
+            {
+                REQUIRE(commandSize == sizeof(neuralai::CommandLineBufferJobV2));
+                validBytes.push_back(Read16(data + offset + 16 + 56));
+                groupStationary.push_back(Read16(data + offset + 16 + 54));
+                accumModes.push_back(Read32(data + offset + 16 + 80 + 20));
+                inputBases.push_back(Read32(data + offset + 16));
+                channelOffsets.push_back(Read32(data + offset + 16 + 72));
+                ++linebufferJobs;
+            }
+            offset += commandSize;
+        }
+        REQUIRE(offset == 224 + commandBytes);
+        const uint32_t groups = uint32_t((inputChannels + 31) / 32);
+        const uint32_t fullGroups = groups - 1;
+        const uint32_t tailJobs = 9;
+        REQUIRE(linebufferJobs == fullGroups + tailJobs);
+        REQUIRE(validBytes.front() == 32);
+        REQUIRE(validBytes.back() == 16);
+        REQUIRE(groupStationary.front() == 1);
+        REQUIRE(groupStationary.back() == 0);
+        REQUIRE(accumModes.front() == 1);
+        REQUIRE(accumModes.back() == 2);
+        const uint32_t groupPlaneBytes = 8u * 8u * 32u;
+        REQUIRE(channelOffsets.front() == groupPlaneBytes);
+        for ( uint32_t group = 1; group < fullGroups; ++group )
+        {
+            REQUIRE(inputBases[group] == inputBases.front() + group * groupPlaneBytes);
+            REQUIRE(channelOffsets[group] == groupPlaneBytes);
+            REQUIRE(validBytes[group] == 32);
+            REQUIRE(groupStationary[group] == 1);
+            REQUIRE(accumModes[group] == 3);
+        }
+        const uint32_t tailStart = fullGroups;
+        for ( uint32_t tap = 0; tap < tailJobs; ++tap )
+        {
+            const uint32_t tapH = tap / 3;
+            const uint32_t tapW = tap % 3;
+            REQUIRE(inputBases[tailStart + tap] == inputBases.front() + fullGroups * groupPlaneBytes +
+                tapH * 8u * 32u + tapW * 32u);
+            REQUIRE(channelOffsets[tailStart + tap] == 0u);
+            REQUIRE(validBytes[tailStart + tap] == 16);
+            REQUIRE(groupStationary[tailStart + tap] == 0);
+            REQUIRE(accumModes[tailStart + tap] == (tap == 0 ? 3u :
+                (tap == tailJobs - 1 ? 2u : 3u)));
+        }
+        blob->Unmap(const_cast<uint8_t *>(data));
+        blob->Release();
+    }
 }
 
 TEST_CASE("Neural-AI compiler splits a width-641 Conv into legal linebuffer jobs")

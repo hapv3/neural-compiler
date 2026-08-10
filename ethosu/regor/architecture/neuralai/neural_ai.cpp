@@ -156,9 +156,15 @@ std::unique_ptr<ArchitectureOpConfig> ArchNeuralAI::GetOpConfig(OpType opType, c
         {
             const int ifmTail = query.ifmShape[0].Depth() % ArrayDimension;
             const int ofmTail = query.ofmShape.Depth() % ArrayDimension;
-            const bool supportedCorpusTails = (ifmTail == 0 || query.ifmShape[0].Depth() == 16) &&
-                                              (ofmTail == 0 || ofmTail == 16);
-            if ( supportedCorpusTails )
+            // A non-final C32 input group may be represented by the existing
+            // block-valid-lane contract.  Admit only a 16-lane remainder;
+            // the linebuffer compiler emits full C32 jobs followed by one
+            // masked tail job and keeps all other arbitrary tails rejected.
+            const bool supportedC32Tails = (ifmTail == 0 || ifmTail == 16) &&
+                                           (ofmTail == 0 || ofmTail == 16);
+            const bool inputTailPaddingSupported = ifmTail != 16 || query.ifmShape[0].Depth() == 16 ||
+                                                   kernel.Padding().IsZero();
+            if ( supportedC32Tails && inputTailPaddingSupported )
                 mode = kernel.Stride() == Point2i(1, 1) ? NeuralAIOpMode::Conv2DLinebufC32S1Requant :
                                                          NeuralAIOpMode::Conv2DLinebufC32S2Requant;
         }

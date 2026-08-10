@@ -646,7 +646,7 @@ MobileNet corpus.
 | MatMul/GEMM | Systolic GEMM32 | K and N in groups of 32; M is tiled |
 | RGB Conv | Linebuffer plus systolic | C3, OC32, K3, S2, P1 |
 | Pointwise Conv | Direct GEMM32 | RTL supports grouped C32 operation; compiler currently lowers only 1x1/S1/P0 and pads IC/OC tails |
-| C32 Conv | Multi-C32 linebuffer | K3, S1/S2, P1; IC/OC multiples of 32 |
+| C32 Conv | Multi-C32 linebuffer | K3, S1/S2; full C32 groups, plus a compiler-decomposed 16-lane IC tail for explicit-padded/VALID Conv; OC tails are masked at the C32 boundary |
 | Depthwise Conv | Depthwise linebuffer | K3, S1/S2, P1; tail lanes masked |
 | Requant | Per-channel systolic or Spatz | Shift range 0..31 |
 | Logistic/Clamp/activation LUT | AFU LUT | 256-entry LUT, out-of-place; use for selected-model activation fusion or standalone activation only |
@@ -1464,7 +1464,12 @@ Native modes:
 
 - K3 S1 P1.
 - K3 S2 P1.
-- IC and OC multiples of 32 for the multi-C32 path.
+- Full C32 input groups use the multi-K group-stationary path. A corpus-required
+  16-lane input remainder is lowered as nine K1 jobs with external psum
+  accumulation and is admitted only when the Conv itself has zero padding
+  (the YOLO artifacts materialize padding before the Conv). Arbitrary input
+  tails and nonzero-padded tail Conv forms remain rejected. OC tails are
+  zero-padded in weights and excluded by the C32-to-NHWC boundary copy.
 
 Main loop:
 
@@ -2107,10 +2112,15 @@ coverage is expanded from concrete model instances, not from generic TFLite
 Conv parameter space.
 
 Current progress: constrained pointwise Conv1x1, RGB K3 S2, generic full-group
-C32 K3, and depthwise K3 S1/S2 lowering are implemented. The generated command
-streams include NHWC↔C32 boundaries, multi-group accumulation, per-channel
-requantization, and fused ReLU/ReLU6 clamps. Generic K3 requires both IC and OC
-to be divisible by 32; pointwise and depthwise retain C32 tail support. The
+C32 K3, the corpus-required 16-lane IC-tail decomposition, and depthwise K3
+S1/S2 lowering are implemented. The generated command streams include
+NHWC↔C32 boundaries, multi-group accumulation, per-channel requantization, and
+fused ReLU/ReLU6 clamps. Generic K3 accepts full C32 groups and a 16-lane IC
+remainder only for zero-padded/VALID Conv; the tail is emitted as nine K1 jobs
+because the frozen RTL multi-K fast predicate requires `block_valid_bytes=32`.
+Arbitrary input tails and nonzero-padded tail Conv forms remain rejected; OC
+tails are zero-padded and masked at the public boundary. Pointwise and
+depthwise retain their existing C32 tail support. The
 direct RGB stem accepts the corpus-required partial output group (OC 1..32),
 and sliced materialized padding supports the full-depth C32 rectangles required
 between MobileNet producer and depthwise consumer. Focused
@@ -2245,6 +2255,16 @@ The following must be complete before Conv compiler lowering begins:
   stem, not hidden as a byte-exact `BUILTIN_REF` result and not used to justify
   a generic TFLite or RTL extension. These ratios are diagnostic for a cropped
   operator, not equivalent full-graph performance claims.
+- The isolated YOLO topology tail Conv (`8x8x48 -> 6x6x32`, K3/S1/VALID)
+  validates the generic input-channel remainder path. The compiler emits one
+  full C32 linebuffer job followed by nine K1 jobs for the 16-lane tail,
+  preserving the external partial-sum sequence and the C32 plane addresses;
+  no RTL source is changed. Vela reports 0 CPU operators and 3 NPU operators,
+  and the 21,984-byte package completes all 14 runtime commands byte-exactly
+  on Verilator at 91,916 PMU cycles. That is 26.4% of the native
+  Micro-MobileNet record and 23.7% of the native Micro-YOLO record; these are
+  diagnostic single-operator ratios. A C32 IC32 control run passes at 58,476
+  PMU cycles, isolating the tail decomposition cost.
 - The complete 13-stage Micro-MobileNet compiler test passes every graph prefix
   and the full graph byte-exactly. The full package contains two `AFU_BINARY`
   residual Adds, one `AFU_GLOBAL_AVGPOOL`, and the expected Conv/linebuffer

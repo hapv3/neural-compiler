@@ -35,7 +35,7 @@ TEST_CASE("Neural-AI Phase 3 classifier selects the stable Conv modes")
     REQUIRE(classification.hasIcTail == false);
     REQUIRE(classification.hasOcTail);
     REQUIRE_FALSE(classification.groupStationary);
-    REQUIRE(classification.diagnostic.find("corpus C16") != std::string::npos);
+    REQUIRE(classification.diagnostic.find("16-lane tails") != std::string::npos);
 
     classification = NeuralAIConstraints::Classify(OpType::Conv2D,
         Shape(1, 8, 8, 64), Shape(64, 3, 3, 64), Shape(1, 8, 8, 64), &generic);
