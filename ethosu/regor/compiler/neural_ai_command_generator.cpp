@@ -547,6 +547,22 @@ struct GeneratorContext
             return SetError(error,
                 "Neural-AI sliced C32 copy requires a positive batch-one rectangle with C%32=0 or C=16");
 
+        const auto checkedU32 = [&](uint64_t value, const char *message, uint32_t &result) -> bool
+        {
+            if ( value > std::numeric_limits<uint32_t>::max() )
+                return SetError(error, message);
+            result = uint32_t(value);
+            return true;
+        };
+        const auto checkedMulU32 = [&](uint64_t lhs, uint64_t rhs, const char *message,
+                                       uint32_t &result) -> bool
+        {
+            if ( lhs != 0 && rhs > std::numeric_limits<uint32_t>::max() / lhs )
+                return SetError(error, message);
+            result = uint32_t(lhs * rhs);
+            return true;
+        };
+
         if ( copyShape.Depth() == 16 )
         {
             struct TailAddressing
@@ -623,6 +639,7 @@ struct GeneratorContext
             uint32_t base = 0;
             uint32_t rowStride = 0;
             uint32_t groupStride = 0;
+            uint32_t pixelStride = 0;
         };
         const auto resolve = [&](const SchedulerConnection *connection, Addressing &addressing) -> bool
         {
@@ -633,8 +650,13 @@ struct GeneratorContext
                 if ( connection->slice.offset && connection->slice.offset != connection->shape.WithZeros() )
                     return SetError(error,
                         "Neural-AI linear sliced C32 fill source requires zero offset");
-                addressing.rowStride = uint32_t(copyShape.Width() * 32);
-                addressing.groupStride = uint32_t(copyShape.Height()) * addressing.rowStride;
+                if ( !checkedMulU32(uint64_t(copyShape.Width()), 32,
+                        "Neural-AI linear C32 row stride is outside the ABI range",
+                        addressing.rowStride) ||
+                     !checkedMulU32(uint64_t(copyShape.Height()), addressing.rowStride,
+                        "Neural-AI linear C32 group stride is outside the ABI range",
+                        addressing.groupStride) )
+                    return false;
                 return true;
             }
 
@@ -644,48 +666,88 @@ struct GeneratorContext
                 ReshapeToNHWC(connection->slice.offset) : storage.WithZeros();
             if ( connection->tensor->format == TensorFormat::NHWC )
             {
-                if ( storage.Batch() != 1 || storage.Depth() != 32 || slice.Batch() != 1 ||
-                     slice.Depth() != 32 || sliceOffset.Batch() != 0 || sliceOffset.Depth() != 0 ||
+                if ( storage.Batch() != 1 || storage.Depth() < 32 || storage.Depth() % 32 != 0 ||
+                     slice.Batch() != 1 || (slice.Depth() != 32 && slice.Depth() != storage.Depth()) ||
+                     sliceOffset.Batch() != 0 || sliceOffset.Depth() < 0 ||
+                     sliceOffset.Depth() % 32 != 0 ||
+                     int64_t(sliceOffset.Depth()) + slice.Depth() > storage.Depth() ||
                      sliceOffset.Height() < 0 || sliceOffset.Width() < 0 ||
-                     sliceOffset.Height() + slice.Height() > storage.Height() ||
-                     sliceOffset.Width() + slice.Width() > storage.Width() ||
+                     int64_t(sliceOffset.Height()) + slice.Height() > storage.Height() ||
+                     int64_t(sliceOffset.Width()) + slice.Width() > storage.Width() ||
                      (connection->slice.stride && connection->slice.stride != connection->shape.WithOnes()) )
-                    return SetError(error,
-                        "Neural-AI sliced NHWC-to-C32 copy requires one unstrided C32 group");
-                const int64_t rowStride64 = storage.Width() * int64_t(32);
-                const int64_t base64 =
-                    (sliceOffset.Height() * int64_t(storage.Width()) + sliceOffset.Width()) * 32;
-                if ( rowStride64 <= 0 || rowStride64 > std::numeric_limits<uint32_t>::max() ||
-                     base64 < 0 || base64 > std::numeric_limits<uint32_t>::max() )
+                    return SetError(error, fmt::format(
+                        "Neural-AI sliced NHWC-to-C32 copy requires an unstrided C32-aligned rectangle "
+                        "('{}' storage [{}], slice [{}], offset [{}], stride [{}])",
+                        connection->tensor->Name(), storage.ToString(), slice.ToString(),
+                        sliceOffset.ToString(), connection->slice.stride.ToString()));
+                if ( !checkedMulU32(uint64_t(storage.Width()), uint64_t(storage.Depth()),
+                        "Neural-AI sliced NHWC row stride is outside the ABI range",
+                        addressing.rowStride) )
+                    return false;
+                const uint64_t pixelIndex = uint64_t(sliceOffset.Height()) *
+                    uint64_t(storage.Width()) + uint64_t(sliceOffset.Width());
+                if ( pixelIndex > std::numeric_limits<uint32_t>::max() /
+                        uint64_t(storage.Depth()) )
                     return SetError(error, "Neural-AI sliced NHWC address is outside the ABI range");
-                addressing.base = uint32_t(base64);
-                addressing.rowStride = uint32_t(rowStride64);
-                addressing.groupStride = uint32_t(storage.Height()) * addressing.rowStride;
+                const uint64_t base64 = pixelIndex * uint64_t(storage.Depth()) +
+                    uint64_t(sliceOffset.Depth());
+                if ( !checkedU32(base64, "Neural-AI sliced NHWC address is outside the ABI range",
+                        addressing.base) )
+                    return false;
+                // Keep the existing DMA2D path for a single C32 public tensor.
+                // For wider compact tensors, one C32 group is a strided
+                // rectangle in NHWC storage: channels are contiguous within a
+                // pixel, while pixels and rows have independent strides.  The
+                // command generator emits one DMA3D per group below so both
+                // strides are represented by the ABI without staging a row.
+                if ( storage.Depth() == 32 )
+                {
+                    if ( !checkedMulU32(uint64_t(storage.Height()), addressing.rowStride,
+                            "Neural-AI sliced NHWC group stride is outside the ABI range",
+                            addressing.groupStride) )
+                        return false;
+                }
+                else
+                {
+                    addressing.groupStride = 32;
+                    addressing.pixelStride = uint32_t(storage.Depth());
+                }
                 return true;
             }
             if ( connection->tensor->format != TensorFormat::C32Blocked || storage.Batch() != 1 ||
                  storage.Depth() % 32 != 0 || slice.Batch() != 1 ||
-                 slice.Depth() != storage.Depth() || sliceOffset.Batch() != 0 ||
-                 sliceOffset.Depth() != 0 || sliceOffset.Height() < 0 || sliceOffset.Width() < 0 ||
-                 sliceOffset.Height() + slice.Height() > storage.Height() ||
-                 sliceOffset.Width() + slice.Width() > storage.Width() ||
+                 (slice.Depth() != 32 && slice.Depth() != storage.Depth()) ||
+                 sliceOffset.Batch() != 0 || sliceOffset.Depth() < 0 ||
+                 int64_t(sliceOffset.Depth()) + slice.Depth() > storage.Depth() ||
+                 sliceOffset.Depth() % 32 != 0 || sliceOffset.Height() < 0 || sliceOffset.Width() < 0 ||
+                 int64_t(sliceOffset.Height()) + slice.Height() > storage.Height() ||
+                 int64_t(sliceOffset.Width()) + slice.Width() > storage.Width() ||
                  (connection->slice.stride && connection->slice.stride != connection->shape.WithOnes()) )
                 return SetError(error, fmt::format(
-                    "Neural-AI sliced C32 copy requires an unstrided full-depth C%32 rectangle "
+                    "Neural-AI sliced C32 copy requires an unstrided C32-aligned rectangle "
                     "('{}' storage [{}], slice [{}], offset [{}], stride [{}])",
                     connection->tensor->Name(), storage.ToString(), slice.ToString(),
                     sliceOffset.ToString(), connection->slice.stride.ToString()));
-            const int64_t rowStride64 = storage.Width() * int64_t(32);
-            const int64_t groupStride64 = storage.Height() * rowStride64;
-            const int64_t base64 =
-                (sliceOffset.Height() * int64_t(storage.Width()) + sliceOffset.Width()) * 32;
-            if ( rowStride64 <= 0 || rowStride64 > std::numeric_limits<uint32_t>::max() ||
-                 groupStride64 <= 0 || groupStride64 > std::numeric_limits<uint32_t>::max() ||
-                 base64 < 0 || base64 > std::numeric_limits<uint32_t>::max() )
+            if ( !checkedMulU32(uint64_t(storage.Width()), 32,
+                    "Neural-AI sliced C32 row stride is outside the ABI range",
+                    addressing.rowStride) ||
+                 !checkedMulU32(uint64_t(storage.Height()), addressing.rowStride,
+                    "Neural-AI sliced C32 group stride is outside the ABI range",
+                    addressing.groupStride) )
+                return false;
+            const uint64_t pixelIndex = uint64_t(sliceOffset.Height()) *
+                uint64_t(storage.Width()) + uint64_t(sliceOffset.Width());
+            if ( pixelIndex > std::numeric_limits<uint32_t>::max() / 32u )
                 return SetError(error, "Neural-AI sliced C32 address is outside the ABI range");
-            addressing.base = uint32_t(base64);
-            addressing.rowStride = uint32_t(rowStride64);
-            addressing.groupStride = uint32_t(groupStride64);
+            const uint64_t basePixel = pixelIndex * 32u;
+            const uint64_t groupIndex = uint64_t(sliceOffset.Depth() / 32);
+            if ( groupIndex > std::numeric_limits<uint32_t>::max() /
+                    uint64_t(addressing.groupStride) )
+                return SetError(error, "Neural-AI sliced C32 address is outside the ABI range");
+            const uint64_t base64 = basePixel + groupIndex * addressing.groupStride;
+            if ( !checkedU32(base64, "Neural-AI sliced C32 address is outside the ABI range",
+                    addressing.base) )
+                return false;
             return true;
         };
 
@@ -693,21 +755,48 @@ struct GeneratorContext
         Addressing destinationAddressing;
         if ( !resolve(ifm, sourceAddressing) || !resolve(ofm, destinationAddressing) ) return false;
         const uint32_t rows = uint32_t(copyShape.Height());
-        const uint32_t rowBytes = uint32_t(copyShape.Width() * 32);
+        uint32_t rowBytes = 0;
+        if ( !checkedMulU32(uint64_t(copyShape.Width()), 32,
+                "Neural-AI sliced C32 row size is outside the ABI range", rowBytes) )
+            return false;
         const uint32_t groups = uint32_t(copyShape.Depth() / 32);
         const uint32_t layerId = uint32_t(operation->Index());
         for ( uint32_t group = 0; group < groups; ++group )
         {
+            const uint64_t sourceGroupOffset = uint64_t(sourceAddressing.base) +
+                uint64_t(group) * sourceAddressing.groupStride;
+            const uint64_t destinationGroupOffset = uint64_t(destinationAddressing.base) +
+                uint64_t(group) * destinationAddressing.groupStride;
+            uint32_t sourceGroupBase = 0;
+            uint32_t destinationGroupBase = 0;
+            if ( !checkedU32(sourceGroupOffset,
+                    "Neural-AI sliced C32 source address is outside the ABI range", sourceGroupBase) ||
+                 !checkedU32(destinationGroupOffset,
+                    "Neural-AI sliced C32 destination address is outside the ABI range",
+                    destinationGroupBase) )
+                return false;
             RefV1 source = TensorRef(ifm->tensor.get(),
-                sourceAddressing.base + group * sourceAddressing.groupStride, error);
+                sourceGroupBase, error);
             if ( !error.empty() ) return false;
             RefV1 destination = TensorRef(ofm->tensor.get(),
-                destinationAddressing.base + group * destinationAddressing.groupStride, error);
+                destinationGroupBase, error);
             if ( !error.empty() ) return false;
-            if ( rows == 1 || (sourceAddressing.rowStride == rowBytes &&
+            if ( sourceAddressing.pixelStride != 0 )
+            {
+                if ( !AppendDMA3D(source, destination, 32,
+                        sourceAddressing.pixelStride, 32, uint32_t(copyShape.Width()),
+                        sourceAddressing.rowStride, destinationAddressing.rowStride, rows,
+                        layerId, group, error) )
+                    return false;
+            }
+            else if ( rows == 1 || (sourceAddressing.rowStride == rowBytes &&
                                   destinationAddressing.rowStride == rowBytes) )
             {
-                if ( !AppendDMA1D(source, destination, rows * rowBytes, layerId, group, error) )
+                uint32_t transferBytes = 0;
+                if ( !checkedMulU32(rows, rowBytes,
+                        "Neural-AI sliced C32 copy size overflows the ABI", transferBytes) )
+                    return false;
+                if ( !AppendDMA1D(source, destination, transferBytes, layerId, group, error) )
                     return false;
             }
             else if ( !AppendDMA2D(source, destination, rowBytes, sourceAddressing.rowStride,

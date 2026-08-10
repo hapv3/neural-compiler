@@ -2208,10 +2208,11 @@ The following must be complete before Conv compiler lowering begins:
 
 ### Current Verification Evidence
 
-- Compiler C++ tests: 216/216 pass after the current asymmetric-Conv,
-  constant-padding serialization, sliced C32 boundary, and mapping-fixture changes. The command
-  generator now places nonzero Pad fill tensors in `ModelConstants`; padding
-  DMAs no longer read an implicitly zeroed TCDM address.
+- Compiler C++ tests: 221/221 pass after the current asymmetric-Conv,
+  constant-padding serialization, sliced C32 boundary, wide compact-NHWC
+  boundary, and mapping-fixture changes. The command generator now places
+  nonzero Pad fill tensors in `ModelConstants`; padding DMAs no longer read an
+  implicitly zeroed TCDM address.
 - A topology-derived MobileNet fixture selected from full-graph operators
   `Conv -> Depthwise -> Pointwise`, spatially cropped to 16x16, invokes in the
   TFLite reference interpreter and compiles to a 7,360-byte `.nai` package with
@@ -2298,6 +2299,24 @@ The following must be complete before Conv compiler lowering begins:
   admit generic NHWC channel tails. The focused run is 17.2% of the
   Micro-MobileNet cycle record and 15.4% of the Micro-YOLO record; these are
   diagnostic ratios rather than equivalent full-graph comparisons.
+- The selected full-size MobileNet final depthwise topology (`7x7x960`,
+  `DepthwiseConv2D`) now compiles with 0 CPU operators and 7 NPU operators.
+  The current compiler emits one compact-NHWC-to-C32 DMA3D transfer per C32
+  group (30 input transfers for C=960), and the fresh package SHA-256
+  (`7309ca6d6059c0068448441e527771fb6777b94a805f83e9f18a0d8d60eeb0ad`)
+  matches the package consumed by simulation. The corrected runtime harness
+  keeps disjoint ranges: input `0x80000000`, output `0x80020000`, invocation
+  `0x80040000`, binding table `0x80048000`, and model `0x80100000`. The full
+  Verilator runtime completes all commands at 521,518 PMU cycles. Its output
+  differs from the TFLite `BUILTIN_REF` golden at 13 of 47,040 bytes, every
+  delta `-1`; a compute-prefix run stopping before `CopyLayout` reproduces the
+  same 13 bytes, proving the layout and DMA are exact. TensorFlow's default
+  XNNPACK output matches RTL in all 47,040 bytes, while `BUILTIN_REF` differs
+  at those 13 bytes. This is the already documented frozen single-round versus
+  double-round semantic-fidelity issue, not an RTL defect and not an accepted
+  byte-exact `BUILTIN_REF` result. The earlier 1,566-byte/210-DMA2D report is
+  invalid because its ad-hoc harness aliased input with output and model with
+  the binding table; no DMA2D mitigation is part of the current mapping.
 - The following corpus-derived MobileNet Pointwise stage
   (`8x8x32 -> 8x8x16`) compiles with 0 CPU operators and passes byte-exactly
   against TFLite on Verilator at 53,174 PMU cycles. The focused run is 15.3%

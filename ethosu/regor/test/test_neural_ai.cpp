@@ -3326,6 +3326,67 @@ TEST_CASE("Neural-AI compiler copies an asymmetric public C32 group into padded 
     blob->Release();
 }
 
+TEST_CASE("Neural-AI compiler copies multi-group compact NHWC into depthwise C32 storage")
+{
+    for ( const int channels : {64, 960} )
+    {
+        INFO("channels=" << channels);
+        std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+        Compiler compiler(architecture);
+        const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+        REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+        const auto model = BuildDepthwiseConvModel(7, 7, channels, 1, -128);
+        REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+        REQUIRE(compiler.Compile());
+
+        IRegorBlob *blob = compiler.Output();
+        REQUIRE(blob != nullptr);
+        int64_t size = 0;
+        const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+        const uint32_t commandBytes = Read32(data + 64 + 12);
+        uint32_t offset = 224;
+        uint32_t inputDma2d = 0;
+        uint32_t inputDma3d = 0;
+        uint32_t previousGroupDestination = 0;
+        while ( offset < 224 + commandBytes )
+        {
+            const uint16_t type = Read16(data + offset);
+            const uint16_t commandSize = Read16(data + offset + 2);
+            if ( type == uint16_t(neuralai::CommandType::DMA3D) &&
+                 Read16(data + offset + 16) == uint16_t(neuralai::Region::InputBinding) )
+            {
+                REQUIRE(commandSize == sizeof(neuralai::CommandDMA3DV2));
+                REQUIRE(Read32(data + offset + 32) == 32);
+                REQUIRE(Read32(data + offset + 36) == uint32_t(channels));
+                REQUIRE(Read32(data + offset + 40) == 32);
+                REQUIRE(Read32(data + offset + 44) == 7);
+                REQUIRE(Read32(data + offset + 48) == 7u * uint32_t(channels));
+                REQUIRE(Read32(data + offset + 52) == 9u * 32u);
+                REQUIRE(Read32(data + offset + 56) == 7);
+                const uint32_t group = inputDma3d;
+                const uint32_t sourceOffset = Read32(data + offset + 20);
+                const uint32_t destinationOffset = Read32(data + offset + 28);
+                REQUIRE(sourceOffset == group * 32u);
+                if ( group != 0 )
+                    REQUIRE(destinationOffset == previousGroupDestination + 9u * 9u * 32u);
+                previousGroupDestination = destinationOffset;
+                ++inputDma3d;
+            }
+            if ( type == uint16_t(neuralai::CommandType::DMA2D) &&
+                 Read16(data + offset + 16) == uint16_t(neuralai::Region::InputBinding) )
+            {
+                ++inputDma2d;
+            }
+            offset += commandSize;
+        }
+        REQUIRE(offset == 224 + commandBytes);
+        REQUIRE(inputDma2d == 0);
+        REQUIRE(inputDma3d == uint32_t(channels / 32));
+        blob->Unmap(const_cast<uint8_t *>(data));
+        blob->Release();
+    }
+}
+
 TEST_CASE("Neural-AI compiler emits all depthwise C32 group and tail variants")
 {
     for ( const int channels : {31, 32, 33, 48, 64, 65, 96} )
