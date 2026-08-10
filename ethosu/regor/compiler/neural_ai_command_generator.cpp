@@ -11,6 +11,7 @@
 #include "architecture/neuralai/neural_ai.hpp"
 #include "architecture/neuralai/neural_ai_op_config.hpp"
 #include "compiler/shape_util.hpp"
+#include "tflite/tflite_schema_generated.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -154,6 +155,25 @@ uint32_t FloatBits(float value)
     static_assert(sizeof(bits) == sizeof(value));
     std::memcpy(&bits, &value, sizeof(bits));
     return bits;
+}
+
+void BindingQuantization(const Tensor *tensor, const SchedulerConnection *connection,
+    uint32_t &scaleBits, int32_t &zeroPoint)
+{
+    const auto *tfliteTensor = tensor->Passthrough() ?
+        static_cast<const tflite::Tensor *>(tensor->Passthrough()) : nullptr;
+    const auto *quantization = tfliteTensor ? tfliteTensor->quantization() : nullptr;
+    if ( quantization != nullptr && quantization->scale() != nullptr &&
+         quantization->scale()->size() == 1 && quantization->zero_point() != nullptr &&
+         quantization->zero_point()->size() == 1 )
+    {
+        scaleBits = FloatBits((*quantization->scale())[0]);
+        zeroPoint = int32_t((*quantization->zero_point())[0]);
+        return;
+    }
+    scaleBits = FloatBits(float(connection->quantization.Scale().Dequantize()));
+    zeroPoint = connection->quantization.zeroPoints.empty() ? 0 :
+        int32_t(connection->quantization.zeroPoints[0]);
 }
 
 struct GeneratorContext
@@ -1420,8 +1440,8 @@ struct GeneratorContext
                 auto position = connections.find(tensor->Uid());
                 if ( position == connections.end() ) return SetError(error, "Neural-AI graph binding is unscheduled");
                 const SchedulerConnection *connection = position->second;
-                const auto dimensions = Dimensions(connection->shape);
-                const uint16_t dataType = ABIDataType(connection->Type());
+                const auto dimensions = Dimensions(tensor->StorageShape());
+                const uint16_t dataType = ABIDataType(tensor->Type());
                 if ( dataType == 0 ) return SetError(error, "Neural-AI public binding has an unsupported data type");
                 neuralai::BindingV1 binding{};
                 binding.direction = uint16_t(direction);
@@ -1432,10 +1452,8 @@ struct GeneratorContext
                 binding.tensorId = nextTensorId++;
                 std::copy(dimensions.begin(), dimensions.end(), binding.dimensions);
                 const uint32_t elementBytes = dataType == uint16_t(DataType::Int32) ? 4 : 1;
-                binding.byteSize = uint32_t(connection->shape.Elements64()) * elementBytes;
-                binding.scaleBits = FloatBits(float(connection->quantization.Scale().Dequantize()));
-                binding.zeroPoint = connection->quantization.zeroPoints.empty() ? 0 :
-                    int32_t(connection->quantization.zeroPoints[0]);
+                binding.byteSize = uint32_t(tensor->StorageShape().Elements64()) * elementBytes;
+                BindingQuantization(tensor.get(), connection, binding.scaleBits, binding.zeroPoint);
                 artifact->bindings.push_back(binding);
                 indices.emplace(tensor->Uid(), uint16_t(index));
 

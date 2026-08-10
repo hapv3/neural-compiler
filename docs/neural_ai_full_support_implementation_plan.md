@@ -2155,8 +2155,9 @@ The following must be complete before Conv compiler lowering begins:
 7. Add C32 layout propagation and TCDM partial-sum allocation while leaving
    logical Graph IR shapes in NHWC.
 8. Extend the v2 `COPY_LAYOUT` handler and command generation with NHWC-to-C32
-   and C32-to-NHWC boundary materialization, with direct RGB C3 input
-   consumption where supported.
+   and C32-to-NHWC boundary materialization. Stage compact public RGB C3 inputs
+   in TCDM before direct-NHWC linebuffer consumption; public binding metadata
+   must retain the original TFLite shape, type, scale, and zero point.
 9. Implement the IC/OC group loops and channel-tail forms observed in the
    selected artifacts; reject other tail/mode combinations.
 10. Fuse ReLU, ReLU6, and Clamp into final requantization.
@@ -2210,6 +2211,15 @@ The following must be complete before Conv compiler lowering begins:
   the TFLite reference interpreter and compiles to a 3,744-byte `.nai` package
   with 0 CPU operators, 8 NPU operators, 4.00 KiB peak SRAM, and 19,456 MACs.
   These are mapping results, not full-graph SRAM or performance claims.
+- The isolated corpus-derived YOLOv8 stem Conv
+  (`18x18x3 -> 8x8x16`, K3/S2/VALID) stages its 972-byte compact public input
+  into TCDM and passes all 1,024 output bytes against TFLite on Verilator. The
+  public `.nai` binding retains NHWC `1x18x18x3`, scale `1/255`, and zero point
+  `-128`; the staged DMA destination is the same address consumed by the
+  linebuffer. The run completes at 55,592 PMU cycles, 16.0% of the native
+  Micro-MobileNet record and 14.3% of the native Micro-YOLO record. These are
+  diagnostic ratios for a cropped single operator, not equivalent full-graph
+  performance comparisons.
 - The complete 13-stage Micro-MobileNet compiler test passes every graph prefix
   and the full graph byte-exactly. The full package contains two `AFU_BINARY`
   residual Adds, one `AFU_GLOBAL_AVGPOOL`, and the expected Conv/linebuffer

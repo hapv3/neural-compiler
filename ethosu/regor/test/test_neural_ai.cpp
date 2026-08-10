@@ -674,20 +674,24 @@ flatbuffers::DetachedBuffer BuildViewModel(
 }
 
 flatbuffers::DetachedBuffer BuildK3ConvModel(int height, int width, int depthK, int depthN, int stride,
-    int64_t inputZeroPoint = 0)
+    int64_t inputZeroPoint = 0, tflite::Padding padding = tflite::Padding::SAME,
+    float inputScaleValue = 1.0f, float outputScaleValue = 1.0f)
 {
     flatbuffers::FlatBufferBuilder builder;
     const std::vector<float> scale = {1.0f};
+    const std::vector<float> inputScale = {inputScaleValue};
+    const std::vector<float> biasScale = {inputScaleValue};
+    const std::vector<float> outputScale = {outputScaleValue};
     const std::vector<int64_t> zeroPoint = {0};
     const std::vector<int64_t> inputZeroPoints = {inputZeroPoint};
     const auto inputQuant = tflite::CreateQuantizationParametersDirect(
-        builder, nullptr, nullptr, &scale, &inputZeroPoints);
+        builder, nullptr, nullptr, &inputScale, &inputZeroPoints);
     const auto weightQuant = tflite::CreateQuantizationParametersDirect(
         builder, nullptr, nullptr, &scale, &zeroPoint);
     const auto biasQuant = tflite::CreateQuantizationParametersDirect(
-        builder, nullptr, nullptr, &scale, &zeroPoint);
+        builder, nullptr, nullptr, &biasScale, &zeroPoint);
     const auto outputQuant = tflite::CreateQuantizationParametersDirect(
-        builder, nullptr, nullptr, &scale, &zeroPoint);
+        builder, nullptr, nullptr, &outputScale, &zeroPoint);
     std::vector<uint8_t> weightData(size_t(depthK) * depthN * 9, 1);
     std::vector<int32_t> bias(depthN, 0);
     std::vector<uint8_t> biasData(bias.size() * sizeof(int32_t));
@@ -697,8 +701,10 @@ flatbuffers::DetachedBuffer BuildK3ConvModel(int height, int width, int depthK, 
         tflite::CreateBufferDirect(builder, &weightData),
         tflite::CreateBufferDirect(builder, &biasData),
     };
-    const int outputHeight = (height + stride - 1) / stride;
-    const int outputWidth = (width + stride - 1) / stride;
+    const int outputHeight = padding == tflite::Padding::SAME ?
+        (height + stride - 1) / stride : (height - 3) / stride + 1;
+    const int outputWidth = padding == tflite::Padding::SAME ?
+        (width + stride - 1) / stride : (width - 3) / stride + 1;
     const std::vector<int32_t> inputShape = {1, height, width, depthK};
     const std::vector<int32_t> weightShape = {depthN, 3, 3, depthK};
     const std::vector<int32_t> biasShape = {depthN};
@@ -710,7 +716,7 @@ flatbuffers::DetachedBuffer BuildK3ConvModel(int height, int width, int depthK, 
         tflite::CreateTensorDirect(builder, &outputShape, tflite::TensorType::INT8, 0, "output", outputQuant),
     };
     const auto options = tflite::CreateConv2DOptions(
-        builder, tflite::Padding::SAME, stride, stride, tflite::ActivationFunctionType::NONE,
+        builder, padding, stride, stride, tflite::ActivationFunctionType::NONE,
         1, 1, tflite::TensorType::INT32);
     const std::vector<int32_t> opInputs = {0, 1, 2};
     const std::vector<int32_t> opOutputs = {3};
@@ -2880,6 +2886,7 @@ TEST_CASE("Neural-AI compiler consumes compact TCDM RGB input directly")
     uint32_t copyLayouts = 0;
     uint32_t dma2dCommands = 0;
     uint32_t localCopies = 0;
+    uint32_t inputCopies = 0;
     bool sawShortDma = false;
     bool sawWideM = false;
     while ( offset < 224 + commandBytes )
@@ -2896,8 +2903,12 @@ TEST_CASE("Neural-AI compiler consumes compact TCDM RGB input directly")
         }
         if ( type == uint16_t(neuralai::CommandType::CopyLayout) ) ++copyLayouts;
         if ( type == uint16_t(neuralai::CommandType::DMA1D) )
+        {
             localCopies += Read32(data + offset + 36) ==
                 uint32_t(neuralai::DMADirection::LocalToLocal);
+            inputCopies += Read16(data + offset + 16) ==
+                uint16_t(neuralai::Region::InputBinding);
+        }
         if ( type == uint16_t(neuralai::CommandType::DMA2D) )
         {
             ++dma2dCommands;
@@ -2910,6 +2921,7 @@ TEST_CASE("Neural-AI compiler consumes compact TCDM RGB input directly")
     REQUIRE(linebufferJobs == 3);
     REQUIRE(copyLayouts == 1);
     REQUIRE(localCopies == 0);
+    REQUIRE(inputCopies == 1);
     REQUIRE(dma2dCommands == 1);
     REQUIRE_FALSE(sawShortDma);
     REQUIRE(sawWideM);
@@ -2923,26 +2935,68 @@ TEST_CASE("Neural-AI compiler supports a partial output group for an RGB stem")
     Compiler compiler(architecture);
     const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
     REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
-    const auto model = BuildK3ConvModel(16, 16, 3, 16, 2);
+    const auto model = BuildK3ConvModel(
+        18, 18, 3, 16, 2, -128, tflite::Padding::VALID, 1.0f / 255.0f, 0.345353007f);
     REQUIRE(compiler.LoadTflite(model.data(), model.size()));
     REQUIRE(compiler.Compile());
     IRegorBlob *blob = compiler.Output();
     REQUIRE(blob != nullptr);
     int64_t size = 0;
     const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    uint32_t bindingOffset = 0;
+    const uint32_t sectionCount = Read32(data + 20);
+    const uint32_t sectionTable = Read32(data + 24);
+    for ( uint32_t section = 0; section < sectionCount; ++section )
+    {
+        const uint32_t offset = sectionTable + section * sizeof(neuralai::SectionV1);
+        if ( Read32(data + offset) == uint32_t(neuralai::SectionType::Bindings) )
+            bindingOffset = Read32(data + offset + 8);
+    }
+    REQUIRE(bindingOffset != 0);
+    REQUIRE(Read32(data + bindingOffset + 16) == 1);
+    REQUIRE(Read32(data + bindingOffset + 20) == 18);
+    REQUIRE(Read32(data + bindingOffset + 24) == 18);
+    REQUIRE(Read32(data + bindingOffset + 28) == 3);
+    REQUIRE(Read32(data + bindingOffset + 32) == 18 * 18 * 3);
+    uint32_t inputScaleBits = 0;
+    const float inputScale = 1.0f / 255.0f;
+    std::memcpy(&inputScaleBits, &inputScale, sizeof(inputScaleBits));
+    REQUIRE(Read32(data + bindingOffset + 36) == inputScaleBits);
+    REQUIRE(int32_t(Read32(data + bindingOffset + 40)) == -128);
+    uint32_t outputScaleBits = 0;
+    const float outputScale = 0.345353007f;
+    std::memcpy(&outputScaleBits, &outputScale, sizeof(outputScaleBits));
+    REQUIRE(Read32(data + bindingOffset + sizeof(neuralai::BindingV1) + 36) == outputScaleBits);
+
     const uint32_t commandBytes = Read32(data + 64 + 12);
     uint32_t offset = 224;
     uint32_t linebufferJobs = 0;
+    uint32_t inputCopies = 0;
+    uint32_t stagedInput = 0;
+    uint32_t linebufferInput = 0;
     while ( offset < 224 + commandBytes )
     {
         const uint16_t type = uint16_t(data[offset]) | (uint16_t(data[offset + 1]) << 8);
         const uint16_t commandSize = uint16_t(data[offset + 2]) |
             (uint16_t(data[offset + 3]) << 8);
-        linebufferJobs += type == uint16_t(neuralai::CommandType::LineBufferJob);
+        if ( type == uint16_t(neuralai::CommandType::DMA1D) &&
+             Read16(data + offset + 16) == uint16_t(neuralai::Region::InputBinding) )
+        {
+            ++inputCopies;
+            stagedInput = Read32(data + offset + 28);
+            REQUIRE(Read32(data + offset + 32) == 18 * 18 * 3);
+        }
+        if ( type == uint16_t(neuralai::CommandType::LineBufferJob) )
+        {
+            ++linebufferJobs;
+            linebufferInput = Read32(data + offset + 16);
+        }
         offset += commandSize;
     }
     REQUIRE(offset == 224 + commandBytes);
     REQUIRE(linebufferJobs > 0);
+    REQUIRE(inputCopies == 1);
+    REQUIRE(linebufferInput == stagedInput);
     blob->Unmap(const_cast<uint8_t *>(data));
     blob->Release();
 }

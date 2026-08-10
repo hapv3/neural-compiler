@@ -19,20 +19,6 @@ namespace regor
 namespace
 {
 
-bool IsDirectRgbStem(const Operation *operation)
-{
-    if ( operation == nullptr || operation->Type() != OpType::Conv2D || operation->Kernel() == nullptr ) return false;
-    const TensorConnection *ifm = operation->Input(TensorUsage::IFM0);
-    const TensorConnection *ofm = operation->Output(TensorUsage::OFM);
-    if ( ifm == nullptr || ofm == nullptr || !ifm->tensor || !ofm->tensor ) return false;
-    const Shape ifmShape = ifm->shape.IsEmpty() ? ifm->tensor->StorageShape() : ifm->shape;
-    const Shape ofmShape = ofm->shape.IsEmpty() ? ofm->tensor->StorageShape() : ofm->shape;
-    const Kernel *kernel = operation->Kernel();
-    return ifmShape.Depth() == 3 && ofmShape.Depth() > 0 && ofmShape.Depth() <= 32 &&
-        kernel->Size() == Point2i(3, 3) && kernel->Stride() == Point2i(2, 2) &&
-        kernel->Dilation() == Point2i(1, 1);
-}
-
 int64_t ScalarZeroPoint(const Quantization &quantization)
 {
     return quantization.zeroPoints.empty() ? 0 : quantization.zeroPoints[0];
@@ -70,7 +56,6 @@ bool ShiftClamp(Quantization &quantization, int64_t delta)
 
 void NeuralAIGraphOptimiser::CanonicalizeAsymmetricConv(Graph *graph, Operation *operation)
 {
-    UNUSED(graph);
     const OpType opType = operation->Type();
     if ( opType != OpType::Conv2D && opType != OpType::DepthwiseConv2D ) return;
 
@@ -163,6 +148,26 @@ void NeuralAIGraphOptimiser::CanonicalizeAsymmetricConv(Graph *graph, Operation 
         operation->ConnectInput(TensorUsage::IFM0, paddedTensor).Set(paddedShape).Set(zeroPointQuantization);
         operation->SetKernel(std::make_unique<Kernel>(kernel->WithPadding({})));
         RecordOptimisation(*operation, pad.get());
+    }
+    else if ( graph->IsInput(ifm->tensor.get()) )
+    {
+        const TensorConnection original = *ifm;
+        auto nativeTensor = std::shared_ptr<Tensor>(original.tensor->Clone().release());
+        nativeTensor->SetName(original.tensor->Name() + "/zero_point_staging");
+        auto copy = std::make_shared<Operation>(OpType::MemoryCopy);
+        copy->CopyInput(TensorUsage::IFM, original);
+        copy->ConnectOutput(TensorUsage::OFM, nativeTensor)
+            .Set(original.shape)
+            .Set(original.slice)
+            .Set(zeroPointQuantization)
+            .Set(original.rounding);
+        operation->ConnectInput(TensorUsage::IFM0, nativeTensor)
+            .Set(original.shape)
+            .Set(original.slice)
+            .Set(zeroPointQuantization)
+            .Set(original.reverse)
+            .Set(original.rounding);
+        RecordOptimisation(*operation, copy.get());
     }
     else
     {
@@ -293,7 +298,7 @@ void NeuralAIGraphOptimiser::OptimiseGraph(Graph *graph)
              operation->Type() != OpType::LUT && operation->Type() != OpType::Add &&
              operation->Type() != OpType::AvgPool && operation->Type() != OpType::Resize &&
              operation->Type() != OpType::MaxPool && operation->Type() != OpType::Concat ) continue;
-        if ( !IsDirectRgbStem(operation.get()) ) InsertInputConversion(graph, operation.get(), TensorUsage::IFM0);
+        InsertInputConversion(graph, operation.get(), TensorUsage::IFM0);
         if ( operation->Type() == OpType::Add || operation->Type() == OpType::Concat )
             InsertInputConversion(graph, operation.get(), TensorUsage::IFM1);
         InsertOutputConversion(graph, operation.get());
