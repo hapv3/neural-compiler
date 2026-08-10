@@ -2208,9 +2208,17 @@ The following must be complete before Conv compiler lowering begins:
   0 CPU operators, 12 NPU operators, 5.12 KiB peak SRAM, and 104,448 MACs.
 - A topology-derived YOLOv8 fixture selected from full-graph operators
   `Pad -> Conv(OC16) -> Logistic -> Mul`, spatially cropped to 16x16, invokes in
-  the TFLite reference interpreter and compiles to a 3,744-byte `.nai` package
+  the TFLite reference interpreter and compiles to a 3,808-byte `.nai` package
   with 0 CPU operators, 8 NPU operators, 4.00 KiB peak SRAM, and 19,456 MACs.
-  These are mapping results, not full-graph SRAM or performance claims.
+  The compiler fuses `Logistic -> Mul` into one `AFU_LUT`; Verilator completes
+  all 10 runtime commands and matches all 1,024 output bytes against TFLite
+  `BUILTIN_REF` at 67,650 PMU cycles. The same TensorFlow interpreter with its
+  default XNNPACK delegate differs at 7 of 1,024 outputs by one LSB, so mapping
+  goldens must explicitly select `BUILTIN_REF` rather than silently changing
+  the compiler's documented integer-reference contract. The focused run is
+  19.4% of the native Micro-MobileNet record and 17.4% of the native
+  Micro-YOLO record. These are diagnostic mapping results, not full-graph SRAM
+  or equivalent performance claims.
 - The isolated corpus-derived YOLOv8 stem Conv
   (`18x18x3 -> 8x8x16`, K3/S2/VALID) stages its 972-byte compact public input
   into TCDM and passes all 1,024 output bytes against TFLite on Verilator. The
