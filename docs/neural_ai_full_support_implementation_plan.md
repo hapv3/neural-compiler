@@ -2197,8 +2197,10 @@ The following must be complete before Conv compiler lowering begins:
 
 ### Current Verification Evidence
 
-- Compiler C++ tests: 214/214 pass (655,289 assertions) after the current
-  asymmetric-Conv and mapping-fixture changes.
+- Compiler C++ tests: 215/215 pass after the current asymmetric-Conv,
+  constant-padding serialization, and mapping-fixture changes. The command
+  generator now places nonzero Pad fill tensors in `ModelConstants`; padding
+  DMAs no longer read an implicitly zeroed TCDM address.
 - A topology-derived MobileNet fixture selected from full-graph operators
   `Conv -> Depthwise -> Pointwise`, spatially cropped to 16x16, invokes in the
   TFLite reference interpreter and compiles to a 7,360-byte `.nai` package with
@@ -2221,6 +2223,18 @@ The following must be complete before Conv compiler lowering begins:
     versus 493,826 ns immediately before it (+0.04%) and 492,662 ns before DMA
     direction validation (+0.27% cumulative).
   - Depthwise K3 S2 C33 tail: 228,121 simulated ns.
+- The corpus-derived MobileNet RGB stem (`16x16x3 -> 8x8x32`) passes
+  byte-exactly against the frozen RTL single-round golden at 58,874 PMU cycles.
+  Its raw `ifm_zp=-1` right/bottom padding is copied from serialized
+  `ModelConstants`, closing a pre-fix 38-byte border mismatch. Against the
+  TFLite interpreter, 64 of 2,048 outputs in one extremely small-scale channel
+  differ by exactly one LSB because TFLite double-rounding is not the frozen
+  systolic single-round contract. This is recorded as an open semantic-fidelity
+  decision for the later release gate, not hidden by the mapping gate and not
+  used to justify an RTL extension. The focused operator consumes 16.9% of the
+  347,992-cycle Micro-MobileNet record and 15.2% of the 388,146-cycle
+  Micro-YOLO record; those ratios are diagnostic only because the workloads are
+  not equivalent full graphs.
 - The current full package is 89,312 bytes, contains 81 runtime commands, and
   has a 290,816-byte peak TCDM allocation. Direct external-to-local compact
   tensor transfers avoid CPU-backed local-to-local bounce copies, and one

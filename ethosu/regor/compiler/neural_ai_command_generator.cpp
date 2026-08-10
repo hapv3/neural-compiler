@@ -163,6 +163,7 @@ struct GeneratorContext
     CompiledNeuralAIArtifact *artifact;
     std::unordered_map<UniqueId, uint16_t> inputBindings;
     std::unordered_map<UniqueId, uint16_t> outputBindings;
+    std::unordered_map<UniqueId, uint32_t> constantOffsets;
     uint32_t nextTensorId = 0;
     uint32_t scratchEnd = 0;
     uint32_t stageOffset = 0;
@@ -207,6 +208,44 @@ struct GeneratorContext
             }
             reference.region = uint16_t(Region::OutputBinding);
             reference.index = position->second;
+        }
+        else if ( tensor->IsConstant() )
+        {
+            auto position = constantOffsets.find(tensor->uid);
+            if ( position == constantOffsets.end() )
+            {
+                const uint32_t aligned = uint32_t(RoundAway(
+                    int(artifact->constants.size()), int(neuralai::Alignment)));
+                artifact->constants.resize(aligned, 0);
+                const uint32_t constantOffset = uint32_t(artifact->constants.size());
+                const int elementBytes = tensor->dataType == regor::DataType::Int8 ? 1 :
+                    tensor->dataType == regor::DataType::Int32 ? 4 : 0;
+                if ( elementBytes == 0 )
+                {
+                    error = "Neural-AI constant DMA supports only INT8 and INT32";
+                    return reference;
+                }
+                const Shape expectedStrides = Shape::GetStridesForShape(
+                    tensor->bufferView.ViewShape(), elementBytes);
+                if ( tensor->bufferView.StrideBytes() != expectedStrides )
+                {
+                    error = "Neural-AI constant DMA requires a contiguous tensor view";
+                    return reference;
+                }
+                const int64_t byteCount = int64_t(tensor->bufferView.Elements()) * elementBytes;
+                const int64_t baseByte = int64_t(tensor->bufferView.BaseOffset()) * elementBytes;
+                if ( byteCount <= 0 || baseByte < 0 ||
+                     baseByte + byteCount > int64_t(tensor->bufferView.Buffer()->Size()) )
+                {
+                    error = "Neural-AI constant DMA view is outside its backing buffer";
+                    return reference;
+                }
+                const uint8_t *source = tensor->bufferView.Buffer()->Data<uint8_t>() + baseByte;
+                artifact->constants.insert(artifact->constants.end(), source, source + byteCount);
+                position = constantOffsets.emplace(tensor->uid, constantOffset).first;
+            }
+            reference.region = uint16_t(Region::ModelConstants);
+            reference.offset = position->second;
         }
         else
         {

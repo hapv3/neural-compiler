@@ -673,13 +673,15 @@ flatbuffers::DetachedBuffer BuildViewModel(
     return builder.Release();
 }
 
-flatbuffers::DetachedBuffer BuildK3ConvModel(int height, int width, int depthK, int depthN, int stride)
+flatbuffers::DetachedBuffer BuildK3ConvModel(int height, int width, int depthK, int depthN, int stride,
+    int64_t inputZeroPoint = 0)
 {
     flatbuffers::FlatBufferBuilder builder;
     const std::vector<float> scale = {1.0f};
     const std::vector<int64_t> zeroPoint = {0};
+    const std::vector<int64_t> inputZeroPoints = {inputZeroPoint};
     const auto inputQuant = tflite::CreateQuantizationParametersDirect(
-        builder, nullptr, nullptr, &scale, &zeroPoint);
+        builder, nullptr, nullptr, &scale, &inputZeroPoints);
     const auto weightQuant = tflite::CreateQuantizationParametersDirect(
         builder, nullptr, nullptr, &scale, &zeroPoint);
     const auto biasQuant = tflite::CreateQuantizationParametersDirect(
@@ -2939,6 +2941,77 @@ TEST_CASE("Neural-AI compiler supports a partial output group for an RGB stem")
     }
     REQUIRE(offset == 224 + commandBytes);
     REQUIRE(linebufferJobs > 0);
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
+}
+
+TEST_CASE("Neural-AI compiler serializes asymmetric Conv padding at the raw zero point")
+{
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    constexpr int8_t inputZeroPoint = -3;
+    const auto model = BuildK3ConvModel(16, 16, 3, 32, 2, inputZeroPoint);
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+    INFO(compiler.LastError());
+    REQUIRE(compiler.Compile());
+
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    const uint32_t sectionCount = Read32(data + 20);
+    const uint32_t sectionTable = Read32(data + 24);
+    uint32_t commandOffset = 0;
+    uint32_t commandBytes = 0;
+    uint32_t constantOffset = 0;
+    uint32_t constantBytes = 0;
+    for ( uint32_t section = 0; section < sectionCount; ++section )
+    {
+        const uint32_t offset = sectionTable + section * sizeof(neuralai::SectionV1);
+        const uint32_t type = Read32(data + offset);
+        if ( type == uint32_t(neuralai::SectionType::Commands) )
+        {
+            commandOffset = Read32(data + offset + 8);
+            commandBytes = Read32(data + offset + 12);
+        }
+        else if ( type == uint32_t(neuralai::SectionType::Constants) )
+        {
+            constantOffset = Read32(data + offset + 8);
+            constantBytes = Read32(data + offset + 12);
+        }
+    }
+    REQUIRE(commandOffset != 0);
+    REQUIRE(commandBytes != 0);
+    REQUIRE(constantOffset != 0);
+    REQUIRE(constantBytes != 0);
+
+    uint32_t paddingCopies = 0;
+    uint32_t offset = commandOffset;
+    while ( offset < commandOffset + commandBytes )
+    {
+        const uint16_t type = Read16(data + offset);
+        const uint16_t commandSize = Read16(data + offset + 2);
+        if ( type == uint16_t(neuralai::CommandType::DMA1D) ||
+             type == uint16_t(neuralai::CommandType::DMA2D) )
+        {
+            const uint16_t sourceRegion = Read16(data + offset + 16);
+            const uint32_t sourceOffset = Read32(data + offset + 20);
+            const uint32_t length = Read32(data + offset + 32);
+            if ( sourceRegion == uint16_t(neuralai::Region::ModelConstants) &&
+                 (length == 3 || length == 51) )
+            {
+                REQUIRE(sourceOffset + length <= constantBytes);
+                for ( uint32_t index = 0; index < length; ++index )
+                    REQUIRE(int8_t(data[constantOffset + sourceOffset + index]) == inputZeroPoint);
+                ++paddingCopies;
+            }
+        }
+        offset += commandSize;
+    }
+    REQUIRE(offset == commandOffset + commandBytes);
+    REQUIRE(paddingCopies == 2);
     blob->Unmap(const_cast<uint8_t *>(data));
     blob->Release();
 }
