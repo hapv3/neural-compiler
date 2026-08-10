@@ -1396,7 +1396,10 @@ struct GeneratorContext
         const bool isK3Conv = IsLinebufferConvMode(mode);
         const uint32_t depthK = channelK * (isK3Conv ? 9u : 1u);
         const uint32_t depthN = uint32_t(ofm->shape.Depth());
-        const uint32_t rows = uint32_t(ofm->shape.Elements64() / depthN);
+        const int64_t rows64 = depthN != 0 ? ofm->shape.Elements64() / depthN : 0;
+        if ( rows64 <= 0 || rows64 > std::numeric_limits<uint32_t>::max() )
+            return SetError(error, "Neural-AI matrix row count is outside the ABI range");
+        const uint32_t rows = uint32_t(rows64);
         const uint32_t paddedK = uint32_t(RoundAway(int(depthK), 32));
         const uint32_t paddedN = uint32_t(RoundAway(int(depthN), 32));
         const uint32_t kGroups = paddedK / 32;
@@ -1580,32 +1583,37 @@ struct GeneratorContext
             if ( ifm->tensor->format != TensorFormat::C32Blocked ||
                  ofm->tensor->format != TensorFormat::C32Blocked )
                 return SetError(error, "Neural-AI pointwise Conv requires C32-blocked input and output");
+            const uint64_t groupStride64 = uint64_t(rows) * 32u;
+            if ( groupStride64 > std::numeric_limits<uint32_t>::max() )
+                return SetError(error, "Neural-AI pointwise Conv row stride overflows the ABI");
+            const uint32_t groupStride = uint32_t(groupStride64);
             uint32_t tileId = 0;
-            const uint32_t groupStride = rows * 32u;
             for ( uint32_t nGroup = 0; nGroup < nGroups; ++nGroup )
             {
                 AppendRQLoad(qparamBase + nGroup * 32, nGroup,
                     uint32_t(operation->Index()), tileId++);
-                for ( uint32_t rowBase = 0; rowBase < rows; rowBase += 256 )
+                const uint64_t weightOffset64 = uint64_t(weightBase) +
+                    uint64_t(nGroup) * kGroups * 32u * 32u;
+                const uint64_t outputOffset64 = uint64_t(nGroup) * groupStride64;
+                if ( weightOffset64 > std::numeric_limits<uint32_t>::max() ||
+                     outputOffset64 > std::numeric_limits<uint32_t>::max() )
+                    return SetError(error, "Neural-AI pointwise Conv tensor reference overflows the ABI");
+                RefV1 ifmRef = TensorRef(ifm->tensor.get(), 0, error);
+                if ( !error.empty() ) return false;
+                RefV1 weights{};
+                weights.region = uint16_t(Region::ModelConstants);
+                weights.offset = uint32_t(weightOffset64);
+                RefV1 partial{};
+                if ( kGroups > 1 )
                 {
-                    const uint32_t dimM = std::min<uint32_t>(256, rows - rowBase);
-                    RefV1 ifmRef = TensorRef(ifm->tensor.get(), rowBase * 32u, error);
-                    if ( !error.empty() ) return false;
-                    RefV1 weights{};
-                    weights.region = uint16_t(Region::ModelConstants);
-                    weights.offset = weightBase + nGroup * kGroups * 32u * 32u;
-                    RefV1 partial{};
-                    if ( kGroups > 1 )
-                    {
-                        partial.region = uint16_t(Region::TCDMScratch);
-                        partial.offset = partialOffset;
-                    }
-                    RefV1 output = TensorRef(ofm->tensor.get(), nGroup * rows * 32u + rowBase * 32u, error);
-                    if ( !error.empty() ) return false;
-                    AppendPointwiseC32(weights, ifmRef, partial, output, dimM,
-                        kGroups, 1, nGroup, groupStride, groupStride,
-                        uint32_t(operation->Index()), tileId++);
+                    partial.region = uint16_t(Region::TCDMScratch);
+                    partial.offset = partialOffset;
                 }
+                RefV1 output = TensorRef(ofm->tensor.get(), uint32_t(outputOffset64), error);
+                if ( !error.empty() ) return false;
+                AppendPointwiseC32(weights, ifmRef, partial, output, rows,
+                    kGroups, 1, nGroup, groupStride, groupStride,
+                    uint32_t(operation->Index()), tileId++);
             }
             return true;
         }

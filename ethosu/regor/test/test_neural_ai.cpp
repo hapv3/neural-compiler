@@ -2715,7 +2715,7 @@ TEST_CASE("Neural-AI compiler materializes reshape-like graph outputs")
     }
 }
 
-TEST_CASE("Neural-AI compiler splits pointwise M stripes at the 256-row ABI limit")
+TEST_CASE("Neural-AI compiler coalesces pointwise M stripes into one command")
 {
     for ( const int width : {257, 511} )
     {
@@ -2745,13 +2745,13 @@ TEST_CASE("Neural-AI compiler splits pointwise M stripes at the 256-row ABI limi
             {
                 ++pointwiseCommands;
                 REQUIRE(Read32(data + offset + 48) > 0);
-                REQUIRE(Read32(data + offset + 48) <= 256);
+                REQUIRE(Read32(data + offset + 48) == uint32_t(width));
             }
             if ( type == uint16_t(neuralai::CommandType::RQLoad) ) ++rqLoads;
             offset += commandSize;
         }
         REQUIRE(offset == 224 + commandBytes);
-        REQUIRE(pointwiseCommands == uint32_t((width + 255) / 256));
+        REQUIRE(pointwiseCommands == 1);
         REQUIRE(rqLoads == 1);
         blob->Unmap(const_cast<uint8_t *>(data));
         blob->Release();
