@@ -44,15 +44,35 @@ bool ParseSelection(const std::string &text, unsigned &subgraph, std::vector<uns
     return !operators.empty();
 }
 
+bool ParseSpatialShape(const std::string &text, int &height, int &width)
+{
+    const auto separator = text.find('x');
+    if ( separator == std::string::npos || separator == 0 || separator + 1 == text.size() ) return false;
+    try
+    {
+        size_t consumed = 0;
+        height = std::stoi(text.substr(0, separator), &consumed);
+        if ( consumed != separator ) return false;
+        consumed = 0;
+        width = std::stoi(text.substr(separator + 1), &consumed);
+        return consumed == text.size() - separator - 1 && height > 0 && width > 0;
+    }
+    catch ( const std::exception & )
+    {
+        return false;
+    }
+}
+
 }  // namespace
 
 int main(int argc, char **argv)
 {
-    if ( argc != 2 && argc != 6 )
+    if ( argc != 2 && argc != 6 && argc != 8 )
     {
         std::cerr << "Usage:\n"
                   << "  neural-ai-model-inventory MODEL.tflite\n"
-                  << "  neural-ai-model-inventory MODEL.tflite --micrograph SUBGRAPH:OP[,OP...] --output OUTPUT.tflite\n";
+                  << "  neural-ai-model-inventory MODEL.tflite --micrograph SUBGRAPH:OP[,OP...] "
+                     "[--input-hw HxW] --output OUTPUT.tflite\n";
         return 2;
     }
 
@@ -76,7 +96,10 @@ int main(int argc, char **argv)
         return 0;
     }
 
-    if ( std::string(argv[2]) != "--micrograph" || std::string(argv[4]) != "--output" )
+    const bool cropSpatial = argc == 8;
+    const int outputOption = cropSpatial ? 6 : 4;
+    const int outputPathIndex = cropSpatial ? 7 : 5;
+    if ( std::string(argv[2]) != "--micrograph" || std::string(argv[outputOption]) != "--output" )
     {
         std::cerr << "Expected --micrograph SUBGRAPH:OP[,OP...] --output OUTPUT.tflite\n";
         return 2;
@@ -88,14 +111,22 @@ int main(int argc, char **argv)
         std::cerr << "Invalid micrograph selection; expected SUBGRAPH:OP[,OP...]\n";
         return 2;
     }
+    int inputHeight = 0;
+    int inputWidth = 0;
+    if ( cropSpatial && (std::string(argv[4]) != "--input-hw" ||
+                           !ParseSpatialShape(argv[5], inputHeight, inputWidth)) )
+    {
+        std::cerr << "Invalid spatial crop; expected --input-hw HxW with positive dimensions\n";
+        return 2;
+    }
     const auto micrograph = regor::BuildTfLiteTopologyMicrograph(
-        data.data(), data.size(), subgraph, operators, path.filename().string());
+        data.data(), data.size(), subgraph, operators, path.filename().string(), inputHeight, inputWidth);
     if ( !micrograph )
     {
         std::cerr << micrograph.error << '\n';
         return 1;
     }
-    const std::filesystem::path outputPath(argv[5]);
+    const std::filesystem::path outputPath(argv[outputPathIndex]);
     std::ofstream output(outputPath, std::ios::binary);
     if ( !output )
     {

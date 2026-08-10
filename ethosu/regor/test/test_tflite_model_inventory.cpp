@@ -63,7 +63,8 @@ std::vector<uint8_t> CreateConvModel()
 std::vector<uint8_t> CreateAddChainModel()
 {
     flatbuffers::FlatBufferBuilder builder;
-    const std::vector<int32_t> shape{1, 2};
+    const std::vector<int32_t> shape{1, 4, 4, 2};
+    const std::vector<int32_t> constantShape{1, 1, 1, 2};
     const std::vector<uint8_t> constantValues{4, uint8_t(int8_t(-7))};
     std::vector<flatbuffers::Offset<tflite::Buffer>> buffers{
         tflite::CreateBufferDirect(builder),
@@ -75,7 +76,8 @@ std::vector<uint8_t> CreateAddChainModel()
     {
         const uint32_t buffer = index == 0 ? 2 : (index == 1 ? 1 : 0);
         tensors.push_back(tflite::CreateTensorDirect(
-            builder, &shape, tflite::TensorType::INT8, buffer, ("tensor" + std::to_string(index)).c_str()));
+            builder, index == 1 ? &constantShape : &shape, tflite::TensorType::INT8,
+            buffer, ("tensor" + std::to_string(index)).c_str()));
     }
     std::vector<flatbuffers::Offset<tflite::Operator>> operators;
     for ( int index = 0; index < 3; ++index )
@@ -180,4 +182,21 @@ TEST_CASE("TFLite topology micrograph treats an empty nonzero buffer as a graph 
     REQUIRE(extracted.provenanceJson.find("\"source_input_tensor_indices\":[0]") != std::string::npos);
     const auto *model = tflite::GetModel(extracted.model.data());
     REQUIRE(model->subgraphs()->Get(0)->inputs()->size() == 1);
+}
+
+TEST_CASE("TFLite topology micrograph records a reproducible spatial crop")
+{
+    const auto source = CreateAddChainModel();
+    const auto extracted = BuildTfLiteTopologyMicrograph(
+        source.data(), source.size(), 0, {0, 1, 2}, "chain.tflite", 2, 3);
+    REQUIRE(extracted);
+    REQUIRE(extracted.provenanceJson.find("\"input_hw\":[2,3]") != std::string::npos);
+    const auto *model = tflite::GetModel(extracted.model.data());
+    const auto *graph = model->subgraphs()->Get(0);
+    const auto *input = graph->tensors()->Get(graph->inputs()->Get(0));
+    const auto *output = graph->tensors()->Get(graph->outputs()->Get(0));
+    REQUIRE(std::vector<int32_t>(input->shape()->begin(), input->shape()->end()) ==
+            std::vector<int32_t>{1, 2, 3, 2});
+    REQUIRE(std::vector<int32_t>(output->shape()->begin(), output->shape()->end()) ==
+            std::vector<int32_t>{1, 2, 3, 2});
 }

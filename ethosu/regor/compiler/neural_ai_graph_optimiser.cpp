@@ -6,7 +6,12 @@
 
 #include "neural_ai_graph_optimiser.hpp"
 
+#include "common/buffer_view.hpp"
 #include "kernel.hpp"
+#include "operation_util.hpp"
+
+#include <algorithm>
+#include <limits>
 
 namespace regor
 {
@@ -23,11 +28,9 @@ bool IsDirectRgbStem(const Operation *operation)
     const Shape ifmShape = ifm->shape.IsEmpty() ? ifm->tensor->StorageShape() : ifm->shape;
     const Shape ofmShape = ofm->shape.IsEmpty() ? ofm->tensor->StorageShape() : ofm->shape;
     const Kernel *kernel = operation->Kernel();
-    return ifmShape.Depth() == 3 && ofmShape.Depth() == 32 &&
+    return ifmShape.Depth() == 3 && ofmShape.Depth() > 0 && ofmShape.Depth() <= 32 &&
         kernel->Size() == Point2i(3, 3) && kernel->Stride() == Point2i(2, 2) &&
-        kernel->Dilation() == Point2i(1, 1) && kernel->Padding().Top() == 1 &&
-        kernel->Padding().Left() == 1 && kernel->Padding().Bottom() == 1 &&
-        kernel->Padding().Right() == 1 && ifm->tensor->Writers().empty();
+        kernel->Dilation() == Point2i(1, 1);
 }
 
 int64_t ScalarZeroPoint(const Quantization &quantization)
@@ -64,6 +67,124 @@ bool ShiftClamp(Quantization &quantization, int64_t delta)
 }
 
 }  // namespace
+
+void NeuralAIGraphOptimiser::CanonicalizeAsymmetricConv(Graph *graph, Operation *operation)
+{
+    UNUSED(graph);
+    const OpType opType = operation->Type();
+    if ( opType != OpType::Conv2D && opType != OpType::DepthwiseConv2D ) return;
+
+    TensorConnection *ifm = operation->Input(TensorUsage::IFM0);
+    TensorConnection *weights = operation->Input(TensorUsage::Weights);
+    TensorConnection *bias = operation->Input(TensorUsage::Scales);
+    TensorConnection *ofm = operation->Output(TensorUsage::OFM);
+    const Kernel *kernel = operation->Kernel();
+    if ( ifm == nullptr || weights == nullptr || bias == nullptr || ofm == nullptr || kernel == nullptr ||
+         ifm->tensor->Type() != DataType::Int8 || weights->tensor->Type() != DataType::Int8 ||
+         bias->tensor->Type() != DataType::Int32 || ifm->quantization.zeroPoints.size() != 1 ||
+         !weights->tensor->IsConstant() || !bias->tensor->IsConstant() )
+        return;
+
+    const int64_t ifmZeroPoint = ifm->quantization.zeroPoints[0];
+    if ( ifmZeroPoint == 0 || std::any_of(weights->quantization.zeroPoints.begin(),
+                                  weights->quantization.zeroPoints.end(), [](int64_t value) { return value != 0; }) )
+        return;
+
+    const Shape weightShape = weights->shape.IsEmpty() ? weights->tensor->StorageShape() : weights->shape;
+    const Shape ofmShape = ofm->shape.IsEmpty() ? ofm->tensor->StorageShape() : ofm->shape;
+    if ( weightShape.Size() != 4 || ofmShape.Depth() <= 0 || bias->tensor->View().Elements() != ofmShape.Depth() ) return;
+
+    const int outputChannels = ofmShape.Depth();
+    const auto weightValues = weights->tensor->View().Values<int>(DataType::Int8);
+    const auto biasValues = bias->tensor->View().Values<int32_t>();
+    std::vector<int32_t> adjustedBias;
+    adjustedBias.reserve(outputChannels);
+    for ( int oc = 0; oc < outputChannels; ++oc )
+    {
+        int64_t weightSum = 0;
+        if ( opType == OpType::Conv2D )
+        {
+            if ( weightShape.Batch() != outputChannels ) return;
+            for ( int ky = 0; ky < weightShape.Height(); ++ky )
+                for ( int kx = 0; kx < weightShape.Width(); ++kx )
+                    for ( int ic = 0; ic < weightShape.Depth(); ++ic )
+                        weightSum += weightValues[Shape(oc, ky, kx, ic)];
+        }
+        else if ( weightShape.Batch() == 1 && weightShape.Depth() == outputChannels )
+        {
+            for ( int ky = 0; ky < weightShape.Height(); ++ky )
+                for ( int kx = 0; kx < weightShape.Width(); ++kx )
+                    weightSum += weightValues[Shape(0, ky, kx, oc)];
+        }
+        else if ( weightShape.Batch() == outputChannels && weightShape.Depth() == 1 )
+        {
+            for ( int ky = 0; ky < weightShape.Height(); ++ky )
+                for ( int kx = 0; kx < weightShape.Width(); ++kx )
+                    weightSum += weightValues[Shape(oc, ky, kx, 0)];
+        }
+        else
+        {
+            return;
+        }
+
+        const int64_t corrected = int64_t(biasValues[oc]) - ifmZeroPoint * weightSum;
+        if ( corrected < std::numeric_limits<int32_t>::min() || corrected > std::numeric_limits<int32_t>::max() ) return;
+        adjustedBias.push_back(int32_t(corrected));
+    }
+
+    Operation *explicitPad = nullptr;
+    if ( kernel->Padding().IsZero() && ifm->tensor->Writers().size() == 1 )
+    {
+        Operation *producer = ifm->tensor->Writers().front().get();
+        if ( producer->Type() == OpType::Pad && producer->Output(TensorUsage::OFM)->tensor == ifm->tensor &&
+             producer->Attribute<pad_attr_t>()->pad_const == 0 )
+            explicitPad = producer;
+    }
+
+    Quantization zeroPointQuantization = ifm->quantization;
+    zeroPointQuantization.zeroPoints = {0};
+    if ( !kernel->Padding().IsZero() )
+    {
+        const Margin padding = kernel->Padding();
+        const std::vector<int32_t> paddingValues{
+            0, 0, padding.Top(), padding.Bottom(), padding.Left(), padding.Right(), 0, 0};
+        const Shape paddingShape(int(paddingValues.size()));
+        auto paddingTensor = CreateConstTensor("neural_ai_asymmetric_padding", DataType::Int32,
+            std::make_shared<Buffer>(std::vector<int32_t>(paddingValues)), &paddingShape);
+        const Shape ifmShape = ifm->shape.IsEmpty() ? ifm->tensor->StorageShape() : ifm->shape;
+        const Shape paddedShape = ifmShape.WithHW(ifmShape.WH() + padding.TL() + padding.BR());
+        auto paddedTensor = std::make_shared<Tensor>(
+            ifm->tensor->Name() + "/zero_point_padding", ifm->tensor->Type(), paddedShape);
+        auto pad = std::make_shared<Operation>(OpType::Pad);
+        pad->CopyInput(TensorUsage::IFM0, *ifm);
+        pad->ConnectInput(TensorUsage::Params, paddingTensor);
+        pad->ConnectOutput(TensorUsage::OFM, paddedTensor).Set(paddedShape).Set(zeroPointQuantization);
+        pad->Attribute<pad_attr_t>()->pad_const = ifmZeroPoint;
+        operation->ConnectInput(TensorUsage::IFM0, paddedTensor).Set(paddedShape).Set(zeroPointQuantization);
+        operation->SetKernel(std::make_unique<Kernel>(kernel->WithPadding({})));
+        RecordOptimisation(*operation, pad.get());
+    }
+    else
+    {
+        ifm->Set(zeroPointQuantization);
+        if ( explicitPad != nullptr )
+        {
+            explicitPad->Output(TensorUsage::OFM)->Set(zeroPointQuantization);
+            explicitPad->Attribute<pad_attr_t>()->pad_const = ifmZeroPoint;
+        }
+    }
+
+    auto adjustedBiasTensor = std::shared_ptr<Tensor>(bias->tensor->Clone().release());
+    adjustedBiasTensor->SetName(bias->tensor->Name() + "/zero_point_compensated");
+    adjustedBiasTensor->SetBuffer(std::make_shared<Buffer>(std::move(adjustedBias)));
+    const TensorConnection originalBias = *bias;
+    operation->ConnectInput(TensorUsage::Scales, adjustedBiasTensor)
+        .Set(originalBias.shape)
+        .Set(originalBias.slice)
+        .Set(originalBias.quantization)
+        .Set(originalBias.reverse)
+        .Set(originalBias.rounding);
+}
 
 void NeuralAIGraphOptimiser::CanonicalizeConvAdd(Graph *graph, Operation *operation)
 {
@@ -159,6 +280,11 @@ void NeuralAIGraphOptimiser::OptimiseGraph(Graph *graph)
 {
     std::vector<std::shared_ptr<Operation>> operations;
     graph->GetAllOperations(operations);
+    if ( _stage == NeuralAIGraphOptimiserStage::Prepare )
+    {
+        for ( const auto &operation : operations ) CanonicalizeAsymmetricConv(graph, operation.get());
+        return;
+    }
     for ( const auto &operation : operations ) CanonicalizeConvAdd(graph, operation.get());
     for ( const auto &operation : operations )
     {

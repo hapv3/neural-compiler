@@ -1324,6 +1324,104 @@ TEST_CASE("Neural-AI graph optimiser inserts ROW32 boundary conversions")
     REQUIRE(operations.size() == 3);
 }
 
+TEST_CASE("Neural-AI prepare optimiser compensates asymmetric Conv padding byte-exactly")
+{
+    const Shape inputShape(1, 3, 3, 1);
+    const Shape weightShape(1, 3, 3, 1);
+    const Shape outputShape(1, 3, 3, 1);
+    const std::vector<int8_t> inputValues{-8, -2, 4, 7, -3, 1, 5, 9, -6};
+    const std::vector<int8_t> weightValues{1, -2, 3, -4, 5, -6, 7, -8, 9};
+    constexpr int32_t originalBias = 17;
+    constexpr int64_t inputZeroPoint = -3;
+
+    auto input = CreateTensor("input", inputShape, DataType::Int8);
+    auto weights = CreateTensor("weights", weightShape, DataType::Int8, std::vector<int8_t>(weightValues));
+    auto bias = CreateTensor("bias", Shape(1), DataType::Int32, std::vector<int32_t>{originalBias});
+    auto output = CreateTensor("output", outputShape, DataType::Int8);
+    auto conv = CreateOperation(OpType::Conv2D, TensorUsage::IFM0, input, TensorUsage::OFM, output);
+    conv->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
+    conv->ConnectInput(TensorUsage::Scales, bias).Set(Quantization::Unit());
+    conv->SetKernel(std::make_unique<Kernel>(
+        Point2i(3, 3), Point2i(1, 1), Point2i(1, 1), Margin(1, 1, 1, 1)));
+    Quantization inputQuantization = Quantization::Unit();
+    inputQuantization.zeroPoints = {inputZeroPoint};
+    conv->Input(TensorUsage::IFM0)->Set(inputQuantization);
+    std::vector<std::shared_ptr<Operation>> operations{conv};
+    auto graph = CreateGraph(operations);
+
+    ArchNeuralAI architecture;
+    GraphOptimiserOptions options;
+    NeuralAIGraphOptimiser optimiser(
+        architecture.Constraints(), options, nullptr, NeuralAIGraphOptimiserStage::Prepare);
+    optimiser.OptimiseGraph(graph.get());
+
+    REQUIRE(conv->Input(TensorUsage::IFM0)->quantization.zeroPoints == std::vector<int64_t>{0});
+    REQUIRE(conv->Input(TensorUsage::IFM0)->shape == Shape(1, 5, 5, 1));
+    REQUIRE(conv->Kernel()->Padding().IsZero());
+    REQUIRE(conv->IFM(0)->Writers().size() == 1);
+    const auto pad = conv->IFM(0)->Writers().front();
+    REQUIRE(pad->Type() == OpType::Pad);
+    REQUIRE(pad->Attribute<pad_attr_t>()->pad_const == inputZeroPoint);
+    REQUIRE(pad->Input(TensorUsage::IFM0)->quantization.zeroPoints == std::vector<int64_t>{inputZeroPoint});
+
+    int32_t weightSum = 0;
+    for ( const int8_t value : weightValues ) weightSum += value;
+    const int32_t expectedBias = originalBias - int32_t(inputZeroPoint) * weightSum;
+    const auto compensatedBias = conv->Input(TensorUsage::Scales)->tensor->View().Values<int32_t>();
+    REQUIRE(compensatedBias[0] == expectedBias);
+    REQUIRE(conv->Input(TensorUsage::Scales)->tensor != bias);
+
+    for ( int oy = 0; oy < 3; ++oy )
+    {
+        for ( int ox = 0; ox < 3; ++ox )
+        {
+            int32_t reference = originalBias;
+            int32_t transformed = expectedBias;
+            for ( int ky = 0; ky < 3; ++ky )
+            {
+                for ( int kx = 0; kx < 3; ++kx )
+                {
+                    const int iy = oy + ky - 1;
+                    const int ix = ox + kx - 1;
+                    const int8_t raw = iy < 0 || iy >= 3 || ix < 0 || ix >= 3 ?
+                        int8_t(inputZeroPoint) : inputValues[iy * 3 + ix];
+                    const int8_t weight = weightValues[ky * 3 + kx];
+                    reference += (int32_t(raw) - int32_t(inputZeroPoint)) * int32_t(weight);
+                    transformed += int32_t(raw) * int32_t(weight);
+                }
+            }
+            REQUIRE(transformed == reference);
+        }
+    }
+}
+
+TEST_CASE("Neural-AI prepare optimiser rejects overflowing asymmetric Conv compensation")
+{
+    auto input = CreateTensor("input", Shape(1, 1, 1, 1), DataType::Int8);
+    auto weights = CreateTensor("weights", Shape(1, 1, 1, 1), DataType::Int8, std::vector<int8_t>{1});
+    auto bias = CreateTensor(
+        "bias", Shape(1), DataType::Int32, std::vector<int32_t>{std::numeric_limits<int32_t>::max()});
+    auto output = CreateTensor("output", Shape(1, 1, 1, 1), DataType::Int8);
+    auto conv = CreateOperation(OpType::Conv2D, TensorUsage::IFM0, input, TensorUsage::OFM, output);
+    conv->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
+    conv->ConnectInput(TensorUsage::Scales, bias).Set(Quantization::Unit());
+    conv->SetKernel(std::make_unique<Kernel>(Point2i(1, 1), Point2i(1, 1), Point2i(1, 1)));
+    Quantization inputQuantization = Quantization::Unit();
+    inputQuantization.zeroPoints = {-1};
+    conv->Input(TensorUsage::IFM0)->Set(inputQuantization);
+    std::vector<std::shared_ptr<Operation>> operations{conv};
+    auto graph = CreateGraph(operations);
+
+    ArchNeuralAI architecture;
+    GraphOptimiserOptions options;
+    NeuralAIGraphOptimiser optimiser(
+        architecture.Constraints(), options, nullptr, NeuralAIGraphOptimiserStage::Prepare);
+    optimiser.OptimiseGraph(graph.get());
+
+    REQUIRE(conv->Input(TensorUsage::IFM0)->quantization.zeroPoints == std::vector<int64_t>{-1});
+    REQUIRE(conv->Input(TensorUsage::Scales)->tensor == bias);
+}
+
 TEST_CASE("Neural-AI constraints enforce signed matrix zero points")
 {
     ArchNeuralAI arch;
@@ -1572,7 +1670,7 @@ TEST_CASE("Neural-AI command generator emits direct single-tile requant")
     REQUIRE(Read16(artifact.commands, 320) == uint16_t(neuralai::CommandType::End));
 }
 
-TEST_CASE("Neural-AI command generator rejects sliced MemoryCopy")
+TEST_CASE("Neural-AI command generator rejects sliced external-to-external MemoryCopy")
 {
     ArchNeuralAI arch;
     const Shape shape(1, 1, 2, 32);
@@ -1602,7 +1700,7 @@ TEST_CASE("Neural-AI command generator rejects sliced MemoryCopy")
     NeuralAICommandGenerator commandGenerator;
     REQUIRE_FALSE(commandGenerator.Generate(
         graph.get(), scheduleOps, schedule.get(), artifact, error));
-    REQUIRE(error == "Neural-AI sliced MemoryCopy is not implemented");
+    REQUIRE(error == "Neural-AI DMA1D requires a local source or destination");
 }
 
 TEST_CASE("Neural-AI compiler emits a native model package")
@@ -2811,6 +2909,36 @@ TEST_CASE("Neural-AI compiler consumes compact TCDM RGB input directly")
     REQUIRE(dma2dCommands == 1);
     REQUIRE_FALSE(sawShortDma);
     REQUIRE(sawWideM);
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
+}
+
+TEST_CASE("Neural-AI compiler supports a partial output group for an RGB stem")
+{
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildK3ConvModel(16, 16, 3, 16, 2);
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+    REQUIRE(compiler.Compile());
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    const uint32_t commandBytes = Read32(data + 64 + 12);
+    uint32_t offset = 224;
+    uint32_t linebufferJobs = 0;
+    while ( offset < 224 + commandBytes )
+    {
+        const uint16_t type = uint16_t(data[offset]) | (uint16_t(data[offset + 1]) << 8);
+        const uint16_t commandSize = uint16_t(data[offset + 2]) |
+            (uint16_t(data[offset + 3]) << 8);
+        linebufferJobs += type == uint16_t(neuralai::CommandType::LineBufferJob);
+        offset += commandSize;
+    }
+    REQUIRE(offset == 224 + commandBytes);
+    REQUIRE(linebufferJobs > 0);
     blob->Unmap(const_cast<uint8_t *>(data));
     blob->Release();
 }

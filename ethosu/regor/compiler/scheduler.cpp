@@ -293,7 +293,11 @@ int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *con
                 ArchOperatorQuery query;
                 Set(query.ifm[0], producer->TryIFM(0));
                 Set(query.ifm[1], producer->TryIFM(1));
+                Set(query.weights, producer->TryInput(TensorUsage::Weights));
+                if ( producer->TryInput(TensorUsage::Weights) != nullptr )
+                    query.weightFormat = WeightFormat::Default;
                 Set(query.ofm, producer->OFM());
+                query.kernel = producer->Kernel();
                 query.transposeMask = producer->OFM()->transpose;
                 if ( _arch->Constraints()->OperatorQuery(producer->Type(), &query, &req).Any(QueryResult::Native) )
                 {
@@ -376,7 +380,11 @@ int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *con
             ArchOperatorQuery query;
             Set(query.ifm[0], consumer->TryIFM(0));
             Set(query.ifm[1], consumer->TryIFM(1));
+            Set(query.weights, consumer->TryInput(TensorUsage::Weights));
+            if ( consumer->TryInput(TensorUsage::Weights) != nullptr )
+                query.weightFormat = WeightFormat::Default;
             Set(query.ofm, consumer->OFM());
+            query.kernel = consumer->Kernel();
             query.transposeMask = consumer->OFM()->transpose;
             for ( const auto [consumerUsage, connection] : consumer->inputs.pairs() )
             {
@@ -679,6 +687,7 @@ WeightScaleEncoding Scheduler::EncodeBestWeightFormat(
 
     const std::array<WF, 4> formatList = {WF(WeightFormat::Default, WeightFormat::Sparse2_4), WF(WeightFormat::Default),
         WF(WeightFormat::Fast, WeightFormat::Sparse2_4), WF(WeightFormat::Fast)};
+    std::string lastEncodingError;
 
     for ( auto weightFormat : formatList )
     {
@@ -707,8 +716,9 @@ WeightScaleEncoding Scheduler::EncodeBestWeightFormat(
             encoding.cycleCost = (weightFormat % WeightFormat::Sparse2_4) ? sparseCycleCost : defaultCycleCost;
             encodingResults.emplace_back(std::move(encoding));
         }
-        catch ( const WeightEncodeException & )
+        catch ( const WeightEncodeException &exception )
         {
+            lastEncodingError = exception.what();
             if ( weightFormat % WeightFormat::Sparse2_4 )
             {
                 supportedFormats.Unset(WeightFormat::Sparse2_4);
@@ -716,7 +726,9 @@ WeightScaleEncoding Scheduler::EncodeBestWeightFormat(
             continue;
         }
     }
-    assert(!encodingResults.empty());
+    if ( encodingResults.empty() )
+        throw std::runtime_error(fmt::format("Failed to encode weights for {}: {}",
+            OpTypeToString(op->Type()), lastEncodingError.empty() ? "no supported weight format" : lastEncodingError));
     auto bestEncoding = ChooseBestWeightFormat(op, _options.optimizationStrategy, encodingResults);
     bestEncoding.blockConfig =
         (bestEncoding.weightScales.npuWeightsTensor->config->Format() % WeightFormat::Sparse2_4) ? std::move(blockConfigSparse) : std::move(blockConfigDefault);

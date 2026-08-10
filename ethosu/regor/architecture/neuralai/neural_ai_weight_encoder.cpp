@@ -10,6 +10,7 @@
 #include "common/numeric_util.hpp"
 
 #include "architecture/neuralai/neural_ai_abi.hpp"
+#include "architecture/neuralai/neural_ai_quantization.hpp"
 #include "compiler/quantization.hpp"
 
 #include <algorithm>
@@ -358,8 +359,16 @@ public:
         {
             const bool padding = index >= _depthLength;
             const int channel = _depthOffset + std::min(index, _depthLength - 1);
-            const QuantizedScale scale = padding ? QuantizedScale(0, 0) :
-                                                   _quantization.scales[channel % _quantization.scales.size()];
+            QuantizedScale scale = padding ? QuantizedScale(0, 0) :
+                                             _quantization.scales[channel % _quantization.scales.size()];
+            if ( !padding && (scale.shift < 0 || scale.shift > 31) )
+            {
+                int32_t multiplier = 0;
+                int32_t shift = 0;
+                if ( !neuralai::CalculateQuantizedMultiplier(scale.Dequantize(), multiplier, shift) )
+                    throw WeightEncodeException("Neural-AI requantization scale is not representable");
+                scale = QuantizedScale(multiplier, shift);
+            }
             const int64_t bias = padding ? 0 : Bias(channel);
             const int zeroPoint = padding || _quantization.zeroPoints.empty() ? 0 :
                                       int(_quantization.zeroPoints[channel % _quantization.zeroPoints.size()]);
@@ -373,13 +382,14 @@ public:
                 throw WeightEncodeException("Neural-AI quantization clamp minimum exceeds maximum");
             const int64_t clampMin = std::clamp<int64_t>(requestedClampMin, -128, 127);
             const int64_t clampMax = std::clamp<int64_t>(requestedClampMax, -128, 127);
-            if ( bias < std::numeric_limits<int32_t>::min() || bias > std::numeric_limits<int32_t>::max() ||
-                 scale.shift < 0 || scale.shift > 31 || clampMin < std::numeric_limits<int32_t>::min() ||
+            if ( bias < std::numeric_limits<int32_t>::min() || bias > std::numeric_limits<int32_t>::max() )
+                throw WeightEncodeException("Neural-AI requantization bias is outside INT32");
+            if ( scale.shift < 0 || scale.shift > 31 )
+                throw WeightEncodeException("Neural-AI requantization shift is outside [0,31]");
+            if ( clampMin < std::numeric_limits<int32_t>::min() ||
                  clampMin > std::numeric_limits<int32_t>::max() || clampMax < std::numeric_limits<int32_t>::min() ||
                  clampMax > std::numeric_limits<int32_t>::max() || clampMin > clampMax )
-            {
-                throw WeightEncodeException("Neural-AI quantization parameter is out of range");
-            }
+                throw WeightEncodeException("Neural-AI requantization clamp is invalid");
             Append32(result, uint32_t(int32_t(bias)));
             Append32(result, uint32_t(scale.scale));
             Append32(result, uint32_t(scale.shift));

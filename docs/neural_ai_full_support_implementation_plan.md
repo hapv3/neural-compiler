@@ -108,10 +108,13 @@ In this document, target support for the Neural-AI NPU means:
 - Main activations and weights are signed INT8; bias and partial sums are INT32.
 - Native GEMM, FullyConnected, Conv, and pointwise paths require symmetric
   quantization: IFM zero point == 0 and weight zero point == 0. OFM zero point
-  is arbitrary INT8, applied by requantization. Nonzero IFM zero point is
-  unsupported unless an explicit, tested affine-to-symmetric conversion is
-  inserted before the native operation. The operator checker must reject
-  violations before scheduling.
+  is arbitrary INT8, applied by requantization. A corpus-backed Conv with a
+  scalar nonzero IFM zero point may be canonicalized exactly by subtracting
+  `ifm_zero_point * sum(weights)` from each constant INT32 bias and
+  materializing implicit padding with the raw IFM zero-point byte before the
+  connection is relabelled as symmetric. The compiler must reject nonconstant
+  weights/bias, correction overflow, and every case outside that tested
+  transform before scheduling.
 - Every operator instance in the selected model corpus uses a documented and
   tested Neural-AI lowering. Operators and parameter combinations outside that
   corpus fail at compile time with an actionable diagnostic unless separately
@@ -161,15 +164,22 @@ provenance JSON:
 
 ```sh
 neural-ai-model-inventory model.tflite \
-  --micrograph 0:OP0,OP1,OP2 --output mapping_case.tflite \
+  --micrograph 0:OP0,OP1,OP2 --input-hw 16x16 \
+  --output mapping_case.tflite \
   > mapping_case.provenance.json
 ```
 
 The selector is `SUBGRAPH:OP[,OP...]`. The extractor preserves the selected
 operators, their constant tensors and exact producer-consumer edges, promotes
 non-constant edges entering or leaving the selection to graph boundaries, and
-removes unrelated model buffers. Use the normal inventory command on the
-generated artifact when a review needs the full tensor-contract table.
+removes unrelated model buffers. `--input-hw` is optional and changes only the
+mapping fixture's spatial extent while propagating the resulting H/W through
+the selected Conv, Depthwise, Pad, activation, Add, Mul, Quantize, and other
+explicitly admitted topology edges. It preserves channels, weights,
+quantization, stride, padding, builtin options, and operator connectivity from
+the full graph. This keeps mapping independent of the later SRAM-feasibility
+gate. Use the normal inventory command on the generated artifact when a review
+needs the full tensor-contract table.
 
 The deterministic JSON records the artifact basename, byte size and explicitly
 labelled MD5 identity hash, TFLite schema version, sorted operator counts,
@@ -1634,8 +1644,14 @@ negative C integers.
 Zero-point constraints:
 
 - Reject nonzero weight zero points on native dense and Conv paths.
-- Do not fold a nonzero input zero point into bias for padded linebuffer Conv;
-  border padding would become position-dependent and incorrect.
+- For a selected INT8 Conv/Depthwise with scalar nonzero IFM zero point,
+  constant symmetric weights, and constant INT32 bias, apply the exact
+  per-channel correction `bias' = bias - ifm_zp * sum(weights)`.
+- Materialize every implicit padding byte as the original raw IFM zero point
+  before changing the Conv connection zero point to zero. Folding bias without
+  this padding rewrite is forbidden because border positions would be wrong.
+- Reject the transform if any corrected bias is outside INT32, if quantization
+  is not scalar where required, or if weights/bias are not eligible constants.
 - Insert an explicit INT8-to-INT8 affine requant into a symmetric internal
   representation only after that SW or AFU path has verified tests.
 - Fail compilation when no loss-safe and overflow-safe internal representation
@@ -2094,7 +2110,10 @@ Current progress: constrained pointwise Conv1x1, RGB K3 S2, generic full-group
 C32 K3, and depthwise K3 S1/S2 lowering are implemented. The generated command
 streams include NHWC↔C32 boundaries, multi-group accumulation, per-channel
 requantization, and fused ReLU/ReLU6 clamps. Generic K3 requires both IC and OC
-to be divisible by 32; pointwise and depthwise retain C32 tail support. Focused
+to be divisible by 32; pointwise and depthwise retain C32 tail support. The
+direct RGB stem accepts the corpus-required partial output group (OC 1..32),
+and sliced materialized padding supports the full-depth C32 rectangles required
+between MobileNet producer and depthwise consumer. Focused
 compiler-generated Verilator E2E tests pass for RGB, generic C32, depthwise C33
 S2, and a pointwise-plus-depthwise chain. A 13-stage, native-like
 Micro-MobileNet topology now compiles through RGB K3 S2, depthwise and
@@ -2162,7 +2181,8 @@ The following must be complete before Conv compiler lowering begins:
 
 ### Mapping Micro-Graph Order
 
-1. RGB stem C3 -> C32.
+1. RGB stem C3 -> one C32 storage group, including the corpus-required OC16 and
+   OC32 logical tails.
 2. Pointwise C32 -> C32.
 3. Conv3x3 S1.
 4. Conv3x3 S2.
@@ -2177,7 +2197,17 @@ The following must be complete before Conv compiler lowering begins:
 
 ### Current Verification Evidence
 
-- Compiler C++ tests: 192/192 pass.
+- Compiler C++ tests: 214/214 pass (655,289 assertions) after the current
+  asymmetric-Conv and mapping-fixture changes.
+- A topology-derived MobileNet fixture selected from full-graph operators
+  `Conv -> Depthwise -> Pointwise`, spatially cropped to 16x16, invokes in the
+  TFLite reference interpreter and compiles to a 7,360-byte `.nai` package with
+  0 CPU operators, 12 NPU operators, 5.12 KiB peak SRAM, and 104,448 MACs.
+- A topology-derived YOLOv8 fixture selected from full-graph operators
+  `Pad -> Conv(OC16) -> Logistic -> Mul`, spatially cropped to 16x16, invokes in
+  the TFLite reference interpreter and compiles to a 3,744-byte `.nai` package
+  with 0 CPU operators, 8 NPU operators, 4.00 KiB peak SRAM, and 19,456 MACs.
+  These are mapping results, not full-graph SRAM or performance claims.
 - The complete 13-stage Micro-MobileNet compiler test passes every graph prefix
   and the full graph byte-exactly. The full package contains two `AFU_BINARY`
   residual Adds, one `AFU_GLOBAL_AVGPOOL`, and the expected Conv/linebuffer

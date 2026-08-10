@@ -72,12 +72,18 @@ std::vector<std::unique_ptr<GraphOptimiser>> GraphOptimiser::MakeGraphOptimiser(
             LOG_ERROR("Invalid graph notation");
             assert(false);
     }
-    graphOptimisers.emplace_back(std::make_unique<GraphIrOptimiser>(arch->Constraints(), options, db));
     std::string target;
     arch->Call([&target](const std::string &name) { target = name; });
     if ( target == REGOR_ARCH_NEURALAI )
     {
-        graphOptimisers.emplace_back(std::make_unique<NeuralAIGraphOptimiser>(arch->Constraints(), options, db));
+        graphOptimisers.emplace_back(std::make_unique<NeuralAIGraphOptimiser>(
+            arch->Constraints(), options, db, NeuralAIGraphOptimiserStage::Prepare));
+    }
+    graphOptimisers.emplace_back(std::make_unique<GraphIrOptimiser>(arch->Constraints(), options, db));
+    if ( target == REGOR_ARCH_NEURALAI )
+    {
+        graphOptimisers.emplace_back(std::make_unique<NeuralAIGraphOptimiser>(
+            arch->Constraints(), options, db, NeuralAIGraphOptimiserStage::Finalize));
     }
     return graphOptimisers;
 }

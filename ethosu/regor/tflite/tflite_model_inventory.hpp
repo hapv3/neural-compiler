@@ -41,6 +41,7 @@ struct TfLiteTopologyMicrograph
 /// operators. Boundary tensors become graph inputs/outputs, while source tensor
 /// contracts, constant buffers, operator options, and topology are preserved.
 TfLiteTopologyMicrograph BuildTfLiteTopologyMicrograph(const uint8_t *data, size_t size,
-    unsigned subgraphIndex, const std::vector<unsigned> &operatorIndices, std::string_view artifactName = {});
+    unsigned subgraphIndex, const std::vector<unsigned> &operatorIndices, std::string_view artifactName = {},
+    int inputHeight = 0, int inputWidth = 0);
 
 }  // namespace regor

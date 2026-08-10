@@ -368,15 +368,189 @@ struct GeneratorContext
         ++artifact->commandCount;
     }
 
+    bool AppendSlicedNHWCCopy(const SchedulerOperation *operation, std::string &error)
+    {
+        const SchedulerConnection *ifm = operation->IFM(0);
+        const SchedulerConnection *ofm = operation->OFM();
+        if ( ifm->Type() != ofm->Type() ||
+             (ifm->Type() != regor::DataType::Int8 && ifm->Type() != regor::DataType::Int32) ||
+             ifm->SliceShape().Elements64() != ofm->SliceShape().Elements64() )
+            return SetError(error, "Neural-AI sliced NHWC copy requires equal INT8/INT32 slices");
+
+        const Shape copyShape = ReshapeToNHWC(ofm->SliceShape());
+        if ( copyShape.Batch() != 1 || copyShape.Height() <= 0 || copyShape.Width() <= 0 ||
+             copyShape.Depth() <= 0 )
+            return SetError(error, "Neural-AI sliced NHWC copy requires a positive batch-one rectangle");
+        const uint32_t elementBytes = ofm->Type() == regor::DataType::Int32 ? 4u : 1u;
+        const int64_t rowBytes64 = copyShape.Width() * int64_t(copyShape.Depth()) * elementBytes;
+        if ( rowBytes64 <= 0 || rowBytes64 > std::numeric_limits<uint32_t>::max() )
+            return SetError(error, "Neural-AI sliced NHWC row size is invalid");
+
+        const auto resolve = [&](const SchedulerConnection *connection, uint32_t &offset,
+                                 uint32_t &rowStride) -> bool
+        {
+            const Shape storageShape = connection->tensor->storageShape;
+            if ( storageShape.Size() == 1 || connection->tensor->IsConstant() )
+            {
+                if ( connection->slice.offset && connection->slice.offset != connection->shape.WithZeros() )
+                    return SetError(error, "Neural-AI linear sliced-copy source requires zero offset");
+                offset = 0;
+                rowStride = uint32_t(rowBytes64);
+                return true;
+            }
+            const Shape storage = ReshapeToNHWC(storageShape);
+            const Shape slice = ReshapeToNHWC(connection->SliceShape());
+            const Shape sliceOffset = connection->slice.offset ?
+                ReshapeToNHWC(connection->slice.offset) : storage.WithZeros();
+            if ( slice.Batch() != 1 || slice.Depth() != storage.Depth() || sliceOffset.Batch() != 0 ||
+                 sliceOffset.Depth() != 0 || sliceOffset.Height() < 0 || sliceOffset.Width() < 0 ||
+                 sliceOffset.Height() + slice.Height() > storage.Height() ||
+                 sliceOffset.Width() + slice.Width() > storage.Width() ||
+                 (connection->slice.stride && connection->slice.stride != connection->shape.WithOnes()) )
+                return SetError(error, fmt::format(
+                    "Neural-AI sliced NHWC copy requires an unstrided full-depth rectangle "
+                    "('{}' storage [{}], slice [{}], offset [{}], stride [{}])",
+                    connection->tensor->Name(), storage.ToString(), slice.ToString(),
+                    sliceOffset.ToString(), connection->slice.stride.ToString()));
+            const int64_t stride64 = storage.Width() * int64_t(storage.Depth()) * elementBytes;
+            const int64_t offset64 =
+                (sliceOffset.Height() * int64_t(storage.Width()) + sliceOffset.Width()) *
+                storage.Depth() * elementBytes;
+            if ( stride64 <= 0 || stride64 > std::numeric_limits<uint32_t>::max() || offset64 < 0 ||
+                 offset64 > std::numeric_limits<uint32_t>::max() )
+                return SetError(error, "Neural-AI sliced NHWC address is outside the ABI range");
+            offset = uint32_t(offset64);
+            rowStride = uint32_t(stride64);
+            return true;
+        };
+
+        uint32_t sourceOffset = 0;
+        uint32_t destinationOffset = 0;
+        uint32_t sourceStride = 0;
+        uint32_t destinationStride = 0;
+        if ( !resolve(ifm, sourceOffset, sourceStride) ||
+             !resolve(ofm, destinationOffset, destinationStride) ) return false;
+        RefV1 source = TensorRef(ifm->tensor.get(), sourceOffset, error);
+        if ( !error.empty() ) return false;
+        RefV1 destination = TensorRef(ofm->tensor.get(), destinationOffset, error);
+        if ( !error.empty() ) return false;
+        const uint32_t rows = uint32_t(copyShape.Height());
+        const uint32_t rowBytes = uint32_t(rowBytes64);
+        const uint32_t layerId = uint32_t(operation->Index());
+        if ( rows == 1 || (sourceStride == rowBytes && destinationStride == rowBytes) )
+        {
+            if ( rows > std::numeric_limits<uint32_t>::max() / rowBytes )
+                return SetError(error, "Neural-AI sliced NHWC copy size overflows the ABI");
+            return AppendDMA1D(source, destination, rows * rowBytes, layerId, 0, error);
+        }
+        return AppendDMA2D(source, destination, rowBytes, sourceStride,
+            destinationStride, rows, layerId, 0, error);
+    }
+
+    bool AppendSlicedC32Copy(const SchedulerOperation *operation, std::string &error)
+    {
+        const SchedulerConnection *ifm = operation->IFM(0);
+        const SchedulerConnection *ofm = operation->OFM();
+        if ( ifm->Type() != regor::DataType::Int8 || ofm->Type() != regor::DataType::Int8 ||
+             ifm->SliceShape().Elements64() != ofm->SliceShape().Elements64() ||
+             ofm->tensor->format != TensorFormat::C32Blocked ||
+             (ifm->tensor->format != TensorFormat::C32Blocked && !ifm->tensor->IsConstant()) )
+            return SetError(error,
+                "Neural-AI sliced C32 copy requires equal INT8 C32 slices or a constant fill source");
+
+        const Shape copyShape = ReshapeToNHWC(ofm->SliceShape());
+        if ( copyShape.Batch() != 1 || copyShape.Height() <= 0 || copyShape.Width() <= 0 ||
+             copyShape.Depth() <= 0 || copyShape.Depth() % 32 != 0 )
+            return SetError(error,
+                "Neural-AI sliced C32 copy requires a positive batch-one rectangle with C%32=0");
+
+        struct Addressing
+        {
+            uint32_t base = 0;
+            uint32_t rowStride = 0;
+            uint32_t groupStride = 0;
+        };
+        const auto resolve = [&](const SchedulerConnection *connection, Addressing &addressing) -> bool
+        {
+            const bool linearConstant = connection->tensor->IsConstant() &&
+                connection->tensor->format != TensorFormat::C32Blocked;
+            if ( linearConstant )
+            {
+                if ( connection->slice.offset && connection->slice.offset != connection->shape.WithZeros() )
+                    return SetError(error,
+                        "Neural-AI linear sliced C32 fill source requires zero offset");
+                addressing.rowStride = uint32_t(copyShape.Width() * 32);
+                addressing.groupStride = uint32_t(copyShape.Height()) * addressing.rowStride;
+                return true;
+            }
+
+            const Shape storage = ReshapeToNHWC(connection->tensor->storageShape);
+            const Shape slice = ReshapeToNHWC(connection->SliceShape());
+            const Shape sliceOffset = connection->slice.offset ?
+                ReshapeToNHWC(connection->slice.offset) : storage.WithZeros();
+            if ( connection->tensor->format != TensorFormat::C32Blocked || storage.Batch() != 1 ||
+                 storage.Depth() % 32 != 0 || slice.Batch() != 1 ||
+                 slice.Depth() != storage.Depth() || sliceOffset.Batch() != 0 ||
+                 sliceOffset.Depth() != 0 || sliceOffset.Height() < 0 || sliceOffset.Width() < 0 ||
+                 sliceOffset.Height() + slice.Height() > storage.Height() ||
+                 sliceOffset.Width() + slice.Width() > storage.Width() ||
+                 (connection->slice.stride && connection->slice.stride != connection->shape.WithOnes()) )
+                return SetError(error, fmt::format(
+                    "Neural-AI sliced C32 copy requires an unstrided full-depth C%32 rectangle "
+                    "('{}' storage [{}], slice [{}], offset [{}], stride [{}])",
+                    connection->tensor->Name(), storage.ToString(), slice.ToString(),
+                    sliceOffset.ToString(), connection->slice.stride.ToString()));
+            const int64_t rowStride64 = storage.Width() * int64_t(32);
+            const int64_t groupStride64 = storage.Height() * rowStride64;
+            const int64_t base64 =
+                (sliceOffset.Height() * int64_t(storage.Width()) + sliceOffset.Width()) * 32;
+            if ( rowStride64 <= 0 || rowStride64 > std::numeric_limits<uint32_t>::max() ||
+                 groupStride64 <= 0 || groupStride64 > std::numeric_limits<uint32_t>::max() ||
+                 base64 < 0 || base64 > std::numeric_limits<uint32_t>::max() )
+                return SetError(error, "Neural-AI sliced C32 address is outside the ABI range");
+            addressing.base = uint32_t(base64);
+            addressing.rowStride = uint32_t(rowStride64);
+            addressing.groupStride = uint32_t(groupStride64);
+            return true;
+        };
+
+        Addressing sourceAddressing;
+        Addressing destinationAddressing;
+        if ( !resolve(ifm, sourceAddressing) || !resolve(ofm, destinationAddressing) ) return false;
+        const uint32_t rows = uint32_t(copyShape.Height());
+        const uint32_t rowBytes = uint32_t(copyShape.Width() * 32);
+        const uint32_t groups = uint32_t(copyShape.Depth() / 32);
+        const uint32_t layerId = uint32_t(operation->Index());
+        for ( uint32_t group = 0; group < groups; ++group )
+        {
+            RefV1 source = TensorRef(ifm->tensor.get(),
+                sourceAddressing.base + group * sourceAddressing.groupStride, error);
+            if ( !error.empty() ) return false;
+            RefV1 destination = TensorRef(ofm->tensor.get(),
+                destinationAddressing.base + group * destinationAddressing.groupStride, error);
+            if ( !error.empty() ) return false;
+            if ( rows == 1 || (sourceAddressing.rowStride == rowBytes &&
+                                  destinationAddressing.rowStride == rowBytes) )
+            {
+                if ( !AppendDMA1D(source, destination, rows * rowBytes, layerId, group, error) )
+                    return false;
+            }
+            else if ( !AppendDMA2D(source, destination, rowBytes, sourceAddressing.rowStride,
+                          destinationAddressing.rowStride, rows, layerId, group, error) )
+                return false;
+        }
+        return true;
+    }
+
     bool AppendCopy(const SchedulerOperation *operation, std::string &error)
     {
         const SchedulerConnection *ifm = operation->IFM(0);
         const SchedulerConnection *ofm = operation->OFM();
-        if ( !IsFullTensorConnection(ifm) || !IsFullTensorConnection(ofm) )
-            return SetError(error, "Neural-AI sliced MemoryCopy is not implemented");
         if ( ifm->tensor->format == TensorFormat::NHWC &&
              ofm->tensor->format == TensorFormat::NHWC )
         {
+            if ( !IsFullTensorConnection(ifm) || !IsFullTensorConnection(ofm) )
+                return AppendSlicedNHWCCopy(operation, error);
             if ( ifm->Type() != ofm->Type() ||
                  ifm->shape.Elements64() != ofm->shape.Elements64() )
                 return SetError(error, "Neural-AI compact copy requires equal element counts and types");
@@ -402,6 +576,16 @@ struct GeneratorContext
                 return false;
             return true;
         }
+        if ( (!IsFullTensorConnection(ifm) || !IsFullTensorConnection(ofm)) &&
+             ofm->tensor->format == TensorFormat::C32Blocked &&
+             (ifm->tensor->format == TensorFormat::C32Blocked || ifm->tensor->IsConstant()) )
+            return AppendSlicedC32Copy(operation, error);
+        if ( !IsFullTensorConnection(ifm) || !IsFullTensorConnection(ofm) )
+            return SetError(error, fmt::format(
+                "Neural-AI sliced MemoryCopy requires compact NHWC or supported C32 tensors "
+                "('{}' {} -> '{}' {})",
+                ifm->tensor->Name(), EnumToString(ifm->tensor->format),
+                ofm->tensor->Name(), EnumToString(ofm->tensor->format)));
         CopyLayoutMode mode;
         if ( ifm->tensor->format == TensorFormat::NHWC && ofm->tensor->format == TensorFormat::Row32 )
             mode = CopyLayoutMode::NHWCToRow32;

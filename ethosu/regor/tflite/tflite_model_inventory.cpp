@@ -13,7 +13,9 @@
 #include <flatbuffers/flatbuffers.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstring>
 #include <iomanip>
 #include <limits>
 #include <map>
@@ -272,12 +274,15 @@ TfLiteModelInventory BuildTfLiteModelInventory(const uint8_t *data, size_t size,
 }
 
 TfLiteTopologyMicrograph BuildTfLiteTopologyMicrograph(const uint8_t *data, size_t size,
-    unsigned subgraphIndex, const std::vector<unsigned> &operatorIndices, std::string_view artifactName)
+    unsigned subgraphIndex, const std::vector<unsigned> &operatorIndices, std::string_view artifactName,
+    int inputHeight, int inputWidth)
 {
     if ( !data || size < 8 ) return {{}, {}, "Input is too small to be a TFLite model"};
     flatbuffers::Verifier verifier(data, size);
     if ( !tflite::VerifyModelBuffer(verifier) ) return {{}, {}, "Input is not a valid TFLite FlatBuffer"};
     if ( operatorIndices.empty() ) return {{}, {}, "At least one source operator index is required"};
+    if ( (inputHeight == 0) != (inputWidth == 0) || inputHeight < 0 || inputWidth < 0 )
+        return {{}, {}, "Micro-graph input height and width must both be positive or both be zero"};
 
     const auto *model = tflite::GetModel(data);
     const auto *subgraphs = model->subgraphs();
@@ -378,6 +383,115 @@ TfLiteTopologyMicrograph BuildTfLiteTopologyMicrograph(const uint8_t *data, size
     unsigned nextTensor = 0;
     for ( const unsigned sourceIndex : selectedTensors ) tensorMap[sourceIndex] = nextTensor++;
 
+    std::map<unsigned, std::vector<int32_t>> tensorShapes;
+    for ( const unsigned sourceIndex : selectedTensors )
+    {
+        const auto *shape = sourceTensors->Get(sourceIndex)->shape();
+        tensorShapes[sourceIndex] = shape ? std::vector<int32_t>(shape->begin(), shape->end()) : std::vector<int32_t>{};
+    }
+    if ( inputHeight > 0 )
+    {
+        for ( const unsigned sourceIndex : boundaryInputs )
+        {
+            auto &shape = tensorShapes[sourceIndex];
+            if ( shape.size() != 4 ) return {{}, {}, "Spatial crop requires rank-4 graph inputs"};
+            shape[1] = inputHeight;
+            shape[2] = inputWidth;
+        }
+        const auto constantBytes = [&](unsigned tensorIndex, const uint8_t *&bytes, size_t &byteCount)
+        {
+            const auto *tensor = sourceTensors->Get(tensorIndex);
+            if ( tensor->buffer() >= buffers->size() ) return false;
+            const auto *buffer = buffers->Get(tensor->buffer());
+            if ( buffer->data() && buffer->data()->size() != 0 )
+            {
+                bytes = buffer->data()->data();
+                byteCount = buffer->data()->size();
+                return true;
+            }
+            if ( buffer->size() != 0 && buffer->offset() <= size && buffer->size() <= size - size_t(buffer->offset()) )
+            {
+                bytes = data + buffer->offset();
+                byteCount = size_t(buffer->size());
+                return true;
+            }
+            return false;
+        };
+        for ( const unsigned opIndex : selectedOps )
+        {
+            const auto *op = sourceOps->Get(opIndex);
+            if ( !op->inputs() || !op->outputs() || op->inputs()->empty() || op->outputs()->empty() )
+                return {{}, {}, "Spatial crop requires operators with explicit inputs and outputs"};
+            const int32_t firstInputIndex = op->inputs()->Get(0);
+            if ( firstInputIndex < 0 || !tensorShapes.count(unsigned(firstInputIndex)) ||
+                 tensorShapes[unsigned(firstInputIndex)].size() != 4 )
+                return {{}, {}, "Spatial crop requires a rank-4 primary input"};
+            const auto &inputShape = tensorShapes[unsigned(firstInputIndex)];
+            std::vector<int32_t> outputShape = tensorShapes[unsigned(op->outputs()->Get(0))];
+            if ( outputShape.size() != 4 ) return {{}, {}, "Spatial crop requires rank-4 operator outputs"};
+            const auto builtin = GetBuiltinCode(codes->Get(op->opcode_index()));
+            if ( const auto *conv = op->builtin_options_as_Conv2DOptions() )
+            {
+                if ( op->inputs()->size() < 2 || op->inputs()->Get(1) < 0 )
+                    return {{}, {}, "Spatial crop Conv has no weight tensor"};
+                const auto &weightShape = tensorShapes[unsigned(op->inputs()->Get(1))];
+                if ( weightShape.size() != 4 ) return {{}, {}, "Spatial crop Conv weights are not rank 4"};
+                const int kernelH = (weightShape[1] - 1) * conv->dilation_h_factor() + 1;
+                const int kernelW = (weightShape[2] - 1) * conv->dilation_w_factor() + 1;
+                outputShape[1] = conv->padding() == tflite::Padding::SAME ?
+                    (inputShape[1] + conv->stride_h() - 1) / conv->stride_h() :
+                    (inputShape[1] - kernelH) / conv->stride_h() + 1;
+                outputShape[2] = conv->padding() == tflite::Padding::SAME ?
+                    (inputShape[2] + conv->stride_w() - 1) / conv->stride_w() :
+                    (inputShape[2] - kernelW) / conv->stride_w() + 1;
+            }
+            else if ( const auto *depthwise = op->builtin_options_as_DepthwiseConv2DOptions() )
+            {
+                if ( op->inputs()->size() < 2 || op->inputs()->Get(1) < 0 )
+                    return {{}, {}, "Spatial crop depthwise Conv has no weight tensor"};
+                const auto &weightShape = tensorShapes[unsigned(op->inputs()->Get(1))];
+                if ( weightShape.size() != 4 ) return {{}, {}, "Spatial crop depthwise weights are not rank 4"};
+                const int kernelH = (weightShape[1] - 1) * depthwise->dilation_h_factor() + 1;
+                const int kernelW = (weightShape[2] - 1) * depthwise->dilation_w_factor() + 1;
+                outputShape[1] = depthwise->padding() == tflite::Padding::SAME ?
+                    (inputShape[1] + depthwise->stride_h() - 1) / depthwise->stride_h() :
+                    (inputShape[1] - kernelH) / depthwise->stride_h() + 1;
+                outputShape[2] = depthwise->padding() == tflite::Padding::SAME ?
+                    (inputShape[2] + depthwise->stride_w() - 1) / depthwise->stride_w() :
+                    (inputShape[2] - kernelW) / depthwise->stride_w() + 1;
+            }
+            else if ( builtin == tflite::BuiltinOperator::PAD )
+            {
+                if ( op->inputs()->size() < 2 || op->inputs()->Get(1) < 0 )
+                    return {{}, {}, "Spatial crop Pad has no parameter tensor"};
+                const uint8_t *bytes = nullptr;
+                size_t byteCount = 0;
+                if ( !constantBytes(unsigned(op->inputs()->Get(1)), bytes, byteCount) || byteCount < 8 * sizeof(int32_t) )
+                    return {{}, {}, "Spatial crop Pad parameters are not constant rank-4 pairs"};
+                std::array<int32_t, 8> padding{};
+                std::memcpy(padding.data(), bytes, sizeof(padding));
+                outputShape = inputShape;
+                outputShape[1] += padding[2] + padding[3];
+                outputShape[2] += padding[4] + padding[5];
+            }
+            else if ( builtin == tflite::BuiltinOperator::LOGISTIC || builtin == tflite::BuiltinOperator::MUL ||
+                      builtin == tflite::BuiltinOperator::ADD || builtin == tflite::BuiltinOperator::QUANTIZE )
+            {
+                outputShape[0] = inputShape[0];
+                outputShape[1] = inputShape[1];
+                outputShape[2] = inputShape[2];
+            }
+            else
+            {
+                return {{}, {}, "Spatial crop does not support an operator in the selected topology"};
+            }
+            if ( outputShape[1] <= 0 || outputShape[2] <= 0 )
+                return {{}, {}, "Spatial crop produces a non-positive output shape"};
+            for ( const int32_t outputIndex : *op->outputs() )
+                if ( outputIndex >= 0 ) tensorShapes[unsigned(outputIndex)] = outputShape;
+        }
+    }
+
     std::set<unsigned> selectedBuffers{0};
     for ( const unsigned sourceIndex : selectedTensors )
     {
@@ -461,6 +575,21 @@ TfLiteTopologyMicrograph BuildTfLiteTopologyMicrograph(const uint8_t *data, size
         mutableGraph->mutable_tensors()->GetMutableObject(localTensor++)->mutate_buffer(
             bufferMap.at(sourceTensors->Get(sourceIndex)->buffer()));
     }
+    if ( inputHeight > 0 )
+    {
+        localTensor = 0;
+        for ( const auto &[sourceIndex, unused] : tensorMap )
+        {
+            (void)unused;
+            auto *tensor = mutableGraph->mutable_tensors()->GetMutableObject(localTensor++);
+            const auto &shape = tensorShapes.at(sourceIndex);
+            if ( tensor->mutable_shape() && tensor->mutable_shape()->size() == shape.size() )
+                for ( unsigned axis = 0; axis < shape.size(); ++axis ) tensor->mutable_shape()->Mutate(axis, shape[axis]);
+            if ( tensor->mutable_shape_signature() && tensor->mutable_shape_signature()->size() == shape.size() )
+                for ( unsigned axis = 1; axis < shape.size(); ++axis )
+                    tensor->mutable_shape_signature()->Mutate(axis, shape[axis]);
+        }
+    }
     unsigned localOp = 0;
     for ( const unsigned sourceIndex : selectedOps )
     {
@@ -510,7 +639,9 @@ TfLiteTopologyMicrograph BuildTfLiteTopologyMicrograph(const uint8_t *data, size
         provenance << index;
     }
     provenance << "],\"micrograph\":{\"byte_size\":" << result.size()
-               << ",\"hash_algorithm\":\"md5\",\"hash\":\"" << Md5Hex(result.data(), result.size()) << "\"}}\n";
+               << ",\"hash_algorithm\":\"md5\",\"hash\":\"" << Md5Hex(result.data(), result.size()) << '"';
+    if ( inputHeight > 0 ) provenance << ",\"input_hw\":[" << inputHeight << ',' << inputWidth << ']';
+    provenance << "}}\n";
     return {std::move(result), provenance.str(), {}};
 }
 
