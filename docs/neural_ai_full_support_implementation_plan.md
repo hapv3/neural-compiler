@@ -2277,6 +2277,16 @@ The following must be complete before Conv compiler lowering begins:
   This is a single stem-Conv attribution run from
   `test_compiler_generated_micro_mobilenet_stage1`, not an equivalent
   full-graph comparison.
+- The compiler-generated Micro-MobileNet stage-10 prefix is a byte-exact PASS
+  on Verilator with 63 commands at 338,498 PMU cycles. Its PMU attribution is
+  168,914 retired Snitch instructions, 14,976 systolic compute cycles (4.42%),
+  5,791 iDMA busy cycles (1.71%), 190,818 AFU done events, and 5,236 aggregate
+  TCDM stall cycles. This is 4.040x the 83,786-cycle stage-1 stem run, 76.32%
+  of the 443,524-cycle compiler full graph, and 97.27% of the 347,992-cycle
+  native Micro-MobileNet total. These ratios are attribution only: the prefix
+  has a 36,864-byte public output boundary and is not equivalent to either
+  full-graph workload. The source test is
+  `test_compiler_generated_micro_mobilenet_stage10`.
 - Neural-AI compiler-runtime host ABI/layout/quantization checks pass.
 - Compiler-generated Verilator packages pass byte-exactly:
   - RGB K3 S2 C3 -> C32: 195,997 simulated ns after wide-row chunking, versus
