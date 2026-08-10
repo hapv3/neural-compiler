@@ -82,7 +82,7 @@ exists. The following status matrix reflects what has been audited:
 | NHWC↔C32 | Not a primitive | iDMA for external↔local, scalar/Spatz for local↔local | Emitted for Conv, depthwise, and constrained Add boundaries | Focused boundary regression |
 | Pointwise Conv1x1 | GEMM32 primitive | v2 `POINTWISE_C32` path | Constrained 1x1/S1/P0 lowering with C32 group/tail padding | Compiler-generated Conv package on Verilator |
 | Linebuffer Conv | Yes | v2 linebuffer and depthwise dispatch | RGB K3 S2, generic full-group C32 K3, and depthwise K3 S1/S2 | Compiler-generated `.nai` packages |
-| AFU commands | Hardware modes exist | v2 constrained `ADD_I8` dispatch | Equal-shape raw-safe INT8 Add, including byte-exact Conv-producer canonicalization | Compiler-generated Add package on Verilator |
+| AFU commands | Hardware modes exist | v2 constrained `ADD_I8` and LUT dispatch | Equal-shape raw-safe INT8 Add, byte-exact Conv-producer canonicalization, standalone activations, and quantized YOLO SiLU LUT fusion | Compiler-generated Add, activation, and SiLU packages on Verilator |
 | Spatz commands | Engine exists | v2 quantized-Add and nearest-upsample dispatch | Quantization-correct Add fallback and nearest-neighbor 2x INT8 C32 | Compiler-generated packages on Verilator |
 | MaxPool | Systolic linebuffer pool mode | v2 constrained MaxPool dispatch | K5/S1/P2, batch 1, INT8 C32, out-of-place | Compiler-generated H24/W24/C32 package on Verilator |
 
@@ -2217,6 +2217,31 @@ The relevant full-graph performance comparison therefore remains 443,524
 compiler Micro-MobileNet cycles versus the 347,992 Micro-MobileNet and 388,146
 Micro-YOLO records.
 
+Quantized YOLO SiLU is implemented as a graph-pattern fusion rather than as
+generic TFLite Mul. Before supported-operator checks, the TFLite optimiser
+recognizes `x * Sigmoid(x)` in either Mul input order and replaces both
+operators with one generated `AFU_LUT`. The admitted contract is static batch-1
+INT8 with equal shapes, scalar TFLite quantization, the canonical INT8 Sigmoid
+representation (`scale=1/256`, `zero_point=-128`), a Mul rescale no greater than
+one, a single-use Sigmoid result, and no public Sigmoid intermediate. LUT
+generation emulates the quantized Sigmoid result followed by TFLite integer Mul
+rounding, rather than evaluating an unconstrained floating-point SiLU formula.
+All other Mul forms remain outside the Neural-AI supported-operator set.
+
+Compiler tests verify both Mul input orders and every one of the 256 LUT bytes;
+the complete Regor suite passes 640,735 assertions in 205 cases in the recorded
+run. The compiler-generated H2/W3/C33 SiLU package is 1,152 bytes, requires 768
+bytes of TCDM, and emits three executable commands: input `COPY_LAYOUT`, one
+`AFU_LUT`, and output `COPY_LAYOUT`. It passes byte-exactly on Verilator at
+91,394.006 total simulated ns, with 89,682 ns measured invocation time and
+52,674 PMU cycles. A same-build, same-shape Sigmoid control also completes at
+91,394.006 total simulated ns, demonstrating that fused SiLU has the cost of one
+unary LUT and does not execute a second generic Mul path. Both are 2.96% above
+the older 88,766 ns activation record because the current control moved by the
+same amount. The focused SiLU cycles are 0.151x the 347,992-cycle
+Micro-MobileNet record and 0.136x the 388,146-cycle Micro-YOLO record, but those
+ratios compare one operator package with full graphs and are diagnostic only.
+
 Nearest-neighbor 2x upsample is implemented through the 64-byte v2
 `UPSAMPLE_NEAREST` command. The supported subset is static batch-1 INT8 with
 exactly 32 channels, equal input/output quantization, and an exact 2x increase
@@ -2293,9 +2318,10 @@ the required Phase 5 performance path for YOLO heads.
    materialization required by view, concat, and vector operations.
 5. Maintain the implemented two-input C32 materialized Concat fallback and add
    concat-consumer Conv fusion for YOLO head performance in Phase 5.
-6. Maintain residual Add canonicalization and the implemented
-   quantization-correct Add fallback. Implement YOLO SiLU and, when present in
-   the selected MobileNet artifact, Hard-Swish as generated AFU LUT fusions.
+6. Maintain residual Add canonicalization, the implemented
+   quantization-correct Add fallback, and the implemented YOLO SiLU AFU LUT
+   fusion. When present in the selected MobileNet artifact, implement
+   Hard-Swish as a generated AFU LUT fusion.
    Retain `MUL_Q7` only for proven Q7 patterns. Do not implement generic TFLite
    Mul or standalone Requant solely for operator coverage; add a constrained
    squeeze-excitation channel multiply only if the target corpus requires it.
@@ -2666,10 +2692,11 @@ selected full-size YOLO and MobileNet artifacts
   -> run the final full graph only at the release gate
 ```
 
-For the expected activation gap, implement byte-exact SiLU LUT fusion before
-considering any Mul datapath extension. For every later gap, revise the corpus
-inventory and constrained contract first. Do not add generic TFLite semantics or
-RTL merely to broaden an operator-support table.
+Byte-exact SiLU LUT fusion is now implemented without a Mul datapath extension.
+The next gap must come from the reproducible operator inventory of the selected
+full-size artifacts. Revise that inventory and its constrained contract before
+implementation; do not add generic TFLite semantics or RTL merely to broaden an
+operator-support table.
 
 Estimated effort for one engineer, assuming the hardware contract remains fixed:
 
