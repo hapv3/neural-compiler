@@ -493,9 +493,10 @@ struct GeneratorContext
         if ( ifm->Type() != regor::DataType::Int8 || ofm->Type() != regor::DataType::Int8 ||
              ifm->SliceShape().Elements64() != ofm->SliceShape().Elements64() ||
              ofm->tensor->format != TensorFormat::C32Blocked ||
-             (ifm->tensor->format != TensorFormat::C32Blocked && !ifm->tensor->IsConstant()) )
+             (ifm->tensor->format != TensorFormat::C32Blocked &&
+                 ifm->tensor->format != TensorFormat::NHWC && !ifm->tensor->IsConstant()) )
             return SetError(error,
-                "Neural-AI sliced C32 copy requires equal INT8 C32 slices or a constant fill source");
+                "Neural-AI sliced C32 copy requires equal INT8 C32/NHWC slices or a constant fill source");
 
         const Shape copyShape = ReshapeToNHWC(ofm->SliceShape());
         if ( copyShape.Batch() != 1 || copyShape.Height() <= 0 || copyShape.Width() <= 0 ||
@@ -527,6 +528,27 @@ struct GeneratorContext
             const Shape slice = ReshapeToNHWC(connection->SliceShape());
             const Shape sliceOffset = connection->slice.offset ?
                 ReshapeToNHWC(connection->slice.offset) : storage.WithZeros();
+            if ( connection->tensor->format == TensorFormat::NHWC )
+            {
+                if ( storage.Batch() != 1 || storage.Depth() != 32 || slice.Batch() != 1 ||
+                     slice.Depth() != 32 || sliceOffset.Batch() != 0 || sliceOffset.Depth() != 0 ||
+                     sliceOffset.Height() < 0 || sliceOffset.Width() < 0 ||
+                     sliceOffset.Height() + slice.Height() > storage.Height() ||
+                     sliceOffset.Width() + slice.Width() > storage.Width() ||
+                     (connection->slice.stride && connection->slice.stride != connection->shape.WithOnes()) )
+                    return SetError(error,
+                        "Neural-AI sliced NHWC-to-C32 copy requires one unstrided C32 group");
+                const int64_t rowStride64 = storage.Width() * int64_t(32);
+                const int64_t base64 =
+                    (sliceOffset.Height() * int64_t(storage.Width()) + sliceOffset.Width()) * 32;
+                if ( rowStride64 <= 0 || rowStride64 > std::numeric_limits<uint32_t>::max() ||
+                     base64 < 0 || base64 > std::numeric_limits<uint32_t>::max() )
+                    return SetError(error, "Neural-AI sliced NHWC address is outside the ABI range");
+                addressing.base = uint32_t(base64);
+                addressing.rowStride = uint32_t(rowStride64);
+                addressing.groupStride = uint32_t(storage.Height()) * addressing.rowStride;
+                return true;
+            }
             if ( connection->tensor->format != TensorFormat::C32Blocked || storage.Batch() != 1 ||
                  storage.Depth() % 32 != 0 || slice.Batch() != 1 ||
                  slice.Depth() != storage.Depth() || sliceOffset.Batch() != 0 ||
@@ -617,7 +639,8 @@ struct GeneratorContext
         }
         if ( (!IsFullTensorConnection(ifm) || !IsFullTensorConnection(ofm)) &&
              ofm->tensor->format == TensorFormat::C32Blocked &&
-             (ifm->tensor->format == TensorFormat::C32Blocked || ifm->tensor->IsConstant()) )
+             (ifm->tensor->format == TensorFormat::C32Blocked ||
+                 ifm->tensor->format == TensorFormat::NHWC || ifm->tensor->IsConstant()) )
             return AppendSlicedC32Copy(operation, error);
         if ( !IsFullTensorConnection(ifm) || !IsFullTensorConnection(ofm) )
             return SetError(error, fmt::format(

@@ -2197,8 +2197,8 @@ The following must be complete before Conv compiler lowering begins:
 
 ### Current Verification Evidence
 
-- Compiler C++ tests: 215/215 pass after the current asymmetric-Conv,
-  constant-padding serialization, and mapping-fixture changes. The command
+- Compiler C++ tests: 216/216 pass after the current asymmetric-Conv,
+  constant-padding serialization, sliced C32 boundary, and mapping-fixture changes. The command
   generator now places nonzero Pad fill tensors in `ModelConstants`; padding
   DMAs no longer read an implicitly zeroed TCDM address.
 - A topology-derived MobileNet fixture selected from full-graph operators
@@ -2235,6 +2235,14 @@ The following must be complete before Conv compiler lowering begins:
   347,992-cycle Micro-MobileNet record and 15.2% of the 388,146-cycle
   Micro-YOLO record; those ratios are diagnostic only because the workloads are
   not equivalent full graphs.
+- The isolated corpus-derived MobileNet Depthwise stage (`8x8x32 -> 8x8x32`)
+  compiles with 0 CPU operators and passes byte-exactly against TFLite on
+  Verilator at 59,840 PMU cycles. Its asymmetric public input uses one
+  constrained iDMA 2D rectangle from compact NHWC `C=32` into padded C32
+  storage (256-byte source rows and 320-byte destination rows). This does not
+  admit generic NHWC channel tails. The focused run is 17.2% of the
+  Micro-MobileNet cycle record and 15.4% of the Micro-YOLO record; these are
+  diagnostic ratios rather than equivalent full-graph comparisons.
 - The current full package is 89,312 bytes, contains 81 runtime commands, and
   has a 290,816-byte peak TCDM allocation. Direct external-to-local compact
   tensor transfers avoid CPU-backed local-to-local bounce copies, and one

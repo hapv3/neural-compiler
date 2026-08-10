@@ -734,13 +734,15 @@ flatbuffers::DetachedBuffer BuildK3ConvModel(int height, int width, int depthK, 
     return builder.Release();
 }
 
-flatbuffers::DetachedBuffer BuildDepthwiseConvModel(int height, int width, int channels, int stride)
+flatbuffers::DetachedBuffer BuildDepthwiseConvModel(int height, int width, int channels, int stride,
+    int64_t inputZeroPoint = 0)
 {
     flatbuffers::FlatBufferBuilder builder;
     const std::vector<float> scale = {1.0f};
     const std::vector<int64_t> zeroPoint = {0};
+    const std::vector<int64_t> inputZeroPoints = {inputZeroPoint};
     const auto inputQuant = tflite::CreateQuantizationParametersDirect(
-        builder, nullptr, nullptr, &scale, &zeroPoint);
+        builder, nullptr, nullptr, &scale, &inputZeroPoints);
     const auto weightQuant = tflite::CreateQuantizationParametersDirect(
         builder, nullptr, nullptr, &scale, &zeroPoint);
     const auto biasQuant = tflite::CreateQuantizationParametersDirect(
@@ -3057,6 +3059,46 @@ TEST_CASE("Neural-AI compiler emits group-scoped depthwise C32 commands")
     REQUIRE(depthwiseCommands == 2);
     REQUIRE(rqLoads == 2);
     REQUIRE(sawTail);
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
+}
+
+TEST_CASE("Neural-AI compiler copies an asymmetric public C32 group into padded depthwise storage")
+{
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildDepthwiseConvModel(8, 8, 32, 1, -128);
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+    const bool compiled = compiler.Compile();
+    INFO(compiler.LastError());
+    REQUIRE(compiled);
+
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    const uint32_t commandBytes = Read32(data + 64 + 12);
+    uint32_t offset = 224;
+    bool sawInputRectangle = false;
+    while ( offset < 224 + commandBytes )
+    {
+        const uint16_t type = Read16(data + offset);
+        const uint16_t commandSize = Read16(data + offset + 2);
+        if ( type == uint16_t(neuralai::CommandType::DMA2D) &&
+             Read16(data + offset + 16) == uint16_t(neuralai::Region::InputBinding) )
+        {
+            REQUIRE(Read32(data + offset + 32) == 8 * 32);
+            REQUIRE(Read32(data + offset + 36) == 8 * 32);
+            REQUIRE(Read32(data + offset + 40) == 10 * 32);
+            REQUIRE(Read32(data + offset + 44) == 8);
+            sawInputRectangle = true;
+        }
+        offset += commandSize;
+    }
+    REQUIRE(offset == 224 + commandBytes);
+    REQUIRE(sawInputRectangle);
     blob->Unmap(const_cast<uint8_t *>(data));
     blob->Release();
 }
