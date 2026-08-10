@@ -1777,11 +1777,13 @@ Full-size artifacts define the required operator contracts, but they are not
 the mapping-phase simulation workload. Bring-up is split into three ordered
 gates:
 
-1. **Operator mapping:** inventory every source instance and extract small
-   compiler-generated micro-graphs that preserve the relevant full-graph
-   producer-consumer topology, tensor shapes, quantization, padding, fusion,
-   layout, and fan-out. Close semantic lowering and byte-exact correctness on
-   those micro-graphs.
+1. **Operator mapping:** use the full graph only as a topology and contract
+   source. Inventory every source instance, then generate small compiler test
+   micro-graphs that preserve the relevant full-graph producer-consumer
+   topology, tensor shapes, quantization, padding, fusion, layout, and fan-out.
+   Close semantic lowering and byte-exact correctness only on those generated
+   micro-graphs; compiling or simulating the full graph is not a mapping-phase
+   test.
 2. **SRAM feasibility:** after every selected instance maps, compose larger
    staged prefixes and use Regor/Vela's existing scheduler decomposition,
    cascade builder, live-range analysis, tensor allocator, fast-storage
@@ -1791,18 +1793,23 @@ gates:
    cascades, tile choice, DMA overlap, and bank placement against attributed PMU
    measurements.
 
-Mapping micro-graphs are derived automatically or reproducibly from the named
-artifact inventory; they are not hand-designed toy operators. Each one must
-include enough neighboring operations to exercise the actual fusion and layout
-decision, for example `Conv -> ReLU6 -> depthwise`, a residual
-`Conv -> Add -> consumer`, YOLO `Conv -> Sigmoid -> Mul`, or
-`Concat -> head Conv`. A single isolated operator is acceptable only when its
-full-graph behavior has no producer-consumer dependency.
+Mapping micro-graphs are generated automatically or reproducibly from the named
+artifact inventory; they are not hand-designed toy operators. Each generated
+case records the source artifact hash, subgraph index, source operator indices,
+and tensor-contract fields used to reproduce it. It must include enough
+neighboring operations to exercise the actual fusion and layout decision, for
+example `Conv -> ReLU6 -> depthwise`, a residual `Conv -> Add -> consumer`,
+YOLO `Conv -> Sigmoid -> Mul`, or `Concat -> head Conv`. A single isolated
+operator is acceptable only when its full-graph behavior has no
+producer-consumer dependency.
 
 During the mapping gate:
 
 - Do not require the full graph to fit TCDM and do not optimize operator
   semantics around current SRAM pressure.
+- Do not use successful or failed full-graph compilation as a mapping test or
+  exit criterion. The full artifact is read only to inventory contracts and to
+  select/generate topology windows.
 - A conservative schedule or explicit L2 spill is acceptable for a micro-graph
   correctness test.
 - Do not run full-graph Verilator. Use compiler unit tests, host reference
