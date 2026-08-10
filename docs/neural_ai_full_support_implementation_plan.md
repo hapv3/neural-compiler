@@ -2248,6 +2248,16 @@ The following must be complete before Conv compiler lowering begins:
   against TFLite on Verilator at 53,174 PMU cycles. The focused run is 15.3%
   of the Micro-MobileNet cycle record and 13.7% of the Micro-YOLO record; these
   remain diagnostic, non-equivalent workload ratios.
+- The complete corpus-derived MobileNet mapping chain
+  `RGB Conv -> Depthwise -> Pointwise` (`16x16` crop) passes byte-exactly
+  against TFLite with all 16 runtime commands completed at 105,334 PMU cycles.
+  Serializing the asymmetric padding constants reduced this from the pre-fix
+  114,096-cycle run by 8,762 cycles (7.68%). The chain is 30.3% of the
+  Micro-MobileNet record and 27.1% of the Micro-YOLO record; these remain
+  diagnostic ratios for a spatially cropped mapping graph, not equivalent
+  full-graph performance claims. The RGB stem's isolated one-LSB rounding
+  difference is absorbed by downstream requantization and does not appear at
+  the chain output.
 - The current full package is 89,312 bytes, contains 81 runtime commands, and
   has a 290,816-byte peak TCDM allocation. Direct external-to-local compact
   tensor transfers avoid CPU-backed local-to-local bounce copies, and one
