@@ -2359,18 +2359,30 @@ The following must be complete before Conv compiler lowering begins:
   The principal counters are 221,405 Snitch instructions, 35,714 systolic
   compute cycles, 6,959 iDMA busy cycles, 292,531 AFU done events, and 5,482
   TCDM stall cycles.
+- The current native Micro-MobileNet rerun is a PASS at 344,454 total PMU
+  cycles, a -3,538-cycle difference from the documented 347,992-cycle
+  regression reference (-1.02%); the documented value remains the regression
+  baseline. The 443,524-cycle compiler full graph is 1.288x this current native
+  run, a 99,070-cycle gap. The 338,498-cycle stage-10 prefix is 98.27% of the
+  current native total, but remains non-equivalent because it exposes a
+  36,864-byte public output boundary. Native layers 0-21 sum to 212,026 cycles,
+  and all 28 traced layers sum to 324,860 cycles, leaving 19,594 cycles of
+  total-run overhead outside the traced layers. The rerun artifacts are
+  `/tmp/neural-ai-native-mobilenet-pmu.log` and
+  `/tmp/neural-ai-native-mobilenet-results.xml`.
 - Runtime firmware `.text` is 24,780 bytes with the ABI 1.1 section layout,
   below the 32 KB limit.
 - The focused package times include boot, command loading,
   boundary layout DMA, and output checking. They must not be compared as
   operator latency against the PMU-only Micro-MobileNet and Micro-YOLO records.
-  The current native baselines remain 347,992 total cycles for Micro-MobileNet
-  and 388,146 total cycles for the Micro-YOLO raw-head graph. The measured
-  compiler graph is therefore 1.275x the Micro-MobileNet record and 1.143x the
-  Micro-YOLO record. These are equivalent full-graph PMU comparisons, but the
-  27.5% gap to the matching MobileNet record does not close the performance
-  gate. Further work must attribute the remaining command/runtime overhead
-  without weakening byte-exact correctness or changing frozen RTL.
+  The documented regression baselines remain 347,992 total cycles for
+  Micro-MobileNet and 388,146 total cycles for the Micro-YOLO raw-head graph.
+  The measured compiler graph is therefore 1.275x the Micro-MobileNet record
+  and 1.143x the Micro-YOLO record. These are equivalent full-graph PMU
+  comparisons, but the 27.5% gap to the matching MobileNet record does not close
+  the performance gate. Further work must attribute the remaining
+  command/runtime overhead without weakening byte-exact correctness or changing
+  frozen RTL.
 
 ### Exit Criteria
 
