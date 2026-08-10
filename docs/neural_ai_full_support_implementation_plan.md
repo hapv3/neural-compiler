@@ -1771,6 +1771,47 @@ blocking.
 
 ## 8. Implementation Phases
 
+### 8.1. Mapping-First Full-Graph Bring-Up
+
+Full-size artifacts define the required operator contracts, but they are not
+the mapping-phase simulation workload. Bring-up is split into three ordered
+gates:
+
+1. **Operator mapping:** inventory every source instance and extract small
+   compiler-generated micro-graphs that preserve the relevant full-graph
+   producer-consumer topology, tensor shapes, quantization, padding, fusion,
+   layout, and fan-out. Close semantic lowering and byte-exact correctness on
+   those micro-graphs.
+2. **SRAM feasibility:** after every selected instance maps, compose larger
+   staged prefixes and use Regor/Vela's existing scheduler decomposition,
+   cascade builder, live-range analysis, tensor allocator, fast-storage
+   allocator, hill-climb allocator, and architecture cost hooks to tile or spill
+   the graph within Neural-AI memory limits.
+3. **Performance:** only after mapping and memory feasibility close, tune
+   cascades, tile choice, DMA overlap, and bank placement against attributed PMU
+   measurements.
+
+Mapping micro-graphs are derived automatically or reproducibly from the named
+artifact inventory; they are not hand-designed toy operators. Each one must
+include enough neighboring operations to exercise the actual fusion and layout
+decision, for example `Conv -> ReLU6 -> depthwise`, a residual
+`Conv -> Add -> consumer`, YOLO `Conv -> Sigmoid -> Mul`, or
+`Concat -> head Conv`. A single isolated operator is acceptable only when its
+full-graph behavior has no producer-consumer dependency.
+
+During the mapping gate:
+
+- Do not require the full graph to fit TCDM and do not optimize operator
+  semantics around current SRAM pressure.
+- A conservative schedule or explicit L2 spill is acceptable for a micro-graph
+  correctness test.
+- Do not run full-graph Verilator. Use compiler unit tests, host reference
+  verification, and focused micro-graph Verilator packages instead.
+- Do not claim model support from micro-graph success alone. Full-graph compile,
+  SRAM feasibility, and final simulation remain later release gates.
+- Keep memory optimization in shared scheduler/allocator mechanisms wherever
+  possible; do not create model-specific firmware allocation logic.
+
 ## Phase 0 - Freeze Contracts and Golden Data
 
 ### Objective
@@ -2096,7 +2137,7 @@ The following must be complete before Conv compiler lowering begins:
 - NHWC L2 → C32 TCDM → NHWC L2 boundary layout round-trip.
 - NHWC input and output byte-order tests across H/W/C and channel-tail cases.
 
-### End-to-End Order
+### Mapping Micro-Graph Order
 
 1. RGB stem C3 -> C32.
 2. Pointwise C32 -> C32.
@@ -2106,8 +2147,10 @@ The following must be complete before Conv compiler lowering begins:
 6. Pointwise plus depthwise chain.
 7. C32 -> NHWC graph output.
 8. Full Micro-MobileNet graph with NHWC host buffers as a fast regression.
-9. Selected full-size MobileNet compiler graph, first by staged prefixes and
-   then end-to-end under the full-graph simulation gate.
+9. Corpus-derived full-size MobileNet topology micro-graphs, including adjacent
+   producer/activation/consumer and residual contexts. Full-size graph compile,
+   TCDM-fit work, and end-to-end simulation are deferred to the SRAM-feasibility
+   and release gates.
 
 ### Current Verification Evidence
 
@@ -2430,22 +2473,26 @@ the required Phase 5 performance path for YOLO heads.
 ### Exit Criteria
 
 - Every Phase 4 operator instance in the selected full-size YOLO and MobileNet
-  artifacts has compiler lowering plus a focused test. Nearby unvalidated
-  variants stop with an actionable diagnostic.
+  artifacts has compiler lowering plus a corpus-derived topology micro-graph
+  test. Nearby unvalidated variants stop with an actionable diagnostic.
 - No operator is advertised from primitive availability alone, and there is no
   silent fallback for unvalidated TFLite variants.
 - No new generic tensor loop is added to firmware when a Spatz or iDMA path
   already exists.
-- Full-graph operator inventories contain no unexpected host/CPU fallback, and
-  Micro-MobileNet/Micro-YOLO regressions remain byte-exact.
+- Full-graph operator inventories contain no unexpected host/CPU fallback,
+  every inventory instance maps to a verified micro-graph contract, and
+  Micro-MobileNet/Micro-YOLO regressions remain byte-exact. Full-size graph SRAM
+  fit and simulation are not Phase 4 exit criteria.
 
 ## Phase 5 - DMA Overlap, Performance Model, and YOLO Patterns
 
 ### Objective
 
-Move from a correctness schedule to an optimized schedule and cover the selected
-full-size YOLO flow. Micro-YOLO remains the fast native performance baseline,
-not the feature target.
+After operator mapping closes, move from micro-graphs to an SRAM-feasible and
+then optimized schedule for the selected full-size YOLO and MobileNet flows.
+Reuse Regor/Vela scheduling, cascading, tiling, live-range, and allocation
+infrastructure before adding Neural-AI-specific policy. Micro-YOLO remains the
+fast native performance baseline, not the feature target.
 
 ### Work Items
 
