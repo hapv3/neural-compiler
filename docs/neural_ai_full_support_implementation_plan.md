@@ -2243,6 +2243,11 @@ The following must be complete before Conv compiler lowering begins:
   admit generic NHWC channel tails. The focused run is 17.2% of the
   Micro-MobileNet cycle record and 15.4% of the Micro-YOLO record; these are
   diagnostic ratios rather than equivalent full-graph comparisons.
+- The following corpus-derived MobileNet Pointwise stage
+  (`8x8x32 -> 8x8x16`) compiles with 0 CPU operators and passes byte-exactly
+  against TFLite on Verilator at 53,174 PMU cycles. The focused run is 15.3%
+  of the Micro-MobileNet cycle record and 13.7% of the Micro-YOLO record; these
+  remain diagnostic, non-equivalent workload ratios.
 - The current full package is 89,312 bytes, contains 81 runtime commands, and
   has a 290,816-byte peak TCDM allocation. Direct external-to-local compact
   tensor transfers avoid CPU-backed local-to-local bounce copies, and one
