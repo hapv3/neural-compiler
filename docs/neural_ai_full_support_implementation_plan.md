@@ -80,16 +80,18 @@ exists. The following status matrix reflects what has been audited:
 | NHWC↔C32 | Not a primitive | iDMA for external↔local, scalar/Spatz for local↔local | Emitted for Conv, depthwise, and constrained Add boundaries | Focused boundary regression |
 | Pointwise Conv1x1 | GEMM32 primitive | v2 `POINTWISE_C32` path | Constrained 1x1/S1/P0 lowering with C32 group/tail padding | Compiler-generated Conv package on Verilator |
 | Linebuffer Conv | Yes | v2 linebuffer and depthwise dispatch | RGB K3 S2, generic full-group C32 K3, and depthwise K3 S1/S2 | Compiler-generated `.nai` packages |
-| AFU commands | Hardware modes exist | v2 constrained `ADD_I8` dispatch | Equal-shape, symmetric, raw-safe INT8 Add | Compiler-generated Add package on Verilator |
-| Spatz commands | Engine exists | v2 nearest-upsample dispatch to the existing C32 kernel | Nearest-neighbor 2x, batch 1, INT8 C32 | Compiler-generated upsample package on Verilator |
+| AFU commands | Hardware modes exist | v2 constrained `ADD_I8` dispatch | Equal-shape raw-safe INT8 Add, including byte-exact Conv-producer canonicalization | Compiler-generated Add package on Verilator |
+| Spatz commands | Engine exists | v2 quantized-Add and nearest-upsample dispatch | Quantization-correct Add fallback and nearest-neighbor 2x INT8 C32 | Compiler-generated packages on Verilator |
 | MaxPool | Systolic linebuffer pool mode | v2 constrained MaxPool dispatch | K5/S1/P2, batch 1, INT8 C32, out-of-place | Compiler-generated H24/W24/C32 package on Verilator |
 
 `ArchNeuralAI` exposes `FullyConnected`, `MatMul`, `MemoryCopy`, and a
 constrained CNN path containing pointwise Conv, RGB K3 S2, generic full-group
-C32 K3, and depthwise K3 S1/S2. It also exposes raw-safe `AddI8` only when
-Regor's normalized quantization proves equal source/output scales, all zero
-points are zero, the clamp spans the full INT8 range, shapes are equal, and the
-AFU output allocation does not overlap either input.
+C32 K3, and depthwise K3 S1/S2. Equal-shape INT8 Add uses `ADD_I8` when Regor's
+normalized scales are the raw identity, the two input zero points sum to the
+output zero point, the clamp spans the full INT8 range, and the AFU output does
+not overlap either input. A private Conv producer may shift its output zero
+point and clamp only when that representation change is provably byte-exact;
+all other scalar-quantized equal-shape Add cases use `SPATZ_ADD`.
 
 The plan should record the hardware commit and compiler commit at which the
 contract was audited.
@@ -2007,14 +2009,23 @@ The following must be complete before Conv compiler lowering begins:
 
 Support the non-Conv operations in the current Neural-AI operator matrix.
 
-Current progress: the 64-byte v2 `AFU_BINARY` ABI and runtime `ADD_I8`
-dispatcher are implemented. The compiler lowers only equal-shape, batch-1,
-raw-safe symmetric INT8 Add to this mode, keeps tensors in C32 blocked storage,
-and disables allocator IFM reuse so the AFU output remains out-of-place.
-Requantized Add, nonzero zero points, broadcasting, and fused activation clamps
-remain unsupported and are rejected. Internal `Reshape`, `Squeeze`, and
-`ExpandDims` are admitted to Regor's existing reshape-removal pass; a
-view-to-Add regression verifies that none of the three adds a runtime command.
+Current progress: Add uses a three-way lowering policy. The 64-byte v2
+`AFU_BINARY` `ADD_I8` command is selected when the normalized Add is a raw
+stored-value sum: both input scales are the input identity, the output scale is
+the inverse identity, the input zero points sum to the output zero point, and
+the output clamp is full INT8. If exactly one input is the private output of a
+Conv, the graph optimiser may shift that Conv's requantization zero point and
+clamp together with the Add input representation. It does so only when both
+shifted clamps and the shifted zero point stay in INT8, which proves the stored
+bytes are exactly `q' = q + delta`; the resulting Add then uses AFU. Other
+equal-shape, batch-1, scalar-quantized INT8 Add cases use the 96-byte v2
+`SPATZ_ADD` command and an integer-only quantization-correct kernel. All three
+paths keep tensors in C32 blocked storage and require out-of-place output.
+Broadcasting and non-scalar quantization remain unsupported and are rejected.
+
+Internal `Reshape`, `Squeeze`, and `ExpandDims` are admitted to Regor's existing
+reshape-removal pass; a view-to-Add regression verifies that none of the three
+adds a runtime command.
 The admitted zero-copy subset must preserve the innermost channel depth, which
 keeps the existing ROW32/C32 physical interpretation stable; depth-changing
 views are rejected by both the TFLite checker and the Graph IR alias hook until
@@ -2032,14 +2043,31 @@ operator-latency comparison. View offset/slice cases remain open; command
 generation now rejects sliced `MemoryCopy` connections instead of incorrectly
 treating them as full-volume copies.
 
-The compiler-generated Add package passes byte-exactly on Verilator at 127,826
-simulated ns. The equivalent hand-written package passes at 113,958 simulated
-ns; the 13,868 ns (12.17%) difference is consistent with additional
+The raw-AFU compiler-generated Add package passes byte-exactly on Verilator at
+127,826 simulated ns. The equivalent hand-written package passes at 113,958
+simulated ns; the 13,868 ns (12.17%) difference is consistent with additional
 parsing/validation overhead for a 1,184-byte compiler artifact versus an
 800-byte fixture, while both execute four commands over the same 128-byte
 tensors. These focused completion times include boot and runtime overhead and
 are not substitutes for the 347,992-cycle Micro-MobileNet or 388,146-cycle
 Micro-YOLO full-graph PMU gates.
+
+The compiler-generated requantized H2/W2/C32 Add package emits
+`COPY_LAYOUT`, `COPY_LAYOUT`, `SPATZ_ADD`, `COPY_LAYOUT`, and `END`, and passes
+an independent byte-exact reference on Verilator at 96,178 simulated ns. Its
+57,386 PMU cycles include firmware boot, command parsing, public L2 transfers,
+and three boundary conversions, so this focused package is a correctness and
+ABI check rather than an Add datapath comparison. The standalone 32-element
+kernel also passes byte-exactly at 13,017 simulated ns.
+
+A diagnostic standalone run over 73,728 elements, matching the tensor volume
+of the first Micro-MobileNet residual, did not finish within 2,000,000 cluster
+cycles. That incomplete lower bound is already 5.75x the 347,992-cycle native
+Micro-MobileNet record and 5.15x the 388,146-cycle Micro-YOLO raw-head record.
+It therefore rejects generic `SPATZ_ADD` as a model hot path: model performance
+depends on selecting raw AFU Add directly or proving the Conv-producer
+canonicalization byte-exact. `SPATZ_ADD` remains the quantization-correct
+fallback for uncommon, non-canonicalizable cases.
 
 Full-spatial INT8 AvgPool is now lowered through a separate 64-byte
 `AFU_GLOBAL_AVGPOOL` command. The supported subset is batch 1, output 1x1,
@@ -2177,7 +2205,8 @@ the required Phase 5 performance path for YOLO heads.
    materialization required by view, concat, and vector operations.
 5. Maintain the implemented two-input C32 materialized Concat fallback and add
    concat-consumer Conv fusion for YOLO head performance in Phase 5.
-6. Implement quantization-correct Add, Mul, and Requant software kernels.
+6. Maintain the implemented quantization-correct Add fallback and implement
+   model-required Mul and standalone Requant software kernels.
 7. Maintain AFU LUT lowering for standalone Sigmoid and clipping while keeping
    source-fused activation clamps in final requantization.
 8. Maintain the implemented MaxPool K5 S1 P2, nearest-neighbor 2x C32, and
@@ -2190,7 +2219,9 @@ the required Phase 5 performance path for YOLO heads.
 - Every materialization validates byte order across H/W/C tails.
 - Every public graph output is contiguous frontend order, including outputs from
   native C32 and ROW32 producers.
-- Add and Mul randomized scale, zero-point, and reference tests.
+- Add scale, zero-point, clamp, raw-AFU, byte-exact Conv canonicalization, and
+  quantization-correct fallback tests; add randomized coverage with each new
+  model-required quantization pattern. Mul requires equivalent reference tests.
 - Exhaustive 256-value LUT tests.
 - Two-input aligned materialized Concat plus rejection tests for channel tails,
   non-channel axes, and mismatched quantization; fused-consumer coverage belongs
