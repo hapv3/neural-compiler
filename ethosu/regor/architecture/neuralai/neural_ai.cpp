@@ -154,9 +154,11 @@ std::unique_ptr<ArchitectureOpConfig> ArchNeuralAI::GetOpConfig(OpType opType, c
                   kernel.Padding().Bottom() >= 0 && kernel.Padding().Bottom() <= 1 &&
                   kernel.Padding().Right() >= 0 && kernel.Padding().Right() <= 1 )
         {
-            const bool hasChannelTail = ( query.ifmShape[0].Depth() % ArrayDimension ) != 0 ||
-                                         ( query.ofmShape.Depth() % ArrayDimension ) != 0;
-            if ( !hasChannelTail )
+            const int ifmTail = query.ifmShape[0].Depth() % ArrayDimension;
+            const int ofmTail = query.ofmShape.Depth() % ArrayDimension;
+            const bool supportedCorpusTails = (ifmTail == 0 || query.ifmShape[0].Depth() == 16) &&
+                                              (ofmTail == 0 || ofmTail == 16);
+            if ( supportedCorpusTails )
                 mode = kernel.Stride() == Point2i(1, 1) ? NeuralAIOpMode::Conv2DLinebufC32S1Requant :
                                                          NeuralAIOpMode::Conv2DLinebufC32S2Requant;
         }

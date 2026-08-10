@@ -74,14 +74,14 @@ class MatrixWeightSource final : public IVolumeWeightSource
 private:
     WeightTransformFunc _transform;
     WeightTransformParam *_param;
-    bool _linebufferK3;
+    bool _groupedLinebufferK3;
     std::vector<int16_t> _packed;
     int _sourceElements = 0;
     int _position = 0;
 
 public:
-    MatrixWeightSource(WeightTransformFunc transform, WeightTransformParam *param, bool linebufferK3) :
-            _transform(transform), _param(param), _linebufferK3(linebufferK3)
+    MatrixWeightSource(WeightTransformFunc transform, WeightTransformParam *param, bool groupedLinebufferK3) :
+            _transform(transform), _param(param), _groupedLinebufferK3(groupedLinebufferK3)
     {
     }
 
@@ -112,7 +112,7 @@ public:
         const int kernelElements = kernelHeight * kernelWidth * inputChannels;
         const int kGroups = RoundAway(kernelElements, 32) / 32;
         const int nGroups = RoundAway(outputDepth, 32) / 32;
-        const bool groupedK3 = _linebufferK3 && inputChannels > 32;
+        const bool groupedK3 = _groupedLinebufferK3;
         const int groupedK = groupedK3 ?
             kernelHeight * kernelWidth * RoundAway(inputChannels, 32) : kGroups * 32;
         const int encodedKGroups = groupedK3 ? groupedK / 32 : kGroups;
@@ -443,10 +443,9 @@ std::unique_ptr<IVolumeWeightSource> NeuralAIWeightEncoder::GetWeightSource(
          encoding->Mode() == NeuralAIOpMode::DepthwiseC32S2Requant )
         return std::make_unique<DepthwiseWeightSource>(func, param);
     const NeuralAIOpMode mode = encoding->Mode();
-    const bool linebufferK3 = mode == NeuralAIOpMode::Conv2DRgbLinebufRequant ||
-        mode == NeuralAIOpMode::Conv2DLinebufC32S1Requant ||
+    const bool groupedLinebufferK3 = mode == NeuralAIOpMode::Conv2DLinebufC32S1Requant ||
         mode == NeuralAIOpMode::Conv2DLinebufC32S2Requant;
-    return std::make_unique<MatrixWeightSource>(func, param, linebufferK3);
+    return std::make_unique<MatrixWeightSource>(func, param, groupedLinebufferK3);
 }
 
 std::unique_ptr<IVolumeScaleSource> NeuralAIWeightEncoder::GetScaleSource(

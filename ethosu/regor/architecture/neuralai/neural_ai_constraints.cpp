@@ -191,14 +191,17 @@ NeuralAIConstraints::Classification NeuralAIConstraints::Classify(OpType opType,
          weightShape.Batch() == ofmC && weightShape.Height() == 3 && weightShape.Width() == 3 &&
          weightShape.Depth() == ifmC )
     {
-        if ( result.hasIcTail || result.hasOcTail )
+        const int ifmTail = ifmC % 32;
+        const int ofmTail = ofmC % 32;
+        if ( (ifmTail != 0 && ifmC != 16) || (ofmTail != 0 && ofmTail != 16) )
         {
-            result.diagnostic = "generic C32 Conv requires input and output channels divisible by 32";
+            result.diagnostic =
+                "generic C32 Conv supports full input groups or corpus C16, plus 16-lane output tails";
             return result;
         }
         result.mode = kernel->Stride() == Point2i(1, 1) ? NeuralAIOpMode::Conv2DLinebufC32S1Requant :
                                                           NeuralAIOpMode::Conv2DLinebufC32S2Requant;
-        result.groupStationary = ifmC > 32;
+        result.groupStationary = ifmC > 32 && !result.hasIcTail && !result.hasOcTail;
         return result;
     }
 

@@ -1145,6 +1145,33 @@ TEST_CASE("Neural-AI constraints accept INT8 matrix and pointwise operations")
     REQUIRE(constraints->OperatorQuery(OpType::Conv2D, &pointwise) == QueryResult::Unsupported);
 }
 
+TEST_CASE("Neural-AI constraints admit only corpus-required generic K3 channel tails")
+{
+    const Kernel kernel({3, 3}, {2, 2}, {1, 1});
+    const auto ic16 = NeuralAIConstraints::Classify(OpType::Conv2D,
+        Shape(1, 18, 18, 16), Shape(32, 3, 3, 16), Shape(1, 8, 8, 32), &kernel);
+    REQUIRE(ic16.mode == NeuralAIOpMode::Conv2DLinebufC32S2Requant);
+    REQUIRE(ic16.hasIcTail);
+    REQUIRE_FALSE(ic16.hasOcTail);
+    REQUIRE_FALSE(ic16.groupStationary);
+
+    const auto ic48 = NeuralAIConstraints::Classify(OpType::Conv2D,
+        Shape(1, 18, 18, 48), Shape(32, 3, 3, 48), Shape(1, 8, 8, 32), &kernel);
+    REQUIRE_FALSE(ic48);
+
+    const auto oc48 = NeuralAIConstraints::Classify(OpType::Conv2D,
+        Shape(1, 18, 18, 32), Shape(48, 3, 3, 32), Shape(1, 8, 8, 48), &kernel);
+    REQUIRE(oc48.mode == NeuralAIOpMode::Conv2DLinebufC32S2Requant);
+    REQUIRE_FALSE(oc48.hasIcTail);
+    REQUIRE(oc48.hasOcTail);
+
+    const auto unsupported = NeuralAIConstraints::Classify(OpType::Conv2D,
+        Shape(1, 18, 18, 24), Shape(32, 3, 3, 24), Shape(1, 8, 8, 32), &kernel);
+    REQUIRE_FALSE(unsupported);
+    REQUIRE(unsupported.diagnostic ==
+        "generic C32 Conv supports full input groups or corpus C16, plus 16-lane output tails");
+}
+
 TEST_CASE("Neural-AI constraints accept shape-preserving memory copies")
 {
     ArchNeuralAI arch;
@@ -2829,6 +2856,60 @@ TEST_CASE("Neural-AI compiler emits grouped linebuffer jobs for generic K3 Conv2
     blob->Release();
 }
 
+TEST_CASE("Neural-AI compiler emits a zero-padded C16 linebuffer group for YOLO K3 Conv")
+{
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildK3ConvModel(
+        16, 16, 16, 32, 2, -126, tflite::Padding::SAME, 0.166790381f, 0.854145825f);
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+    const bool compiled = compiler.Compile();
+    INFO(compiler.LastError());
+    REQUIRE(compiled);
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    const uint32_t commandBytes = Read32(data + 64 + 12);
+    uint32_t offset = 224;
+    uint32_t linebufferJobs = 0;
+    uint32_t tailCopies = 0;
+    while ( offset < 224 + commandBytes )
+    {
+        const uint16_t type = Read16(data + offset);
+        const uint16_t commandSize = Read16(data + offset + 2);
+        REQUIRE(commandSize >= 32);
+        if ( type == uint16_t(neuralai::CommandType::LineBufferJob) )
+        {
+            REQUIRE(commandSize == sizeof(neuralai::CommandLineBufferJobV2));
+            REQUIRE(Read16(data + offset + 24) == 16);
+            REQUIRE(Read16(data + offset + 72) == 16);
+            REQUIRE(Read16(data + offset + 52) == 1);
+            REQUIRE(Read16(data + offset + 54) == 1);
+            REQUIRE(Read32(data + offset + 80) == 1);
+            const uint32_t expectedAccum = linebufferJobs == 0 ? 1u :
+                (linebufferJobs == 8 ? 2u : 3u);
+            REQUIRE(Read32(data + offset + 116) == expectedAccum);
+            ++linebufferJobs;
+        }
+        if ( type == uint16_t(neuralai::CommandType::DMA3D) )
+        {
+            REQUIRE(commandSize == sizeof(neuralai::CommandDMA3DV2));
+            REQUIRE(Read32(data + offset + 32) == 16);
+            REQUIRE(Read32(data + offset + 40) == 32);
+            ++tailCopies;
+        }
+        offset += commandSize;
+    }
+    REQUIRE(offset == 224 + commandBytes);
+    REQUIRE(linebufferJobs == 9);
+    REQUIRE(tailCopies > 0);
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
+}
+
 TEST_CASE("Neural-AI compiler splits a width-641 Conv into legal linebuffer jobs")
 {
     std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
@@ -3333,6 +3414,40 @@ TEST_CASE("Neural-AI generic K3 weights are grouped by IC before kernel taps")
     REQUIRE(int8_t(encoded[32 * 32]) == 2);
     REQUIRE(int8_t(encoded[8 * 32 * 32]) == 16);
     REQUIRE(int8_t(encoded[9 * 32 * 32]) == 1);
+}
+
+TEST_CASE("Neural-AI generic K3 weights zero-pad a C16 input group")
+{
+    constexpr int depthK = 16;
+    constexpr int depthN = 32;
+    constexpr int kernel = 3;
+    ArchNeuralAI arch;
+    NeuralAIOpConfig opConfig(256, NeuralAIOpMode::Conv2DLinebufC32S2Requant);
+    auto *encoder = arch.WeightEncoder();
+    auto config = encoder->GetEncodingConfig(
+        &opConfig, nullptr, DataType::Int8, Flags<WeightFormat>(WeightFormat::Default));
+    auto source = encoder->GetWeightSource(config.get(), DataType::Int8, nullptr, nullptr);
+    std::vector<int8_t> weights(depthN * kernel * kernel * depthK);
+    for ( int o = 0; o < depthN; ++o )
+        for ( int h = 0; h < kernel; ++h )
+            for ( int w = 0; w < kernel; ++w )
+                for ( int i = 0; i < depthK; ++i )
+                    weights[((o * kernel + h) * kernel + w) * depthK + i] =
+                        int8_t((h * kernel + w) * depthK + i);
+    source->SetSource(weights.data(), 0, Shape(depthN, kernel, kernel, depthK),
+        Shape(kernel * kernel * depthK, kernel * depthK, depthK, 1), 0);
+    std::vector<uint8_t> encoded;
+    REQUIRE(encoder->EncodeWeights(config.get(), source.get(), encoded).encodedSize ==
+        9 * 32 * 32);
+    for ( int tap = 0; tap < 9; ++tap )
+    {
+        for ( int inputLane = 0; inputLane < 32; ++inputLane )
+        {
+            const int8_t expected = inputLane < depthK ?
+                int8_t(tap * depthK + inputLane) : int8_t(0);
+            REQUIRE(int8_t(encoded[(tap * 32 + inputLane) * 32]) == expected);
+        }
+    }
 }
 
 TEST_CASE("Neural-AI Regor weight encoder emits ABI qparam lanes")

@@ -322,6 +322,29 @@ struct GeneratorContext
         return true;
     }
 
+    bool AppendDMA3D(const RefV1 &source, const RefV1 &destination, uint32_t length,
+        uint32_t sourceStride2, uint32_t destinationStride2, uint32_t repetitions2,
+        uint32_t sourceStride3, uint32_t destinationStride3, uint32_t repetitions3,
+        uint32_t layerId, uint32_t tileId, std::string &error)
+    {
+        DMADirection direction;
+        if ( !ResolveDMADirection(source, destination, direction) )
+            return SetError(error, "Neural-AI DMA3D requires a local source or destination");
+        AppendHeader(artifact->commands, CommandType::DMA3D, 64, layerId, tileId);
+        AppendRef(artifact->commands, source);
+        AppendRef(artifact->commands, destination);
+        Append32(artifact->commands, length);
+        Append32(artifact->commands, sourceStride2);
+        Append32(artifact->commands, destinationStride2);
+        Append32(artifact->commands, repetitions2);
+        Append32(artifact->commands, sourceStride3);
+        Append32(artifact->commands, destinationStride3);
+        Append32(artifact->commands, repetitions3);
+        Append32(artifact->commands, uint32_t(direction));
+        ++artifact->commandCount;
+        return true;
+    }
+
     bool AppendDMA1D(const RefV1 &source, const RefV1 &destination, uint32_t length,
         uint32_t layerId, uint32_t tileId, std::string &error)
     {
@@ -520,9 +543,80 @@ struct GeneratorContext
 
         const Shape copyShape = ReshapeToNHWC(ofm->SliceShape());
         if ( copyShape.Batch() != 1 || copyShape.Height() <= 0 || copyShape.Width() <= 0 ||
-             copyShape.Depth() <= 0 || copyShape.Depth() % 32 != 0 )
+             copyShape.Depth() <= 0 || (copyShape.Depth() % 32 != 0 && copyShape.Depth() != 16) )
             return SetError(error,
-                "Neural-AI sliced C32 copy requires a positive batch-one rectangle with C%32=0");
+                "Neural-AI sliced C32 copy requires a positive batch-one rectangle with C%32=0 or C=16");
+
+        if ( copyShape.Depth() == 16 )
+        {
+            struct TailAddressing
+            {
+                uint32_t base = 0;
+                uint32_t pixelStride = 0;
+                uint32_t rowStride = 0;
+            };
+            const auto resolveTail = [&](const SchedulerConnection *connection,
+                                         TailAddressing &addressing) -> bool
+            {
+                const Shape storage = ReshapeToNHWC(connection->tensor->storageShape);
+                const Shape slice = ReshapeToNHWC(connection->SliceShape());
+                const Shape sliceOffset = connection->slice.offset ?
+                    ReshapeToNHWC(connection->slice.offset) : storage.WithZeros();
+                const bool compact = connection->tensor->format == TensorFormat::NHWC ||
+                    (connection->tensor->IsConstant() &&
+                        connection->tensor->format != TensorFormat::C32Blocked);
+                const int pixelStride = compact ? 16 : 32;
+                const bool linearConstant = connection->tensor->IsConstant() &&
+                    connection->tensor->format != TensorFormat::C32Blocked;
+                if ( linearConstant )
+                {
+                    if ( (connection->slice.offset &&
+                             connection->slice.offset != connection->shape.WithZeros()) ||
+                         connection->slice.stride || storage.Elements64() != slice.Elements64() )
+                        return SetError(error,
+                            "Neural-AI linear C16 padding source requires one complete unstrided slice");
+                    addressing.pixelStride = 16;
+                    addressing.rowStride = uint32_t(slice.Width() * 16);
+                    return true;
+                }
+                if ( storage.Batch() != 1 || storage.Depth() != 16 ||
+                     slice.Batch() != 1 || slice.Depth() != 16 ||
+                     sliceOffset.Batch() != 0 || sliceOffset.Depth() != 0 ||
+                     sliceOffset.Height() < 0 || sliceOffset.Width() < 0 ||
+                     sliceOffset.Height() + slice.Height() > storage.Height() ||
+                     sliceOffset.Width() + slice.Width() > storage.Width() ||
+                     (connection->slice.stride && connection->slice.stride != connection->shape.WithOnes()) )
+                    return SetError(error, fmt::format(
+                        "Neural-AI sliced C16-to-C32 copy requires an unstrided full-depth rectangle "
+                        "('{}' {} storage [{}], slice [{}], offset [{}], stride [{}])",
+                        connection->tensor->Name(), EnumToString(connection->tensor->format),
+                        storage.ToString(), slice.ToString(), sliceOffset.ToString(),
+                        connection->slice.stride.ToString()));
+                const int64_t rowStride64 = storage.Width() * int64_t(pixelStride);
+                const int64_t base64 =
+                    (sliceOffset.Height() * int64_t(storage.Width()) + sliceOffset.Width()) * pixelStride;
+                if ( rowStride64 <= 0 || rowStride64 > std::numeric_limits<uint32_t>::max() ||
+                     base64 < 0 || base64 > std::numeric_limits<uint32_t>::max() )
+                    return SetError(error, "Neural-AI sliced C16 address is outside the ABI range");
+                addressing.base = uint32_t(base64);
+                addressing.pixelStride = uint32_t(pixelStride);
+                addressing.rowStride = uint32_t(rowStride64);
+                return true;
+            };
+
+            TailAddressing sourceAddressing;
+            TailAddressing destinationAddressing;
+            if ( !resolveTail(ifm, sourceAddressing) || !resolveTail(ofm, destinationAddressing) ) return false;
+            RefV1 source = TensorRef(ifm->tensor.get(), sourceAddressing.base, error);
+            if ( !error.empty() ) return false;
+            RefV1 destination = TensorRef(ofm->tensor.get(), destinationAddressing.base, error);
+            if ( !error.empty() ) return false;
+            return AppendDMA3D(source, destination, 16,
+                sourceAddressing.pixelStride, destinationAddressing.pixelStride,
+                uint32_t(copyShape.Width()), sourceAddressing.rowStride,
+                destinationAddressing.rowStride, uint32_t(copyShape.Height()),
+                uint32_t(operation->Index()), 0, error);
+        }
 
         struct Addressing
         {
@@ -1219,7 +1313,7 @@ struct GeneratorContext
         const uint32_t kGroups = paddedK / 32;
         const uint32_t nGroups = paddedN / 32;
         const bool linebufferK3 = isK3Conv;
-        const uint32_t linebufferKGroups = linebufferK3 && channelK > 32 ?
+        const uint32_t linebufferKGroups = linebufferK3 && !config->DirectNhwcInput() ?
             9u * uint32_t(RoundAway(int(channelK), 32)) / 32u : kGroups;
         if ( rows == 0 || range.scaleBytes != int(paddedN * sizeof(neuralai::QParamV1)) ||
              range.weightBytes != int(linebufferKGroups * nGroups * 32 * 32) )
@@ -1268,11 +1362,63 @@ struct GeneratorContext
             const uint32_t outputGroups = uint32_t(RoundAway(int(depthN), 32)) / 32u;
             const uint32_t kernelTilesPerInputGroup =
                 uint32_t(operation->Kernel()->Size().x * operation->Kernel()->Size().y);
+            const bool decomposeC16Taps = !directRgb && channelK == 16u;
             uint32_t tileId = 2;
             for ( uint32_t outputGroup = 0; outputGroup < outputGroups; ++outputGroup )
             {
                 AppendRQLoad(qparamBase + outputGroup * 32u, outputGroup,
                     uint32_t(operation->Index()), tileId++);
+                if ( decomposeC16Taps )
+                {
+                    std::vector<std::vector<neuralai::LinebufferJob>> tapJobs;
+                    tapJobs.reserve(kernelTilesPerInputGroup);
+                    for ( uint32_t tap = 0; tap < kernelTilesPerInputGroup; ++tap )
+                    {
+                        const uint32_t tapH = tap / uint32_t(operation->Kernel()->Size().x);
+                        const uint32_t tapW = tap % uint32_t(operation->Kernel()->Size().x);
+                        neuralai::LinebufferPlannerInput plannerInput{};
+                        plannerInput.logicalIfm = logicalIfm;
+                        plannerInput.logicalOfm = logicalOfm;
+                        plannerInput.ifmBase = uint32_t(ifm->tensor->AllocatedAddress()) +
+                            tapH * uint32_t(logicalIfm.Width()) * 32u + tapW * 32u;
+                        plannerInput.ofmBase = uint32_t(ofm->tensor->AllocatedAddress());
+                        plannerInput.weightBase = uint32_t(weightStageOffset +
+                            (outputGroup * kernelTilesPerInputGroup + tap) * 32u * 32u);
+                        plannerInput.psumBase = uint32_t(partialOffset);
+                        plannerInput.kernelH = 1;
+                        plannerInput.kernelW = 1;
+                        plannerInput.strideH = operation->Kernel()->Stride().y;
+                        plannerInput.strideW = operation->Kernel()->Stride().x;
+                        plannerInput.ic = int(channelK);
+                        plannerInput.oc = 32;
+                        plannerInput.groupIndex = 0;
+                        plannerInput.inputGroupIndex = 0;
+                        plannerInput.outputGroupIndex = int(outputGroup);
+                        plannerInput.validLaneCount = int(channelK);
+                        plannerInput.ifmPixelStride = 32;
+                        plannerInput.maxM = MaxExternalPsumLinebufferM;
+                        plannerInput.tcdmBudget = ArchNeuralAI::AllocatableTCDMBytes;
+                        plannerInput.accumMode = tap == 0u ? 1 :
+                            (tap + 1u == kernelTilesPerInputGroup ? 2 : 3);
+                        tapJobs.push_back(neuralai::LinebufferPlanner().Plan(plannerInput));
+                    }
+                    const int spatialJobs = int(tapJobs.front().size());
+                    for ( const auto &jobs : tapJobs )
+                    {
+                        if ( int(jobs.size()) != spatialJobs )
+                            return SetError(error,
+                                "Neural-AI C16 linebuffer taps have inconsistent spatial tiling");
+                    }
+                    for ( int jobIndex = 0; jobIndex < spatialJobs; ++jobIndex )
+                    {
+                        for ( auto &jobs : tapJobs )
+                        {
+                            AppendLineBufferJob(jobs[jobIndex],
+                                uint32_t(operation->Index()), tileId++);
+                        }
+                    }
+                    continue;
+                }
                 std::vector<std::vector<neuralai::LinebufferJob>> groupJobs;
                 groupJobs.reserve(inputGroups);
                 for ( uint32_t inputGroup = 0; inputGroup < inputGroups; ++inputGroup )
@@ -1574,7 +1720,8 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
             if ( directRgb || paddedK > 0 )
             {
                 const uint32_t paddedN = uint32_t(RoundAway(int(operation->OFM()->shape.Depth()), 32));
-                const uint32_t kGroups = directRgb ? 1u : paddedK / 32u;
+                const uint32_t kGroups = directRgb ? 1u :
+                    9u * uint32_t(RoundAway(int(operation->IFM(0)->shape.Depth()), 32)) / 32u;
                 linebufferWeightBytes = std::max(linebufferWeightBytes,
                     uint32_t(kGroups * (paddedN / 32u) * 32u * 32u));
             }

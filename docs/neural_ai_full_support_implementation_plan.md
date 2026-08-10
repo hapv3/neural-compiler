@@ -2228,6 +2228,23 @@ The following must be complete before Conv compiler lowering begins:
   Micro-MobileNet record and 14.3% of the native Micro-YOLO record. These are
   diagnostic ratios for a cropped single operator, not equivalent full-graph
   performance comparisons.
+- The next isolated YOLOv8 Conv (`18x18x16 -> 8x8x32`, K3/S2/VALID) now maps
+  the corpus-required C16 input tail without widening RTL. Compact C16 boundary
+  and Pad slices use 16-byte-pixel DMA3D copies into C32 storage; weights are
+  encoded as nine tap-major 32x32 tiles with lanes 16..31 zero. Because the
+  frozen RTL enables automatic group-stationary multi-K only for a full
+  32-byte block, the compiler emits nine K1 linebuffer jobs and accumulates
+  them as `initialize, intermediate..., final-requant` rather than incorrectly
+  advertising one nine-tile job. The 12,608-byte package completes all 13
+  runtime commands at 89,110 PMU cycles, 25.6% of the 347,992-cycle native
+  Micro-MobileNet record and 23.0% of the 388,146-cycle native Micro-YOLO
+  record. It matches the default TFLite XNNPACK execution in all 2,048 bytes;
+  TFLite `BUILTIN_REF` differs at eight occurrences in one channel by exactly
+  one LSB (`-26` versus `-27`). This is recorded as the same frozen
+  single-round semantic-fidelity issue already accepted for the MobileNet RGB
+  stem, not hidden as a byte-exact `BUILTIN_REF` result and not used to justify
+  a generic TFLite or RTL extension. These ratios are diagnostic for a cropped
+  operator, not equivalent full-graph performance claims.
 - The complete 13-stage Micro-MobileNet compiler test passes every graph prefix
   and the full graph byte-exactly. The full package contains two `AFU_BINARY`
   residual Adds, one `AFU_GLOBAL_AVGPOOL`, and the expected Conv/linebuffer
