@@ -155,6 +155,22 @@ Generate each TFLite source inventory with the Regor tool built as
 neural-ai-model-inventory model.tflite > model.inventory.json
 ```
 
+Generate a mapping micro-graph from reviewed source operator indices with the
+same tool. The command writes the TFLite artifact and prints its deterministic
+provenance JSON:
+
+```sh
+neural-ai-model-inventory model.tflite \
+  --micrograph 0:OP0,OP1,OP2 --output mapping_case.tflite \
+  > mapping_case.provenance.json
+```
+
+The selector is `SUBGRAPH:OP[,OP...]`. The extractor preserves the selected
+operators, their constant tensors and exact producer-consumer edges, promotes
+non-constant edges entering or leaving the selection to graph boundaries, and
+removes unrelated model buffers. Use the normal inventory command on the
+generated artifact when a review needs the full tensor-contract table.
+
 The deterministic JSON records the artifact basename, byte size and explicitly
 labelled MD5 identity hash, TFLite schema version, sorted operator counts,
 subgraph bindings, every tensor shape/type/buffer/quantization tuple, every

@@ -60,6 +60,45 @@ std::vector<uint8_t> CreateConvModel()
     return {builder.GetBufferPointer(), builder.GetBufferPointer() + builder.GetSize()};
 }
 
+std::vector<uint8_t> CreateAddChainModel()
+{
+    flatbuffers::FlatBufferBuilder builder;
+    const std::vector<int32_t> shape{1, 2};
+    const std::vector<uint8_t> constantValues{4, uint8_t(int8_t(-7))};
+    std::vector<flatbuffers::Offset<tflite::Buffer>> buffers{
+        tflite::CreateBufferDirect(builder),
+        tflite::CreateBufferDirect(builder, &constantValues),
+        tflite::CreateBufferDirect(builder),
+    };
+    std::vector<flatbuffers::Offset<tflite::Tensor>> tensors;
+    for ( int index = 0; index < 5; ++index )
+    {
+        const uint32_t buffer = index == 0 ? 2 : (index == 1 ? 1 : 0);
+        tensors.push_back(tflite::CreateTensorDirect(
+            builder, &shape, tflite::TensorType::INT8, buffer, ("tensor" + std::to_string(index)).c_str()));
+    }
+    std::vector<flatbuffers::Offset<tflite::Operator>> operators;
+    for ( int index = 0; index < 3; ++index )
+    {
+        const std::vector<int32_t> inputs{index == 0 ? 0 : index + 1, 1};
+        const std::vector<int32_t> outputs{index + 2};
+        operators.push_back(tflite::CreateOperatorDirect(builder, 0, &inputs, &outputs,
+            tflite::BuiltinOptions::AddOptions, tflite::CreateAddOptions(builder).Union()));
+    }
+    const std::vector<int32_t> graphInputs{0};
+    const std::vector<int32_t> graphOutputs{4};
+    std::vector<flatbuffers::Offset<tflite::SubGraph>> subgraphs{
+        tflite::CreateSubGraphDirect(builder, &tensors, &graphInputs, &graphOutputs, &operators, "main"),
+    };
+    std::vector<flatbuffers::Offset<tflite::OperatorCode>> codes{
+        tflite::CreateOperatorCodeDirect(builder, int8_t(tflite::BuiltinOperator::ADD), nullptr, 2,
+            tflite::BuiltinOperator::ADD),
+    };
+    const auto model = tflite::CreateModelDirect(builder, 3, &codes, &subgraphs, "topology test", &buffers);
+    tflite::FinishModelBuffer(builder, model);
+    return {builder.GetBufferPointer(), builder.GetBufferPointer() + builder.GetSize()};
+}
+
 }  // namespace
 
 TEST_CASE("TFLite model inventory is deterministic and describes model contracts")
@@ -90,4 +129,55 @@ TEST_CASE("TFLite model inventory rejects malformed input")
     REQUIRE_FALSE(inventory);
     REQUIRE(inventory.json.empty());
     REQUIRE(inventory.error == "Input is not a valid TFLite FlatBuffer");
+}
+
+TEST_CASE("TFLite topology micrograph preserves a selected source chain")
+{
+    const auto source = CreateAddChainModel();
+    const auto extracted = BuildTfLiteTopologyMicrograph(source.data(), source.size(), 0, {1, 2}, "chain.tflite");
+    REQUIRE(extracted);
+    REQUIRE(extracted.provenanceJson.find("\"source_operator_indices\":[1,2]") != std::string::npos);
+    REQUIRE(extracted.provenanceJson.find("\"source_input_tensor_indices\":[2]") != std::string::npos);
+    REQUIRE(extracted.provenanceJson.find("\"source_output_tensor_indices\":[4]") != std::string::npos);
+
+    flatbuffers::Verifier verifier(extracted.model.data(), extracted.model.size());
+    REQUIRE(tflite::VerifyModelBuffer(verifier));
+    const auto *model = tflite::GetModel(extracted.model.data());
+    REQUIRE(model->subgraphs()->size() == 1);
+    const auto *graph = model->subgraphs()->Get(0);
+    REQUIRE(graph->operators()->size() == 2);
+    REQUIRE(graph->tensors()->size() == 4);
+    REQUIRE(graph->inputs()->size() == 1);
+    REQUIRE(graph->inputs()->Get(0) == 1);
+    REQUIRE(graph->outputs()->size() == 1);
+    REQUIRE(graph->outputs()->Get(0) == 3);
+    REQUIRE(graph->operators()->Get(0)->inputs()->Get(0) == 1);
+    REQUIRE(graph->operators()->Get(0)->inputs()->Get(1) == 0);
+    REQUIRE(graph->operators()->Get(0)->outputs()->Get(0) == 2);
+    REQUIRE(graph->operators()->Get(1)->inputs()->Get(0) == 2);
+    REQUIRE(graph->operators()->Get(1)->outputs()->Get(0) == 3);
+    REQUIRE(graph->tensors()->Get(0)->buffer() == 1);
+    REQUIRE(model->buffers()->size() == 2);
+    REQUIRE(model->buffers()->Get(1)->data()->size() == 2);
+    REQUIRE(int8_t(model->buffers()->Get(1)->data()->Get(0)) == 4);
+    REQUIRE(int8_t(model->buffers()->Get(1)->data()->Get(1)) == -7);
+}
+
+TEST_CASE("TFLite topology micrograph rejects invalid selections")
+{
+    const auto source = CreateAddChainModel();
+    REQUIRE_FALSE(BuildTfLiteTopologyMicrograph(source.data(), source.size(), 0, {}, "chain.tflite"));
+    REQUIRE_FALSE(BuildTfLiteTopologyMicrograph(source.data(), source.size(), 0, {1, 1}, "chain.tflite"));
+    REQUIRE_FALSE(BuildTfLiteTopologyMicrograph(source.data(), source.size(), 0, {3}, "chain.tflite"));
+    REQUIRE_FALSE(BuildTfLiteTopologyMicrograph(source.data(), source.size(), 1, {0}, "chain.tflite"));
+}
+
+TEST_CASE("TFLite topology micrograph treats an empty nonzero buffer as a graph input")
+{
+    const auto source = CreateAddChainModel();
+    const auto extracted = BuildTfLiteTopologyMicrograph(source.data(), source.size(), 0, {0}, "chain.tflite");
+    REQUIRE(extracted);
+    REQUIRE(extracted.provenanceJson.find("\"source_input_tensor_indices\":[0]") != std::string::npos);
+    const auto *model = tflite::GetModel(extracted.model.data());
+    REQUIRE(model->subgraphs()->Get(0)->inputs()->size() == 1);
 }

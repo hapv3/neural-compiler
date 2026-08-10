@@ -7,6 +7,7 @@
 #include "tflite_model_inventory.hpp"
 
 #include "common/hash.hpp"
+#include "flatbuffer_utils.hpp"
 #include "tflite_schema_generated.hpp"
 
 #include <flatbuffers/flatbuffers.h>
@@ -16,8 +17,10 @@
 #include <iomanip>
 #include <limits>
 #include <map>
+#include <set>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace regor
 {
@@ -266,6 +269,249 @@ TfLiteModelInventory BuildTfLiteModelInventory(const uint8_t *data, size_t size,
     }
     os << "]}\n";
     return {os.str(), {}};
+}
+
+TfLiteTopologyMicrograph BuildTfLiteTopologyMicrograph(const uint8_t *data, size_t size,
+    unsigned subgraphIndex, const std::vector<unsigned> &operatorIndices, std::string_view artifactName)
+{
+    if ( !data || size < 8 ) return {{}, {}, "Input is too small to be a TFLite model"};
+    flatbuffers::Verifier verifier(data, size);
+    if ( !tflite::VerifyModelBuffer(verifier) ) return {{}, {}, "Input is not a valid TFLite FlatBuffer"};
+    if ( operatorIndices.empty() ) return {{}, {}, "At least one source operator index is required"};
+
+    const auto *model = tflite::GetModel(data);
+    const auto *subgraphs = model->subgraphs();
+    const auto *codes = model->operator_codes();
+    const auto *buffers = model->buffers();
+    if ( !subgraphs || subgraphIndex >= subgraphs->size() ) return {{}, {}, "Subgraph index is out of range"};
+    if ( !codes || !buffers ) return {{}, {}, "TFLite model has no operator-code or buffer table"};
+
+    const auto *subgraph = subgraphs->Get(subgraphIndex);
+    const auto *sourceOps = subgraph->operators();
+    const auto *sourceTensors = subgraph->tensors();
+    if ( !sourceOps || !sourceTensors ) return {{}, {}, "Selected subgraph has no operators or tensors"};
+
+    std::set<unsigned> selectedOps(operatorIndices.begin(), operatorIndices.end());
+    if ( selectedOps.size() != operatorIndices.size() ) return {{}, {}, "Source operator indices must be unique"};
+    for ( const unsigned index : selectedOps )
+    {
+        if ( index >= sourceOps->size() ) return {{}, {}, "Source operator index is out of range"};
+        if ( sourceOps->Get(index)->opcode_index() >= codes->size() )
+            return {{}, {}, "Operator references an invalid opcode index"};
+        if ( sourceOps->Get(index)->large_custom_options_size() != 0 )
+            return {{}, {}, "Large external custom options are not supported in mapping micro-graphs"};
+    }
+
+    std::map<unsigned, unsigned> producer;
+    std::map<unsigned, std::set<unsigned>> consumers;
+    for ( unsigned opIndex = 0; opIndex < sourceOps->size(); ++opIndex )
+    {
+        const auto *op = sourceOps->Get(opIndex);
+        if ( op->outputs() )
+        {
+            for ( const int32_t tensorIndex : *op->outputs() )
+                if ( tensorIndex >= 0 ) producer[unsigned(tensorIndex)] = opIndex;
+        }
+        if ( op->inputs() )
+        {
+            for ( const int32_t tensorIndex : *op->inputs() )
+                if ( tensorIndex >= 0 ) consumers[unsigned(tensorIndex)].insert(opIndex);
+        }
+    }
+
+    std::set<unsigned> selectedTensors;
+    std::set<unsigned> boundaryInputs;
+    std::set<unsigned> boundaryOutputs;
+    const auto hasConstantPayload = [&](const tflite::Tensor *tensor)
+    {
+        if ( tensor->buffer() >= buffers->size() ) return false;
+        const auto *buffer = buffers->Get(tensor->buffer());
+        return (buffer->data() && buffer->data()->size() != 0) || buffer->size() != 0;
+    };
+    const auto collectTensor = [&](int32_t tensorIndex, std::set<unsigned> &target) -> bool
+    {
+        if ( tensorIndex < 0 ) return true;
+        if ( unsigned(tensorIndex) >= sourceTensors->size() ) return false;
+        target.insert(unsigned(tensorIndex));
+        return true;
+    };
+    for ( const unsigned opIndex : selectedOps )
+    {
+        const auto *op = sourceOps->Get(opIndex);
+        if ( op->inputs() )
+        {
+            for ( const int32_t tensorIndex : *op->inputs() )
+            {
+                if ( !collectTensor(tensorIndex, selectedTensors) )
+                    return {{}, {}, "Operator references an invalid input tensor index"};
+                if ( tensorIndex < 0 ) continue;
+                const auto writer = producer.find(unsigned(tensorIndex));
+                const bool producedInside = writer != producer.end() && selectedOps.count(writer->second) != 0;
+                const auto *tensor = sourceTensors->Get(unsigned(tensorIndex));
+                if ( !producedInside && !hasConstantPayload(tensor) ) boundaryInputs.insert(unsigned(tensorIndex));
+            }
+        }
+        if ( op->outputs() )
+        {
+            for ( const int32_t tensorIndex : *op->outputs() )
+            {
+                if ( !collectTensor(tensorIndex, selectedTensors) )
+                    return {{}, {}, "Operator references an invalid output tensor index"};
+                if ( tensorIndex < 0 ) continue;
+                bool readOutside = false;
+                const auto readers = consumers.find(unsigned(tensorIndex));
+                if ( readers != consumers.end() )
+                    readOutside = std::any_of(readers->second.begin(), readers->second.end(),
+                        [&](unsigned reader) { return selectedOps.count(reader) == 0; });
+                const bool readInside = readers != consumers.end() && std::any_of(readers->second.begin(), readers->second.end(),
+                    [&](unsigned reader) { return selectedOps.count(reader) != 0; });
+                if ( readOutside || !readInside ) boundaryOutputs.insert(unsigned(tensorIndex));
+            }
+        }
+        if ( op->intermediates() )
+            for ( const int32_t tensorIndex : *op->intermediates() )
+                if ( !collectTensor(tensorIndex, selectedTensors) )
+                    return {{}, {}, "Operator references an invalid intermediate tensor index"};
+    }
+
+    std::map<unsigned, unsigned> tensorMap;
+    unsigned nextTensor = 0;
+    for ( const unsigned sourceIndex : selectedTensors ) tensorMap[sourceIndex] = nextTensor++;
+
+    std::set<unsigned> selectedBuffers{0};
+    for ( const unsigned sourceIndex : selectedTensors )
+    {
+        const unsigned bufferIndex = sourceTensors->Get(sourceIndex)->buffer();
+        if ( bufferIndex >= buffers->size() ) return {{}, {}, "Tensor references an invalid buffer index"};
+        const auto *buffer = buffers->Get(bufferIndex);
+        if ( buffer->size() != 0 &&
+             (buffer->offset() > size || buffer->size() > size - size_t(buffer->offset())) )
+            return {{}, {}, "External tensor buffer is outside the source model"};
+        selectedBuffers.insert(bufferIndex);
+    }
+    std::map<unsigned, unsigned> bufferMap;
+    unsigned nextBuffer = 0;
+    for ( const unsigned sourceIndex : selectedBuffers ) bufferMap[sourceIndex] = nextBuffer++;
+
+    flatbuffers::FlatBufferBuilder builder;
+    std::vector<flatbuffers::Offset<tflite::OperatorCode>> copiedCodes;
+    for ( const auto *code : *codes )
+    {
+        const auto copied = FlatbufferUtils::CopyTable(
+            builder, reinterpret_cast<const flatbuffers::Table *>(code), tflite::OperatorCode::MiniReflectTypeTable());
+        copiedCodes.emplace_back(copied.o);
+    }
+    std::vector<flatbuffers::Offset<tflite::Buffer>> copiedBuffers;
+    for ( const auto &[sourceIndex, unused] : bufferMap )
+    {
+        (void)unused;
+        const auto *sourceBuffer = buffers->Get(sourceIndex);
+        if ( sourceBuffer->size() != 0 )
+        {
+            const auto begin = data + sourceBuffer->offset();
+            const std::vector<uint8_t> payload(begin, begin + sourceBuffer->size());
+            copiedBuffers.push_back(tflite::CreateBufferDirect(builder, &payload));
+        }
+        else
+        {
+            const auto copied = FlatbufferUtils::CopyTable(builder,
+                reinterpret_cast<const flatbuffers::Table *>(sourceBuffer), tflite::Buffer::MiniReflectTypeTable());
+            copiedBuffers.emplace_back(copied.o);
+        }
+    }
+    std::vector<flatbuffers::Offset<tflite::Tensor>> copiedTensors;
+    for ( const auto &[sourceIndex, unused] : tensorMap )
+    {
+        (void)unused;
+        const auto copied = FlatbufferUtils::CopyTable(builder,
+            reinterpret_cast<const flatbuffers::Table *>(sourceTensors->Get(sourceIndex)), tflite::Tensor::MiniReflectTypeTable());
+        copiedTensors.emplace_back(copied.o);
+    }
+    std::vector<flatbuffers::Offset<tflite::Operator>> copiedOps;
+    for ( const unsigned sourceIndex : selectedOps )
+    {
+        const auto copied = FlatbufferUtils::CopyTable(builder,
+            reinterpret_cast<const flatbuffers::Table *>(sourceOps->Get(sourceIndex)), tflite::Operator::MiniReflectTypeTable());
+        copiedOps.emplace_back(copied.o);
+    }
+
+    const auto remapBoundary = [&](const std::set<unsigned> &source)
+    {
+        std::vector<int32_t> result;
+        for ( const unsigned index : source ) result.push_back(int32_t(tensorMap.at(index)));
+        return result;
+    };
+    const auto graphInputs = remapBoundary(boundaryInputs);
+    const auto graphOutputs = remapBoundary(boundaryOutputs);
+    std::vector<flatbuffers::Offset<tflite::SubGraph>> copiedSubgraphs{
+        tflite::CreateSubGraphDirect(builder, &copiedTensors, &graphInputs, &graphOutputs, &copiedOps, "mapping_micrograph"),
+    };
+    std::ostringstream description;
+    description << "Neural-AI topology micrograph from " << artifactName << " subgraph " << subgraphIndex;
+    const auto copiedModel = tflite::CreateModelDirect(
+        builder, model->version(), &copiedCodes, &copiedSubgraphs, description.str().c_str(), &copiedBuffers);
+    tflite::FinishModelBuffer(builder, copiedModel);
+
+    auto *mutableModel = tflite::GetMutableModel(builder.GetBufferPointer());
+    auto *mutableGraph = mutableModel->mutable_subgraphs()->GetMutableObject(0);
+    unsigned localTensor = 0;
+    for ( const auto &[sourceIndex, unused] : tensorMap )
+    {
+        (void)unused;
+        mutableGraph->mutable_tensors()->GetMutableObject(localTensor++)->mutate_buffer(
+            bufferMap.at(sourceTensors->Get(sourceIndex)->buffer()));
+    }
+    unsigned localOp = 0;
+    for ( const unsigned sourceIndex : selectedOps )
+    {
+        const auto patchTensorIndices = [&](flatbuffers::Vector<int32_t> *indices)
+        {
+            if ( !indices ) return;
+            for ( unsigned i = 0; i < indices->size(); ++i )
+            {
+                const int32_t sourceTensor = indices->Get(i);
+                if ( sourceTensor >= 0 ) indices->Mutate(i, int32_t(tensorMap.at(unsigned(sourceTensor))));
+            }
+        };
+        auto *mutableOp = mutableGraph->mutable_operators()->GetMutableObject(localOp++);
+        patchTensorIndices(mutableOp->mutable_inputs());
+        patchTensorIndices(mutableOp->mutable_outputs());
+        patchTensorIndices(mutableOp->mutable_intermediates());
+        (void)sourceIndex;
+    }
+
+    std::vector<uint8_t> result(builder.GetBufferPointer(), builder.GetBufferPointer() + builder.GetSize());
+    std::ostringstream provenance;
+    provenance << "{\"micrograph_schema_version\":1,\"source_artifact\":{\"name\":\""
+               << EscapeJson(artifactName) << "\",\"byte_size\":" << size
+               << ",\"hash_algorithm\":\"md5\",\"hash\":\"" << Md5Hex(data, size)
+               << "\"},\"subgraph_index\":" << subgraphIndex << ",\"source_operator_indices\":[";
+    bool first = true;
+    for ( const unsigned index : selectedOps )
+    {
+        if ( !first ) provenance << ',';
+        first = false;
+        provenance << index;
+    }
+    provenance << "],\"source_input_tensor_indices\":[";
+    first = true;
+    for ( const unsigned index : boundaryInputs )
+    {
+        if ( !first ) provenance << ',';
+        first = false;
+        provenance << index;
+    }
+    provenance << "],\"source_output_tensor_indices\":[";
+    first = true;
+    for ( const unsigned index : boundaryOutputs )
+    {
+        if ( !first ) provenance << ',';
+        first = false;
+        provenance << index;
+    }
+    provenance << "],\"micrograph\":{\"byte_size\":" << result.size()
+               << ",\"hash_algorithm\":\"md5\",\"hash\":\"" << Md5Hex(result.data(), result.size()) << "\"}}\n";
+    return {std::move(result), provenance.str(), {}};
 }
 
 }  // namespace regor
