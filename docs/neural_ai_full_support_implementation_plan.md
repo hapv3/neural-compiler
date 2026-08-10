@@ -16,8 +16,10 @@ Allowed scope:
   Makefiles, and simulation tooling may be extended for verification.
 - Existing simulation flows must continue to work.
 
-This is a design and implementation guide. It does not claim that the current
-hardware supports every TFLite or TOSA operator.
+This is a design and implementation guide for running selected full-size YOLO
+and MobileNet graphs. It is deliberately model-driven: it does not target full
+TFLite or TOSA operator coverage, and an operator is not in scope merely because
+it exists in either frontend format.
 
 ## 2. Architectural Conclusion
 
@@ -100,7 +102,9 @@ contract was audited.
 
 In this document, full support for the Neural-AI NPU means:
 
-- The input is a static-shape, batch-1 TFLite or TOSA model.
+- The input is a selected, static-shape, batch-1 full-size YOLO or MobileNet
+  model represented as TFLite, or as TOSA when the same model pattern is already
+  covered by the target contract.
 - Main activations and weights are signed INT8; bias and partial sums are INT32.
 - Native GEMM, FullyConnected, Conv, and pointwise paths require symmetric
   quantization: IFM zero point == 0 and weight zero point == 0. OFM zero point
@@ -108,8 +112,10 @@ In this document, full support for the Neural-AI NPU means:
   unsupported unless an explicit, tested affine-to-symmetric conversion is
   inserted before the native operation. The operator checker must reject
   violations before scheduling.
-- The graph only uses operators and parameter combinations covered by the
-  Neural-AI contract.
+- Every operator instance in the selected model corpus uses a documented and
+  tested Neural-AI lowering. Operators and parameter combinations outside that
+  corpus fail at compile time with an actionable diagnostic unless separately
+  promoted into the corpus.
 - The compiler produces one `.nai` file without requiring a model-specific
   `main.c`, C graph, hand-packed weights, or hand-written descriptors.
 - One generic firmware image can load and execute that file.
@@ -123,12 +129,50 @@ In this document, full support for the Neural-AI NPU means:
 Full support does not mean:
 
 - Every TFLite or TOSA operator.
+- Every YOLO or MobileNet version, input resolution, detection head, or optional
+  block. Support is claimed for named model artifacts in the release corpus and
+  for additional artifacts proven to use the same validated contracts.
 - Floating-point inference.
 - Dynamic shapes or dynamic allocation in firmware.
 - Arbitrary kernel, stride, dilation, or padding values beyond RTL limits.
 - Generic Softmax, GELU, NMS, or control flow without a verified software kernel.
 - Five-cluster scheduling, because the five-cluster top level is still planned.
 - Modifying RTL to make a model compilable.
+
+### 3.1. Target Model Corpus and Expansion Policy
+
+The release corpus, rather than the frontend operator catalog, defines scope.
+It must contain at least one selected full-size YOLO graph and one selected
+full-size MobileNet graph, with model hashes, input shapes, quantization
+metadata, and an operator-instance inventory checked into test data or generated
+reproducibly. Micro-MobileNet and Micro-YOLO remain fast regression and PMU
+baselines; they do not define feature completeness.
+
+Expected recurring patterns include:
+
+- YOLO: Conv plus fused activation, C2f/bottleneck residual Add, SPPF-style
+  MaxPool, nearest-neighbor upsample, channel Concat, detection heads, and only
+  the post-processing patterns included in the selected deployable artifact.
+- MobileNet: pointwise and depthwise Conv, fused ReLU/ReLU6, residual Add, and
+  global average pool. Hard-Swish and squeeze-excitation are required only when
+  the selected MobileNet artifact contains them.
+
+For every unsupported node discovered in that corpus:
+
+1. Prefer an existing RTL primitive, compiler fusion, layout view, or
+   quantization canonicalization.
+2. Add a constrained runtime or Spatz kernel only for a recurring model pattern
+   with byte-exact tests and an acceptable measured cost.
+3. Extend the command ABI only when existing commands cannot describe that
+   model-required lowering.
+4. Do not extend RTL for generic TFLite semantics. Any future RTL proposal must
+   be justified separately by a selected-model correctness or performance gap.
+5. Reject all unvalidated shapes, broadcasts, quantization forms, and operator
+   variants explicitly; do not silently route them through a generic firmware
+   loop.
+
+The generic firmware image is model-independent packaging and dispatch. It does
+not imply generic implementations of every frontend operator.
 
 ## 4. Current `neural-compiler` Architecture
 
@@ -501,7 +545,10 @@ live in new files and be selected by magic and version.
 
 ### 5.6. Effective Operator Support
 
-The current contract in `neural-ai/docs/operator_support_matrix.md` is:
+The current hardware and software primitives are broader than the compiler's
+release claim. The table below is a candidate-path inventory; a row is supported
+only for the constrained patterns exercised and tested by the selected YOLO and
+MobileNet corpus.
 
 | Family | Native or available path | Main limits |
 |---|---|---|
@@ -512,18 +559,21 @@ The current contract in `neural-ai/docs/operator_support_matrix.md` is:
 | C32 Conv | Multi-C32 linebuffer | K3, S1/S2, P1; IC/OC multiples of 32 |
 | Depthwise Conv | Depthwise linebuffer | K3, S1/S2, P1; tail lanes masked |
 | Requant | Per-channel systolic or Spatz | Shift range 0..31 |
-| Logistic/Clamp | AFU LUT | 256-entry LUT, out-of-place |
-| Add/Mul | AFU fast mode or Spatz | Fast mode covers selected quantization |
+| Logistic/Clamp/activation LUT | AFU LUT | 256-entry LUT, out-of-place; use for selected-model activation fusion or standalone activation only |
+| Add | AFU fast mode or Spatz | Equal-shape residual Add patterns selected by model quantization; no generic broadcast contract |
+| Mul | AFU `MUL_Q7` or fused LUT | `MUL_Q7` only for a proven Q7 stored-value contract; SiLU/Hard-Swish should be fused to a 256-entry LUT; no generic TFLite Mul contract |
 | MaxPool | Systolic or Spatz | Fast path is C32 K5 S1 P2 |
 | Upsample | Spatz | Graph contract is nearest-neighbor 2x |
 | Global AvgPool | AFU | C32 input, 1x1 output |
 | Views | Compiler metadata | Zero-copy only when storage order is preserved |
-| Concat | View, fused consumer, or Spatz | Generic N-way concat is not stable yet |
+| Concat | View, fused consumer, or constrained materialization | Only selected YOLO channel-concat patterns; generic N-way concat is out of scope |
 | DFL/class sigmoid | Model-specific AFU modes | Not equivalent to generic Softmax |
 
-The backend must first support exactly these parameter combinations. A generic
-fallback on Snitch or Spatz may only be advertised after the kernel and tests
-exist.
+The backend must support only the subset of these parameter combinations needed
+by the target corpus. A primitive's existence does not make the corresponding
+generic TFLite operator supported. Snitch or Spatz fallback is acceptable only
+for a demonstrated model requirement after byte-exact and performance tests;
+otherwise compilation must reject the node.
 
 ### 5.7. Requantization Contract
 
@@ -1087,9 +1137,11 @@ enum class NeuralAIOpMode {
     DepthwiseConv2DC32Requant,
     DepthwiseConv2DC32DownsampleRequant,
     LogisticLutI8,
+    SiluLutI8,
+    HardSwishLutI8,
     ClampI8,
     AddI8,
-    MulI8,
+    MulQ7I8,
     DflSoftmaxI8Q8,
     ClassSigmoidRow32High16I8,
     SpatzRequant,
@@ -1124,9 +1176,11 @@ removed (derived state) or treated as an assertion that the runtime validates
 and rejects if the predicate does not match. Different performance formulas
 must be used for full-group and tail paths.
 
-AFU mode names must map directly to hardware modes (`E8`, `E16`, `E32`,
+AFU command mode names must map directly to hardware modes (`E8`, `E16`, `E32`,
 `MUL_Q7`, `ADD_I8`, `DFL4_ROW32_Q8`, `CLASS_SIGMOID_ROW32_HIGH16`,
-`GLOBAL_AVGPOOL_C32`), not generic TFLite operator names.
+`GLOBAL_AVGPOOL_C32`), not generic TFLite operator names. Compiler-only modes
+such as `SiluLutI8` and `HardSwishLutI8` identify a proven graph fusion and then
+lower to `AFU_LUT`; they do not add an RTL mode.
 
 Classifier inputs:
 
@@ -1509,8 +1563,9 @@ Zero-point constraints:
 
 ### 7.12. Elementwise Quantization
 
-The current raw INT8 Add and Mul wrappers are not sufficient for generic TFLite
-quantization. Runtime v2 commands must carry complete quantization parameters.
+Elementwise lowering is model-pattern driven. The backend does not promise
+generic TFLite Add or Mul semantics, broadcasting, or arbitrary per-axis
+quantization.
 
 Add:
 
@@ -1526,13 +1581,36 @@ real = (q0 - zp0) * (q1 - zp1) * scale0 * scale1
 qout = round(real / scale_out) + zp_out
 ```
 
-Use the AFU fast mode only when the configuration matches exactly. Use a Spatz
-vector kernel or a scalar correctness fallback on Snitch for remaining cases,
-then optimize. The performance report must identify the selected path.
+For residual Add, use `ADD_I8` only when stored representations already match or
+when changing a private Conv producer's final requantization is proven
+byte-exact. Use the implemented quantization-correct Spatz Add only for a
+selected-model case that cannot be canonicalized and passes the model
+performance gate. Reject broadcast and unvalidated quantization forms.
+
+Do not add a generic TFLite Mul command or widen the RTL multiplier for this
+plan. Lower model-required multiplication as follows:
+
+- Fuse YOLO SiLU (`x * sigmoid(x)`) into a generated 256-entry INT8 LUT and
+  execute it with `AFU_LUT`.
+- Fuse MobileNet Hard-Swish into a generated 256-entry INT8 LUT when present in
+  the selected artifact.
+- Use existing AFU `MUL_Q7` only when the exact stored-value Q7 representation,
+  truncation behavior, clamp, and non-overlap constraints are proven.
+- Add a constrained channel-broadcast multiply for squeeze-excitation only if a
+  selected MobileNet artifact requires it and fusion cannot eliminate it. This
+  requires its own byte-exact reference and performance gate, but does not imply
+  generic two-tensor Mul support.
+- Reject all other Mul variants unless a named target model demonstrates the
+  need and the plan is revised with evidence.
+
+The performance report must identify the selected fusion or primitive. A scalar
+generic tensor loop is not a release path.
 
 Sigmoid and Clamp:
 
 - Generate a 256-byte LUT from input and output quantization.
+- Generate fused SiLU and Hard-Swish LUTs from the complete quantized reference
+  formula, including zero points, rounding, and clamp.
 - Fuse Clamp, ReLU, and ReLU6 into Conv requantization when possible.
 - Account for AFU out-of-place restrictions in allocation and liveness.
 
@@ -1878,8 +1956,11 @@ model into `.nai` and execute it using the Phase 1 runtime.
 
 ### Objective
 
-Support CNN backbones containing an RGB stem, pointwise Conv, C32 Conv, and
-depthwise Conv.
+Support the Conv backbones required by the selected full-size YOLO and
+MobileNet artifacts: RGB stem, pointwise Conv, C32 Conv, depthwise Conv, and
+their fused final-requantization activations. Channel, stride, and padding
+coverage is expanded from concrete model instances, not from generic TFLite
+Conv parameter space.
 
 Current progress: constrained pointwise Conv1x1, RGB K3 S2, generic full-group
 C32 K3, and depthwise K3 S1/S2 lowering are implemented. The generated command
@@ -1954,7 +2035,9 @@ The following must be complete before Conv compiler lowering begins:
 5. Depthwise S1/S2 with channel tails.
 6. Pointwise plus depthwise chain.
 7. C32 -> NHWC graph output.
-8. Full Micro-MobileNet graph with NHWC host buffers.
+8. Full Micro-MobileNet graph with NHWC host buffers as a fast regression.
+9. Selected full-size MobileNet compiler graph, first by staged prefixes and
+   then end-to-end under the full-graph simulation gate.
 
 ### Current Verification Evidence
 
@@ -1997,8 +2080,11 @@ The following must be complete before Conv compiler lowering begins:
 
 ### Exit Criteria
 
-- Micro-MobileNet no longer requires a hand-written graph, weights, or
-  descriptors.
+- The selected full-size MobileNet artifact no longer requires a hand-written
+  graph, weights, or descriptor, and every Conv/depthwise instance matches a
+  validated constrained mode.
+- Micro-MobileNet remains byte-exact and its 347,992-cycle native record remains
+  the regression/performance attribution baseline.
 - Per-channel bias and scale match the reference.
 - Peak TCDM and firmware size are reported and enforced.
 - Existing hand-written model tests still pass.
@@ -2007,7 +2093,9 @@ The following must be complete before Conv compiler lowering begins:
 
 ### Objective
 
-Support the non-Conv operations in the current Neural-AI operator matrix.
+Support only the non-Conv patterns exercised by the selected full-size YOLO and
+MobileNet graphs. The operator matrix is a primitive inventory, not a mandate
+to implement generic frontend semantics.
 
 Current progress: Add uses a three-way lowering policy. The 64-byte v2
 `AFU_BINARY` `ADD_I8` command is selected when the normalized Add is a raw
@@ -2205,8 +2293,12 @@ the required Phase 5 performance path for YOLO heads.
    materialization required by view, concat, and vector operations.
 5. Maintain the implemented two-input C32 materialized Concat fallback and add
    concat-consumer Conv fusion for YOLO head performance in Phase 5.
-6. Maintain the implemented quantization-correct Add fallback and implement
-   model-required Mul and standalone Requant software kernels.
+6. Maintain residual Add canonicalization and the implemented
+   quantization-correct Add fallback. Implement YOLO SiLU and, when present in
+   the selected MobileNet artifact, Hard-Swish as generated AFU LUT fusions.
+   Retain `MUL_Q7` only for proven Q7 patterns. Do not implement generic TFLite
+   Mul or standalone Requant solely for operator coverage; add a constrained
+   squeeze-excitation channel multiply only if the target corpus requires it.
 7. Maintain AFU LUT lowering for standalone Sigmoid and clipping while keeping
    source-fused activation clamps in final requantization.
 8. Maintain the implemented MaxPool K5 S1 P2, nearest-neighbor 2x C32, and
@@ -2220,9 +2312,14 @@ the required Phase 5 performance path for YOLO heads.
 - Every public graph output is contiguous frontend order, including outputs from
   native C32 and ROW32 producers.
 - Add scale, zero-point, clamp, raw-AFU, byte-exact Conv canonicalization, and
-  quantization-correct fallback tests; add randomized coverage with each new
-  model-required quantization pattern. Mul requires equivalent reference tests.
-- Exhaustive 256-value LUT tests.
+  quantization-correct fallback tests; add randomized coverage for each residual
+  pattern found in the target corpus.
+- Exhaustive 256-value LUT tests for Sigmoid, clipping, SiLU, and Hard-Swish
+  modes that are required by selected models, including extreme zero points,
+  scales, rounding boundaries, and clamps.
+- If `MUL_Q7` or squeeze-excitation channel multiply is selected, compare every
+  supported quantization/shape case with an independent integer reference and
+  reject nearby unsupported broadcasts and representations.
 - Two-input aligned materialized Concat plus rejection tests for channel tails,
   non-channel axes, and mismatched quantization; fused-consumer coverage belongs
   to Phase 5.
@@ -2230,19 +2327,23 @@ the required Phase 5 performance path for YOLO heads.
 
 ### Exit Criteria
 
-- Every row marked Supported in the operator matrix has compiler lowering and an
-  end-to-end test.
-- Every Partial row has a documented path or diagnostic; there is no silent
-  incorrect result.
+- Every Phase 4 operator instance in the selected full-size YOLO and MobileNet
+  artifacts has compiler lowering plus a focused test. Nearby unvalidated
+  variants stop with an actionable diagnostic.
+- No operator is advertised from primitive availability alone, and there is no
+  silent fallback for unvalidated TFLite variants.
 - No new generic tensor loop is added to firmware when a Spatz or iDMA path
   already exists.
+- Full-graph operator inventories contain no unexpected host/CPU fallback, and
+  Micro-MobileNet/Micro-YOLO regressions remain byte-exact.
 
 ## Phase 5 - DMA Overlap, Performance Model, and YOLO Patterns
 
 ### Objective
 
-Move from a correctness schedule to an optimized schedule and cover the existing
-YOLO model flow.
+Move from a correctness schedule to an optimized schedule and cover the selected
+full-size YOLO flow. Micro-YOLO remains the fast native performance baseline,
+not the feature target.
 
 ### Work Items
 
@@ -2252,7 +2353,8 @@ YOLO model flow.
 4. Calibrate the architecture performance model using PMU data.
 5. Enumerate tile candidates in the scheduler and select by measured cost.
 6. Fuse logical concat into dual-source Conv when the contract matches.
-7. Add DFL softmax4 and class-sigmoid pattern matching.
+7. Add DFL softmax4 and class-sigmoid pattern matching only when those exact
+   head patterns are present in the selected deployable YOLO artifact.
 8. Add a debug map from layer and tile IDs to command byte ranges.
 
 ### Tests
@@ -2261,25 +2363,34 @@ YOLO model flow.
 - Ping-pong buffer reuse under artificial TCDM stalls.
 - Blocking and overlapping schedules produce identical output.
 - PMU estimates remain within a defined error threshold.
-- Full Micro-YOLO end-to-end graph.
+- Selected full-size YOLO compiler graph, with staged or subgraph simulations
+  during development and a final full-graph run under the agreed long-simulation
+  workflow.
+- Micro-YOLO end-to-end regression and PMU baseline comparison.
 - Command-count and L2-traffic regression thresholds.
 
 ### Exit Criteria
 
 - DMA and compute actually overlap; rolling metadata alone is not sufficient.
-- Micro-YOLO compiles and runs without hand-written descriptors.
+- The selected full-size YOLO artifact compiles without hand-written descriptors
+  and every operator instance is accounted for by a validated lowering.
+- The generated graph is compared with the 388,146-cycle Micro-YOLO record using
+  normalized layer/path measurements where shapes differ; no unsupported claim
+  is inferred from raw total-cycle ratios between different model sizes.
 - Performance reports separate compute, DMA, AFU or Spatz, and stall time.
 
-## Phase 6 - Hardening, TOSA, and Release Gates
+## Phase 6 - Hardening and Release Gates
 
 ### Objective
 
-Turn the backend into a maintainable target rather than a model-specific
-prototype.
+Turn the model-driven YOLO/MobileNet backend into a maintainable target without
+expanding it into a generic TFLite or TOSA backend.
 
 ### Work Items
 
-1. Run the same backend from TOSA and GraphAPI canonical IR.
+1. Validate TOSA or GraphAPI input only for patterns already required and proven
+   by the selected model corpus. Frontend parity is not a release blocker when
+   no selected artifact uses that frontend.
 2. Audit all remaining `NHCWB16`, 16-byte alignment, and Ethos-target assertions;
    prove that `NHCWB16` is unreachable from the Neural-AI target.
 3. Fuzz and negative-test the package parser.
@@ -2293,7 +2404,9 @@ prototype.
 
 ### Exit Criteria
 
-- The supported TFLite and TOSA subsets use the same target backend.
+- Any supported TOSA/GraphAPI pattern uses the same target contracts as its
+  already-supported TFLite counterpart; no independent generic operator subset
+  is created.
 - There is no known silent fallback.
 - Runtime safely rejects malformed packages.
 - Ethos output and regression results remain unchanged.
@@ -2371,8 +2484,12 @@ Using `SIM_BUILD=/tmp/...` avoids adding build output to the source tree. RTL
 6. Per-operation Conv and vector end-to-end tests.
 7. Micro-MobileNet.
 8. Micro-YOLO.
-9. Full existing Neural-AI cluster regression.
-10. Git check confirming no RTL `.sv` diff under `hw`.
+9. Compiler and operator-inventory checks for selected full-size MobileNet and
+   YOLO artifacts.
+10. Staged full-size model subgraphs, then explicit full-graph simulation only
+    at the release gate and under the agreed long-simulation workflow.
+11. Full existing Neural-AI cluster regression.
+12. Git check confirming no RTL `.sv` diff under `hw`.
 
 ## 10. Diagnostics and Unsupported Behavior
 
@@ -2413,8 +2530,9 @@ Recommended independent changes:
 7. Pointwise and depthwise plus Micro-MobileNet.
 8. Views, layouts, vector, and AFU operations.
 9. Asynchronous DMA and performance model.
-10. YOLO patterns and Micro-YOLO.
-11. TOSA, hardening, and documentation.
+10. Selected full-size YOLO/MobileNet patterns and micro-model regressions.
+11. Hardening, optional frontend parity for already-supported patterns, and
+    documentation.
 
 Each change must:
 
@@ -2487,19 +2605,29 @@ overlap model only after asynchronous submit and wait commands have PMU coverage
 
 Risk: every unsupported operation becomes a scalar loop on Snitch.
 
-Mitigation: keep the supported subset explicit, prefer AFU, Spatz, and iDMA, and
-add fallbacks only for demonstrated model requirements with performance labels.
+Mitigation: derive the supported subset from the selected full-size model
+inventory, prefer fusion and existing AFU, Spatz, and iDMA primitives, and add a
+fallback only for a demonstrated recurring model requirement with byte-exact
+and performance evidence. Generic TFLite coverage must not drive RTL, ABI, or
+firmware growth.
 
 ## 13. Definition of Done
 
 The Neural-AI backend is complete for the current hardware contract when:
 
-- `vela --accelerator-config neural-ai --output-format nai model.tflite` produces
-  a `.nai` file.
+- `vela --accelerator-config neural-ai --output-format nai model.tflite`
+  produces a `.nai` file for each named full-size YOLO and MobileNet artifact in
+  the release corpus.
 - Builds are reproducible and the file contains no absolute runtime address.
 - Generic firmware loads the invocation and model without model-specific C code.
-- MatMul, RGB Conv, pointwise, C32 Conv, depthwise, and the current vector and AFU
-  operator matrix have compiler lowering and end-to-end tests.
+- Every operator instance in those artifacts maps to a constrained, documented,
+  tested lowering or fusion. Primitive availability and generic TFLite operator
+  names are not completion criteria.
+- Required Conv, depthwise, residual Add, activation, pooling, upsample, concat,
+  and selected detection-head patterns have focused byte-exact tests and
+  model-level coverage.
+- SiLU and Hard-Swish use LUT fusion when required; generic TFLite Mul and full
+  generic TFLite operator coverage remain explicitly out of scope.
 - Per-channel bias, multiplier, shift, and zero point follow RTL semantics.
 - Frontend and Graph IR keep logical NHWC shapes, and all rank-4 public bindings
   use contiguous NHWC storage.
@@ -2512,33 +2640,36 @@ The Neural-AI backend is complete for the current hardware contract when:
 - The runtime bounds-checks every section, reference, and command.
 - Firmware fits 32 KB ITCM and runtime data fits 32 KB DTCM.
 - Peak TCDM, command bytes, and constant bytes are reported.
+- Full-size model performance is reported by graph and attributed by operator
+  path. Micro-MobileNet (347,992 cycles) and Micro-YOLO raw-head (388,146
+  cycles) remain regression references; comparisons across different model
+  sizes use normalized layer/path data rather than raw total-cycle equivalence.
 - Existing ABI v1 and hand-written model tests still pass.
 - Existing Ethos-U compiler tests and output still pass.
 - There is no RTL `.sv` source change under `/home/dev01/neural-ai/hw`.
 
 ## 14. Recommended Starting Point
 
-Do not start with full Conv implementation. The first vertical slice should be:
+The foundational MatMul/Conv/runtime slices already exist. The next vertical
+slice should start from the selected full-size model artifacts rather than from
+another generic operator:
 
 ```text
-TFLite MatMul or FullyConnected
-  -> Regor Graph IR
-  -> preserved frontend-order model input
-  -> NHWC/contiguous-to-ROW32 boundary pack
-  -> Neural-AI scheduler and alignment
-  -> packed 32x32 weights
-  -> relocatable v2 commands
-  -> ROW32-to-frontend-order boundary unpack
-  -> .nai writer
-  -> generic software runtime
-  -> existing cluster simulator
-  -> reference output comparison
+selected full-size YOLO and MobileNet artifacts
+  -> reproducible operator-instance and quantization inventory
+  -> classify each instance against existing constrained lowerings
+  -> prioritize the first unsupported recurring hot-path pattern
+  -> prefer fusion or an existing RTL primitive
+  -> add focused compiler, host-runtime, and single-operator RTL tests
+  -> run staged model subgraphs
+  -> compare attributed PMU data with Micro-YOLO/Micro-MobileNet records
+  -> run the final full graph only at the release gate
 ```
 
-This slice exercises every important boundary: target factory, CLI, allocator,
-encoder, command ABI, writer, loader, runtime, and simulator. Port linebuffer and
-Conv only after the slice is stable. This avoids debugging the compiler,
-quantization, descriptors, and runtime simultaneously in one large graph.
+For the expected activation gap, implement byte-exact SiLU LUT fusion before
+considering any Mul datapath extension. For every later gap, revise the corpus
+inventory and constrained contract first. Do not add generic TFLite semantics or
+RTL merely to broaden an operator-support table.
 
 Estimated effort for one engineer, assuming the hardware contract remains fixed:
 
