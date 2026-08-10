@@ -1142,7 +1142,7 @@ TEST_CASE("Neural-AI constraints substitute INT8 Sigmoid with an AFU LUT")
     REQUIRE(constraints->OperatorQuery(OpType::LUT, &query) == QueryResult::Unsupported);
 }
 
-TEST_CASE("Neural-AI constraints accept only raw-safe Add quantization")
+TEST_CASE("Neural-AI constraints accept scalar INT8 Add quantization")
 {
     ArchNeuralAI arch;
     auto *constraints = arch.Constraints();
@@ -1168,9 +1168,12 @@ TEST_CASE("Neural-AI constraints accept only raw-safe Add quantization")
     REQUIRE(constraints->OperatorQuery(OpType::Add, &query) == QueryResult::Native);
 
     inputQuant.zeroPoints = {1};
-    REQUIRE(constraints->OperatorQuery(OpType::Add, &query) == QueryResult::Unsupported);
+    REQUIRE(constraints->OperatorQuery(OpType::Add, &query) == QueryResult::Native);
     inputQuant.zeroPoints = {0};
     outputQuant.quantMin = {0};
+    REQUIRE(constraints->OperatorQuery(OpType::Add, &query) == QueryResult::Native);
+
+    inputQuant.scales = {QuantizedScale(1.0), QuantizedScale(0.5)};
     REQUIRE(constraints->OperatorQuery(OpType::Add, &query) == QueryResult::Unsupported);
 }
 
@@ -1718,30 +1721,141 @@ TEST_CASE("Neural-AI compiler lowers quantization-safe Add through AFU binary")
     blob->Release();
 }
 
-TEST_CASE("Neural-AI compiler rejects Add modes that need requantization or activation")
+TEST_CASE("Neural-AI compiler lowers quantized Add through Spatz")
 {
-    const auto rejects = [](flatbuffers::DetachedBuffer model)
+    const auto lowersToSpatz = [](flatbuffers::DetachedBuffer model)
     {
         std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
         Compiler compiler(architecture);
         const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
         REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
         REQUIRE(compiler.LoadTflite(model.data(), model.size()));
-        bool rejected = false;
-        try
+        const bool compiled = compiler.Compile();
+        INFO(compiler.LastError());
+        REQUIRE(compiled);
+        IRegorBlob *blob = compiler.Output();
+        REQUIRE(blob != nullptr);
+        int64_t size = 0;
+        const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+        const uint32_t commandBytes = Read32(data + 64 + 12);
+        uint32_t offset = 224;
+        uint32_t spatzCommands = 0;
+        while ( offset < 224 + commandBytes )
         {
-            rejected = !compiler.Compile();
+            const uint16_t type = Read16(data + offset);
+            const uint16_t commandSize = Read16(data + offset + 2);
+            REQUIRE(commandSize >= 32);
+            if ( type == uint16_t(neuralai::CommandType::SpatzAdd) )
+            {
+                REQUIRE(commandSize == sizeof(neuralai::CommandSpatzAddV2));
+                REQUIRE(Read32(data + offset + 40) == 128);
+                REQUIRE(int32_t(Read32(data + offset + 44)) > 0);
+                REQUIRE(int32_t(Read32(data + offset + 52)) > 0);
+                REQUIRE(int32_t(Read32(data + offset + 60)) > 0);
+                REQUIRE(Read32(data + offset + 88) == 20);
+                ++spatzCommands;
+            }
+            offset += commandSize;
         }
-        catch ( const std::runtime_error & )
-        {
-            rejected = true;
-        }
-        REQUIRE(rejected);
+        REQUIRE(offset == 224 + commandBytes);
+        REQUIRE(spatzCommands == 1);
+        blob->Unmap(const_cast<uint8_t *>(data));
+        blob->Release();
     };
 
-    rejects(BuildAddModel(1.0f, 0.5f, 1.0f));
-    rejects(BuildAddModel(1.0f, 1.0f, 1.0f, 1));
-    rejects(BuildAddModel(1.0f, 1.0f, 1.0f, 0, tflite::ActivationFunctionType::RELU));
+    lowersToSpatz(BuildAddModel(1.0f, 1.0f, 1.0f, 1));
+    lowersToSpatz(BuildAddModel(1.0f, 0.5f, 1.0f));
+}
+
+TEST_CASE("Neural-AI canonicalizes a private clamped Conv producer for raw AFU Add")
+{
+    auto input = CreateTensor("input", Shape(1, 2, 2, 32), DataType::Int8);
+    auto convOfm = CreateTensor("conv", Shape(1, 2, 2, 32), DataType::Int8);
+    auto skip = CreateTensor("skip", Shape(1, 2, 2, 32), DataType::Int8);
+    auto output = CreateTensor("output", Shape(1, 2, 2, 32), DataType::Int8);
+    auto conv = CreateOperation(
+        OpType::Conv2D, TensorUsage::IFM0, input, TensorUsage::OFM, convOfm);
+    auto add = CreateOperation(OpType::Add, TensorUsage::IFM0, convOfm,
+        TensorUsage::IFM1, skip, TensorUsage::OFM, output);
+
+    Quantization producerQuant;
+    producerQuant.scales = {QuantizedScale::Unit()};
+    producerQuant.zeroPoints = {10};
+    producerQuant.quantMin = {10};
+    producerQuant.quantMax = {100};
+    conv->Output(TensorUsage::OFM)->Set(producerQuant);
+    Quantization convAddQuant = producerQuant;
+    convAddQuant.scales = {QuantizedScale(32768.0)};
+    add->Input(TensorUsage::IFM0)->Set(convAddQuant);
+    Quantization skipQuant;
+    skipQuant.scales = {QuantizedScale(32768.0)};
+    skipQuant.zeroPoints = {5};
+    skipQuant.quantMin = {-128};
+    skipQuant.quantMax = {127};
+    add->Input(TensorUsage::IFM1)->Set(skipQuant);
+    Quantization outputQuant;
+    outputQuant.scales = {QuantizedScale(1.0 / 32768.0)};
+    outputQuant.zeroPoints = {20};
+    outputQuant.quantMin = {-128};
+    outputQuant.quantMax = {127};
+    add->Output(TensorUsage::OFM)->Set(outputQuant);
+
+    std::vector<std::shared_ptr<Operation>> operations = {conv, add};
+    auto graph = CreateGraph(operations);
+    GraphOptimiserOptions options;
+    ArchNeuralAI architecture;
+    NeuralAIGraphOptimiser optimiser(architecture.Constraints(), options, nullptr);
+    optimiser.OptimiseGraph(graph.get());
+
+    REQUIRE(conv->Output(TensorUsage::OFM)->quantization.zeroPoints[0] == 15);
+    REQUIRE(conv->Output(TensorUsage::OFM)->quantization.quantMin[0] == 15);
+    REQUIRE(conv->Output(TensorUsage::OFM)->quantization.quantMax[0] == 105);
+    REQUIRE(add->Input(TensorUsage::IFM0)->quantization.zeroPoints[0] == 15);
+    REQUIRE(add->Input(TensorUsage::IFM0)->quantization.zeroPoints[0] +
+        add->Input(TensorUsage::IFM1)->quantization.zeroPoints[0] ==
+        add->Output(TensorUsage::OFM)->quantization.zeroPoints[0]);
+}
+
+TEST_CASE("Neural-AI does not canonicalize Conv Add when AFU would lose the output clamp")
+{
+    auto input = CreateTensor("input", Shape(1, 2, 2, 32), DataType::Int8);
+    auto convOfm = CreateTensor("conv", Shape(1, 2, 2, 32), DataType::Int8);
+    auto skip = CreateTensor("skip", Shape(1, 2, 2, 32), DataType::Int8);
+    auto output = CreateTensor("output", Shape(1, 2, 2, 32), DataType::Int8);
+    auto conv = CreateOperation(
+        OpType::Conv2D, TensorUsage::IFM0, input, TensorUsage::OFM, convOfm);
+    auto add = CreateOperation(OpType::Add, TensorUsage::IFM0, convOfm,
+        TensorUsage::IFM1, skip, TensorUsage::OFM, output);
+
+    Quantization producerQuant;
+    producerQuant.scales = {QuantizedScale::Unit()};
+    producerQuant.zeroPoints = {10};
+    producerQuant.quantMin = {10};
+    producerQuant.quantMax = {100};
+    conv->Output(TensorUsage::OFM)->Set(producerQuant);
+    Quantization convAddQuant = producerQuant;
+    convAddQuant.scales = {QuantizedScale(32768.0)};
+    add->Input(TensorUsage::IFM0)->Set(convAddQuant);
+    Quantization skipQuant;
+    skipQuant.scales = {QuantizedScale(32768.0)};
+    skipQuant.zeroPoints = {5};
+    add->Input(TensorUsage::IFM1)->Set(skipQuant);
+    Quantization outputQuant;
+    outputQuant.scales = {QuantizedScale(1.0 / 32768.0)};
+    outputQuant.zeroPoints = {20};
+    outputQuant.quantMin = {0};
+    outputQuant.quantMax = {127};
+    add->Output(TensorUsage::OFM)->Set(outputQuant);
+
+    std::vector<std::shared_ptr<Operation>> operations = {conv, add};
+    auto graph = CreateGraph(operations);
+    GraphOptimiserOptions options;
+    ArchNeuralAI architecture;
+    NeuralAIGraphOptimiser optimiser(architecture.Constraints(), options, nullptr);
+    optimiser.OptimiseGraph(graph.get());
+
+    REQUIRE(conv->Output(TensorUsage::OFM)->quantization.zeroPoints[0] == 10);
+    REQUIRE(add->Input(TensorUsage::IFM0)->quantization.zeroPoints[0] == 10);
 }
 
 TEST_CASE("Neural-AI compiler lowers INT8 Sigmoid through a raw-byte AFU LUT")

@@ -345,6 +345,28 @@ struct CommandAFUBinaryV2
     uint32_t reserved[4];
 };
 
+struct CommandSpatzAddV2
+{
+    CommandHeaderV2 header;
+    RefV1 lhs;
+    RefV1 rhs;
+    RefV1 ofm;
+    uint32_t length;
+    int32_t lhsScale;
+    uint32_t lhsShift;
+    int32_t rhsScale;
+    uint32_t rhsShift;
+    int32_t outputScale;
+    uint32_t outputShift;
+    int32_t lhsZeroPoint;
+    int32_t rhsZeroPoint;
+    int32_t outputZeroPoint;
+    int32_t clampMin;
+    int32_t clampMax;
+    uint32_t doubleRoundShift;
+    uint32_t reserved;
+};
+
 struct CommandAFUGlobalAvgPoolV2
 {
     CommandHeaderV2 header;
@@ -445,6 +467,7 @@ static_assert(sizeof(CommandPointwiseC32V2) == 96);
 static_assert(sizeof(CommandDepthwiseC32V2) == 96);
 static_assert(sizeof(CommandAFULutV2) == 64);
 static_assert(sizeof(CommandAFUBinaryV2) == 64);
+static_assert(sizeof(CommandSpatzAddV2) == 96);
 static_assert(sizeof(CommandAFUGlobalAvgPoolV2) == 64);
 static_assert(sizeof(CommandUpsampleNearestV2) == 64);
 static_assert(sizeof(CommandMaxPoolV2) == 96);

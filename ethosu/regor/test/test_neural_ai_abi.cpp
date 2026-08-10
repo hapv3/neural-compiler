@@ -91,6 +91,34 @@ TEST_CASE("neural_ai_abi freezes AFU binary command layout")
     REQUIRE(command.mode == 1);
 }
 
+TEST_CASE("neural_ai_abi freezes Spatz quantized Add command layout")
+{
+    CommandSpatzAddV2 command{};
+    command.header.type = uint16_t(CommandType::SpatzAdd);
+    command.header.sizeBytes = sizeof(command);
+    command.lhsScale = 0x60000000;
+    command.lhsShift = 20;
+    command.rhsScale = 0x40000000;
+    command.rhsShift = 20;
+    command.outputScale = 0x40000000;
+    command.outputShift = 41;
+    command.lhsZeroPoint = -3;
+    command.rhsZeroPoint = 5;
+    command.outputZeroPoint = 7;
+    command.clampMin = -100;
+    command.clampMax = 100;
+    command.doubleRoundShift = 20;
+
+    REQUIRE(command.header.type == 16);
+    REQUIRE(command.header.sizeBytes == 96);
+    REQUIRE(command.lhsScale == 0x60000000);
+    REQUIRE(command.outputShift == 41);
+    REQUIRE(command.lhsZeroPoint == -3);
+    REQUIRE(command.clampMax == 100);
+    REQUIRE(command.doubleRoundShift == 20);
+    REQUIRE(command.reserved == 0);
+}
+
 TEST_CASE("neural_ai_abi freezes AFU LUT command layout")
 {
     CommandAFULutV2 command{};

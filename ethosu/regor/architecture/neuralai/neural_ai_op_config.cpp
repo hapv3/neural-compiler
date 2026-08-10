@@ -25,7 +25,7 @@ const char *NeuralAIOpModeName(NeuralAIOpMode mode)
     case NeuralAIOpMode::DepthwiseC32S1Requant: return "DepthwiseC32S1Requant";
     case NeuralAIOpMode::DepthwiseC32S2Requant: return "DepthwiseC32S2Requant";
     case NeuralAIOpMode::AFULutI8: return "AFULutI8";
-    case NeuralAIOpMode::AFUBinaryAddI8: return "AFUBinaryAddI8";
+    case NeuralAIOpMode::AddI8: return "AddI8";
     case NeuralAIOpMode::AFUGlobalAvgPoolC32: return "AFUGlobalAvgPoolC32";
     case NeuralAIOpMode::UpsampleNearestC32: return "UpsampleNearestC32";
     case NeuralAIOpMode::MaxPoolK5S1P2C32: return "MaxPoolK5S1P2C32";

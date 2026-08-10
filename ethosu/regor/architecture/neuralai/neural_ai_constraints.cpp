@@ -49,23 +49,26 @@ bool HasFullInt8Clamp(const ArchFM &fm)
                 [](int64_t value) { return value >= 127; }));
 }
 
-bool HasRawAddScales(const ArchFM &lhs, const ArchFM &rhs, const ArchFM &ofm)
+bool HasInt8Clamp(const ArchFM &fm)
 {
-    if ( lhs.quantization == nullptr || rhs.quantization == nullptr || ofm.quantization == nullptr )
-        return false;
-    const auto &lhsScales = lhs.quantization->scales;
-    const auto &rhsScales = rhs.quantization->scales;
-    const auto &ofmScales = ofm.quantization->scales;
-    if ( lhsScales.size() != 1 || rhsScales.size() != 1 || ofmScales.size() != 1 )
-        return false;
+    if ( fm.quantization == nullptr ) return false;
+    const auto &quantization = *fm.quantization;
+    return (quantization.quantMin.empty() ||
+            (quantization.quantMin.size() == 1 && quantization.quantMin[0] >= -128 &&
+                quantization.quantMin[0] <= 127)) &&
+           (quantization.quantMax.empty() ||
+            (quantization.quantMax.size() == 1 && quantization.quantMax[0] >= -128 &&
+                quantization.quantMax[0] <= 127)) &&
+           (quantization.quantMin.empty() || quantization.quantMax.empty() ||
+               quantization.quantMin[0] <= quantization.quantMax[0]);
+}
 
-    // TFLite graph optimisation represents equal-scale INT8 Add as two
-    // 2^15 input rescales followed by a 2^-15 output rescale.  This exact
-    // identity is the only form whose stored values can be added directly.
-    const QuantizedScale inputIdentity(32768.0);
-    const QuantizedScale outputIdentity(1.0 / 32768.0);
-    return lhsScales[0] == inputIdentity && rhsScales[0] == inputIdentity &&
-           ofmScales[0] == outputIdentity;
+bool HasScalarSoftwareScale(const ArchFM &fm)
+{
+    if ( fm.quantization == nullptr || fm.quantization->scales.size() != 1 ||
+         fm.quantization->zeroPoints.size() > 1 ) return false;
+    const QuantizedScale &scale = fm.quantization->scales[0];
+    return scale.scale > 0 && scale.shift >= 0 && scale.shift <= 63;
 }
 
 int64_t ScalarZeroPoint(const Quantization &quantization)
@@ -342,21 +345,18 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
     }
     if ( opType == OpType::Add )
     {
-        if ( query->ifm[1].type != DataType::Int8 ||
+        if ( query->ifm[0].type != DataType::Int8 || query->ifm[1].type != DataType::Int8 ||
+             query->ofm.type != DataType::Int8 ||
              !IsStaticPositiveShape(query->ifm[1].shape) ||
              !HasBatchOne(query->ifm[0].shape) ||
              !HasBatchOne(query->ifm[1].shape) ||
              !HasBatchOne(query->ofm.shape) ||
              query->ifm[0].shape != query->ifm[1].shape ||
              query->ifm[0].shape != query->ofm.shape ||
-             query->ifm[0].quantization == nullptr ||
-             query->ifm[1].quantization == nullptr ||
-             query->ofm.quantization == nullptr ||
-             !HasRawAddScales(query->ifm[0], query->ifm[1], query->ofm) ||
-             !HasSymmetricZeroPoint(query->ifm[0]) ||
-             !HasSymmetricZeroPoint(query->ifm[1]) ||
-             !HasSymmetricZeroPoint(query->ofm) ||
-             !HasFullInt8Clamp(query->ofm) )
+             !HasScalarSoftwareScale(query->ifm[0]) ||
+             !HasScalarSoftwareScale(query->ifm[1]) ||
+             !HasScalarSoftwareScale(query->ofm) ||
+             !HasInt8Clamp(query->ofm) )
         {
             return QueryResult::Unsupported;
         }
@@ -487,7 +487,8 @@ bool NeuralAIConstraints::SupportedZeroPoint(int64_t zeroPoint, TensorUsage usag
          opType == OpType::Concat ||
          IsClipping(opType) )
         return (IsIFM(usage) || IsOFM(usage)) && zeroPoint >= -128 && zeroPoint <= 127;
-    if ( opType == OpType::Add ) return (IsIFM(usage) || IsOFM(usage)) && zeroPoint == 0;
+    if ( opType == OpType::Add )
+        return (IsIFM(usage) || IsOFM(usage)) && zeroPoint >= -128 && zeroPoint <= 127;
     if ( opType == OpType::AvgPool )
         return (IsIFM(usage) || IsOFM(usage)) && zeroPoint >= -128 && zeroPoint <= 127;
     if ( opType == OpType::MaxPool )

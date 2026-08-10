@@ -525,18 +525,21 @@ struct GeneratorContext
         return true;
     }
 
-    bool AppendAFUAdd(const SchedulerOperation *operation, std::string &error)
+    bool AppendAdd(const SchedulerOperation *operation, std::string &error)
     {
         const SchedulerOpInfo *cost = schedule->Cost(operation);
         if ( cost == nullptr || cost->Config() == nullptr )
             return SetError(error, "Neural-AI Add operation has no validated target mode");
         const auto *config = static_cast<const NeuralAIOpConfig *>(cost->Config());
-        if ( config->Mode() != NeuralAIOpMode::AFUBinaryAddI8 )
-            return SetError(error, "Neural-AI Add operation has no validated AFU binary mode");
+        if ( config->Mode() != NeuralAIOpMode::AddI8 )
+            return SetError(error, "Neural-AI Add operation has no validated INT8 mode");
         const SchedulerConnection *lhs = operation->IFM(0);
         const SchedulerConnection *rhs = operation->IFM(1);
         const SchedulerConnection *ofm = operation->OFM();
         if ( lhs == nullptr || rhs == nullptr || ofm == nullptr ||
+             !IsFullTensorConnection(lhs) || !IsFullTensorConnection(rhs) ||
+             !IsFullTensorConnection(ofm) || lhs->Type() != regor::DataType::Int8 ||
+             rhs->Type() != regor::DataType::Int8 || ofm->Type() != regor::DataType::Int8 ||
              lhs->tensor->format != TensorFormat::C32Blocked ||
              rhs->tensor->format != TensorFormat::C32Blocked ||
              ofm->tensor->format != TensorFormat::C32Blocked ||
@@ -554,6 +557,10 @@ struct GeneratorContext
         if ( !error.empty() ) return false;
         RefV1 ofmRef = TensorRef(ofm->tensor.get(), 0, error);
         if ( !error.empty() ) return false;
+        if ( lhsRef.region != uint16_t(Region::TCDMScratch) ||
+             rhsRef.region != uint16_t(Region::TCDMScratch) ||
+             ofmRef.region != uint16_t(Region::TCDMScratch) )
+            return SetError(error, "Neural-AI Add requires internal TCDM tensors");
         const auto overlaps = [lhsBytes](const RefV1 &first, const RefV1 &second)
         {
             if ( first.region != second.region || first.index != second.index ) return false;
@@ -561,15 +568,74 @@ struct GeneratorContext
                    uint64_t(second.offset) < uint64_t(first.offset) + uint64_t(lhsBytes);
         };
         if ( overlaps(lhsRef, ofmRef) || overlaps(rhsRef, ofmRef) )
-            return SetError(error, "Neural-AI AFU Add requires out-of-place output storage");
-        AppendHeader(artifact->commands, CommandType::AFUBinary, 64,
-            uint32_t(operation->Index()), 0);
-        AppendRef(artifact->commands, lhsRef);
-        AppendRef(artifact->commands, rhsRef);
-        AppendRef(artifact->commands, ofmRef);
-        Append32(artifact->commands, uint32_t(lhsBytes));
-        Append32(artifact->commands, uint32_t(AFUBinaryMode::AddI8));
-        AppendZeros(artifact->commands, 4);
+            return SetError(error, "Neural-AI Add requires out-of-place output storage");
+
+        const auto scalarZeroPoint = [](const Quantization &quantization)
+        {
+            return quantization.zeroPoints.empty() ? 0 : int(quantization.zeroPoints[0]);
+        };
+        if ( lhs->quantization.scales.size() != 1 || rhs->quantization.scales.size() != 1 ||
+             ofm->quantization.scales.size() != 1 || lhs->quantization.zeroPoints.size() > 1 ||
+             rhs->quantization.zeroPoints.size() > 1 || ofm->quantization.zeroPoints.size() > 1 )
+            return SetError(error, "Neural-AI Add requires scalar quantization");
+        const QuantizedScale lhsScale = lhs->quantization.scales[0];
+        const QuantizedScale rhsScale = rhs->quantization.scales[0];
+        const QuantizedScale outputScale = ofm->quantization.scales[0];
+        const int lhsZeroPoint = scalarZeroPoint(lhs->quantization);
+        const int rhsZeroPoint = scalarZeroPoint(rhs->quantization);
+        const int outputZeroPoint = scalarZeroPoint(ofm->quantization);
+        const QuantizedScale inputIdentity(32768.0);
+        const QuantizedScale outputIdentity(1.0 / 32768.0);
+        const bool rawSafe = lhsScale == inputIdentity && rhsScale == inputIdentity &&
+            outputScale == outputIdentity &&
+            int64_t(lhsZeroPoint) + int64_t(rhsZeroPoint) == int64_t(outputZeroPoint) &&
+            (ofm->quantization.quantMin.empty() ||
+                ofm->quantization.quantMin[0] <= -128) &&
+            (ofm->quantization.quantMax.empty() || ofm->quantization.quantMax[0] >= 127);
+        if ( rawSafe )
+        {
+            AppendHeader(artifact->commands, CommandType::AFUBinary, 64,
+                uint32_t(operation->Index()), 0);
+            AppendRef(artifact->commands, lhsRef);
+            AppendRef(artifact->commands, rhsRef);
+            AppendRef(artifact->commands, ofmRef);
+            Append32(artifact->commands, uint32_t(lhsBytes));
+            Append32(artifact->commands, uint32_t(AFUBinaryMode::AddI8));
+            AppendZeros(artifact->commands, 4);
+        }
+        else
+        {
+            const auto *round = operation->Attribute<double_round_shift_attr_t>();
+            const int clampMin = ofm->quantization.quantMin.empty() ? -128 :
+                int(ofm->quantization.quantMin[0]);
+            const int clampMax = ofm->quantization.quantMax.empty() ? 127 :
+                int(ofm->quantization.quantMax[0]);
+            if ( round == nullptr || (round->shift != 0 && round->shift != 20) ||
+                 ofm->rounding != RoundMode::DBL || lhsScale.scale <= 0 || rhsScale.scale <= 0 ||
+                 outputScale.scale <= 0 || lhsScale.shift < 0 || lhsScale.shift > 63 ||
+                 rhsScale.shift < 0 || rhsScale.shift > 63 || outputScale.shift < 0 ||
+                 outputScale.shift > 63 || clampMin < -128 || clampMax > 127 || clampMin > clampMax )
+                return SetError(error, "Neural-AI SPATZ_ADD quantization is outside the INT8 contract");
+            AppendHeader(artifact->commands, CommandType::SpatzAdd, 96,
+                uint32_t(operation->Index()), 0);
+            AppendRef(artifact->commands, lhsRef);
+            AppendRef(artifact->commands, rhsRef);
+            AppendRef(artifact->commands, ofmRef);
+            Append32(artifact->commands, uint32_t(lhsBytes));
+            Append32(artifact->commands, uint32_t(lhsScale.scale));
+            Append32(artifact->commands, uint32_t(lhsScale.shift));
+            Append32(artifact->commands, uint32_t(rhsScale.scale));
+            Append32(artifact->commands, uint32_t(rhsScale.shift));
+            Append32(artifact->commands, uint32_t(outputScale.scale));
+            Append32(artifact->commands, uint32_t(outputScale.shift));
+            Append32(artifact->commands, uint32_t(lhsZeroPoint));
+            Append32(artifact->commands, uint32_t(rhsZeroPoint));
+            Append32(artifact->commands, uint32_t(outputZeroPoint));
+            Append32(artifact->commands, uint32_t(clampMin));
+            Append32(artifact->commands, uint32_t(clampMax));
+            Append32(artifact->commands, uint32_t(round->shift));
+            Append32(artifact->commands, 0);
+        }
         ++artifact->commandCount;
         return true;
     }
@@ -1269,7 +1335,7 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         }
         else if ( operation->Type() == OpType::Add )
         {
-            if ( !context.AppendAFUAdd(operation.get(), error) ) return false;
+            if ( !context.AppendAdd(operation.get(), error) ) return false;
         }
         else if ( operation->Type() == OpType::LUT )
         {

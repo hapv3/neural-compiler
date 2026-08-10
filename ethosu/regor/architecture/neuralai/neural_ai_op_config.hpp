@@ -23,7 +23,7 @@ enum class NeuralAIOpMode
     DepthwiseC32S1Requant,
     DepthwiseC32S2Requant,
     AFULutI8,
-    AFUBinaryAddI8,
+    AddI8,
     AFUGlobalAvgPoolC32,
     UpsampleNearestC32,
     MaxPoolK5S1P2C32,
