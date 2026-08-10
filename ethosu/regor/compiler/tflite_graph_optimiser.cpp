@@ -1678,6 +1678,114 @@ Operation *TFLiteGraphOptimiser::RewriteSpaceToBatchConvBatchToSpace(Graph *cons
     return returnOp;
 }
 
+Operation *TFLiteGraphOptimiser::RewriteSiluToLUT(Graph *const graph, Operation *const operation)
+{
+    if ( operation->Type() != OpType::Mul || !_constraints->SupportsSiluLUTFusion() ) return operation;
+
+    auto *lhs = operation->Input(TensorUsage::IFM0);
+    auto *rhs = operation->Input(TensorUsage::IFM1);
+    auto *ofm = operation->Output(TensorUsage::OFM);
+    if ( lhs == nullptr || rhs == nullptr || ofm == nullptr ) return operation;
+
+    ArchOperatorQuery mulQuery;
+    Set(mulQuery.ifm[0], lhs);
+    Set(mulQuery.ifm[1], rhs);
+    Set(mulQuery.ofm, ofm);
+    if ( _constraints->OperatorQuery(OpType::Mul, &mulQuery).Any(QueryResult::Native) ) return operation;
+
+    TensorConnection *value = nullptr;
+    TensorConnection *sigmoidOutput = nullptr;
+    std::shared_ptr<Operation> sigmoid;
+    for ( auto [candidateValue, candidateSigmoid] : {std::pair{lhs, rhs}, std::pair{rhs, lhs}} )
+    {
+        const auto &writers = candidateSigmoid->tensor->Writers();
+        if ( writers.size() == 1 && writers.front()->Type() == OpType::Sigmoid )
+        {
+            value = candidateValue;
+            sigmoidOutput = candidateSigmoid;
+            sigmoid = writers.front();
+            break;
+        }
+    }
+    if ( sigmoid == nullptr || graph->IsOutput(sigmoidOutput->tensor.get()) ||
+         sigmoidOutput->tensor->Readers().size() != 1 ||
+         sigmoidOutput->tensor->Readers().front().get() != operation )
+        return operation;
+
+    auto *sigmoidInput = sigmoid->Input(TensorUsage::IFM0);
+    auto *sigmoidOfm = sigmoid->Output(TensorUsage::OFM);
+    if ( sigmoidInput == nullptr || sigmoidOfm == nullptr ||
+         sigmoidInput->tensor != value->tensor || sigmoidOfm->tensor != sigmoidOutput->tensor ||
+         value->tensor->Type() != DataType::Int8 || sigmoidOutput->tensor->Type() != DataType::Int8 ||
+         ofm->tensor->Type() != DataType::Int8 || value->shape != sigmoidInput->shape ||
+         value->shape != sigmoidOutput->shape || value->shape != ofm->shape ||
+         value->slice || sigmoidInput->slice || sigmoidOutput->slice || ofm->slice ||
+         value->quantization != sigmoidInput->quantization )
+        return operation;
+
+    const auto hasScalarQuantization = [](const Quantization &quantization)
+    {
+        return quantization.type == QuantizationType::TFLITE &&
+               quantization.scales.size() == 1 && quantization.zeroPoints.size() == 1 &&
+               quantization.scales[0].scale > 0 && quantization.zeroPoints[0] >= -128 &&
+               quantization.zeroPoints[0] <= 127;
+    };
+    if ( !hasScalarQuantization(value->quantization) ||
+         !hasScalarQuantization(sigmoidOutput->quantization) ||
+         !hasScalarQuantization(ofm->quantization) )
+        return operation;
+
+    const double valueScale = value->quantization.scales[0].Dequantize();
+    const double sigmoidScale = sigmoidOutput->quantization.scales[0].Dequantize();
+    const double outputScale = ofm->quantization.scales[0].Dequantize();
+    if ( sigmoidScale != (1.0 / 256.0) || sigmoidOutput->quantization.zeroPoints[0] != -128 )
+        return operation;
+    QuantizedScale multiplyScale = ElementwiseMulScale(valueScale, sigmoidScale, outputScale);
+    if ( multiplyScale.scale <= 0 || multiplyScale.Dequantize() > 1.0 ) return operation;
+    // MultiplyByQuantizedMultiplier uses the TFLite left-shift-positive notation.
+    multiplyScale.shift = 31 - multiplyScale.shift;
+    if ( multiplyScale.shift > 0 ) return operation;
+
+    ArchOperatorQuery lutQuery;
+    Set(lutQuery.ifm[0], value);
+    Set(lutQuery.ofm, ofm);
+    if ( !_constraints->OperatorQuery(OpType::LUT, &lutQuery).Any(QueryResult::Native) ) return operation;
+
+    const int valueZeroPoint = int(value->quantization.zeroPoints[0]);
+    const int sigmoidZeroPoint = int(sigmoidOutput->quantization.zeroPoints[0]);
+    const int outputZeroPoint = int(ofm->quantization.zeroPoints[0]);
+    std::vector<int8_t> lut;
+    lut.reserve(256);
+    for ( int input = -128; input <= 127; ++input )
+    {
+        const double realInput = valueScale * double(input - valueZeroPoint);
+        const double realSigmoid = ClampSigmoid8(realInput);
+        int quantizedSigmoid = int(std::round(double(sigmoidZeroPoint) + realSigmoid / sigmoidScale));
+        quantizedSigmoid = std::clamp(quantizedSigmoid, -128, 127);
+        const int product = (input - valueZeroPoint) * (quantizedSigmoid - sigmoidZeroPoint);
+        int result = outputZeroPoint + MultiplyByQuantizedMultiplier(product, multiplyScale);
+        result = std::clamp(result, -128, 127);
+        lut.push_back(int8_t(result));
+    }
+
+    auto lutTensor = CreateConstTensor(
+        "silu", DataType::Int8, std::make_shared<Buffer>(std::move(lut)));
+    Operation *lutOp = CreateLUT(value->tensor, lutTensor, value->quantization,
+        value->quantization, DataType::Int8, &value->shape, ofm->tensor);
+    lutOp->Output(TensorUsage::OFM)->Set(RoundMode::NATURAL);
+    if ( !_supportedOps->Check(lutOp) )
+    {
+        lutOp->Disconnect();
+        return operation;
+    }
+
+    RecordOptimisation(*sigmoid, lutOp);
+    RecordOptimisation(*operation, lutOp);
+    operation->Disconnect();
+    sigmoid->Disconnect();
+    return lutOp;
+}
+
 template<typename T>
 void DilateWeights(TensorConnection *weightConn, const Point2i &dilatedKernelSize, const Point2i &manualDilation)
 {

@@ -263,6 +263,59 @@ flatbuffers::DetachedBuffer BuildSigmoidModel()
     return builder.Release();
 }
 
+flatbuffers::DetachedBuffer BuildSiluModel(bool reverseMulInputs = false)
+{
+    flatbuffers::FlatBufferBuilder builder;
+    const std::vector<float> inputScales = {0.125f};
+    const std::vector<float> sigmoidScales = {1.0f / 256.0f};
+    const std::vector<float> outputScales = {1.0f / 16.0f};
+    const std::vector<int64_t> inputZeroPoints = {0};
+    const std::vector<int64_t> sigmoidZeroPoints = {-128};
+    const std::vector<int64_t> outputZeroPoints = {0};
+    const auto inputQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &inputScales, &inputZeroPoints);
+    const auto sigmoidQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &sigmoidScales, &sigmoidZeroPoints);
+    const auto outputQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &outputScales, &outputZeroPoints);
+    std::vector<flatbuffers::Offset<tflite::Buffer>> buffers = {
+        tflite::CreateBufferDirect(builder),
+    };
+    const std::vector<int32_t> shape = {1, 2, 3, 33};
+    std::vector<flatbuffers::Offset<tflite::Tensor>> tensors = {
+        tflite::CreateTensorDirect(builder, &shape, tflite::TensorType::INT8, 0, "input", inputQuant),
+        tflite::CreateTensorDirect(builder, &shape, tflite::TensorType::INT8, 0, "sigmoid", sigmoidQuant),
+        tflite::CreateTensorDirect(builder, &shape, tflite::TensorType::INT8, 0, "output", outputQuant),
+    };
+    const std::vector<int32_t> sigmoidInputs = {0};
+    const std::vector<int32_t> sigmoidOutputs = {1};
+    const std::vector<int32_t> mulInputs = reverseMulInputs ?
+        std::vector<int32_t>{1, 0} : std::vector<int32_t>{0, 1};
+    const std::vector<int32_t> mulOutputs = {2};
+    const auto mulOptions = tflite::CreateMulOptions(builder);
+    const std::vector<flatbuffers::Offset<tflite::Operator>> operations = {
+        tflite::CreateOperatorDirect(builder, 0, &sigmoidInputs, &sigmoidOutputs),
+        tflite::CreateOperatorDirect(builder, 1, &mulInputs, &mulOutputs,
+            tflite::BuiltinOptions::MulOptions, mulOptions.Union()),
+    };
+    const std::vector<int32_t> graphInputs = {0};
+    const std::vector<int32_t> graphOutputs = {2};
+    const std::vector<flatbuffers::Offset<tflite::SubGraph>> subgraphs = {
+        tflite::CreateSubGraphDirect(
+            builder, &tensors, &graphInputs, &graphOutputs, &operations, "main"),
+    };
+    const std::vector<flatbuffers::Offset<tflite::OperatorCode>> operatorCodes = {
+        tflite::CreateOperatorCodeDirect(builder, int8_t(tflite::BuiltinOperator::LOGISTIC),
+            nullptr, 1, tflite::BuiltinOperator::LOGISTIC),
+        tflite::CreateOperatorCodeDirect(builder, int8_t(tflite::BuiltinOperator::MUL),
+            nullptr, 1, tflite::BuiltinOperator::MUL),
+    };
+    const auto model = tflite::CreateModelDirect(
+        builder, 3, &operatorCodes, &subgraphs, "Neural-AI SiLU test", &buffers);
+    tflite::FinishModelBuffer(builder, model);
+    return builder.Release();
+}
+
 flatbuffers::DetachedBuffer BuildClippingModel(tflite::BuiltinOperator activation)
 {
     flatbuffers::FlatBufferBuilder builder;
@@ -1104,6 +1157,7 @@ TEST_CASE("Neural-AI constraints substitute INT8 Sigmoid with an AFU LUT")
 {
     ArchNeuralAI arch;
     auto *constraints = arch.Constraints();
+    REQUIRE(constraints->SupportsSiluLUTFusion());
     ArchOperatorQuery query;
     query.ifm[0].type = DataType::Int8;
     query.ifm[0].shape = Shape(1, 2, 3, 33);
@@ -1195,6 +1249,21 @@ TEST_CASE("Neural-AI admits only native-depth-preserving reshape-like views")
         REQUIRE_FALSE(checker->Check(view.get()));
         view->Disconnect();
     }
+}
+
+TEST_CASE("Neural-AI keeps generic TFLite Mul outside the supported operator set")
+{
+    auto checker = MakeSupportedOpsChecker(REGOR_ARCH_NEURALAI);
+    auto lhs = CreateTensor("lhs", Shape(1, 2, 2, 32), DataType::Int8);
+    auto rhs = CreateTensor("rhs", Shape(1, 2, 2, 32), DataType::Int8);
+    auto output = CreateTensor("output", Shape(1, 2, 2, 32), DataType::Int8);
+    auto mul = CreateOperation(
+        OpType::Mul, TensorUsage::IFM0, lhs, TensorUsage::IFM1, rhs, TensorUsage::OFM, output);
+    mul->Input(TensorUsage::IFM0)->Set(Quantization::Unit());
+    mul->Input(TensorUsage::IFM1)->Set(Quantization::Unit());
+    mul->Output(TensorUsage::OFM)->Set(Quantization::Unit());
+    REQUIRE_FALSE(checker->Check(mul.get()));
+    mul->Disconnect();
 }
 
 TEST_CASE("Neural-AI Graph IR keeps depth-changing views for explicit rejection")
@@ -1914,6 +1983,74 @@ TEST_CASE("Neural-AI compiler lowers INT8 Sigmoid through a raw-byte AFU LUT")
     REQUIRE(lutCommands == 1);
     blob->Unmap(const_cast<uint8_t *>(data));
     blob->Release();
+}
+
+TEST_CASE("Neural-AI compiler fuses quantized YOLO SiLU into one AFU LUT")
+{
+    for ( const bool reverseMulInputs : {false, true} )
+    {
+        INFO("reverseMulInputs=" << reverseMulInputs);
+        std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+        Compiler compiler(architecture);
+        const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+        REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+        const auto model = BuildSiluModel(reverseMulInputs);
+        REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+        const bool compiled = compiler.Compile();
+        INFO(compiler.LastError());
+        REQUIRE(compiled);
+
+        IRegorBlob *blob = compiler.Output();
+        REQUIRE(blob != nullptr);
+        int64_t size = 0;
+        const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+        const uint32_t commandBytes = Read32(data + 64 + 12);
+        const uint32_t constantsOffset = Read32(data + 96 + 8);
+        const uint32_t constantsBytes = Read32(data + 96 + 12);
+        uint32_t offset = 224;
+        uint32_t lutCommands = 0;
+        while ( offset < 224 + commandBytes )
+        {
+            const uint16_t type = Read16(data + offset);
+            const uint16_t commandSize = Read16(data + offset + 2);
+            REQUIRE(commandSize >= 32);
+            REQUIRE(type != uint16_t(neuralai::CommandType::AFUBinary));
+            REQUIRE(type != uint16_t(neuralai::CommandType::SpatzMul));
+            if ( type == uint16_t(neuralai::CommandType::AFULut) )
+            {
+                REQUIRE(commandSize == sizeof(neuralai::CommandAFULutV2));
+                REQUIRE(Read16(data + offset + 16) == uint16_t(neuralai::Region::TCDMScratch));
+                REQUIRE(Read16(data + offset + 24) == uint16_t(neuralai::Region::TCDMScratch));
+                REQUIRE(Read16(data + offset + 32) == uint16_t(neuralai::Region::ModelConstants));
+                const uint32_t ifmOffset = Read32(data + offset + 20);
+                const uint32_t ofmOffset = Read32(data + offset + 28);
+                const uint32_t lutOffset = Read32(data + offset + 36);
+                REQUIRE((ifmOffset + 384 <= ofmOffset || ofmOffset + 384 <= ifmOffset));
+                REQUIRE(Read32(data + offset + 40) == 384);
+                REQUIRE(lutOffset <= constantsBytes);
+                REQUIRE(256 <= constantsBytes - lutOffset);
+                for ( uint32_t raw = 0; raw < 256; ++raw )
+                {
+                    const int input = raw < 128 ? int(raw) : int(raw) - 256;
+                    const double real = std::clamp(0.125 * double(input), -8.0, 8.0);
+                    const double sigmoid = 1.0 / (1.0 + std::exp(-real));
+                    const int quantizedSigmoid = std::clamp(
+                        int(std::round(-128.0 + 256.0 * sigmoid)), -128, 127);
+                    const int product = input * (quantizedSigmoid + 128);
+                    const int rounded = product >= 0 ?
+                        (product + 64) / 128 : -((-product + 64) / 128);
+                    const int expected = std::clamp(rounded, -128, 127);
+                    REQUIRE(data[constantsOffset + lutOffset + raw] == uint8_t(expected));
+                }
+                ++lutCommands;
+            }
+            offset += commandSize;
+        }
+        REQUIRE(offset == 224 + commandBytes);
+        REQUIRE(lutCommands == 1);
+        blob->Unmap(const_cast<uint8_t *>(data));
+        blob->Release();
+    }
 }
 
 TEST_CASE("Neural-AI compiler lowers standalone INT8 ReLU6 through an AFU LUT")

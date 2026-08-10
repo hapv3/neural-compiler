@@ -119,6 +119,7 @@ private:
     Operation *CreateTransposeForMatMul(const std::shared_ptr<Tensor> &ifm, const Shape &ofmShape);
     Operation *RewriteBatchMatMul(Graph *const, Operation *const operation);
     Operation *RewriteSpaceToBatchConvBatchToSpace(Graph *const, Operation *const operation);
+    Operation *RewriteSiluToLUT(Graph *const graph, Operation *const operation);
     Operation *FixupDilationGT2(Graph *const, Operation *const operation);
     Operation *FixupBias(Graph *const, Operation *const operation);
 
@@ -216,6 +217,7 @@ public:
                 // _supportedOperators->Check(newOp)
                 // before replacing a pattern with newOp
                 &TFLiteGraphOptimiser::RewriteSpaceToBatchConvBatchToSpace,
+                &TFLiteGraphOptimiser::RewriteSiluToLUT,
             }
         },
         {

@@ -133,6 +133,8 @@ public:
     virtual bool SupportsDoubleBroadcast() = 0;
     // Whether clipping activations may be represented by the producer's requantization bounds.
     virtual bool SupportsFusedActivationClamping() const { return false; }
+    // Whether the frontend may replace the quantized x*sigmoid(x) pattern with one LUT.
+    virtual bool SupportsSiluLUTFusion() const { return false; }
     // Whether a reshape-like operation can alias storage without changing its
     // architecture-specific physical interpretation.
     virtual bool CanAliasReshape(const Shape &, const Shape &) const { return true; }

@@ -43,6 +43,7 @@ public:
     bool SupportsRescale(DataType, DataType) override { return false; }
     bool SupportsDoubleBroadcast() override { return false; }
     bool SupportsFusedActivationClamping() const override { return true; }
+    bool SupportsSiluLUTFusion() const override { return true; }
     bool CanAliasReshape(const Shape &ifmShape, const Shape &ofmShape) const override
     {
         return ifmShape.Elements64() == ofmShape.Elements64() &&
