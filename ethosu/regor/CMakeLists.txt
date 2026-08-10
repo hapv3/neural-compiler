@@ -306,6 +306,7 @@ regor_lib(
         "tflite/tflite_reader.cpp"
         "tflite/tflite_writer.cpp"
         "tflite/tflite_mapping.cpp"
+        "tflite/tflite_model_inventory.cpp"
         "tflite/tflite_model_semantics.cpp"
         "tflite/tflite_supported_operators.cpp"
         "tflite/tflite_supported_operators_neural_ai.cpp"
@@ -325,6 +326,21 @@ regor_lib(
         regor-objects
     PUBLIC_HEADERS
         ${REGOR_HEADERS}
+)
+
+regor_exe(
+    NAME
+        neural_ai_model_inventory
+    OUTPUT_NAME
+        neural-ai-model-inventory
+    COMPONENT
+        regor
+    SOURCES
+        "tools/neural_ai_model_inventory.cpp"
+    INC_DIRS
+        ${CMAKE_CURRENT_SOURCE_DIR}
+    DEPS
+        regor-static
 )
 
 if (REGOR_PYTHON_BINDINGS_DESTINATION)

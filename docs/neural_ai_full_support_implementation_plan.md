@@ -148,6 +148,23 @@ metadata, and an operator-instance inventory checked into test data or generated
 reproducibly. Micro-MobileNet and Micro-YOLO remain fast regression and PMU
 baselines; they do not define feature completeness.
 
+Generate each TFLite source inventory with the Regor tool built as
+`neural-ai-model-inventory`:
+
+```sh
+neural-ai-model-inventory model.tflite > model.inventory.json
+```
+
+The deterministic JSON records the artifact basename, byte size and explicitly
+labelled MD5 identity hash, TFLite schema version, sorted operator counts,
+subgraph bindings, every tensor shape/type/buffer/quantization tuple, every
+operator edge, and the YOLO/MobileNet-relevant builtin options such as Conv and
+pool kernel/stride/padding, fused activation, concat axis, and nearest-resize
+flags. It intentionally contains no target-support classification: inventory
+describes what the model requests, while the separately reviewed constrained
+contracts decide what Neural-AI accepts. Release metadata may additionally
+record a SHA-256 digest without changing this source inventory format.
+
 Expected recurring patterns include:
 
 - YOLO: Conv plus fused activation, C2f/bottleneck residual Add, SPPF-style

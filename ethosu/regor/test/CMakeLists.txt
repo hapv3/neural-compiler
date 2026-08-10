@@ -70,6 +70,7 @@ add_catch_test(
         test_fast_storage_allocator.cpp
         test_tflite_fb.cpp
         test_tflite_reader.cpp
+        test_tflite_model_inventory.cpp
         test_custom_operator_ethosu.cpp
         test_tflite_supported_operators.cpp
         test_passthrough.cpp
