@@ -2270,6 +2270,13 @@ The following must be complete before Conv compiler lowering begins:
   and the full graph byte-exactly. The full package contains two `AFU_BINARY`
   residual Adds, one `AFU_GLOBAL_AVGPOOL`, and the expected Conv/linebuffer
   commands, with no `AFU_LUT` activation command.
+- The compiler-generated Micro-MobileNet stage-1 stem Conv
+  (`96x96x3 -> 48x48x32`) is a byte-exact PASS on Verilator at 83,786 PMU
+  cycles. Its PMU attribution is 41,801 retired Snitch instructions, 2,304
+  systolic compute cycles, 3,426 iDMA busy cycles, and 248 TCDM stall cycles.
+  This is a single stem-Conv attribution run from
+  `test_compiler_generated_micro_mobilenet_stage1`, not an equivalent
+  full-graph comparison.
 - Neural-AI compiler-runtime host ABI/layout/quantization checks pass.
 - Compiler-generated Verilator packages pass byte-exactly:
   - RGB K3 S2 C3 -> C32: 195,997 simulated ns after wide-row chunking, versus
