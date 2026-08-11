@@ -152,17 +152,16 @@ new runtime path has not yet passed E2E.
 | Storage-preserving views | Verified | reshape/squeeze/expand-dims; public output is materialized |
 | StridedSlice | Verified | C32-aligned aliases plus exact C32-to-C16 high-half materialization |
 | Materialized Concat | Verified | exactly two aligned C32 inputs; generic correctness fallback |
-| YOLO C144 head transpose | Compiler verified, runtime blocked | three `[0,3,1,2]` head packs; E2E currently returns status 4 |
+| YOLO C144 head transpose | Verified | three `[0,3,1,2]` head packs; vectorized C32-to-CHW runtime path |
 | DFL transpose/Softmax4 | Not implemented | exact op 236 pattern only; no generic Transpose/Softmax |
 | Async DMA and overlap | Not implemented | blocking execution remains correct; performance phase |
 | Full selected graphs | In progress | full compile must contain no CPU fallback and fit TCDM |
 
 The complete Regor suite passed 230 cases and 628,349 assertions after the C144
-compiler increment. Runtime ABI/host checks and cross-compiles pass for the
-uncommitted C144 runtime work, but the E2E failure below prevents claiming or
-committing that runtime increment.
+compiler increment. Runtime ABI/host checks, cross-compiles, firmware-size gate,
+and focused C144 E2E now pass.
 
-### Current open blocker: YOLO C144 head pack
+### Verified YOLO C144 head pack
 
 Selected transpose instances:
 
@@ -185,11 +184,15 @@ instances. The exact op-197 fixture is 1,032 bytes, MD5
 `51474bc8b289f991feede52575ed6e58`, three commands, and requires 44,800 TCDM
 bytes. TFLite `BUILTIN_REF` produces an exact 14,400-byte golden.
 
-The package structure is valid at inspection time: input NHWC-to-C32, one
-`C32ToCHW` command with mode 5 and C144 valid depth, then output DMA. However,
-the focused Verilator test returned runtime status `4` instead of pass status
-`3` at 70,676 ns. This is the first task to diagnose. Do not widen the compiler
-contract or modify RTL to hide the failure.
+The package contains input NHWC-to-C32, one `C32ToCHW` command with mode 5 and
+C144 valid depth, then output DMA. The focused Verilator test passes all 14,400
+bytes at 155,705 total simulated ns, 125,397 ns measured invocation time, and
+85,414 PMU cycles. Those cycles are 24.5% of the 347,992-cycle Micro-MobileNet
+reference and 22.0% of the 388,146-cycle Micro-YOLO reference. These ratios are
+focused cross-workload attribution only, not 1:1 targets. The runtime uses
+strided vector loads and contiguous vector stores, with no scalar byte-copy or
+command-per-byte slow path. The earlier status-4 failure was a cocotb setup bug:
+the focused test had not written its invocation and binding table to L2.
 
 ### Verified YOLO-specific evidence
 
@@ -221,23 +224,7 @@ contract or modify RTL to hide the failure.
 
 ## 5. Remaining work, in execution order
 
-### P0 — Close the C144 runtime blocker
-
-1. Decode status `4` and identify the exact validator, resolver, or dispatch
-   rejection; compare the serialized package against the host-dispatch path.
-2. Fix only the ABI/runtime/kernel defect. Keep mode 5, exact shapes, and
-   fail-closed validation.
-3. Run host ABI/runtime checks, Spatz cross-build, full firmware build, and
-   `.text < 32 KiB` check.
-4. Regenerate the exact fixture and confirm all 14,400 golden bytes.
-5. Start the focused Verilator test and immediately end the Codex section.
-6. In the next section, inspect the result. Commit the runtime increment only if
-   E2E passes; otherwise record the precise failure and continue diagnosis.
-
-No RTL change is expected. If evidence shows that RTL must change, stop and ask
-for explicit permission before editing any `.sv` file.
-
-### P1 — Implement only the exact DFL head pattern
+### P0 — Implement only the exact DFL head pattern
 
 The next compiler blocker is op 236, not another form of the C144 pack. Inventory
 and constrain the complete local topology around:
@@ -252,7 +239,7 @@ transpose materialization. Admit only the selected axes, ranks, bin count,
 quantization, and consumers. Add adjacent negative tests. Generic Transpose and
 generic Softmax remain unsupported.
 
-### P2 — Close remaining selected detection-tail contracts
+### P1 — Close remaining selected detection-tail contracts
 
 Walk the full artifact to the next unsupported source ID after each verified
 increment. Constrain only corpus forms of reshape/slice, class sigmoid, DFL
@@ -261,7 +248,7 @@ Prefer fusion, metadata views, and producer canonicalization over standalone
 commands. Do not introduce generic Mul, broadcasting, arbitrary slice, or host
 fallback merely to make compilation continue.
 
-### P3 — Full-graph memory feasibility
+### P2 — Full-graph memory feasibility
 
 After all operator mappings close:
 
@@ -273,7 +260,7 @@ After all operator mappings close:
 - Add concat-consumer Conv fusion where materialized Concat is a measured YOLO
   hot path. The two-input aligned materialization remains a correctness fallback.
 
-### P4 — Performance and DMA overlap
+### P3 — Performance and DMA overlap
 
 Only after correctness and SRAM feasibility:
 
@@ -285,12 +272,10 @@ Only after correctness and SRAM feasibility:
 - Add layer/tile-to-command-byte debug mapping and L2-traffic/command-count
   regression thresholds.
 
-### P5 — Hardening and release
+### P4 — Hardening and release
 
 - Pin the full-size MobileNet artifact and close its exact operator inventory.
 - Fuzz package parsing; test version mismatch and ABI compatibility.
-- Audit Neural-AI paths for `NHCWB16`, 16-byte assumptions, unsafe aliases,
-  integer overflow, overlap, and nondeterministic artifact generation.
 - Add actionable diagnostics and user documentation.
 - Run all compiler, runtime, focused RTL, Micro-MobileNet, Micro-YOLO, and final
   selected full-graph regressions. Confirm `git diff -- neural-ai/hw` is empty
