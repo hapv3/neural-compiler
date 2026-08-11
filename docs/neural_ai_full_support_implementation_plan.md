@@ -153,7 +153,7 @@ new runtime path has not yet passed E2E.
 | StridedSlice | Verified | C32-aligned aliases plus exact C32-to-C16 high-half materialization |
 | Materialized Concat | Verified | exactly two aligned C32 inputs; generic correctness fallback |
 | YOLO C144 head transpose | Verified | three `[0,3,1,2]` head packs; vectorized C32-to-CHW runtime path |
-| DFL transpose/Softmax4 | Not implemented | exact op 236 pattern only; no generic Transpose/Softmax |
+| DFL16 projection | Awaiting RTL permission | exact ops 234–239; four coordinates, 16-bin Softmax and expectation |
 | Async DMA and overlap | Not implemented | blocking execution remains correct; performance phase |
 | Full selected graphs | In progress | full compile must contain no CPU fallback and fit TCDM |
 
@@ -224,20 +224,37 @@ the focused test had not written its invocation and binding table to L2.
 
 ## 5. Remaining work, in execution order
 
-### P0 — Implement only the exact DFL head pattern
+### P0 — Implement only the exact DFL16 head pattern
 
-The next compiler blocker is op 236, not another form of the C144 pack. Inventory
-and constrain the complete local topology around:
+The next compiler blocker is op 236, not another form of the C144 pack. The
+selected artifact's exact topology is:
 
 ```text
-[1,4,16,2100] --Transpose [0,1,3,2]--> [1,4,2100,16]
-              -> Softmax over the 16-bin axis -> reviewed DFL consumers
+[1,144,2100] --slice first 64 channels--> [1,64,2100]
+  -> reshape [1,4,16,2100]
+  -> transpose [0,1,3,2] to [1,4,2100,16]
+  -> Softmax over 16 bins
+  -> Conv1x1 with constant weights [0..15]
+  -> [1,4,2100,1] -> reshape [1,1,4,2100]
 ```
 
-Prefer a fused compact/vector Softmax4/DFL lowering that avoids a generic
-transpose materialization. Admit only the selected axes, ranks, bin count,
-quantization, and consumers. Add adjacent negative tests. Generic Transpose and
-generic Softmax remain unsupported.
+Input logits are INT8 with scale `0.265464634` and zero point `63`; Softmax
+output is canonical INT8 scale `1/256`, zero point `-128`; the projection output
+uses scale `0.0449872725`, zero point `-128`. Fuse the view, transpose, Softmax16,
+and expectation projection so the 134,400-byte transpose/Softmax intermediate is
+never materialized. Admit only batch 1, four coordinates, 16 bins, 2,100
+locations, the selected scalar quantization, constant `[0..15]` projection, and
+private intermediates. Add adjacent negative tests. Generic Transpose, Softmax,
+and Conv-based post-processing remain unsupported.
+
+The existing AFU mode 5 implements Micro-YOLO's four-bin contract (`4 sides × 4
+bins`) and cannot compose a 16-bin normalization because all 16 exponentials
+must share one sum. All eight AFU mode IDs are currently occupied. A fast DFL16
+path therefore requires an explicitly approved RTL generalization of the current
+DFL mode (while preserving the four-bin regression), or another measured native
+vector implementation proven not to create a model hot-path slow fallback. Do
+not add the multi-pass scalar/temporary-buffer software form merely to advance
+compilation.
 
 ### P1 — Close remaining selected detection-tail contracts
 
