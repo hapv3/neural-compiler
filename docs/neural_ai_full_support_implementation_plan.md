@@ -2087,9 +2087,11 @@ model into `.nai` and execute it using the Phase 1 runtime.
 
 - Compiler C++ tests compile pointwise M=257 and M=511 into one full-row
   `POINTWISE_C32` command per output group. The runtime decomposes each command
-  into at most 256-row systolic stripes while caching up to three input-group
-  weight tiles. This changes compiler/runtime scheduling only; it requires no
-  ABI wire-layout or RTL change.
+  into at most 256-row systolic stripes. For up to four input C32 groups, their
+  contiguous weight tiles are staged once as a block in the reserved 4 KiB
+  command window; larger group counts retain the existing three-slot cache and
+  transient fallback. This changes runtime scheduling only; it requires no ABI
+  wire-layout or RTL change.
 - GEMM weight-packing tests cover K and N boundaries 1, 31, 32, 33, 63, 64,
   and 65, checking every valid byte and every zero-padded lane.
 - Focused compiler-generated pointwise M=257 and M=511 packages both pass
@@ -2135,9 +2137,10 @@ classifier. This required TFLite SAME padding with asymmetric 0/1 sides for
 even-sized K3 S2 inputs. ReLU6 is fused into the producing Conv's existing
 per-channel requantization, so this graph does not emit a standalone AFU LUT
 command. The full compiler-generated graph now passes byte-exactly on the
-current Verilator model. Pointwise command coalescing reduces its PMU result to
-393,750 cycles, so correctness remains closed while the performance gate stays
-open against the documented 347,992-cycle native Micro-MobileNet record.
+current Verilator model. Pointwise command coalescing and contiguous weight
+batching reduce its PMU result to 390,082 cycles, so correctness remains closed
+while the performance gate stays open against the documented 347,992-cycle
+native Micro-MobileNet record.
 
 ### Prerequisite Gate
 
@@ -2281,11 +2284,13 @@ The following must be complete before Conv compiler lowering begins:
   `test_compiler_generated_micro_mobilenet_stage1`, not an equivalent
   full-graph comparison.
 - The compiler-generated Micro-MobileNet stage-10 prefix remains a byte-exact
-  PASS on Verilator after pointwise coalescing. Its command count falls from 63
-  to 39, PMU cycles from 338,498 to 287,654 (-15.0%), and completed iDMA
-  operations from 227 to 139. This remains attribution only: the prefix has a
-  36,864-byte public output boundary and is not equivalent to either full-graph
-  workload. The source test is
+  PASS on Verilator after pointwise coalescing and contiguous weight batching.
+  Its command count falls from 63 to 39, PMU cycles from 338,498 to 284,232
+  (-16.0%), and completed iDMA operations from 227 to 125. Relative to the
+  coalescing-only result, batching saves 3,422 cycles (1.19%) and 14 iDMA
+  submissions while leaving systolic compute and TCDM stalls unchanged. This
+  remains attribution only: the prefix has a 36,864-byte public output boundary
+  and is not equivalent to either full-graph workload. The source test is
   `test_compiler_generated_micro_mobilenet_stage10`.
 - Neural-AI compiler-runtime host ABI/layout/quantization checks pass.
 - Compiler-generated Verilator packages pass byte-exactly:
@@ -2356,14 +2361,16 @@ The following must be complete before Conv compiler lowering begins:
   `POINTWISE_C32` command for each output group. The model reader copies aligned
   ABI records as 32-bit words while retaining a byte-copy fallback for unaligned
   reads.
-- The equivalent full-graph run remains a byte-exact PASS at 393,750 PMU cycles,
-  down from 443,524 (-11.2%). Pointwise tile reuse reduces iDMA busy cycles from
-  6,959 to 5,231.
+- The equivalent full-graph run remains a byte-exact PASS at 390,082 PMU cycles,
+  down from 443,524 (-12.0%). Contiguous pointwise weight batching improves the
+  coalescing-only result by 3,668 cycles (0.93%), reduces iDMA submissions from
+  176 to 161, and reduces iDMA busy cycles from 5,231 to 5,043. Systolic compute
+  remains 35,714 cycles and TCDM stalls remain 5,482.
 - The current native Micro-MobileNet rerun is a PASS at 344,454 total PMU
   cycles, a -3,538-cycle difference from the documented 347,992-cycle
   regression reference (-1.02%); the documented value remains the regression
-  baseline. The optimized compiler full graph is 1.143x this current native
-  run and 1.131x the documented baseline. Its 1.014x ratio to the 388,146-cycle
+  baseline. The optimized compiler full graph is 1.132x this current native
+  run and 1.121x the documented baseline. Its 1.005x ratio to the 388,146-cycle
   Micro-YOLO record is diagnostic only because the graphs differ. Native layers
   0-21 sum to 212,026 cycles, and all 28 traced layers sum to 324,860 cycles,
   leaving 19,594 cycles of total-run overhead outside the traced layers. The
@@ -2375,7 +2382,13 @@ The following must be complete before Conv compiler lowering begins:
   `/tmp/neural-ai-perf-opt1-stage10-iter1.log`, and
   `/tmp/neural-ai-perf-opt1-full-iter1.log`; each has a matching
   `-results.xml` artifact.
-- The rebuilt runtime firmware reports `.text=29,936`, `.data=68`, and
+- Pointwise weight-batching evidence is in
+  `/tmp/neural-ai-perf-opt3-focused-g2-iter1.log`,
+  `/tmp/neural-ai-perf-opt3-focused-g1-m257-iter1.log`,
+  `/tmp/neural-ai-perf-opt3-stage10-iter1.log`, and
+  `/tmp/neural-ai-perf-opt3-full-iter1.log`; each has a matching
+  `-results.xml` artifact.
+- The rebuilt runtime firmware reports `.text=30,164`, `.data=68`, and
   `.bss=6,081` bytes via `llvm-size -A`. Text remains below the 32 KiB ITCM
   limit, and data plus BSS is 6,149 bytes, below the 32 KiB DTCM limit.
 - The focused package times include boot, command loading,
@@ -2383,8 +2396,8 @@ The following must be complete before Conv compiler lowering begins:
   operator latency against the PMU-only Micro-MobileNet and Micro-YOLO records.
   The documented regression baselines remain 347,992 total cycles for
   Micro-MobileNet and 388,146 total cycles for the Micro-YOLO raw-head graph.
-  The optimized compiler graph is 1.131x the matching documented
-  Micro-MobileNet record; its 1.014x Micro-YOLO ratio is diagnostic only because
+  The optimized compiler graph is 1.121x the matching documented
+  Micro-MobileNet record; its 1.005x Micro-YOLO ratio is diagnostic only because
   the graph differs. The matching MobileNet gap does not close the performance
   gate. Further work must attribute the remaining command/runtime overhead
   without weakening byte-exact correctness or changing frozen RTL.
@@ -2488,7 +2501,7 @@ package includes boot, package validation, 21 DMA operations, two boundary
 layout conversions, and public L2 I/O. Their cycle counts are therefore
 datapath and integration checks, not an operator-speed ratio. The complete
 compiler-generated graph now supplies the missing full-graph comparison:
-393,750 cycles, or 1.131x the 347,992-cycle Micro-MobileNet record. Its 1.014x
+390,082 cycles, or 1.121x the 347,992-cycle Micro-MobileNet record. Its 1.005x
 ratio to the 388,146-cycle Micro-YOLO record is diagnostic because that graph
 differs. Focused AFU results remain useful for attribution but do not replace
 the matching end-to-end gate.
@@ -2525,7 +2538,7 @@ boot, package parsing, boundary copies, LUT DMA staging, 256 MMIO writes, and
 output transfer. It is not comparable to the full-graph PMU records. The
 current compiler Micro-MobileNet graph fuses Conv clamps and emits no LUT, while
 the native Micro-YOLO record uses its specialized raw-head class-sigmoid path.
-The relevant matching full-graph performance comparison is therefore 393,750
+The relevant matching full-graph performance comparison is therefore 390,082
 compiler Micro-MobileNet cycles versus the documented 347,992-cycle record and
 the current 344,454-cycle native rerun. The 388,146-cycle Micro-YOLO comparison
 remains diagnostic because it is a different graph.
