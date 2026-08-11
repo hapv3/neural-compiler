@@ -2682,6 +2682,29 @@ references across different workloads, not 1:1 optimization targets. The
 full-size YOLO compile now advances past both resize instances and stops next at
 the detection-tail Transpose contract.
 
+The selected full-size YOLO Transpose inventory contains four instances, but
+they are two different contracts and must not enable a generic Transpose path.
+Operators 197, 214, and 231 use permutation `[0, 3, 1, 2]` to transform
+H10/W10/C144, H20/W20/C144, and H40/W40/C144 detection-head tensors into
+compact channel-major tensors before storage-preserving reshapes to
+`[1, 144, 100]`, `[1, 144, 400]`, and `[1, 144, 1600]`. Each source is the
+channel concatenation of C64 and C80 pointwise-Conv results with identical
+quantization. The constrained lowering may therefore materialize the selected
+C64+C80 concat in five C32 group planes and issue one vectorized
+C32-blocked-to-compact-CHW pack. The C80 source contributes three physical C32
+planes with only 16 valid lanes in the final plane; the pack writes only the
+144 logical output channels. Its inner transfer must use strided vector loads
+and contiguous vector stores, not one scalar or one command per byte.
+
+Operator 236 is a separate DFL pattern: permutation `[0, 1, 3, 2]` transforms
+`[1, 4, 16, 2100]` to `[1, 4, 2100, 16]` immediately before Softmax. It remains
+part of the exact DFL Softmax pattern in Phase 5 and is not admitted by the
+C144 head-pack contract. Other permutations, depths, concat splits, dynamic
+shapes, batches other than one, requantizing forms, and public intermediate
+outputs remain rejected. This split preserves a fast corpus-derived path while
+preventing the compiler from routing arbitrary Transpose through a generic
+firmware tensor loop.
+
 YOLO-style MaxPool is implemented through the 96-byte v2 `MAXPOOL` command.
 The supported subset is static batch-1 INT8, K5/S1/P2, same input/output shape
 and quantization, no fused activation, C32-blocked internal tensors, and
