@@ -702,6 +702,21 @@ std::unique_ptr<CompiledGraph> Compiler::CompileGraph(
         return nullptr;
     }
 
+    if ( IsNeuralAI(_architecture.get()) )
+    {
+        const MemArea featureMapMemory = _architecture->FeatureMapMemory();
+        const int allocatedBytes = schedule->memoryUsage.at(featureMapMemory);
+        const int64_t availableBytes = featureMapMemory.memory->SizeBytes();
+        if ( allocatedBytes > availableBytes )
+        {
+            SetLastError(fmt::format(
+                "Neural-AI schedule requires {} bytes of TCDM, but only {} bytes are available; "
+                "spatial tiling or rolling-buffer scheduling is required",
+                allocatedBytes, availableBytes));
+            return nullptr;
+        }
+    }
+
     if ( _optDb )
     {
         _optDb->AddAllocations(schedule->featureMapLRGraph.get());

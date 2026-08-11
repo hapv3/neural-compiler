@@ -3036,6 +3036,21 @@ TEST_CASE("Neural-AI compiler splits a width-641 Conv into legal linebuffer jobs
     blob->Release();
 }
 
+TEST_CASE("Neural-AI compiler reports full-size schedules that require spatial tiling")
+{
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildK3ConvModel(
+        224, 224, 3, 32, 2, -1, tflite::Padding::SAME, 1.0f / 127.5f, 1.0f);
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+    REQUIRE_FALSE(compiler.Compile());
+    REQUIRE(compiler.LastError().find("Neural-AI schedule requires") != std::string::npos);
+    REQUIRE(compiler.LastError().find("spatial tiling or rolling-buffer scheduling is required") !=
+        std::string::npos);
+}
+
 TEST_CASE("Neural-AI compiler consumes compact TCDM RGB input directly")
 {
     std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();

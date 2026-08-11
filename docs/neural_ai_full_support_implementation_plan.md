@@ -2227,7 +2227,22 @@ The following must be complete before Conv compiler lowering begins:
 
 ### Current Verification Evidence
 
-- Compiler C++ tests: 221/221 pass after the current asymmetric-Conv,
+- The selected full-size MobileNet artifact is
+  `mobilenet_v2_224_int8.tflite`, 3,984,680 bytes, MD5 identity
+  `90347b4b49eda798307d40190f26b3bd`. Its reproducible inventory contains 35
+  Conv2D, 17 DepthwiseConv2D, 10 Add, 4 Pad, one Mean, and one FullyConnected
+  instance, with public INT8 bindings `1x224x224x3` (`scale=0.00784313772`,
+  `zero_point=-1`) and `1x1000` (`scale=0.0569532216`, `zero_point=-54`).
+- The full-geometry source topology `Conv[0] -> Depthwise[1]` currently reaches
+  an 817,280-byte allocation peak, above the 520,192 allocatable TCDM bytes.
+  This is an SRAM-feasibility gap requiring spatial tiling or rolling buffers,
+  not an operator fallback. The compiler now rejects every over-budget
+  Neural-AI schedule immediately with the required and available byte counts,
+  instead of continuing to the misleading linebuffer-tile diagnostic. A
+  full-size 224x224 RGB stem regression covers the actionable failure. This
+  fail-closed gate is not a claim of full-size support.
+- Compiler C++ tests: 222/222 pass (635,956 assertions) after the current
+  full-size TCDM gate, asymmetric-Conv,
   constant-padding serialization, sliced C32 boundary, wide compact-NHWC
   boundary, and mapping-fixture changes. The command generator now places
   nonzero Pad fill tensors in `ModelConstants`; padding DMAs no longer read an
