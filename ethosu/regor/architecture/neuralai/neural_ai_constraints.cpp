@@ -435,8 +435,9 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
         const Kernel *kernel = query->kernel;
         const Shape &ifmShape = query->ifm[0].shape;
         const Shape &ofmShape = query->ofm.shape;
+        const bool supportedDepth = ifmShape.Depth() == 32 || ifmShape.Depth() == 128;
         if ( kernel == nullptr || !HasBatchOne(ifmShape) || !HasBatchOne(ofmShape) ||
-             ifmShape.Depth() != 32 || ofmShape != ifmShape ||
+             !supportedDepth || ofmShape != ifmShape ||
              kernel->Size() != Point2i(5, 5) || kernel->Stride() != Point2i(1, 1) ||
              kernel->Dilation() != Point2i(1, 1) ||
              kernel->Padding().Top() != 2 || kernel->Padding().Bottom() != 2 ||

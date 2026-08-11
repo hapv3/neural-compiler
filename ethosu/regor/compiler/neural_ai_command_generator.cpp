@@ -1310,12 +1310,13 @@ struct GeneratorContext
             return SetError(error, "Neural-AI MaxPool requires full C32-blocked INT8 tensors");
         const Shape inputShape = ReshapeToNHWC(ifm->shape);
         const Shape outputShape = ReshapeToNHWC(ofm->shape);
-        if ( inputShape.Batch() != 1 || inputShape.Depth() != 32 || outputShape != inputShape ||
+        const bool supportedDepth = inputShape.Depth() == 32 || inputShape.Depth() == 128;
+        if ( inputShape.Batch() != 1 || !supportedDepth || outputShape != inputShape ||
              kernel->Size() != Point2i(5, 5) || kernel->Stride() != Point2i(1, 1) ||
              kernel->Dilation() != Point2i(1, 1) ||
              kernel->Padding().Top() != 2 || kernel->Padding().Bottom() != 2 ||
              kernel->Padding().Left() != 2 || kernel->Padding().Right() != 2 )
-            return SetError(error, "Neural-AI MaxPool requires batch-1 K5/S1/P2 C32 shape");
+            return SetError(error, "Neural-AI MaxPool requires batch-1 K5/S1/P2 C32-grouped shape");
         const int64_t bytes = ifm->tensor->AllocationSizeBytes();
         if ( bytes <= 0 || bytes != ofm->tensor->AllocationSizeBytes() ||
              bytes > std::numeric_limits<uint32_t>::max() )
@@ -1337,7 +1338,7 @@ struct GeneratorContext
         AppendRef(artifact->commands, ofmRef);
         Append32(artifact->commands, uint32_t(inputShape.Height()));
         Append32(artifact->commands, uint32_t(inputShape.Width()));
-        Append32(artifact->commands, 32);
+        Append32(artifact->commands, uint32_t(inputShape.Depth()));
         Append32(artifact->commands, 5);
         Append32(artifact->commands, 5);
         Append32(artifact->commands, 1);
