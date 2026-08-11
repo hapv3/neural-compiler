@@ -429,6 +429,7 @@ enum class CopyLayoutMode : uint16_t
     Row32ToNHWC = 2,
     NHWCToC32 = 3,
     C32ToNHWC = 4,
+    C32ToCHW = 5,
 };
 
 struct CommandCopyLayoutV2

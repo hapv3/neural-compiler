@@ -509,7 +509,7 @@ flatbuffers::DetachedBuffer BuildMaxPoolModel(
 
 flatbuffers::DetachedBuffer BuildConcatModel(
     int lhsChannels = 32, int rhsChannels = 32, int axis = 3,
-    float outputScale = 0.25f)
+    float outputScale = 0.25f, int height = 2, int width = 3)
 {
     flatbuffers::FlatBufferBuilder builder;
     const std::vector<float> inputScales = {0.25f};
@@ -524,11 +524,11 @@ flatbuffers::DetachedBuffer BuildConcatModel(
     std::vector<flatbuffers::Offset<tflite::Buffer>> buffers = {
         tflite::CreateBufferDirect(builder),
     };
-    const std::vector<int32_t> lhsShape = {1, 2, 3, lhsChannels};
-    const std::vector<int32_t> rhsShape = {1, 2, 3, rhsChannels};
+    const std::vector<int32_t> lhsShape = {1, height, width, lhsChannels};
+    const std::vector<int32_t> rhsShape = {1, height, width, rhsChannels};
     const std::vector<int32_t> outputShape = axis == 2 ?
-        std::vector<int32_t>{1, 2, 6, lhsChannels} :
-        std::vector<int32_t>{1, 2, 3, lhsChannels + rhsChannels};
+        std::vector<int32_t>{1, height, width * 2, lhsChannels} :
+        std::vector<int32_t>{1, height, width, lhsChannels + rhsChannels};
     std::vector<flatbuffers::Offset<tflite::Tensor>> tensors = {
         tflite::CreateTensorDirect(
             builder, &lhsShape, tflite::TensorType::INT8, 0, "lhs", lhsQuant),
@@ -557,6 +557,59 @@ flatbuffers::DetachedBuffer BuildConcatModel(
     };
     const auto model = tflite::CreateModelDirect(
         builder, 3, &operatorCodes, &subgraphs, "Neural-AI Concat test", &buffers);
+    tflite::FinishModelBuffer(builder, model);
+    return builder.Release();
+}
+
+flatbuffers::DetachedBuffer BuildHeadTransposeModel(
+    int height = 10, int width = 10, int channels = 144,
+    std::vector<int32_t> permutation = {0, 3, 1, 2})
+{
+    flatbuffers::FlatBufferBuilder builder;
+    const std::vector<float> scales = {0.265464634f};
+    const std::vector<int64_t> zeroPoints = {63};
+    const auto inputQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &scales, &zeroPoints);
+    const auto outputQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &scales, &zeroPoints);
+    std::vector<uint8_t> permutationData(permutation.size() * sizeof(int32_t));
+    std::memcpy(permutationData.data(), permutation.data(), permutationData.size());
+    std::vector<flatbuffers::Offset<tflite::Buffer>> buffers = {
+        tflite::CreateBufferDirect(builder),
+        tflite::CreateBufferDirect(builder, &permutationData),
+    };
+    const std::vector<int32_t> inputShape = {1, height, width, channels};
+    const std::vector<int32_t> permutationShape = {int(permutation.size())};
+    std::vector<int32_t> outputShape(inputShape.size());
+    for ( int i = 0; i < int(permutation.size()); ++i )
+        outputShape[i] = inputShape[permutation[i]];
+    std::vector<flatbuffers::Offset<tflite::Tensor>> tensors = {
+        tflite::CreateTensorDirect(
+            builder, &inputShape, tflite::TensorType::INT8, 0, "input", inputQuant),
+        tflite::CreateTensorDirect(
+            builder, &permutationShape, tflite::TensorType::INT32, 1, "permutation"),
+        tflite::CreateTensorDirect(
+            builder, &outputShape, tflite::TensorType::INT8, 0, "output", outputQuant),
+    };
+    const std::vector<int32_t> opInputs = {0, 1};
+    const std::vector<int32_t> opOutputs = {2};
+    const auto options = tflite::CreateTransposeOptions(builder);
+    const std::vector<flatbuffers::Offset<tflite::Operator>> operations = {
+        tflite::CreateOperatorDirect(builder, 0, &opInputs, &opOutputs,
+            tflite::BuiltinOptions::TransposeOptions, options.Union()),
+    };
+    const std::vector<int32_t> graphInputs = {0};
+    const std::vector<int32_t> graphOutputs = {2};
+    const std::vector<flatbuffers::Offset<tflite::SubGraph>> subgraphs = {
+        tflite::CreateSubGraphDirect(
+            builder, &tensors, &graphInputs, &graphOutputs, &operations, "main"),
+    };
+    const std::vector<flatbuffers::Offset<tflite::OperatorCode>> operatorCodes = {
+        tflite::CreateOperatorCodeDirect(builder, int8_t(tflite::BuiltinOperator::TRANSPOSE),
+            nullptr, 1, tflite::BuiltinOperator::TRANSPOSE),
+    };
+    const auto model = tflite::CreateModelDirect(
+        builder, 3, &operatorCodes, &subgraphs, "Neural-AI head Transpose test", &buffers);
     tflite::FinishModelBuffer(builder, model);
     return builder.Release();
 }
@@ -1310,6 +1363,50 @@ TEST_CASE("Neural-AI constraints accept shape-preserving memory copies")
 
     query.ofm.shape = Shape(1, 1, 1, 34);
     REQUIRE(constraints->OperatorQuery(OpType::MemoryCopy, &query) == QueryResult::Unsupported);
+}
+
+TEST_CASE("Neural-AI constraints admit only selected YOLO C144 head transposes")
+{
+    ArchNeuralAI arch;
+    auto *constraints = arch.Constraints();
+    Quantization quantization;
+    quantization.scales = {QuantizedScale(0.265464634)};
+    quantization.zeroPoints = {63};
+    ArchOperatorQuery query;
+    query.ifm[0].type = DataType::Int8;
+    query.ifm[0].shape = Shape(1, 10, 10, 144);
+    query.ifm[0].quantization = &quantization;
+    query.ofm.type = DataType::Int8;
+    query.ofm.shape = Shape(1, 144, 10, 10);
+    query.ofm.quantization = &quantization;
+    query.transposeMask = TransposeType::NCHW;
+
+    ArchRequirements requirements;
+    REQUIRE(constraints->OperatorQuery(OpType::Transpose, &query, &requirements) ==
+        QueryResult::NativeHasReq);
+    REQUIRE(requirements.req.Any(ArchRequirement::Tensor));
+    REQUIRE(requirements.tensor.usage == TensorUsage::IFM0);
+    REQUIRE(requirements.tensor.format == TensorFormat::C32Blocked);
+    REQUIRE(requirements.tensor.next != nullptr);
+    REQUIRE(requirements.tensor.next->usage == TensorUsage::OFM);
+    REQUIRE(requirements.tensor.next->format == TensorFormat::NHWC);
+
+    for ( int spatial : {20, 40} )
+    {
+        query.ifm[0].shape = Shape(1, spatial, spatial, 144);
+        query.ofm.shape = Shape(1, 144, spatial, spatial);
+        REQUIRE(constraints->OperatorQuery(OpType::Transpose, &query) == QueryResult::Native);
+    }
+    query.ifm[0].shape = Shape(1, 10, 10, 128);
+    query.ofm.shape = Shape(1, 128, 10, 10);
+    REQUIRE(constraints->OperatorQuery(OpType::Transpose, &query) == QueryResult::Unsupported);
+    query.ifm[0].shape = Shape(1, 10, 10, 144);
+    query.ofm.shape = Shape(1, 10, 144, 10);
+    query.transposeMask = TransposeType::NHCW;
+    REQUIRE(constraints->OperatorQuery(OpType::Transpose, &query) == QueryResult::Unsupported);
+    query.ifm[0].shape = Shape(1, 4, 16, 2100);
+    query.ofm.shape = Shape(1, 4, 2100, 16);
+    REQUIRE(constraints->OperatorQuery(OpType::Transpose, &query) == QueryResult::Unsupported);
 }
 
 TEST_CASE("Neural-AI constraints substitute INT8 Sigmoid with an AFU LUT")
@@ -2701,6 +2798,114 @@ TEST_CASE("Neural-AI compiler rejects Concat outside two-input C32 channel contr
     rejects(BuildConcatModel(31, 32));
     rejects(BuildConcatModel(32, 32, 2));
     rejects(BuildConcatModel(32, 32, 3, 0.5f));
+}
+
+TEST_CASE("Neural-AI compiler materializes selected YOLO C64+C80 head Concat")
+{
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildConcatModel(64, 80, 3, 0.25f, 10, 10);
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+    const bool compiled = compiler.Compile();
+    INFO(compiler.LastError());
+    REQUIRE(compiled);
+
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    const uint32_t commandBytes = Read32(data + 64 + 12);
+    uint32_t offset = 224;
+    std::vector<uint32_t> localCopyBytes;
+    while ( offset < 224 + commandBytes )
+    {
+        const uint16_t commandSize = Read16(data + offset + 2);
+        if ( Read16(data + offset) == uint16_t(neuralai::CommandType::DMA1D) &&
+             Read32(data + offset + 36) == uint32_t(neuralai::DMADirection::LocalToLocal) )
+            localCopyBytes.push_back(Read32(data + offset + 32));
+        offset += commandSize;
+    }
+    REQUIRE(offset == 224 + commandBytes);
+    std::sort(localCopyBytes.begin(), localCopyBytes.end());
+    REQUIRE(localCopyBytes == std::vector<uint32_t>{6400, 9600});
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
+}
+
+TEST_CASE("Neural-AI compiler emits vector head pack only for selected C144 NCHW transpose")
+{
+    const auto compile = [](flatbuffers::DetachedBuffer model, bool expected)
+    {
+        std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+        Compiler compiler(architecture);
+        const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+        REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+        REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+        if ( expected )
+        {
+            Graph *graph = compiler.GetGraph("main");
+            REQUIRE(graph != nullptr);
+            std::vector<std::shared_ptr<Operation>> operations;
+            graph->GetAllOperations(operations);
+            REQUIRE(operations.size() == 1);
+            INFO(OpTypeToString(operations[0]->Type()));
+            REQUIRE(operations[0]->Type() == OpType::Transpose);
+            auto supported = MakeSupportedOpsChecker(REGOR_ARCH_NEURALAI);
+            REQUIRE(supported->Check(operations[0].get()));
+        }
+        bool compiled = false;
+        std::string exceptionMessage;
+        try
+        {
+            compiled = compiler.Compile();
+        }
+        catch ( const std::runtime_error &exception )
+        {
+            exceptionMessage = exception.what();
+        }
+        INFO(exceptionMessage);
+        INFO(compiler.LastError());
+        REQUIRE(compiled == expected);
+        if ( !compiled ) return;
+
+        IRegorBlob *blob = compiler.Output();
+        REQUIRE(blob != nullptr);
+        int64_t size = 0;
+        const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+        const uint32_t commandBytes = Read32(data + 64 + 12);
+        uint32_t offset = 224;
+        uint32_t headPacks = 0;
+        while ( offset < 224 + commandBytes )
+        {
+            const uint16_t commandSize = Read16(data + offset + 2);
+            if ( Read16(data + offset) == uint16_t(neuralai::CommandType::CopyLayout) &&
+                 Read16(data + offset + 32) == uint16_t(neuralai::CopyLayoutMode::C32ToCHW) )
+            {
+                REQUIRE(Read16(data + offset + 34) == uint16_t(neuralai::TensorLayout::C32Blocked));
+                REQUIRE(Read16(data + offset + 36) == uint16_t(neuralai::TensorLayout::NHWC));
+                REQUIRE(Read32(data + offset + 40) == 1);
+                REQUIRE(Read32(data + offset + 44) == 10);
+                REQUIRE(Read32(data + offset + 48) == 10);
+                REQUIRE(Read32(data + offset + 52) == 144);
+                REQUIRE(Read32(data + offset + 56) == 144);
+                REQUIRE(Read32(data + offset + 60) == 10 * 10 * 32);
+                REQUIRE(Read32(data + offset + 64) == 10 * 10);
+                ++headPacks;
+            }
+            offset += commandSize;
+        }
+        REQUIRE(offset == 224 + commandBytes);
+        REQUIRE(headPacks == 1);
+        blob->Unmap(const_cast<uint8_t *>(data));
+        blob->Release();
+    };
+
+    compile(BuildHeadTransposeModel(), true);
+    compile(BuildHeadTransposeModel(10, 10, 128), false);
+    compile(BuildHeadTransposeModel(10, 10, 144, {0, 2, 3, 1}), false);
+    compile(BuildHeadTransposeModel(4, 16, 2100, {0, 1, 3, 2}), false);
 }
 
 TEST_CASE("Neural-AI compiler lowers the complete Micro-MobileNet topology")

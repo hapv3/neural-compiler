@@ -28,6 +28,7 @@ enum class NeuralAIOpMode
     UpsampleNearestC32,
     MaxPoolK5S1P2C32,
     ConcatC32,
+    HeadPackC32ToCHW,
 };
 
 const char *NeuralAIOpModeName(NeuralAIOpMode mode);

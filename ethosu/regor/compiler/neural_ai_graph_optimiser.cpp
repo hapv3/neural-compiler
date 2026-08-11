@@ -297,7 +297,8 @@ void NeuralAIGraphOptimiser::OptimiseGraph(Graph *graph)
              operation->Type() != OpType::Conv2D && operation->Type() != OpType::DepthwiseConv2D &&
              operation->Type() != OpType::LUT && operation->Type() != OpType::Add &&
              operation->Type() != OpType::AvgPool && operation->Type() != OpType::Resize &&
-             operation->Type() != OpType::MaxPool && operation->Type() != OpType::Concat ) continue;
+             operation->Type() != OpType::MaxPool && operation->Type() != OpType::Concat &&
+             operation->Type() != OpType::Transpose ) continue;
         InsertInputConversion(graph, operation.get(), TensorUsage::IFM0);
         if ( operation->Type() == OpType::Add || operation->Type() == OpType::Concat )
             InsertInputConversion(graph, operation.get(), TensorUsage::IFM1);

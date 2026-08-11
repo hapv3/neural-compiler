@@ -31,6 +31,7 @@ const std::set<OpType> s_supportedOpTypes = {
     OpType::Sigmoid,
     OpType::StridedSlice,
     OpType::Squeeze,
+    OpType::Transpose,
 };
 
 const std::set<DataType> s_supportedDataTypes = {
@@ -85,12 +86,44 @@ bool SupportedConcat(const Operation *operation)
          lhs->shape.Size() != ofm->shape.Size() ||
          lhs->shape.WithDepth(1) != rhs->shape.WithDepth(1) ||
          lhs->shape.WithDepth(1) != ofm->shape.WithDepth(1) ||
-         lhs->shape.Depth() % 32 != 0 || rhs->shape.Depth() % 32 != 0 ||
+         lhs->shape.Depth() % 32 != 0 ||
+         (rhs->shape.Depth() % 32 != 0 &&
+             !(lhs->shape.Depth() == 64 && rhs->shape.Depth() == 80 &&
+               (lhs->shape.Height() == 10 || lhs->shape.Height() == 20 ||
+                   lhs->shape.Height() == 40) &&
+               lhs->shape.Width() == lhs->shape.Height())) ||
          ofm->shape.Depth() != lhs->shape.Depth() + rhs->shape.Depth() ||
          lhs->quantization != rhs->quantization || lhs->quantization != ofm->quantization )
     {
         Failure(operation,
-            "Neural-AI Concat requires two equal-spatial, equal-quantization, C32-aligned inputs on the channel axis");
+            "Neural-AI Concat requires two equal-spatial, equal-quantization, aligned or selected C64+C80 inputs on the channel axis");
+        return false;
+    }
+    return true;
+}
+
+bool SupportedHeadTranspose(const Operation *operation)
+{
+    const TensorConnection *ifm = operation->Input(TensorUsage::IFM0);
+    const TensorConnection *permutation = operation->Input(TensorUsage::Params);
+    const TensorConnection *ofm = operation->Output(TensorUsage::OFM);
+    if ( ifm == nullptr || permutation == nullptr || ofm == nullptr ||
+         !permutation->tensor->IsConstant() || permutation->shape.Elements64() != 4 ||
+         ifm->shape.Size() != 4 || ofm->shape.Size() != 4 || ifm->shape.Batch() != 1 ||
+         ifm->shape.Depth() != 144 || ifm->shape.Width() != ifm->shape.Height() ||
+         (ifm->shape.Height() != 10 && ifm->shape.Height() != 20 && ifm->shape.Height() != 40) ||
+         ofm->shape != Shape(1, 144, ifm->shape.Height(), ifm->shape.Width()) ||
+         ifm->quantization != ofm->quantization )
+    {
+        Failure(operation,
+            "Neural-AI Transpose requires a selected quantization-preserving C144 detection head");
+        return false;
+    }
+    const auto values = permutation->tensor->View().Values<int32_t>();
+    if ( values.Count() != 4 || values[0] != 0 || values[1] != 3 ||
+         values[2] != 1 || values[3] != 2 )
+    {
+        Failure(operation, "Neural-AI head Transpose requires permutation [0, 3, 1, 2]");
         return false;
     }
     return true;
@@ -160,6 +193,9 @@ TfLiteSupportedOperatorsNeuralAI::TfLiteSupportedOperatorsNeuralAI() :
     static ConstraintCheck s_supportedConcat = {&SupportedConcat,
         "Concat must match the two-input C32 channel-axis contract."};
     opConstraints[OpType::Concat].push_back(&s_supportedConcat);
+    static ConstraintCheck s_supportedHeadTranspose = {&SupportedHeadTranspose,
+        "Transpose must match the selected C144 detection-head pack contract."};
+    opConstraints[OpType::Transpose].push_back(&s_supportedHeadTranspose);
     static ConstraintCheck s_supportedC32DepthSlice = {&SupportedC32DepthSlice,
         "StridedSlice must match the C32-aligned view or C32-to-C16 half-depth contract."};
     opConstraints[OpType::StridedSlice].push_back(&s_supportedC32DepthSlice);

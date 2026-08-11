@@ -96,6 +96,7 @@ bool NeuralAIConstraints::IsSupportedOp(OpType opType)
            opType == OpType::Sigmoid || IsClipping(opType) ||
            opType == OpType::DepthwiseConv2D || opType == OpType::Resize ||
            opType == OpType::MaxPool || opType == OpType::Concat ||
+           opType == OpType::Transpose ||
            opType == OpType::MemoryCopy;
 }
 
@@ -281,7 +282,11 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
              lhsShape.Size() != rhsShape.Size() || lhsShape.Size() != ofmShape.Size() ||
              lhsShape.WithDepth(1) != rhsShape.WithDepth(1) ||
              lhsShape.WithDepth(1) != ofmShape.WithDepth(1) ||
-             lhsShape.Depth() % 32 != 0 || rhsShape.Depth() % 32 != 0 ||
+             lhsShape.Depth() % 32 != 0 ||
+             (rhsShape.Depth() % 32 != 0 &&
+                 !(lhsShape.Depth() == 64 && rhsShape.Depth() == 80 &&
+                   (lhsShape.Height() == 10 || lhsShape.Height() == 20 || lhsShape.Height() == 40) &&
+                   lhsShape.Width() == lhsShape.Height())) ||
              ofmShape.Depth() != lhsShape.Depth() + rhsShape.Depth() )
             return QueryResult::Unsupported;
         if ( req != nullptr )
@@ -292,6 +297,39 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
             s_tensorRequirements[0].next = &s_tensorRequirements[1];
             s_tensorRequirements[1].next = &s_tensorRequirements[2];
             s_tensorRequirements[2].next = nullptr;
+            req->tensor = s_tensorRequirements[0];
+            req->req.Set(ArchRequirement::Tensor);
+            return QueryResult::NativeHasReq;
+        }
+        return QueryResult::Native;
+    }
+
+    if ( opType == OpType::Transpose )
+    {
+        const Shape &ifmShape = query->ifm[0].shape;
+        const Shape &ofmShape = query->ofm.shape;
+        // GraphIR asks a mask-only capability question before it has attached
+        // shapes.  Preserve the rank-4 NCHW form so the complete constrained
+        // query below can decide whether this is one of the selected heads.
+        if ( !ifmShape && !ofmShape && query->transposeMask == TransposeType::NCHW )
+            return QueryResult::NativeConstrained;
+        const bool selectedSpatial = ifmShape.Height() == 10 || ifmShape.Height() == 20 ||
+                                     ifmShape.Height() == 40;
+        if ( query->ifm[0].type != DataType::Int8 || query->ofm.type != DataType::Int8 ||
+             query->transposeMask != TransposeType::NCHW ||
+             !IsStaticPositiveShape(ifmShape) || !IsStaticPositiveShape(ofmShape) ||
+             ifmShape.Size() != 4 || ofmShape.Size() != 4 || ifmShape.Batch() != 1 ||
+             ifmShape.Depth() != 144 || !selectedSpatial || ifmShape.Width() != ifmShape.Height() ||
+             ofmShape != Shape(1, 144, ifmShape.Height(), ifmShape.Width()) ||
+             query->ifm[0].quantization == nullptr || query->ofm.quantization == nullptr ||
+             !query->ifm[0].quantization->EqualScales(*query->ofm.quantization) )
+            return QueryResult::Unsupported;
+        if ( req != nullptr )
+        {
+            Set(s_tensorRequirements[0], TensorUsage::IFM0, TensorFormat::C32Blocked);
+            Set(s_tensorRequirements[1], TensorUsage::OFM, TensorFormat::NHWC);
+            s_tensorRequirements[0].next = &s_tensorRequirements[1];
+            s_tensorRequirements[1].next = nullptr;
             req->tensor = s_tensorRequirements[0];
             req->req.Set(ArchRequirement::Tensor);
             return QueryResult::NativeHasReq;

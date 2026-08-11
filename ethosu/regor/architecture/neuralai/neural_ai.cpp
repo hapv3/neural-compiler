@@ -104,8 +104,19 @@ std::unique_ptr<ArchitectureOpConfig> ArchNeuralAI::GetOpConfig(OpType opType, c
          opType != OpType::AvgPool &&
          opType != OpType::MaxPool &&
          opType != OpType::Concat &&
+         opType != OpType::Transpose &&
          opType != OpType::MemoryCopy ) return nullptr;
-    if ( query.ifmBits != 8 || query.ofmBits != 8 || query.transpose != TransposeType::None ||
+    const bool headPack = opType == OpType::Transpose && query.transpose == TransposeType::NCHW &&
+                          query.ifmShape[0].Size() == 4 && query.ofmShape.Size() == 4 &&
+                          query.ifmShape[0].Batch() == 1 && query.ifmShape[0].Depth() == 144 &&
+                          (query.ifmShape[0].Height() == 10 || query.ifmShape[0].Height() == 20 ||
+                              query.ifmShape[0].Height() == 40) &&
+                          query.ifmShape[0].Width() == query.ifmShape[0].Height() &&
+                          (query.ofmShape == query.ifmShape[0] ||
+                              query.ofmShape == Shape(1, 144, query.ifmShape[0].Height(),
+                                                    query.ifmShape[0].Width()));
+    if ( query.ifmBits != 8 || query.ofmBits != 8 ||
+         (query.transpose != TransposeType::None && !headPack) ||
          query.reverse != ReverseType::None )
     {
         return nullptr;
@@ -121,6 +132,7 @@ std::unique_ptr<ArchitectureOpConfig> ArchNeuralAI::GetOpConfig(OpType opType, c
             NeuralAIOpMode::UpsampleNearestC32 : NeuralAIOpMode::AFUGlobalAvgPoolC32;
     else if ( opType == OpType::MaxPool ) mode = NeuralAIOpMode::MaxPoolK5S1P2C32;
     else if ( opType == OpType::Concat ) mode = NeuralAIOpMode::ConcatC32;
+    else if ( headPack ) mode = NeuralAIOpMode::HeadPackC32ToCHW;
     else if ( opType == OpType::Conv2D && query.kernel != nullptr )
     {
         const auto &kernel = *query.kernel;

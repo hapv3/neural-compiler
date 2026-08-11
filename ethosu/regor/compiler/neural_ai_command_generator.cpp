@@ -1376,9 +1376,13 @@ struct GeneratorContext
         const Shape ofmShape = ReshapeToNHWC(ofm->shape);
         if ( lhsShape.Batch() != 1 || lhsShape.WithDepth(1) != rhsShape.WithDepth(1) ||
              lhsShape.WithDepth(1) != ofmShape.WithDepth(1) ||
-             lhsShape.Depth() % 32 != 0 || rhsShape.Depth() % 32 != 0 ||
+             lhsShape.Depth() % 32 != 0 ||
+             (rhsShape.Depth() % 32 != 0 &&
+                 !(lhsShape.Depth() == 64 && rhsShape.Depth() == 80 &&
+                   (lhsShape.Height() == 10 || lhsShape.Height() == 20 || lhsShape.Height() == 40) &&
+                   lhsShape.Width() == lhsShape.Height())) ||
              ofmShape.Depth() != lhsShape.Depth() + rhsShape.Depth() )
-            return SetError(error, "Neural-AI Concat requires two aligned channel-axis inputs");
+            return SetError(error, "Neural-AI Concat requires aligned or selected C64+C80 channel-axis inputs");
         const int64_t lhsBytes = lhs->tensor->AllocationSizeBytes();
         const int64_t rhsBytes = rhs->tensor->AllocationSizeBytes();
         const int64_t ofmBytes = ofm->tensor->AllocationSizeBytes();
@@ -1409,6 +1413,69 @@ struct GeneratorContext
         const uint32_t layerId = uint32_t(operation->Index());
         return AppendDMA1D(lhsRef, ofmLhsRef, uint32_t(lhsBytes), layerId, 0, error) &&
                AppendDMA1D(rhsRef, ofmRhsRef, uint32_t(rhsBytes), layerId, 1, error);
+    }
+
+    bool AppendHeadPack(const SchedulerOperation *operation, std::string &error)
+    {
+        const SchedulerOpInfo *cost = schedule->Cost(operation);
+        if ( cost == nullptr || cost->Config() == nullptr )
+            return SetError(error, "Neural-AI Transpose operation has no validated target mode");
+        const auto *config = static_cast<const NeuralAIOpConfig *>(cost->Config());
+        if ( config->Mode() != NeuralAIOpMode::HeadPackC32ToCHW )
+            return SetError(error, "Neural-AI Transpose operation has no validated head-pack mode");
+        const SchedulerConnection *ifm = operation->IFM(0);
+        const SchedulerConnection *ofm = operation->OFM();
+        if ( ifm == nullptr || ofm == nullptr || !IsFullTensorConnection(ifm) ||
+             !IsFullTensorConnection(ofm) || ifm->Type() != regor::DataType::Int8 ||
+             ofm->Type() != regor::DataType::Int8 ||
+             ifm->tensor->format != TensorFormat::C32Blocked ||
+             ofm->tensor->format != TensorFormat::NHWC )
+            return SetError(error, "Neural-AI head pack requires full C32-to-compact INT8 tensors");
+        const Shape inputShape = ifm->shape;
+        const Shape outputShape = ofm->shape;
+        const bool selectedSpatial = inputShape.Height() == 10 || inputShape.Height() == 20 ||
+                                     inputShape.Height() == 40;
+        if ( inputShape.Size() != 4 || outputShape.Size() != 4 || inputShape.Batch() != 1 ||
+             inputShape.Depth() != 144 || !selectedSpatial ||
+             inputShape.Width() != inputShape.Height() ||
+             outputShape != Shape(1, 144, inputShape.Height(), inputShape.Width()) )
+            return SetError(error, "Neural-AI head pack requires selected square C144 NCHW transpose");
+        const int64_t pixels64 = int64_t(inputShape.Height()) * inputShape.Width();
+        const int64_t sourceBytes64 = pixels64 * 160;
+        const int64_t destinationBytes64 = pixels64 * 144;
+        if ( pixels64 <= 0 || sourceBytes64 != ifm->tensor->AllocationSizeBytes() ||
+             destinationBytes64 != ofm->tensor->AllocationSizeBytes() ||
+             sourceBytes64 > std::numeric_limits<uint32_t>::max() ||
+             destinationBytes64 > std::numeric_limits<uint32_t>::max() )
+            return SetError(error, "Neural-AI head-pack tensor storage size is invalid");
+        RefV1 source = TensorRef(ifm->tensor.get(), 0, error);
+        if ( !error.empty() ) return false;
+        RefV1 destination = TensorRef(ofm->tensor.get(), 0, error);
+        if ( !error.empty() ) return false;
+        if ( source.region != uint16_t(Region::TCDMScratch) ||
+             destination.region != uint16_t(Region::TCDMScratch) )
+            return SetError(error, "Neural-AI head pack requires internal TCDM tensors");
+        const uint32_t sourceBytes = uint32_t(sourceBytes64);
+        const uint32_t destinationBytes = uint32_t(destinationBytes64);
+        if ( source.offset < destination.offset + destinationBytes &&
+             destination.offset < source.offset + sourceBytes )
+            return SetError(error, "Neural-AI head pack requires out-of-place output storage");
+
+        AppendHeader(artifact->commands, CommandType::CopyLayout, 96,
+            uint32_t(operation->Index()), 0);
+        AppendRef(artifact->commands, source);
+        AppendRef(artifact->commands, destination);
+        Append16(artifact->commands, uint16_t(CopyLayoutMode::C32ToCHW));
+        Append16(artifact->commands, ABILayout(TensorFormat::C32Blocked));
+        Append16(artifact->commands, ABILayout(TensorFormat::NHWC));
+        Append16(artifact->commands, uint16_t(DataType::Int8));
+        for ( uint32_t dimension : Dimensions(inputShape) ) Append32(artifact->commands, dimension);
+        Append32(artifact->commands, 144);
+        Append32(artifact->commands, uint32_t(pixels64 * 32));
+        Append32(artifact->commands, uint32_t(pixels64));
+        AppendZeros(artifact->commands, 7);
+        ++artifact->commandCount;
+        return true;
     }
 
     bool AppendMatrix(const SchedulerOperation *operation, std::string &error)
@@ -1934,6 +2001,10 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         else if ( operation->Type() == OpType::Concat )
         {
             if ( !context.AppendConcat(operation.get(), error) ) return false;
+        }
+        else if ( operation->Type() == OpType::Transpose )
+        {
+            if ( !context.AppendHeadPack(operation.get(), error) ) return false;
         }
         else if ( operation->Type() == OpType::FullyConnected || operation->Type() == OpType::MatMul ||
                   operation->Type() == OpType::Conv2D )
