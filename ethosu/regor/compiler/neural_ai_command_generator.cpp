@@ -57,6 +57,39 @@ bool IsFullTensorConnection(const SchedulerConnection *connection)
            (!connection->slice.stride || connection->slice.stride == shape.WithOnes());
 }
 
+bool C32SliceByteOffset(const SchedulerConnection *connection, uint32_t &offset,
+    std::string &error)
+{
+    offset = 0;
+    if ( !connection->slice ) return true;
+    const Shape fullShape = ReshapeToNHWC(connection->shape);
+    const Shape sliceShape = ReshapeToNHWC(connection->SliceShape());
+    const Shape sliceOffset = ReshapeToNHWC(connection->slice.offset);
+    const Shape sliceStride = connection->slice.stride ?
+        ReshapeToNHWC(connection->slice.stride) : fullShape.WithOnes();
+    if ( connection->tensor->format != TensorFormat::C32Blocked ||
+         sliceShape.WithDepth(1) != fullShape.WithDepth(1) ||
+         sliceOffset.WithDepth(0) != fullShape.WithZeros() ||
+         sliceStride != sliceStride.WithOnes() || sliceOffset.Depth() < 0 ||
+         sliceOffset.Depth() % 32 != 0 || sliceShape.Depth() <= 0 ||
+         sliceShape.Depth() % 32 != 0 ||
+         sliceOffset.Depth() + sliceShape.Depth() > fullShape.Depth() )
+    {
+        error = "Neural-AI native tensor slice requires a full-spatial C32-aligned depth view";
+        return false;
+    }
+    const uint64_t groupPlaneBytes = uint64_t(fullShape.Height()) *
+        uint64_t(fullShape.Width()) * 32u;
+    const uint64_t byteOffset = uint64_t(sliceOffset.Depth() / 32) * groupPlaneBytes;
+    if ( byteOffset > std::numeric_limits<uint32_t>::max() )
+    {
+        error = "Neural-AI native tensor slice offset overflows the ABI";
+        return false;
+    }
+    offset = uint32_t(byteOffset);
+    return true;
+}
+
 bool IsLocalDMARegion(uint16_t region)
 {
     return region == uint16_t(Region::TCDMScratch) ||
@@ -1392,11 +1425,13 @@ struct GeneratorContext
 
         const SchedulerConnection *ifm = operation->IFM(0);
         const SchedulerConnection *ofm = operation->OFM();
-        const uint32_t channelK = uint32_t(ifm->shape.Depth());
+        const Shape ifmShape = ifm->SliceShape();
+        const Shape ofmShape = ofm->SliceShape();
+        const uint32_t channelK = uint32_t(ifmShape.Depth());
         const bool isK3Conv = IsLinebufferConvMode(mode);
         const uint32_t depthK = channelK * (isK3Conv ? 9u : 1u);
-        const uint32_t depthN = uint32_t(ofm->shape.Depth());
-        const int64_t rows64 = depthN != 0 ? ofm->shape.Elements64() / depthN : 0;
+        const uint32_t depthN = uint32_t(ofmShape.Depth());
+        const int64_t rows64 = depthN != 0 ? ofmShape.Elements64() / depthN : 0;
         if ( rows64 <= 0 || rows64 > std::numeric_limits<uint32_t>::max() )
             return SetError(error, "Neural-AI matrix row count is outside the ABI range");
         const uint32_t rows = uint32_t(rows64);
@@ -1447,8 +1482,10 @@ struct GeneratorContext
                      uint32_t(operation->Index()), 1, error) )
                 return false;
 
-            const auto logicalIfm = ReshapeToNHWC(ifm->shape);
-            const auto logicalOfm = ReshapeToNHWC(ofm->shape);
+            uint32_t ifmSliceOffset = 0;
+            if ( !directRgb && !C32SliceByteOffset(ifm, ifmSliceOffset, error) ) return false;
+            const auto logicalIfm = ReshapeToNHWC(ifmShape);
+            const auto logicalOfm = ReshapeToNHWC(ofmShape);
             const uint32_t paddedInputChannels = uint32_t(RoundAway(int(channelK), 32));
             const uint32_t inputGroups = directRgb ? 1u : paddedInputChannels / 32u;
             const uint32_t outputGroups = uint32_t(RoundAway(int(depthN), 32)) / 32u;
@@ -1481,7 +1518,7 @@ struct GeneratorContext
                             plannerInput.logicalOfm = logicalOfm;
                             const uint32_t groupPlaneBytes = uint32_t(logicalIfm.Height()) *
                                 uint32_t(logicalIfm.Width()) * 32u;
-                            plannerInput.ifmBase = uint32_t(ifm->tensor->AllocatedAddress()) +
+                            plannerInput.ifmBase = uint32_t(ifm->tensor->AllocatedAddress()) + ifmSliceOffset +
                                 inputGroup * groupPlaneBytes +
                                 tapH * uint32_t(logicalIfm.Width()) * 32u + tapW * 32u;
                             plannerInput.ofmBase = uint32_t(ofm->tensor->AllocatedAddress());
@@ -1512,7 +1549,7 @@ struct GeneratorContext
                     neuralai::LinebufferPlannerInput plannerInput{};
                     plannerInput.logicalIfm = logicalIfm;
                     plannerInput.logicalOfm = logicalOfm;
-                    plannerInput.ifmBase = uint32_t(ifm->tensor->AllocatedAddress());
+                    plannerInput.ifmBase = uint32_t(ifm->tensor->AllocatedAddress()) + ifmSliceOffset;
                     plannerInput.ofmBase = uint32_t(ofm->tensor->AllocatedAddress());
                     plannerInput.weightBase = uint32_t(weightStageOffset +
                         (outputGroup * inputGroups + inputGroup) * kernelTilesPerInputGroup * 32u * 32u);
@@ -1587,6 +1624,8 @@ struct GeneratorContext
             if ( groupStride64 > std::numeric_limits<uint32_t>::max() )
                 return SetError(error, "Neural-AI pointwise Conv row stride overflows the ABI");
             const uint32_t groupStride = uint32_t(groupStride64);
+            uint32_t ifmSliceOffset = 0;
+            if ( !C32SliceByteOffset(ifm, ifmSliceOffset, error) ) return false;
             uint32_t tileId = 0;
             for ( uint32_t nGroup = 0; nGroup < nGroups; ++nGroup )
             {
@@ -1598,7 +1637,7 @@ struct GeneratorContext
                 if ( weightOffset64 > std::numeric_limits<uint32_t>::max() ||
                      outputOffset64 > std::numeric_limits<uint32_t>::max() )
                     return SetError(error, "Neural-AI pointwise Conv tensor reference overflows the ABI");
-                RefV1 ifmRef = TensorRef(ifm->tensor.get(), 0, error);
+                RefV1 ifmRef = TensorRef(ifm->tensor.get(), ifmSliceOffset, error);
                 if ( !error.empty() ) return false;
                 RefV1 weights{};
                 weights.region = uint16_t(Region::ModelConstants);
@@ -1617,6 +1656,9 @@ struct GeneratorContext
             }
             return true;
         }
+
+        if ( ifm->slice )
+            return SetError(error, "Neural-AI FC and MatMul do not support sliced inputs");
 
         uint32_t tileId = 0;
         for ( uint32_t nGroup = 0; nGroup < nGroups; ++nGroup )
@@ -1818,9 +1860,11 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         }
         const auto *config = static_cast<const NeuralAIOpConfig *>(cost->Config());
         const NeuralAIOpMode mode = config->Mode();
-        const uint32_t rows = uint32_t(operation->OFM()->shape.Elements64() / operation->OFM()->shape.Depth());
+        const Shape ifmShape = operation->IFM(0)->SliceShape();
+        const Shape ofmShape = operation->OFM()->SliceShape();
+        const uint32_t rows = uint32_t(ofmShape.Elements64() / ofmShape.Depth());
         const bool isK3Conv = IsLinebufferConvMode(mode);
-        const uint32_t logicalK = uint32_t(operation->IFM(0)->shape.Depth()) * (isK3Conv ? 9u : 1u);
+        const uint32_t logicalK = uint32_t(ifmShape.Depth()) * (isK3Conv ? 9u : 1u);
         const uint32_t paddedK = uint32_t(RoundAway(int(logicalK), 32));
         const uint32_t stripeRows = std::min<uint32_t>(rows, 256);
         if ( paddedK != 32 ) context.stageBytes = std::max(context.stageBytes, stripeRows * 32);
@@ -1830,9 +1874,9 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
             const bool directRgb = config->DirectNhwcInput();
             if ( directRgb || paddedK > 0 )
             {
-                const uint32_t paddedN = uint32_t(RoundAway(int(operation->OFM()->shape.Depth()), 32));
+                const uint32_t paddedN = uint32_t(RoundAway(int(ofmShape.Depth()), 32));
                 const uint32_t kGroups = directRgb ? 1u :
-                    9u * uint32_t(RoundAway(int(operation->IFM(0)->shape.Depth()), 32)) / 32u;
+                    9u * uint32_t(RoundAway(int(ifmShape.Depth()), 32)) / 32u;
                 linebufferWeightBytes = std::max(linebufferWeightBytes,
                     uint32_t(kGroups * (paddedN / 32u) * 32u * 32u));
             }

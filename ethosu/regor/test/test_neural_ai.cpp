@@ -740,6 +740,118 @@ flatbuffers::DetachedBuffer BuildK3ConvModel(int height, int width, int depthK, 
     return builder.Release();
 }
 
+flatbuffers::DetachedBuffer BuildC32SliceConvModel(
+    int height, int width, int inputDepth, int sliceBegin, int sliceDepth, int outputDepth,
+    int consumerKernel = 1)
+{
+    flatbuffers::FlatBufferBuilder builder;
+    const std::vector<float> scale = {1.0f};
+    const std::vector<int64_t> zeroPoint = {0};
+    const auto inputQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &scale, &zeroPoint);
+    const auto weightQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &scale, &zeroPoint);
+    const auto biasQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &scale, &zeroPoint);
+    const auto outputQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &scale, &zeroPoint);
+
+    auto Int32Bytes = [](const std::vector<int32_t> &values)
+    {
+        std::vector<uint8_t> bytes(values.size() * sizeof(int32_t));
+        std::memcpy(bytes.data(), values.data(), bytes.size());
+        return bytes;
+    };
+    const std::vector<int32_t> begin = {0, 0, 0, sliceBegin};
+    const std::vector<int32_t> end = {0, 0, 0, sliceBegin + sliceDepth};
+    const std::vector<int32_t> strides = {1, 1, 1, 1};
+    const auto beginData = Int32Bytes(begin);
+    const auto endData = Int32Bytes(end);
+    const auto stridesData = Int32Bytes(strides);
+    std::vector<uint8_t> producerWeightData(size_t(inputDepth) * 32, 1);
+    std::vector<int32_t> producerBias(inputDepth, 0);
+    const auto producerBiasData = Int32Bytes(producerBias);
+    std::vector<uint8_t> consumerWeightData(
+        size_t(outputDepth) * sliceDepth * consumerKernel * consumerKernel, 1);
+    std::vector<int32_t> consumerBias(outputDepth, 0);
+    const auto consumerBiasData = Int32Bytes(consumerBias);
+    std::vector<flatbuffers::Offset<tflite::Buffer>> buffers = {
+        tflite::CreateBufferDirect(builder),
+        tflite::CreateBufferDirect(builder, &beginData),
+        tflite::CreateBufferDirect(builder, &endData),
+        tflite::CreateBufferDirect(builder, &stridesData),
+        tflite::CreateBufferDirect(builder, &producerWeightData),
+        tflite::CreateBufferDirect(builder, &producerBiasData),
+        tflite::CreateBufferDirect(builder, &consumerWeightData),
+        tflite::CreateBufferDirect(builder, &consumerBiasData),
+    };
+
+    const std::vector<int32_t> inputShape = {1, height, width, 32};
+    const std::vector<int32_t> paramsShape = {4};
+    const std::vector<int32_t> producerShape = {1, height, width, inputDepth};
+    const std::vector<int32_t> producerWeightShape = {inputDepth, 1, 1, 32};
+    const std::vector<int32_t> producerBiasShape = {inputDepth};
+    const std::vector<int32_t> sliceShape = {1, height, width, sliceDepth};
+    const std::vector<int32_t> consumerWeightShape = {
+        outputDepth, consumerKernel, consumerKernel, sliceDepth};
+    const std::vector<int32_t> consumerBiasShape = {outputDepth};
+    const std::vector<int32_t> outputShape = {1, height, width, outputDepth};
+    std::vector<flatbuffers::Offset<tflite::Tensor>> tensors = {
+        tflite::CreateTensorDirect(builder, &inputShape, tflite::TensorType::INT8, 0, "input", inputQuant),
+        tflite::CreateTensorDirect(builder, &paramsShape, tflite::TensorType::INT32, 1, "begin"),
+        tflite::CreateTensorDirect(builder, &paramsShape, tflite::TensorType::INT32, 2, "end"),
+        tflite::CreateTensorDirect(builder, &paramsShape, tflite::TensorType::INT32, 3, "strides"),
+        tflite::CreateTensorDirect(builder, &producerShape, tflite::TensorType::INT8, 0, "producer", inputQuant),
+        tflite::CreateTensorDirect(builder, &producerWeightShape, tflite::TensorType::INT8, 4,
+            "producer_weights", weightQuant),
+        tflite::CreateTensorDirect(builder, &producerBiasShape, tflite::TensorType::INT32, 5,
+            "producer_bias", biasQuant),
+        tflite::CreateTensorDirect(builder, &sliceShape, tflite::TensorType::INT8, 0, "slice", inputQuant),
+        tflite::CreateTensorDirect(builder, &consumerWeightShape, tflite::TensorType::INT8, 6,
+            "consumer_weights", weightQuant),
+        tflite::CreateTensorDirect(builder, &consumerBiasShape, tflite::TensorType::INT32, 7,
+            "consumer_bias", biasQuant),
+        tflite::CreateTensorDirect(builder, &outputShape, tflite::TensorType::INT8, 0, "output", outputQuant),
+    };
+
+    const auto sliceOptions = tflite::CreateStridedSliceOptions(builder, 7, 7, 0, 0, 0);
+    const auto producerOptions = tflite::CreateConv2DOptions(builder, tflite::Padding::VALID, 1, 1,
+        tflite::ActivationFunctionType::NONE, 1, 1, tflite::TensorType::INT32);
+    const auto consumerOptions = tflite::CreateConv2DOptions(builder,
+        consumerKernel == 1 ? tflite::Padding::VALID : tflite::Padding::SAME, 1, 1,
+        tflite::ActivationFunctionType::NONE, 1, 1, tflite::TensorType::INT32);
+    const std::vector<int32_t> producerInputs = {0, 5, 6};
+    const std::vector<int32_t> producerOutputs = {4};
+    const std::vector<int32_t> sliceInputs = {4, 1, 2, 3};
+    const std::vector<int32_t> sliceOutputs = {7};
+    const std::vector<int32_t> consumerInputs = {7, 8, 9};
+    const std::vector<int32_t> consumerOutputs = {10};
+    const std::vector<flatbuffers::Offset<tflite::Operator>> operations = {
+        tflite::CreateOperatorDirect(builder, 1, &producerInputs, &producerOutputs,
+            tflite::BuiltinOptions::Conv2DOptions, producerOptions.Union()),
+        tflite::CreateOperatorDirect(builder, 0, &sliceInputs, &sliceOutputs,
+            tflite::BuiltinOptions::StridedSliceOptions, sliceOptions.Union()),
+        tflite::CreateOperatorDirect(builder, 1, &consumerInputs, &consumerOutputs,
+            tflite::BuiltinOptions::Conv2DOptions, consumerOptions.Union()),
+    };
+    const std::vector<int32_t> graphInputs = {0};
+    const std::vector<int32_t> graphOutputs = {10};
+    const std::vector<flatbuffers::Offset<tflite::SubGraph>> subgraphs = {
+        tflite::CreateSubGraphDirect(
+            builder, &tensors, &graphInputs, &graphOutputs, &operations, "main"),
+    };
+    const std::vector<flatbuffers::Offset<tflite::OperatorCode>> operatorCodes = {
+        tflite::CreateOperatorCodeDirect(builder, int8_t(tflite::BuiltinOperator::STRIDED_SLICE),
+            nullptr, 2, tflite::BuiltinOperator::STRIDED_SLICE),
+        tflite::CreateOperatorCodeDirect(builder, int8_t(tflite::BuiltinOperator::CONV_2D),
+            nullptr, 3, tflite::BuiltinOperator::CONV_2D),
+    };
+    const auto model = tflite::CreateModelDirect(builder, 3, &operatorCodes, &subgraphs,
+        "Neural-AI C32 slice pointwise test", &buffers);
+    tflite::FinishModelBuffer(builder, model);
+    return builder.Release();
+}
+
 flatbuffers::DetachedBuffer BuildDepthwiseConvModel(int height, int width, int channels, int stride,
     int64_t inputZeroPoint = 0)
 {
@@ -2675,6 +2787,111 @@ TEST_CASE("Neural-AI compiler removes internal reshape-like views without adding
         blob->Unmap(const_cast<uint8_t *>(data));
         blob->Release();
     }
+}
+
+TEST_CASE("Neural-AI compiler aliases C32-aligned YOLO depth slices into pointwise Conv")
+{
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildC32SliceConvModel(2, 3, 64, 32, 32, 32);
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+    const bool compiled = compiler.Compile();
+    INFO(compiler.LastError());
+    REQUIRE(compiled);
+
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    const uint32_t commandBytes = Read32(data + 64 + 12);
+    uint32_t offset = 224;
+    uint32_t producerOutputOffset = 0;
+    uint32_t consumerInputOffset = 0;
+    uint32_t copyCommands = 0;
+    uint32_t pointwiseCommands = 0;
+    while ( offset < 224 + commandBytes )
+    {
+        const auto type = neuralai::CommandType(Read16(data + offset));
+        const uint16_t commandSize = Read16(data + offset + 2);
+        REQUIRE(commandSize >= sizeof(neuralai::CommandHeaderV2));
+        if ( type == neuralai::CommandType::CopyLayout )
+        {
+            ++copyCommands;
+        }
+        if ( type == neuralai::CommandType::PointwiseC32 )
+        {
+            if ( pointwiseCommands == 1 ) producerOutputOffset = Read32(data + offset + 44);
+            else if ( pointwiseCommands == 2 ) consumerInputOffset = Read32(data + offset + 28);
+            ++pointwiseCommands;
+        }
+        offset += commandSize;
+    }
+    REQUIRE(offset == 224 + commandBytes);
+    REQUIRE(copyCommands == 2);
+    REQUIRE(pointwiseCommands == 3);
+    REQUIRE(consumerInputOffset == producerOutputOffset);
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
+}
+
+TEST_CASE("Neural-AI compiler aliases C32-aligned YOLO depth slices into linebuffer Conv")
+{
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildC32SliceConvModel(2, 3, 64, 32, 32, 32, 3);
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+    const bool compiled = compiler.Compile();
+    INFO(compiler.LastError());
+    REQUIRE(compiled);
+
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    const uint32_t commandBytes = Read32(data + 64 + 12);
+    uint32_t offset = 224;
+    uint32_t producerOutputOffset = 0;
+    uint32_t linebufferInputOffset = 0;
+    uint32_t pointwiseCommands = 0;
+    uint32_t linebufferCommands = 0;
+    while ( offset < 224 + commandBytes )
+    {
+        const auto type = neuralai::CommandType(Read16(data + offset));
+        const uint16_t commandSize = Read16(data + offset + 2);
+        REQUIRE(commandSize >= sizeof(neuralai::CommandHeaderV2));
+        if ( type == neuralai::CommandType::PointwiseC32 )
+        {
+            if ( pointwiseCommands == 1 ) producerOutputOffset = Read32(data + offset + 44);
+            ++pointwiseCommands;
+        }
+        if ( type == neuralai::CommandType::LineBufferJob )
+        {
+            if ( linebufferCommands == 0 ) linebufferInputOffset = Read32(data + offset + 16);
+            ++linebufferCommands;
+        }
+        offset += commandSize;
+    }
+    REQUIRE(offset == 224 + commandBytes);
+    REQUIRE(pointwiseCommands == 2);
+    REQUIRE(linebufferCommands > 0);
+    REQUIRE(linebufferInputOffset == producerOutputOffset);
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
+}
+
+TEST_CASE("Neural-AI compiler rejects non-C32 YOLO depth slices")
+{
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildC32SliceConvModel(2, 3, 32, 16, 16, 32);
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+    REQUIRE_FALSE(compiler.Compile());
 }
 
 TEST_CASE("Neural-AI compiler materializes reshape-like graph outputs")

@@ -2487,9 +2487,24 @@ validation, versus the previous 97,150 ns (+0.51%). The existing two-DMA
 runtime fixture previously passed on the same simulator build at 91,973
 simulated ns. That fixture moves 32 bytes while the public view moves 128 bytes,
 so their completion times are only focused sanity checks and not an
-operator-latency comparison. View offset/slice cases remain open; command
-generation now rejects sliced `MemoryCopy` connections instead of incorrectly
-treating them as full-volume copies.
+operator-latency comparison.
+
+The selected YOLO inventory contains 16 backbone/C2f `StridedSlice` instances
+before the postprocess tail. Fourteen use a full-spatial, unit-stride depth view
+whose offset and extent are both C32 aligned. Those forms are now admitted as
+zero-copy aliases: graph optimization moves the view into its consumer and
+Neural-AI command generation converts the logical depth offset into the
+corresponding C32 group-plane byte offset for pointwise and linebuffer Conv.
+Corpus-shaped `pointwise C32 -> slice(offset=32, depth=32) -> pointwise C32`
+and `pointwise C32 -> slice -> linebuffer Conv3x3` regressions emit no slice or
+materialization command, and each consumer IFM reference equals the producer's
+second output-group address. The focused slice suite passes 38 assertions, and
+the complete Regor suite passes 225/225 cases (630,427 assertions). The two initial
+`C32 -> C16 + C16` C2f slices remain rejected because a 16-lane view cannot use
+the current pointwise C32 reference contract without lane remapping. Spatial,
+strided, non-rank-4, requantized, and non-C32 depth slices are also rejected.
+Sliced `MemoryCopy` connections outside this admitted zero-copy path remain
+fail-closed instead of being treated as full-volume copies.
 
 The raw-AFU compiler-generated Add package passes byte-exactly on Verilator at
 127,826 simulated ns. The equivalent hand-written package passes at 113,958
