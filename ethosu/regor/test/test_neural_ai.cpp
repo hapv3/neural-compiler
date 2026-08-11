@@ -2470,49 +2470,55 @@ TEST_CASE("Neural-AI compiler admits MobileNet-scale global AvgPool")
     blob->Release();
 }
 
-TEST_CASE("Neural-AI compiler lowers nearest 2x C32 resize through Spatz upsample")
+TEST_CASE("Neural-AI compiler lowers selected nearest 2x C32-grouped resize depths")
 {
-    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
-    Compiler compiler(architecture);
-    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
-    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
-    const auto model = BuildResizeNearestModel();
-    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
-    const bool compiled = compiler.Compile();
-    INFO(compiler.LastError());
-    REQUIRE(compiled);
-
-    IRegorBlob *blob = compiler.Output();
-    REQUIRE(blob != nullptr);
-    int64_t size = 0;
-    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
-    const uint32_t commandBytes = Read32(data + 64 + 12);
-    uint32_t offset = 224;
-    uint32_t upsampleCommands = 0;
-    while ( offset < 224 + commandBytes )
+    for ( const int channels : {32, 128, 256} )
     {
-        const uint16_t type = Read16(data + offset);
-        const uint16_t commandSize = Read16(data + offset + 2);
-        REQUIRE(commandSize >= 32);
-        if ( type == uint16_t(neuralai::CommandType::UpsampleNearest) )
+        DYNAMIC_SECTION("channels=" << channels)
         {
-            REQUIRE(commandSize == sizeof(neuralai::CommandUpsampleNearestV2));
-            REQUIRE(Read16(data + offset + 16) == uint16_t(neuralai::Region::TCDMScratch));
-            REQUIRE(Read16(data + offset + 24) == uint16_t(neuralai::Region::TCDMScratch));
-            REQUIRE(Read32(data + offset + 16 + 4) != Read32(data + offset + 24 + 4));
-            REQUIRE(Read32(data + offset + 32) == 2);
-            REQUIRE(Read32(data + offset + 36) == 3);
-            REQUIRE(Read32(data + offset + 40) == 32);
-            REQUIRE(Read32(data + offset + 44) == 2);
-            REQUIRE(Read32(data + offset + 48) == 2);
-            ++upsampleCommands;
+            std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+            Compiler compiler(architecture);
+            const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+            REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+            const auto model = BuildResizeNearestModel(2, 3, channels, 4, 6);
+            REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+            const bool compiled = compiler.Compile();
+            INFO(compiler.LastError());
+            REQUIRE(compiled);
+
+            IRegorBlob *blob = compiler.Output();
+            REQUIRE(blob != nullptr);
+            int64_t size = 0;
+            const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+            const uint32_t commandBytes = Read32(data + 64 + 12);
+            uint32_t offset = 224;
+            uint32_t upsampleCommands = 0;
+            while ( offset < 224 + commandBytes )
+            {
+                const uint16_t type = Read16(data + offset);
+                const uint16_t commandSize = Read16(data + offset + 2);
+                REQUIRE(commandSize >= 32);
+                if ( type == uint16_t(neuralai::CommandType::UpsampleNearest) )
+                {
+                    REQUIRE(commandSize == sizeof(neuralai::CommandUpsampleNearestV2));
+                    REQUIRE(Read16(data + offset + 16) == uint16_t(neuralai::Region::TCDMScratch));
+                    REQUIRE(Read16(data + offset + 24) == uint16_t(neuralai::Region::TCDMScratch));
+                    REQUIRE(Read32(data + offset + 16 + 4) != Read32(data + offset + 24 + 4));
+                    REQUIRE(Read32(data + offset + 32) == 2);
+                    REQUIRE(Read32(data + offset + 36) == 3);
+                    REQUIRE(Read32(data + offset + 40) == uint32_t(channels));
+                    REQUIRE(Read32(data + offset + 44) == 2);
+                    REQUIRE(Read32(data + offset + 48) == 2);
+                    ++upsampleCommands;
+                }
+                offset += commandSize;
+            }
+            REQUIRE(offset == 224 + commandBytes);
+            REQUIRE(upsampleCommands == 1);
+            blob->Unmap(const_cast<uint8_t *>(data));
+            blob->Release();
         }
-        offset += commandSize;
     }
-    REQUIRE(offset == 224 + commandBytes);
-    REQUIRE(upsampleCommands == 1);
-    blob->Unmap(const_cast<uint8_t *>(data));
-    blob->Release();
 }
 
 TEST_CASE("Neural-AI compiler rejects resize outside nearest 2x C32 contract")
@@ -2537,6 +2543,7 @@ TEST_CASE("Neural-AI compiler rejects resize outside nearest 2x C32 contract")
     };
 
     rejects(BuildResizeNearestModel(2, 3, 33, 4, 6));
+    rejects(BuildResizeNearestModel(2, 3, 64, 4, 6));
     rejects(BuildResizeNearestModel(2, 3, 32, 6, 9));
     rejects(BuildResizeNearestModel(2, 3, 32, 4, 6, 0.5f));
 }

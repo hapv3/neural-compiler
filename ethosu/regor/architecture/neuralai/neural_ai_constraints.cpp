@@ -303,10 +303,12 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
     {
         const Shape &ifmShape = query->ifm[0].shape;
         const Shape &ofmShape = query->ofm.shape;
+        const bool supportedDepth =
+            ifmShape.Depth() == 32 || ifmShape.Depth() == 128 || ifmShape.Depth() == 256;
         if ( query->ifm[0].type != DataType::Int8 || query->ofm.type != DataType::Int8 ||
              !IsStaticPositiveShape(ifmShape) || !IsStaticPositiveShape(ofmShape) ||
              !HasBatchOne(ifmShape) || !HasBatchOne(ofmShape) ||
-             ifmShape.Depth() != 32 || ofmShape.Depth() != 32 ||
+             !supportedDepth || ofmShape.Depth() != ifmShape.Depth() ||
              ofmShape.Height() % 2 != 0 || ofmShape.Height() / 2 != ifmShape.Height() ||
              ofmShape.Width() % 2 != 0 || ofmShape.Width() / 2 != ifmShape.Width() )
             return QueryResult::Unsupported;
@@ -389,9 +391,12 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
         const Kernel *kernel = query->kernel;
         const Shape &ifmShape = query->ifm[0].shape;
         const Shape &ofmShape = query->ofm.shape;
+        const bool nearestDepth =
+            ifmShape.Depth() == 32 || ifmShape.Depth() == 128 || ifmShape.Depth() == 256;
         const bool nearest2x = kernel != nullptr && kernel->Size() == Point2i(1, 1) &&
                                kernel->Stride() == Point2i(1, 1) && kernel->Padding().IsZero() &&
-                               ifmShape.Depth() == 32 && ofmShape.Depth() == 32 &&
+                               HasBatchOne(ifmShape) && HasBatchOne(ofmShape) && nearestDepth &&
+                               ofmShape.Depth() == ifmShape.Depth() &&
                                ofmShape.Height() % 2 == 0 && ofmShape.Height() / 2 == ifmShape.Height() &&
                                ofmShape.Width() % 2 == 0 && ofmShape.Width() / 2 == ifmShape.Width();
         if ( nearest2x )

@@ -1253,8 +1253,10 @@ struct GeneratorContext
             return SetError(error, "Neural-AI upsample requires C32-blocked tensors");
         if ( ifm->resamplingMode != ArchResampling::Nearest )
             return SetError(error, "Neural-AI upsample requires nearest resampling metadata");
-        if ( ifm->shape.Depth() != 32 || ofm->shape.Depth() != 32 )
-            return SetError(error, "Neural-AI upsample requires exactly 32 channels");
+        const bool supportedDepth =
+            ifm->shape.Depth() == 32 || ifm->shape.Depth() == 128 || ifm->shape.Depth() == 256;
+        if ( !supportedDepth || ofm->shape.Depth() != ifm->shape.Depth() )
+            return SetError(error, "Neural-AI upsample requires a selected C32-grouped depth");
         if ( ofm->shape.Height() % 2 != 0 ||
              ofm->shape.Height() / 2 != ifm->shape.Height() ||
              ofm->shape.Width() % 2 != 0 ||
@@ -1283,7 +1285,7 @@ struct GeneratorContext
         AppendRef(artifact->commands, ofmRef);
         Append32(artifact->commands, uint32_t(ifm->shape.Height()));
         Append32(artifact->commands, uint32_t(ifm->shape.Width()));
-        Append32(artifact->commands, 32);
+        Append32(artifact->commands, uint32_t(ifm->shape.Depth()));
         Append32(artifact->commands, 2);
         Append32(artifact->commands, 2);
         AppendZeros(artifact->commands, 3);
