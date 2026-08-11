@@ -49,6 +49,16 @@ public:
         return ifmShape.Elements64() == ofmShape.Elements64() &&
                ifmShape.Depth() == ofmShape.Depth();
     }
+    bool CanAliasSlice(const Shape &ifmShape, const Shape &sliceOffset,
+        const Shape &sliceShape) const override
+    {
+        if ( ifmShape.Depth() == sliceShape.Depth() && sliceOffset.Depth() == 0 ) return true;
+        const bool c32Aligned = sliceOffset.Depth() >= 0 && sliceOffset.Depth() % 32 == 0 &&
+            sliceShape.Depth() > 0 && sliceShape.Depth() % 32 == 0;
+        const bool lowC16 = ifmShape.Depth() == 32 && sliceOffset.Depth() == 0 &&
+            sliceShape.Depth() == 16;
+        return c32Aligned || lowC16;
+    }
     Flags<QueryResult> OperatorQuery(OpType opType, const ArchOperatorQuery *query = nullptr,
         ArchRequirements *req = nullptr) override;
     bool SupportedZeroPoint(int64_t zeroPoint, TensorUsage usage, DataType dataType, OpType opType) override;

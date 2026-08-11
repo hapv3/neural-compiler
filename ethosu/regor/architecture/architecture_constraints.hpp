@@ -138,6 +138,9 @@ public:
     // Whether a reshape-like operation can alias storage without changing its
     // architecture-specific physical interpretation.
     virtual bool CanAliasReshape(const Shape &, const Shape &) const { return true; }
+    // Whether a slice can be forwarded as consumer metadata without changing
+    // its architecture-specific physical interpretation.
+    virtual bool CanAliasSlice(const Shape &, const Shape &, const Shape &) const { return true; }
     virtual Flags<QueryResult> OperatorQuery(OpType opType, const ArchOperatorQuery *query = nullptr, ArchRequirements *req = nullptr) = 0;
     virtual bool SupportedZeroPoint(int64_t zp, TensorUsage usage, DataType dType, OpType opType) = 0;
 };

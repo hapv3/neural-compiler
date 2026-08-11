@@ -3382,6 +3382,10 @@ Operation *GraphIrOptimiser::MoveSplitSliceToConsumer(Graph *const, Operation *c
 
     if ( operation->Type() == OpType::MemoryCopy && hasIFMSlice && !hasOFMSlice && !hasReverse )
     {
+        const Shape sliceOffset = ifmConn->slice.offset ?
+            ifmConn->slice.offset : ifmConn->shape.WithZeros();
+        if ( !_constraints->CanAliasSlice(ifmConn->shape, sliceOffset, ifmConn->SliceShape()) )
+            return operation;
         auto *ofm = ofmConn->tensor.get();
         auto readers = ofm->Readers();
         for ( auto &cons : readers )

@@ -2498,13 +2498,31 @@ corresponding C32 group-plane byte offset for pointwise and linebuffer Conv.
 Corpus-shaped `pointwise C32 -> slice(offset=32, depth=32) -> pointwise C32`
 and `pointwise C32 -> slice -> linebuffer Conv3x3` regressions emit no slice or
 materialization command, and each consumer IFM reference equals the producer's
-second output-group address. The focused slice suite passes 38 assertions, and
-the complete Regor suite passes 225/225 cases (630,427 assertions). The two initial
-`C32 -> C16 + C16` C2f slices remain rejected because a 16-lane view cannot use
-the current pointwise C32 reference contract without lane remapping. Spatial,
-strided, non-rank-4, requantized, and non-C32 depth slices are also rejected.
+second output-group address. The two initial `C32 -> C16 + C16` C2f slices now
+have asymmetric constrained lowering. The low half aliases the original C32
+group because its active values already occupy lanes 0-15. The high half is
+materialized exactly once into lanes 0-15 of a new C32 storage group with one
+local `DMA3D` command, even when it has multiple consumers. The architecture
+slice-alias hook prevents the generic Graph IR pass from incorrectly forwarding
+the high-half lane offset to every consumer. The runtime dispatches each local
+strided segment through `spatz_vec_copy_i8()`; local `DMA2D` and `DMA3D` no
+longer fall back to Snitch byte-copy loops. For the first YOLO C2f shape this
+moves 80x80x16 = 102,400 bytes once; it is a bounded vector materialization,
+not the final concat-performance path. N-way C16 concat still requires
+concat-consumer Conv fusion. Spatial, strided, non-rank-4, requantized, and
+other non-C32 depth slices remain rejected.
 Sliced `MemoryCopy` connections outside this admitted zero-copy path remain
 fail-closed instead of being treated as full-volume copies.
+
+The updated generic firmware builds with 30,504 bytes of `.text`, below the
+32 KiB ITCM gate, and the cross-repository ABI plus host runtime checks pass.
+The focused slice suite covers low-half aliasing, one high-half local strided
+copy with exact source-lane and destination references, and rejection of
+misaligned or wider-source C16 variants, passing 83 assertions in 6 cases. The
+complete Regor suite passes 227/227 cases (601,830 assertions). No total-cycle
+claim is made from these host checks; Micro-YOLO's 388,146-cycle raw-head result
+remains a reference for later attributed full-graph comparison rather than a
+1:1 target.
 
 The raw-AFU compiler-generated Add package passes byte-exactly on Verilator at
 127,826 simulated ns. The equivalent hand-written package passes at 113,958

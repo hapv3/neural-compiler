@@ -130,12 +130,14 @@ bool SupportedC32DepthSlice(const Operation *operation)
 
     const int depthBegin = (options->begin_mask() & 0x8) != 0 ? 0 : begin.Depth();
     const int depthEnd = (options->end_mask() & 0x8) != 0 ? ifm->shape.Depth() : end.Depth();
+    const bool c32Aligned = depthBegin % 32 == 0 && ofm->shape.Depth() % 32 == 0;
+    const bool c32ToC16 = ifm->shape.Depth() == 32 && ofm->shape.Depth() == 16 &&
+        (depthBegin == 0 || depthBegin == 16);
     if ( depthBegin < 0 || depthEnd <= depthBegin || depthEnd > ifm->shape.Depth() ||
-         depthBegin % 32 != 0 || ofm->shape.Depth() % 32 != 0 ||
-         depthEnd - depthBegin != ofm->shape.Depth() )
+         (!c32Aligned && !c32ToC16) || depthEnd - depthBegin != ofm->shape.Depth() )
     {
         Failure(operation,
-            "Neural-AI zero-copy StridedSlice requires C32-aligned depth offset and extent");
+            "Neural-AI StridedSlice requires a C32-aligned view or a C32-to-C16 half-depth slice");
         return false;
     }
     return true;
@@ -159,7 +161,7 @@ TfLiteSupportedOperatorsNeuralAI::TfLiteSupportedOperatorsNeuralAI() :
         "Concat must match the two-input C32 channel-axis contract."};
     opConstraints[OpType::Concat].push_back(&s_supportedConcat);
     static ConstraintCheck s_supportedC32DepthSlice = {&SupportedC32DepthSlice,
-        "StridedSlice must match the C32-aligned zero-copy depth-slice contract."};
+        "StridedSlice must match the C32-aligned view or C32-to-C16 half-depth contract."};
     opConstraints[OpType::StridedSlice].push_back(&s_supportedC32DepthSlice);
 }
 

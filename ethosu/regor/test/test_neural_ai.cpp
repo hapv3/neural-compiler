@@ -2883,7 +2883,51 @@ TEST_CASE("Neural-AI compiler aliases C32-aligned YOLO depth slices into linebuf
     blob->Release();
 }
 
-TEST_CASE("Neural-AI compiler rejects non-C32 YOLO depth slices")
+TEST_CASE("Neural-AI compiler aliases the low C16 half of a C32 YOLO tensor")
+{
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildC32SliceConvModel(2, 3, 32, 0, 16, 32);
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+    const bool compiled = compiler.Compile();
+    INFO(compiler.LastError());
+    REQUIRE(compiled);
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    const uint32_t commandBytes = Read32(data + 64 + 12);
+    uint32_t offset = 224;
+    std::vector<uint32_t> pointwiseInputs;
+    std::vector<uint32_t> pointwiseOutputs;
+    uint32_t localStridedCopies = 0;
+    while ( offset < 224 + commandBytes )
+    {
+        const auto type = neuralai::CommandType(Read16(data + offset));
+        const uint16_t commandSize = Read16(data + offset + 2);
+        REQUIRE(commandSize >= sizeof(neuralai::CommandHeaderV2));
+        if ( type == neuralai::CommandType::PointwiseC32 )
+        {
+            pointwiseInputs.push_back(Read32(data + offset + 28));
+            pointwiseOutputs.push_back(Read32(data + offset + 44));
+        }
+        if ( type == neuralai::CommandType::DMA3D &&
+             Read32(data + offset + 60) == uint32_t(neuralai::DMADirection::LocalToLocal) )
+            ++localStridedCopies;
+        offset += commandSize;
+    }
+    REQUIRE(offset == 224 + commandBytes);
+    REQUIRE(pointwiseInputs.size() == 2);
+    REQUIRE(pointwiseOutputs.size() == 2);
+    REQUIRE(pointwiseInputs[1] == pointwiseOutputs[0]);
+    REQUIRE(localStridedCopies == 0);
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
+}
+
+TEST_CASE("Neural-AI compiler vector-materializes the high C16 half of a C32 YOLO tensor")
 {
     std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
     Compiler compiler(architecture);
@@ -2891,7 +2935,67 @@ TEST_CASE("Neural-AI compiler rejects non-C32 YOLO depth slices")
     REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
     const auto model = BuildC32SliceConvModel(2, 3, 32, 16, 16, 32);
     REQUIRE(compiler.LoadTflite(model.data(), model.size()));
-    REQUIRE_FALSE(compiler.Compile());
+    const bool compiled = compiler.Compile();
+    INFO(compiler.LastError());
+    REQUIRE(compiled);
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    const uint32_t commandBytes = Read32(data + 64 + 12);
+    uint32_t offset = 224;
+    std::vector<uint32_t> pointwiseInputs;
+    std::vector<uint32_t> pointwiseOutputs;
+    uint32_t copySource = 0;
+    uint32_t copyDestination = 0;
+    uint32_t localStridedCopies = 0;
+    while ( offset < 224 + commandBytes )
+    {
+        const auto type = neuralai::CommandType(Read16(data + offset));
+        const uint16_t commandSize = Read16(data + offset + 2);
+        REQUIRE(commandSize >= sizeof(neuralai::CommandHeaderV2));
+        if ( type == neuralai::CommandType::PointwiseC32 )
+        {
+            pointwiseInputs.push_back(Read32(data + offset + 28));
+            pointwiseOutputs.push_back(Read32(data + offset + 44));
+        }
+        if ( type == neuralai::CommandType::DMA3D &&
+             Read32(data + offset + 60) == uint32_t(neuralai::DMADirection::LocalToLocal) )
+        {
+            REQUIRE(Read32(data + offset + 32) == 16);
+            REQUIRE(Read32(data + offset + 36) == 32);
+            REQUIRE(Read32(data + offset + 40) == 32);
+            REQUIRE(Read32(data + offset + 44) == 3);
+            REQUIRE(Read32(data + offset + 56) == 2);
+            copySource = Read32(data + offset + 20);
+            copyDestination = Read32(data + offset + 28);
+            ++localStridedCopies;
+        }
+        offset += commandSize;
+    }
+    REQUIRE(offset == 224 + commandBytes);
+    REQUIRE(pointwiseInputs.size() == 2);
+    REQUIRE(pointwiseOutputs.size() == 2);
+    REQUIRE(localStridedCopies == 1);
+    REQUIRE(copySource == pointwiseOutputs[0] + 16);
+    REQUIRE(pointwiseInputs[1] == copyDestination);
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
+}
+
+TEST_CASE("Neural-AI compiler rejects C16 slices outside the YOLO half-depth contract")
+{
+    const auto rejects = [](flatbuffers::DetachedBuffer model)
+    {
+        std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+        Compiler compiler(architecture);
+        const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+        REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+        REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+        REQUIRE_FALSE(compiler.Compile());
+    };
+    rejects(BuildC32SliceConvModel(2, 3, 32, 8, 16, 32));
+    rejects(BuildC32SliceConvModel(2, 3, 64, 16, 16, 32));
 }
 
 TEST_CASE("Neural-AI compiler materializes reshape-like graph outputs")

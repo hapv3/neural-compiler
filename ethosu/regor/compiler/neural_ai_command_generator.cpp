@@ -67,12 +67,14 @@ bool C32SliceByteOffset(const SchedulerConnection *connection, uint32_t &offset,
     const Shape sliceOffset = ReshapeToNHWC(connection->slice.offset);
     const Shape sliceStride = connection->slice.stride ?
         ReshapeToNHWC(connection->slice.stride) : fullShape.WithOnes();
+    const bool c32Aligned = sliceOffset.Depth() >= 0 && sliceOffset.Depth() % 32 == 0 &&
+        sliceShape.Depth() > 0 && sliceShape.Depth() % 32 == 0;
+    const bool lowC16 = fullShape.Depth() == 32 && sliceOffset.Depth() == 0 &&
+        sliceShape.Depth() == 16;
     if ( connection->tensor->format != TensorFormat::C32Blocked ||
          sliceShape.WithDepth(1) != fullShape.WithDepth(1) ||
          sliceOffset.WithDepth(0) != fullShape.WithZeros() ||
-         sliceStride != sliceStride.WithOnes() || sliceOffset.Depth() < 0 ||
-         sliceOffset.Depth() % 32 != 0 || sliceShape.Depth() <= 0 ||
-         sliceShape.Depth() % 32 != 0 ||
+         sliceStride != sliceStride.WithOnes() || (!c32Aligned && !lowC16) ||
          sliceOffset.Depth() + sliceShape.Depth() > fullShape.Depth() )
     {
         error = "Neural-AI native tensor slice requires a full-spatial C32-aligned depth view";
@@ -628,9 +630,12 @@ struct GeneratorContext
                     addressing.rowStride = uint32_t(slice.Width() * 16);
                     return true;
                 }
-                if ( storage.Batch() != 1 || storage.Depth() != 16 ||
+                const bool compactC16 = storage.Depth() == 16 && sliceOffset.Depth() == 0;
+                const bool highC16FromC32 = connection->tensor->format == TensorFormat::C32Blocked &&
+                    storage.Depth() == 32 && sliceOffset.Depth() == 16;
+                if ( storage.Batch() != 1 || (!compactC16 && !highC16FromC32) ||
                      slice.Batch() != 1 || slice.Depth() != 16 ||
-                     sliceOffset.Batch() != 0 || sliceOffset.Depth() != 0 ||
+                     sliceOffset.Batch() != 0 ||
                      sliceOffset.Height() < 0 || sliceOffset.Width() < 0 ||
                      sliceOffset.Height() + slice.Height() > storage.Height() ||
                      sliceOffset.Width() + slice.Width() > storage.Width() ||
@@ -643,7 +648,8 @@ struct GeneratorContext
                         connection->slice.stride.ToString()));
                 const int64_t rowStride64 = storage.Width() * int64_t(pixelStride);
                 const int64_t base64 =
-                    (sliceOffset.Height() * int64_t(storage.Width()) + sliceOffset.Width()) * pixelStride;
+                    (sliceOffset.Height() * int64_t(storage.Width()) + sliceOffset.Width()) * pixelStride +
+                    sliceOffset.Depth();
                 if ( rowStride64 <= 0 || rowStride64 > std::numeric_limits<uint32_t>::max() ||
                      base64 < 0 || base64 > std::numeric_limits<uint32_t>::max() )
                     return SetError(error, "Neural-AI sliced C16 address is outside the ABI range");
