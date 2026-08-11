@@ -84,7 +84,7 @@ exists. The following status matrix reflects what has been audited:
 | Linebuffer Conv | Yes | v2 linebuffer and depthwise dispatch | RGB K3 S2, generic full-group C32 K3, and depthwise K3 S1/S2 | Compiler-generated `.nai` packages |
 | AFU commands | Hardware modes exist | v2 constrained `ADD_I8` and LUT dispatch | Equal-shape raw-safe INT8 Add, byte-exact Conv-producer canonicalization, standalone activations, and quantized YOLO SiLU LUT fusion | Compiler-generated Add, activation, and SiLU packages on Verilator |
 | Spatz commands | Engine exists | v2 quantized-Add and nearest-upsample dispatch | Quantization-correct Add fallback and nearest-neighbor 2x INT8 C32 | Compiler-generated packages on Verilator |
-| MaxPool | Systolic linebuffer pool mode | v2 constrained MaxPool dispatch | K5/S1/P2, batch 1, INT8 C32, out-of-place | Compiler-generated H24/W24/C32 package on Verilator |
+| MaxPool | Systolic linebuffer pool mode | v2 constrained MaxPool dispatch | K5/S1/P2, batch 1, selected INT8 C32/C128 depths, out-of-place | Compiler-generated C32 and YOLO-derived C128 packages on Verilator |
 
 `ArchNeuralAI` exposes `FullyConnected`, `MatMul`, `MemoryCopy`, and a
 constrained CNN path containing pointwise Conv, RGB K3 S2, generic full-group
@@ -2514,7 +2514,7 @@ other non-C32 depth slices remain rejected.
 Sliced `MemoryCopy` connections outside this admitted zero-copy path remain
 fail-closed instead of being treated as full-volume copies.
 
-The updated generic firmware builds with 30,504 bytes of `.text`, below the
+The current generic firmware builds with 30,656 bytes of `.text`, below the
 32 KiB ITCM gate, and the cross-repository ABI plus host runtime checks pass.
 The focused slice suite covers low-half aliasing, one high-half local strided
 copy with exact source-lane and destination references, and rejection of
@@ -2670,13 +2670,15 @@ compiler-generated full YOLO graph is still required for an equivalent
 comparison with the 388,146-cycle native full-graph record.
 
 YOLO-style MaxPool is implemented through the 96-byte v2 `MAXPOOL` command.
-The supported subset is static batch-1 INT8, exactly 32 channels, K5/S1/P2,
-same input/output shape and quantization, no fused activation, C32-blocked
-internal tensors, and out-of-place output. The runtime validates all fixed
-kernel fields, overflow-safe tensor ranges, TCDM references, reserved fields,
-and non-overlap before calling
+The supported subset is static batch-1 INT8, K5/S1/P2, same input/output shape
+and quantization, no fused activation, C32-blocked internal tensors, and
+out-of-place output. Depth is restricted to C32 and the selected full-size
+YOLO SPPF depth C128; C64 and non-C32 depths remain rejected. The runtime
+validates all fixed kernel fields, overflow-safe tensor ranges, TCDM references,
+reserved fields, and non-overlap. C128 executes four group-plane calls to
 `systolic_maxpool5x5s1p2_c32_linebuf()`, the same linebuffer pool fast path used
-by native Micro-YOLO. C33, K3, requantized, and fused-ReLU forms are rejected.
+by native Micro-YOLO, without a scalar or generic tensor fallback. K3,
+requantized, and fused-ReLU forms remain rejected.
 
 The compiler-generated H24/W24/C32 operator package passes byte-exactly on
 Verilator at 289,729 simulated ns, with 251,203 ns measured invocation time and
@@ -2690,6 +2692,18 @@ must not be interpreted as a 11.7x kernel slowdown. An equivalent
 compiler-generated full YOLO graph remains necessary to check for attributed
 slow paths against the 388,146-cycle native reference; exact total-cycle parity
 is not required.
+
+The full-size YOLO inventory identifies all three SPPF MaxPool instances as
+H10/W10/C128 with the same K5/S1/P2 and raw-quantization contract. A micrograph
+extracted directly from source operator 101 compiles with 0 CPU operators and
+one C128 `MAXPOOL` command. Its independent golden matches TFLite `BUILTIN_REF`
+in all 12,800 bytes, and the compiler-generated Verilator package passes
+byte-exactly at 104,191 measured invocation ns and 65,358 PMU cycles. That is
+18.8% of the 347,992-cycle Micro-MobileNet record and 16.8% of the 388,146-cycle
+Micro-YOLO record, but these ratios are attribution references for a focused
+operator package, not 1:1 full-graph targets. After this extension the selected
+full YOLO compile advances past MaxPool and stops next at its C256 nearest
+resize contract.
 
 The model-required materialized Concat fallback is implemented for exactly two
 static batch-1 INT8 inputs on the channel axis. Both input depths must be C32
