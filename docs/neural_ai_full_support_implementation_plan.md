@@ -2524,6 +2524,15 @@ claim is made from these host checks; Micro-YOLO's 388,146-cycle raw-head result
 remains a reference for later attributed full-graph comparison rather than a
 1:1 target.
 
+The compiler-generated H2/W3/C32 high-half regression independently exercises
+the cross-repository path from TFLite `StridedSlice` through the emitted local
+`DMA3D` and the runtime Spatz copy. Its input activates only channel zero; the
+two pointwise stages use distinct low/high-half weights, so the expected value
+32 distinguishes the high-half result from the value 16 that an incorrect
+low-half alias would produce. Verilator completes byte-exactly in 105,347
+simulated ns. This focused integration time includes boot and package handling
+and is not compared 1:1 with the 388,146-cycle Micro-YOLO reference.
+
 The raw-AFU compiler-generated Add package passes byte-exactly on Verilator at
 127,826 simulated ns. The equivalent hand-written package passes at 113,958
 simulated ns; the 13,868 ns (12.17%) difference is consistent with additional
