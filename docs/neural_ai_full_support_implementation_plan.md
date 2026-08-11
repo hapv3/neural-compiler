@@ -83,7 +83,7 @@ exists. The following status matrix reflects what has been audited:
 | Pointwise Conv1x1 | GEMM32 primitive | v2 `POINTWISE_C32` path | Constrained 1x1/S1/P0 lowering with C32 group/tail padding | Compiler-generated Conv package on Verilator |
 | Linebuffer Conv | Yes | v2 linebuffer and depthwise dispatch | RGB K3 S2, generic full-group C32 K3, and depthwise K3 S1/S2 | Compiler-generated `.nai` packages |
 | AFU commands | Hardware modes exist | v2 constrained `ADD_I8` and LUT dispatch | Equal-shape raw-safe INT8 Add, byte-exact Conv-producer canonicalization, standalone activations, and quantized YOLO SiLU LUT fusion | Compiler-generated Add, activation, and SiLU packages on Verilator |
-| Spatz commands | Engine exists | v2 quantized-Add and nearest-upsample dispatch | Quantization-correct Add fallback and nearest-neighbor 2x INT8 C32 | Compiler-generated packages on Verilator |
+| Spatz commands | Engine exists | v2 quantized-Add and nearest-upsample dispatch | Quantization-correct Add fallback and nearest-neighbor 2x at selected C32-grouped depths | Compiler-generated packages on Verilator |
 | MaxPool | Systolic linebuffer pool mode | v2 constrained MaxPool dispatch | K5/S1/P2, batch 1, selected INT8 C32/C128 depths, out-of-place | Compiler-generated C32 and YOLO-derived C128 packages on Verilator |
 
 `ArchNeuralAI` exposes `FullyConnected`, `MatMul`, `MemoryCopy`, and a
@@ -2514,7 +2514,7 @@ other non-C32 depth slices remain rejected.
 Sliced `MemoryCopy` connections outside this admitted zero-copy path remain
 fail-closed instead of being treated as full-volume copies.
 
-The current generic firmware builds with 30,656 bytes of `.text`, below the
+The current generic firmware builds with 30,828 bytes of `.text`, below the
 32 KiB ITCM gate, and the cross-repository ABI plus host runtime checks pass.
 The focused slice suite covers low-half aliasing, one high-half local strided
 copy with exact source-lane and destination references, and rejection of
@@ -2648,15 +2648,16 @@ ratios compare one operator package with full graphs and are diagnostic only.
 
 Nearest-neighbor 2x upsample is implemented through the 64-byte v2
 `UPSAMPLE_NEAREST` command. The supported subset is static batch-1 INT8 with
-exactly 32 channels, equal input/output quantization, and an exact 2x increase
-in both spatial dimensions. The compiler legalizes TFLite
+the selected depths C32, C128, or C256, equal input/output quantization, and an
+exact 2x increase in both spatial dimensions. The compiler legalizes TFLite
 `ResizeNearestNeighbor` into the existing nearest-resampling AvgPool form,
 keeps both internal tensors C32 blocked, and requires an out-of-place output.
-The runtime validates the C32/2x contract, overflow-safe input/output ranges,
-TCDM references, and non-overlap before calling the existing
-`spatz_upsample_nearest2x_c32_i8` assembly kernel used by native Micro-YOLO.
-C33 and non-2x shapes are intentionally rejected rather than routed through an
-untested generic fallback.
+The runtime validates the selected-depth/2x contract, overflow-safe
+input/output ranges, TCDM references, and non-overlap. Multi-group tensors call
+the existing `spatz_upsample_nearest2x_c32_i8` assembly kernel used by native
+Micro-YOLO once per C32 group-plane, with independent input and four-times-larger
+output plane strides. C64, C33, and non-2x shapes are intentionally rejected
+rather than routed through an untested generic fallback.
 
 The compiler-generated H2/W3/C32 package passes byte-exactly on Verilator at
 86,036 simulated ns, with 83,998 ns measured invocation time and 50,260 PMU
@@ -2668,6 +2669,18 @@ the same assembly kernel, this focused result confirms datapath reuse and
 integration rather than establishing an operator-speed regression. A
 compiler-generated full YOLO graph is still required for an equivalent
 comparison with the 388,146-cycle native full-graph record.
+
+The selected full-size YOLO inventory contains two such operators:
+H10/W10/C256 to H20/W20/C256 and H20/W20/C128 to H40/W40/C128. A micrograph
+extracted directly from source operator 108 compiles with 0 CPU operators and
+one C256 `UPSAMPLE_NEAREST` command. Its independent golden matches TFLite
+`BUILTIN_REF` in all 102,400 output bytes, and the compiler-generated package
+passes byte-exactly on Verilator at 147,070 measured invocation ns and 108,022
+PMU cycles. The focused cycles are 31.0% of the 347,992-cycle Micro-MobileNet
+record and 27.8% of the 388,146-cycle Micro-YOLO record; these are attribution
+references across different workloads, not 1:1 optimization targets. The
+full-size YOLO compile now advances past both resize instances and stops next at
+the detection-tail Transpose contract.
 
 YOLO-style MaxPool is implemented through the 96-byte v2 `MAXPOOL` command.
 The supported subset is static batch-1 INT8, K5/S1/P2, same input/output shape
@@ -2749,8 +2762,9 @@ the required Phase 5 performance path for YOLO heads.
    squeeze-excitation channel multiply only if the target corpus requires it.
 7. Maintain AFU LUT lowering for standalone Sigmoid and clipping while keeping
    source-fused activation clamps in final requantization.
-8. Maintain the implemented MaxPool K5 S1 P2, nearest-neighbor 2x C32, and
-   global average pool paths while expanding only model-required shapes.
+8. Maintain the implemented MaxPool K5 S1 P2, selected C32-grouped
+   nearest-neighbor 2x, and global average pool paths while expanding only
+   model-required shapes.
 9. Add out-of-place and liveness constraints for AFU operations.
 
 ### Tests
