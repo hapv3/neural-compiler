@@ -194,6 +194,29 @@ TEST_CASE("Neural-AI linebuffer planner accounts for encoded weights and partial
     REQUIRE_THROWS_AS(LinebufferPlanner().Plan(input), std::runtime_error);
 }
 
+TEST_CASE("Neural-AI linebuffer planner budgets a rolling RGB stem by resident rows")
+{
+    auto input = GoldenInputForShape(320, 320, 3, 160, 160);
+    input.strideH = 2;
+    input.strideW = 2;
+    input.ifmPixelStride = 3;
+    input.validLaneCount = 3;
+    input.maxM = 1024;
+    input.tcdmBudget = 64 * 1024;
+
+    REQUIRE_THROWS_AS(LinebufferPlanner().Plan(input), std::runtime_error);
+
+    input.rollingBuffers = true;
+    const auto jobs = LinebufferPlanner().Plan(input);
+    REQUIRE(jobs.size() == 27);
+    const auto footprint = LinebufferPlanner().RollingFootprint(input, jobs.front());
+    REQUIRE(footprint.ifmBytes == 12u * 320u * 3u);
+    REQUIRE(footprint.ofmBytes == 6u * 160u * 32u);
+    REQUIRE(footprint.weightBytes == 3u * 3u * 32u * 32u);
+    REQUIRE(footprint.psumBytes == 0u);
+    REQUIRE(footprint.totalBytes == 51456u);
+}
+
 TEST_CASE("Neural-AI linebuffer planner rejects an invalid lane count")
 {
     auto input = GoldenInput();

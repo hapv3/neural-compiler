@@ -158,7 +158,7 @@ new runtime path has not yet passed E2E.
 | Async DMA and overlap | Not implemented | blocking execution remains correct; performance phase |
 | Full selected graphs | Memory blocked | lowering reaches scheduling; 1,659,008 bytes requested versus 520,192 available |
 
-The current focused Regor suite passes 89 Neural-AI cases and 36,059 assertions.
+The current focused Regor suite passes 90 Neural-AI cases and 36,066 assertions.
 Runtime ABI/host checks, cross-builds, firmware-size gates, and focused C144,
 DFL16, and MatMul V2 E2E tests pass.
 
@@ -206,7 +206,8 @@ the focused test had not written its invocation and binding table to L2.
 - C32-to-C16 high-half slice materializes once with local DMA3D plus Spatz
   vector copy; the focused H2/W3/C32 package passes at 105,347 ns.
 - Full YOLO compilation now passes both resize operations, all three MaxPools,
-  and the first three head transposes, then stops at DFL transpose op 236.
+  the first three head transposes, and the fused DFL16 chain, then stops at the
+  full-schedule TCDM capacity check.
 
 ### Other retained evidence
 
@@ -240,6 +241,11 @@ The current full YOLO compile reaches scheduling and requests 1,659,008 bytes of
 TCDM. Reduce this to the 520,192-byte allocatable limit without adding a scalar
 or CPU fallback:
 
+- The first verified rolling-footprint contract budgets the 320x320 RGB stem
+  Conv tile at 51,456 bytes (12 compact RGB rows, six C32 output rows, and one
+  K3 weight tile), versus more than 300 KiB when the full input is resident.
+  The next increment must remap these planned rows in command generation; the
+  compiler does not yet claim that rolling allocation is executable.
 - Prove compact public bindings and native internal layouts end to end.
 - Use Regor cascading, tiling, live ranges, and allocator before adding target
   policy.

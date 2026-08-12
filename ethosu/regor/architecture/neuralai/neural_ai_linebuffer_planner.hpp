@@ -96,6 +96,9 @@ struct LinebufferPlannerInput
     int maxM = 256;
     int tcdmBudget = 0;
     int alreadyLiveBytes = 0;
+    // The caller will remap each job to row-sized rolling buffers instead of
+    // keeping the complete IFM and OFM resident in TCDM.
+    bool rollingBuffers = false;
     bool isDepthwise = false;
     // 0 = direct requant, 1 = initialize partial sums, 2 = final accumulation
     // with requantization, 3 = intermediate partial-sum accumulation.  This is
@@ -103,10 +106,21 @@ struct LinebufferPlannerInput
     int accumMode = 0;
 };
 
+struct LinebufferTileFootprint
+{
+    uint32_t ifmBytes = 0;
+    uint32_t ofmBytes = 0;
+    uint32_t weightBytes = 0;
+    uint32_t psumBytes = 0;
+    uint32_t totalBytes = 0;
+};
+
 class LinebufferPlanner final
 {
 public:
     std::vector<LinebufferJob> Plan(const LinebufferPlannerInput &input) const;
+    LinebufferTileFootprint RollingFootprint(
+        const LinebufferPlannerInput &input, const LinebufferJob &job) const;
 };
 
 static_assert(sizeof(SystolicLinebufCfg) == 80);

@@ -160,20 +160,6 @@ std::vector<LinebufferJob> LinebufferPlanner::Plan(const LinebufferPlannerInput 
     if ( tileW == 0 ) tileW = 1;
     if ( tileH * tileW > input.maxM ) tileH = std::max(1, input.maxM / tileW);
 
-    const uint64_t ifmBytes = uint64_t(input.logicalIfm.Height()) * uint64_t(input.logicalIfm.Width()) *
-        uint64_t(std::max(input.ic, C32));
-    const uint64_t ofmBytes = uint64_t(tileH) * uint64_t(tileW) * C32;
-    /* Linebuffer weights are staged as complete 32x32 systolic tiles.  The
-       previous estimate counted only one K lane and could accept a candidate
-       that overflowed TCDM once the encoded tile was loaded. */
-    const uint64_t weightBytes = uint64_t(input.kernelH) * uint64_t(input.kernelW) *
-        uint64_t(input.isDepthwise ? C32 : C32 * C32);
-    const uint64_t psumBytes = input.accumMode != 0 ? ofmBytes * sizeof(int32_t) : 0u;
-    const uint64_t required = uint64_t(std::max(0, input.alreadyLiveBytes)) + ifmBytes +
-        ofmBytes + weightBytes + psumBytes;
-    if ( input.tcdmBudget > 0 && required > uint64_t(input.tcdmBudget) )
-        throw std::runtime_error("Neural-AI linebuffer tile exceeds TCDM budget");
-
     std::vector<LinebufferJob> jobs;
     for ( int oh = 0; oh < outputH; oh += tileH )
     {
@@ -183,7 +169,56 @@ std::vector<LinebufferJob> LinebufferPlanner::Plan(const LinebufferPlannerInput 
                 std::min(tileW, outputW - ow)));
         }
     }
+
+    uint64_t required = 0;
+    if ( input.rollingBuffers )
+    {
+        for ( const auto &job : jobs )
+            required = std::max(required, uint64_t(RollingFootprint(input, job).totalBytes));
+    }
+    else
+    {
+        const uint64_t ifmBytes = uint64_t(input.logicalIfm.Height()) * uint64_t(input.logicalIfm.Width()) *
+            uint64_t(std::max(input.ic, C32));
+        const uint64_t ofmBytes = uint64_t(tileH) * uint64_t(tileW) * C32;
+        /* Linebuffer weights are staged as complete 32x32 systolic tiles.  The
+           previous estimate counted only one K lane and could accept a candidate
+           that overflowed TCDM once the encoded tile was loaded. */
+        const uint64_t weightBytes = uint64_t(input.kernelH) * uint64_t(input.kernelW) *
+            uint64_t(input.isDepthwise ? C32 : C32 * C32);
+        const uint64_t psumBytes = input.accumMode != 0 ? ofmBytes * sizeof(int32_t) : 0u;
+        required = uint64_t(std::max(0, input.alreadyLiveBytes)) + ifmBytes +
+            ofmBytes + weightBytes + psumBytes;
+    }
+    if ( input.tcdmBudget > 0 && required > uint64_t(input.tcdmBudget) )
+        throw std::runtime_error("Neural-AI linebuffer tile exceeds TCDM budget");
     return jobs;
+}
+
+LinebufferTileFootprint LinebufferPlanner::RollingFootprint(
+    const LinebufferPlannerInput &input, const LinebufferJob &job) const
+{
+    const uint64_t inputRowBytes = uint64_t(input.logicalIfm.Width()) *
+        uint64_t(input.ifmPixelStride > 0 ? input.ifmPixelStride : input.ic);
+    const uint64_t outputRowBytes = uint64_t(input.logicalOfm.Width()) * C32;
+    const uint64_t outputRows =
+        (uint64_t(job.rows) + uint64_t(job.linebuf.outputW) - 1u) / uint64_t(job.linebuf.outputW);
+
+    const uint64_t ifmBytes = uint64_t(job.linebuf.inputH) * inputRowBytes;
+    const uint64_t ofmBytes = outputRows * outputRowBytes;
+    const uint64_t weightBytes = uint64_t(input.kernelH) * uint64_t(input.kernelW) *
+        uint64_t(input.isDepthwise ? C32 : C32 * C32);
+    const uint64_t psumBytes = input.accumMode != 0 ? uint64_t(job.rows) * C32 * sizeof(int32_t) : 0u;
+    const uint64_t totalBytes = uint64_t(std::max(0, input.alreadyLiveBytes)) + ifmBytes +
+        ofmBytes + weightBytes + psumBytes;
+
+    LinebufferTileFootprint footprint{};
+    footprint.ifmBytes = CheckedU32(ifmBytes, "rolling IFM footprint");
+    footprint.ofmBytes = CheckedU32(ofmBytes, "rolling OFM footprint");
+    footprint.weightBytes = CheckedU32(weightBytes, "rolling weight footprint");
+    footprint.psumBytes = CheckedU32(psumBytes, "rolling partial-sum footprint");
+    footprint.totalBytes = CheckedU32(totalBytes, "rolling total footprint");
+    return footprint;
 }
 
 }  // namespace regor::neuralai
