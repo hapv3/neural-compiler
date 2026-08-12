@@ -201,12 +201,6 @@ NeuralAIConstraints::Classification NeuralAIConstraints::Classify(OpType opType,
                 "generic C32 Conv supports full input groups or 16-lane tails only";
             return result;
         }
-        if ( ifmTail == 16 && ifmC > 32 && !kernel->Padding().IsZero() )
-        {
-            result.diagnostic =
-                "generic C32 Conv input tails require explicit zero padding";
-            return result;
-        }
         result.mode = kernel->Stride() == Point2i(1, 1) ? NeuralAIOpMode::Conv2DLinebufC32S1Requant :
                                                           NeuralAIOpMode::Conv2DLinebufC32S2Requant;
         result.groupStationary = ifmC > 32 && !result.hasIcTail && !result.hasOcTail;

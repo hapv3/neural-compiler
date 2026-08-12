@@ -53,7 +53,8 @@ public:
     // Target-specific backends can consume Regor's stripe/cascade sequencing
     // before the generic graph-packing stage.
     HLCStream GenerateCommandStream(
-        vector_span<std::unique_ptr<SchedulerOperation>> operations, const Schedule *schedule);
+        vector_span<std::unique_ptr<SchedulerOperation>> operations, const Schedule *schedule,
+        bool cascadesOnly = false);
 
 private:
     // Generates one or more HLCStripe commands from a given operation and adds them to the stream

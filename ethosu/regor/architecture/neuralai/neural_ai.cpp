@@ -175,9 +175,7 @@ std::unique_ptr<ArchitectureOpConfig> ArchNeuralAI::GetOpConfig(OpType opType, c
             // masked tail job and keeps all other arbitrary tails rejected.
             const bool supportedC32Tails = (ifmTail == 0 || ifmTail == 16) &&
                                            (ofmTail == 0 || ofmTail == 16);
-            const bool inputTailPaddingSupported = ifmTail != 16 || query.ifmShape[0].Depth() == 16 ||
-                                                   kernel.Padding().IsZero();
-            if ( supportedC32Tails && inputTailPaddingSupported )
+            if ( supportedC32Tails )
                 mode = kernel.Stride() == Point2i(1, 1) ? NeuralAIOpMode::Conv2DLinebufC32S1Requant :
                                                          NeuralAIOpMode::Conv2DLinebufC32S2Requant;
         }

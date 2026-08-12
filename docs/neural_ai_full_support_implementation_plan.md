@@ -142,6 +142,7 @@ new runtime path has not yet passed E2E.
 | Pointwise Conv | Verified | K1/S1/P0, C32 groups/tails, per-channel RQ |
 | RGB stem Conv | Verified | selected K3/S2 contract |
 | Generic C32 Conv K3 | Verified | full input/output groups; linebuffer path |
+| Rolling Conv/LUT cascade | Compiler verified | full-width Y stripes; RGB/C32 DMA staging; asymmetric padding fill; one C32 group |
 | Depthwise Conv K3 | Verified | selected S1/S2 contracts |
 | Asymmetric Conv canonicalization | Verified | exact bias correction and padding behavior |
 | Add | Verified | raw AFU, exact producer canonicalization, or quantized Spatz fallback |
@@ -156,9 +157,9 @@ new runtime path has not yet passed E2E.
 | YOLO C144 head transpose | Verified | three `[0,3,1,2]` head packs; vectorized C32-to-CHW runtime path |
 | DFL16 projection | Verified | exact ops 234–239; fused 16-bin AFU plus one Spatz pack/requant call per tile |
 | Async DMA and overlap | Not implemented | blocking execution remains correct; performance phase |
-| Full selected graphs | Memory blocked | lowering reaches scheduling; 1,659,008 bytes requested versus 520,192 available |
+| Full selected graphs | Memory blocked | rolling stem lowers peak to 921,600 bytes; 520,192 available |
 
-The current focused Regor suite passes 90 Neural-AI cases and 36,066 assertions.
+The current focused Regor suite passes 93 Neural-AI cases and 36,420 assertions.
 Runtime ABI/host checks, cross-builds, firmware-size gates, and focused C144,
 DFL16, and MatMul V2 E2E tests pass.
 
@@ -207,7 +208,10 @@ the focused test had not written its invocation and binding table to L2.
   vector copy; the focused H2/W3/C32 package passes at 105,347 ns.
 - Full YOLO compilation now passes both resize operations, all three MaxPools,
   the first three head transposes, and the fused DFL16 chain, then stops at the
-  full-schedule TCDM capacity check.
+  full-schedule TCDM capacity check. Metadata padding and striped command
+  generation form cascade 3 as RGB K3/S2 Conv -> LUT -> K3/S2 Conv. This reduces
+  the scheduler peak from 1,659,008 to 921,600 bytes (44.4%); the next measured
+  peak is a C48 passthrough/Concat live-range boundary at 80x80.
 
 ### Other retained evidence
 
@@ -237,28 +241,31 @@ compiler-runtime package is byte-exact and passes in 468,781 cycles under the
 
 ### P0 — Full-graph memory feasibility
 
-The current full YOLO compile reaches scheduling and requests 1,659,008 bytes of
-TCDM. Reduce this to the 520,192-byte allocatable limit without adding a scalar
-or CPU fallback:
+The current full YOLO compile reaches scheduling and requests 921,600 bytes of
+TCDM, down from 1,659,008 bytes. Reduce this to the 520,192-byte allocatable
+limit without adding a scalar or CPU fallback:
 
-- The first verified rolling-footprint contract budgets the 320x320 RGB stem
-  Conv tile at 51,456 bytes (12 compact RGB rows, six C32 output rows, and one
-  K3 weight tile), versus more than 300 KiB when the full input is resident.
-  The next increment must remap these planned rows in command generation; the
-  compiler does not yet claim that rolling allocation is executable.
-- Neural-AI now exposes Y subdivision for Conv, depthwise Conv, and LUT, and a
-  target-gated LUT cascade capability. Regor forms the first `Conv -> LUT`
-  cascade with a 10,240-byte rolling buffer. Peak remains 1,659,008 bytes
-  because four explicit padding copies force the LUT output to become a full
-  tensor before the next Conv. Reuse the non-owning HLC stripe stream to remove
-  that boundary and drive tile-aware Neural-AI commands.
+- Completed: Y subdivision and target-gated LUT cascading; non-owning HLC stripe
+  sequencing; compact RGB/C32 row staging; rolling row wrap; per-stripe Conv and
+  AFU LUT commands; cached weights, qparams, and LUTs.
+- Completed: asymmetric Conv padding is metadata, not a full Pad tensor. DMA2D
+  fills each staging stripe from one 32-byte raw-zero-point pattern, then copies
+  valid rows. Exact bias correction and padding tests pass.
+- Completed P0 stem contract: cascade 3 is RGB K3/S2 Conv -> LUT -> K3/S2 Conv.
+  The focused block test proves every logical Conv/LUT output row is emitted
+  exactly once. Current striped matrix generation is deliberately constrained
+  to one native C32 input/output group.
+- Next measured blocker: eliminate the 921,600-byte C48 passthrough/Concat
+  live-range boundary at 80x80 using a metadata channel view or direct
+  concat-consumer Conv staging. Retain materialized Concat as the correctness
+  fallback.
 - Prove compact public bindings and native internal layouts end to end.
 - Use Regor cascading, tiling, live ranges, and allocator before adding target
   policy.
 - Keep model constants in L2; stage tiles, qparams, or LUTs as required.
 - Fit the graph within 520,192 allocatable TCDM bytes and 32 KiB firmware text.
-- Add concat-consumer Conv fusion where materialized Concat is a measured YOLO
-  hot path. The two-input aligned materialization remains a correctness fallback.
+- Do not broaden striped Conv beyond measured model shapes until focused tests
+  establish multi-group address, tail, and rolling-wrap contracts.
 
 ### P1 — Close remaining selected detection-tail contracts
 
@@ -367,7 +374,7 @@ The milestone is complete only when:
   verified lowering; adjacent unsupported variants fail clearly.
 - Final public I/O is compact frontend order and matches the independent golden.
 - The schedule fits TCDM, firmware fits ITCM, malformed packages fail safely,
-  and ABI v1 remains functional.
+  and the trusted ABI v2-only firmware remains functional.
 - PMU attribution shows no compiler-created slow path on selected hot paths;
   comparisons use equivalent work and do not require artificial 1:1 matching.
 - Existing Ethos/compiler and Neural-AI software/RTL regressions pass.

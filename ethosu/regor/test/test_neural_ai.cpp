@@ -1655,13 +1655,15 @@ TEST_CASE("Neural-AI prepare optimiser compensates asymmetric Conv padding byte-
     optimiser.OptimiseGraph(graph.get());
 
     REQUIRE(conv->Input(TensorUsage::IFM0)->quantization.zeroPoints == std::vector<int64_t>{0});
-    REQUIRE(conv->Input(TensorUsage::IFM0)->shape == Shape(1, 5, 5, 1));
-    REQUIRE(conv->Kernel()->Padding().IsZero());
-    REQUIRE(conv->IFM(0)->Writers().size() == 1);
-    const auto pad = conv->IFM(0)->Writers().front();
-    REQUIRE(pad->Type() == OpType::Pad);
-    REQUIRE(pad->Attribute<pad_attr_t>()->pad_const == inputZeroPoint);
-    REQUIRE(pad->Input(TensorUsage::IFM0)->quantization.zeroPoints == std::vector<int64_t>{inputZeroPoint});
+    REQUIRE(conv->Input(TensorUsage::IFM0)->shape == inputShape);
+    REQUIRE(conv->Kernel()->Padding().Top() == 1);
+    REQUIRE(conv->Kernel()->Padding().Left() == 1);
+    REQUIRE(conv->Kernel()->Padding().Bottom() == 1);
+    REQUIRE(conv->Kernel()->Padding().Right() == 1);
+    REQUIRE(conv->IFM(0)->Writers().empty());
+    const auto paddingValue = conv->Input(TensorUsage::Params1);
+    REQUIRE(paddingValue != nullptr);
+    REQUIRE(paddingValue->tensor->View().Values<int8_t>()[0] == int8_t(inputZeroPoint));
 
     int32_t weightSum = 0;
     for ( const int8_t value : weightValues ) weightSum += value;
@@ -1799,14 +1801,16 @@ TEST_CASE("Neural-AI performance model estimates GEMM and DMA costs")
 
 TEST_CASE("Neural-AI scheduler emits interleaved Conv LUT stripes")
 {
-    constexpr int height = 320;
-    constexpr int width = 320;
+    constexpr int height = 162;
+    constexpr int width = 162;
+    constexpr int outputHeight = 80;
+    constexpr int outputWidth = 80;
     constexpr int inputChannels = 3;
     constexpr int outputChannels = 16;
     ArchNeuralAI arch;
     auto input = CreateTensor("input", Shape(1, height, width, inputChannels), DataType::Int8);
-    auto convOutput = CreateTensor("conv_output", Shape(1, height / 2, width / 2, outputChannels), DataType::Int8);
-    auto output = CreateTensor("output", Shape(1, height / 2, width / 2, outputChannels), DataType::Int8);
+    auto convOutput = CreateTensor("conv_output", Shape(1, outputHeight, outputWidth, outputChannels), DataType::Int8);
+    auto output = CreateTensor("output", Shape(1, outputHeight, outputWidth, outputChannels), DataType::Int8);
     auto weights = CreateTensor("weights", Shape(outputChannels, 3, 3, inputChannels), DataType::Int8,
         std::vector<int8_t>(outputChannels * 3 * 3 * inputChannels, 1));
     auto scales = CreateTensor("scales", Shape(outputChannels), DataType::Int32,
@@ -1817,12 +1821,16 @@ TEST_CASE("Neural-AI scheduler emits interleaved Conv LUT stripes")
 
     auto conv = CreateOperation(
         OpType::Conv2D, TensorUsage::IFM0, input, TensorUsage::OFM, convOutput);
+    conv->Input(TensorUsage::IFM0)->Set(Quantization::Unit());
+    conv->Output(TensorUsage::OFM)->Set(Quantization::Unit());
     conv->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
     conv->ConnectInput(TensorUsage::Scales, scales).Set(Quantization::Unit());
     conv->SetKernel(std::make_unique<Kernel>(
-        Point2i(3, 3), Point2i(2, 2), Point2i(1, 1), Margin(1, 1, 1, 1)));
+        Point2i(3, 3), Point2i(2, 2), Point2i(1, 1)));
     auto activation = CreateOperation(
         OpType::LUT, TensorUsage::IFM0, convOutput, TensorUsage::OFM, output);
+    activation->Input(TensorUsage::IFM0)->Set(Quantization::Unit());
+    activation->Output(TensorUsage::OFM)->Set(Quantization::Unit());
     activation->ConnectInput(TensorUsage::LUT, lut);
     std::vector<std::shared_ptr<Operation>> sourceOps = {conv, activation};
     auto graph = CreateGraph(sourceOps);
@@ -1834,7 +1842,8 @@ TEST_CASE("Neural-AI scheduler emits interleaved Conv LUT stripes")
     SchedulerPacking packing(&arch, false, equivalenceIds);
     auto scheduleOps = packing.Process(graph.get());
     SchedulerOptions schedulerOptions;
-    schedulerOptions.optimizationStagingLimit = 32 * 1024;
+    schedulerOptions.optimizationStrategy = OptimizationStrategy::Performance;
+    schedulerOptions.optimizationStagingLimit = 256 * 1024;
     schedulerOptions.disabled.Set(SchedulerFeature::WeightBuffering);
     Scheduler scheduler(
         &arch, schedulerOptions, "neural-ai-cascade-hlc", scheduleOps,
@@ -1853,6 +1862,7 @@ TEST_CASE("Neural-AI scheduler emits interleaved Conv LUT stripes")
     const int cascade = schedule->Cost(scheduledConv)->cascade;
     REQUIRE(cascade > 0);
     REQUIRE(schedule->Cost(scheduledLut)->cascade == cascade);
+    REQUIRE(scheduledConv->OFM()->tensor->storageShape.Height() < outputHeight);
 
     HLCStreamGenerator generator(0, false);
     HLCStream commands = generator.GenerateCommandStream(
@@ -1870,6 +1880,42 @@ TEST_CASE("Neural-AI scheduler emits interleaved Conv LUT stripes")
     REQUIRE(lutPosition != stripeTypes.end());
     REQUIRE(convPosition < lutPosition);
     REQUIRE(std::find(lutPosition + 1, stripeTypes.end(), OpType::Conv2D) != stripeTypes.end());
+
+    CompiledNeuralAIArtifact artifact;
+    std::string error;
+    NeuralAICommandGenerator commandGenerator;
+    const bool generated = commandGenerator.Generate(graph.get(), scheduleOps, schedule.get(), artifact, error);
+    INFO(error);
+    REQUIRE(generated);
+    REQUIRE(error.empty());
+    uint32_t linebufferJobs = 0;
+    uint32_t lutCommands = 0;
+    uint32_t linebufferRows = 0;
+    uint32_t lutBytes = 0;
+    size_t commandOffset = 0;
+    while ( commandOffset < artifact.commands.size() )
+    {
+        const uint16_t type = Read16(artifact.commands, commandOffset);
+        const uint16_t bytes = Read16(artifact.commands, commandOffset + 2);
+        REQUIRE(bytes >= 32);
+        if ( type == uint16_t(neuralai::CommandType::LineBufferJob) )
+        {
+            ++linebufferJobs;
+            linebufferRows += Read32(artifact.commands, commandOffset + 132);
+        }
+        if ( type == uint16_t(neuralai::CommandType::AFULut) )
+        {
+            ++lutCommands;
+            lutBytes += Read32(artifact.commands, commandOffset + 40);
+        }
+        commandOffset += bytes;
+    }
+    REQUIRE(commandOffset == artifact.commands.size());
+    REQUIRE(linebufferJobs > 1);
+    REQUIRE(lutCommands > 1);
+    REQUIRE(linebufferRows == outputHeight * outputWidth);
+    REQUIRE(lutBytes == outputHeight * outputWidth * 32);
+    REQUIRE(artifact.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);
 }
 
 TEST_CASE("Neural-AI scheduler lowers a complete FullyConnected graph")
@@ -3524,7 +3570,7 @@ TEST_CASE("Neural-AI compiler emits grouped linebuffer jobs for generic K3 Conv2
     blob->Release();
 }
 
-TEST_CASE("Neural-AI compiler emits a zero-padded C16 linebuffer group for YOLO K3 Conv")
+TEST_CASE("Neural-AI compiler stages a zero-padded C16 linebuffer group for YOLO K3 Conv")
 {
     std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
     Compiler compiler(architecture);
@@ -3544,6 +3590,7 @@ TEST_CASE("Neural-AI compiler emits a zero-padded C16 linebuffer group for YOLO 
     uint32_t offset = 224;
     uint32_t linebufferJobs = 0;
     uint32_t tailCopies = 0;
+    uint32_t stagingCopies = 0;
     while ( offset < 224 + commandBytes )
     {
         const uint16_t type = Read16(data + offset);
@@ -3569,11 +3616,16 @@ TEST_CASE("Neural-AI compiler emits a zero-padded C16 linebuffer group for YOLO 
             REQUIRE(Read32(data + offset + 40) == 32);
             ++tailCopies;
         }
+        if ( type == uint16_t(neuralai::CommandType::DMA2D) &&
+             Read16(data + offset + 16) == uint16_t(neuralai::Region::TCDMScratch) &&
+             Read16(data + offset + 24) == uint16_t(neuralai::Region::TCDMScratch) )
+            ++stagingCopies;
         offset += commandSize;
     }
     REQUIRE(offset == 224 + commandBytes);
     REQUIRE(linebufferJobs == 9);
-    REQUIRE(tailCopies > 0);
+    REQUIRE(tailCopies == 0);
+    REQUIRE(stagingCopies > 0);
     blob->Unmap(const_cast<uint8_t *>(data));
     blob->Release();
 }
@@ -3885,7 +3937,7 @@ TEST_CASE("Neural-AI compiler serializes asymmetric Conv padding at the raw zero
     REQUIRE(constantOffset != 0);
     REQUIRE(constantBytes != 0);
 
-    uint32_t paddingCopies = 0;
+    uint32_t paddingFills = 0;
     uint32_t offset = commandOffset;
     while ( offset < commandOffset + commandBytes )
     {
@@ -3897,19 +3949,21 @@ TEST_CASE("Neural-AI compiler serializes asymmetric Conv padding at the raw zero
             const uint16_t sourceRegion = Read16(data + offset + 16);
             const uint32_t sourceOffset = Read32(data + offset + 20);
             const uint32_t length = Read32(data + offset + 32);
-            if ( sourceRegion == uint16_t(neuralai::Region::ModelConstants) &&
-                 (length == 3 || length == 51) )
+            if ( type == uint16_t(neuralai::CommandType::DMA2D) &&
+                 sourceRegion == uint16_t(neuralai::Region::ModelConstants) &&
+                 length == 32 && Read32(data + offset + 36) == 0 )
             {
                 REQUIRE(sourceOffset + length <= constantBytes);
                 for ( uint32_t index = 0; index < length; ++index )
                     REQUIRE(int8_t(data[constantOffset + sourceOffset + index]) == inputZeroPoint);
-                ++paddingCopies;
+                REQUIRE(Read32(data + offset + 44) > 1);
+                ++paddingFills;
             }
         }
         offset += commandSize;
     }
     REQUIRE(offset == commandOffset + commandBytes);
-    REQUIRE(paddingCopies == 2);
+    REQUIRE(paddingFills == 1);
     blob->Unmap(const_cast<uint8_t *>(data));
     blob->Release();
 }

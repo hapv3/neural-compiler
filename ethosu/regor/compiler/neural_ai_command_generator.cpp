@@ -10,6 +10,7 @@
 
 #include "architecture/neuralai/neural_ai.hpp"
 #include "architecture/neuralai/neural_ai_op_config.hpp"
+#include "compiler/high_level_command_stream_generator.hpp"
 #include "compiler/shape_util.hpp"
 #include "tflite/tflite_schema_generated.hpp"
 
@@ -55,6 +56,11 @@ bool IsFullTensorConnection(const SchedulerConnection *connection)
     return connection->SliceShape() == shape &&
            (!connection->slice.offset || connection->slice.offset == shape.WithZeros()) &&
            (!connection->slice.stride || connection->slice.stride == shape.WithOnes());
+}
+
+int64_t TensorStorageBytes(const SchedulerTensor *tensor)
+{
+    return tensor->architecture->StorageBytes(tensor->storageShape, tensor->format, tensor->dataType);
 }
 
 bool C32SliceByteOffset(const SchedulerConnection *connection, uint32_t &offset,
@@ -226,14 +232,18 @@ struct GeneratorContext
     std::unordered_map<UniqueId, uint16_t> inputBindings;
     std::unordered_map<UniqueId, uint16_t> outputBindings;
     std::unordered_map<UniqueId, uint32_t> constantOffsets;
+    std::unordered_map<UniqueId, RefV1> lutReferences;
+    std::unordered_map<int, RefV1> fillReferences;
     std::unordered_map<UniqueId, MatrixData> matrixData;
     uint32_t nextTensorId = 0;
     uint32_t scratchEnd = 0;
     uint32_t stageOffset = 0;
     uint32_t weightStageOffset = 0;
     uint32_t partialOffset = 0;
+    uint32_t stripeStageOffset = 0;
     uint32_t stageBytes = 0;
     uint32_t partialBytes = 0;
+    uint32_t stripeStageBytes = 0;
 
     GeneratorContext(const Graph *sourceGraph, const Schedule *sourceSchedule,
         CompiledNeuralAIArtifact *output) :
@@ -1136,6 +1146,27 @@ struct GeneratorContext
         return true;
     }
 
+    RefV1 LutRef(const SchedulerConnection *lut)
+    {
+        auto position = lutReferences.find(lut->tensor->uid);
+        if ( position != lutReferences.end() ) return position->second;
+        while ( artifact->constants.size() % ArchNeuralAI::DMAAlignment != 0 )
+            artifact->constants.push_back(0);
+        RefV1 reference{};
+        reference.region = uint16_t(Region::ModelConstants);
+        reference.offset = uint32_t(artifact->constants.size());
+        const uint8_t *lutBytes = lut->tensor->bufferView.RawData<uint8_t>();
+        // Regor LUT tensors are ordered by signed INT8 value (-128..127),
+        // whereas the AFU indexes the table with the input's raw byte.
+        for ( uint32_t raw = 0; raw < 256; ++raw )
+        {
+            const int32_t signedValue = raw < 128 ? int32_t(raw) : int32_t(raw) - 256;
+            artifact->constants.push_back(lutBytes[signedValue + 128]);
+        }
+        lutReferences.emplace(lut->tensor->uid, reference);
+        return reference;
+    }
+
     bool AppendAFULut(const SchedulerOperation *operation, std::string &error)
     {
         const SchedulerOpInfo *cost = schedule->Cost(operation);
@@ -1171,19 +1202,7 @@ struct GeneratorContext
              ofmRef.offset < ifmRef.offset + uint32_t(bytes) )
             return SetError(error, "Neural-AI AFU LUT requires out-of-place output storage");
 
-        while ( artifact->constants.size() % ArchNeuralAI::DMAAlignment != 0 )
-            artifact->constants.push_back(0);
-        RefV1 lutRef{};
-        lutRef.region = uint16_t(Region::ModelConstants);
-        lutRef.offset = uint32_t(artifact->constants.size());
-        const uint8_t *lutBytes = lut->tensor->bufferView.RawData<uint8_t>();
-        // Regor LUT tensors are ordered by signed INT8 value (-128..127),
-        // whereas the AFU indexes the table with the input's raw byte.
-        for ( uint32_t raw = 0; raw < 256; ++raw )
-        {
-            const int32_t signedValue = raw < 128 ? int32_t(raw) : int32_t(raw) - 256;
-            artifact->constants.push_back(lutBytes[signedValue + 128]);
-        }
+        const RefV1 lutRef = LutRef(lut);
 
         AppendHeader(artifact->commands, CommandType::AFULut, 64,
             uint32_t(operation->Index()), 0);
@@ -1193,6 +1212,81 @@ struct GeneratorContext
         Append32(artifact->commands, uint32_t(bytes));
         AppendZeros(artifact->commands, 5);
         ++artifact->commandCount;
+        return true;
+    }
+
+    bool AppendAFULutStripe(const SchedulerOperation *operation, const HLCStripe *stripe,
+        uint32_t &tileId, std::string &error)
+    {
+        const SchedulerOpInfo *cost = schedule->Cost(operation);
+        const auto *config = cost != nullptr && cost->Config() != nullptr ?
+            static_cast<const NeuralAIOpConfig *>(cost->Config()) : nullptr;
+        const SchedulerConnection *ifm = operation->IFM(0);
+        const SchedulerConnection *ofm = operation->OFM();
+        const SchedulerConnection *lut = operation->TryInput(TensorUsage::LUT);
+        if ( config == nullptr || config->Mode() != NeuralAIOpMode::AFULutI8 ||
+             stripe == nullptr || stripe->stripeAreas.size() != 1 || ifm == nullptr || ofm == nullptr ||
+             lut == nullptr || ifm->Type() != regor::DataType::Int8 || ofm->Type() != regor::DataType::Int8 ||
+             ifm->tensor->format != TensorFormat::C32Blocked ||
+             ofm->tensor->format != TensorFormat::C32Blocked || !lut->tensor->IsConstant() ||
+             lut->tensor->dataType != regor::DataType::Int8 || lut->tensor->bufferView.Elements() != 256 )
+            return SetError(error, "Neural-AI striped AFU LUT has an invalid scheduled operation");
+        const StripeArea &area = stripe->stripeAreas.front();
+        if ( area.ifmCount != 1 || !(area.ifmAreas[0] == area.ofmArea) )
+            return SetError(error, "Neural-AI striped AFU LUT requires equal IFM and OFM areas");
+        const Shape start = ReshapeToNHWC(area.ofmArea.Start());
+        const Shape shape = ReshapeToNHWC(area.ofmArea.SizeShape());
+        const Shape ifmStorage = ReshapeToNHWC(ifm->tensor->storageShape);
+        const Shape ofmStorage = ReshapeToNHWC(ofm->tensor->storageShape);
+        if ( start.Batch() != 0 || start.Width() != 0 || start.Depth() != 0 || shape.Batch() != 1 ||
+             shape.Width() != ifm->shape.Width() || shape.Width() != ofm->shape.Width() ||
+             shape.Depth() != ifm->shape.Depth() || shape.Depth() != ofm->shape.Depth() ||
+             ifmStorage.Width() != shape.Width() || ofmStorage.Width() != shape.Width() ||
+             ifmStorage.Height() <= 0 || ofmStorage.Height() <= 0 )
+            return SetError(error, "Neural-AI striped AFU LUT requires a full-width, full-depth C32 area");
+
+        RefV1 ifmBase = TensorRef(ifm->tensor.get(), 0, error);
+        if ( !error.empty() ) return false;
+        RefV1 ofmBase = TensorRef(ofm->tensor.get(), 0, error);
+        if ( !error.empty() ) return false;
+        if ( ifmBase.region != uint16_t(Region::TCDMScratch) ||
+             ofmBase.region != uint16_t(Region::TCDMScratch) )
+            return SetError(error, "Neural-AI striped AFU LUT requires internal TCDM tensors");
+        const uint32_t ifmBytes = uint32_t(TensorStorageBytes(ifm->tensor.get()));
+        const uint32_t ofmBytes = uint32_t(TensorStorageBytes(ofm->tensor.get()));
+        if ( ifmBase.offset < ofmBase.offset + ofmBytes && ofmBase.offset < ifmBase.offset + ifmBytes )
+            return SetError(error, "Neural-AI striped AFU LUT requires out-of-place output storage");
+
+        const RefV1 lutRef = LutRef(lut);
+        const uint32_t rowBytes = uint32_t(shape.Width()) * 32u;
+        const uint32_t ifmPlaneBytes = uint32_t(ifmStorage.Height()) * rowBytes;
+        const uint32_t ofmPlaneBytes = uint32_t(ofmStorage.Height()) * rowBytes;
+        const int groups = DivRoundUp(shape.Depth(), 32);
+        for ( int group = 0; group < groups; ++group )
+        {
+            int rowsDone = 0;
+            while ( rowsDone < shape.Height() )
+            {
+                const int logicalY = start.Height() + rowsDone;
+                const int ifmY = logicalY % ifmStorage.Height();
+                const int ofmY = logicalY % ofmStorage.Height();
+                const int rows = std::min({shape.Height() - rowsDone,
+                    ifmStorage.Height() - ifmY, ofmStorage.Height() - ofmY});
+                RefV1 ifmRef = ifmBase;
+                RefV1 ofmRef = ofmBase;
+                ifmRef.offset += uint32_t(group) * ifmPlaneBytes + uint32_t(ifmY) * rowBytes;
+                ofmRef.offset += uint32_t(group) * ofmPlaneBytes + uint32_t(ofmY) * rowBytes;
+                AppendHeader(artifact->commands, CommandType::AFULut, 64,
+                    uint32_t(operation->Index()), tileId++);
+                AppendRef(artifact->commands, ifmRef);
+                AppendRef(artifact->commands, ofmRef);
+                AppendRef(artifact->commands, lutRef);
+                Append32(artifact->commands, uint32_t(rows) * rowBytes);
+                AppendZeros(artifact->commands, 5);
+                ++artifact->commandCount;
+                rowsDone += rows;
+            }
+        }
         return true;
     }
 
@@ -1564,6 +1658,191 @@ struct GeneratorContext
         return true;
     }
 
+    MatrixData &MaterializeMatrixData(const SchedulerOperation *operation, uint32_t paddedN,
+        const WeightRange &range, const uint8_t *data)
+    {
+        auto [position, inserted] = matrixData.emplace(operation->Uid(), MatrixData{});
+        MatrixData &materialized = position->second;
+        if ( inserted )
+        {
+            materialized.qparamBase = uint32_t(artifact->qparams.size());
+            for ( uint32_t channel = 0; channel < paddedN; ++channel )
+            {
+                const uint8_t *source = data + channel * sizeof(neuralai::QParamV1);
+                neuralai::QParamV1 qparam{};
+                qparam.bias = int32_t(Read32(source));
+                qparam.multiplier = int32_t(Read32(source + 4));
+                qparam.shift = Read32(source + 8);
+                qparam.zeroPoint = int32_t(Read32(source + 12));
+                qparam.clampMin = int32_t(Read32(source + 16));
+                qparam.clampMax = int32_t(Read32(source + 20));
+                artifact->qparams.push_back(qparam);
+            }
+            materialized.weightBase = uint32_t(artifact->constants.size());
+            const uint8_t *weightData = data + range.weightOffset;
+            artifact->constants.insert(artifact->constants.end(), weightData, weightData + range.weightBytes);
+        }
+        return materialized;
+    }
+
+    RefV1 FillPatternRef(int8_t value)
+    {
+        auto position = fillReferences.find(int(value));
+        if ( position != fillReferences.end() ) return position->second;
+        while ( artifact->constants.size() % ArchNeuralAI::DMAAlignment != 0 )
+            artifact->constants.push_back(0);
+        RefV1 reference{};
+        reference.region = uint16_t(Region::ModelConstants);
+        reference.offset = uint32_t(artifact->constants.size());
+        artifact->constants.insert(artifact->constants.end(), 32, uint8_t(value));
+        fillReferences.emplace(int(value), reference);
+        return reference;
+    }
+
+    bool AppendStripeStaging(const SchedulerConnection *ifm, const neuralai::StripeStagingPlan &plan,
+        int8_t paddingValue, uint32_t layerId, uint32_t &tileId, bool fill, std::string &error)
+    {
+        if ( fill )
+        {
+            const RefV1 pattern = FillPatternRef(paddingValue);
+            RefV1 destination{};
+            destination.region = uint16_t(Region::TCDMScratch);
+            destination.offset = stripeStageOffset;
+            const uint32_t blocks = plan.bytes / 32u;
+            if ( blocks != 0 && !AppendDMA2D(pattern, destination, 32, 0, 32, blocks,
+                                   layerId, tileId++, error) )
+                return false;
+            const uint32_t tail = plan.bytes % 32u;
+            if ( tail != 0 )
+            {
+                destination.offset += blocks * 32u;
+                if ( !AppendDMA2D(pattern, destination, tail, 0, tail, 1,
+                         layerId, tileId++, error) )
+                    return false;
+            }
+        }
+        for ( const auto &copy : plan.copies )
+        {
+            RefV1 source = TensorRef(ifm->tensor.get(), copy.source, error);
+            if ( !error.empty() ) return false;
+            RefV1 destination{};
+            destination.region = uint16_t(Region::TCDMScratch);
+            destination.offset = copy.destination;
+            if ( !AppendDMA2D(source, destination, copy.length, copy.sourceStride,
+                     copy.destinationStride, copy.repetitions, layerId, tileId++, error) )
+                return false;
+        }
+        return true;
+    }
+
+    bool AppendC32MatrixStripe(const SchedulerOperation *operation, const HLCStripe *stripe,
+        uint32_t &tileId, std::string &error)
+    {
+        const SchedulerOpInfo *cost = schedule->Cost(operation);
+        const auto *config = cost != nullptr && cost->Config() != nullptr ?
+            static_cast<const NeuralAIOpConfig *>(cost->Config()) : nullptr;
+        if ( config == nullptr || !IsLinebufferConvMode(config->Mode()) || cost->npuWeightsTensor == nullptr ||
+             stripe == nullptr || stripe->stripeAreas.size() != 1 )
+            return SetError(error, std::string("Neural-AI striped matrix path requires linebuffer Conv2D, got ") +
+                (config == nullptr ? "no config" : NeuralAIOpModeName(config->Mode())));
+        const SchedulerConnection *ifm = operation->IFM(0);
+        const SchedulerConnection *ofm = operation->OFM();
+        const StripeArea &area = stripe->stripeAreas.front();
+        if ( area.ifmCount != 1 || ifm->Type() != regor::DataType::Int8 ||
+             ofm->Type() != regor::DataType::Int8 || ofm->tensor->format != TensorFormat::C32Blocked )
+            return SetError(error, "Neural-AI direct RGB stripe has invalid feature maps");
+        const Shape ifmShape = ReshapeToNHWC(ifm->shape);
+        const Shape ofmAreaShape = ReshapeToNHWC(area.ofmArea.SizeShape());
+        const Shape ofmAreaStart = ReshapeToNHWC(area.ofmArea.Start());
+        const Shape ofmStorage = ReshapeToNHWC(ofm->tensor->storageShape);
+        const uint32_t channelK = uint32_t(ifmShape.Depth());
+        const uint32_t depthN = uint32_t(ofmAreaShape.Depth());
+        if ( channelK == 0 || channelK > 32 || depthN <= 0 || depthN > 32 || ofmAreaStart.Width() != 0 ||
+             ofmAreaStart.Depth() != 0 || ofmAreaShape.Width() != ofm->shape.Width() ||
+             ofmStorage.Width() != ofmAreaShape.Width() || ofmStorage.Height() <= 0 ||
+             ofmAreaShape.Height() > ofmStorage.Height() ||
+             ofmAreaStart.Height() % ofmStorage.Height() + ofmAreaShape.Height() > ofmStorage.Height() )
+            return SetError(error, "Neural-AI Conv stripe exceeds its C32 rolling output");
+
+        neuralai::StripeStagingInput stagingInput{};
+        stagingInput.logicalIfm = ifmShape;
+        stagingInput.storageIfm = ReshapeToNHWC(ifm->tensor->storageShape);
+        stagingInput.validArea = area.ifmAreas[0];
+        stagingInput.sourceBase = 0;
+        stagingInput.stagingBase = stripeStageOffset;
+        stagingInput.padTop = stripe->padding.top;
+        stagingInput.padLeft = stripe->padding.left;
+        stagingInput.padBottom = stripe->padding.bottom;
+        stagingInput.padRight = stripe->padding.right;
+        stagingInput.channels = int(channelK);
+        stagingInput.directNhwc = config->DirectNhwcInput();
+        const auto staging = neuralai::LinebufferPlanner().PlanStripeStaging(stagingInput);
+        if ( staging.bytes > stripeStageBytes )
+            return SetError(error, "Neural-AI Conv stripe exceeds its planned staging workspace");
+        const bool needsFill = stripe->padding.top != 0 || stripe->padding.left != 0 ||
+            stripe->padding.bottom != 0 || stripe->padding.right != 0;
+        int8_t paddingValue = 0;
+        if ( const SchedulerConnection *padding = operation->TryInput(TensorUsage::Params1) )
+        {
+            if ( !padding->tensor->IsConstant() || padding->Type() != regor::DataType::Int8 ||
+                 padding->tensor->bufferView.Elements() != 1 )
+                return SetError(error, "Neural-AI Conv stripe padding value is invalid");
+            paddingValue = padding->tensor->bufferView.Values<int8_t>()[0];
+        }
+        if ( !AppendStripeStaging(ifm, staging, paddingValue, uint32_t(operation->Index()),
+                 tileId, needsFill, error) )
+            return false;
+
+        const NpuWeightTensor *encoded = cost->npuWeightsTensor.get();
+        if ( encoded->encodedRanges.size() != 1 || !encoded->bufferView.HasBuffer() )
+            return SetError(error, "Neural-AI Conv stripe requires one encoded weight range");
+        const WeightRange &range = encoded->encodedRanges.begin()->second;
+        const uint32_t paddedN = uint32_t(RoundAway(int(depthN), 32));
+        const uint32_t weightGroups = config->DirectNhwcInput() ? 1u : 9u;
+        if ( range.scaleBytes != int(paddedN * sizeof(neuralai::QParamV1)) ||
+             range.weightBytes != int(weightGroups * 32u * 32u) )
+            return SetError(error, "Neural-AI Conv stripe encoded constants have invalid dimensions");
+        const uint8_t *data = encoded->bufferView.RawData<uint8_t>() + range.offset;
+        MatrixData &materialized = MaterializeMatrixData(operation, paddedN, range, data);
+        if ( !materialized.linebufferWeightsStaged )
+        {
+            RefV1 source{};
+            source.region = uint16_t(Region::ModelConstants);
+            source.offset = materialized.weightBase;
+            RefV1 destination{};
+            destination.region = uint16_t(Region::TCDMScratch);
+            destination.offset = weightStageOffset;
+            if ( !AppendDMA2D(source, destination, 32, 32, 32, uint32_t(range.weightBytes) / 32u,
+                     uint32_t(operation->Index()), tileId++, error) )
+                return false;
+            materialized.linebufferWeightsStaged = true;
+        }
+
+        AppendRQLoad(materialized.qparamBase, 0, uint32_t(operation->Index()), tileId++);
+        neuralai::LinebufferPlannerInput plannerInput{};
+        plannerInput.logicalIfm = staging.stagedIfm;
+        plannerInput.logicalOfm = ofmAreaShape;
+        plannerInput.ifmBase = stripeStageOffset;
+        plannerInput.ofmBase = uint32_t(ofm->tensor->AllocatedAddress()) +
+            uint32_t(ofmAreaStart.Height() % ofmStorage.Height()) *
+                uint32_t(ofmStorage.Width()) * 32u;
+        plannerInput.weightBase = weightStageOffset;
+        plannerInput.psumBase = partialOffset;
+        plannerInput.kernelH = operation->Kernel()->Size().y;
+        plannerInput.kernelW = operation->Kernel()->Size().x;
+        plannerInput.strideH = operation->Kernel()->Stride().y;
+        plannerInput.strideW = operation->Kernel()->Stride().x;
+        plannerInput.ic = config->DirectNhwcInput() ? int(channelK) : 32;
+        plannerInput.oc = 32;
+        plannerInput.validLaneCount = int(channelK);
+        plannerInput.ifmPixelStride = config->DirectNhwcInput() ? int(channelK) : 32;
+        plannerInput.maxM = MaxDirectLinebufferM;
+        plannerInput.tcdmBudget = ArchNeuralAI::AllocatableTCDMBytes;
+        for ( const auto &job : neuralai::LinebufferPlanner().Plan(plannerInput) )
+            AppendLineBufferJob(job, uint32_t(operation->Index()), tileId++);
+        return true;
+    }
+
     bool AppendMatrix(const SchedulerOperation *operation, std::string &error)
     {
         const SchedulerOpInfo *cost = schedule->Cost(operation);
@@ -1608,27 +1887,7 @@ struct GeneratorContext
              range.weightBytes != int(linebufferKGroups * nGroups * 32 * 32) )
             return SetError(error, "Neural-AI encoded matrix dimensions do not match the scheduled operation");
 
-        auto [matrixPosition, inserted] = matrixData.emplace(operation->Uid(), MatrixData{});
-        MatrixData &materialized = matrixPosition->second;
-        if ( inserted )
-        {
-            materialized.qparamBase = uint32_t(artifact->qparams.size());
-            for ( uint32_t channel = 0; channel < paddedN; ++channel )
-            {
-                const uint8_t *source = data + channel * sizeof(neuralai::QParamV1);
-                neuralai::QParamV1 qparam{};
-                qparam.bias = int32_t(Read32(source));
-                qparam.multiplier = int32_t(Read32(source + 4));
-                qparam.shift = Read32(source + 8);
-                qparam.zeroPoint = int32_t(Read32(source + 12));
-                qparam.clampMin = int32_t(Read32(source + 16));
-                qparam.clampMax = int32_t(Read32(source + 20));
-                artifact->qparams.push_back(qparam);
-            }
-            materialized.weightBase = uint32_t(artifact->constants.size());
-            const uint8_t *weightData = data + range.weightOffset;
-            artifact->constants.insert(artifact->constants.end(), weightData, weightData + range.weightBytes);
-        }
+        MatrixData &materialized = MaterializeMatrixData(operation, paddedN, range, data);
         const uint32_t qparamBase = materialized.qparamBase;
         const uint32_t weightBase = materialized.weightBase;
 
@@ -1657,8 +1916,38 @@ struct GeneratorContext
 
             uint32_t ifmSliceOffset = 0;
             if ( !directRgb && !C32SliceByteOffset(ifm, ifmSliceOffset, error) ) return false;
-            const auto logicalIfm = ReshapeToNHWC(ifmShape);
+            auto logicalIfm = ReshapeToNHWC(ifmShape);
             const auto logicalOfm = ReshapeToNHWC(ofmShape);
+            uint32_t linebufferIfmBase = uint32_t(ifm->tensor->AllocatedAddress()) + ifmSliceOffset;
+            Margin linebufferPadding = operation->Kernel()->Padding();
+            if ( const SchedulerConnection *padding = operation->TryInput(TensorUsage::Params1) )
+            {
+                if ( !padding->tensor->IsConstant() || padding->Type() != regor::DataType::Int8 ||
+                     padding->tensor->bufferView.Elements() != 1 )
+                    return SetError(error, "Neural-AI Conv padding value is invalid");
+                neuralai::StripeStagingInput stagingInput{};
+                stagingInput.logicalIfm = logicalIfm;
+                stagingInput.storageIfm = ReshapeToNHWC(ifm->tensor->storageShape);
+                stagingInput.validArea = Box(logicalIfm);
+                stagingInput.stagingBase = stripeStageOffset;
+                stagingInput.padTop = linebufferPadding.Top();
+                stagingInput.padLeft = linebufferPadding.Left();
+                stagingInput.padBottom = linebufferPadding.Bottom();
+                stagingInput.padRight = linebufferPadding.Right();
+                stagingInput.channels = int(channelK);
+                stagingInput.directNhwc = directRgb;
+                const auto staging = neuralai::LinebufferPlanner().PlanStripeStaging(stagingInput);
+                if ( staging.bytes > stripeStageBytes )
+                    return SetError(error, "Neural-AI Conv padding exceeds its planned staging workspace");
+                uint32_t stagingTile = 2;
+                const int8_t paddingValue = padding->tensor->bufferView.Values<int8_t>()[0];
+                if ( !AppendStripeStaging(ifm, staging, paddingValue, uint32_t(operation->Index()),
+                         stagingTile, true, error) )
+                    return false;
+                logicalIfm = staging.stagedIfm;
+                linebufferIfmBase = stripeStageOffset;
+                linebufferPadding = {};
+            }
             const uint32_t paddedInputChannels = uint32_t(RoundAway(int(channelK), 32));
             const uint32_t inputGroups = directRgb ? 1u : paddedInputChannels / 32u;
             const uint32_t outputGroups = uint32_t(RoundAway(int(depthN), 32)) / 32u;
@@ -1691,7 +1980,7 @@ struct GeneratorContext
                             plannerInput.logicalOfm = logicalOfm;
                             const uint32_t groupPlaneBytes = uint32_t(logicalIfm.Height()) *
                                 uint32_t(logicalIfm.Width()) * 32u;
-                            plannerInput.ifmBase = uint32_t(ifm->tensor->AllocatedAddress()) + ifmSliceOffset +
+                            plannerInput.ifmBase = linebufferIfmBase +
                                 inputGroup * groupPlaneBytes +
                                 tapH * uint32_t(logicalIfm.Width()) * 32u + tapW * 32u;
                             plannerInput.ofmBase = uint32_t(ofm->tensor->AllocatedAddress());
@@ -1722,7 +2011,7 @@ struct GeneratorContext
                     neuralai::LinebufferPlannerInput plannerInput{};
                     plannerInput.logicalIfm = logicalIfm;
                     plannerInput.logicalOfm = logicalOfm;
-                    plannerInput.ifmBase = uint32_t(ifm->tensor->AllocatedAddress()) + ifmSliceOffset;
+                    plannerInput.ifmBase = linebufferIfmBase;
                     plannerInput.ofmBase = uint32_t(ofm->tensor->AllocatedAddress());
                     plannerInput.weightBase = uint32_t(weightStageOffset +
                         (outputGroup * inputGroups + inputGroup) * kernelTilesPerInputGroup * 32u * 32u);
@@ -1731,10 +2020,10 @@ struct GeneratorContext
                     plannerInput.kernelW = operation->Kernel()->Size().x;
                     plannerInput.strideH = operation->Kernel()->Stride().y;
                     plannerInput.strideW = operation->Kernel()->Stride().x;
-                    plannerInput.padTop = operation->Kernel()->Padding().Top();
-                    plannerInput.padLeft = operation->Kernel()->Padding().Left();
-                    plannerInput.padBottom = operation->Kernel()->Padding().Bottom();
-                    plannerInput.padRight = operation->Kernel()->Padding().Right();
+                    plannerInput.padTop = linebufferPadding.Top();
+                    plannerInput.padLeft = linebufferPadding.Left();
+                    plannerInput.padBottom = linebufferPadding.Bottom();
+                    plannerInput.padRight = linebufferPadding.Right();
                     plannerInput.ic = directRgb ? int(channelK) : 32;
                     plannerInput.oc = 32;
                     plannerInput.groupIndex = int(inputGroup);
@@ -1963,7 +2252,7 @@ struct GeneratorContext
             description.rank = 4;
             const auto dimensions = Dimensions(tensor->storageShape);
             std::copy(dimensions.begin(), dimensions.end(), description.dimensions);
-            description.byteSize = uint32_t(tensor->AllocationSizeBytes());
+            description.byteSize = uint32_t(TensorStorageBytes(tensor));
             description.alignment = tensor->format == TensorFormat::NHWC ? 1u : ArchNeuralAI::DMAAlignment;
             description.scratchOffset = uint32_t(tensor->AllocatedAddress());
             artifact->tensors.push_back(description);
@@ -1986,6 +2275,12 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
     artifact = {};
     GeneratorContext context(graph, schedule, &artifact);
     if ( !context.BuildBindings(operations, error) ) return false;
+    HLCStreamGenerator hlcGenerator(0, false);
+    HLCStream hlcCommands = hlcGenerator.GenerateCommandStream(
+        vector_span<std::unique_ptr<SchedulerOperation>>(operations, 0, int(operations.size())),
+        schedule, true);
+    std::unordered_map<UniqueId, const SchedulerOperation *> operationsByUid;
+    for ( const auto &operation : operations ) operationsByUid.emplace(operation->Uid(), operation.get());
 
     uint32_t scratchBytes = 0;
     for ( const auto &operation : operations )
@@ -1996,14 +2291,14 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
             if ( !connection.tensor->isGraphInput && !connection.tensor->isGraphOutput &&
                  !connection.tensor->IsConstant() )
                 scratchBytes = std::max(scratchBytes, uint32_t(connection.tensor->AllocatedAddress() +
-                    connection.tensor->AllocationSizeBytes()));
+                    TensorStorageBytes(connection.tensor.get())));
         }
         for ( const auto &[usage, connection] : operation->outputs.pairs() )
         {
             UNUSED(usage);
             if ( !connection.tensor->isGraphInput && !connection.tensor->isGraphOutput )
                 scratchBytes = std::max(scratchBytes, uint32_t(connection.tensor->AllocatedAddress() +
-                    connection.tensor->AllocationSizeBytes()));
+                    TensorStorageBytes(connection.tensor.get())));
         }
     }
     context.scratchEnd = uint32_t(RoundAway(int(scratchBytes), ArchNeuralAI::DMAAlignment));
@@ -2061,9 +2356,102 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
     context.weightStageOffset = context.stageOffset;
     context.partialOffset = uint32_t(RoundAway(
         int(context.stageOffset + context.stageBytes), ArchNeuralAI::DMAAlignment));
+    context.stripeStageOffset = uint32_t(RoundAway(
+        int(context.partialOffset + context.partialBytes), ArchNeuralAI::DMAAlignment));
+    for ( const auto &command : hlcCommands )
+    {
+        if ( command->CommandType() != HighLevelCommandType::STRIPE ) continue;
+        const auto *stripe = static_cast<const HLCStripe *>(command.get());
+        auto operationPosition = operationsByUid.find(stripe->operation->srcId);
+        if ( operationPosition == operationsByUid.end() ) continue;
+        const SchedulerOperation *operation = operationPosition->second;
+        const SchedulerOpInfo *cost = schedule->Cost(operation);
+        const auto *config = cost != nullptr && cost->Config() != nullptr ?
+            static_cast<const NeuralAIOpConfig *>(cost->Config()) : nullptr;
+        if ( cost == nullptr || cost->cascade == 0 || operation->Type() != OpType::Conv2D ||
+             config == nullptr || !IsLinebufferConvMode(config->Mode()) || operation->IFM(0)->shape.Depth() > 32 )
+            continue;
+        const StripeArea &area = stripe->stripeAreas.front();
+        neuralai::StripeStagingInput stagingInput{};
+        stagingInput.logicalIfm = ReshapeToNHWC(operation->IFM(0)->shape);
+        stagingInput.storageIfm = ReshapeToNHWC(operation->IFM(0)->tensor->storageShape);
+        stagingInput.validArea = area.ifmAreas[0];
+        stagingInput.padTop = stripe->padding.top;
+        stagingInput.padLeft = stripe->padding.left;
+        stagingInput.padBottom = stripe->padding.bottom;
+        stagingInput.padRight = stripe->padding.right;
+        stagingInput.channels = operation->IFM(0)->shape.Depth();
+        stagingInput.directNhwc = config->DirectNhwcInput();
+        const auto staging = neuralai::LinebufferPlanner().PlanStripeStaging(stagingInput);
+        context.stripeStageBytes = std::max(context.stripeStageBytes, staging.bytes);
+    }
+    for ( const auto &operation : operations )
+    {
+        const SchedulerOpInfo *cost = schedule->Cost(operation.get());
+        const auto *config = cost != nullptr && cost->Config() != nullptr ?
+            static_cast<const NeuralAIOpConfig *>(cost->Config()) : nullptr;
+        if ( cost == nullptr || cost->cascade != 0 || operation->Type() != OpType::Conv2D ||
+             config == nullptr || !IsLinebufferConvMode(config->Mode()) ||
+             operation->TryInput(TensorUsage::Params1) == nullptr )
+            continue;
+        const SchedulerConnection *ifm = operation->IFM(0);
+        const Shape logicalIfm = ReshapeToNHWC(ifm->shape);
+        const Margin &padding = operation->Kernel()->Padding();
+        neuralai::StripeStagingInput stagingInput{};
+        stagingInput.logicalIfm = logicalIfm;
+        stagingInput.storageIfm = ReshapeToNHWC(ifm->tensor->storageShape);
+        stagingInput.validArea = Box(logicalIfm);
+        stagingInput.padTop = padding.Top();
+        stagingInput.padLeft = padding.Left();
+        stagingInput.padBottom = padding.Bottom();
+        stagingInput.padRight = padding.Right();
+        stagingInput.channels = logicalIfm.Depth();
+        stagingInput.directNhwc = config->DirectNhwcInput();
+        const auto staging = neuralai::LinebufferPlanner().PlanStripeStaging(stagingInput);
+        context.stripeStageBytes = std::max(context.stripeStageBytes, staging.bytes);
+    }
 
     for ( const auto &operation : operations )
     {
+        const SchedulerOpInfo *operationCost = schedule->Cost(operation.get());
+        if ( operationCost != nullptr && operationCost->cascade != 0 )
+        {
+            const CascadeInfo *cascade = schedule->Cascade(operationCost->cascade);
+            if ( cascade == nullptr )
+            {
+                error = "Neural-AI scheduled operation references a missing cascade";
+                return false;
+            }
+            if ( operation->Index() != cascade->start ) continue;
+            std::unordered_map<UniqueId, uint32_t> tileIds;
+            for ( const auto &command : hlcCommands )
+            {
+                if ( command->CommandType() != HighLevelCommandType::STRIPE ) continue;
+                const auto *stripe = static_cast<const HLCStripe *>(command.get());
+                auto operationPosition = operationsByUid.find(stripe->operation->srcId);
+                if ( operationPosition == operationsByUid.end() ) continue;
+                const SchedulerOperation *stripeOperation = operationPosition->second;
+                const SchedulerOpInfo *stripeCost = schedule->Cost(stripeOperation);
+                if ( stripeCost == nullptr || stripeCost->cascade != operationCost->cascade ) continue;
+                uint32_t &tileId = tileIds[stripeOperation->Uid()];
+                if ( stripeOperation->Type() == OpType::Conv2D )
+                {
+                    if ( !context.AppendC32MatrixStripe(stripeOperation, stripe, tileId, error) )
+                        return false;
+                }
+                else if ( stripeOperation->Type() == OpType::LUT )
+                {
+                    if ( !context.AppendAFULutStripe(stripeOperation, stripe, tileId, error) ) return false;
+                }
+                else
+                {
+                    error = "Neural-AI cascade contains an unsupported striped operation " +
+                        OpTypeToString(stripeOperation->Type());
+                    return false;
+                }
+            }
+            continue;
+        }
         if ( operation->Type() == OpType::MemoryCopy )
         {
             if ( !context.AppendCopy(operation.get(), error) ) return false;
@@ -2121,10 +2509,11 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
     }
     context.AppendControl(CommandType::End, 0, 0);
     artifact.requiredTCDMBytes = uint32_t(RoundAway(
-        int(context.partialOffset + context.partialBytes), ArchNeuralAI::DMAAlignment));
+        int(context.stripeStageOffset + context.stripeStageBytes), ArchNeuralAI::DMAAlignment));
     if ( artifact.requiredTCDMBytes > ArchNeuralAI::AllocatableTCDMBytes )
     {
-        error = "Neural-AI generated command workspace exceeds allocatable TCDM";
+        error = fmt::format("Neural-AI generated command workspace {} exceeds allocatable TCDM {}",
+            artifact.requiredTCDMBytes, ArchNeuralAI::AllocatableTCDMBytes);
         return false;
     }
     return true;

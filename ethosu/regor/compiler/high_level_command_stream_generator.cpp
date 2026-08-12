@@ -1172,7 +1172,8 @@ HLCStream HLCStreamGenerator::GenerateCommandStream(const NPUOperation *npuOp, c
 }
 
 HLCStream HLCStreamGenerator::GenerateCommandStream(
-    vector_span<std::unique_ptr<SchedulerOperation>> operations, const Schedule *schedule)
+    vector_span<std::unique_ptr<SchedulerOperation>> operations, const Schedule *schedule,
+    bool cascadesOnly)
 {
     HLCStream cmds;
     _schedule = schedule;
@@ -1193,7 +1194,7 @@ HLCStream HLCStreamGenerator::GenerateCommandStream(
         assert(opInfo != nullptr);
         if ( opInfo->cascade == 0 )
         {
-            GenerateCommands(op, hlcOps[index], subgraphs, cmds);
+            if ( !cascadesOnly ) GenerateCommands(op, hlcOps[index], subgraphs, cmds);
             continue;
         }
 

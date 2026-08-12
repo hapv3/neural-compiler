@@ -128,26 +128,41 @@ void NeuralAIGraphOptimiser::CanonicalizeAsymmetricConv(Graph *graph, Operation 
 
     Quantization zeroPointQuantization = ifm->quantization;
     zeroPointQuantization.zeroPoints = {0};
+    const auto connectPaddingValue = [operation, ifmZeroPoint]()
+    {
+        const Shape scalarShape(1);
+        auto value = CreateConstTensor("neural_ai_padding_value", DataType::Int8,
+            std::make_shared<Buffer>(std::vector<int8_t>{int8_t(ifmZeroPoint)}), &scalarShape);
+        operation->ConnectInput(TensorUsage::Params1, value).Set(Quantization::Unit());
+    };
     if ( !kernel->Padding().IsZero() )
     {
-        const Margin padding = kernel->Padding();
-        const std::vector<int32_t> paddingValues{
-            0, 0, padding.Top(), padding.Bottom(), padding.Left(), padding.Right(), 0, 0};
-        const Shape paddingShape(int(paddingValues.size()));
-        auto paddingTensor = CreateConstTensor("neural_ai_asymmetric_padding", DataType::Int32,
-            std::make_shared<Buffer>(std::vector<int32_t>(paddingValues)), &paddingShape);
-        const Shape ifmShape = ifm->shape.IsEmpty() ? ifm->tensor->StorageShape() : ifm->shape;
-        const Shape paddedShape = ifmShape.WithHW(ifmShape.WH() + padding.TL() + padding.BR());
-        auto paddedTensor = std::make_shared<Tensor>(
-            ifm->tensor->Name() + "/zero_point_padding", ifm->tensor->Type(), paddedShape);
-        auto pad = std::make_shared<Operation>(OpType::Pad);
-        pad->CopyInput(TensorUsage::IFM0, *ifm);
-        pad->ConnectInput(TensorUsage::Params, paddingTensor);
-        pad->ConnectOutput(TensorUsage::OFM, paddedTensor).Set(paddedShape).Set(zeroPointQuantization);
-        pad->Attribute<pad_attr_t>()->pad_const = ifmZeroPoint;
-        operation->ConnectInput(TensorUsage::IFM0, paddedTensor).Set(paddedShape).Set(zeroPointQuantization);
-        operation->SetKernel(std::make_unique<Kernel>(kernel->WithPadding({})));
-        RecordOptimisation(*operation, pad.get());
+        if ( opType == OpType::DepthwiseConv2D )
+        {
+            const Margin padding = kernel->Padding();
+            const std::vector<int32_t> paddingValues{
+                0, 0, padding.Top(), padding.Bottom(), padding.Left(), padding.Right(), 0, 0};
+            const Shape paddingShape(int(paddingValues.size()));
+            auto paddingTensor = CreateConstTensor("neural_ai_asymmetric_padding", DataType::Int32,
+                std::make_shared<Buffer>(std::vector<int32_t>(paddingValues)), &paddingShape);
+            const Shape inputShape = ifm->shape.IsEmpty() ? ifm->tensor->StorageShape() : ifm->shape;
+            const Shape paddedShape = inputShape.WithHW(inputShape.WH() + padding.TL() + padding.BR());
+            auto paddedTensor = std::make_shared<Tensor>(
+                ifm->tensor->Name() + "/zero_point_padding", ifm->tensor->Type(), paddedShape);
+            auto pad = std::make_shared<Operation>(OpType::Pad);
+            pad->CopyInput(TensorUsage::IFM0, *ifm);
+            pad->ConnectInput(TensorUsage::Params, paddingTensor);
+            pad->ConnectOutput(TensorUsage::OFM, paddedTensor).Set(paddedShape).Set(zeroPointQuantization);
+            pad->Attribute<pad_attr_t>()->pad_const = ifmZeroPoint;
+            operation->ConnectInput(TensorUsage::IFM0, paddedTensor).Set(paddedShape).Set(zeroPointQuantization);
+            operation->SetKernel(std::make_unique<Kernel>(kernel->WithPadding({})));
+            RecordOptimisation(*operation, pad.get());
+        }
+        else
+        {
+            ifm->Set(zeroPointQuantization);
+            connectPaddingValue();
+        }
     }
     else if ( graph->IsInput(ifm->tensor.get()) )
     {
@@ -174,8 +189,38 @@ void NeuralAIGraphOptimiser::CanonicalizeAsymmetricConv(Graph *graph, Operation 
         ifm->Set(zeroPointQuantization);
         if ( explicitPad != nullptr )
         {
-            explicitPad->Output(TensorUsage::OFM)->Set(zeroPointQuantization);
-            explicitPad->Attribute<pad_attr_t>()->pad_const = ifmZeroPoint;
+            const TensorConnection *padIfm = explicitPad->Input(TensorUsage::IFM0);
+            const TensorConnection *padParams = explicitPad->Input(TensorUsage::Params);
+            const Shape inputShape = padIfm->SliceShape();
+            const Shape before = TensorToShape(padParams->tensor.get(), inputShape.Size(), 2, 0);
+            const Shape after = TensorToShape(padParams->tensor.get(), inputShape.Size(), 2, 1);
+            if ( before.WithHW(0, 0) == before.WithZeros() && after.WithHW(0, 0) == after.WithZeros() )
+            {
+                int bottom = after.Height();
+                int right = after.Width();
+                const Point2i dilated = kernel->DilatedWH();
+                const auto adjustAfter = [](int input, int stride, int filter, int beforeValue, int afterValue)
+                {
+                    const int total = NeededTotalPadding(input, stride, filter);
+                    const int difference = afterValue % stride - (total - beforeValue) % stride;
+                    return std::max(0, afterValue - difference - (difference >= 0 ? 0 : stride));
+                };
+                bottom = adjustAfter(inputShape.Height(), kernel->Stride().y, dilated.y,
+                    before.Height(), bottom);
+                right = adjustAfter(inputShape.Width(), kernel->Stride().x, dilated.x,
+                    before.Width(), right);
+                operation->SetKernel(std::make_unique<Kernel>(kernel->WithPadding(
+                    {before.Height(), before.Width(), bottom, right})));
+                operation->CopyInput(TensorUsage::IFM0, *padIfm);
+                operation->Input(TensorUsage::IFM0)->Set(zeroPointQuantization);
+                connectPaddingValue();
+                if ( explicitPad->Output(TensorUsage::OFM)->tensor->Readers().empty() ) explicitPad->Disconnect();
+            }
+            else
+            {
+                explicitPad->Output(TensorUsage::OFM)->Set(zeroPointQuantization);
+                explicitPad->Attribute<pad_attr_t>()->pad_const = ifmZeroPoint;
+            }
         }
     }
 
