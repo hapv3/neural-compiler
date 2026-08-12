@@ -11,6 +11,7 @@
 #include "architecture/neuralai/neural_ai_weight_encoder.hpp"
 #include "compiler/compiler.hpp"
 #include "compiler/graphir_optimiser.hpp"
+#include "compiler/high_level_command_stream_generator.hpp"
 #include "compiler/neural_ai_command_generator.hpp"
 #include "compiler/neural_ai_graph_optimiser.hpp"
 #include "compiler/neural_ai_writer.hpp"
@@ -1794,6 +1795,81 @@ TEST_CASE("Neural-AI performance model estimates GEMM and DMA costs")
     REQUIRE(performance->MeasureCycleCost(query).opCycles == 0);
     REQUIRE(performance->MemToMemCycles(
         arch.FeatureMapMemory().memory, arch.ReadonlyMemory().memory, 64) == 3);
+}
+
+TEST_CASE("Neural-AI scheduler emits interleaved Conv LUT stripes")
+{
+    constexpr int height = 320;
+    constexpr int width = 320;
+    constexpr int inputChannels = 3;
+    constexpr int outputChannels = 16;
+    ArchNeuralAI arch;
+    auto input = CreateTensor("input", Shape(1, height, width, inputChannels), DataType::Int8);
+    auto convOutput = CreateTensor("conv_output", Shape(1, height / 2, width / 2, outputChannels), DataType::Int8);
+    auto output = CreateTensor("output", Shape(1, height / 2, width / 2, outputChannels), DataType::Int8);
+    auto weights = CreateTensor("weights", Shape(outputChannels, 3, 3, inputChannels), DataType::Int8,
+        std::vector<int8_t>(outputChannels * 3 * 3 * inputChannels, 1));
+    auto scales = CreateTensor("scales", Shape(outputChannels), DataType::Int32,
+        std::vector<int32_t>(outputChannels, 0));
+    std::vector<int8_t> lutValues(256);
+    for ( int index = 0; index < 256; ++index ) lutValues[index] = int8_t(index - 128);
+    auto lut = CreateTensor("lut", Shape(256), DataType::Int8, std::move(lutValues));
+
+    auto conv = CreateOperation(
+        OpType::Conv2D, TensorUsage::IFM0, input, TensorUsage::OFM, convOutput);
+    conv->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
+    conv->ConnectInput(TensorUsage::Scales, scales).Set(Quantization::Unit());
+    conv->SetKernel(std::make_unique<Kernel>(
+        Point2i(3, 3), Point2i(2, 2), Point2i(1, 1), Margin(1, 1, 1, 1)));
+    auto activation = CreateOperation(
+        OpType::LUT, TensorUsage::IFM0, convOutput, TensorUsage::OFM, output);
+    activation->ConnectInput(TensorUsage::LUT, lut);
+    std::vector<std::shared_ptr<Operation>> sourceOps = {conv, activation};
+    auto graph = CreateGraph(sourceOps);
+
+    GraphOptimiserOptions graphOptions;
+    NeuralAIGraphOptimiser optimiser(arch.Constraints(), graphOptions, nullptr);
+    optimiser.Process(graph.get());
+    const std::unordered_map<UniqueId, UniqueId> equivalenceIds;
+    SchedulerPacking packing(&arch, false, equivalenceIds);
+    auto scheduleOps = packing.Process(graph.get());
+    SchedulerOptions schedulerOptions;
+    schedulerOptions.optimizationStagingLimit = 32 * 1024;
+    schedulerOptions.disabled.Set(SchedulerFeature::WeightBuffering);
+    Scheduler scheduler(
+        &arch, schedulerOptions, "neural-ai-cascade-hlc", scheduleOps,
+        packing.OpConfigCompatablility());
+    auto schedule = scheduler.Process();
+
+    const SchedulerOperation *scheduledConv = nullptr;
+    const SchedulerOperation *scheduledLut = nullptr;
+    for ( const auto &operation : scheduleOps )
+    {
+        if ( operation->Type() == OpType::Conv2D ) scheduledConv = operation.get();
+        if ( operation->Type() == OpType::LUT ) scheduledLut = operation.get();
+    }
+    REQUIRE(scheduledConv != nullptr);
+    REQUIRE(scheduledLut != nullptr);
+    const int cascade = schedule->Cost(scheduledConv)->cascade;
+    REQUIRE(cascade > 0);
+    REQUIRE(schedule->Cost(scheduledLut)->cascade == cascade);
+
+    HLCStreamGenerator generator(0, false);
+    HLCStream commands = generator.GenerateCommandStream(
+        vector_span<std::unique_ptr<SchedulerOperation>>(scheduleOps), schedule.get());
+    std::vector<OpType> stripeTypes;
+    for ( const auto &command : commands )
+    {
+        if ( command->CommandType() != HighLevelCommandType::STRIPE ) continue;
+        stripeTypes.push_back(static_cast<const HLCStripe *>(command.get())->operation->type);
+    }
+    REQUIRE(stripeTypes.size() > 2);
+    const auto convPosition = std::find(stripeTypes.begin(), stripeTypes.end(), OpType::Conv2D);
+    const auto lutPosition = std::find(stripeTypes.begin(), stripeTypes.end(), OpType::LUT);
+    REQUIRE(convPosition != stripeTypes.end());
+    REQUIRE(lutPosition != stripeTypes.end());
+    REQUIRE(convPosition < lutPosition);
+    REQUIRE(std::find(lutPosition + 1, stripeTypes.end(), OpType::Conv2D) != stripeTypes.end());
 }
 
 TEST_CASE("Neural-AI scheduler lowers a complete FullyConnected graph")
