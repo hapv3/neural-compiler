@@ -59,6 +59,12 @@ public:
         _end = const_cast<std::vector<TYPE> &>(vec).erase(posEnd, posEnd);
     }
 
+    vector_span(const vector_span<TYPE> &span, int start, int end)
+    {
+        _start = span._start + start;
+        _end = span._start + end;
+    }
+
     TYPE &front() { return *_start; }
     const TYPE &front() const { return *_start; }
 

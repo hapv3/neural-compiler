@@ -1171,6 +1171,48 @@ HLCStream HLCStreamGenerator::GenerateCommandStream(const NPUOperation *npuOp, c
     return cmds;
 }
 
+HLCStream HLCStreamGenerator::GenerateCommandStream(
+    vector_span<std::unique_ptr<SchedulerOperation>> operations, const Schedule *schedule)
+{
+    HLCStream cmds;
+    _schedule = schedule;
+    std::vector<std::shared_ptr<HLCOperation>> hlcOps;
+    hlcOps.reserve(operations.size());
+    for ( const auto &schedOp : operations )
+    {
+        auto *op = schedOp.get();
+        hlcOps.push_back(MakeOperation(op, schedule->Cost(op), _base, _addresses));
+    }
+
+    SubGraphs subgraphs;
+    const int size = int(operations.size());
+    for ( int index = 0; index < size; ++index )
+    {
+        auto *op = operations[index].get();
+        auto *opInfo = schedule->Cost(op);
+        assert(opInfo != nullptr);
+        if ( opInfo->cascade == 0 )
+        {
+            GenerateCommands(op, hlcOps[index], subgraphs, cmds);
+            continue;
+        }
+
+        const auto *cascadeInfo = schedule->Cascade(opInfo->cascade);
+        assert(cascadeInfo != nullptr);
+        assert(op->Index() == cascadeInfo->start);
+        const int cascadeSize = cascadeInfo->end - cascadeInfo->start + 1;
+        assert(index + cascadeSize <= size);
+        vector_span<std::unique_ptr<SchedulerOperation>> cascadedOps(
+            operations, index, index + cascadeSize);
+        vector_span<std::shared_ptr<HLCOperation>> cascadedHlcOps(
+            hlcOps, index, index + cascadeSize);
+        GenerateCommandsForCascade(cascadedOps, cascadedHlcOps, cascadeInfo, cmds);
+        index += cascadeSize - 1;
+    }
+    assert(subgraphs.empty());
+    return cmds;
+}
+
 void HLCStreamGenerator::PrintCommandStream(const NPUOperation *npuOp, std::vector<std::shared_ptr<HLCOperation>> &hlcOps, HLCStream &cmds)
 {
     LOG_PRINT("High level NPU operations:\n");

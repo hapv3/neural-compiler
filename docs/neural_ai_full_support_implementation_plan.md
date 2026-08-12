@@ -246,6 +246,12 @@ or CPU fallback:
   K3 weight tile), versus more than 300 KiB when the full input is resident.
   The next increment must remap these planned rows in command generation; the
   compiler does not yet claim that rolling allocation is executable.
+- Neural-AI now exposes Y subdivision for Conv, depthwise Conv, and LUT, and a
+  target-gated LUT cascade capability. Regor forms the first `Conv -> LUT`
+  cascade with a 10,240-byte rolling buffer. Peak remains 1,659,008 bytes
+  because four explicit padding copies force the LUT output to become a full
+  tensor before the next Conv. Reuse the non-owning HLC stripe stream to remove
+  that boundary and drive tile-aware Neural-AI commands.
 - Prove compact public bindings and native internal layouts end to end.
 - Use Regor cascading, tiling, live ranges, and allocator before adding target
   policy.

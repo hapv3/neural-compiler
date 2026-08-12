@@ -49,6 +49,11 @@ public:
 
     // Generates high level command stream for the scheduled operations in the given NPU op
     HLCStream GenerateCommandStream(const NPUOperation *npuOp, const Schedule *schedule, SubGraphs &subgraphs);
+    // Generates a stream without transferring ownership into an NPUOperation.
+    // Target-specific backends can consume Regor's stripe/cascade sequencing
+    // before the generic graph-packing stage.
+    HLCStream GenerateCommandStream(
+        vector_span<std::unique_ptr<SchedulerOperation>> operations, const Schedule *schedule);
 
 private:
     // Generates one or more HLCStripe commands from a given operation and adds them to the stream

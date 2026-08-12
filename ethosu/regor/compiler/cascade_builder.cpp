@@ -421,9 +421,10 @@ bool CascadeBuilder::IsCascadable(const SchedulerOperation *op, SchedulerConnect
 
     // TODO MLBEDSW-11387: Support cascading for ReduceSum
     // TODO MLBEDSW-7003: Resampling mode is not supported for cascaded convolutions
+    const bool targetRowActivation = _arch->SupportsCascadedOperator(type);
     return (cost->stripe.Height() < op->OFM()->shape.Height()) &&
            ((IsConvolution(type) && (ifmConn->resamplingMode == ArchResampling::None)) || IsElementwise(type) ||
-               (IsPooling(type) && type != OpType::ReduceSum));
+               (IsPooling(type) && type != OpType::ReduceSum) || targetRowActivation);
 }
 
 

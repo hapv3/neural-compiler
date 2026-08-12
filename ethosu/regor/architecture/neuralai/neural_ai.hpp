@@ -44,7 +44,7 @@ public:
     ArchitecturePerformance *Performance() override { return _performance.get(); }
     IRegisterCommandStreamGenerator *RegisterCommandStreamGenerator() override { return nullptr; }
     IArchitectureConstraints *Constraints() override { return _constraints.get(); }
-    TensorFormat IdealBufferingFormat() override { return TensorFormat::Row32; }
+    TensorFormat IdealBufferingFormat() override { return TensorFormat::C32Blocked; }
     int AllocationQuantum() const override { return DMAAlignment; }
     int TensorAlignment(TensorUsage usage, TensorFormat format) const override;
     TensorFormat ModelBindingFormat(TensorUsage usage) const override;
@@ -59,6 +59,7 @@ public:
     uint32_t Version() override;
     int UpscaleAndRounding(ArchResampling resampling, int &rounding) override;
     AxisMask CanSubdivide(OpType opType, TransposeType transpose, ReverseType reverse) override;
+    bool SupportsCascadedOperator(OpType opType) const override { return opType == OpType::LUT; }
     bool SupportsScalar(OpType opType, DataType dataType, TensorUsage usage) override;
     Flags<WeightFormat> SupportedWeightFormat(OpType op) override;
     void Call(std::function<void(const std::string &)> callBack) override;

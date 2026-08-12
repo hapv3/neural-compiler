@@ -1213,6 +1213,12 @@ TEST_CASE("Neural-AI architecture exposes fixed hardware configuration")
     REQUIRE(arch.ModelBindingFormat(TensorUsage::IFM) == TensorFormat::NHWC);
     REQUIRE(arch.DefaultInternalTensorFormat(TensorUsage::IFM, false) == TensorFormat::Row32);
     REQUIRE(arch.DefaultInternalTensorFormat(TensorUsage::OFM, true) == TensorFormat::NHWC);
+    REQUIRE(arch.IdealBufferingFormat() == TensorFormat::C32Blocked);
+    REQUIRE(arch.CanSubdivide(OpType::Conv2D, TransposeType::None, ReverseType::None) == AxisMask::AxisY);
+    REQUIRE(arch.CanSubdivide(OpType::DepthwiseConv2D, TransposeType::None, ReverseType::None) == AxisMask::AxisY);
+    REQUIRE(arch.CanSubdivide(OpType::LUT, TransposeType::None, ReverseType::None) == AxisMask::AxisY);
+    REQUIRE(arch.CanSubdivide(OpType::Concat, TransposeType::None, ReverseType::None) == AxisMask::None);
+    REQUIRE(arch.CanSubdivide(OpType::LUT, TransposeType::NCHW, ReverseType::None) == AxisMask::None);
 
     std::string target;
     arch.Call([&target](const std::string &name) { target = name; });

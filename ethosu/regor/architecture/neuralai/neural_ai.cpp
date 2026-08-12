@@ -293,8 +293,16 @@ int ArchNeuralAI::UpscaleAndRounding(ArchResampling, int &rounding)
     return 1;
 }
 
-AxisMask ArchNeuralAI::CanSubdivide(OpType, TransposeType, ReverseType)
+AxisMask ArchNeuralAI::CanSubdivide(OpType opType, TransposeType transpose, ReverseType reverse)
 {
+    if ( transpose == TransposeType::None && reverse == ReverseType::None &&
+         (opType == OpType::Conv2D || opType == OpType::DepthwiseConv2D || opType == OpType::LUT) )
+    {
+        // Neural-AI linebuffer and AFU commands preserve complete rows.  Width
+        // subdivision would require a second address-wrap contract, while Y
+        // stripes map directly to the target's rolling row buffers.
+        return AxisMask::AxisY;
+    }
     return AxisMask::None;
 }
 

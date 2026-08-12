@@ -142,6 +142,29 @@ TEST_CASE("CalculateIfmStripeAndPadding maps OFM stripes without padding (height
     CHECK(ifmBox.SizeShape().Depth() == 3);
 }
 
+TEST_CASE("HLC generator accepts a non-owning scheduler operation span")
+{
+    Kernel kernel(Point2i{1, 3}, Point2i{1, 1}, Point2i{1, 1}, Margin(1, 0, 1, 0));
+    Shape ifmShape(1, 10, 1, 1);
+    Shape ofmShape(1, 10, 1, 1);
+    Shape stripeShape(1, 1, 1, 1);
+    std::vector<std::unique_ptr<SchedulerOperation>> operations;
+    operations.push_back(CreateSchedulerOperation(
+        OpType::Conv2D, kernel, ifmShape, ofmShape, Point2i{1, 1}, Point2i{1, 1}));
+    auto schedule = CreateSchedule(operations.front(), stripeShape);
+
+    HLCStreamGenerator generator(0, false);
+    HLCStream commands = generator.GenerateCommandStream(
+        vector_span<std::unique_ptr<SchedulerOperation>>(operations), &schedule);
+
+    REQUIRE(commands.size() == 10);
+    REQUIRE(commands.front()->CommandType() == HighLevelCommandType::STRIPE);
+    const auto *first = static_cast<const HLCStripe *>(commands.front().get());
+    REQUIRE(first->padding.top == 1);
+    REQUIRE(first->stripeAreas.front().ofmArea.SizeShape().Height() == 1);
+    REQUIRE(operations.front() != nullptr);
+}
+
 TEST_CASE("CalculateIfmStripeAndPadding reports padding on boundary stripes (height-only)")
 {
     Kernel kernel(Point2i{1, 3}, Point2i{1, 1}, Point2i{1, 1}, Margin(1, 0, 1, 0));
