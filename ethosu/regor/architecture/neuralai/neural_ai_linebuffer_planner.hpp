@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include "common/box.hpp"
 #include "common/shape.hpp"
 
 #include <cstdint>
@@ -115,12 +116,45 @@ struct LinebufferTileFootprint
     uint32_t totalBytes = 0;
 };
 
+struct StripeStagingCopy
+{
+    uint32_t source = 0;
+    uint32_t destination = 0;
+    uint32_t length = 0;
+    uint32_t sourceStride = 0;
+    uint32_t destinationStride = 0;
+    uint32_t repetitions = 0;
+};
+
+struct StripeStagingInput
+{
+    Shape logicalIfm;
+    Shape storageIfm;
+    Box validArea;
+    uint32_t sourceBase = 0;
+    uint32_t stagingBase = 0;
+    int padTop = 0;
+    int padLeft = 0;
+    int padBottom = 0;
+    int padRight = 0;
+    int channels = 0;
+    bool directNhwc = false;
+};
+
+struct StripeStagingPlan
+{
+    Shape stagedIfm;
+    uint32_t bytes = 0;
+    std::vector<StripeStagingCopy> copies;
+};
+
 class LinebufferPlanner final
 {
 public:
     std::vector<LinebufferJob> Plan(const LinebufferPlannerInput &input) const;
     LinebufferTileFootprint RollingFootprint(
         const LinebufferPlannerInput &input, const LinebufferJob &job) const;
+    StripeStagingPlan PlanStripeStaging(const StripeStagingInput &input) const;
 };
 
 static_assert(sizeof(SystolicLinebufCfg) == 80);

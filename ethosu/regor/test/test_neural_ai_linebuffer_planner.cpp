@@ -257,3 +257,68 @@ TEST_CASE("Neural-AI linebuffer planner disables fast mode for an unaligned base
     REQUIRE(jobs.front().linebuf.c32GroupStationary == 0u);
     REQUIRE(jobs.front().linebuf.channelAddrOffset == 0u);
 }
+
+TEST_CASE("Neural-AI stripe staging planner pads a compact RGB top stripe")
+{
+    StripeStagingInput input{};
+    input.logicalIfm = Shape(1, 320, 320, 3);
+    input.storageIfm = input.logicalIfm;
+    input.validArea = Box(Shape(0, 0, 0, 0), Box::Size(Shape(1, 2, 320, 3)));
+    input.sourceBase = 0x1000;
+    input.stagingBase = 0x8000;
+    input.padTop = 1;
+    input.padLeft = 1;
+    input.padRight = 1;
+    input.channels = 3;
+    input.directNhwc = true;
+
+    const auto plan = LinebufferPlanner().PlanStripeStaging(input);
+    REQUIRE(plan.stagedIfm == Shape(1, 3, 322, 3));
+    REQUIRE(plan.bytes == 3u * 322u * 3u);
+    REQUIRE(plan.copies.size() == 1);
+    const auto &copy = plan.copies.front();
+    REQUIRE(copy.source == 0x1000u);
+    REQUIRE(copy.destination == 0x8000u + 322u * 3u + 3u);
+    REQUIRE(copy.length == 320u * 3u);
+    REQUIRE(copy.sourceStride == 320u * 3u);
+    REQUIRE(copy.destinationStride == 322u * 3u);
+    REQUIRE(copy.repetitions == 2u);
+}
+
+TEST_CASE("Neural-AI stripe staging planner splits wrapped C32 channel planes")
+{
+    StripeStagingInput input{};
+    input.logicalIfm = Shape(1, 8, 4, 64);
+    input.storageIfm = Shape(1, 3, 4, 64);
+    input.validArea = Box(Shape(0, 2, 0, 0), Box::Size(Shape(1, 3, 4, 64)));
+    input.sourceBase = 0x1000;
+    input.stagingBase = 0x8000;
+    input.padLeft = 1;
+    input.padRight = 1;
+    input.channels = 64;
+
+    const auto plan = LinebufferPlanner().PlanStripeStaging(input);
+    REQUIRE(plan.stagedIfm == Shape(1, 3, 6, 64));
+    REQUIRE(plan.bytes == 3u * 6u * 64u);
+    REQUIRE(plan.copies.size() == 4);
+
+    REQUIRE(plan.copies[0].source == 0x1000u + 2u * 4u * 32u);
+    REQUIRE(plan.copies[0].destination == 0x8000u + 32u);
+    REQUIRE(plan.copies[0].repetitions == 1u);
+    REQUIRE(plan.copies[1].source == 0x1000u);
+    REQUIRE(plan.copies[1].destination == 0x8000u + 6u * 32u + 32u);
+    REQUIRE(plan.copies[1].repetitions == 2u);
+
+    const uint32_t sourcePlaneBytes = 3u * 4u * 32u;
+    const uint32_t destinationPlaneBytes = 3u * 6u * 32u;
+    REQUIRE(plan.copies[2].source == plan.copies[0].source + sourcePlaneBytes);
+    REQUIRE(plan.copies[2].destination == plan.copies[0].destination + destinationPlaneBytes);
+    REQUIRE(plan.copies[3].source == plan.copies[1].source + sourcePlaneBytes);
+    REQUIRE(plan.copies[3].destination == plan.copies[1].destination + destinationPlaneBytes);
+    for ( const auto &copy : plan.copies )
+    {
+        REQUIRE(copy.length == 4u * 32u);
+        REQUIRE(copy.sourceStride == 4u * 32u);
+        REQUIRE(copy.destinationStride == 6u * 32u);
+    }
+}

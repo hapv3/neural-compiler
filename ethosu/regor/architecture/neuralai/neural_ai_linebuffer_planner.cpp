@@ -221,4 +221,69 @@ LinebufferTileFootprint LinebufferPlanner::RollingFootprint(
     return footprint;
 }
 
+StripeStagingPlan LinebufferPlanner::PlanStripeStaging(const StripeStagingInput &input) const
+{
+    if ( input.logicalIfm.Size() != 4 || input.storageIfm.Size() != 4 ||
+         input.validArea.Start().Size() != 4 || input.validArea.End().Size() != 4 )
+        throw std::invalid_argument("Neural-AI stripe staging requires rank-four tensors");
+    const Shape &areaStart = input.validArea.Start();
+    const Shape areaShape = input.validArea.SizeShape();
+    const Shape &logical = input.logicalIfm;
+    const Shape &storage = input.storageIfm;
+    if ( logical.Batch() != 1 || storage.Batch() != 1 || areaStart.Batch() != 0 ||
+         areaShape.Batch() != 1 || input.channels <= 0 || areaShape.Height() <= 0 || areaShape.Width() <= 0 ||
+         areaStart.Height() < 0 || areaStart.Width() < 0 ||
+         areaStart.Height() + areaShape.Height() > logical.Height() ||
+         areaStart.Width() + areaShape.Width() > logical.Width() ||
+         storage.Height() <= 0 || storage.Width() != logical.Width() ||
+         input.padTop < 0 || input.padLeft < 0 || input.padBottom < 0 || input.padRight < 0 )
+        throw std::invalid_argument("Invalid Neural-AI stripe staging input");
+
+    const int stagedH = input.padTop + areaShape.Height() + input.padBottom;
+    const int stagedW = input.padLeft + areaShape.Width() + input.padRight;
+    const int storedChannels = input.directNhwc ? input.channels : RoundAway(input.channels, C32);
+    if ( areaStart.Depth() != 0 || areaShape.Depth() != input.channels )
+        throw std::invalid_argument("Neural-AI stripe staging requires a full-depth area");
+    if ( input.directNhwc && storage.Depth() != input.channels )
+        throw std::invalid_argument("Neural-AI direct stripe staging requires compact NHWC storage");
+    if ( !input.directNhwc && RoundAway(storage.Depth(), C32) != storedChannels )
+        throw std::invalid_argument("Neural-AI native stripe staging requires a full-depth C32 area");
+
+    StripeStagingPlan plan{};
+    plan.stagedIfm = Shape(1, stagedH, stagedW, input.channels);
+    plan.bytes = CheckedU32(uint64_t(stagedH) * uint64_t(stagedW) * uint64_t(storedChannels),
+        "stripe staging size");
+
+    const int groups = input.directNhwc ? 1 : storedChannels / C32;
+    const uint32_t pixelBytes = uint32_t(input.directNhwc ? input.channels : C32);
+    const uint32_t sourceRowBytes = CheckedU32(uint64_t(storage.Width()) * pixelBytes,
+        "stripe source row stride");
+    const uint32_t destinationRowBytes = CheckedU32(uint64_t(stagedW) * pixelBytes,
+        "stripe destination row stride");
+    const uint32_t copyBytes = CheckedU32(uint64_t(areaShape.Width()) * pixelBytes,
+        "stripe row copy size");
+    const uint32_t sourcePlaneBytes = CheckedU32(
+        uint64_t(storage.Height()) * sourceRowBytes, "stripe source plane size");
+    const uint32_t destinationPlaneBytes = CheckedU32(
+        uint64_t(stagedH) * destinationRowBytes, "stripe destination plane size");
+
+    for ( int group = 0; group < groups; ++group )
+    {
+        int copiedRows = 0;
+        while ( copiedRows < areaShape.Height() )
+        {
+            const int sourceY = (areaStart.Height() + copiedRows) % storage.Height();
+            const int repetitions = std::min(areaShape.Height() - copiedRows, storage.Height() - sourceY);
+            const uint64_t source = uint64_t(input.sourceBase) + uint64_t(group) * sourcePlaneBytes +
+                uint64_t(sourceY) * sourceRowBytes + uint64_t(areaStart.Width()) * pixelBytes;
+            const uint64_t destination = uint64_t(input.stagingBase) + uint64_t(group) * destinationPlaneBytes +
+                uint64_t(input.padTop + copiedRows) * destinationRowBytes + uint64_t(input.padLeft) * pixelBytes;
+            plan.copies.push_back({CheckedAddress(source), CheckedAddress(destination), copyBytes,
+                sourceRowBytes, destinationRowBytes, uint32_t(repetitions)});
+            copiedRows += repetitions;
+        }
+    }
+    return plan;
+}
+
 }  // namespace regor::neuralai
