@@ -6,12 +6,12 @@
 
 #pragma once
 
+#include "architecture/neuralai/neural_ai_linebuffer_planner.hpp"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
-
-#include "architecture/neuralai/neural_ai_linebuffer_planner.hpp"
 
 namespace regor::neuralai
 {
@@ -101,6 +101,7 @@ enum class CommandType : uint16_t
     DMASubmit2D = 25,
     DMASubmit3D = 26,
     DMAWait = 27,
+    AFUDFL16 = 28,
 };
 
 enum CommandFlags : uint32_t
@@ -448,6 +449,18 @@ struct CommandCopyLayoutV2
     uint32_t reserved[7];
 };
 
+struct CommandAFUDFL16V2
+{
+    CommandHeaderV2 header;
+    RefV1 source;
+    RefV1 destination;
+    RefV1 scratch;
+    RefV1 expLut;
+    RefV1 recipLut;
+    uint32_t locations;
+    uint32_t reserved[1];
+};
+
 static_assert(sizeof(ModelHeaderV1) == 64);
 static_assert(sizeof(SectionV1) == 32);
 static_assert(sizeof(InvocationV1) == 64);
@@ -475,6 +488,8 @@ static_assert(sizeof(CommandMaxPoolV2) == 96);
 static_assert(sizeof(LinebufJobWireV1) == 124);
 static_assert(sizeof(CommandLineBufferJobV2) == 160);
 static_assert(sizeof(CommandCopyLayoutV2) == 96);
+
+static_assert(sizeof(CommandAFUDFL16V2) == 64);
 
 using SerializedModelHeaderV1 = std::array<uint8_t, sizeof(ModelHeaderV1)>;
 using SerializedSectionV1 = std::array<uint8_t, sizeof(SectionV1)>;

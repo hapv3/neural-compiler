@@ -120,6 +120,7 @@ private:
     Operation *RewriteBatchMatMul(Graph *const, Operation *const operation);
     Operation *RewriteSpaceToBatchConvBatchToSpace(Graph *const, Operation *const operation);
     Operation *RewriteSiluToLUT(Graph *const graph, Operation *const operation);
+    Operation *RewriteYoloDfl16(Graph *const graph, Operation *const operation);
     Operation *FixupDilationGT2(Graph *const, Operation *const operation);
     Operation *FixupBias(Graph *const, Operation *const operation);
 
@@ -218,6 +219,7 @@ public:
                 // before replacing a pattern with newOp
                 &TFLiteGraphOptimiser::RewriteSpaceToBatchConvBatchToSpace,
                 &TFLiteGraphOptimiser::RewriteSiluToLUT,
+            &TFLiteGraphOptimiser::RewriteYoloDfl16,
             }
         },
         {

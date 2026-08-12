@@ -1409,6 +1409,42 @@ TEST_CASE("Neural-AI constraints admit only selected YOLO C144 head transposes")
     REQUIRE(constraints->OperatorQuery(OpType::Transpose, &query) == QueryResult::Unsupported);
 }
 
+TEST_CASE("Neural-AI constraints reserve tiled scratch for fused YOLO DFL16")
+{
+    ArchNeuralAI arch;
+    auto *constraints = arch.Constraints();
+    ArchOperatorQuery query;
+    query.ifm[0].type = DataType::Int8;
+    query.ifm[0].shape = Shape(1, 1, 144, 2100);
+    query.ofm.type = DataType::Int8;
+    query.ofm.shape = Shape(1, 1, 4, 2100);
+
+    ArchRequirements requirements;
+    REQUIRE(constraints->OperatorQuery(OpType::Dfl, &query, &requirements) == QueryResult::NativeHasReq);
+    REQUIRE(requirements.req.Any(ArchRequirement::Tensor));
+    REQUIRE(requirements.tensor.usage == TensorUsage::IFM0);
+    REQUIRE(requirements.tensor.format == TensorFormat::NHWC);
+    REQUIRE(requirements.tensor.next != nullptr);
+    REQUIRE(requirements.tensor.next->usage == TensorUsage::OFM);
+    REQUIRE(requirements.tensor.next->format == TensorFormat::NHWC);
+    REQUIRE(requirements.tensor.next->next != nullptr);
+    REQUIRE(requirements.tensor.next->next->usage == TensorUsage::Scratch);
+    REQUIRE(requirements.tensor.next->next->format == TensorFormat::Row32);
+    REQUIRE(requirements.tensor.next->next->shape == Shape(1, 1, 34, 32));
+
+    ArchitectureConfigQuery configQuery{};
+    configQuery.ifmBits = 8;
+    configQuery.ofmBits = 8;
+    configQuery.transpose = TransposeType::None;
+    configQuery.reverse = ReverseType::None;
+    auto config = arch.GetOpConfig(OpType::Dfl, configQuery);
+    REQUIRE(config != nullptr);
+    REQUIRE(static_cast<NeuralAIOpConfig *>(config.get())->Mode() == NeuralAIOpMode::Dfl16);
+
+    query.ifm[0].shape = Shape(1, 1, 64, 2100);
+    REQUIRE(constraints->OperatorQuery(OpType::Dfl, &query) == QueryResult::Unsupported);
+}
+
 TEST_CASE("Neural-AI constraints substitute INT8 Sigmoid with an AFU LUT")
 {
     ArchNeuralAI arch;

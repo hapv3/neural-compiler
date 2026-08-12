@@ -1678,6 +1678,139 @@ Operation *TFLiteGraphOptimiser::RewriteSpaceToBatchConvBatchToSpace(Graph *cons
     return returnOp;
 }
 
+Operation *TFLiteGraphOptimiser::RewriteYoloDfl16(Graph *const graph, Operation *const operation)
+{
+    if ( operation->Type() != OpType::Reshape ) return operation;
+
+    auto *finalIfm = operation->Input(TensorUsage::IFM0);
+    auto *finalOfm = operation->Output(TensorUsage::OFM);
+    if ( finalIfm == nullptr || finalOfm == nullptr || finalIfm->shape != Shape(1, 4, 2100, 1) || finalOfm->shape != Shape(1, 1, 4, 2100) )
+        return operation;
+
+    const auto soleWriter = [](const TensorConnection *connection, OpType type) -> std::shared_ptr<Operation>
+    {
+        if ( connection == nullptr ) return nullptr;
+        const auto &writers = connection->tensor->Writers();
+        return writers.size() == 1 && writers.front()->Type() == type ? writers.front() : nullptr;
+    };
+    const auto privateLink = [graph](const TensorConnection *connection, const Operation *reader)
+    {
+        return connection != nullptr && !graph->IsOutput(connection->tensor.get()) &&
+               connection->tensor->Readers().size() == 1 && connection->tensor->Readers().front().get() == reader;
+    };
+    const auto scalarQuant = [](const Quantization &quantization, double scale, int zeroPoint)
+    {
+        return quantization.type == QuantizationType::TFLITE && quantization.scales.size() == 1 &&
+               quantization.zeroPoints.size() == 1 && std::abs(quantization.scales[0].Dequantize() - scale) < 1e-8 &&
+               quantization.zeroPoints[0] == zeroPoint;
+    };
+
+    auto projection = soleWriter(finalIfm, OpType::Conv2D);
+    if ( projection == nullptr || !privateLink(finalIfm, operation) ) return operation;
+    auto *projectionIfm = projection->Input(TensorUsage::IFM0);
+    auto *projectionWeights = projection->Input(TensorUsage::Weights);
+    auto *projectionBias = projection->Input(TensorUsage::Scales);
+    auto *projectionOfm = projection->Output(TensorUsage::OFM);
+    if ( projectionIfm == nullptr || projectionWeights == nullptr || projectionBias == nullptr || projectionOfm == nullptr ||
+         projectionIfm->shape != Shape(1, 4, 2100, 16) || projectionOfm->shape != finalIfm->shape || projection->Kernel() == nullptr ||
+         projection->Kernel()->Size() != Point2i(1, 1) || projection->Kernel()->Stride() != Point2i(1, 1) ||
+         projection->Kernel()->Dilation() != Point2i(1, 1) || !projection->Kernel()->Padding().IsZero() ||
+         !projectionWeights->tensor->IsConstant() || projectionWeights->tensor->Type() != DataType::Int8 ||
+         projectionWeights->shape != Shape(1, 1, 1, 16) || !projectionBias->tensor->IsConstant() ||
+         projectionBias->tensor->Type() != DataType::Int32 || projectionBias->shape.Elements64() != 1 )
+        return operation;
+
+    const auto weightValues = projectionWeights->tensor->View().Values<int8_t>();
+    const auto biasValues = projectionBias->tensor->View().Values<int32_t>();
+    if ( weightValues.Count() != 16 || biasValues.Count() != 1 || biasValues[0] != 0 ||
+         projectionWeights->quantization.scales.size() != 1 || projectionWeights->quantization.zeroPoints.size() != 1 )
+        return operation;
+    const double weightScale = projectionWeights->quantization.scales[0].Dequantize();
+    const int64_t weightZeroPoint = projectionWeights->quantization.zeroPoints[0];
+    for ( int bin = 0; bin < 16; ++bin )
+    {
+        const double realWeight = (int(weightValues[Shape(0, 0, 0, bin)]) - weightZeroPoint) * weightScale;
+        if ( std::abs(realWeight - bin) > weightScale * 0.51 ) return operation;
+    }
+
+    auto softmax = soleWriter(projectionIfm, OpType::Softmax);
+    if ( softmax == nullptr || !privateLink(projectionIfm, projection.get()) ) return operation;
+    auto *softmaxIfm = softmax->Input(TensorUsage::IFM0);
+    auto *softmaxOfm = softmax->Output(TensorUsage::OFM);
+    if ( softmaxIfm == nullptr || softmaxOfm == nullptr || softmaxIfm->shape != Shape(1, 4, 2100, 16) ||
+         softmaxOfm->shape != softmaxIfm->shape || !scalarQuant(softmaxOfm->quantization, 1.0 / 256.0, -128) )
+        return operation;
+
+    auto transpose = soleWriter(softmaxIfm, OpType::Transpose);
+    if ( transpose == nullptr || !privateLink(softmaxIfm, softmax.get()) ) return operation;
+    auto *transposeIfm = transpose->Input(TensorUsage::IFM0);
+    auto *permutation = transpose->Input(TensorUsage::Params);
+    auto *transposeOfm = transpose->Output(TensorUsage::OFM);
+    if ( transposeIfm == nullptr || permutation == nullptr || transposeOfm == nullptr || transposeIfm->shape != Shape(1, 4, 16, 2100) ||
+         transposeOfm->shape != softmaxIfm->shape || !permutation->tensor->IsConstant() || permutation->shape.Elements64() != 4 )
+        return operation;
+    const auto permutationValues = permutation->tensor->View().Values<int32_t>();
+    if ( permutationValues.Count() != 4 || permutationValues[0] != 0 || permutationValues[1] != 1 ||
+         permutationValues[2] != 3 || permutationValues[3] != 2 )
+        return operation;
+
+    auto reshape = soleWriter(transposeIfm, OpType::Reshape);
+    if ( reshape == nullptr || !privateLink(transposeIfm, transpose.get()) ) return operation;
+    auto *source = reshape->Input(TensorUsage::IFM0);
+    auto *reshapeOfm = reshape->Output(TensorUsage::OFM);
+    if ( source == nullptr || reshapeOfm == nullptr || source->shape != Shape(1, 64, 2100) ||
+         reshapeOfm->shape != transposeIfm->shape || source->tensor->Type() != DataType::Int8 )
+        return operation;
+
+    auto slice = soleWriter(source, OpType::StridedSlice);
+    if ( slice == nullptr || !privateLink(source, reshape.get()) ) return operation;
+    auto *sliceIfm = slice->Input(TensorUsage::IFM0);
+    auto *begin = slice->Input(TensorUsage::Params0);
+    auto *end = slice->Input(TensorUsage::Params1);
+    auto *strides = slice->Input(TensorUsage::Params2);
+    auto *sliceOfm = slice->Output(TensorUsage::OFM);
+    const auto *passthrough = static_cast<const tflite::Operator *>(slice->Passthrough());
+    const auto *sliceOptions = passthrough != nullptr ? passthrough->builtin_options_as_StridedSliceOptions() : nullptr;
+    if ( sliceIfm == nullptr || begin == nullptr || end == nullptr || strides == nullptr || sliceOfm == nullptr ||
+         sliceOptions == nullptr || sliceIfm->shape != Shape(1, 144, 2100) || sliceOfm->shape != Shape(1, 64, 2100) ||
+         !begin->tensor->IsConstant() || !end->tensor->IsConstant() || !strides->tensor->IsConstant() ||
+         begin->shape.Elements64() != 3 || end->shape.Elements64() != 3 || strides->shape.Elements64() != 3 ||
+         sliceOptions->begin_mask() != 7 || sliceOptions->end_mask() != 5 || sliceOptions->ellipsis_mask() != 0 ||
+         sliceOptions->new_axis_mask() != 0 || sliceOptions->shrink_axis_mask() != 0 )
+        return operation;
+    const auto beginValues = begin->tensor->View().Values<int32_t>();
+    const auto endValues = end->tensor->View().Values<int32_t>();
+    const auto strideValues = strides->tensor->View().Values<int32_t>();
+    if ( beginValues.Count() != 3 || endValues.Count() != 3 || strideValues.Count() != 3 || beginValues[0] != 0 ||
+         beginValues[1] != 0 || beginValues[2] != 0 || endValues[0] != 0 || endValues[1] != 64 || endValues[2] != 0 ||
+         strideValues[0] != 1 || strideValues[1] != 1 || strideValues[2] != 1 )
+        return operation;
+    source = sliceIfm;
+    if ( source->tensor->Type() != DataType::Int8 || finalOfm->tensor->Type() != DataType::Int8 ||
+         !scalarQuant(source->quantization, 0.265464634, 63) || !scalarQuant(finalOfm->quantization, 0.0449872725, -128) )
+        return operation;
+
+    auto dfl = std::make_shared<Operation>(OpType::Dfl);
+    dfl->CopyInput(TensorUsage::IFM0, *source);
+    dfl->CopyOutput(TensorUsage::OFM, *finalOfm);
+    if ( !_supportedOps->Check(dfl.get()) )
+    {
+        dfl->Disconnect();
+        return operation;
+    }
+
+    for ( const auto &matched : {slice, reshape, transpose, softmax, projection} )
+        RecordOptimisation(*matched, dfl.get());
+    RecordOptimisation(*operation, dfl.get());
+    operation->Disconnect();
+    projection->Disconnect();
+    softmax->Disconnect();
+    transpose->Disconnect();
+    reshape->Disconnect();
+    slice->Disconnect();
+    return dfl.get();
+}
+
 Operation *TFLiteGraphOptimiser::RewriteSiluToLUT(Graph *const graph, Operation *const operation)
 {
     if ( operation->Type() != OpType::Mul || !_constraints->SupportsSiluLUTFusion() ) return operation;

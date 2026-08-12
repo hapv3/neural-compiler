@@ -29,6 +29,7 @@ enum class NeuralAIOpMode
     MaxPoolK5S1P2C32,
     ConcatC32,
     HeadPackC32ToCHW,
+    Dfl16,
 };
 
 const char *NeuralAIOpModeName(NeuralAIOpMode mode);

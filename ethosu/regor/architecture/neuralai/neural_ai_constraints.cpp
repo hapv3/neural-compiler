@@ -17,6 +17,7 @@ namespace
 {
 
 thread_local std::array<ArchTensorRequirement, 3> s_tensorRequirements;
+thread_local std::array<ArchTensorRequirement, 3> s_dflTensorRequirements;
 
 bool IsStaticPositiveShape(const Shape &shape)
 {
@@ -96,7 +97,7 @@ bool NeuralAIConstraints::IsSupportedOp(OpType opType)
            opType == OpType::Sigmoid || IsClipping(opType) ||
            opType == OpType::DepthwiseConv2D || opType == OpType::Resize ||
            opType == OpType::MaxPool || opType == OpType::Concat ||
-           opType == OpType::Transpose ||
+           opType == OpType::Transpose || opType == OpType::Dfl ||
            opType == OpType::MemoryCopy;
 }
 
@@ -268,6 +269,27 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
     {
         return query->ifm[0].type == query->ofm.type && query->ifm[0].shape == query->ofm.shape ?
             QueryResult::Native : QueryResult::Unsupported;
+    }
+
+    if ( opType == OpType::Dfl )
+    {
+        if ( query->ifm[0].type != DataType::Int8 || query->ofm.type != DataType::Int8 ||
+             query->ifm[0].shape != Shape(1, 1, 144, 2100) || query->ofm.shape != Shape(1, 1, 4, 2100) )
+            return QueryResult::Unsupported;
+        if ( req != nullptr )
+        {
+            Set(s_dflTensorRequirements[0], TensorUsage::IFM0, TensorFormat::NHWC);
+            Set(s_dflTensorRequirements[1], TensorUsage::OFM, TensorFormat::NHWC);
+            Set(s_dflTensorRequirements[2], TensorUsage::Scratch, DataType::Int8,
+                TensorFormat::Row32, Shape(1, 1, 34, 32));
+            s_dflTensorRequirements[0].next = &s_dflTensorRequirements[1];
+            s_dflTensorRequirements[1].next = &s_dflTensorRequirements[2];
+            s_dflTensorRequirements[2].next = nullptr;
+            req->tensor = s_dflTensorRequirements[0];
+            req->req.Set(ArchRequirement::Tensor);
+            return QueryResult::NativeHasReq;
+        }
+        return QueryResult::Native;
     }
 
     if ( opType == OpType::Concat )

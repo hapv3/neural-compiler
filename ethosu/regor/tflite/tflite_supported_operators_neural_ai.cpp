@@ -22,6 +22,7 @@ const std::set<OpType> s_supportedOpTypes = {
     OpType::Conv2D,
     OpType::Concat,
     OpType::DepthwiseConv2D,
+    OpType::Dfl,
     OpType::ExpandDims,
     OpType::FullyConnected,
     OpType::LUT,
@@ -129,6 +130,19 @@ bool SupportedHeadTranspose(const Operation *operation)
     return true;
 }
 
+bool SupportedDfl16(const Operation *operation)
+{
+    const TensorConnection *ifm = operation->Input(TensorUsage::IFM0);
+    const TensorConnection *ofm = operation->Output(TensorUsage::OFM);
+    if ( ifm == nullptr || ofm == nullptr || ifm->tensor->Type() != DataType::Int8 ||
+         ofm->tensor->Type() != DataType::Int8 || ifm->shape != Shape(1, 144, 2100) || ofm->shape != Shape(1, 1, 4, 2100) )
+    {
+        Failure(operation, "Neural-AI DFL requires the selected 4x16x2100 INT8 contract");
+        return false;
+    }
+    return true;
+}
+
 bool SupportedC32DepthSlice(const Operation *operation)
 {
     const TensorConnection *ifm = operation->Input(TensorUsage::IFM0);
@@ -196,6 +210,8 @@ TfLiteSupportedOperatorsNeuralAI::TfLiteSupportedOperatorsNeuralAI() :
     static ConstraintCheck s_supportedHeadTranspose = {&SupportedHeadTranspose,
         "Transpose must match the selected C144 detection-head pack contract."};
     opConstraints[OpType::Transpose].push_back(&s_supportedHeadTranspose);
+    static ConstraintCheck s_supportedDfl16 = {&SupportedDfl16, "DFL must match the selected four-coordinate, 16-bin, 2100-location contract."};
+    opConstraints[OpType::Dfl].push_back(&s_supportedDfl16);
     static ConstraintCheck s_supportedC32DepthSlice = {&SupportedC32DepthSlice,
         "StridedSlice must match the C32-aligned view or C32-to-C16 half-depth contract."};
     opConstraints[OpType::StridedSlice].push_back(&s_supportedC32DepthSlice);

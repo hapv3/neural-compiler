@@ -1478,6 +1478,84 @@ struct GeneratorContext
         return true;
     }
 
+    bool AppendDFL16(const SchedulerOperation *operation, std::string &error)
+    {
+        const SchedulerOpInfo *cost = schedule->Cost(operation);
+        const auto *config = cost != nullptr && cost->Config() != nullptr ?
+            static_cast<const NeuralAIOpConfig *>(cost->Config()) : nullptr;
+        if ( config == nullptr || config->Mode() != NeuralAIOpMode::Dfl16 )
+            return SetError(error, "Neural-AI DFL operation has no validated DFL16 mode");
+        const SchedulerConnection *ifm = operation->IFM(0);
+        const SchedulerConnection *ofm = operation->OFM();
+        const SchedulerConnection *scratch = operation->TryInput(TensorUsage::Scratch);
+        if ( ifm == nullptr || ofm == nullptr || scratch == nullptr || !IsFullTensorConnection(ifm) ||
+             !IsFullTensorConnection(ofm) || ifm->Type() != regor::DataType::Int8 || ofm->Type() != regor::DataType::Int8 ||
+             ifm->shape != Shape(1, 1, 144, 2100) || ofm->shape != Shape(1, 1, 4, 2100) ||
+             ifm->tensor->format != TensorFormat::NHWC || ofm->tensor->format != TensorFormat::NHWC ||
+             scratch->tensor->format != TensorFormat::Row32 || scratch->tensor->AllocationSizeBytes() < 1088 )
+            return SetError(error, "Neural-AI DFL16 requires compact logits/output and tiled ROW32 scratch");
+        if ( ofm->quantization.scales.size() != 1 || ofm->quantization.zeroPoints.size() != 1 ||
+             ofm->quantization.zeroPoints[0] != -128 )
+            return SetError(error, "Neural-AI DFL16 requires the selected scalar output quantization");
+
+        RefV1 source = TensorRef(ifm->tensor.get(), 0, error);
+        if ( !error.empty() ) return false;
+        RefV1 destination = TensorRef(ofm->tensor.get(), 0, error);
+        if ( !error.empty() ) return false;
+        RefV1 scratchRef = TensorRef(scratch->tensor.get(), 0, error);
+        if ( !error.empty() ) return false;
+        if ( source.region != uint16_t(Region::TCDMScratch) ||
+             destination.region != uint16_t(Region::TCDMScratch) ||
+             scratchRef.region != uint16_t(Region::TCDMScratch) )
+            return SetError(error, "Neural-AI DFL16 requires internal TCDM tensors");
+
+        const auto appendLut = [this](bool reciprocal)
+        {
+            artifact->constants.resize(RoundAway(int(artifact->constants.size()),
+                int(ArchNeuralAI::DMAAlignment)), 0);
+            RefV1 reference{};
+            reference.region = uint16_t(Region::ModelConstants);
+            reference.offset = uint32_t(artifact->constants.size());
+            for ( uint32_t index = 0; index < 256; ++index )
+            {
+                uint32_t value;
+                if ( reciprocal )
+                {
+                    const uint32_t midpointQ9 = 513 + index * 2;
+                    value = uint32_t(((uint64_t(1) << 37) + (midpointQ9 >> 1)) / midpointQ9);
+                }
+                else if ( index == 0 )
+                {
+                    value = 32768;
+                }
+                else
+                {
+                    const uint32_t negDelta = 256 - index;
+                    const uint32_t shift = negDelta >> 4;
+                    const uint32_t fraction = negDelta & 15;
+                    const uint32_t base = shift >= 15 ? 1 : 32768 >> shift;
+                    const uint32_t next = base > 1 ? base >> 1 : 1;
+                    value = ((base * (16 - fraction)) + (next * fraction) + 8) >> 4;
+                    if ( value == 0 ) value = 1;
+                }
+                Append32(artifact->constants, value);
+            }
+            return reference;
+        };
+        const RefV1 expLut = appendLut(false);
+        const RefV1 recipLut = appendLut(true);
+        AppendHeader(artifact->commands, CommandType::AFUDFL16, 64, uint32_t(operation->Index()), 0);
+        AppendRef(artifact->commands, source);
+        AppendRef(artifact->commands, destination);
+        AppendRef(artifact->commands, scratchRef);
+        AppendRef(artifact->commands, expLut);
+        AppendRef(artifact->commands, recipLut);
+        Append32(artifact->commands, 2100);
+        AppendZeros(artifact->commands, 1);
+        ++artifact->commandCount;
+        return true;
+    }
+
     bool AppendMatrix(const SchedulerOperation *operation, std::string &error)
     {
         const SchedulerOpInfo *cost = schedule->Cost(operation);
@@ -2005,6 +2083,10 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         else if ( operation->Type() == OpType::Transpose )
         {
             if ( !context.AppendHeadPack(operation.get(), error) ) return false;
+        }
+        else if ( operation->Type() == OpType::Dfl )
+        {
+            if ( !context.AppendDFL16(operation.get(), error) ) return false;
         }
         else if ( operation->Type() == OpType::FullyConnected || operation->Type() == OpType::MatMul ||
                   operation->Type() == OpType::Conv2D )

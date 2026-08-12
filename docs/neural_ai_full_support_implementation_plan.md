@@ -64,10 +64,11 @@ Ethos `NHCWB16` is unreachable from Neural-AI. Shared Ethos assumptions such as
   alias through L2 round trips.
 - `.nai` begins with `NAIV`, contains fixed-width little-endian sections and
   relocatable region/offset references, and contains no native pointers.
-- ABI v2 coexists with the legacy `NPUC` v1 path. Firmware validates header,
-  ranges, alignment, direction, overlap, reserved fields, and command version.
-- The compiler performs model/tile planning. Firmware only validates and
-  dispatches commands.
+- ABI v2 is the only firmware command path; legacy `NPUC` parsing and its test
+  firmware were removed after migrating MatMul to a V2 package/invocation.
+- Regor validates semantic command constraints. Trusted firmware retains the
+  structural, overflow, reference, binding, address-range, and transfer checks
+  required to resolve and execute the package safely.
 
 ### Layouts and data representation
 
@@ -135,7 +136,7 @@ new runtime path has not yet passed E2E.
 
 | Area | Current status | Contract / note |
 |---|---|---|
-| `.nai`, ABI v2, streaming dispatcher | Verified | v1 preserved; relocatable references; malformed packages fail closed |
+| `.nai`, ABI v2, streaming dispatcher | Verified | V2-only firmware; relocatable references; malformed packages fail closed |
 | DMA 1D/2D/3D and boundaries | Verified | unaligned compact L2; native TCDM alignment; direction validation |
 | GEMM32, FC, MatMul | Verified | compiler-generated packages; invalid dimensions/quantization rejected |
 | Pointwise Conv | Verified | K1/S1/P0, C32 groups/tails, per-channel RQ |
@@ -153,13 +154,13 @@ new runtime path has not yet passed E2E.
 | StridedSlice | Verified | C32-aligned aliases plus exact C32-to-C16 high-half materialization |
 | Materialized Concat | Verified | exactly two aligned C32 inputs; generic correctness fallback |
 | YOLO C144 head transpose | Verified | three `[0,3,1,2]` head packs; vectorized C32-to-CHW runtime path |
-| DFL16 projection | Awaiting RTL permission | exact ops 234–239; four coordinates, 16-bin Softmax and expectation |
+| DFL16 projection | Verified | exact ops 234–239; fused 16-bin AFU plus one Spatz pack/requant call per tile |
 | Async DMA and overlap | Not implemented | blocking execution remains correct; performance phase |
-| Full selected graphs | In progress | full compile must contain no CPU fallback and fit TCDM |
+| Full selected graphs | Memory blocked | lowering reaches scheduling; 1,659,008 bytes requested versus 520,192 available |
 
-The complete Regor suite passed 230 cases and 628,349 assertions after the C144
-compiler increment. Runtime ABI/host checks, cross-compiles, firmware-size gate,
-and focused C144 E2E now pass.
+The current focused Regor suite passes 89 Neural-AI cases and 36,059 assertions.
+Runtime ABI/host checks, cross-builds, firmware-size gates, and focused C144,
+DFL16, and MatMul V2 E2E tests pass.
 
 ### Verified YOLO C144 head pack
 
@@ -209,7 +210,7 @@ the focused test had not written its invocation and binding table to L2.
 
 ### Other retained evidence
 
-- Cross-repository ABI manifest currently checks 6 constants, 58 enums, and 25
+- Cross-repository ABI manifest currently checks 6 constants, 59 enums, and 26
   structures.
 - Unaligned DMA and C3/C31 boundary round trips are byte-exact; the ROW32 matrix
   covers C3, C31, C32, C33, C63, C64, and C65.
@@ -219,55 +220,25 @@ the focused test had not written its invocation and binding table to L2.
 - Generic quantized Spatz Add is correctness-only for uncommon cases. A
   73,728-element diagnostic exceeded 2,000,000 cluster cycles and is prohibited
   on selected hot paths; raw AFU or exact producer canonicalization is required.
-- Runtime `.text` must be rechecked after every runtime increment. The C144
-  cross-build currently reports 31,576 bytes, leaving little ITCM margin.
+- Runtime `.text` must be rechecked after every runtime increment. Trusted V2-only
+  firmware currently reports 23,904 bytes, leaving 8,864 bytes of ITCM margin.
 
 ## 5. Remaining work, in execution order
 
-### P0 — Implement only the exact DFL16 head pattern
+### Completed — exact DFL16 head pattern
 
-The next compiler blocker is op 236, not another form of the C144 pack. The
-selected artifact's exact topology is:
+The selected four-coordinate, 16-bin, 2,100-location chain is fused into one
+DFL operation. The approved RTL generalization preserves DFL4 and adds DFL16;
+firmware performs one Spatz gather/pack call per 32-location tile, one AFU call,
+and one vector requant/pack. Host tests and the Spatz block test pass. The full
+compiler-runtime package is byte-exact and passes in 468,781 cycles under the
+1,000,000-cycle gate. Compiler lowering now passes this graph point.
 
-```text
-[1,144,2100] --slice first 64 channels--> [1,64,2100]
-  -> reshape [1,4,16,2100]
-  -> transpose [0,1,3,2] to [1,4,2100,16]
-  -> Softmax over 16 bins
-  -> Conv1x1 with constant weights [0..15]
-  -> [1,4,2100,1] -> reshape [1,1,4,2100]
-```
+### P0 — Full-graph memory feasibility
 
-Input logits are INT8 with scale `0.265464634` and zero point `63`; Softmax
-output is canonical INT8 scale `1/256`, zero point `-128`; the projection output
-uses scale `0.0449872725`, zero point `-128`. Fuse the view, transpose, Softmax16,
-and expectation projection so the 134,400-byte transpose/Softmax intermediate is
-never materialized. Admit only batch 1, four coordinates, 16 bins, 2,100
-locations, the selected scalar quantization, constant `[0..15]` projection, and
-private intermediates. Add adjacent negative tests. Generic Transpose, Softmax,
-and Conv-based post-processing remain unsupported.
-
-The existing AFU mode 5 implements Micro-YOLO's four-bin contract (`4 sides × 4
-bins`) and cannot compose a 16-bin normalization because all 16 exponentials
-must share one sum. All eight AFU mode IDs are currently occupied. A fast DFL16
-path therefore requires an explicitly approved RTL generalization of the current
-DFL mode (while preserving the four-bin regression), or another measured native
-vector implementation proven not to create a model hot-path slow fallback. Do
-not add the multi-pass scalar/temporary-buffer software form merely to advance
-compilation.
-
-### P1 — Close remaining selected detection-tail contracts
-
-Walk the full artifact to the next unsupported source ID after each verified
-increment. Constrain only corpus forms of reshape/slice, class sigmoid, DFL
-weighted reduction, Mul/Sub/Add, Quantize, and final Concat/output handling.
-Prefer fusion, metadata views, and producer canonicalization over standalone
-commands. Do not introduce generic Mul, broadcasting, arbitrary slice, or host
-fallback merely to make compilation continue.
-
-### P2 — Full-graph memory feasibility
-
-After all operator mappings close:
+The current full YOLO compile reaches scheduling and requests 1,659,008 bytes of
+TCDM. Reduce this to the 520,192-byte allocatable limit without adding a scalar
+or CPU fallback:
 
 - Prove compact public bindings and native internal layouts end to end.
 - Use Regor cascading, tiling, live ranges, and allocator before adding target
@@ -276,6 +247,13 @@ After all operator mappings close:
 - Fit the graph within 520,192 allocatable TCDM bytes and 32 KiB firmware text.
 - Add concat-consumer Conv fusion where materialized Concat is a measured YOLO
   hot path. The two-input aligned materialization remains a correctness fallback.
+
+### P1 — Close remaining selected detection-tail contracts
+
+After the graph can be scheduled, walk to the next unsupported source ID and
+constrain only corpus forms of reshape/slice, class sigmoid, Mul/Sub/Add,
+Quantize, and final Concat/output handling. Prefer fusion, metadata views, and
+producer canonicalization over standalone commands.
 
 ### P3 — Performance and DMA overlap
 
@@ -327,8 +305,8 @@ unrelated user changes into a commit.
 - Compiler: serialization goldens, layout/stride/offset formulas, quantization
   edge cases, tails, tiling, alias/liveness, positive contracts, and explicit
   adjacent rejection.
-- Runtime: parser bounds, region resolution, direction, alignment, overlap,
-  reserved fields, malformed commands, v1 compatibility, and operation dispatch.
+- Runtime: parser bounds, region resolution, alignment, overlap, malformed V2
+  commands, trusted-build safety boundaries, and operation dispatch.
 - Integration: compiler-generated `.nai` package, exact external bindings,
   independent golden, status checks, and byte-for-byte output.
 - Regression order: local unit tests -> ABI/host tests -> cross-build/size ->

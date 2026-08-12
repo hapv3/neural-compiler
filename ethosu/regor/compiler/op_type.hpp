@@ -106,6 +106,7 @@ enum class OpType : uint16_t
     ReinterpretCast,
     Passthrough,
     LUT,
+    Dfl,
     AndNot,
     NullPool,
     SumPool,

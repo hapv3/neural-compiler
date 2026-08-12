@@ -31,6 +31,7 @@ const char *NeuralAIOpModeName(NeuralAIOpMode mode)
     case NeuralAIOpMode::MaxPoolK5S1P2C32: return "MaxPoolK5S1P2C32";
     case NeuralAIOpMode::ConcatC32: return "ConcatC32";
     case NeuralAIOpMode::HeadPackC32ToCHW: return "HeadPackC32ToCHW";
+    case NeuralAIOpMode::Dfl16: return "Dfl16";
     default: return "Unsupported";
     }
 }
@@ -63,6 +64,7 @@ int NeuralAIOpGroup::Add(const ArchitectureOpGroupQuery &op, const std::vector<i
              op.type != OpType::MaxPool &&
             op.type != OpType::Concat &&
             op.type != OpType::Transpose &&
+            op.type != OpType::Dfl &&
             op.type != OpType::MemoryCopy) )
     {
         return 0;
@@ -73,6 +75,7 @@ int NeuralAIOpGroup::Add(const ArchitectureOpGroupQuery &op, const std::vector<i
     _allowsIFMReuse = op.type != OpType::Add && op.type != OpType::LUT &&
                       op.type != OpType::AvgPool && op.type != OpType::MaxPool &&
                       op.type != OpType::Concat && op.type != OpType::Transpose;
+    if ( op.type == OpType::Dfl ) _allowsIFMReuse = false;
     return -1;
 }
 
