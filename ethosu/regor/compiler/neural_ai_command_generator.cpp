@@ -213,12 +213,20 @@ void BindingQuantization(const Tensor *tensor, const SchedulerConnection *connec
 
 struct GeneratorContext
 {
+    struct MatrixData
+    {
+        uint32_t qparamBase = 0;
+        uint32_t weightBase = 0;
+        bool linebufferWeightsStaged = false;
+    };
+
     const Graph *graph;
     const Schedule *schedule;
     CompiledNeuralAIArtifact *artifact;
     std::unordered_map<UniqueId, uint16_t> inputBindings;
     std::unordered_map<UniqueId, uint16_t> outputBindings;
     std::unordered_map<UniqueId, uint32_t> constantOffsets;
+    std::unordered_map<UniqueId, MatrixData> matrixData;
     uint32_t nextTensorId = 0;
     uint32_t scratchEnd = 0;
     uint32_t stageOffset = 0;
@@ -1600,22 +1608,29 @@ struct GeneratorContext
              range.weightBytes != int(linebufferKGroups * nGroups * 32 * 32) )
             return SetError(error, "Neural-AI encoded matrix dimensions do not match the scheduled operation");
 
-        const uint32_t qparamBase = uint32_t(artifact->qparams.size());
-        for ( uint32_t channel = 0; channel < paddedN; ++channel )
+        auto [matrixPosition, inserted] = matrixData.emplace(operation->Uid(), MatrixData{});
+        MatrixData &materialized = matrixPosition->second;
+        if ( inserted )
         {
-            const uint8_t *source = data + channel * sizeof(neuralai::QParamV1);
-            neuralai::QParamV1 qparam{};
-            qparam.bias = int32_t(Read32(source));
-            qparam.multiplier = int32_t(Read32(source + 4));
-            qparam.shift = Read32(source + 8);
-            qparam.zeroPoint = int32_t(Read32(source + 12));
-            qparam.clampMin = int32_t(Read32(source + 16));
-            qparam.clampMax = int32_t(Read32(source + 20));
-            artifact->qparams.push_back(qparam);
+            materialized.qparamBase = uint32_t(artifact->qparams.size());
+            for ( uint32_t channel = 0; channel < paddedN; ++channel )
+            {
+                const uint8_t *source = data + channel * sizeof(neuralai::QParamV1);
+                neuralai::QParamV1 qparam{};
+                qparam.bias = int32_t(Read32(source));
+                qparam.multiplier = int32_t(Read32(source + 4));
+                qparam.shift = Read32(source + 8);
+                qparam.zeroPoint = int32_t(Read32(source + 12));
+                qparam.clampMin = int32_t(Read32(source + 16));
+                qparam.clampMax = int32_t(Read32(source + 20));
+                artifact->qparams.push_back(qparam);
+            }
+            materialized.weightBase = uint32_t(artifact->constants.size());
+            const uint8_t *weightData = data + range.weightOffset;
+            artifact->constants.insert(artifact->constants.end(), weightData, weightData + range.weightBytes);
         }
-        const uint32_t weightBase = uint32_t(artifact->constants.size());
-        const uint8_t *weightData = data + range.weightOffset;
-        artifact->constants.insert(artifact->constants.end(), weightData, weightData + range.weightBytes);
+        const uint32_t qparamBase = materialized.qparamBase;
+        const uint32_t weightBase = materialized.weightBase;
 
         if ( isK3Conv )
         {
@@ -1632,9 +1647,13 @@ struct GeneratorContext
             RefV1 stagedWeights{};
             stagedWeights.region = uint16_t(Region::TCDMScratch);
             stagedWeights.offset = weightStageOffset;
-            if ( !AppendDMA2D(modelWeights, stagedWeights, 32, 32, 32, weightBytes / 32u,
-                     uint32_t(operation->Index()), 1, error) )
-                return false;
+            if ( !materialized.linebufferWeightsStaged )
+            {
+                if ( !AppendDMA2D(modelWeights, stagedWeights, 32, 32, 32, weightBytes / 32u,
+                         uint32_t(operation->Index()), 1, error) )
+                    return false;
+                materialized.linebufferWeightsStaged = true;
+            }
 
             uint32_t ifmSliceOffset = 0;
             if ( !directRgb && !C32SliceByteOffset(ifm, ifmSliceOffset, error) ) return false;
