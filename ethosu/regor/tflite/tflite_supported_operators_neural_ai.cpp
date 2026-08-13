@@ -72,6 +72,7 @@ bool SupportedConcat(const Operation *operation)
 {
     const TensorConnection *lhs = operation->Input(TensorUsage::IFM0);
     const TensorConnection *rhs = operation->Input(TensorUsage::IFM1);
+    const TensorConnection *tail = operation->Input(TensorUsage::IFM2);
     const TensorConnection *ofm = operation->Output(TensorUsage::OFM);
     const auto *attr = operation->Attribute<axis_attr_t>();
     int ifmCount = 0;
@@ -82,22 +83,33 @@ bool SupportedConcat(const Operation *operation)
     }
     int axis = attr == nullptr ? 0 : attr->axis;
     if ( lhs != nullptr && axis < 0 ) axis += lhs->shape.Size();
-    if ( lhs == nullptr || rhs == nullptr || ofm == nullptr || ifmCount != 2 ||
+    const bool structuralCspConcat = lhs != nullptr && rhs != nullptr && tail != nullptr && ofm != nullptr &&
+        ifmCount == 3 && lhs->shape.Size() == 4 && lhs->shape.Batch() == 1 &&
+        lhs->shape.Height() > 0 && lhs->shape.Width() > 0 && lhs->shape.Depth() == 16 &&
+        rhs->shape == lhs->shape && tail->shape == lhs->shape &&
+        ofm->shape == lhs->shape.WithDepth(48) &&
+        lhs->quantization.EqualScales(rhs->quantization) && lhs->quantization.EqualScales(tail->quantization) &&
+        lhs->quantization.EqualScales(ofm->quantization) &&
+        lhs->quantization.zeroPoints == rhs->quantization.zeroPoints &&
+        lhs->quantization.zeroPoints == tail->quantization.zeroPoints &&
+        lhs->quantization.zeroPoints == ofm->quantization.zeroPoints;
+    if ( lhs == nullptr || rhs == nullptr || ofm == nullptr || (!structuralCspConcat && ifmCount != 2) ||
          axis != lhs->shape.Size() - 1 || lhs->shape.Size() != rhs->shape.Size() ||
          lhs->shape.Size() != ofm->shape.Size() ||
          lhs->shape.WithDepth(1) != rhs->shape.WithDepth(1) ||
          lhs->shape.WithDepth(1) != ofm->shape.WithDepth(1) ||
-         lhs->shape.Depth() % 32 != 0 ||
+         (lhs->shape.Depth() % 32 != 0 && !structuralCspConcat) ||
          (rhs->shape.Depth() % 32 != 0 &&
-             !(lhs->shape.Depth() == 64 && rhs->shape.Depth() == 80 &&
+             !structuralCspConcat && !(lhs->shape.Depth() == 64 && rhs->shape.Depth() == 80 &&
                (lhs->shape.Height() == 10 || lhs->shape.Height() == 20 ||
                    lhs->shape.Height() == 40) &&
                lhs->shape.Width() == lhs->shape.Height())) ||
-         ofm->shape.Depth() != lhs->shape.Depth() + rhs->shape.Depth() ||
-         lhs->quantization != rhs->quantization || lhs->quantization != ofm->quantization )
+         (!structuralCspConcat && ofm->shape.Depth() != lhs->shape.Depth() + rhs->shape.Depth()) ||
+         (!structuralCspConcat &&
+             (lhs->quantization != rhs->quantization || lhs->quantization != ofm->quantization)) )
     {
         Failure(operation,
-            "Neural-AI Concat requires two equal-spatial, equal-quantization, aligned or selected C64+C80 inputs on the channel axis");
+            "Neural-AI Concat requires aligned two-input, selected C64+C80, or structural C16+C16+C16 inputs on the channel axis");
         return false;
     }
     return true;
@@ -205,7 +217,7 @@ TfLiteSupportedOperatorsNeuralAI::TfLiteSupportedOperatorsNeuralAI() :
     opConstraints[OpType::ResizeNearestNeighbor].push_back(&s_preservesQuantization);
     opConstraints[OpType::MaxPool].push_back(&s_preservesQuantization);
     static ConstraintCheck s_supportedConcat = {&SupportedConcat,
-        "Concat must match the two-input C32 channel-axis contract."};
+        "Concat must match an aligned two-input or structural CSP/head channel-axis contract."};
     opConstraints[OpType::Concat].push_back(&s_supportedConcat);
     static ConstraintCheck s_supportedHeadTranspose = {&SupportedHeadTranspose,
         "Transpose must match the selected C144 detection-head pack contract."};

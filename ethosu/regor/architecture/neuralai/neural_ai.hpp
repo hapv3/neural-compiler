@@ -59,7 +59,10 @@ public:
     uint32_t Version() override;
     int UpscaleAndRounding(ArchResampling resampling, int &rounding) override;
     AxisMask CanSubdivide(OpType opType, TransposeType transpose, ReverseType reverse) override;
-    bool SupportsCascadedOperator(OpType opType) const override { return opType == OpType::LUT; }
+    bool SupportsCascadedOperator(OpType opType) const override
+    {
+        return opType == OpType::LUT || opType == OpType::Concat;
+    }
     bool SupportsScalar(OpType opType, DataType dataType, TensorUsage usage) override;
     Flags<WeightFormat> SupportedWeightFormat(OpType op) override;
     void Call(std::function<void(const std::string &)> callBack) override;

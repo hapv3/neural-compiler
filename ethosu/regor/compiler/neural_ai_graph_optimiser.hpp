@@ -35,6 +35,7 @@ private:
     void CanonicalizeConvAdd(Graph *graph, Operation *operation);
     void InsertInputConversion(Graph *graph, Operation *operation, TensorUsage usage);
     void InsertOutputConversion(Graph *graph, Operation *operation);
+    void MaterializeStructuralCspConcatInputs(Operation *operation);
 };
 
 }  // namespace regor

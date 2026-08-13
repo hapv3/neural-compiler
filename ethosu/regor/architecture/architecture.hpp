@@ -55,6 +55,7 @@ enum class TensorFormat : uint16_t
     WeightsEncoded = 3,
     Row32 = 4,
     C32Blocked = 5,
+    CompactNHWC = 6,
 };
 
 /// <summary>

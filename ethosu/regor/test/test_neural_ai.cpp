@@ -510,7 +510,7 @@ flatbuffers::DetachedBuffer BuildMaxPoolModel(
 
 flatbuffers::DetachedBuffer BuildConcatModel(
     int lhsChannels = 32, int rhsChannels = 32, int axis = 3,
-    float outputScale = 0.25f, int height = 2, int width = 3)
+    float outputScale = 0.25f, int height = 2, int width = 3, int tailChannels = 0)
 {
     flatbuffers::FlatBufferBuilder builder;
     const std::vector<float> inputScales = {0.25f};
@@ -527,9 +527,10 @@ flatbuffers::DetachedBuffer BuildConcatModel(
     };
     const std::vector<int32_t> lhsShape = {1, height, width, lhsChannels};
     const std::vector<int32_t> rhsShape = {1, height, width, rhsChannels};
+    const std::vector<int32_t> tailShape = {1, height, width, tailChannels};
     const std::vector<int32_t> outputShape = axis == 2 ?
         std::vector<int32_t>{1, height, width * 2, lhsChannels} :
-        std::vector<int32_t>{1, height, width, lhsChannels + rhsChannels};
+        std::vector<int32_t>{1, height, width, lhsChannels + rhsChannels + tailChannels};
     std::vector<flatbuffers::Offset<tflite::Tensor>> tensors = {
         tflite::CreateTensorDirect(
             builder, &lhsShape, tflite::TensorType::INT8, 0, "lhs", lhsQuant),
@@ -538,16 +539,21 @@ flatbuffers::DetachedBuffer BuildConcatModel(
         tflite::CreateTensorDirect(
             builder, &outputShape, tflite::TensorType::INT8, 0, "output", outputQuant),
     };
+    if ( tailChannels > 0 )
+        tensors.insert(tensors.begin() + 2, tflite::CreateTensorDirect(
+            builder, &tailShape, tflite::TensorType::INT8, 0, "tail", rhsQuant));
     const auto options = tflite::CreateConcatenationOptions(
         builder, axis, tflite::ActivationFunctionType::NONE);
-    const std::vector<int32_t> opInputs = {0, 1};
-    const std::vector<int32_t> opOutputs = {2};
+    const std::vector<int32_t> opInputs = tailChannels > 0 ?
+        std::vector<int32_t>{0, 1, 2} : std::vector<int32_t>{0, 1};
+    const std::vector<int32_t> opOutputs = {tailChannels > 0 ? 3 : 2};
     const std::vector<flatbuffers::Offset<tflite::Operator>> operations = {
         tflite::CreateOperatorDirect(builder, 0, &opInputs, &opOutputs,
             tflite::BuiltinOptions::ConcatenationOptions, options.Union()),
     };
-    const std::vector<int32_t> graphInputs = {0, 1};
-    const std::vector<int32_t> graphOutputs = {2};
+    const std::vector<int32_t> graphInputs = tailChannels > 0 ?
+        std::vector<int32_t>{0, 1, 2} : std::vector<int32_t>{0, 1};
+    const std::vector<int32_t> graphOutputs = {tailChannels > 0 ? 3 : 2};
     const std::vector<flatbuffers::Offset<tflite::SubGraph>> subgraphs = {
         tflite::CreateSubGraphDirect(
             builder, &tensors, &graphInputs, &graphOutputs, &operations, "main"),
@@ -1208,6 +1214,7 @@ TEST_CASE("Neural-AI architecture exposes fixed hardware configuration")
     REQUIRE(arch.TensorAlignment(TensorUsage::IFM, TensorFormat::C32Blocked) == 32);
     REQUIRE(arch.TensorAlignment(TensorUsage::IFM, TensorFormat::WeightsEncoded) == 32);
     REQUIRE(arch.TensorAlignment(TensorUsage::IFM, TensorFormat::NHWC) == 1);
+    REQUIRE(arch.TensorAlignment(TensorUsage::IFM, TensorFormat::CompactNHWC) == 1);
     REQUIRE(arch.FeatureMapMemory().memory->Name() == "tcdm");
     REQUIRE(arch.FeatureMapMemory().memory->SizeBytes() == ArchNeuralAI::AllocatableTCDMBytes);
     REQUIRE(arch.ReadonlyMemory().memory->Name() == "model");
@@ -1218,7 +1225,7 @@ TEST_CASE("Neural-AI architecture exposes fixed hardware configuration")
     REQUIRE(arch.CanSubdivide(OpType::Conv2D, TransposeType::None, ReverseType::None) == AxisMask::AxisY);
     REQUIRE(arch.CanSubdivide(OpType::DepthwiseConv2D, TransposeType::None, ReverseType::None) == AxisMask::AxisY);
     REQUIRE(arch.CanSubdivide(OpType::LUT, TransposeType::None, ReverseType::None) == AxisMask::AxisY);
-    REQUIRE(arch.CanSubdivide(OpType::Concat, TransposeType::None, ReverseType::None) == AxisMask::None);
+    REQUIRE(arch.CanSubdivide(OpType::Concat, TransposeType::None, ReverseType::None) == AxisMask::AxisY);
     REQUIRE(arch.CanSubdivide(OpType::LUT, TransposeType::NCHW, ReverseType::None) == AxisMask::None);
 
     std::string target;
@@ -1238,6 +1245,30 @@ TEST_CASE("Neural-AI ROW32 storage and alignment")
     REQUIRE(arch.TensorStrides(logical, TensorFormat::Row32, DataType::Int8) == Shape(384, 192, 64, 1));
     REQUIRE(arch.CanAliasDepthOffset(TensorFormat::Row32, 32));
     REQUIRE_FALSE(arch.CanAliasDepthOffset(TensorFormat::Row32, 1));
+}
+
+TEST_CASE("Neural-AI compact NHWC preserves unpadded channel storage")
+{
+    ArchNeuralAI arch;
+    const Shape logical(1, 2, 3, 16);
+
+    REQUIRE(arch.StorageShape(logical, TensorFormat::CompactNHWC) == logical);
+    REQUIRE(arch.StorageBytes(logical, TensorFormat::CompactNHWC, DataType::Int8) == 96);
+    REQUIRE(arch.TensorStrides(logical, TensorFormat::CompactNHWC, DataType::Int8) ==
+        Shape(96, 48, 16, 1));
+}
+
+TEST_CASE("Neural-AI selected CSP gather reuses one rolling C48 row")
+{
+    ArchNeuralAI arch;
+    for ( const int width : {11, 80, 96} )
+    {
+        const Shape row(1, 1, width, 48);
+        REQUIRE(arch.RollingBufferShape(row, row, TensorFormat::C32Blocked) ==
+            Shape(1, 1, width, 64));
+        REQUIRE(arch.StorageBytes(row, TensorFormat::C32Blocked, DataType::Int8) ==
+            width * 64);
+    }
 }
 
 TEST_CASE("Neural-AI architecture rejects conflicting RTL limits")
@@ -1370,6 +1401,45 @@ TEST_CASE("Neural-AI constraints accept shape-preserving memory copies")
 
     query.ofm.shape = Shape(1, 1, 1, 34);
     REQUIRE(constraints->OperatorQuery(OpType::MemoryCopy, &query) == QueryResult::Unsupported);
+}
+
+TEST_CASE("Neural-AI constraints keep selected CSP Concat tails compact")
+{
+    ArchNeuralAI arch;
+    auto *constraints = arch.Constraints();
+    ArchOperatorQuery query;
+    query.ifm[0].type = DataType::Int8;
+    for ( const Shape &inputShape : {Shape(1, 7, 11, 16), Shape(1, 80, 80, 16),
+             Shape(1, 160, 96, 16)} )
+    {
+        query.ifm[0].shape = inputShape;
+        query.ifm[1] = query.ifm[0];
+        query.ofm.type = DataType::Int8;
+        query.ofm.shape = inputShape.WithDepth(48);
+        query.axis = -1;
+
+        ArchRequirements requirements;
+        REQUIRE(constraints->OperatorQuery(OpType::Concat, &query, &requirements) ==
+            QueryResult::NativeHasReq);
+        const std::array<std::pair<TensorUsage, TensorFormat>, 4> expected{{
+            {TensorUsage::IFM0, TensorFormat::CompactNHWC},
+            {TensorUsage::IFM1, TensorFormat::CompactNHWC},
+            {TensorUsage::IFM2, TensorFormat::CompactNHWC},
+            {TensorUsage::OFM, TensorFormat::C32Blocked},
+        }};
+        const ArchTensorRequirement *tensor = &requirements.tensor;
+        for ( const auto &[usage, format] : expected )
+        {
+            REQUIRE(tensor != nullptr);
+            REQUIRE(tensor->usage == usage);
+            REQUIRE(tensor->format == format);
+            tensor = tensor->next;
+        }
+        REQUIRE(tensor == nullptr);
+    }
+
+    query.ofm.shape = query.ifm[0].shape.WithDepth(64);
+    REQUIRE(constraints->OperatorQuery(OpType::Concat, &query) == QueryResult::Unsupported);
 }
 
 TEST_CASE("Neural-AI constraints admit only selected YOLO C144 head transposes")
@@ -1528,6 +1598,34 @@ TEST_CASE("Neural-AI constraints accept scalar INT8 Add quantization")
 
     inputQuant.scales = {QuantizedScale(1.0), QuantizedScale(0.5)};
     REQUIRE(constraints->OperatorQuery(OpType::Add, &query) == QueryResult::Unsupported);
+}
+
+TEST_CASE("Neural-AI constraints keep selected CSP Add compact")
+{
+    ArchNeuralAI arch;
+    auto *constraints = arch.Constraints();
+    Quantization quantization = Quantization::Unit();
+    ArchOperatorQuery query;
+    for ( const Shape &shape : {Shape(1, 7, 11, 16), Shape(1, 80, 80, 16),
+             Shape(1, 160, 96, 16)} )
+    {
+        for ( ArchFM &ifm : query.ifm )
+        {
+            ifm.type = DataType::Int8;
+            ifm.shape = shape;
+            ifm.quantization = &quantization;
+        }
+        query.ofm.type = DataType::Int8;
+        query.ofm.shape = shape;
+        query.ofm.quantization = &quantization;
+
+        ArchRequirements requirements;
+        REQUIRE(constraints->OperatorQuery(OpType::Add, &query, &requirements) ==
+            QueryResult::NativeHasReq);
+        for ( const ArchTensorRequirement *tensor = &requirements.tensor; tensor != nullptr;
+              tensor = tensor->next )
+            REQUIRE(tensor->format == TensorFormat::CompactNHWC);
+    }
 }
 
 TEST_CASE("Neural-AI admits only native-depth-preserving reshape-like views")
@@ -1915,6 +2013,99 @@ TEST_CASE("Neural-AI scheduler emits interleaved Conv LUT stripes")
     REQUIRE(lutCommands > 1);
     REQUIRE(linebufferRows == outputHeight * outputWidth);
     REQUIRE(lutBytes == outputHeight * outputWidth * 32);
+    REQUIRE(artifact.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);
+}
+
+TEST_CASE("Neural-AI scheduler gathers native Concat stripes with DMA3D")
+{
+    constexpr int height = 40;
+    constexpr int width = 40;
+    constexpr int inputChannels = 64;
+    constexpr int concatChannels = 2 * inputChannels;
+    constexpr int outputChannels = 64;
+    ArchNeuralAI arch;
+    auto lhs = CreateTensor("lhs", Shape(1, height, width, inputChannels), DataType::Int8);
+    auto rhs = CreateTensor("rhs", Shape(1, height, width, inputChannels), DataType::Int8);
+    auto concatOutput = CreateTensor(
+        "concat_output", Shape(1, height, width, concatChannels), DataType::Int8);
+    auto output = CreateTensor("output", Shape(1, height, width, outputChannels), DataType::Int8);
+    auto weights = CreateTensor("weights", Shape(outputChannels, 1, 1, concatChannels), DataType::Int8,
+        std::vector<int8_t>(outputChannels * concatChannels, 1));
+    auto scales = CreateTensor("scales", Shape(outputChannels), DataType::Int32,
+        std::vector<int32_t>(outputChannels, 0));
+
+    auto concat = CreateOperation(
+        OpType::Concat, TensorUsage::IFM0, lhs, TensorUsage::OFM, concatOutput);
+    concat->ConnectInput(TensorUsage::IFM1, rhs).Set(Quantization::Unit());
+    concat->Input(TensorUsage::IFM0)->Set(Quantization::Unit());
+    concat->Output(TensorUsage::OFM)->Set(Quantization::Unit());
+    concat->Attribute<axis_attr_t>()->axis = 3;
+    auto pointwise = CreateOperation(
+        OpType::Conv2D, TensorUsage::IFM0, concatOutput, TensorUsage::OFM, output);
+    pointwise->Input(TensorUsage::IFM0)->Set(Quantization::Unit());
+    pointwise->Output(TensorUsage::OFM)->Set(Quantization::Unit());
+    pointwise->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
+    pointwise->ConnectInput(TensorUsage::Scales, scales).Set(Quantization::Unit());
+    pointwise->SetKernel(std::make_unique<Kernel>(
+        Point2i(1, 1), Point2i(1, 1), Point2i(1, 1)));
+    std::vector<std::shared_ptr<Operation>> sourceOps = {concat, pointwise};
+    auto graph = CreateGraph(sourceOps);
+
+    GraphOptimiserOptions graphOptions;
+    NeuralAIGraphOptimiser optimiser(arch.Constraints(), graphOptions, nullptr);
+    optimiser.Process(graph.get());
+    const std::unordered_map<UniqueId, UniqueId> equivalenceIds;
+    SchedulerPacking packing(&arch, false, equivalenceIds);
+    auto scheduleOps = packing.Process(graph.get());
+    SchedulerOptions schedulerOptions;
+    schedulerOptions.optimizationStrategy = OptimizationStrategy::Performance;
+    schedulerOptions.optimizationStagingLimit = 128 * 1024;
+    schedulerOptions.disabled.Set(SchedulerFeature::WeightBuffering);
+    Scheduler scheduler(
+        &arch, schedulerOptions, "neural-ai-concat-cascade", scheduleOps,
+        packing.OpConfigCompatablility());
+    auto schedule = scheduler.Process();
+
+    const SchedulerOperation *scheduledConcat = nullptr;
+    const SchedulerOperation *scheduledConv = nullptr;
+    for ( const auto &operation : scheduleOps )
+    {
+        if ( operation->Type() == OpType::Concat ) scheduledConcat = operation.get();
+        if ( operation->Type() == OpType::Conv2D ) scheduledConv = operation.get();
+    }
+    REQUIRE(scheduledConcat != nullptr);
+    REQUIRE(scheduledConv != nullptr);
+    const int cascade = schedule->Cost(scheduledConcat)->cascade;
+    REQUIRE(cascade > 0);
+    REQUIRE(schedule->Cost(scheduledConv)->cascade == cascade);
+    REQUIRE(scheduledConcat->OFM()->tensor->storageShape.Height() < height);
+
+    CompiledNeuralAIArtifact artifact;
+    std::string error;
+    NeuralAICommandGenerator commandGenerator;
+    const bool generated = commandGenerator.Generate(graph.get(), scheduleOps, schedule.get(), artifact, error);
+    INFO(error);
+    REQUIRE(generated);
+    REQUIRE(error.empty());
+    uint32_t gatherCommands = 0;
+    size_t commandOffset = 0;
+    while ( commandOffset < artifact.commands.size() )
+    {
+        const uint16_t type = Read16(artifact.commands, commandOffset);
+        const uint16_t bytes = Read16(artifact.commands, commandOffset + 2);
+        REQUIRE(bytes >= 32);
+        if ( type == uint16_t(neuralai::CommandType::DMA3D) &&
+             Read32(artifact.commands, commandOffset + 60) ==
+                 uint32_t(neuralai::DMADirection::LocalToLocal) )
+        {
+            REQUIRE(bytes == sizeof(neuralai::CommandDMA3DV2));
+            REQUIRE(Read32(artifact.commands, commandOffset + 32) == 32);
+            ++gatherCommands;
+        }
+        commandOffset += bytes;
+    }
+    REQUIRE(commandOffset == artifact.commands.size());
+    REQUIRE(gatherCommands > 2);
     REQUIRE(artifact.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);
 }
 
@@ -2936,6 +3127,50 @@ TEST_CASE("Neural-AI compiler materializes two-input C32 channel Concat with DMA
     REQUIRE(destinationOffsets[1] - destinationOffsets[0] == 2 * 3 * 32);
     blob->Unmap(const_cast<uint8_t *>(data));
     blob->Release();
+}
+
+TEST_CASE("Neural-AI compiler gathers structural three-way C16 Concat with DMA3D")
+{
+    for ( const Point2i spatial : {Point2i(11, 7), Point2i(13, 9)} )
+    {
+        std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+        Compiler compiler(architecture);
+        const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+        REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+        const auto model = BuildConcatModel(
+            16, 16, 3, 0.25f, spatial.y, spatial.x, 16);
+        REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+        const bool compiled = compiler.Compile();
+        INFO(compiler.LastError());
+        REQUIRE(compiled);
+
+        IRegorBlob *blob = compiler.Output();
+        REQUIRE(blob != nullptr);
+        int64_t size = 0;
+        const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+        const uint32_t commandBytes = Read32(data + 64 + 12);
+        uint32_t offset = 224;
+        uint32_t gatherCommands = 0;
+        while ( offset < 224 + commandBytes )
+        {
+            const uint16_t commandSize = Read16(data + offset + 2);
+            REQUIRE(commandSize >= 32);
+            if ( Read16(data + offset) == uint16_t(neuralai::CommandType::DMA3D) &&
+                 Read32(data + offset + 60) == uint32_t(neuralai::DMADirection::LocalToLocal) )
+            {
+                REQUIRE(commandSize == sizeof(neuralai::CommandDMA3DV2));
+                REQUIRE(Read32(data + offset + 32) == 16);
+                REQUIRE(Read32(data + offset + 44) == uint32_t(spatial.x));
+                REQUIRE(Read32(data + offset + 56) == uint32_t(spatial.y));
+                ++gatherCommands;
+            }
+            offset += commandSize;
+        }
+        REQUIRE(offset == 224 + commandBytes);
+        REQUIRE(gatherCommands == 3);
+        blob->Unmap(const_cast<uint8_t *>(data));
+        blob->Release();
+    }
 }
 
 TEST_CASE("Neural-AI compiler rejects Concat outside two-input C32 channel contract")

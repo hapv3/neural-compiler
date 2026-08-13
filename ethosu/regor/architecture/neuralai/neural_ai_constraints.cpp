@@ -16,7 +16,7 @@ namespace regor
 namespace
 {
 
-thread_local std::array<ArchTensorRequirement, 3> s_tensorRequirements;
+thread_local std::array<ArchTensorRequirement, 4> s_tensorRequirements;
 thread_local std::array<ArchTensorRequirement, 3> s_dflTensorRequirements;
 
 bool IsStaticPositiveShape(const Shape &shape)
@@ -291,6 +291,10 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
         const Shape &lhsShape = query->ifm[0].shape;
         const Shape &rhsShape = query->ifm[1].shape;
         const Shape &ofmShape = query->ofm.shape;
+        const bool structuralCspConcat = lhsShape.Size() == 4 && lhsShape.Batch() == 1 &&
+                                       lhsShape.Height() > 0 && lhsShape.Width() > 0 &&
+                                       lhsShape.Depth() == 16 && rhsShape == lhsShape &&
+                                       ofmShape == lhsShape.WithDepth(48);
         if ( query->ifm[0].type != DataType::Int8 || query->ifm[1].type != DataType::Int8 ||
              query->ofm.type != DataType::Int8 || query->axis != -1 ||
              !IsStaticPositiveShape(lhsShape) || !IsStaticPositiveShape(rhsShape) ||
@@ -298,21 +302,30 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
              lhsShape.Size() != rhsShape.Size() || lhsShape.Size() != ofmShape.Size() ||
              lhsShape.WithDepth(1) != rhsShape.WithDepth(1) ||
              lhsShape.WithDepth(1) != ofmShape.WithDepth(1) ||
-             lhsShape.Depth() % 32 != 0 ||
+             (lhsShape.Depth() % 32 != 0 && !structuralCspConcat) ||
              (rhsShape.Depth() % 32 != 0 &&
-                 !(lhsShape.Depth() == 64 && rhsShape.Depth() == 80 &&
+                 !structuralCspConcat && !(lhsShape.Depth() == 64 && rhsShape.Depth() == 80 &&
                    (lhsShape.Height() == 10 || lhsShape.Height() == 20 || lhsShape.Height() == 40) &&
                    lhsShape.Width() == lhsShape.Height())) ||
-             ofmShape.Depth() != lhsShape.Depth() + rhsShape.Depth() )
+             (!structuralCspConcat && ofmShape.Depth() != lhsShape.Depth() + rhsShape.Depth()) )
             return QueryResult::Unsupported;
         if ( req != nullptr )
         {
-            Set(s_tensorRequirements[0], TensorUsage::IFM0, TensorFormat::C32Blocked);
-            Set(s_tensorRequirements[1], TensorUsage::IFM1, TensorFormat::C32Blocked);
-            Set(s_tensorRequirements[2], TensorUsage::OFM, TensorFormat::C32Blocked);
+            Set(s_tensorRequirements[0], TensorUsage::IFM0,
+                structuralCspConcat ? TensorFormat::CompactNHWC : TensorFormat::C32Blocked);
+            Set(s_tensorRequirements[1], TensorUsage::IFM1,
+                structuralCspConcat ? TensorFormat::CompactNHWC : TensorFormat::C32Blocked);
+            Set(s_tensorRequirements[2], structuralCspConcat ? TensorUsage::IFM2 : TensorUsage::OFM,
+                structuralCspConcat ? TensorFormat::CompactNHWC : TensorFormat::C32Blocked);
             s_tensorRequirements[0].next = &s_tensorRequirements[1];
             s_tensorRequirements[1].next = &s_tensorRequirements[2];
-            s_tensorRequirements[2].next = nullptr;
+            if ( structuralCspConcat )
+            {
+                Set(s_tensorRequirements[3], TensorUsage::OFM, TensorFormat::C32Blocked);
+                s_tensorRequirements[2].next = &s_tensorRequirements[3];
+                s_tensorRequirements[3].next = nullptr;
+            }
+            else s_tensorRequirements[2].next = nullptr;
             req->tensor = s_tensorRequirements[0];
             req->req.Set(ArchRequirement::Tensor);
             return QueryResult::NativeHasReq;
@@ -428,9 +441,14 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
         }
         if ( req != nullptr )
         {
-            Set(s_tensorRequirements[0], TensorUsage::IFM0, TensorFormat::C32Blocked);
-            Set(s_tensorRequirements[1], TensorUsage::IFM1, TensorFormat::C32Blocked);
-            Set(s_tensorRequirements[2], TensorUsage::OFM, TensorFormat::C32Blocked);
+            const bool structuralCspAdd = query->ofm.shape.Size() == 4 &&
+                query->ofm.shape.Batch() == 1 && query->ofm.shape.Height() > 0 &&
+                query->ofm.shape.Width() > 0 && query->ofm.shape.Depth() == 16;
+            const TensorFormat format = structuralCspAdd ?
+                TensorFormat::CompactNHWC : TensorFormat::C32Blocked;
+            Set(s_tensorRequirements[0], TensorUsage::IFM0, format);
+            Set(s_tensorRequirements[1], TensorUsage::IFM1, format);
+            Set(s_tensorRequirements[2], TensorUsage::OFM, format);
             s_tensorRequirements[0].next = &s_tensorRequirements[1];
             s_tensorRequirements[1].next = &s_tensorRequirements[2];
             s_tensorRequirements[2].next = nullptr;

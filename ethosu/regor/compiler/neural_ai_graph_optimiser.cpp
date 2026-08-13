@@ -326,6 +326,43 @@ void NeuralAIGraphOptimiser::InsertOutputConversion(Graph *graph, Operation *ope
     RecordOptimisation(*operation, copy.get());
 }
 
+void NeuralAIGraphOptimiser::MaterializeStructuralCspConcatInputs(Operation *operation)
+{
+    const TensorConnection *ofm = operation->Output(TensorUsage::OFM);
+    if ( operation->Type() != OpType::Concat || ofm == nullptr ||
+         ofm->shape.Size() != 4 || ofm->shape.Batch() != 1 ||
+         ofm->shape.Height() <= 0 || ofm->shape.Width() <= 0 ||
+         ofm->shape.Depth() != 48 ||
+         operation->Input(TensorUsage::IFM2) == nullptr ) return;
+
+    for ( int index = 0; index < 3; ++index )
+    {
+        const TensorUsage usage = MakeTensorUsage(TensorUsage::IFM, index);
+        const TensorConnection original = *operation->Input(usage);
+        const Shape sliceShape = original.SliceShape();
+        const Shape sliceOffset = original.slice.offset ?
+            original.slice.offset : original.shape.WithZeros();
+        if ( sliceShape != ofm->shape.WithDepth(16) ||
+             original.tensor->StorageShape().Depth() != 32 ||
+             sliceOffset.WithDepth(0) != sliceOffset.WithZeros() ||
+             sliceOffset.Depth() != 0 ) continue;
+
+        auto compact = std::make_shared<Tensor>(
+            original.tensor->Name() + "/compact_c16", original.tensor->Type(), sliceShape);
+        auto copy = std::make_shared<Operation>(OpType::MemoryCopy);
+        copy->CopyInput(TensorUsage::IFM, original);
+        copy->ConnectOutput(TensorUsage::OFM, compact)
+            .Set(sliceShape)
+            .Set(original.quantization)
+            .Set(original.rounding);
+        operation->ConnectInput(usage, compact)
+            .Set(sliceShape)
+            .Set(original.quantization)
+            .Set(original.rounding);
+        RecordOptimisation(*operation, copy.get());
+    }
+}
+
 void NeuralAIGraphOptimiser::OptimiseGraph(Graph *graph)
 {
     std::vector<std::shared_ptr<Operation>> operations;
@@ -336,6 +373,7 @@ void NeuralAIGraphOptimiser::OptimiseGraph(Graph *graph)
         return;
     }
     for ( const auto &operation : operations ) CanonicalizeConvAdd(graph, operation.get());
+    for ( const auto &operation : operations ) MaterializeStructuralCspConcatInputs(operation.get());
     for ( const auto &operation : operations )
     {
         if ( operation->Type() != OpType::FullyConnected && operation->Type() != OpType::MatMul &&
@@ -345,6 +383,8 @@ void NeuralAIGraphOptimiser::OptimiseGraph(Graph *graph)
              operation->Type() != OpType::MaxPool && operation->Type() != OpType::Concat &&
              operation->Type() != OpType::Transpose && operation->Type() != OpType::Dfl ) continue;
         InsertInputConversion(graph, operation.get(), TensorUsage::IFM0);
+        if ( operation->Type() == OpType::Concat && operation->Input(TensorUsage::IFM2) != nullptr )
+            InsertInputConversion(graph, operation.get(), TensorUsage::IFM2);
         if ( operation->Type() == OpType::Add || operation->Type() == OpType::Concat )
             InsertInputConversion(graph, operation.get(), TensorUsage::IFM1);
         InsertOutputConversion(graph, operation.get());

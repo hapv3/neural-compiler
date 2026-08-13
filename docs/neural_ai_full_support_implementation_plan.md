@@ -142,7 +142,7 @@ new runtime path has not yet passed E2E.
 | Pointwise Conv | Verified | K1/S1/P0, C32 groups/tails, per-channel RQ |
 | RGB stem Conv | Verified | selected K3/S2 contract |
 | Generic C32 Conv K3 | Verified | full input/output groups; linebuffer path |
-| Rolling Conv/LUT cascade | Compiler verified | full-width Y stripes; RGB/C32 DMA staging; asymmetric padding fill; one C32 group |
+| Rolling Conv/LUT/Concat cascade | Compiler verified | full-width Y stripes; DMA3D Concat gather; rolling pointwise Conv; asymmetric padding fill |
 | Depthwise Conv K3 | Verified | selected S1/S2 contracts |
 | Asymmetric Conv canonicalization | Verified | exact bias correction and padding behavior |
 | Add | Verified | raw AFU, exact producer canonicalization, or quantized Spatz fallback |
@@ -153,13 +153,13 @@ new runtime path has not yet passed E2E.
 | Nearest resize | Verified | exact 2x, selected C32/C128/C256, native Spatz kernel |
 | Storage-preserving views | Verified | reshape/squeeze/expand-dims; public output is materialized |
 | StridedSlice | Verified | C32-aligned aliases plus exact C32-to-C16 high-half materialization |
-| Materialized Concat | Verified | exactly two aligned C32 inputs; generic correctness fallback |
+| Concat | Compiler verified | generic striped two-input C32 gather; structural compact C16x3 gather; materialized correctness fallback |
 | YOLO C144 head transpose | Verified | three `[0,3,1,2]` head packs; vectorized C32-to-CHW runtime path |
 | DFL16 projection | Verified | exact ops 234–239; fused 16-bin AFU plus one Spatz pack/requant call per tile |
 | Async DMA and overlap | Not implemented | blocking execution remains correct; performance phase |
-| Full selected graphs | Memory blocked | rolling stem lowers peak to 921,600 bytes; 520,192 available |
+| Full selected graphs | Memory blocked | peak is 640,320 bytes; 520,192 available; head LUT/live range is next |
 
-The current focused Regor suite passes 93 Neural-AI cases and 36,420 assertions.
+The current focused Regor suite passes 99 Neural-AI cases and 37,191 assertions.
 Runtime ABI/host checks, cross-builds, firmware-size gates, and focused C144,
 DFL16, and MatMul V2 E2E tests pass.
 
@@ -208,10 +208,12 @@ the focused test had not written its invocation and binding table to L2.
   vector copy; the focused H2/W3/C32 package passes at 105,347 ns.
 - Full YOLO compilation now passes both resize operations, all three MaxPools,
   the first three head transposes, and the fused DFL16 chain, then stops at the
-  full-schedule TCDM capacity check. Metadata padding and striped command
-  generation form cascade 3 as RGB K3/S2 Conv -> LUT -> K3/S2 Conv. This reduces
-  the scheduler peak from 1,659,008 to 921,600 bytes (44.4%); the next measured
-  peak is a C48 passthrough/Concat live-range boundary at 80x80.
+  full-schedule TCDM capacity check. Structural compact C16 handling and striped
+  DMA3D Concat gathering reduce the peak from 1,659,008 to 640,320 bytes
+  (61.4%). The 80x80 C16x3 CSP cascade and 40x40 C128+C64 neck cascade each use
+  517,120 bytes. The next maximum is head op 172: a C80x2100 LUT while 471,360
+  bytes remain live. Stem cascade 3 is also still 563,200 bytes and must be
+  brought below the 520,192-byte release limit.
 
 ### Other retained evidence
 
@@ -241,7 +243,7 @@ compiler-runtime package is byte-exact and passes in 468,781 cycles under the
 
 ### P0 — Full-graph memory feasibility
 
-The current full YOLO compile reaches scheduling and requests 921,600 bytes of
+The current full YOLO compile reaches scheduling and requests 640,320 bytes of
 TCDM, down from 1,659,008 bytes. Reduce this to the 520,192-byte allocatable
 limit without adding a scalar or CPU fallback:
 
@@ -253,19 +255,24 @@ limit without adding a scalar or CPU fallback:
   valid rows. Exact bias correction and padding tests pass.
 - Completed P0 stem contract: cascade 3 is RGB K3/S2 Conv -> LUT -> K3/S2 Conv.
   The focused block test proves every logical Conv/LUT output row is emitted
-  exactly once. Current striped matrix generation is deliberately constrained
-  to one native C32 input/output group.
-- Next measured blocker: eliminate the 921,600-byte C48 passthrough/Concat
-  live-range boundary at 80x80 using a metadata channel view or direct
-  concat-consumer Conv staging. Retain materialized Concat as the correctness
-  fallback.
+  exactly once.
+- Completed structural CSP/neck contract: internal C16 tensors use compact
+  storage; C16+C16+C16 to C48 and native C32 channel Concat are gathered per
+  full-width Y stripe with local-to-local DMA3D. The following pointwise Conv
+  consumes the rolling C32 buffer directly, including multi-group input and
+  rolling wrap. This is structural in channel/layout topology and does not
+  constrain H/W to `[1,80,80,48]`. Focused scheduler/command tests pass.
+- Next measured blocker: reduce the 640,320-byte detection-head peak at op 172
+  by shortening or streaming the live C144/C80x2100 path into LUT/DFL. Then
+  remove the remaining 43,008-byte excess in stem cascade 3. Retain full tensor
+  materialization only as the correctness fallback.
 - Prove compact public bindings and native internal layouts end to end.
 - Use Regor cascading, tiling, live ranges, and allocator before adding target
   policy.
 - Keep model constants in L2; stage tiles, qparams, or LUTs as required.
 - Fit the graph within 520,192 allocatable TCDM bytes and 32 KiB firmware text.
-- Do not broaden striped Conv beyond measured model shapes until focused tests
-  establish multi-group address, tail, and rolling-wrap contracts.
+- Broaden striped operators only from structural contracts backed by focused
+  multi-group address, tail, and rolling-wrap tests; avoid fixed H/W policies.
 
 ### P1 — Close remaining selected detection-tail contracts
 

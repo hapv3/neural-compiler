@@ -221,7 +221,7 @@ int ArchNeuralAI::TensorAlignment(TensorUsage, TensorFormat format) const
     // that format) may start at any byte address.  Native ROW32/C32 and
     // encoded weights are consumed by 32-byte engines and retain the DMA
     // alignment requirement.
-    return format == TensorFormat::NHWC ? 1 : DMAAlignment;
+    return format == TensorFormat::NHWC || format == TensorFormat::CompactNHWC ? 1 : DMAAlignment;
 }
 
 TensorFormat ArchNeuralAI::ModelBindingFormat(TensorUsage) const
@@ -276,7 +276,12 @@ bool ArchNeuralAI::CanAliasDepthOffset(TensorFormat format, int depthOffset) con
 Shape ArchNeuralAI::RollingBufferShape(const Shape &producerShape, const Shape &consumerShape,
     TensorFormat format) const
 {
-    const int bufferHeight = RoundAway(producerShape.Height() + consumerShape.Height(), consumerShape.Height());
+    const bool structuralCspConcatRow = format == TensorFormat::C32Blocked &&
+        producerShape.Size() == 4 && producerShape.Batch() == 1 &&
+        producerShape.Height() == 1 && producerShape.Width() > 0 &&
+        producerShape.Depth() == 48 && consumerShape == producerShape;
+    const int bufferHeight = structuralCspConcatRow ? 1 :
+        RoundAway(producerShape.Height() + consumerShape.Height(), consumerShape.Height());
     return StorageShape(consumerShape.With(-3, bufferHeight).WithDepth(producerShape.Depth()), format);
 }
 
@@ -294,7 +299,8 @@ int ArchNeuralAI::UpscaleAndRounding(ArchResampling, int &rounding)
 AxisMask ArchNeuralAI::CanSubdivide(OpType opType, TransposeType transpose, ReverseType reverse)
 {
     if ( transpose == TransposeType::None && reverse == ReverseType::None &&
-         (opType == OpType::Conv2D || opType == OpType::DepthwiseConv2D || opType == OpType::LUT) )
+         (opType == OpType::Conv2D || opType == OpType::DepthwiseConv2D || opType == OpType::LUT ||
+             opType == OpType::Concat) )
     {
         // Neural-AI linebuffer and AFU commands preserve complete rows.  Width
         // subdivision would require a second address-wrap contract, while Y

@@ -29,6 +29,7 @@ BEGIN_ENUM_TABLE(regor::TensorFormat)
     ADD_ENUM_NAME(WeightsEncoded)
     ADD_ENUM_NAME(Row32)
     ADD_ENUM_NAME(C32Blocked)
+    ADD_ENUM_NAME(CompactNHWC)
 END_ENUM_TABLE()
 
 namespace regor
@@ -74,7 +75,7 @@ int64_t Architecture::StorageBytes(const Shape &logicalShape, TensorFormat forma
 Shape Architecture::TensorStrides(const Shape &logicalShape, TensorFormat format, DataType dataType) const
 {
     const int elementBytes = DataTypeSizeBits(dataType) / 8;
-    if ( format == TensorFormat::NHWC )
+    if ( format == TensorFormat::NHWC || format == TensorFormat::CompactNHWC )
     {
         const int strideC = elementBytes;
         const int strideX = logicalShape.Depth() * strideC;

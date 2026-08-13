@@ -708,7 +708,8 @@ static Shape CalculateUpscaledIfmStripeShape(const Shape &ofmStripeShape, const 
     }
     // Special-treatments for operators where depth cannot be inferred
     // use full IFM-depth.
-    else if ( (IsConvolution(opType) && !IsDepthwise(opType)) || opType == OpType::ReduceSum )
+    else if ( (IsConvolution(opType) && !IsDepthwise(opType)) || opType == OpType::ReduceSum ||
+              opType == OpType::Concat )
     {
         stripeShape = stripeShape.WithDepth(ifmSlice.shape.Depth());
     }
@@ -748,7 +749,8 @@ static Shape CalculateUpscaledIfmStripeOffset(const Shape &ofmStripeOffset, cons
     }
     // Special-treatments for operators where depth cannot be inferred
     // use depth offset 0 to cover the whole IFM-slice
-    else if ( (IsConvolution(opType) && !IsDepthwise(opType)) || opType == OpType::ReduceSum )
+    else if ( (IsConvolution(opType) && !IsDepthwise(opType)) || opType == OpType::ReduceSum ||
+              opType == OpType::Concat )
     {
         stripeOffset = stripeOffset.WithDepth(0);
     }

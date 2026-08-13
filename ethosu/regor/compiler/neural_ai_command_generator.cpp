@@ -15,6 +15,7 @@
 #include "tflite/tflite_schema_generated.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <limits>
 #include <unordered_map>
@@ -56,6 +57,11 @@ bool IsFullTensorConnection(const SchedulerConnection *connection)
     return connection->SliceShape() == shape &&
            (!connection->slice.offset || connection->slice.offset == shape.WithZeros()) &&
            (!connection->slice.stride || connection->slice.stride == shape.WithOnes());
+}
+
+bool IsCompactNHWC(TensorFormat format)
+{
+    return format == TensorFormat::NHWC || format == TensorFormat::CompactNHWC;
 }
 
 int64_t TensorStorageBytes(const SchedulerTensor *tensor)
@@ -178,7 +184,8 @@ uint16_t ABIDataType(regor::DataType type)
 
 uint16_t ABILayout(TensorFormat format)
 {
-    if ( format == TensorFormat::NHWC ) return uint16_t(TensorLayout::NHWC);
+    if ( format == TensorFormat::NHWC || format == TensorFormat::CompactNHWC )
+        return uint16_t(TensorLayout::NHWC);
     if ( format == TensorFormat::Row32 ) return uint16_t(TensorLayout::Row32);
     if ( format == TensorFormat::C32Blocked ) return uint16_t(TensorLayout::C32Blocked);
     return 0;
@@ -590,7 +597,7 @@ struct GeneratorContext
              ifm->SliceShape().Elements64() != ofm->SliceShape().Elements64() ||
              ofm->tensor->format != TensorFormat::C32Blocked ||
              (ifm->tensor->format != TensorFormat::C32Blocked &&
-                 ifm->tensor->format != TensorFormat::NHWC && !ifm->tensor->IsConstant()) )
+                 !IsCompactNHWC(ifm->tensor->format) && !ifm->tensor->IsConstant()) )
             return SetError(error,
                 "Neural-AI sliced C32 copy requires equal INT8 C32/NHWC slices or a constant fill source");
 
@@ -631,7 +638,7 @@ struct GeneratorContext
                 const Shape slice = ReshapeToNHWC(connection->SliceShape());
                 const Shape sliceOffset = connection->slice.offset ?
                     ReshapeToNHWC(connection->slice.offset) : storage.WithZeros();
-                const bool compact = connection->tensor->format == TensorFormat::NHWC ||
+                const bool compact = IsCompactNHWC(connection->tensor->format) ||
                     (connection->tensor->IsConstant() &&
                         connection->tensor->format != TensorFormat::C32Blocked);
                 const int pixelStride = compact ? 16 : 32;
@@ -721,7 +728,7 @@ struct GeneratorContext
             const Shape slice = ReshapeToNHWC(connection->SliceShape());
             const Shape sliceOffset = connection->slice.offset ?
                 ReshapeToNHWC(connection->slice.offset) : storage.WithZeros();
-            if ( connection->tensor->format == TensorFormat::NHWC )
+            if ( IsCompactNHWC(connection->tensor->format) )
             {
                 if ( storage.Batch() != 1 || storage.Depth() < 32 || storage.Depth() % 32 != 0 ||
                      slice.Batch() != 1 || (slice.Depth() != 32 && slice.Depth() != storage.Depth()) ||
@@ -867,8 +874,7 @@ struct GeneratorContext
     {
         const SchedulerConnection *ifm = operation->IFM(0);
         const SchedulerConnection *ofm = operation->OFM();
-        if ( ifm->tensor->format == TensorFormat::NHWC &&
-             ofm->tensor->format == TensorFormat::NHWC )
+        if ( IsCompactNHWC(ifm->tensor->format) && IsCompactNHWC(ofm->tensor->format) )
         {
             if ( !IsFullTensorConnection(ifm) || !IsFullTensorConnection(ofm) )
                 return AppendSlicedNHWCCopy(operation, error);
@@ -900,7 +906,7 @@ struct GeneratorContext
         if ( (!IsFullTensorConnection(ifm) || !IsFullTensorConnection(ofm)) &&
              ofm->tensor->format == TensorFormat::C32Blocked &&
              (ifm->tensor->format == TensorFormat::C32Blocked ||
-                 ifm->tensor->format == TensorFormat::NHWC || ifm->tensor->IsConstant()) )
+                 IsCompactNHWC(ifm->tensor->format) || ifm->tensor->IsConstant()) )
             return AppendSlicedC32Copy(operation, error);
         if ( !IsFullTensorConnection(ifm) || !IsFullTensorConnection(ofm) )
             return SetError(error, fmt::format(
@@ -909,13 +915,13 @@ struct GeneratorContext
                 ifm->tensor->Name(), EnumToString(ifm->tensor->format),
                 ofm->tensor->Name(), EnumToString(ofm->tensor->format)));
         CopyLayoutMode mode;
-        if ( ifm->tensor->format == TensorFormat::NHWC && ofm->tensor->format == TensorFormat::Row32 )
+        if ( IsCompactNHWC(ifm->tensor->format) && ofm->tensor->format == TensorFormat::Row32 )
             mode = CopyLayoutMode::NHWCToRow32;
-        else if ( ifm->tensor->format == TensorFormat::Row32 && ofm->tensor->format == TensorFormat::NHWC )
+        else if ( ifm->tensor->format == TensorFormat::Row32 && IsCompactNHWC(ofm->tensor->format) )
             mode = CopyLayoutMode::Row32ToNHWC;
-        else if ( ifm->tensor->format == TensorFormat::NHWC && ofm->tensor->format == TensorFormat::C32Blocked )
+        else if ( IsCompactNHWC(ifm->tensor->format) && ofm->tensor->format == TensorFormat::C32Blocked )
             mode = CopyLayoutMode::NHWCToC32;
-        else if ( ifm->tensor->format == TensorFormat::C32Blocked && ofm->tensor->format == TensorFormat::NHWC )
+        else if ( ifm->tensor->format == TensorFormat::C32Blocked && IsCompactNHWC(ofm->tensor->format) )
             mode = CopyLayoutMode::C32ToNHWC;
         else return SetError(error, "Neural-AI MemoryCopy requires an NHWC/ROW32/C32 boundary");
 
@@ -1042,15 +1048,22 @@ struct GeneratorContext
         const SchedulerConnection *lhs = operation->IFM(0);
         const SchedulerConnection *rhs = operation->IFM(1);
         const SchedulerConnection *ofm = operation->OFM();
+        const bool structuralCompactCsp = lhs != nullptr && rhs != nullptr && ofm != nullptr &&
+            lhs->shape.Size() == 4 && lhs->shape.Batch() == 1 &&
+            lhs->shape.Height() > 0 && lhs->shape.Width() > 0 && lhs->shape.Depth() == 16 &&
+            rhs->shape == lhs->shape &&
+            ofm->shape == lhs->shape && IsCompactNHWC(lhs->tensor->format) &&
+            IsCompactNHWC(rhs->tensor->format) && IsCompactNHWC(ofm->tensor->format);
         if ( lhs == nullptr || rhs == nullptr || ofm == nullptr ||
              !IsFullTensorConnection(lhs) || !IsFullTensorConnection(rhs) ||
              !IsFullTensorConnection(ofm) || lhs->Type() != regor::DataType::Int8 ||
              rhs->Type() != regor::DataType::Int8 || ofm->Type() != regor::DataType::Int8 ||
-             lhs->tensor->format != TensorFormat::C32Blocked ||
-             rhs->tensor->format != TensorFormat::C32Blocked ||
-             ofm->tensor->format != TensorFormat::C32Blocked ||
+             (!structuralCompactCsp && (lhs->tensor->format != TensorFormat::C32Blocked ||
+                 rhs->tensor->format != TensorFormat::C32Blocked ||
+                 ofm->tensor->format != TensorFormat::C32Blocked)) ||
              lhs->shape != rhs->shape || lhs->shape != ofm->shape )
-            return SetError(error, "Neural-AI AFU Add requires equal C32-blocked tensors");
+            return SetError(error,
+                "Neural-AI AFU Add requires equal C32-blocked tensors or the selected compact CSP tensor");
         const int64_t lhsBytes = lhs->tensor->AllocationSizeBytes();
         const int64_t rhsBytes = rhs->tensor->AllocationSizeBytes();
         const int64_t ofmBytes = ofm->tensor->AllocationSizeBytes();
@@ -1464,7 +1477,69 @@ struct GeneratorContext
             return SetError(error, "Neural-AI Concat operation has no validated C32 mode");
         const SchedulerConnection *lhs = operation->IFM(0);
         const SchedulerConnection *rhs = operation->IFM(1);
+        const SchedulerConnection *tail = operation->TryIFM(2);
         const SchedulerConnection *ofm = operation->OFM();
+        const Shape lhsSlice = lhs != nullptr ? ReshapeToNHWC(lhs->SliceShape()) : Shape();
+        const Shape rhsSlice = rhs != nullptr ? ReshapeToNHWC(rhs->SliceShape()) : Shape();
+        const Shape tailSlice = tail != nullptr ? ReshapeToNHWC(tail->SliceShape()) : Shape();
+        const Shape ofmSlice = ofm != nullptr ? ReshapeToNHWC(ofm->SliceShape()) : Shape();
+        const bool structuralCsp = lhs != nullptr && rhs != nullptr && tail != nullptr && ofm != nullptr &&
+            lhsSlice.Depth() == 16 && rhsSlice == lhsSlice && tailSlice == lhsSlice &&
+            lhsSlice.Batch() == 1 && lhsSlice.Height() > 0 && lhsSlice.Width() > 0 &&
+            ofmSlice == lhsSlice.WithDepth(48) && IsCompactNHWC(lhs->tensor->format) &&
+            IsCompactNHWC(rhs->tensor->format) && IsCompactNHWC(tail->tensor->format) &&
+            ofm->tensor->format == TensorFormat::C32Blocked;
+        if ( structuralCsp )
+        {
+            const Shape outputStorage = ReshapeToNHWC(ofm->tensor->storageShape);
+            const Shape outputOffset = ofm->slice.offset ?
+                ReshapeToNHWC(ofm->slice.offset) : ofmSlice.WithZeros();
+            if ( outputStorage.Batch() != 1 || outputStorage.Height() <= 0 ||
+                 outputStorage.Width() != lhsSlice.Width() || outputStorage.Depth() < 48 ||
+                 outputOffset.Batch() != 0 || outputOffset.Width() != 0 ||
+                 outputOffset.Depth() != 0 || ofmSlice.Height() > outputStorage.Height() )
+                return SetError(error, "Neural-AI selected CSP Concat has invalid rolling output storage");
+            const uint64_t outputRowBytes64 = uint64_t(outputStorage.Width()) * 32u;
+            const uint64_t outputGroupBytes64 =
+                uint64_t(outputStorage.Height()) * outputRowBytes64;
+            if ( outputGroupBytes64 > std::numeric_limits<uint32_t>::max() )
+                return SetError(error, "Neural-AI selected CSP Concat output storage overflows the ABI");
+
+            const std::array<const SchedulerConnection *, 3> inputs{lhs, rhs, tail};
+            for ( int index = 0; index < int(inputs.size()); ++index )
+            {
+                const SchedulerConnection *input = inputs[index];
+                const Shape inputStorage = ReshapeToNHWC(input->tensor->storageShape);
+                const Shape inputOffset = input->slice.offset ?
+                    ReshapeToNHWC(input->slice.offset) : lhsSlice.WithZeros();
+                if ( inputStorage.Batch() != 1 || inputStorage.Width() != lhsSlice.Width() ||
+                     inputStorage.Depth() != 16 || inputOffset.Batch() != 0 ||
+                     inputOffset.Width() != 0 || inputOffset.Depth() != 0 ||
+                     inputOffset.Height() < 0 ||
+                     inputOffset.Height() + lhsSlice.Height() > inputStorage.Height() )
+                    return SetError(error, "Neural-AI selected CSP Concat has invalid compact input storage");
+                const uint64_t inputRowBytes64 = uint64_t(inputStorage.Width()) * 16u;
+                const uint64_t sourceBase64 = uint64_t(inputOffset.Height()) * inputRowBytes64;
+                const uint64_t outputRow = uint64_t(outputOffset.Height() % outputStorage.Height());
+                const uint64_t destinationBase64 = outputRow * outputRowBytes64 +
+                    (index == 2 ? outputGroupBytes64 : 0u) + (index == 1 ? 16u : 0u);
+                if ( sourceBase64 > std::numeric_limits<uint32_t>::max() ||
+                     destinationBase64 > std::numeric_limits<uint32_t>::max() ||
+                     inputRowBytes64 > std::numeric_limits<uint32_t>::max() ||
+                     outputRowBytes64 > std::numeric_limits<uint32_t>::max() )
+                    return SetError(error, "Neural-AI selected CSP Concat reference overflows the ABI");
+                RefV1 source = TensorRef(input->tensor.get(), uint32_t(sourceBase64), error);
+                if ( !error.empty() ) return false;
+                RefV1 destination = TensorRef(ofm->tensor.get(), uint32_t(destinationBase64), error);
+                if ( !error.empty() ) return false;
+                if ( !AppendDMA3D(source, destination, 16, 16, 32,
+                         uint32_t(lhsSlice.Width()), uint32_t(inputRowBytes64),
+                         uint32_t(outputRowBytes64), uint32_t(lhsSlice.Height()),
+                         uint32_t(operation->Index()), uint32_t(index), error) )
+                    return false;
+            }
+            return true;
+        }
         if ( lhs == nullptr || rhs == nullptr || ofm == nullptr ||
              !IsFullTensorConnection(lhs) || !IsFullTensorConnection(rhs) ||
              !IsFullTensorConnection(ofm) || lhs->Type() != regor::DataType::Int8 ||
@@ -1515,6 +1590,105 @@ struct GeneratorContext
         const uint32_t layerId = uint32_t(operation->Index());
         return AppendDMA1D(lhsRef, ofmLhsRef, uint32_t(lhsBytes), layerId, 0, error) &&
                AppendDMA1D(rhsRef, ofmRhsRef, uint32_t(rhsBytes), layerId, 1, error);
+    }
+
+    bool AppendConcatStripe(const SchedulerOperation *operation, const HLCStripe *stripe,
+        uint32_t &tileId, std::string &error)
+    {
+        const SchedulerConnection *ofm = operation->OFM();
+        if ( stripe == nullptr || stripe->stripeAreas.size() != 1 || ofm == nullptr ||
+             ofm->tensor->format != TensorFormat::C32Blocked )
+            return SetError(error, "Neural-AI striped Concat has an invalid scheduled operation");
+        const Shape start = ReshapeToNHWC(stripe->stripeAreas.front().ofmArea.Start());
+        const Shape shape = ReshapeToNHWC(stripe->stripeAreas.front().ofmArea.SizeShape());
+        const Shape outputStorage = ReshapeToNHWC(ofm->tensor->storageShape);
+        if ( start.Batch() != 0 || start.Width() != 0 || start.Depth() != 0 ||
+             shape.Batch() != 1 || shape.Height() <= 0 ||
+             shape.Width() != ofm->shape.Width() || shape.Depth() != ofm->shape.Depth() ||
+             outputStorage.Batch() != 1 || outputStorage.Height() <= 0 ||
+             outputStorage.Width() != shape.Width() )
+            return SetError(error, "Neural-AI striped Concat requires a full-width, full-depth Y stripe");
+
+        std::vector<const SchedulerConnection *> inputs;
+        for ( int index = 0; ; ++index )
+        {
+            const SchedulerConnection *input = operation->TryIFM(index);
+            if ( input == nullptr ) break;
+            inputs.push_back(input);
+        }
+        const bool compactC16x3 = inputs.size() == 3 && shape.Depth() == 48 &&
+            std::all_of(inputs.begin(), inputs.end(), [&](const SchedulerConnection *input)
+            {
+                return input->shape == ofm->shape.WithDepth(16) &&
+                       IsCompactNHWC(input->tensor->format);
+            });
+        const bool c32Inputs = inputs.size() == 2 &&
+            std::all_of(inputs.begin(), inputs.end(), [&](const SchedulerConnection *input)
+            {
+                return input->shape.WithDepth(1) == ofm->shape.WithDepth(1) &&
+                       input->tensor->format == TensorFormat::C32Blocked;
+            });
+        if ( !compactC16x3 && !c32Inputs )
+            return SetError(error,
+                "Neural-AI striped Concat requires structural compact C16x3 or native C32 inputs");
+        if ( c32Inputs &&
+             DivRoundUp(inputs[0]->shape.Depth(), 32) +
+                     DivRoundUp(inputs[1]->shape.Depth(), 32) !=
+                 DivRoundUp(ofm->shape.Depth(), 32) )
+            return SetError(error, "Neural-AI striped Concat physical C32 groups are inconsistent");
+
+        RefV1 outputBase = TensorRef(ofm->tensor.get(), 0, error);
+        if ( !error.empty() ) return false;
+        const uint32_t rowBytes = uint32_t(shape.Width()) * 32u;
+        const uint32_t outputPlaneBytes = uint32_t(outputStorage.Height()) * rowBytes;
+        int outputGroup = 0;
+        for ( int inputIndex = 0; inputIndex < int(inputs.size()); ++inputIndex )
+        {
+            const SchedulerConnection *input = inputs[inputIndex];
+            const Shape inputStorage = ReshapeToNHWC(input->tensor->storageShape);
+            if ( inputStorage.Batch() != 1 || inputStorage.Height() <= 0 ||
+                 inputStorage.Width() != shape.Width() )
+                return SetError(error, "Neural-AI striped Concat input storage is invalid");
+            RefV1 inputBase = TensorRef(input->tensor.get(), 0, error);
+            if ( !error.empty() ) return false;
+            const uint32_t inputPixelBytes = compactC16x3 ? 16u : 32u;
+            const uint32_t inputRowBytes = uint32_t(shape.Width()) * inputPixelBytes;
+            const uint32_t inputPlaneBytes = uint32_t(inputStorage.Height()) * inputRowBytes;
+            const int groups = compactC16x3 ? 1 : DivRoundUp(input->shape.Depth(), 32);
+            for ( int group = 0; group < groups; ++group )
+            {
+                int rowsDone = 0;
+                while ( rowsDone < shape.Height() )
+                {
+                    const int logicalY = start.Height() + rowsDone;
+                    const int inputY = logicalY % inputStorage.Height();
+                    const int outputY = logicalY % outputStorage.Height();
+                    const int rows = std::min({shape.Height() - rowsDone,
+                        inputStorage.Height() - inputY, outputStorage.Height() - outputY});
+                    RefV1 source = inputBase;
+                    RefV1 destination = outputBase;
+                    source.offset += uint32_t(group) * inputPlaneBytes +
+                        uint32_t(inputY) * inputRowBytes;
+                    if ( compactC16x3 )
+                    {
+                        destination.offset += uint32_t(inputIndex / 2) * outputPlaneBytes +
+                            uint32_t(outputY) * rowBytes + uint32_t(inputIndex % 2) * 16u;
+                    }
+                    else
+                    {
+                        destination.offset += uint32_t(outputGroup + group) * outputPlaneBytes +
+                            uint32_t(outputY) * rowBytes;
+                    }
+                    if ( !AppendDMA3D(source, destination, compactC16x3 ? 16u : 32u,
+                             inputPixelBytes, 32, uint32_t(shape.Width()), inputRowBytes,
+                             rowBytes, uint32_t(rows), uint32_t(operation->Index()), tileId++, error) )
+                        return false;
+                    rowsDone += rows;
+                }
+            }
+            if ( !compactC16x3 ) outputGroup += groups;
+        }
+        return true;
     }
 
     bool AppendHeadPack(const SchedulerOperation *operation, std::string &error)
@@ -1741,6 +1915,99 @@ struct GeneratorContext
         const SchedulerOpInfo *cost = schedule->Cost(operation);
         const auto *config = cost != nullptr && cost->Config() != nullptr ?
             static_cast<const NeuralAIOpConfig *>(cost->Config()) : nullptr;
+        if ( config != nullptr && config->Mode() == NeuralAIOpMode::Conv2DPointwiseC32Requant )
+        {
+            if ( cost->npuWeightsTensor == nullptr || stripe == nullptr ||
+                 stripe->stripeAreas.size() != 1 )
+                return SetError(error, "Neural-AI striped pointwise Conv has no scheduled constants or stripe");
+            const SchedulerConnection *ifm = operation->IFM(0);
+            const SchedulerConnection *ofm = operation->OFM();
+            const StripeArea &area = stripe->stripeAreas.front();
+            if ( area.ifmCount != 1 || ifm->Type() != regor::DataType::Int8 ||
+                 ofm->Type() != regor::DataType::Int8 ||
+                 ifm->tensor->format != TensorFormat::C32Blocked ||
+                 ofm->tensor->format != TensorFormat::C32Blocked )
+                return SetError(error, "Neural-AI striped pointwise Conv requires C32 feature maps");
+
+            const Shape ifmAreaStart = ReshapeToNHWC(area.ifmAreas[0].Start());
+            const Shape ifmAreaShape = ReshapeToNHWC(area.ifmAreas[0].SizeShape());
+            const Shape ofmAreaStart = ReshapeToNHWC(area.ofmArea.Start());
+            const Shape ofmAreaShape = ReshapeToNHWC(area.ofmArea.SizeShape());
+            const Shape ifmStorage = ReshapeToNHWC(ifm->tensor->storageShape);
+            const Shape ofmStorage = ReshapeToNHWC(ofm->tensor->storageShape);
+            const uint32_t channelK = uint32_t(ifm->shape.Depth());
+            const uint32_t depthN = uint32_t(ofm->shape.Depth());
+            const uint32_t paddedK = uint32_t(RoundAway(int(channelK), 32));
+            const uint32_t paddedN = uint32_t(RoundAway(int(depthN), 32));
+            const uint32_t kGroups = paddedK / 32u;
+            const uint32_t nGroups = paddedN / 32u;
+            if ( ifmAreaStart.Batch() != 0 || ofmAreaStart.Batch() != 0 ||
+                 ifmAreaStart.Width() != 0 || ofmAreaStart.Width() != 0 ||
+                 ifmAreaStart.Depth() != 0 || ofmAreaStart.Depth() != 0 ||
+                 ifmAreaShape != ofmAreaShape.WithDepth(int(channelK)) ||
+                 ofmAreaShape.Batch() != 1 || ofmAreaShape.Height() <= 0 ||
+                 ofmAreaShape.Width() != ofm->shape.Width() ||
+                 ofmAreaShape.Depth() != int(depthN) || ifmStorage.Height() <= 0 ||
+                 ofmStorage.Height() <= 0 || ifmStorage.Width() != ofmAreaShape.Width() ||
+                 ofmStorage.Width() != ofmAreaShape.Width() || kGroups == 0 || nGroups == 0 )
+                return SetError(error, "Neural-AI striped pointwise Conv has an invalid full-width Y stripe");
+
+            const NpuWeightTensor *encoded = cost->npuWeightsTensor.get();
+            if ( encoded->encodedRanges.size() != 1 || !encoded->bufferView.HasBuffer() )
+                return SetError(error, "Neural-AI striped pointwise Conv requires one encoded constant range");
+            const WeightRange &range = encoded->encodedRanges.begin()->second;
+            if ( range.scaleBytes != int(paddedN * sizeof(neuralai::QParamV1)) ||
+                 range.weightBytes != int(kGroups * nGroups * 32u * 32u) )
+                return SetError(error, "Neural-AI striped pointwise Conv constants have invalid dimensions");
+            const uint8_t *data = encoded->bufferView.RawData<uint8_t>() + range.offset;
+            MatrixData &materialized = MaterializeMatrixData(operation, paddedN, range, data);
+            const uint32_t inputGroupStride = uint32_t(ifmStorage.Height()) *
+                uint32_t(ifmStorage.Width()) * 32u;
+            const uint32_t outputGroupStride = uint32_t(ofmStorage.Height()) *
+                uint32_t(ofmStorage.Width()) * 32u;
+            uint32_t ifmSliceOffset = 0;
+            if ( !C32SliceByteOffset(ifm, ifmSliceOffset, error) ) return false;
+            RefV1 ifmBase = TensorRef(ifm->tensor.get(), ifmSliceOffset, error);
+            if ( !error.empty() ) return false;
+            RefV1 ofmBase = TensorRef(ofm->tensor.get(), 0, error);
+            if ( !error.empty() ) return false;
+
+            int rowsDone = 0;
+            while ( rowsDone < ofmAreaShape.Height() )
+            {
+                const int inputY = (ifmAreaStart.Height() + rowsDone) % ifmStorage.Height();
+                const int outputY = (ofmAreaStart.Height() + rowsDone) % ofmStorage.Height();
+                const int rows = std::min({ofmAreaShape.Height() - rowsDone,
+                    ifmStorage.Height() - inputY, ofmStorage.Height() - outputY});
+                const uint32_t matrixRows = uint32_t(rows * ofmAreaShape.Width());
+                if ( kGroups > 1u && uint64_t(matrixRows) * 32u * 4u > partialBytes )
+                    return SetError(error, "Neural-AI striped pointwise Conv exceeds its partial buffer");
+                for ( uint32_t nGroup = 0; nGroup < nGroups; ++nGroup )
+                {
+                    AppendRQLoad(materialized.qparamBase + nGroup * 32u, nGroup,
+                        uint32_t(operation->Index()), tileId++);
+                    RefV1 weights{};
+                    weights.region = uint16_t(Region::ModelConstants);
+                    weights.offset = materialized.weightBase + nGroup * kGroups * 32u * 32u;
+                    RefV1 input = ifmBase;
+                    input.offset += uint32_t(inputY * ifmStorage.Width()) * 32u;
+                    RefV1 output = ofmBase;
+                    output.offset += nGroup * outputGroupStride +
+                        uint32_t(outputY * ofmStorage.Width()) * 32u;
+                    RefV1 partial{};
+                    if ( kGroups > 1u )
+                    {
+                        partial.region = uint16_t(Region::TCDMScratch);
+                        partial.offset = partialOffset;
+                    }
+                    AppendPointwiseC32(weights, input, partial, output, matrixRows,
+                        kGroups, 1, nGroup, inputGroupStride, outputGroupStride,
+                        uint32_t(operation->Index()), tileId++);
+                }
+                rowsDone += rows;
+            }
+            return true;
+        }
         if ( config == nullptr || !IsLinebufferConvMode(config->Mode()) || cost->npuWeightsTensor == nullptr ||
              stripe == nullptr || stripe->stripeAreas.size() != 1 )
             return SetError(error, std::string("Neural-AI striped matrix path requires linebuffer Conv2D, got ") +
@@ -2442,6 +2709,10 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
                 else if ( stripeOperation->Type() == OpType::LUT )
                 {
                     if ( !context.AppendAFULutStripe(stripeOperation, stripe, tileId, error) ) return false;
+                }
+                else if ( stripeOperation->Type() == OpType::Concat )
+                {
+                    if ( !context.AppendConcatStripe(stripeOperation, stripe, tileId, error) ) return false;
                 }
                 else
                 {
