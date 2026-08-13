@@ -166,24 +166,47 @@ bool SupportedC32DepthSlice(const Operation *operation)
     const auto *options = passthrough != nullptr ?
         passthrough->builtin_options_as_StridedSliceOptions() : nullptr;
     if ( ifm == nullptr || ofm == nullptr || beginParam == nullptr || endParam == nullptr ||
-         stridesParam == nullptr || options == nullptr || ifm->shape.Size() != 4 ||
-         ofm->shape.Size() != 4 || ifm->shape.WithDepth(1) != ofm->shape.WithDepth(1) ||
+         stridesParam == nullptr || options == nullptr ||
          ifm->quantization != ofm->quantization || options->ellipsis_mask() != 0 ||
-         options->new_axis_mask() != 0 || options->shrink_axis_mask() != 0 ||
-         (options->begin_mask() & 0x7) != 0x7 || (options->end_mask() & 0x7) != 0x7 )
+         options->new_axis_mask() != 0 || options->shrink_axis_mask() != 0 )
     {
         Failure(operation,
-            "Neural-AI StridedSlice requires a full-spatial, quantization-preserving rank-4 depth slice");
+            "Neural-AI StridedSlice requires a quantization-preserving selected channel slice");
         return false;
     }
 
     const Shape begin = TensorToShape(beginParam->tensor.get(), beginParam->shape.Elements());
     const Shape end = TensorToShape(endParam->tensor.get(), endParam->shape.Elements());
     const Shape strides = TensorToShape(stridesParam->tensor.get(), stridesParam->shape.Elements());
-    if ( begin.Size() != 4 || end.Size() != 4 || strides.Size() != 4 ||
+    if ( begin.Size() != ifm->shape.Size() || end.Size() != ifm->shape.Size() ||
+         strides.Size() != ifm->shape.Size() ||
          strides != strides.WithOnes() )
     {
-        Failure(operation, "Neural-AI StridedSlice requires four unit strides");
+        Failure(operation, "Neural-AI StridedSlice requires one unit stride per input axis");
+        return false;
+    }
+
+    const auto effectiveBegin = [&](int axis)
+    {
+        return (options->begin_mask() & (1 << axis)) != 0 ? 0 : begin[axis];
+    };
+    const auto effectiveEnd = [&](int axis)
+    {
+        return (options->end_mask() & (1 << axis)) != 0 ? ifm->shape[axis] : end[axis];
+    };
+    const bool compactClassHead = ifm->shape.Size() == 3 && ofm->shape.Size() == 3 &&
+        ifm->shape[0] == 1 && ifm->shape[1] == 144 && ifm->shape[2] > 0 &&
+        ofm->shape == Shape(1, 80, ifm->shape[2]) && effectiveBegin(0) == 0 &&
+        effectiveEnd(0) == 1 && effectiveBegin(1) == 64 && effectiveEnd(1) == 144 &&
+        effectiveBegin(2) == 0 && effectiveEnd(2) == ifm->shape[2];
+    if ( compactClassHead ) return true;
+
+    if ( ifm->shape.Size() != 4 || ofm->shape.Size() != 4 ||
+         ifm->shape.WithDepth(1) != ofm->shape.WithDepth(1) ||
+         (options->begin_mask() & 0x7) != 0x7 || (options->end_mask() & 0x7) != 0x7 )
+    {
+        Failure(operation,
+            "Neural-AI StridedSlice requires a full-spatial rank-4 depth slice or selected C144-to-C80 class view");
         return false;
     }
 

@@ -1553,6 +1553,15 @@ TEST_CASE("Neural-AI constraints substitute INT8 Sigmoid with an AFU LUT")
     REQUIRE(lutRequirements.tensor.next->usage == TensorUsage::OFM);
     REQUIRE(lutRequirements.tensor.next->format == TensorFormat::C32Blocked);
 
+    query.ifm[0].shape = Shape(1, 80, 2100);
+    query.ofm.shape = query.ifm[0].shape;
+    ArchRequirements classHeadRequirements;
+    REQUIRE(constraints->OperatorQuery(OpType::LUT, &query, &classHeadRequirements) ==
+        QueryResult::NativeHasReq);
+    REQUIRE(classHeadRequirements.tensor.format == TensorFormat::NHWC);
+    REQUIRE(classHeadRequirements.tensor.next != nullptr);
+    REQUIRE(classHeadRequirements.tensor.next->format == TensorFormat::NHWC);
+
     query.transposeMask = TransposeType::NCHW;
     REQUIRE(constraints->OperatorQuery(OpType::LUT, &query) == QueryResult::Unsupported);
     query.transposeMask = TransposeType::None;
@@ -2312,6 +2321,80 @@ TEST_CASE("Neural-AI command generator rejects sliced external-to-external Memor
     REQUIRE_FALSE(commandGenerator.Generate(
         graph.get(), scheduleOps, schedule.get(), artifact, error));
     REQUIRE(error == "Neural-AI DMA1D requires a local source or destination");
+}
+
+TEST_CASE("Neural-AI command generator reads compact class LUT slice directly")
+{
+    constexpr int locations = 37;
+    ArchNeuralAI arch;
+    const Shape fullShape(1, 1, 144, locations);
+    const Shape classShape(1, 1, 80, locations);
+    auto input = CreateTensor("input", fullShape, DataType::Int8);
+    auto staged = CreateTensor("staged", fullShape, DataType::Int8);
+    auto lutOutput = CreateTensor("lut_output", classShape, DataType::Int8);
+    auto output = CreateTensor("output", classShape, DataType::Int8);
+    std::vector<int8_t> lutValues(256);
+    for ( int index = 0; index < 256; ++index ) lutValues[index] = int8_t(index - 128);
+    auto lut = CreateTensor("lut", Shape(256), DataType::Int8, std::move(lutValues));
+
+    auto inputCopy = CreateOperation(
+        OpType::MemoryCopy, TensorUsage::IFM0, input, TensorUsage::OFM, staged);
+    inputCopy->Input(TensorUsage::IFM0)->Set(Quantization::Unit());
+    inputCopy->Output(TensorUsage::OFM)->Set(Quantization::Unit());
+    auto activation = CreateOperation(
+        OpType::LUT, TensorUsage::IFM0, staged, TensorUsage::OFM, lutOutput);
+    activation->Input(TensorUsage::IFM0)->Set(
+        TensorSlice(Shape(0, 0, 64, 0), classShape, fullShape.WithOnes()));
+    activation->Input(TensorUsage::IFM0)->Set(Quantization::Unit());
+    activation->Output(TensorUsage::OFM)->Set(Quantization::Unit());
+    activation->ConnectInput(TensorUsage::LUT, lut);
+    auto outputCopy = CreateOperation(
+        OpType::MemoryCopy, TensorUsage::IFM0, lutOutput, TensorUsage::OFM, output);
+    outputCopy->Input(TensorUsage::IFM0)->Set(Quantization::Unit());
+    outputCopy->Output(TensorUsage::OFM)->Set(Quantization::Unit());
+    std::vector<std::shared_ptr<Operation>> sourceOps = {inputCopy, activation, outputCopy};
+    auto graph = CreateGraph(sourceOps);
+
+    const std::unordered_map<UniqueId, UniqueId> equivalenceIds;
+    SchedulerPacking packing(&arch, false, equivalenceIds);
+    auto scheduleOps = packing.Process(graph.get());
+    SchedulerOptions schedulerOptions;
+    schedulerOptions.disabled.Set(SchedulerFeature::Cascading);
+    schedulerOptions.disabled.Set(SchedulerFeature::WeightBuffering);
+    Scheduler scheduler(
+        &arch, schedulerOptions, "neural-ai-compact-lut-slice", scheduleOps,
+        packing.OpConfigCompatablility());
+    auto schedule = scheduler.Process();
+    const SchedulerOperation *scheduledLut = nullptr;
+    for ( const auto &operation : scheduleOps )
+        if ( operation->Type() == OpType::LUT ) scheduledLut = operation.get();
+    REQUIRE(scheduledLut != nullptr);
+
+    CompiledNeuralAIArtifact artifact;
+    std::string error;
+    NeuralAICommandGenerator commandGenerator;
+    const bool generated = commandGenerator.Generate(
+        graph.get(), scheduleOps, schedule.get(), artifact, error);
+    INFO(error);
+    REQUIRE(generated);
+    uint32_t lutCommands = 0;
+    size_t offset = 0;
+    while ( offset < artifact.commands.size() )
+    {
+        const uint16_t type = Read16(artifact.commands, offset);
+        const uint16_t bytes = Read16(artifact.commands, offset + 2);
+        REQUIRE(bytes >= 32);
+        if ( type == uint16_t(neuralai::CommandType::AFULut) )
+        {
+            REQUIRE(Read32(artifact.commands, offset + 20) ==
+                uint32_t(scheduledLut->IFM(0)->tensor->AllocatedAddress()) + 64u * locations);
+            REQUIRE(Read32(artifact.commands, offset + 40) == 80u * locations);
+            ++lutCommands;
+        }
+        offset += bytes;
+    }
+    REQUIRE(offset == artifact.commands.size());
+    REQUIRE(lutCommands == 1);
 }
 
 TEST_CASE("Neural-AI compiler emits a native model package")

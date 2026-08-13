@@ -1191,20 +1191,57 @@ struct GeneratorContext
         const SchedulerConnection *ifm = operation->IFM(0);
         const SchedulerConnection *ofm = operation->OFM();
         const SchedulerConnection *lut = operation->TryInput(TensorUsage::LUT);
+        const bool c32 = ifm != nullptr && ofm != nullptr &&
+            ifm->tensor->format == TensorFormat::C32Blocked &&
+            ofm->tensor->format == TensorFormat::C32Blocked;
+        const bool compact = ifm != nullptr && ofm != nullptr &&
+            IsCompactNHWC(ifm->tensor->format) && IsCompactNHWC(ofm->tensor->format);
         if ( ifm == nullptr || ofm == nullptr || lut == nullptr ||
-             !IsFullTensorConnection(ifm) || !IsFullTensorConnection(ofm) ||
+             !IsFullTensorConnection(ofm) ||
              ifm->Type() != regor::DataType::Int8 || ofm->Type() != regor::DataType::Int8 ||
-             ifm->shape != ofm->shape ||
-             ifm->tensor->format != TensorFormat::C32Blocked ||
-             ofm->tensor->format != TensorFormat::C32Blocked ||
+             ifm->SliceShape() != ofm->shape ||
+             (!c32 && !compact) || (c32 && !IsFullTensorConnection(ifm)) ||
              !lut->tensor->IsConstant() || lut->tensor->dataType != regor::DataType::Int8 ||
              lut->tensor->bufferView.Elements() != 256 )
-            return SetError(error, "Neural-AI AFU LUT requires equal C32 INT8 tensors and a 256-byte LUT");
-        const int64_t bytes = ifm->tensor->AllocationSizeBytes();
-        if ( bytes <= 0 || bytes != ofm->tensor->AllocationSizeBytes() ||
+            return SetError(error,
+                "Neural-AI AFU LUT requires equal C32 or compact INT8 views and a 256-byte LUT");
+        const int64_t bytes = compact ?
+            ifm->SliceShape().Elements64() : ifm->tensor->AllocationSizeBytes();
+        const int64_t outputBytes = TensorStorageBytes(ofm->tensor.get());
+        if ( bytes <= 0 || outputBytes < bytes || (!compact && bytes != outputBytes) ||
              bytes > std::numeric_limits<uint32_t>::max() )
-            return SetError(error, "Neural-AI AFU LUT tensor storage size is invalid");
-        RefV1 ifmRef = TensorRef(ifm->tensor.get(), 0, error);
+            return SetError(error, fmt::format(
+                "Neural-AI AFU LUT tensor storage size is invalid (view={}, output={})",
+                bytes, outputBytes));
+        uint32_t ifmOffset = 0;
+        if ( !IsFullTensorConnection(ifm) )
+        {
+            if ( !IsCompactNHWC(ifm->tensor->format) )
+                return SetError(error, "Neural-AI sliced AFU LUT input must use compact storage");
+            const Shape storage = ReshapeToNHWC(ifm->tensor->storageShape);
+            const Shape slice = ReshapeToNHWC(ifm->SliceShape());
+            const Shape offset = ifm->slice.offset ?
+                ReshapeToNHWC(ifm->slice.offset) : storage.WithZeros();
+            const Shape stride = ifm->slice.stride ?
+                ReshapeToNHWC(ifm->slice.stride) : storage.WithOnes();
+            const bool contiguous = slice.Height() == 1 ||
+                (slice.Width() == storage.Width() && offset.Width() == 0);
+            if ( storage.Batch() != 1 || slice.Batch() != 1 ||
+                 slice.Depth() != storage.Depth() || offset.Batch() != 0 ||
+                 offset.Depth() != 0 || offset.Height() < 0 || offset.Width() < 0 ||
+                 offset.Height() + slice.Height() > storage.Height() ||
+                 offset.Width() + slice.Width() > storage.Width() ||
+                 stride != stride.WithOnes() || !contiguous )
+                return SetError(error,
+                    "Neural-AI sliced AFU LUT requires one contiguous compact rectangle");
+            const uint64_t offset64 =
+                (uint64_t(offset.Height()) * uint64_t(storage.Width()) +
+                    uint64_t(offset.Width())) * uint64_t(storage.Depth());
+            if ( offset64 > std::numeric_limits<uint32_t>::max() )
+                return SetError(error, "Neural-AI sliced AFU LUT offset overflows the ABI");
+            ifmOffset = uint32_t(offset64);
+        }
+        RefV1 ifmRef = TensorRef(ifm->tensor.get(), ifmOffset, error);
         if ( !error.empty() ) return false;
         RefV1 ofmRef = TensorRef(ofm->tensor.get(), 0, error);
         if ( !error.empty() ) return false;

@@ -405,8 +405,15 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
             return QueryResult::Unsupported;
         if ( req != nullptr )
         {
-            Set(s_tensorRequirements[0], TensorUsage::IFM0, TensorFormat::C32Blocked);
-            Set(s_tensorRequirements[1], TensorUsage::OFM, TensorFormat::C32Blocked);
+            const Shape &shape = query->ofm.shape;
+            const bool compactClassHead =
+                (shape.Size() == 3 && shape[0] == 1 && shape[1] == 80 && shape[2] > 0) ||
+                (shape.Size() == 4 && shape.Batch() == 1 && shape.Height() == 1 &&
+                    shape.Width() == 80 && shape.Depth() > 0);
+            const TensorFormat format = compactClassHead ?
+                TensorFormat::NHWC : TensorFormat::C32Blocked;
+            Set(s_tensorRequirements[0], TensorUsage::IFM0, format);
+            Set(s_tensorRequirements[1], TensorUsage::OFM, format);
             s_tensorRequirements[0].next = &s_tensorRequirements[1];
             s_tensorRequirements[1].next = nullptr;
             req->tensor = s_tensorRequirements[0];

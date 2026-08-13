@@ -157,9 +157,9 @@ new runtime path has not yet passed E2E.
 | YOLO C144 head transpose | Verified | three `[0,3,1,2]` head packs; vectorized C32-to-CHW runtime path |
 | DFL16 projection | Verified | exact ops 234–239; fused 16-bin AFU plus one Spatz pack/requant call per tile |
 | Async DMA and overlap | Not implemented | blocking execution remains correct; performance phase |
-| Full selected graphs | Memory blocked | peak is 640,320 bytes; 520,192 available; head LUT/live range is next |
+| Full selected graphs | Memory blocked | peak is 604,800 bytes; 520,192 available; three-head compact Concat is next |
 
-The current focused Regor suite passes 99 Neural-AI cases and 37,191 assertions.
+The current focused Regor suite passes 100 Neural-AI cases and 37,205 assertions.
 Runtime ABI/host checks, cross-builds, firmware-size gates, and focused C144,
 DFL16, and MatMul V2 E2E tests pass.
 
@@ -209,11 +209,14 @@ the focused test had not written its invocation and binding table to L2.
 - Full YOLO compilation now passes both resize operations, all three MaxPools,
   the first three head transposes, and the fused DFL16 chain, then stops at the
   full-schedule TCDM capacity check. Structural compact C16 handling and striped
-  DMA3D Concat gathering reduce the peak from 1,659,008 to 640,320 bytes
-  (61.4%). The 80x80 C16x3 CSP cascade and 40x40 C128+C64 neck cascade each use
-  517,120 bytes. The next maximum is head op 172: a C80x2100 LUT while 471,360
-  bytes remain live. Stem cascade 3 is also still 563,200 bytes and must be
-  brought below the 520,192-byte release limit.
+  DMA3D Concat gathering reduce the peak from 1,659,008 to 604,800 bytes
+  (63.5%). The selected C144-to-C80 class slice is now a compact metadata view;
+  AFU LUT reads that contiguous view directly and its point drops to 470,400
+  bytes. The 80x80 C16x3 CSP cascade and 40x40 C128+C64 neck cascade each use
+  517,120 bytes. The next maximum is the out-of-place compact three-head
+  C144x2100 Concat, whose 302,400-byte input and output live ranges overlap.
+  Stem cascade 3 is also still 563,200 bytes and must be brought below the
+  520,192-byte release limit.
 
 ### Other retained evidence
 
@@ -243,7 +246,7 @@ compiler-runtime package is byte-exact and passes in 468,781 cycles under the
 
 ### P0 — Full-graph memory feasibility
 
-The current full YOLO compile reaches scheduling and requests 640,320 bytes of
+The current full YOLO compile reaches scheduling and requests 604,800 bytes of
 TCDM, down from 1,659,008 bytes. Reduce this to the 520,192-byte allocatable
 limit without adding a scalar or CPU fallback:
 
@@ -262,8 +265,12 @@ limit without adding a scalar or CPU fallback:
   consumes the rolling C32 buffer directly, including multi-group input and
   rolling wrap. This is structural in channel/layout topology and does not
   constrain H/W to `[1,80,80,48]`. Focused scheduler/command tests pass.
-- Next measured blocker: reduce the 640,320-byte detection-head peak at op 172
-  by shortening or streaming the live C144/C80x2100 path into LUT/DFL. Then
+- Completed class-view step: selected `[1,144,L] -> [1,80,L]` slicing is an
+  unstrided compact view for any positive location count `L`; AFU LUT accepts
+  the contiguous slice without a C32 conversion. No overlapping AFU buffers or
+  firmware/RTL relaxation is used.
+- Next measured blocker: eliminate the 604,800-byte out-of-place compact
+  three-head C144 Concat peak by streaming/fusing its pack/consumer path. Then
   remove the remaining 43,008-byte excess in stem cascade 3. Retain full tensor
   materialization only as the correctness fallback.
 - Prove compact public bindings and native internal layouts end to end.
