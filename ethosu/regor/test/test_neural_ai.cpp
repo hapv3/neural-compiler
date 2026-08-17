@@ -621,6 +621,68 @@ flatbuffers::DetachedBuffer BuildHeadTransposeModel(
     return builder.Release();
 }
 
+flatbuffers::DetachedBuffer BuildConcatHeadTransposeModel(int height = 10, int width = 10)
+{
+    flatbuffers::FlatBufferBuilder builder;
+    const std::vector<float> scales = {0.25f};
+    const std::vector<int64_t> zeroPoints = {-3};
+    const auto quantization = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &scales, &zeroPoints);
+    const std::vector<int32_t> lhsShape = {1, height, width, 64};
+    const std::vector<int32_t> rhsShape = {1, height, width, 80};
+    const std::vector<int32_t> mergedShape = {1, height, width, 144};
+    const std::vector<int32_t> outputShape = {1, 144, height, width};
+    const std::vector<int32_t> permutation = {0, 3, 1, 2};
+    const std::vector<int32_t> permutationShape = {4};
+    std::vector<uint8_t> permutationData(permutation.size() * sizeof(int32_t));
+    std::memcpy(permutationData.data(), permutation.data(), permutationData.size());
+    std::vector<flatbuffers::Offset<tflite::Buffer>> buffers = {
+        tflite::CreateBufferDirect(builder),
+        tflite::CreateBufferDirect(builder, &permutationData),
+    };
+    std::vector<flatbuffers::Offset<tflite::Tensor>> tensors = {
+        tflite::CreateTensorDirect(
+            builder, &lhsShape, tflite::TensorType::INT8, 0, "lhs", quantization),
+        tflite::CreateTensorDirect(
+            builder, &rhsShape, tflite::TensorType::INT8, 0, "rhs", quantization),
+        tflite::CreateTensorDirect(
+            builder, &mergedShape, tflite::TensorType::INT8, 0, "merged", quantization),
+        tflite::CreateTensorDirect(
+            builder, &permutationShape, tflite::TensorType::INT32, 1, "permutation"),
+        tflite::CreateTensorDirect(
+            builder, &outputShape, tflite::TensorType::INT8, 0, "output", quantization),
+    };
+    const auto concatOptions = tflite::CreateConcatenationOptions(
+        builder, 3, tflite::ActivationFunctionType::NONE);
+    const auto transposeOptions = tflite::CreateTransposeOptions(builder);
+    const std::vector<int32_t> concatInputs = {0, 1};
+    const std::vector<int32_t> concatOutputs = {2};
+    const std::vector<int32_t> transposeInputs = {2, 3};
+    const std::vector<int32_t> transposeOutputs = {4};
+    const std::vector<flatbuffers::Offset<tflite::Operator>> operations = {
+        tflite::CreateOperatorDirect(builder, 0, &concatInputs, &concatOutputs,
+            tflite::BuiltinOptions::ConcatenationOptions, concatOptions.Union()),
+        tflite::CreateOperatorDirect(builder, 1, &transposeInputs, &transposeOutputs,
+            tflite::BuiltinOptions::TransposeOptions, transposeOptions.Union()),
+    };
+    const std::vector<int32_t> graphInputs = {0, 1};
+    const std::vector<int32_t> graphOutputs = {4};
+    const std::vector<flatbuffers::Offset<tflite::SubGraph>> subgraphs = {
+        tflite::CreateSubGraphDirect(
+            builder, &tensors, &graphInputs, &graphOutputs, &operations, "main"),
+    };
+    const std::vector<flatbuffers::Offset<tflite::OperatorCode>> operatorCodes = {
+        tflite::CreateOperatorCodeDirect(builder, int8_t(tflite::BuiltinOperator::CONCATENATION),
+            nullptr, 1, tflite::BuiltinOperator::CONCATENATION),
+        tflite::CreateOperatorCodeDirect(builder, int8_t(tflite::BuiltinOperator::TRANSPOSE),
+            nullptr, 1, tflite::BuiltinOperator::TRANSPOSE),
+    };
+    const auto model = tflite::CreateModelDirect(
+        builder, 3, &operatorCodes, &subgraphs, "Neural-AI fused head-pack test", &buffers);
+    tflite::FinishModelBuffer(builder, model);
+    return builder.Release();
+}
+
 flatbuffers::DetachedBuffer BuildViewModel(
     tflite::BuiltinOperator viewOperator, bool followedByAdd)
 {
@@ -3594,6 +3656,46 @@ TEST_CASE("Neural-AI compiler emits vector head pack only for selected C144 NCHW
     compile(BuildHeadTransposeModel(10, 10, 128), false);
     compile(BuildHeadTransposeModel(10, 10, 144, {0, 2, 3, 1}), false);
     compile(BuildHeadTransposeModel(4, 16, 2100, {0, 1, 3, 2}), false);
+}
+
+TEST_CASE("Neural-AI compiler packs C64 and C80 head inputs without materializing C144")
+{
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildConcatHeadTransposeModel();
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+    const bool compiled = compiler.Compile();
+    INFO(compiler.LastError());
+    REQUIRE(compiled);
+
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    const uint32_t commandBytes = Read32(data + 64 + 12);
+    uint32_t offset = 224;
+    std::vector<uint32_t> packedChannels;
+    uint32_t localCopies = 0;
+    while ( offset < 224 + commandBytes )
+    {
+        const uint16_t commandType = Read16(data + offset);
+        const uint16_t commandSize = Read16(data + offset + 2);
+        REQUIRE(commandSize >= 32);
+        if ( commandType == uint16_t(neuralai::CommandType::CopyLayout) &&
+             Read16(data + offset + 32) == uint16_t(neuralai::CopyLayoutMode::C32ToCHW) )
+            packedChannels.push_back(Read32(data + offset + 56));
+        if ( commandType == uint16_t(neuralai::CommandType::DMA1D) &&
+             Read32(data + offset + 36) == uint32_t(neuralai::DMADirection::LocalToLocal) )
+            ++localCopies;
+        offset += commandSize;
+    }
+    REQUIRE(offset == 224 + commandBytes);
+    REQUIRE(packedChannels == std::vector<uint32_t>{64, 80});
+    REQUIRE(localCopies == 0);
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
 }
 
 TEST_CASE("Neural-AI compiler lowers the complete Micro-MobileNet topology")

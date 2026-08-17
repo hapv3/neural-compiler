@@ -391,6 +391,38 @@ void NeuralAIGraphOptimiser::MaterializeStructuralCspConcatInputs(Operation *ope
     }
 }
 
+void NeuralAIGraphOptimiser::FuseStructuralHeadPack(Graph *graph, Operation *operation)
+{
+    if ( operation->Type() != OpType::Transpose ) return;
+    TensorConnection *transposeInput = operation->Input(TensorUsage::IFM0);
+    TensorConnection *transposeOutput = operation->Output(TensorUsage::OFM);
+    if ( transposeInput == nullptr || transposeOutput == nullptr ||
+         transposeInput->tensor->Writers().size() != 1 ) return;
+
+    Operation *concat = transposeInput->tensor->Writers().front().get();
+    TensorConnection *lhs = concat->Input(TensorUsage::IFM0);
+    TensorConnection *rhs = concat->Input(TensorUsage::IFM1);
+    TensorConnection *concatOutput = concat->Output(TensorUsage::OFM);
+    if ( concat->Type() != OpType::Concat || lhs == nullptr || rhs == nullptr ||
+         concat->Input(TensorUsage::IFM2) != nullptr || concatOutput == nullptr ||
+         concatOutput->tensor != transposeInput->tensor ||
+         concatOutput->tensor->Readers().size() != 1 || graph->IsOutput(concatOutput->tensor.get()) ) return;
+
+    const Shape lhsShape = Shape::PadAxes(lhs->SliceShape(), 4, 1);
+    const Shape rhsShape = Shape::PadAxes(rhs->SliceShape(), 4, 1);
+    const Shape mergedShape = Shape::PadAxes(concatOutput->shape, 4, 1);
+    const Shape outputShape = Shape::PadAxes(transposeOutput->shape, 4, 1);
+    if ( lhsShape.Batch() != 1 || lhsShape.Depth() != 64 || rhsShape != lhsShape.WithDepth(80) ||
+         mergedShape != lhsShape.WithDepth(144) ||
+         outputShape != Shape(1, 144, lhsShape.Height(), lhsShape.Width()) ||
+         !lhs->quantization.EqualScales(rhs->quantization) ||
+         !lhs->quantization.EqualScales(concatOutput->quantization) ) return;
+
+    operation->CopyInput(TensorUsage::IFM0, *lhs);
+    operation->CopyInput(TensorUsage::IFM1, *rhs);
+    concat->Disconnect();
+}
+
 void NeuralAIGraphOptimiser::DistributeStructuralHeadMerge(Graph *graph, Operation *operation)
 {
     if ( operation->Type() != OpType::Concat ) return;
@@ -518,6 +550,9 @@ void NeuralAIGraphOptimiser::OptimiseGraph(Graph *graph)
     for ( const auto &operation : operations ) DistributeStructuralHeadMerge(graph, operation.get());
     operations.clear();
     graph->GetAllOperations(operations);
+    for ( const auto &operation : operations ) FuseStructuralHeadPack(graph, operation.get());
+    operations.clear();
+    graph->GetAllOperations(operations);
     for ( const auto &operation : operations ) MaterializeStructuralCspConcatInputs(operation.get());
     for ( const auto &operation : operations )
     {
@@ -530,7 +565,8 @@ void NeuralAIGraphOptimiser::OptimiseGraph(Graph *graph)
         InsertInputConversion(graph, operation.get(), TensorUsage::IFM0);
         if ( operation->Type() == OpType::Concat && operation->Input(TensorUsage::IFM2) != nullptr )
             InsertInputConversion(graph, operation.get(), TensorUsage::IFM2);
-        if ( operation->Type() == OpType::Add || operation->Type() == OpType::Concat )
+        if ( operation->Type() == OpType::Add || operation->Type() == OpType::Concat ||
+             (operation->Type() == OpType::Transpose && operation->Input(TensorUsage::IFM1) != nullptr) )
             InsertInputConversion(graph, operation.get(), TensorUsage::IFM1);
         InsertOutputConversion(graph, operation.get());
     }

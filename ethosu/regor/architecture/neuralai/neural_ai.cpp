@@ -106,13 +106,17 @@ std::unique_ptr<ArchitectureOpConfig> ArchNeuralAI::GetOpConfig(OpType opType, c
          opType != OpType::Concat &&
          opType != OpType::Transpose &&
          opType != OpType::Dfl && opType != OpType::MemoryCopy ) return nullptr;
+    const bool splitHeadPack = query.ifmShape[1] && query.ifmShape[0].Depth() == 64 &&
+                               query.ifmShape[1] == query.ifmShape[0].WithDepth(80);
     const bool headPack = opType == OpType::Transpose && query.transpose == TransposeType::NCHW &&
                           query.ifmShape[0].Size() == 4 && query.ofmShape.Size() == 4 &&
-                          query.ifmShape[0].Batch() == 1 && query.ifmShape[0].Depth() == 144 &&
+                          query.ifmShape[0].Batch() == 1 &&
+                          (query.ifmShape[0].Depth() == 144 || splitHeadPack) &&
                           (query.ifmShape[0].Height() == 10 || query.ifmShape[0].Height() == 20 ||
                               query.ifmShape[0].Height() == 40) &&
                           query.ifmShape[0].Width() == query.ifmShape[0].Height() &&
                           (query.ofmShape == query.ifmShape[0] ||
+                              (splitHeadPack && query.ofmShape == query.ifmShape[0].WithDepth(144)) ||
                               query.ofmShape == Shape(1, 144, query.ifmShape[0].Height(),
                                                     query.ifmShape[0].Width()));
     if ( query.ifmBits != 8 || query.ofmBits != 8 ||

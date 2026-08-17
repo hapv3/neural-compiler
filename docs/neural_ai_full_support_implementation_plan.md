@@ -218,8 +218,10 @@ the focused test had not written its invocation and binding table to L2.
   stripes directly into TCDM and uses 256,000 bytes, down from 563,200 bytes.
   Neural-AI public bindings are excluded from internal arena allocation; RGB
   Conv outside this topology retains the full-copy fallback. The next schedule
-  maximum is 554,016 bytes at each C64+C80-to-C144 head Concat. Fuse that Concat
-  with its C32-to-CHW head pack.
+  maximum was 554,016 bytes at each C64+C80-to-C144 head Concat. Each selected
+  head now bypasses that materialization and emits two C32-to-CHW vector packs
+  for the C64 and C80 inputs. The full-model peak is 528,416 bytes at the 40x40
+  head pack, 8,224 bytes above the allocatable limit.
 
 ### Other retained evidence
 
@@ -282,9 +284,16 @@ limit without adding a scalar or CPU fallback:
   test checks 160 binding-to-TCDM DMA2D commands, one shared cascade, and a
   313,440-byte compiled-block TCDM requirement; standalone RGB Conv keeps its
   validated full-copy path.
-- Next measured blocker: fuse each C64+C80 head Concat with its following
-  C32-to-CHW pack to remove the 554,016-byte peak. Retain full tensor
-  materialization only as the correctness fallback.
+- Completed C64+C80 head-pack fusion: the structural two-input Concat is removed,
+  Transpose consumes both native inputs, and two segmented Spatz C32-to-CHW calls
+  write the compact output without a local C144 gather. The block test checks
+  exactly the 64- and 80-channel commands and no local-to-local DMA. This follows
+  the Micro-YOLO reference strategy of bypassing a logical Concat rather than
+  copying it; cycle counts remain reference-only until cluster verification.
+- Next measured blocker: remove the remaining 528,416-byte peak by bypassing the
+  40x40 CHW head tensor as well. Feed the C64 box input directly to fused DFL16
+  and the C80 class input directly to its LUT, retaining the materialized
+  C32-to-CHW path as the correctness fallback for standalone Transpose.
 - Prove compact public bindings and native internal layouts end to end.
 - Use Regor cascading, tiling, live ranges, and allocator before adding target
   policy.

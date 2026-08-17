@@ -350,6 +350,7 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
     if ( opType == OpType::Transpose )
     {
         const Shape &ifmShape = query->ifm[0].shape;
+        const Shape &ifm1Shape = query->ifm[1].shape;
         const Shape &ofmShape = query->ofm.shape;
         // GraphIR asks a mask-only capability question before it has attached
         // shapes.  Preserve the rank-4 NCHW form so the complete constrained
@@ -358,11 +359,18 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
             return QueryResult::NativeConstrained;
         const bool selectedSpatial = ifmShape.Height() == 10 || ifmShape.Height() == 20 ||
                                      ifmShape.Height() == 40;
+        const bool splitHeadPack = ifm1Shape && ifmShape.Depth() == 64 &&
+                                   ifm1Shape == ifmShape.WithDepth(80) &&
+                                   query->ifm[1].type == DataType::Int8 &&
+                                   query->ifm[1].quantization != nullptr &&
+                                   query->ifm[0].quantization != nullptr &&
+                                   query->ifm[1].quantization->EqualScales(*query->ifm[0].quantization);
         if ( query->ifm[0].type != DataType::Int8 || query->ofm.type != DataType::Int8 ||
              query->transposeMask != TransposeType::NCHW ||
              !IsStaticPositiveShape(ifmShape) || !IsStaticPositiveShape(ofmShape) ||
              ifmShape.Size() != 4 || ofmShape.Size() != 4 || ifmShape.Batch() != 1 ||
-             ifmShape.Depth() != 144 || !selectedSpatial || ifmShape.Width() != ifmShape.Height() ||
+             (ifmShape.Depth() != 144 && !splitHeadPack) ||
+             !selectedSpatial || ifmShape.Width() != ifmShape.Height() ||
              ofmShape != Shape(1, 144, ifmShape.Height(), ifmShape.Width()) ||
              query->ifm[0].quantization == nullptr || query->ofm.quantization == nullptr ||
              !query->ifm[0].quantization->EqualScales(*query->ofm.quantization) )
@@ -370,9 +378,16 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
         if ( req != nullptr )
         {
             Set(s_tensorRequirements[0], TensorUsage::IFM0, TensorFormat::C32Blocked);
-            Set(s_tensorRequirements[1], TensorUsage::OFM, TensorFormat::NHWC);
+            Set(s_tensorRequirements[1], splitHeadPack ? TensorUsage::IFM1 : TensorUsage::OFM,
+                splitHeadPack ? TensorFormat::C32Blocked : TensorFormat::NHWC);
             s_tensorRequirements[0].next = &s_tensorRequirements[1];
-            s_tensorRequirements[1].next = nullptr;
+            if ( splitHeadPack )
+            {
+                Set(s_tensorRequirements[2], TensorUsage::OFM, TensorFormat::NHWC);
+                s_tensorRequirements[1].next = &s_tensorRequirements[2];
+                s_tensorRequirements[2].next = nullptr;
+            }
+            else s_tensorRequirements[1].next = nullptr;
             req->tensor = s_tensorRequirements[0];
             req->req.Set(ArchRequirement::Tensor);
             return QueryResult::NativeHasReq;

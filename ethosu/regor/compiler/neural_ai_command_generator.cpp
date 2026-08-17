@@ -1789,62 +1789,94 @@ struct GeneratorContext
     {
         const SchedulerOpInfo *cost = schedule->Cost(operation);
         if ( cost == nullptr || cost->Config() == nullptr )
-            return SetError(error, "Neural-AI Transpose operation has no validated target mode");
+            return SetError(error, fmt::format(
+                "Neural-AI Transpose operation has no validated target mode (IFM0 {}, IFM1 {}, OFM {})",
+                operation->IFM(0)->shape.ToString(),
+                operation->TryIFM(1) == nullptr ? "none" : operation->TryIFM(1)->shape.ToString(),
+                operation->OFM()->shape.ToString()));
         const auto *config = static_cast<const NeuralAIOpConfig *>(cost->Config());
         if ( config->Mode() != NeuralAIOpMode::HeadPackC32ToCHW )
             return SetError(error, "Neural-AI Transpose operation has no validated head-pack mode");
         const SchedulerConnection *ifm = operation->IFM(0);
+        const SchedulerConnection *ifm1 = operation->TryIFM(1);
         const SchedulerConnection *ofm = operation->OFM();
         if ( ifm == nullptr || ofm == nullptr || !IsFullTensorConnection(ifm) ||
              !IsFullTensorConnection(ofm) || ifm->Type() != regor::DataType::Int8 ||
              ofm->Type() != regor::DataType::Int8 ||
              ifm->tensor->format != TensorFormat::C32Blocked ||
+             (ifm1 != nullptr && (!IsFullTensorConnection(ifm1) ||
+                 ifm1->Type() != regor::DataType::Int8 ||
+                 ifm1->tensor->format != TensorFormat::C32Blocked)) ||
              ofm->tensor->format != TensorFormat::NHWC )
             return SetError(error, "Neural-AI head pack requires full C32-to-compact INT8 tensors");
         const Shape inputShape = ifm->shape;
         const Shape outputShape = ofm->shape;
         const bool selectedSpatial = inputShape.Height() == 10 || inputShape.Height() == 20 ||
                                      inputShape.Height() == 40;
+        const bool splitHeadPack = ifm1 != nullptr && inputShape.Depth() == 64 &&
+                                   ifm1->shape == inputShape.WithDepth(80);
         if ( inputShape.Size() != 4 || outputShape.Size() != 4 || inputShape.Batch() != 1 ||
-             inputShape.Depth() != 144 || !selectedSpatial ||
+             (inputShape.Depth() != 144 && !splitHeadPack) || !selectedSpatial ||
              inputShape.Width() != inputShape.Height() ||
              outputShape != Shape(1, 144, inputShape.Height(), inputShape.Width()) )
             return SetError(error, "Neural-AI head pack requires selected square C144 NCHW transpose");
         const int64_t pixels64 = int64_t(inputShape.Height()) * inputShape.Width();
-        const int64_t sourceBytes64 = pixels64 * 160;
         const int64_t destinationBytes64 = pixels64 * 144;
+        const int64_t sourceBytes64 = pixels64 * ((inputShape.Depth() + 31) & ~31);
+        const int64_t source1Bytes64 = splitHeadPack ? pixels64 * 96 : 0;
         if ( pixels64 <= 0 || sourceBytes64 != ifm->tensor->AllocationSizeBytes() ||
+             (splitHeadPack && source1Bytes64 != ifm1->tensor->AllocationSizeBytes()) ||
              destinationBytes64 != ofm->tensor->AllocationSizeBytes() ||
              sourceBytes64 > std::numeric_limits<uint32_t>::max() ||
+             source1Bytes64 > std::numeric_limits<uint32_t>::max() ||
              destinationBytes64 > std::numeric_limits<uint32_t>::max() )
             return SetError(error, "Neural-AI head-pack tensor storage size is invalid");
         RefV1 source = TensorRef(ifm->tensor.get(), 0, error);
         if ( !error.empty() ) return false;
+        RefV1 source1{};
+        if ( splitHeadPack )
+        {
+            source1 = TensorRef(ifm1->tensor.get(), 0, error);
+            if ( !error.empty() ) return false;
+        }
         RefV1 destination = TensorRef(ofm->tensor.get(), 0, error);
         if ( !error.empty() ) return false;
         if ( source.region != uint16_t(Region::TCDMScratch) ||
+             (splitHeadPack && source1.region != uint16_t(Region::TCDMScratch)) ||
              destination.region != uint16_t(Region::TCDMScratch) )
             return SetError(error, "Neural-AI head pack requires internal TCDM tensors");
-        const uint32_t sourceBytes = uint32_t(sourceBytes64);
         const uint32_t destinationBytes = uint32_t(destinationBytes64);
-        if ( source.offset < destination.offset + destinationBytes &&
-             destination.offset < source.offset + sourceBytes )
-            return SetError(error, "Neural-AI head pack requires out-of-place output storage");
-
-        AppendHeader(artifact->commands, CommandType::CopyLayout, 96,
-            uint32_t(operation->Index()), 0);
-        AppendRef(artifact->commands, source);
-        AppendRef(artifact->commands, destination);
-        Append16(artifact->commands, uint16_t(CopyLayoutMode::C32ToCHW));
-        Append16(artifact->commands, ABILayout(TensorFormat::C32Blocked));
-        Append16(artifact->commands, ABILayout(TensorFormat::NHWC));
-        Append16(artifact->commands, uint16_t(DataType::Int8));
-        for ( uint32_t dimension : Dimensions(inputShape) ) Append32(artifact->commands, dimension);
-        Append32(artifact->commands, 144);
-        Append32(artifact->commands, uint32_t(pixels64 * 32));
-        Append32(artifact->commands, uint32_t(pixels64));
-        AppendZeros(artifact->commands, 7);
-        ++artifact->commandCount;
+        const auto appendPart = [&](RefV1 partSource, uint32_t sourceBytes,
+                                    uint32_t channelOffset, uint32_t channels, uint32_t part)
+        {
+            RefV1 partDestination = destination;
+            partDestination.offset += channelOffset * uint32_t(pixels64);
+            if ( partSource.offset < destination.offset + destinationBytes &&
+                 destination.offset < partSource.offset + sourceBytes )
+                return SetError(error, "Neural-AI head pack requires out-of-place output storage");
+            AppendHeader(artifact->commands, CommandType::CopyLayout, 96,
+                uint32_t(operation->Index()), part);
+            AppendRef(artifact->commands, partSource);
+            AppendRef(artifact->commands, partDestination);
+            Append16(artifact->commands, uint16_t(CopyLayoutMode::C32ToCHW));
+            Append16(artifact->commands, ABILayout(TensorFormat::C32Blocked));
+            Append16(artifact->commands, ABILayout(TensorFormat::NHWC));
+            Append16(artifact->commands, uint16_t(DataType::Int8));
+            for ( uint32_t dimension : Dimensions(inputShape.WithDepth(int(channels))) )
+                Append32(artifact->commands, dimension);
+            Append32(artifact->commands, channels);
+            Append32(artifact->commands, uint32_t(pixels64 * 32));
+            Append32(artifact->commands, uint32_t(pixels64));
+            AppendZeros(artifact->commands, 7);
+            ++artifact->commandCount;
+            return true;
+        };
+        if ( splitHeadPack )
+        {
+            if ( !appendPart(source, uint32_t(sourceBytes64), 0, 64, 0) ||
+                 !appendPart(source1, uint32_t(source1Bytes64), 64, 80, 1) ) return false;
+        }
+        else if ( !appendPart(source, uint32_t(sourceBytes64), 0, 144, 0) ) return false;
         return true;
     }
 

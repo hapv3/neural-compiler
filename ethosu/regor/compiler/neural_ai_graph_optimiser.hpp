@@ -36,6 +36,7 @@ private:
     void InsertInputConversion(Graph *graph, Operation *operation, TensorUsage usage);
     void InsertOutputConversion(Graph *graph, Operation *operation);
     void MaterializeStructuralCspConcatInputs(Operation *operation);
+    void FuseStructuralHeadPack(Graph *graph, Operation *operation);
     void DistributeStructuralHeadMerge(Graph *graph, Operation *operation);
 };
 
