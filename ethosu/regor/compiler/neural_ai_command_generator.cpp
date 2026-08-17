@@ -736,7 +736,7 @@ struct GeneratorContext
             if ( IsCompactNHWC(connection->tensor->format) )
             {
                 if ( storage.Batch() != 1 || storage.Depth() < 32 || storage.Depth() % 32 != 0 ||
-                     slice.Batch() != 1 || (slice.Depth() != 32 && slice.Depth() != storage.Depth()) ||
+                     slice.Batch() != 1 || slice.Depth() <= 0 || slice.Depth() % 32 != 0 ||
                      sliceOffset.Batch() != 0 || sliceOffset.Depth() < 0 ||
                      sliceOffset.Depth() % 32 != 0 ||
                      int64_t(sliceOffset.Depth()) + slice.Depth() > storage.Depth() ||
@@ -785,7 +785,7 @@ struct GeneratorContext
             }
             if ( connection->tensor->format != TensorFormat::C32Blocked || storage.Batch() != 1 ||
                  storage.Depth() % 32 != 0 || slice.Batch() != 1 ||
-                 (slice.Depth() != 32 && slice.Depth() != storage.Depth()) ||
+                 slice.Depth() <= 0 || slice.Depth() % 32 != 0 ||
                  sliceOffset.Batch() != 0 || sliceOffset.Depth() < 0 ||
                  int64_t(sliceOffset.Depth()) + slice.Depth() > storage.Depth() ||
                  sliceOffset.Depth() % 32 != 0 || sliceOffset.Height() < 0 || sliceOffset.Width() < 0 ||
@@ -1058,33 +1058,54 @@ struct GeneratorContext
         const SchedulerConnection *lhs = operation->IFM(0);
         const SchedulerConnection *rhs = operation->IFM(1);
         const SchedulerConnection *ofm = operation->OFM();
+        const Shape lhsShape = lhs != nullptr ? lhs->SliceShape() : Shape();
+        const Shape rhsShape = rhs != nullptr ? rhs->SliceShape() : Shape();
+        const Shape ofmShape = ofm != nullptr ? ofm->SliceShape() : Shape();
+        const bool c32 = lhs != nullptr && rhs != nullptr && ofm != nullptr &&
+            lhs->tensor->format == TensorFormat::C32Blocked &&
+            rhs->tensor->format == TensorFormat::C32Blocked &&
+            ofm->tensor->format == TensorFormat::C32Blocked;
         const bool structuralCompactCsp = lhs != nullptr && rhs != nullptr && ofm != nullptr &&
-            lhs->shape.Size() == 4 && lhs->shape.Batch() == 1 &&
-            lhs->shape.Height() > 0 && lhs->shape.Width() > 0 && lhs->shape.Depth() == 16 &&
-            rhs->shape == lhs->shape &&
-            ofm->shape == lhs->shape && IsCompactNHWC(lhs->tensor->format) &&
+            lhsShape.Size() == 4 && lhsShape.Batch() == 1 &&
+            lhsShape.Height() > 0 && lhsShape.Width() > 0 && lhsShape.Depth() == 16 &&
+            rhsShape == lhsShape && ofmShape == lhsShape &&
+            IsCompactNHWC(lhs->tensor->format) &&
             IsCompactNHWC(rhs->tensor->format) && IsCompactNHWC(ofm->tensor->format);
         if ( lhs == nullptr || rhs == nullptr || ofm == nullptr ||
-             !IsFullTensorConnection(lhs) || !IsFullTensorConnection(rhs) ||
-             !IsFullTensorConnection(ofm) || lhs->Type() != regor::DataType::Int8 ||
+             (!c32 && (!IsFullTensorConnection(lhs) || !IsFullTensorConnection(rhs) ||
+                 !IsFullTensorConnection(ofm))) || lhs->Type() != regor::DataType::Int8 ||
              rhs->Type() != regor::DataType::Int8 || ofm->Type() != regor::DataType::Int8 ||
-             (!structuralCompactCsp && (lhs->tensor->format != TensorFormat::C32Blocked ||
-                 rhs->tensor->format != TensorFormat::C32Blocked ||
-                 ofm->tensor->format != TensorFormat::C32Blocked)) ||
-             lhs->shape != rhs->shape || lhs->shape != ofm->shape )
-            return SetError(error,
-                "Neural-AI AFU Add requires equal C32-blocked tensors or the selected compact CSP tensor");
-        const int64_t lhsBytes = lhs->tensor->AllocationSizeBytes();
-        const int64_t rhsBytes = rhs->tensor->AllocationSizeBytes();
-        const int64_t ofmBytes = ofm->tensor->AllocationSizeBytes();
-        if ( lhsBytes <= 0 || lhsBytes != rhsBytes || lhsBytes != ofmBytes ||
-             lhsBytes > std::numeric_limits<uint32_t>::max() )
+             (!structuralCompactCsp && !c32) || lhsShape != rhsShape || lhsShape != ofmShape ||
+             lhsShape.Depth() <= 0 || lhsShape.Elements64() <= 0 )
+            return SetError(error, fmt::format(
+                "Neural-AI AFU Add operation {} requires equal C32 or selected compact tensors "
+                "(lhs [{}] {}, rhs [{}] {}, ofm [{}] {})",
+                operation->Index(), lhs == nullptr ? "missing" : lhs->shape.ToString(),
+                lhs == nullptr ? "missing" : EnumToString(lhs->tensor->format),
+                rhs == nullptr ? "missing" : rhs->shape.ToString(),
+                rhs == nullptr ? "missing" : EnumToString(rhs->tensor->format),
+                ofm == nullptr ? "missing" : ofm->shape.ToString(),
+                ofm == nullptr ? "missing" : EnumToString(ofm->tensor->format)));
+        const int64_t pixels = lhsShape.Elements64() / lhsShape.Depth();
+        const int64_t lhsBytes = structuralCompactCsp ? lhsShape.Elements64() :
+            pixels * RoundAway(lhsShape.Depth(), 32);
+        uint32_t lhsOffset = 0;
+        uint32_t rhsOffset = 0;
+        uint32_t ofmOffset = 0;
+        if ( c32 && (!C32SliceByteOffset(lhs, lhsOffset, error) ||
+                       !C32SliceByteOffset(rhs, rhsOffset, error) ||
+                       !C32SliceByteOffset(ofm, ofmOffset, error)) )
+            return false;
+        if ( lhsBytes <= 0 || lhsBytes > std::numeric_limits<uint32_t>::max() ||
+             uint64_t(lhsOffset) + uint64_t(lhsBytes) > uint64_t(TensorStorageBytes(lhs->tensor.get())) ||
+             uint64_t(rhsOffset) + uint64_t(lhsBytes) > uint64_t(TensorStorageBytes(rhs->tensor.get())) ||
+             uint64_t(ofmOffset) + uint64_t(lhsBytes) > uint64_t(TensorStorageBytes(ofm->tensor.get())) )
             return SetError(error, "Neural-AI AFU Add tensor storage size is invalid");
-        RefV1 lhsRef = TensorRef(lhs->tensor.get(), 0, error);
+        RefV1 lhsRef = TensorRef(lhs->tensor.get(), lhsOffset, error);
         if ( !error.empty() ) return false;
-        RefV1 rhsRef = TensorRef(rhs->tensor.get(), 0, error);
+        RefV1 rhsRef = TensorRef(rhs->tensor.get(), rhsOffset, error);
         if ( !error.empty() ) return false;
-        RefV1 ofmRef = TensorRef(ofm->tensor.get(), 0, error);
+        RefV1 ofmRef = TensorRef(ofm->tensor.get(), ofmOffset, error);
         if ( !error.empty() ) return false;
         if ( lhsRef.region != uint16_t(Region::TCDMScratch) ||
              rhsRef.region != uint16_t(Region::TCDMScratch) ||
@@ -1166,6 +1187,103 @@ struct GeneratorContext
             Append32(artifact->commands, 0);
         }
         ++artifact->commandCount;
+        return true;
+    }
+
+    bool AppendPassthroughConcat(const SchedulerOperation *operation, std::string &error)
+    {
+        const SchedulerConnection *ofm = operation->OFM();
+        std::vector<const SchedulerConnection *> inputs;
+        for ( const auto &[usage, connection] : operation->inputs.pairs() )
+        {
+            if ( IsIFM(usage) ) inputs.push_back(&connection);
+        }
+        if ( ofm == nullptr || inputs.size() < 3 || !IsFullTensorConnection(ofm) ||
+             ofm->Type() != regor::DataType::Int8 ||
+             ofm->tensor->format != TensorFormat::C32Blocked )
+            return SetError(error, fmt::format(
+                "Neural-AI Passthrough requires a selected aligned multi-input Concat "
+                "(inputs={}, output='{}' [{}] {} full={})",
+                inputs.size(), ofm == nullptr ? "missing" : ofm->tensor->Name(),
+                ofm == nullptr ? "missing" : ofm->SliceShape().ToString(),
+                ofm == nullptr ? "missing" : EnumToString(ofm->tensor->format),
+                ofm != nullptr && IsFullTensorConnection(ofm)));
+        const Shape inputShape = inputs.front()->SliceShape();
+        const Shape outputShape = ofm->SliceShape();
+        if ( inputShape.Size() != 4 || inputShape.Batch() != 1 ||
+             inputShape.Height() <= 0 || inputShape.Width() <= 0 || inputShape.Depth() <= 0 ||
+             inputShape.Depth() % 32 != 0 ||
+             outputShape != inputShape.WithDepth(int(inputs.size()) * inputShape.Depth()) )
+            return SetError(error, fmt::format(
+                "Neural-AI Passthrough Concat requires equal C32 groups on the final axis "
+                "(inputs={}, first=[{}], output=[{}])",
+                inputs.size(), inputShape.ToString(), outputShape.ToString()));
+        const int64_t inputBytes64 = inputShape.Elements64();
+        const int64_t outputBytes64 = outputShape.Elements64();
+        if ( inputBytes64 <= 0 || outputBytes64 != inputBytes64 * int64_t(inputs.size()) ||
+             outputBytes64 > std::numeric_limits<uint32_t>::max() ||
+             TensorStorageBytes(ofm->tensor.get()) != outputBytes64 )
+            return SetError(error, "Neural-AI Passthrough Concat storage size is invalid");
+        RefV1 destination = TensorRef(ofm->tensor.get(), 0, error);
+        if ( !error.empty() ) return false;
+        if ( destination.region != uint16_t(Region::TCDMScratch) )
+            return SetError(error, "Neural-AI Passthrough Concat requires an internal output");
+        const uint32_t inputBytes = uint32_t(inputBytes64);
+        const uint32_t outputBytes = uint32_t(outputBytes64);
+        const uint32_t groups = uint32_t(inputShape.Depth() / 32);
+        const uint32_t groupBytes = inputBytes / groups;
+        const uint32_t sourceRowStride = uint32_t(
+            int64_t(inputShape.Width()) * inputShape.Depth());
+        const uint32_t destinationRowStride = uint32_t(
+            int64_t(inputShape.Width()) * 32);
+        for ( int index = 0; index < int(inputs.size()); ++index )
+        {
+            const SchedulerConnection *input = inputs[index];
+            if ( !IsFullTensorConnection(input) || input->Type() != regor::DataType::Int8 ||
+                 input->SliceShape() != inputShape ||
+                 (input->tensor->format != TensorFormat::C32Blocked &&
+                     !IsCompactNHWC(input->tensor->format)) ||
+                 TensorStorageBytes(input->tensor.get()) != inputBytes64 )
+                return SetError(error,
+                    "Neural-AI Passthrough Concat inputs must be complete C32 groups");
+            RefV1 source = TensorRef(input->tensor.get(), 0, error);
+            if ( !error.empty() ) return false;
+            RefV1 partDestination = destination;
+            partDestination.offset += uint32_t(index) * inputBytes;
+            const bool overlaps = source.region == destination.region &&
+                source.index == destination.index &&
+                uint64_t(source.offset) < uint64_t(destination.offset) + outputBytes &&
+                uint64_t(destination.offset) < uint64_t(source.offset) + inputBytes;
+            const bool alreadyPlaced = input->tensor->format == TensorFormat::C32Blocked &&
+                source.region == partDestination.region && source.index == partDestination.index &&
+                source.offset == partDestination.offset;
+            if ( overlaps && !alreadyPlaced )
+                return SetError(error,
+                    "Neural-AI Passthrough Concat does not allow overlapping gather buffers");
+            if ( alreadyPlaced ) continue;
+            for ( uint32_t group = 0; group < groups; ++group )
+            {
+                RefV1 groupSource = source;
+                RefV1 groupDestination = partDestination;
+                groupDestination.offset += group * groupBytes;
+                if ( input->tensor->format == TensorFormat::C32Blocked || groups == 1 )
+                {
+                    groupSource.offset += group * groupBytes;
+                    if ( !AppendDMA1D(groupSource, groupDestination, groupBytes,
+                             uint32_t(operation->Index()), uint32_t(index) * groups + group, error) )
+                        return false;
+                }
+                else
+                {
+                    groupSource.offset += group * 32;
+                    if ( !AppendDMA3D(groupSource, groupDestination, 32,
+                             uint32_t(inputShape.Depth()), 32, uint32_t(inputShape.Width()),
+                             sourceRowStride, destinationRowStride, uint32_t(inputShape.Height()),
+                             uint32_t(operation->Index()), uint32_t(index) * groups + group, error) )
+                        return false;
+                }
+            }
+        }
         return true;
     }
 
@@ -3050,6 +3168,10 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         {
             if ( !context.AppendDFL16(operation.get(), error) ) return false;
         }
+        else if ( operation->Type() == OpType::Passthrough )
+        {
+            if ( !context.AppendPassthroughConcat(operation.get(), error) ) return false;
+        }
         else if ( operation->Type() == OpType::FullyConnected || operation->Type() == OpType::MatMul ||
                   operation->Type() == OpType::Conv2D )
         {
@@ -3057,8 +3179,22 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         }
         else
         {
-            error = "Neural-AI command generation encountered unsupported operation " +
-                OpTypeToString(operation->Type());
+            const SchedulerConnection *ofm = operation->OFM();
+            std::string inputs;
+            for ( const auto &[usage, connection] : operation->inputs.pairs() )
+            {
+                inputs += fmt::format(" usage{} '{}' [{}] {} addr{};", int(usage),
+                    connection.tensor->Name(), connection.SliceShape().ToString(),
+                    EnumToString(connection.tensor->format), connection.tensor->AllocatedAddress());
+            }
+            error = fmt::format(
+                "Neural-AI command generation encountered unsupported operation {} {} "
+                "(inputs:{} OFM '{}' [{}] {} addr{})",
+                OpTypeToString(operation->Type()), operation->Index(),
+                inputs, ofm == nullptr ? "missing" : ofm->tensor->Name(),
+                ofm == nullptr ? "missing" : ofm->SliceShape().ToString(),
+                ofm == nullptr ? "missing" : EnumToString(ofm->tensor->format),
+                ofm == nullptr ? -1 : ofm->tensor->AllocatedAddress());
             return false;
         }
     }

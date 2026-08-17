@@ -864,7 +864,7 @@ flatbuffers::DetachedBuffer BuildK3ConvModel(int height, int width, int depthK, 
 
 flatbuffers::DetachedBuffer BuildC32SliceConvModel(
     int height, int width, int inputDepth, int sliceBegin, int sliceDepth, int outputDepth,
-    int consumerKernel = 1)
+    int consumerKernel = 1, bool sliceIsGraphOutput = false)
 {
     flatbuffers::FlatBufferBuilder builder;
     const std::vector<float> scale = {1.0f};
@@ -948,7 +948,7 @@ flatbuffers::DetachedBuffer BuildC32SliceConvModel(
     const std::vector<int32_t> sliceOutputs = {7};
     const std::vector<int32_t> consumerInputs = {7, 8, 9};
     const std::vector<int32_t> consumerOutputs = {10};
-    const std::vector<flatbuffers::Offset<tflite::Operator>> operations = {
+    std::vector<flatbuffers::Offset<tflite::Operator>> operations = {
         tflite::CreateOperatorDirect(builder, 1, &producerInputs, &producerOutputs,
             tflite::BuiltinOptions::Conv2DOptions, producerOptions.Union()),
         tflite::CreateOperatorDirect(builder, 0, &sliceInputs, &sliceOutputs,
@@ -957,7 +957,8 @@ flatbuffers::DetachedBuffer BuildC32SliceConvModel(
             tflite::BuiltinOptions::Conv2DOptions, consumerOptions.Union()),
     };
     const std::vector<int32_t> graphInputs = {0};
-    const std::vector<int32_t> graphOutputs = {10};
+    if ( sliceIsGraphOutput ) operations.pop_back();
+    const std::vector<int32_t> graphOutputs = {sliceIsGraphOutput ? 7 : 10};
     const std::vector<flatbuffers::Offset<tflite::SubGraph>> subgraphs = {
         tflite::CreateSubGraphDirect(
             builder, &tensors, &graphInputs, &graphOutputs, &operations, "main"),
@@ -3004,6 +3005,77 @@ TEST_CASE("Neural-AI compiler lowers quantization-safe Add through AFU binary")
     blob->Release();
 }
 
+TEST_CASE("Neural-AI AFU Add reads a C32-aligned slice without materialization")
+{
+    ArchNeuralAI arch;
+    const Shape fullShape(1, 2, 3, 64);
+    const Shape addShape(1, 2, 3, 32);
+    auto lhs = CreateTensor("lhs", fullShape, DataType::Int8);
+    auto rhs = CreateTensor("rhs", addShape, DataType::Int8);
+    auto output = CreateTensor("output", addShape, DataType::Int8);
+    auto add = CreateOperation(
+        OpType::Add, TensorUsage::IFM0, lhs, TensorUsage::IFM1, rhs,
+        TensorUsage::OFM, output);
+    Quantization inputQuantization;
+    inputQuantization.scales = {QuantizedScale(32768.0)};
+    inputQuantization.zeroPoints = {0};
+    inputQuantization.quantMin = {-128};
+    inputQuantization.quantMax = {127};
+    Quantization outputQuantization = inputQuantization;
+    outputQuantization.scales = {QuantizedScale(1.0 / 32768.0)};
+    add->Input(TensorUsage::IFM0)
+        ->Set(TensorSlice(Shape(0, 0, 0, 32), addShape, fullShape.WithOnes()))
+        .Set(inputQuantization);
+    add->Input(TensorUsage::IFM1)->Set(inputQuantization);
+    add->Output(TensorUsage::OFM)->Set(outputQuantization);
+    std::vector<std::shared_ptr<Operation>> sourceOps = {add};
+    auto graph = CreateGraph(sourceOps);
+
+    GraphOptimiserOptions graphOptions;
+    NeuralAIGraphOptimiser optimiser(arch.Constraints(), graphOptions, nullptr);
+    optimiser.OptimiseGraph(graph.get());
+    const std::unordered_map<UniqueId, UniqueId> equivalenceIds;
+    SchedulerPacking packing(&arch, false, equivalenceIds);
+    auto scheduleOps = packing.Process(graph.get());
+    SchedulerOptions schedulerOptions;
+    schedulerOptions.disabled.Set(SchedulerFeature::Cascading);
+    schedulerOptions.disabled.Set(SchedulerFeature::WeightBuffering);
+    Scheduler scheduler(&arch, schedulerOptions, "neural-ai-sliced-add", scheduleOps,
+        packing.OpConfigCompatablility());
+    auto schedule = scheduler.Process();
+    const SchedulerOperation *scheduledAdd = nullptr;
+    for ( const auto &operation : scheduleOps )
+        if ( operation->Type() == OpType::Add ) scheduledAdd = operation.get();
+    REQUIRE(scheduledAdd != nullptr);
+
+    CompiledNeuralAIArtifact artifact;
+    std::string error;
+    NeuralAICommandGenerator commandGenerator;
+    const bool generated = commandGenerator.Generate(
+        graph.get(), scheduleOps, schedule.get(), artifact, error);
+    INFO(error);
+    REQUIRE(generated);
+    uint32_t addCommands = 0;
+    size_t offset = 0;
+    while ( offset < artifact.commands.size() )
+    {
+        const uint16_t type = Read16(artifact.commands, offset);
+        const uint16_t bytes = Read16(artifact.commands, offset + 2);
+        REQUIRE(bytes >= 32);
+        if ( type == uint16_t(neuralai::CommandType::AFUBinary) )
+        {
+            const uint32_t planeBytes = 2u * 3u * 32u;
+            REQUIRE(Read32(artifact.commands, offset + 20) ==
+                uint32_t(scheduledAdd->IFM(0)->tensor->AllocatedAddress()) + planeBytes);
+            REQUIRE(Read32(artifact.commands, offset + 40) == planeBytes);
+            ++addCommands;
+        }
+        offset += bytes;
+    }
+    REQUIRE(offset == artifact.commands.size());
+    REQUIRE(addCommands == 1);
+}
+
 TEST_CASE("Neural-AI compiler lowers quantized Add through Spatz")
 {
     const auto lowersToSpatz = [](flatbuffers::DetachedBuffer model)
@@ -3678,6 +3750,109 @@ TEST_CASE("Neural-AI compiler gathers structural three-way C16 Concat with DMA3D
     }
 }
 
+TEST_CASE("Neural-AI compiler gathers an aligned four-way multi-group Passthrough Concat")
+{
+    ArchNeuralAI arch;
+    const Shape inputShape(1, 2, 3, 64);
+    const Shape outputShape(1, 2, 3, 256);
+    std::array<std::shared_ptr<Tensor>, 4> inputs;
+    std::array<std::shared_ptr<Tensor>, 4> staged;
+    std::vector<std::shared_ptr<Operation>> sourceOps;
+    for ( int index = 0; index < 4; ++index )
+    {
+        inputs[index] = CreateTensor(
+            "input" + std::to_string(index), inputShape, DataType::Int8);
+        staged[index] = CreateTensor(
+            "staged" + std::to_string(index), inputShape, DataType::Int8);
+        auto copy = CreateOperation(
+            OpType::MemoryCopy, TensorUsage::IFM0, inputs[index], TensorUsage::OFM, staged[index]);
+        copy->Input(TensorUsage::IFM0)->Set(Quantization::Unit());
+        copy->Output(TensorUsage::OFM)->Set(Quantization::Unit());
+        sourceOps.push_back(copy);
+    }
+    auto merged = CreateTensor("merged", outputShape, DataType::Int8);
+    auto output = CreateTensor("output", outputShape, DataType::Int8);
+    auto passthrough = std::make_shared<Operation>(OpType::Passthrough);
+    for ( int index = 0; index < 4; ++index )
+        passthrough->ConnectInput(MakeTensorUsage(TensorUsage::IFM, index), staged[index])
+            .Set(Quantization::Unit());
+    passthrough->ConnectOutput(TensorUsage::OFM, merged).Set(Quantization::Unit());
+    sourceOps.push_back(passthrough);
+    auto outputCopy = CreateOperation(
+        OpType::MemoryCopy, TensorUsage::IFM0, merged, TensorUsage::OFM, output);
+    outputCopy->Input(TensorUsage::IFM0)->Set(Quantization::Unit());
+    outputCopy->Output(TensorUsage::OFM)->Set(Quantization::Unit());
+    sourceOps.push_back(outputCopy);
+    auto graph = CreateGraph(sourceOps);
+
+    const std::unordered_map<UniqueId, UniqueId> equivalenceIds;
+    SchedulerPacking packing(&arch, false, equivalenceIds);
+    auto scheduleOps = packing.Process(graph.get());
+    const SchedulerOperation *scheduledPassthrough = nullptr;
+    for ( const auto &operation : scheduleOps )
+    {
+        if ( operation->Type() != OpType::Passthrough ) continue;
+        scheduledPassthrough = operation.get();
+        for ( int index = 0; index < 4; ++index )
+            operation->IFM(index)->tensor->format =
+                index < 2 ? TensorFormat::NHWC : TensorFormat::C32Blocked;
+        operation->OFM()->tensor->format = TensorFormat::C32Blocked;
+    }
+    REQUIRE(scheduledPassthrough != nullptr);
+    SchedulerOptions schedulerOptions;
+    schedulerOptions.disabled.Set(SchedulerFeature::Cascading);
+    schedulerOptions.disabled.Set(SchedulerFeature::WeightBuffering);
+    Scheduler scheduler(&arch, schedulerOptions, "neural-ai-four-way-concat", scheduleOps,
+        packing.OpConfigCompatablility());
+    auto schedule = scheduler.Process();
+
+    CompiledNeuralAIArtifact artifact;
+    std::string error;
+    NeuralAICommandGenerator commandGenerator;
+    const bool generated = commandGenerator.Generate(
+        graph.get(), scheduleOps, schedule.get(), artifact, error);
+    INFO(error);
+    REQUIRE(generated);
+    std::vector<uint32_t> destinations;
+    uint32_t c32PlaneCopies = 0;
+    uint32_t compactPlaneCopies = 0;
+    size_t offset = 0;
+    while ( offset < artifact.commands.size() )
+    {
+        const uint16_t type = Read16(artifact.commands, offset);
+        const uint16_t bytes = Read16(artifact.commands, offset + 2);
+        REQUIRE(bytes >= 32);
+        if ( type == uint16_t(neuralai::CommandType::DMA1D) &&
+             Read32(artifact.commands, offset + 36) ==
+                 uint32_t(neuralai::DMADirection::LocalToLocal) )
+        {
+            REQUIRE(Read32(artifact.commands, offset + 32) == 2u * 3u * 32u);
+            destinations.push_back(Read32(artifact.commands, offset + 28));
+            ++c32PlaneCopies;
+        }
+        if ( type == uint16_t(neuralai::CommandType::DMA3D) &&
+             Read32(artifact.commands, offset + 60) ==
+                 uint32_t(neuralai::DMADirection::LocalToLocal) )
+        {
+            REQUIRE(Read32(artifact.commands, offset + 32) == 32);
+            REQUIRE(Read32(artifact.commands, offset + 36) == 64);
+            REQUIRE(Read32(artifact.commands, offset + 40) == 32);
+            REQUIRE(Read32(artifact.commands, offset + 44) == 3);
+            REQUIRE(Read32(artifact.commands, offset + 56) == 2);
+            destinations.push_back(Read32(artifact.commands, offset + 28));
+            ++compactPlaneCopies;
+        }
+        offset += bytes;
+    }
+    REQUIRE(offset == artifact.commands.size());
+    REQUIRE(c32PlaneCopies == 4);
+    REQUIRE(compactPlaneCopies == 4);
+    REQUIRE(destinations.size() == 8);
+    std::sort(destinations.begin(), destinations.end());
+    for ( int index = 1; index < 8; ++index )
+        REQUIRE(destinations[index] - destinations[index - 1] == 2u * 3u * 32u);
+}
+
 TEST_CASE("Neural-AI compiler rejects Concat outside two-input C32 channel contract")
 {
     const auto rejects = [](flatbuffers::DetachedBuffer model)
@@ -4043,6 +4218,59 @@ TEST_CASE("Neural-AI compiler aliases C32-aligned YOLO depth slices into linebuf
     REQUIRE(pointwiseCommands == 2);
     REQUIRE(linebufferCommands > 0);
     REQUIRE(linebufferInputOffset == producerOutputOffset);
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
+}
+
+TEST_CASE("Neural-AI compiler materializes a high C64 slice from C128 with grouped DMA")
+{
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildC32SliceConvModel(2, 3, 128, 64, 64, 32, 1, true);
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+    const bool compiled = compiler.Compile();
+    INFO(compiler.LastError());
+    REQUIRE(compiled);
+
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    const uint32_t commandBytes = Read32(data + 64 + 12);
+    uint32_t offset = 224;
+    std::vector<uint32_t> sourceOffsets;
+    std::vector<uint32_t> destinationOffsets;
+    uint32_t layoutCopies = 0;
+    while ( offset < 224 + commandBytes )
+    {
+        const auto type = neuralai::CommandType(Read16(data + offset));
+        const uint16_t commandSize = Read16(data + offset + 2);
+        REQUIRE(commandSize >= sizeof(neuralai::CommandHeaderV2));
+        if ( type == neuralai::CommandType::DMA3D &&
+             Read16(data + offset + 16) == uint16_t(neuralai::Region::TCDMScratch) &&
+             Read16(data + offset + 24) == uint16_t(neuralai::Region::OutputBinding) )
+        {
+            REQUIRE(Read32(data + offset + 32) == 32);
+            REQUIRE(Read32(data + offset + 36) == 32);
+            REQUIRE(Read32(data + offset + 40) == 64);
+            REQUIRE(Read32(data + offset + 44) == 3);
+            REQUIRE(Read32(data + offset + 56) == 2);
+            sourceOffsets.push_back(Read32(data + offset + 20));
+            destinationOffsets.push_back(Read32(data + offset + 28));
+        }
+        if ( type == neuralai::CommandType::CopyLayout ) ++layoutCopies;
+        offset += commandSize;
+    }
+    REQUIRE(offset == 224 + commandBytes);
+    REQUIRE(sourceOffsets.size() == 2);
+    REQUIRE(destinationOffsets.size() == 2);
+    REQUIRE(sourceOffsets[1] - sourceOffsets[0] == 2u * 3u * 32u);
+    REQUIRE(destinationOffsets[1] - destinationOffsets[0] == 32);
+    // The sole layout conversion is the model input feeding the C128 producer;
+    // the sliced graph output itself is emitted by the two DMA3D commands above.
+    REQUIRE(layoutCopies == 1);
     blob->Unmap(const_cast<uint8_t *>(data));
     blob->Release();
 }

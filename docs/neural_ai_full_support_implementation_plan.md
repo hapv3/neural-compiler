@@ -152,15 +152,15 @@ new runtime path has not yet passed E2E.
 | YOLO MaxPool | Verified | K5/S1/P2, C32 or selected C128, systolic fast path |
 | Nearest resize | Verified | exact 2x, selected C32/C128/C256, native Spatz kernel |
 | Storage-preserving views | Verified | reshape/squeeze/expand-dims; public output is materialized |
-| StridedSlice | Verified | C32-aligned aliases plus exact C32-to-C16 high-half materialization |
-| Concat | Compiler verified | generic striped two-input C32 gather; structural compact C16x3 gather; materialized correctness fallback |
+| StridedSlice | Verified | C32-aligned aliases; multi-group C32 DMA materialization; exact C32-to-C16 high-half materialization |
+| Concat | Compiler verified | striped two-input gather; structural C16x3 gather; aligned multi-input/multi-group DMA gather |
 | YOLO C144 head transpose | Verified fallback | standalone heads retain vectorized C32-to-CHW materialization |
 | DFL16 projection | Compiler/runtime verified | selected heads feed C64/C80 C32 directly; focused cluster verification pending |
 | Async DMA and overlap | Not implemented | blocking execution remains correct; performance phase |
-| Full selected graphs | P1 operator blocked | scheduled peak is 517,120 bytes; command generation reaches detection-tail Add |
+| Full selected graphs | P1 operator blocked | scheduled peak is 517,120 bytes; command generation reaches final unary Quantize passthrough |
 
-The focused Regor suite passes 106 Neural-AI cases and 38,589 assertions; the
-complete suite passes 249 cases and 624,634 assertions.
+The focused Regor suite passes 109 Neural-AI cases and 38,683 assertions; the
+complete suite passes 252 cases and 642,034 assertions.
 Runtime ABI/host checks, cross-builds, firmware-size gates, and focused C144,
 DFL16, and MatMul V2 E2E tests pass.
 
@@ -207,6 +207,13 @@ the focused test had not written its invocation and binding table to L2.
   invocation 104,191 ns and 65,358 PMU cycles. All three SPPF pools match.
 - C32-to-C16 high-half slice materializes once with local DMA3D plus Spatz
   vector copy; the focused H2/W3/C32 package passes at 105,347 ns.
+- The focused compiler-generated C32 Concat package passes at 109,797 ns and
+  79,124 PMU cycles. This is a correctness/block baseline, not a target for hot
+  Concat+Conv paths: the Micro-YOLO reference deliberately bypasses its
+  147,456-byte materialized Concat and splits the consuming Conv. The new
+  multi-group gather is therefore restricted to selected detection-tail merges
+  that cannot be consumed as a split Conv; Micro-MobileNet has no corresponding
+  Concat performance baseline.
 - Full YOLO compilation now passes both resize operations, all three MaxPools,
   all three head transposes, and the DFL16/class chain, then stops at the
   full-schedule TCDM capacity check. Structural compact C16 handling and striped
@@ -224,8 +231,13 @@ the focused test had not written its invocation and binding table to L2.
   for the C64 and C80 inputs. The C144 head tensor is now bypassed as well:
   DFL16 reads C64 directly in C32 layout, while one C32-to-CHW pack writes the
   C80 class result and its LUT runs in place. The scheduled peak is 517,120
-  bytes, 3,072 bytes below the allocatable limit; command generation now stops
-  at the next P1 detection-tail Add.
+  bytes, 3,072 bytes below the allocatable limit. Detection-tail residual Add
+  now consumes aligned C32 slices directly, C128-to-C64 high-half views
+  materialize as two grouped DMA3D transfers, and aligned four-way C64-to-C256
+  merges gather per C32 plane (DMA1D for C32 storage and DMA3D for compact
+  storage). Command generation now stops at the final unary Quantize
+  passthrough; it must be lowered as a real requantization unless its input and
+  output quantization are proven identical.
 
 ### Other retained evidence
 
@@ -308,11 +320,13 @@ The completed path adds no scalar or CPU fallback:
 
 ### P1 — Close remaining selected detection-tail contracts
 
-The graph is memory-feasible and command generation now stops at the selected
-detection-tail Add. Walk forward one unsupported source ID at a time and
-constrain only corpus forms of reshape/slice, class sigmoid, Mul/Sub/Add,
-Quantize, and final Concat/output handling. Prefer fusion, metadata views, and
-producer canonicalization over standalone commands.
+The graph is memory-feasible and detection-tail aligned slices, residual Add,
+and four-way multi-group gathers are lowered without scalar packing. Command
+generation now stops at the final unary Quantize passthrough. Characterize its
+input/output quantization first, then prefer producer requantization or a native
+vector requant command; use memcpy only when scale, zero-point, type, shape, and
+layout are all identical. Continue one unsupported source ID at a time through
+the remaining class sigmoid, Mul/Sub, reshape, slice, and final output handling.
 
 ### P3 — Performance and DMA overlap
 
