@@ -458,7 +458,7 @@ struct CommandAFUDFL16V2
     RefV1 expLut;
     RefV1 recipLut;
     uint32_t locations;
-    uint32_t reserved[1];
+    uint32_t sourceLayout;
 };
 
 static_assert(sizeof(ModelHeaderV1) == 64);

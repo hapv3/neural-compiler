@@ -1571,6 +1571,28 @@ TEST_CASE("Neural-AI constraints reserve tiled scratch for fused YOLO DFL16")
     REQUIRE(requirements.tensor.next->next->format == TensorFormat::Row32);
     REQUIRE(requirements.tensor.next->next->shape == Shape(1, 1, 34, 32));
 
+    query.ifm[0].shape = Shape(1, 40, 40, 64);
+    query.ifm[1].type = DataType::Int8;
+    query.ifm[1].shape = Shape(1, 40, 40, 80);
+    query.ofm.shape = Shape(1, 1, 4, 1600);
+    REQUIRE(constraints->OperatorQuery(OpType::Dfl, &query, &requirements) ==
+        QueryResult::NativeHasReq);
+    const std::array<std::pair<TensorUsage, TensorFormat>, 4> splitRequirements{{
+        {TensorUsage::IFM0, TensorFormat::C32Blocked},
+        {TensorUsage::IFM1, TensorFormat::C32Blocked},
+        {TensorUsage::OFM, TensorFormat::NHWC},
+        {TensorUsage::Scratch, TensorFormat::Row32},
+    }};
+    const ArchTensorRequirement *split = &requirements.tensor;
+    for ( const auto &[usage, format] : splitRequirements )
+    {
+        REQUIRE(split != nullptr);
+        REQUIRE(split->usage == usage);
+        REQUIRE(split->format == format);
+        split = split->next;
+    }
+    REQUIRE(split == nullptr);
+
     ArchitectureConfigQuery configQuery{};
     configQuery.ifmBits = 8;
     configQuery.ofmBits = 8;
@@ -1580,7 +1602,7 @@ TEST_CASE("Neural-AI constraints reserve tiled scratch for fused YOLO DFL16")
     REQUIRE(config != nullptr);
     REQUIRE(static_cast<NeuralAIOpConfig *>(config.get())->Mode() == NeuralAIOpMode::Dfl16);
 
-    query.ifm[0].shape = Shape(1, 1, 64, 2100);
+    query.ifm[0].shape = Shape(1, 40, 40, 32);
     REQUIRE(constraints->OperatorQuery(OpType::Dfl, &query) == QueryResult::Unsupported);
 }
 
@@ -2383,6 +2405,138 @@ TEST_CASE("Neural-AI compiler distributes DFL and class LUT across compact heads
     REQUIRE(lutCommands == 3);
     REQUIRE(concatCommands == 6);
     REQUIRE(offset == artifact.commands.size());
+    REQUIRE(artifact.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);
+}
+
+TEST_CASE("Neural-AI compiler feeds split C32 heads directly into DFL16")
+{
+    ArchNeuralAI arch;
+    constexpr int spatial = 10;
+    constexpr int locations = spatial * spatial;
+    auto boxes = CreateTensor("boxes", Shape(1, spatial, spatial, 64), DataType::Int8);
+    auto classes = CreateTensor("classes", Shape(1, spatial, spatial, 80), DataType::Int8);
+    auto packed = CreateTensor("packed", Shape(1, 144, spatial, spatial), DataType::Int8);
+    auto logits = CreateTensor("logits", Shape(1, 1, 144, locations), DataType::Int8);
+    auto dflOutput = CreateTensor("dfl_output", Shape(1, 1, 4, locations), DataType::Int8);
+    auto classOutput = CreateTensor("class_output", Shape(1, 1, 80, locations), DataType::Int8);
+    auto classBinding = CreateTensor("class_binding", Shape(1, 1, 80, locations), DataType::Int8);
+    std::vector<int8_t> lutValues(256);
+    for ( int index = 0; index < 256; ++index ) lutValues[index] = int8_t(index - 128);
+    auto lutTable = CreateTensor("lut", Shape(256), DataType::Int8, std::move(lutValues));
+
+    auto transpose = CreateOperation(
+        OpType::Transpose, TensorUsage::IFM0, boxes, TensorUsage::OFM, packed);
+    transpose->ConnectInput(TensorUsage::IFM1, classes).Set(Quantization::Unit());
+    transpose->Input(TensorUsage::IFM0)->Set(Quantization::Unit());
+    transpose->Output(TensorUsage::OFM)->Set(Quantization::Unit());
+    auto view = CreateOperation(
+        OpType::Passthrough, TensorUsage::IFM0, packed, TensorUsage::OFM, logits);
+    view->Input(TensorUsage::IFM0)->Set(Quantization::Unit());
+    view->Output(TensorUsage::OFM)->Set(Quantization::Unit());
+    auto dfl = CreateOperation(
+        OpType::Dfl, TensorUsage::IFM0, logits, TensorUsage::OFM, dflOutput);
+    dfl->Input(TensorUsage::IFM0)->Set(Quantization::Unit());
+    Quantization dflQuantization = Quantization::Unit();
+    dflQuantization.zeroPoints = {-128};
+    dfl->Output(TensorUsage::OFM)->Set(dflQuantization);
+    dfl->ConnectInput(TensorUsage::LUT, lutTable);
+    dfl->ConnectOutput(MakeTensorUsage(TensorUsage::OFM, 1), classOutput)
+        .Set(Quantization::Unit());
+    auto classCopy = CreateOperation(
+        OpType::MemoryCopy, TensorUsage::IFM0, classOutput, TensorUsage::OFM, classBinding);
+    classCopy->Input(TensorUsage::IFM0)->Set(Quantization::Unit());
+    classCopy->Output(TensorUsage::OFM)->Set(Quantization::Unit());
+    std::vector<std::shared_ptr<Operation>> sourceOps = {transpose, view, dfl, classCopy};
+    auto graph = CreateGraph(sourceOps);
+    REQUIRE(dfl->Input(TensorUsage::IFM1) == nullptr);
+    REQUIRE(dfl->Input(TensorUsage::LUT) != nullptr);
+    REQUIRE(dfl->Output(MakeTensorUsage(TensorUsage::OFM, 1)) != nullptr);
+    REQUIRE(logits->Writers().size() == 1);
+    REQUIRE(logits->Readers().size() == 1);
+    REQUIRE(packed->Writers().size() == 1);
+    REQUIRE(packed->Readers().size() == 1);
+    REQUIRE_FALSE(graph->IsOutput(logits.get()));
+    REQUIRE_FALSE(graph->IsOutput(packed.get()));
+    REQUIRE(dfl->Input(TensorUsage::IFM0)->quantization.EqualScales(
+        transpose->Input(TensorUsage::IFM0)->quantization));
+    REQUIRE(transpose->Input(TensorUsage::IFM0)->quantization.EqualScales(
+        transpose->Input(TensorUsage::IFM1)->quantization));
+    REQUIRE(Shape::PadAxes(transpose->Input(TensorUsage::IFM0)->SliceShape(), 4, 1) ==
+        Shape(1, spatial, spatial, 64));
+    REQUIRE(Shape::PadAxes(transpose->Input(TensorUsage::IFM1)->SliceShape(), 4, 1) ==
+        Shape(1, spatial, spatial, 80));
+    REQUIRE(Shape::PadAxes(transpose->Output(TensorUsage::OFM)->shape, 4, 1) ==
+        Shape(1, 144, spatial, spatial));
+    REQUIRE(Shape::PadAxes(dfl->Input(TensorUsage::IFM0)->shape, 4, 1) ==
+        Shape(1, 1, 144, locations));
+
+    GraphOptimiserOptions graphOptions;
+    NeuralAIGraphOptimiser optimiser(arch.Constraints(), graphOptions, nullptr);
+    optimiser.OptimiseGraph(graph.get());
+    std::vector<std::shared_ptr<Operation>> rewritten;
+    graph->GetAllOperations(rewritten);
+    REQUIRE(std::none_of(rewritten.begin(), rewritten.end(), [](const auto &rewrittenOperation)
+        { return rewrittenOperation->Type() == OpType::Transpose ||
+                 rewrittenOperation->Type() == OpType::Passthrough; }));
+    const auto rewrittenDfl = std::find_if(rewritten.begin(), rewritten.end(), [](const auto &rewrittenOperation)
+        { return rewrittenOperation->Type() == OpType::Dfl; });
+    REQUIRE(rewrittenDfl != rewritten.end());
+    REQUIRE((*rewrittenDfl)->Input(TensorUsage::IFM0)->shape == Shape(1, spatial, spatial, 64));
+    REQUIRE((*rewrittenDfl)->Input(TensorUsage::IFM1)->shape == Shape(1, spatial, spatial, 80));
+
+    const std::unordered_map<UniqueId, UniqueId> equivalenceIds;
+    SchedulerPacking packing(&arch, false, equivalenceIds);
+    auto scheduleOps = packing.Process(graph.get());
+    SchedulerOptions schedulerOptions;
+    schedulerOptions.disabled.Set(SchedulerFeature::Cascading);
+    schedulerOptions.disabled.Set(SchedulerFeature::WeightBuffering);
+    Scheduler scheduler(&arch, schedulerOptions, "neural-ai-split-dfl", scheduleOps,
+        packing.OpConfigCompatablility());
+    auto schedule = scheduler.Process();
+
+    CompiledNeuralAIArtifact artifact;
+    std::string error;
+    NeuralAICommandGenerator commandGenerator;
+    const bool generated = commandGenerator.Generate(
+        graph.get(), scheduleOps, schedule.get(), artifact, error);
+    INFO(error);
+    REQUIRE(generated);
+    uint32_t dflCommands = 0;
+    uint32_t classPacks = 0;
+    uint32_t inPlaceLuts = 0;
+    size_t offset = 0;
+    while ( offset < artifact.commands.size() )
+    {
+        const uint16_t type = Read16(artifact.commands, offset);
+        const uint16_t bytes = Read16(artifact.commands, offset + 2);
+        REQUIRE(bytes >= 32);
+        if ( type == uint16_t(neuralai::CommandType::AFUDFL16) )
+        {
+            REQUIRE(Read32(artifact.commands, offset + 56) == locations);
+            REQUIRE(Read32(artifact.commands, offset + 60) == 1);
+            ++dflCommands;
+        }
+        else if ( type == uint16_t(neuralai::CommandType::CopyLayout) &&
+                  Read16(artifact.commands, offset + 32) ==
+                      uint16_t(neuralai::CopyLayoutMode::C32ToCHW) )
+        {
+            REQUIRE(Read32(artifact.commands, offset + 56) == 80);
+            ++classPacks;
+        }
+        else if ( type == uint16_t(neuralai::CommandType::AFULut) )
+        {
+            REQUIRE(Read16(artifact.commands, offset + 16) ==
+                Read16(artifact.commands, offset + 24));
+            REQUIRE(Read32(artifact.commands, offset + 20) ==
+                Read32(artifact.commands, offset + 28));
+            ++inPlaceLuts;
+        }
+        offset += bytes;
+    }
+    REQUIRE(offset == artifact.commands.size());
+    REQUIRE(dflCommands == 1);
+    REQUIRE(classPacks == 1);
+    REQUIRE(inPlaceLuts == 1);
     REQUIRE(artifact.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);
 }
 
@@ -4244,14 +4398,13 @@ TEST_CASE("Neural-AI compiler stages a zero-padded C16 linebuffer group for YOLO
             ++tailCopies;
         }
         if ( type == uint16_t(neuralai::CommandType::DMA2D) &&
-             Read16(data + offset + 16) == uint16_t(neuralai::Region::TCDMScratch) &&
              Read16(data + offset + 24) == uint16_t(neuralai::Region::TCDMScratch) )
             ++stagingCopies;
         offset += commandSize;
     }
     REQUIRE(offset == 224 + commandBytes);
     REQUIRE(linebufferJobs == 9);
-    REQUIRE(tailCopies == 0);
+    REQUIRE(tailCopies == 1);
     REQUIRE(stagingCopies > 0);
     blob->Unmap(const_cast<uint8_t *>(data));
     blob->Release();

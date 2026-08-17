@@ -37,6 +37,7 @@ private:
     void InsertOutputConversion(Graph *graph, Operation *operation);
     void MaterializeStructuralCspConcatInputs(Operation *operation);
     void FuseStructuralHeadPack(Graph *graph, Operation *operation);
+    void FuseStructuralHeadPostprocess(Graph *graph, Operation *operation);
     void DistributeStructuralHeadMerge(Graph *graph, Operation *operation);
 };
 

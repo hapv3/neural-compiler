@@ -155,7 +155,7 @@ union HLCParameters
 struct StripeArea
 {
     int ifmCount = 0;
-    std::array<Box, 2> ifmAreas;
+    std::array<Box, 3> ifmAreas;
     Box ofmArea;
 
     void AddIfm(Box ifm) { ifmAreas.at(ifmCount++) = ifm; }

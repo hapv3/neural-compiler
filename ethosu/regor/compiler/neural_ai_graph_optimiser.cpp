@@ -423,6 +423,50 @@ void NeuralAIGraphOptimiser::FuseStructuralHeadPack(Graph *graph, Operation *ope
     concat->Disconnect();
 }
 
+void NeuralAIGraphOptimiser::FuseStructuralHeadPostprocess(Graph *graph, Operation *operation)
+{
+    if ( operation->Type() != OpType::Dfl || operation->Input(TensorUsage::IFM1) != nullptr ||
+         operation->Input(TensorUsage::LUT) == nullptr ||
+         operation->Output(MakeTensorUsage(TensorUsage::OFM, 1)) == nullptr ) return;
+    TensorConnection *dflInput = operation->Input(TensorUsage::IFM0);
+    if ( dflInput == nullptr || dflInput->tensor->Writers().size() != 1 ) return;
+
+    Operation *view = dflInput->tensor->Writers().front().get();
+    TensorConnection *viewInput = view->Input(TensorUsage::IFM0);
+    TensorConnection *viewOutput = view->Output(TensorUsage::OFM);
+    if ( (view->Type() != OpType::Reshape && view->Type() != OpType::Passthrough) ||
+         viewInput == nullptr || viewOutput == nullptr ||
+         viewOutput->tensor != dflInput->tensor || viewOutput->tensor->Readers().size() != 1 ||
+         graph->IsOutput(viewOutput->tensor.get()) || viewInput->tensor->Writers().size() != 1 ) return;
+
+    Operation *transpose = viewInput->tensor->Writers().front().get();
+    TensorConnection *boxInput = transpose->Input(TensorUsage::IFM0);
+    TensorConnection *classInput = transpose->Input(TensorUsage::IFM1);
+    TensorConnection *transposeOutput = transpose->Output(TensorUsage::OFM);
+    if ( transpose->Type() != OpType::Transpose || boxInput == nullptr || classInput == nullptr ||
+         transposeOutput == nullptr || transposeOutput->tensor != viewInput->tensor ||
+         transposeOutput->tensor->Readers().size() != 1 ||
+         graph->IsOutput(transposeOutput->tensor.get()) ) return;
+
+    const Shape boxShape = Shape::PadAxes(boxInput->SliceShape(), 4, 1);
+    const Shape classShape = Shape::PadAxes(classInput->SliceShape(), 4, 1);
+    const Shape packedShape = Shape::PadAxes(transposeOutput->shape, 4, 1);
+    const Shape logitsShape = Shape::PadAxes(dflInput->shape, 4, 1);
+    const int64_t locations = int64_t(boxShape.Height()) * boxShape.Width();
+    if ( boxShape.Batch() != 1 || boxShape.Height() <= 0 || boxShape.Width() <= 0 ||
+         boxShape.Depth() != 64 || classShape != boxShape.WithDepth(80) ||
+         packedShape != Shape(1, 144, boxShape.Height(), boxShape.Width()) ||
+         locations > std::numeric_limits<int>::max() ||
+         logitsShape != Shape(1, 1, 144, int(locations)) ||
+         !boxInput->quantization.EqualScales(classInput->quantization) ||
+         !boxInput->quantization.EqualScales(dflInput->quantization) ) return;
+
+    operation->CopyInput(TensorUsage::IFM0, *boxInput);
+    operation->CopyInput(TensorUsage::IFM1, *classInput);
+    view->Disconnect();
+    transpose->Disconnect();
+}
+
 void NeuralAIGraphOptimiser::DistributeStructuralHeadMerge(Graph *graph, Operation *operation)
 {
     if ( operation->Type() != OpType::Concat ) return;
@@ -553,6 +597,9 @@ void NeuralAIGraphOptimiser::OptimiseGraph(Graph *graph)
     for ( const auto &operation : operations ) FuseStructuralHeadPack(graph, operation.get());
     operations.clear();
     graph->GetAllOperations(operations);
+    for ( const auto &operation : operations ) FuseStructuralHeadPostprocess(graph, operation.get());
+    operations.clear();
+    graph->GetAllOperations(operations);
     for ( const auto &operation : operations ) MaterializeStructuralCspConcatInputs(operation.get());
     for ( const auto &operation : operations )
     {
@@ -566,7 +613,8 @@ void NeuralAIGraphOptimiser::OptimiseGraph(Graph *graph)
         if ( operation->Type() == OpType::Concat && operation->Input(TensorUsage::IFM2) != nullptr )
             InsertInputConversion(graph, operation.get(), TensorUsage::IFM2);
         if ( operation->Type() == OpType::Add || operation->Type() == OpType::Concat ||
-             (operation->Type() == OpType::Transpose && operation->Input(TensorUsage::IFM1) != nullptr) )
+             ((operation->Type() == OpType::Transpose || operation->Type() == OpType::Dfl) &&
+                 operation->Input(TensorUsage::IFM1) != nullptr) )
             InsertInputConversion(graph, operation.get(), TensorUsage::IFM1);
         InsertOutputConversion(graph, operation.get());
     }

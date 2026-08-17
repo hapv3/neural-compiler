@@ -322,3 +322,62 @@ TEST_CASE("Neural-AI stripe staging planner splits wrapped C32 channel planes")
         REQUIRE(copy.destinationStride == 6u * 32u);
     }
 }
+
+TEST_CASE("Neural-AI stripe staging planner expands compact C16 into C32")
+{
+    StripeStagingInput input{};
+    input.logicalIfm = Shape(1, 8, 4, 16);
+    input.storageIfm = Shape(1, 3, 4, 16);
+    input.validArea = Box(Shape(0, 2, 0, 0), Box::Size(Shape(1, 3, 4, 16)));
+    input.sourceBase = 0x1000;
+    input.stagingBase = 0x8000;
+    input.padLeft = 1;
+    input.padRight = 1;
+    input.channels = 16;
+
+    const auto plan = LinebufferPlanner().PlanStripeStaging(input);
+    REQUIRE(plan.stagedIfm == Shape(1, 3, 6, 16));
+    REQUIRE(plan.bytes == 3u * 6u * 32u);
+    REQUIRE(plan.copies.size() == 2);
+    REQUIRE(plan.copies[0].source == 0x1000u + 2u * 4u * 16u);
+    REQUIRE(plan.copies[0].destination == 0x8000u + 32u);
+    REQUIRE(plan.copies[0].length == 16u);
+    REQUIRE(plan.copies[0].sourceStride == 16u);
+    REQUIRE(plan.copies[0].destinationStride == 32u);
+    REQUIRE(plan.copies[0].repetitions == 4u);
+    REQUIRE(plan.copies[0].sourceStride3 == 4u * 16u);
+    REQUIRE(plan.copies[0].destinationStride3 == 6u * 32u);
+    REQUIRE(plan.copies[0].repetitions3 == 1u);
+    REQUIRE(plan.copies[1].source == 0x1000u);
+    REQUIRE(plan.copies[1].destination == 0x8000u + 6u * 32u + 32u);
+    REQUIRE(plan.copies[1].repetitions3 == 2u);
+}
+
+TEST_CASE("Neural-AI stripe staging planner expands compact C80 groups into C96")
+{
+    StripeStagingInput input{};
+    input.logicalIfm = Shape(1, 2, 3, 80);
+    input.storageIfm = input.logicalIfm;
+    input.validArea = Box(input.logicalIfm);
+    input.sourceBase = 0x1000;
+    input.stagingBase = 0x8000;
+    input.channels = 80;
+
+    const auto plan = LinebufferPlanner().PlanStripeStaging(input);
+    REQUIRE(plan.bytes == 2u * 3u * 96u);
+    REQUIRE(plan.copies.size() == 3);
+    const std::array<uint32_t, 3> expectedLengths{32, 32, 16};
+    for ( int group = 0; group < 3; ++group )
+    {
+        const auto &copy = plan.copies[group];
+        REQUIRE(copy.source == 0x1000u + uint32_t(group * 32));
+        REQUIRE(copy.destination == 0x8000u + uint32_t(group) * 2u * 3u * 32u);
+        REQUIRE(copy.length == expectedLengths[group]);
+        REQUIRE(copy.sourceStride == 80u);
+        REQUIRE(copy.destinationStride == 32u);
+        REQUIRE(copy.repetitions == 3u);
+        REQUIRE(copy.sourceStride3 == 3u * 80u);
+        REQUIRE(copy.destinationStride3 == 3u * 32u);
+        REQUIRE(copy.repetitions3 == 2u);
+    }
+}

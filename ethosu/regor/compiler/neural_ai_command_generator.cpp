@@ -593,11 +593,15 @@ struct GeneratorContext
     {
         const SchedulerConnection *ifm = operation->IFM(0);
         const SchedulerConnection *ofm = operation->OFM();
+        const bool toC32 = ofm->tensor->format == TensorFormat::C32Blocked &&
+            (ifm->tensor->format == TensorFormat::C32Blocked ||
+                IsCompactNHWC(ifm->tensor->format) || ifm->tensor->IsConstant());
+        const bool fromC32 = ifm->tensor->format == TensorFormat::C32Blocked &&
+            (ofm->tensor->format == TensorFormat::C32Blocked ||
+                IsCompactNHWC(ofm->tensor->format));
         if ( ifm->Type() != regor::DataType::Int8 || ofm->Type() != regor::DataType::Int8 ||
              ifm->SliceShape().Elements64() != ofm->SliceShape().Elements64() ||
-             ofm->tensor->format != TensorFormat::C32Blocked ||
-             (ifm->tensor->format != TensorFormat::C32Blocked &&
-                 !IsCompactNHWC(ifm->tensor->format) && !ifm->tensor->IsConstant()) )
+             (!toC32 && !fromC32) )
             return SetError(error,
                 "Neural-AI sliced C32 copy requires equal INT8 C32/NHWC slices or a constant fill source");
 
@@ -656,9 +660,10 @@ struct GeneratorContext
                     return true;
                 }
                 const bool compactC16 = storage.Depth() == 16 && sliceOffset.Depth() == 0;
-                const bool highC16FromC32 = connection->tensor->format == TensorFormat::C32Blocked &&
-                    storage.Depth() == 32 && sliceOffset.Depth() == 16;
-                if ( storage.Batch() != 1 || (!compactC16 && !highC16FromC32) ||
+                const bool c16FromC32 = connection->tensor->format == TensorFormat::C32Blocked &&
+                    storage.Depth() == 32 &&
+                    (sliceOffset.Depth() == 0 || sliceOffset.Depth() == 16);
+                if ( storage.Batch() != 1 || (!compactC16 && !c16FromC32) ||
                      slice.Batch() != 1 || slice.Depth() != 16 ||
                      sliceOffset.Batch() != 0 ||
                      sliceOffset.Height() < 0 || sliceOffset.Width() < 0 ||
@@ -845,10 +850,12 @@ struct GeneratorContext
             RefV1 destination = TensorRef(ofm->tensor.get(),
                 destinationGroupBase, error);
             if ( !error.empty() ) return false;
-            if ( sourceAddressing.pixelStride != 0 )
+            if ( sourceAddressing.pixelStride != 0 || destinationAddressing.pixelStride != 0 )
             {
                 if ( !AppendDMA3D(source, destination, 32,
-                        sourceAddressing.pixelStride, 32, uint32_t(copyShape.Width()),
+                        sourceAddressing.pixelStride != 0 ? sourceAddressing.pixelStride : 32,
+                        destinationAddressing.pixelStride != 0 ? destinationAddressing.pixelStride : 32,
+                        uint32_t(copyShape.Width()),
                         sourceAddressing.rowStride, destinationAddressing.rowStride, rows,
                         layerId, group, error) )
                     return false;
@@ -903,10 +910,13 @@ struct GeneratorContext
                 return false;
             return true;
         }
-        if ( (!IsFullTensorConnection(ifm) || !IsFullTensorConnection(ofm)) &&
-             ofm->tensor->format == TensorFormat::C32Blocked &&
-             (ifm->tensor->format == TensorFormat::C32Blocked ||
-                 IsCompactNHWC(ifm->tensor->format) || ifm->tensor->IsConstant()) )
+        const bool slicedC32Boundary =
+            (ofm->tensor->format == TensorFormat::C32Blocked &&
+                (ifm->tensor->format == TensorFormat::C32Blocked ||
+                    IsCompactNHWC(ifm->tensor->format) || ifm->tensor->IsConstant())) ||
+            (ifm->tensor->format == TensorFormat::C32Blocked &&
+                IsCompactNHWC(ofm->tensor->format));
+        if ( (!IsFullTensorConnection(ifm) || !IsFullTensorConnection(ofm)) && slicedC32Boundary )
             return AppendSlicedC32Copy(operation, error);
         if ( !IsFullTensorConnection(ifm) || !IsFullTensorConnection(ofm) )
             return SetError(error, fmt::format(
@@ -1274,13 +1284,22 @@ struct GeneratorContext
         const SchedulerConnection *ifm = operation->IFM(0);
         const SchedulerConnection *ofm = operation->OFM();
         const SchedulerConnection *lut = operation->TryInput(TensorUsage::LUT);
+        const bool c32ToCompactC16 = ifm != nullptr && ofm != nullptr &&
+            ifm->tensor->format == TensorFormat::C32Blocked &&
+            IsCompactNHWC(ofm->tensor->format) && ifm->shape.Depth() == 16 &&
+            ofm->shape.Depth() == 16;
         if ( config == nullptr || config->Mode() != NeuralAIOpMode::AFULutI8 ||
              stripe == nullptr || stripe->stripeAreas.size() != 1 || ifm == nullptr || ofm == nullptr ||
              lut == nullptr || ifm->Type() != regor::DataType::Int8 || ofm->Type() != regor::DataType::Int8 ||
              ifm->tensor->format != TensorFormat::C32Blocked ||
-             ofm->tensor->format != TensorFormat::C32Blocked || !lut->tensor->IsConstant() ||
+             (ofm->tensor->format != TensorFormat::C32Blocked && !c32ToCompactC16) ||
+             !lut->tensor->IsConstant() ||
              lut->tensor->dataType != regor::DataType::Int8 || lut->tensor->bufferView.Elements() != 256 )
-            return SetError(error, "Neural-AI striped AFU LUT has an invalid scheduled operation");
+            return SetError(error, fmt::format(
+                "Neural-AI striped AFU LUT operation {} is invalid (IFM {}, OFM {}, config {})",
+                operation->Index(), EnumToString(ifm->tensor->format),
+                EnumToString(ofm->tensor->format),
+                config == nullptr ? "none" : NeuralAIOpModeName(config->Mode())));
         const StripeArea &area = stripe->stripeAreas.front();
         if ( area.ifmCount != 1 || !(area.ifmAreas[0] == area.ofmArea) )
             return SetError(error, "Neural-AI striped AFU LUT requires equal IFM and OFM areas");
@@ -1304,13 +1323,47 @@ struct GeneratorContext
             return SetError(error, "Neural-AI striped AFU LUT requires internal TCDM tensors");
         const uint32_t ifmBytes = uint32_t(TensorStorageBytes(ifm->tensor.get()));
         const uint32_t ofmBytes = uint32_t(TensorStorageBytes(ofm->tensor.get()));
-        if ( ifmBase.offset < ofmBase.offset + ofmBytes && ofmBase.offset < ifmBase.offset + ifmBytes )
-            return SetError(error, "Neural-AI striped AFU LUT requires out-of-place output storage");
+        const bool buffersOverlap = ifmBase.offset < ofmBase.offset + ofmBytes &&
+            ofmBase.offset < ifmBase.offset + ifmBytes;
+        if ( buffersOverlap && (!c32ToCompactC16 || ifmBase.offset != ofmBase.offset) )
+            return SetError(error,
+                "Neural-AI striped AFU LUT requires separate buffers or exact C16 compaction reuse");
 
         const RefV1 lutRef = LutRef(lut);
         const uint32_t rowBytes = uint32_t(shape.Width()) * 32u;
         const uint32_t ifmPlaneBytes = uint32_t(ifmStorage.Height()) * rowBytes;
-        const uint32_t ofmPlaneBytes = uint32_t(ofmStorage.Height()) * rowBytes;
+        const uint32_t ofmRowBytes = uint32_t(shape.Width()) *
+            (c32ToCompactC16 ? 16u : 32u);
+        const uint32_t ofmPlaneBytes = uint32_t(ofmStorage.Height()) * ofmRowBytes;
+        if ( c32ToCompactC16 )
+        {
+            int rowsDone = 0;
+            while ( rowsDone < shape.Height() )
+            {
+                const int logicalY = start.Height() + rowsDone;
+                const int ifmY = logicalY % ifmStorage.Height();
+                const int ofmY = logicalY % ofmStorage.Height();
+                const int rows = std::min({shape.Height() - rowsDone,
+                    ifmStorage.Height() - ifmY, ofmStorage.Height() - ofmY});
+                RefV1 ifmRef = ifmBase;
+                RefV1 ofmRef = ofmBase;
+                ifmRef.offset += uint32_t(ifmY) * rowBytes;
+                ofmRef.offset += uint32_t(ofmY) * ofmRowBytes;
+                if ( !AppendDMA2D(ifmRef, ofmRef, 16, 32, 16,
+                         uint32_t(rows * shape.Width()), uint32_t(operation->Index()), tileId++, error) )
+                    return false;
+                AppendHeader(artifact->commands, CommandType::AFULut, 64,
+                    uint32_t(operation->Index()), tileId++);
+                AppendRef(artifact->commands, ofmRef);
+                AppendRef(artifact->commands, ofmRef);
+                AppendRef(artifact->commands, lutRef);
+                Append32(artifact->commands, uint32_t(rows) * ofmRowBytes);
+                AppendZeros(artifact->commands, 5);
+                ++artifact->commandCount;
+                rowsDone += rows;
+            }
+            return true;
+        }
         const int groups = DivRoundUp(shape.Depth(), 32);
         for ( int group = 0; group < groups; ++group )
         {
@@ -1888,18 +1941,30 @@ struct GeneratorContext
         if ( config == nullptr || config->Mode() != NeuralAIOpMode::Dfl16 )
             return SetError(error, "Neural-AI DFL operation has no validated DFL16 mode");
         const SchedulerConnection *ifm = operation->IFM(0);
+        const SchedulerConnection *ifm1 = operation->TryIFM(1);
         const SchedulerConnection *ofm = operation->OFM();
         const SchedulerConnection *classOfm = operation->outputs.try_ref(MakeTensorUsage(TensorUsage::OFM, 1));
         const SchedulerConnection *classLut = operation->TryInput(TensorUsage::LUT);
         const SchedulerConnection *scratch = operation->TryInput(TensorUsage::Scratch);
-        const int locations = ifm != nullptr && ifm->shape.Size() == 4 ? ifm->shape.Depth() : 0;
+        const bool splitHead = ifm != nullptr && ifm1 != nullptr && ifm->shape.Size() == 4 &&
+                               ifm->shape.Batch() == 1 && ifm->shape.Depth() == 64 &&
+                               ifm1->shape == ifm->shape.WithDepth(80);
+        const int64_t locations64 = splitHead ? int64_t(ifm->shape.Height()) * ifm->shape.Width() :
+            (ifm != nullptr && ifm->shape.Size() == 4 ? ifm->shape.Depth() : 0);
+        const int locations = locations64 > 0 && locations64 <= std::numeric_limits<int>::max() ?
+            int(locations64) : 0;
         if ( ifm == nullptr || ofm == nullptr || scratch == nullptr || !IsFullTensorConnection(ifm) ||
              !IsFullTensorConnection(ofm) || ifm->Type() != regor::DataType::Int8 || ofm->Type() != regor::DataType::Int8 ||
-             locations <= 0 || ifm->shape != Shape(1, 1, 144, locations) ||
+             (splitHead && (!IsFullTensorConnection(ifm1) || ifm1->Type() != regor::DataType::Int8)) ||
+             locations <= 0 || (!splitHead && ifm->shape != Shape(1, 1, 144, locations)) ||
              ofm->shape != Shape(1, 1, 4, locations) ||
-             !IsCompactNHWC(ifm->tensor->format) || !IsCompactNHWC(ofm->tensor->format) ||
+             (splitHead ? (ifm->tensor->format != TensorFormat::C32Blocked ||
+                              ifm1->tensor->format != TensorFormat::C32Blocked) :
+                          !IsCompactNHWC(ifm->tensor->format)) ||
+             !IsCompactNHWC(ofm->tensor->format) ||
              scratch->tensor->format != TensorFormat::Row32 || scratch->tensor->AllocationSizeBytes() < 1088 )
-            return SetError(error, "Neural-AI DFL16 requires compact logits/output and tiled ROW32 scratch");
+            return SetError(error,
+                "Neural-AI DFL16 requires compact or split-C32 logits, compact output, and tiled ROW32 scratch");
         if ( (classOfm == nullptr) != (classLut == nullptr) )
             return SetError(error, "Neural-AI fused DFL16 class output requires a LUT and output together");
         if ( classOfm != nullptr &&
@@ -1913,6 +1978,10 @@ struct GeneratorContext
         if ( ofm->quantization.scales.size() != 1 || ofm->quantization.zeroPoints.size() != 1 ||
              ofm->quantization.zeroPoints[0] != -128 )
             return SetError(error, "Neural-AI DFL16 requires the selected scalar output quantization");
+        if ( splitHead &&
+             (ifm->tensor->AllocationSizeBytes() != int64_t(locations) * 64 ||
+                 ifm1->tensor->AllocationSizeBytes() != int64_t(locations) * 96) )
+            return SetError(error, "Neural-AI split DFL16 source storage size is invalid");
 
         RefV1 source = TensorRef(ifm->tensor.get(), 0, error);
         if ( !error.empty() ) return false;
@@ -1967,7 +2036,7 @@ struct GeneratorContext
         AppendRef(artifact->commands, expLut);
         AppendRef(artifact->commands, recipLut);
         Append32(artifact->commands, uint32_t(locations));
-        AppendZeros(artifact->commands, 1);
+        Append32(artifact->commands, splitHead ? 1u : 0u);
         ++artifact->commandCount;
         if ( classOfm != nullptr )
         {
@@ -1976,7 +2045,8 @@ struct GeneratorContext
             if ( classOffset64 > std::numeric_limits<uint32_t>::max() ||
                  classBytes64 > std::numeric_limits<uint32_t>::max() )
                 return SetError(error, "Neural-AI fused DFL16 class view overflows the ABI");
-            RefV1 classSource = TensorRef(ifm->tensor.get(), uint32_t(classOffset64), error);
+            RefV1 classSource = splitHead ? TensorRef(ifm1->tensor.get(), 0, error) :
+                TensorRef(ifm->tensor.get(), uint32_t(classOffset64), error);
             if ( !error.empty() ) return false;
             RefV1 classDestination = TensorRef(classOfm->tensor.get(), 0, error);
             if ( !error.empty() ) return false;
@@ -1984,12 +2054,34 @@ struct GeneratorContext
                  classDestination.region != uint16_t(Region::TCDMScratch) )
                 return SetError(error, "Neural-AI fused DFL16 class LUT requires internal TCDM tensors");
             const uint32_t classBytes = uint32_t(classBytes64);
+            const uint32_t classSourceBytes = splitHead ? uint32_t(locations) * 96u : classBytes;
             if ( uint64_t(classSource.offset) < uint64_t(classDestination.offset) + classBytes &&
-                 uint64_t(classDestination.offset) < uint64_t(classSource.offset) + classBytes )
+                 uint64_t(classDestination.offset) < uint64_t(classSource.offset) + classSourceBytes )
                 return SetError(error, "Neural-AI fused DFL16 class LUT requires out-of-place storage");
 
+            uint32_t lutTile = 1;
+            if ( splitHead )
+            {
+                AppendHeader(artifact->commands, CommandType::CopyLayout, 96,
+                    uint32_t(operation->Index()), lutTile++);
+                AppendRef(artifact->commands, classSource);
+                AppendRef(artifact->commands, classDestination);
+                Append16(artifact->commands, uint16_t(CopyLayoutMode::C32ToCHW));
+                Append16(artifact->commands, ABILayout(TensorFormat::C32Blocked));
+                Append16(artifact->commands, ABILayout(TensorFormat::NHWC));
+                Append16(artifact->commands, uint16_t(DataType::Int8));
+                for ( uint32_t dimension : Dimensions(ifm1->shape) )
+                    Append32(artifact->commands, dimension);
+                Append32(artifact->commands, 80);
+                Append32(artifact->commands, uint32_t(locations) * 32u);
+                Append32(artifact->commands, uint32_t(locations));
+                AppendZeros(artifact->commands, 7);
+                ++artifact->commandCount;
+                classSource = classDestination;
+            }
+
             AppendHeader(artifact->commands, CommandType::AFULut, 64,
-                uint32_t(operation->Index()), 1);
+                uint32_t(operation->Index()), lutTile);
             AppendRef(artifact->commands, classSource);
             AppendRef(artifact->commands, classDestination);
             AppendRef(artifact->commands, LutRef(classLut));
@@ -2070,8 +2162,15 @@ struct GeneratorContext
             RefV1 destination{};
             destination.region = uint16_t(Region::TCDMScratch);
             destination.offset = copy.destination;
-            if ( !AppendDMA2D(source, destination, copy.length, copy.sourceStride,
-                     copy.destinationStride, copy.repetitions, layerId, tileId++, error) )
+            if ( copy.repetitions3 != 0 )
+            {
+                if ( !AppendDMA3D(source, destination, copy.length, copy.sourceStride,
+                         copy.destinationStride, copy.repetitions, copy.sourceStride3,
+                         copy.destinationStride3, copy.repetitions3, layerId, tileId++, error) )
+                    return false;
+            }
+            else if ( !AppendDMA2D(source, destination, copy.length, copy.sourceStride,
+                          copy.destinationStride, copy.repetitions, layerId, tileId++, error) )
                 return false;
         }
         return true;
@@ -2204,7 +2303,18 @@ struct GeneratorContext
         stagingInput.logicalIfm = ifmShape;
         stagingInput.storageIfm = ReshapeToNHWC(ifm->tensor->storageShape);
         stagingInput.validArea = area.ifmAreas[0];
-        stagingInput.sourceBase = 0;
+        uint32_t ifmSliceOffset = 0;
+        if ( !config->DirectNhwcInput() )
+        {
+            if ( ifm->tensor->format == TensorFormat::C32Blocked )
+            {
+                if ( !C32SliceByteOffset(ifm, ifmSliceOffset, error) ) return false;
+            }
+            else if ( !IsCompactNHWC(ifm->tensor->format) || !IsFullTensorConnection(ifm) )
+                return SetError(error,
+                    "Neural-AI compact stripe staging requires a full tensor connection");
+        }
+        stagingInput.sourceBase = ifmSliceOffset;
         stagingInput.stagingBase = stripeStageOffset;
         stagingInput.padTop = stripe->padding.top;
         stagingInput.padLeft = stripe->padding.left;
@@ -2215,7 +2325,9 @@ struct GeneratorContext
         const auto staging = neuralai::LinebufferPlanner().PlanStripeStaging(stagingInput);
         if ( staging.bytes > stripeStageBytes )
             return SetError(error, "Neural-AI Conv stripe exceeds its planned staging workspace");
-        const bool needsFill = stripe->padding.top != 0 || stripe->padding.left != 0 ||
+        const bool compactTail = !config->DirectNhwcInput() &&
+            stagingInput.storageIfm.Depth() == int(channelK) && channelK % 32 != 0;
+        const bool needsFill = compactTail || stripe->padding.top != 0 || stripe->padding.left != 0 ||
             stripe->padding.bottom != 0 || stripe->padding.right != 0;
         int8_t paddingValue = 0;
         if ( const SchedulerConnection *padding = operation->TryInput(TensorUsage::Params1) )

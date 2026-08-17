@@ -17,7 +17,7 @@ namespace
 {
 
 thread_local std::array<ArchTensorRequirement, 4> s_tensorRequirements;
-thread_local std::array<ArchTensorRequirement, 3> s_dflTensorRequirements;
+thread_local std::array<ArchTensorRequirement, 4> s_dflTensorRequirements;
 
 bool IsStaticPositiveShape(const Shape &shape)
 {
@@ -267,21 +267,39 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
 
     if ( opType == OpType::Dfl )
     {
-        const int locations = query->ifm[0].shape.Size() == 4 ?
-            query->ifm[0].shape.Depth() : 0;
+        const Shape &ifmShape = query->ifm[0].shape;
+        const Shape &ifm1Shape = query->ifm[1].shape;
+        const int64_t locations64 = ifmShape.Size() == 4 && ifmShape.Height() == 1 && ifmShape.Width() == 144 ?
+            ifmShape.Depth() : (ifmShape.Size() == 4 ? int64_t(ifmShape.Height()) * ifmShape.Width() : 0);
+        const int locations = locations64 > 0 && locations64 <= std::numeric_limits<int>::max() ?
+            int(locations64) : 0;
+        const bool splitHead = ifmShape.Size() == 4 && ifmShape.Batch() == 1 &&
+                               ifmShape.Height() > 0 && ifmShape.Width() > 0 &&
+                               ifmShape.Depth() == 64 && ifm1Shape == ifmShape.WithDepth(80);
         if ( query->ifm[0].type != DataType::Int8 || query->ofm.type != DataType::Int8 ||
-             locations <= 0 || query->ifm[0].shape != Shape(1, 1, 144, locations) ||
+             (splitHead && query->ifm[1].type != DataType::Int8) || locations <= 0 ||
+             (!splitHead && ifmShape != Shape(1, 1, 144, locations)) ||
              query->ofm.shape != Shape(1, 1, 4, locations) )
             return QueryResult::Unsupported;
         if ( req != nullptr )
         {
-            Set(s_dflTensorRequirements[0], TensorUsage::IFM0, TensorFormat::NHWC);
-            Set(s_dflTensorRequirements[1], TensorUsage::OFM, TensorFormat::NHWC);
-            Set(s_dflTensorRequirements[2], TensorUsage::Scratch, DataType::Int8,
+            for ( auto &requirement : s_dflTensorRequirements ) requirement = {};
+            Set(s_dflTensorRequirements[0], TensorUsage::IFM0,
+                splitHead ? TensorFormat::C32Blocked : TensorFormat::NHWC);
+            int requirement = 1;
+            if ( splitHead )
+            {
+                Set(s_dflTensorRequirements[requirement], TensorUsage::IFM1, TensorFormat::C32Blocked);
+                s_dflTensorRequirements[requirement - 1].next = &s_dflTensorRequirements[requirement];
+                ++requirement;
+            }
+            Set(s_dflTensorRequirements[requirement], TensorUsage::OFM, TensorFormat::NHWC);
+            s_dflTensorRequirements[requirement - 1].next = &s_dflTensorRequirements[requirement];
+            ++requirement;
+            Set(s_dflTensorRequirements[requirement], TensorUsage::Scratch, DataType::Int8,
                 TensorFormat::Row32, Shape(1, 1, 34, 32));
-            s_dflTensorRequirements[0].next = &s_dflTensorRequirements[1];
-            s_dflTensorRequirements[1].next = &s_dflTensorRequirements[2];
-            s_dflTensorRequirements[2].next = nullptr;
+            s_dflTensorRequirements[requirement - 1].next = &s_dflTensorRequirements[requirement];
+            s_dflTensorRequirements[requirement].next = nullptr;
             req->tensor = s_dflTensorRequirements[0];
             req->req.Set(ArchRequirement::Tensor);
             return QueryResult::NativeHasReq;

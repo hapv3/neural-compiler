@@ -154,12 +154,13 @@ new runtime path has not yet passed E2E.
 | Storage-preserving views | Verified | reshape/squeeze/expand-dims; public output is materialized |
 | StridedSlice | Verified | C32-aligned aliases plus exact C32-to-C16 high-half materialization |
 | Concat | Compiler verified | generic striped two-input C32 gather; structural compact C16x3 gather; materialized correctness fallback |
-| YOLO C144 head transpose | Verified | three `[0,3,1,2]` head packs; vectorized C32-to-CHW runtime path |
-| DFL16 projection | Verified | exact ops 234–239; fused 16-bin AFU plus one Spatz pack/requant call per tile |
+| YOLO C144 head transpose | Verified fallback | standalone heads retain vectorized C32-to-CHW materialization |
+| DFL16 projection | Compiler/runtime verified | selected heads feed C64/C80 C32 directly; focused cluster verification pending |
 | Async DMA and overlap | Not implemented | blocking execution remains correct; performance phase |
-| Full selected graphs | Memory blocked | peak is 604,800 bytes; 520,192 available; three-head compact Concat is next |
+| Full selected graphs | P1 operator blocked | scheduled peak is 517,120 bytes; command generation reaches detection-tail Add |
 
-The current focused Regor suite passes 100 Neural-AI cases and 37,205 assertions.
+The focused Regor suite passes 106 Neural-AI cases and 38,589 assertions; the
+complete suite passes 249 cases and 624,634 assertions.
 Runtime ABI/host checks, cross-builds, firmware-size gates, and focused C144,
 DFL16, and MatMul V2 E2E tests pass.
 
@@ -220,8 +221,11 @@ the focused test had not written its invocation and binding table to L2.
   Conv outside this topology retains the full-copy fallback. The next schedule
   maximum was 554,016 bytes at each C64+C80-to-C144 head Concat. Each selected
   head now bypasses that materialization and emits two C32-to-CHW vector packs
-  for the C64 and C80 inputs. The full-model peak is 528,416 bytes at the 40x40
-  head pack, 8,224 bytes above the allocatable limit.
+  for the C64 and C80 inputs. The C144 head tensor is now bypassed as well:
+  DFL16 reads C64 directly in C32 layout, while one C32-to-CHW pack writes the
+  C80 class result and its LUT runs in place. The scheduled peak is 517,120
+  bytes, 3,072 bytes below the allocatable limit; command generation now stops
+  at the next P1 detection-tail Add.
 
 ### Other retained evidence
 
@@ -236,7 +240,7 @@ the focused test had not written its invocation and binding table to L2.
   73,728-element diagnostic exceeded 2,000,000 cluster cycles and is prohibited
   on selected hot paths; raw AFU or exact producer canonicalization is required.
 - Runtime `.text` must be rechecked after every runtime increment. Trusted V2-only
-  firmware currently reports 23,904 bytes, leaving 8,864 bytes of ITCM margin.
+  firmware currently reports 24,084 bytes, leaving 8,684 bytes of ITCM margin.
 
 ## 5. Remaining work, in execution order
 
@@ -249,11 +253,11 @@ and one vector requant/pack. Host tests and the Spatz block test pass. The full
 compiler-runtime package is byte-exact and passes in 468,781 cycles under the
 1,000,000-cycle gate. Compiler lowering now passes this graph point.
 
-### P0 — Full-graph memory feasibility
+### Completed P0 — Full-graph memory feasibility
 
-The current full YOLO compile reaches scheduling and reports 554,016 bytes of
-TCDM, down from 1,659,008 bytes. Reduce this to the 520,192-byte allocatable
-limit without adding a scalar or CPU fallback:
+The current full YOLO compile reaches command generation with a 517,120-byte
+scheduled peak, down from 1,659,008 bytes and below the 520,192-byte limit.
+The completed path adds no scalar or CPU fallback:
 
 - Completed: Y subdivision and target-gated LUT cascading; non-owning HLC stripe
   sequencing; compact RGB/C32 row staging; rolling row wrap; per-stripe Conv and
@@ -290,10 +294,10 @@ limit without adding a scalar or CPU fallback:
   exactly the 64- and 80-channel commands and no local-to-local DMA. This follows
   the Micro-YOLO reference strategy of bypassing a logical Concat rather than
   copying it; cycle counts remain reference-only until cluster verification.
-- Next measured blocker: remove the remaining 528,416-byte peak by bypassing the
-  40x40 CHW head tensor as well. Feed the C64 box input directly to fused DFL16
-  and the C80 class input directly to its LUT, retaining the materialized
-  C32-to-CHW path as the correctness fallback for standalone Transpose.
+- Completed direct head postprocess: fused DFL consumes C64 and C80 C32 inputs,
+  marks the ABI source layout, gathers each DFL16 tile once, packs C80 directly
+  to the compact class output, and applies the class LUT in place. Standalone
+  Transpose retains its materialized fallback.
 - Prove compact public bindings and native internal layouts end to end.
 - Use Regor cascading, tiling, live ranges, and allocator before adding target
   policy.
@@ -304,7 +308,8 @@ limit without adding a scalar or CPU fallback:
 
 ### P1 — Close remaining selected detection-tail contracts
 
-After the graph can be scheduled, walk to the next unsupported source ID and
+The graph is memory-feasible and command generation now stops at the selected
+detection-tail Add. Walk forward one unsupported source ID at a time and
 constrain only corpus forms of reshape/slice, class sigmoid, Mul/Sub/Add,
 Quantize, and final Concat/output handling. Prefer fusion, metadata views, and
 producer canonicalization over standalone commands.

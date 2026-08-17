@@ -124,6 +124,9 @@ struct StripeStagingCopy
     uint32_t sourceStride = 0;
     uint32_t destinationStride = 0;
     uint32_t repetitions = 0;
+    uint32_t sourceStride3 = 0;
+    uint32_t destinationStride3 = 0;
+    uint32_t repetitions3 = 0;
 };
 
 struct StripeStagingInput
