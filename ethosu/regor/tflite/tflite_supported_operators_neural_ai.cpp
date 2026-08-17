@@ -93,23 +93,33 @@ bool SupportedConcat(const Operation *operation)
         lhs->quantization.zeroPoints == rhs->quantization.zeroPoints &&
         lhs->quantization.zeroPoints == tail->quantization.zeroPoints &&
         lhs->quantization.zeroPoints == ofm->quantization.zeroPoints;
-    if ( lhs == nullptr || rhs == nullptr || ofm == nullptr || (!structuralCspConcat && ifmCount != 2) ||
+    const bool compactHeadConcat = lhs != nullptr && rhs != nullptr && tail != nullptr && ofm != nullptr &&
+        ifmCount == 3 && lhs->shape.Size() == 3 && lhs->shape[0] == 1 &&
+        (lhs->shape[1] == 4 || lhs->shape[1] == 80 || lhs->shape[1] == 144) &&
+        lhs->shape[2] > 0 && rhs->shape[0] == 1 && rhs->shape[1] == lhs->shape[1] &&
+        rhs->shape[2] > 0 && tail->shape[0] == 1 && tail->shape[1] == lhs->shape[1] &&
+        tail->shape[2] > 0 && ofm->shape == Shape(1, lhs->shape[1],
+            lhs->shape[2] + rhs->shape[2] + tail->shape[2]) &&
+        lhs->quantization == rhs->quantization && lhs->quantization == tail->quantization &&
+        lhs->quantization == ofm->quantization;
+    const bool structuralThreeWay = structuralCspConcat || compactHeadConcat;
+    if ( lhs == nullptr || rhs == nullptr || ofm == nullptr || (!structuralThreeWay && ifmCount != 2) ||
          axis != lhs->shape.Size() - 1 || lhs->shape.Size() != rhs->shape.Size() ||
          lhs->shape.Size() != ofm->shape.Size() ||
          lhs->shape.WithDepth(1) != rhs->shape.WithDepth(1) ||
          lhs->shape.WithDepth(1) != ofm->shape.WithDepth(1) ||
-         (lhs->shape.Depth() % 32 != 0 && !structuralCspConcat) ||
+         (lhs->shape.Depth() % 32 != 0 && !structuralThreeWay) ||
          (rhs->shape.Depth() % 32 != 0 &&
-             !structuralCspConcat && !(lhs->shape.Depth() == 64 && rhs->shape.Depth() == 80 &&
+             !structuralThreeWay && !(lhs->shape.Depth() == 64 && rhs->shape.Depth() == 80 &&
                (lhs->shape.Height() == 10 || lhs->shape.Height() == 20 ||
                    lhs->shape.Height() == 40) &&
                lhs->shape.Width() == lhs->shape.Height())) ||
-         (!structuralCspConcat && ofm->shape.Depth() != lhs->shape.Depth() + rhs->shape.Depth()) ||
-         (!structuralCspConcat &&
+         (!structuralThreeWay && ofm->shape.Depth() != lhs->shape.Depth() + rhs->shape.Depth()) ||
+         (!structuralThreeWay &&
              (lhs->quantization != rhs->quantization || lhs->quantization != ofm->quantization)) )
     {
         Failure(operation,
-            "Neural-AI Concat requires aligned two-input, selected C64+C80, or structural C16+C16+C16 inputs on the channel axis");
+            "Neural-AI Concat requires aligned two-input, structural C16x3, or compact three-head inputs on the final axis");
         return false;
     }
     return true;
@@ -146,10 +156,13 @@ bool SupportedDfl16(const Operation *operation)
 {
     const TensorConnection *ifm = operation->Input(TensorUsage::IFM0);
     const TensorConnection *ofm = operation->Output(TensorUsage::OFM);
+    const int locations = ifm != nullptr && ifm->shape.Size() == 3 ? ifm->shape[2] : 0;
     if ( ifm == nullptr || ofm == nullptr || ifm->tensor->Type() != DataType::Int8 ||
-         ofm->tensor->Type() != DataType::Int8 || ifm->shape != Shape(1, 144, 2100) || ofm->shape != Shape(1, 1, 4, 2100) )
+         ofm->tensor->Type() != DataType::Int8 || locations <= 0 ||
+         ifm->shape != Shape(1, 144, locations) ||
+         ofm->shape != Shape(1, 1, 4, locations) )
     {
-        Failure(operation, "Neural-AI DFL requires the selected 4x16x2100 INT8 contract");
+        Failure(operation, "Neural-AI DFL requires a structural 4x16xL INT8 contract");
         return false;
     }
     return true;

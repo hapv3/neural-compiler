@@ -1526,6 +1526,63 @@ struct GeneratorContext
             ofmSlice == lhsSlice.WithDepth(48) && IsCompactNHWC(lhs->tensor->format) &&
             IsCompactNHWC(rhs->tensor->format) && IsCompactNHWC(tail->tensor->format) &&
             ofm->tensor->format == TensorFormat::C32Blocked;
+        const bool compactHead = lhs != nullptr && rhs != nullptr && tail != nullptr && ofm != nullptr &&
+            lhsSlice.Batch() == 1 && lhsSlice.Height() == 1 &&
+            (lhsSlice.Width() == 4 || lhsSlice.Width() == 80 || lhsSlice.Width() == 144) &&
+            lhsSlice.Depth() > 0 && rhsSlice.Depth() > 0 && tailSlice.Depth() > 0 &&
+            lhsSlice.WithDepth(1) == rhsSlice.WithDepth(1) &&
+            lhsSlice.WithDepth(1) == tailSlice.WithDepth(1) &&
+            ofmSlice == lhsSlice.WithDepth(
+                lhsSlice.Depth() + rhsSlice.Depth() + tailSlice.Depth()) &&
+            IsCompactNHWC(lhs->tensor->format) && IsCompactNHWC(rhs->tensor->format) &&
+            IsCompactNHWC(tail->tensor->format) && IsCompactNHWC(ofm->tensor->format) &&
+            IsFullTensorConnection(lhs) && IsFullTensorConnection(rhs) &&
+            IsFullTensorConnection(tail) && IsFullTensorConnection(ofm);
+        if ( compactHead )
+        {
+            const std::array<const SchedulerConnection *, 3> inputs{lhs, rhs, tail};
+            const uint32_t outputDepth = uint32_t(ofmSlice.Depth());
+            const uint64_t outputRowBytes64 = uint64_t(ofmSlice.Width()) * outputDepth;
+            const uint64_t outputBytes = uint64_t(ofmSlice.Elements64());
+            if ( outputBytes > uint64_t(TensorStorageBytes(ofm->tensor.get())) ||
+                 outputBytes > std::numeric_limits<uint32_t>::max() ||
+                 outputRowBytes64 > std::numeric_limits<uint32_t>::max() )
+                return SetError(error, "Neural-AI compact head Concat output storage is invalid");
+            const uint32_t outputRowBytes = uint32_t(outputRowBytes64);
+            RefV1 output = TensorRef(ofm->tensor.get(), 0, error);
+            if ( !error.empty() ) return false;
+            uint32_t destinationDepth = 0;
+            for ( int index = 0; index < int(inputs.size()); ++index )
+            {
+                const SchedulerConnection *input = inputs[index];
+                const Shape inputShape = ReshapeToNHWC(input->SliceShape());
+                const uint32_t inputDepth = uint32_t(inputShape.Depth());
+                const uint64_t inputRowBytes64 = uint64_t(inputShape.Width()) * inputDepth;
+                const uint64_t inputBytes = uint64_t(inputShape.Elements64());
+                if ( inputBytes > uint64_t(TensorStorageBytes(input->tensor.get())) ||
+                     inputBytes > std::numeric_limits<uint32_t>::max() ||
+                     inputRowBytes64 > std::numeric_limits<uint32_t>::max() )
+                    return SetError(error, "Neural-AI compact head Concat input storage is invalid");
+                const uint32_t inputRowBytes = uint32_t(inputRowBytes64);
+                RefV1 source = TensorRef(input->tensor.get(), 0, error);
+                if ( !error.empty() ) return false;
+                RefV1 destination = output;
+                destination.offset += destinationDepth;
+                if ( source.region != uint16_t(Region::TCDMScratch) ||
+                     destination.region != uint16_t(Region::TCDMScratch) )
+                    return SetError(error, "Neural-AI compact head Concat requires internal TCDM tensors");
+                if ( uint64_t(source.offset) < uint64_t(output.offset) + outputBytes &&
+                     uint64_t(output.offset) < uint64_t(source.offset) + inputBytes )
+                    return SetError(error, "Neural-AI compact head Concat requires out-of-place storage");
+                if ( !AppendDMA3D(source, destination, inputDepth, inputDepth, outputDepth,
+                         uint32_t(inputShape.Width()), inputRowBytes, outputRowBytes,
+                         uint32_t(inputShape.Height()), uint32_t(operation->Index()),
+                         uint32_t(index), error) )
+                    return false;
+                destinationDepth += inputDepth;
+            }
+            return true;
+        }
         if ( structuralCsp )
         {
             const Shape outputStorage = ReshapeToNHWC(ofm->tensor->storageShape);
@@ -1800,13 +1857,27 @@ struct GeneratorContext
             return SetError(error, "Neural-AI DFL operation has no validated DFL16 mode");
         const SchedulerConnection *ifm = operation->IFM(0);
         const SchedulerConnection *ofm = operation->OFM();
+        const SchedulerConnection *classOfm = operation->outputs.try_ref(MakeTensorUsage(TensorUsage::OFM, 1));
+        const SchedulerConnection *classLut = operation->TryInput(TensorUsage::LUT);
         const SchedulerConnection *scratch = operation->TryInput(TensorUsage::Scratch);
+        const int locations = ifm != nullptr && ifm->shape.Size() == 4 ? ifm->shape.Depth() : 0;
         if ( ifm == nullptr || ofm == nullptr || scratch == nullptr || !IsFullTensorConnection(ifm) ||
              !IsFullTensorConnection(ofm) || ifm->Type() != regor::DataType::Int8 || ofm->Type() != regor::DataType::Int8 ||
-             ifm->shape != Shape(1, 1, 144, 2100) || ofm->shape != Shape(1, 1, 4, 2100) ||
-             ifm->tensor->format != TensorFormat::NHWC || ofm->tensor->format != TensorFormat::NHWC ||
+             locations <= 0 || ifm->shape != Shape(1, 1, 144, locations) ||
+             ofm->shape != Shape(1, 1, 4, locations) ||
+             !IsCompactNHWC(ifm->tensor->format) || !IsCompactNHWC(ofm->tensor->format) ||
              scratch->tensor->format != TensorFormat::Row32 || scratch->tensor->AllocationSizeBytes() < 1088 )
             return SetError(error, "Neural-AI DFL16 requires compact logits/output and tiled ROW32 scratch");
+        if ( (classOfm == nullptr) != (classLut == nullptr) )
+            return SetError(error, "Neural-AI fused DFL16 class output requires a LUT and output together");
+        if ( classOfm != nullptr &&
+             (!IsFullTensorConnection(classOfm) || classOfm->Type() != regor::DataType::Int8 ||
+              classOfm->shape != Shape(1, 1, 80, locations) ||
+              !IsCompactNHWC(classOfm->tensor->format) || !classLut->tensor->IsConstant() ||
+              classLut->tensor->dataType != regor::DataType::Int8 ||
+              classLut->tensor->bufferView.Elements() != 256) )
+            return SetError(error,
+                "Neural-AI fused DFL16 class output requires compact INT8 classes and a 256-byte LUT");
         if ( ofm->quantization.scales.size() != 1 || ofm->quantization.zeroPoints.size() != 1 ||
              ofm->quantization.zeroPoints[0] != -128 )
             return SetError(error, "Neural-AI DFL16 requires the selected scalar output quantization");
@@ -1863,9 +1934,37 @@ struct GeneratorContext
         AppendRef(artifact->commands, scratchRef);
         AppendRef(artifact->commands, expLut);
         AppendRef(artifact->commands, recipLut);
-        Append32(artifact->commands, 2100);
+        Append32(artifact->commands, uint32_t(locations));
         AppendZeros(artifact->commands, 1);
         ++artifact->commandCount;
+        if ( classOfm != nullptr )
+        {
+            const uint64_t classOffset64 = uint64_t(64) * uint64_t(locations);
+            const uint64_t classBytes64 = uint64_t(80) * uint64_t(locations);
+            if ( classOffset64 > std::numeric_limits<uint32_t>::max() ||
+                 classBytes64 > std::numeric_limits<uint32_t>::max() )
+                return SetError(error, "Neural-AI fused DFL16 class view overflows the ABI");
+            RefV1 classSource = TensorRef(ifm->tensor.get(), uint32_t(classOffset64), error);
+            if ( !error.empty() ) return false;
+            RefV1 classDestination = TensorRef(classOfm->tensor.get(), 0, error);
+            if ( !error.empty() ) return false;
+            if ( classSource.region != uint16_t(Region::TCDMScratch) ||
+                 classDestination.region != uint16_t(Region::TCDMScratch) )
+                return SetError(error, "Neural-AI fused DFL16 class LUT requires internal TCDM tensors");
+            const uint32_t classBytes = uint32_t(classBytes64);
+            if ( uint64_t(classSource.offset) < uint64_t(classDestination.offset) + classBytes &&
+                 uint64_t(classDestination.offset) < uint64_t(classSource.offset) + classBytes )
+                return SetError(error, "Neural-AI fused DFL16 class LUT requires out-of-place storage");
+
+            AppendHeader(artifact->commands, CommandType::AFULut, 64,
+                uint32_t(operation->Index()), 1);
+            AppendRef(artifact->commands, classSource);
+            AppendRef(artifact->commands, classDestination);
+            AppendRef(artifact->commands, LutRef(classLut));
+            Append32(artifact->commands, classBytes);
+            AppendZeros(artifact->commands, 5);
+            ++artifact->commandCount;
+        }
         return true;
     }
 

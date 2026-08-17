@@ -2118,6 +2118,104 @@ TEST_CASE("Neural-AI scheduler gathers native Concat stripes with DMA3D")
     REQUIRE(artifact.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);
 }
 
+TEST_CASE("Neural-AI compiler distributes DFL and class LUT across compact heads")
+{
+    ArchNeuralAI arch;
+    const std::array<int, 3> locations{3, 5, 7};
+    std::array<std::shared_ptr<Tensor>, 3> inputs;
+    for ( int index = 0; index < int(inputs.size()); ++index )
+        inputs[index] = CreateTensor("head" + std::to_string(index),
+            Shape(1, 1, 144, locations[index]), DataType::Int8);
+    auto merged = CreateTensor("merged", Shape(1, 1, 144, 15), DataType::Int8);
+    auto dflOutput = CreateTensor("dfl_output", Shape(1, 1, 4, 15), DataType::Int8);
+    auto classOutput = CreateTensor("class_output", Shape(1, 1, 80, 15), DataType::Int8);
+    std::vector<int8_t> lutValues(256);
+    for ( int index = 0; index < 256; ++index ) lutValues[index] = int8_t(index - 128);
+    auto lutTable = CreateTensor("lut", Shape(256), DataType::Int8, std::move(lutValues));
+
+    auto merge = std::make_shared<Operation>(OpType::Concat);
+    for ( int index = 0; index < int(inputs.size()); ++index )
+        merge->ConnectInput(MakeTensorUsage(TensorUsage::IFM, index), inputs[index])
+            .Set(Quantization::Unit());
+    merge->ConnectOutput(TensorUsage::OFM, merged).Set(Quantization::Unit());
+    merge->Attribute<axis_attr_t>()->axis = -1;
+    auto dfl = CreateOperation(
+        OpType::Dfl, TensorUsage::IFM0, merged, TensorUsage::OFM, dflOutput);
+    dfl->Input(TensorUsage::IFM0)->Set(Quantization::Unit());
+    Quantization dflQuantization = Quantization::Unit();
+    dflQuantization.zeroPoints = {-128};
+    dfl->Output(TensorUsage::OFM)->Set(dflQuantization);
+    auto activation = CreateOperation(
+        OpType::LUT, TensorUsage::IFM0, merged, TensorUsage::OFM, classOutput);
+    activation->Input(TensorUsage::IFM0)->Set(
+        TensorSlice(Shape(0, 0, 64, 0), Shape(1, 1, 80, 15), merged->StorageShape().WithOnes()));
+    activation->Input(TensorUsage::IFM0)->Set(Quantization::Unit());
+    activation->Output(TensorUsage::OFM)->Set(Quantization::Unit());
+    activation->ConnectInput(TensorUsage::LUT, lutTable);
+    std::vector<std::shared_ptr<Operation>> sourceOps = {merge, dfl, activation};
+    auto graph = CreateGraph(sourceOps);
+
+    GraphOptimiserOptions graphOptions;
+    NeuralAIGraphOptimiser optimiser(arch.Constraints(), graphOptions, nullptr);
+    optimiser.OptimiseGraph(graph.get());
+    std::vector<std::shared_ptr<Operation>> rewritten;
+    graph->GetAllOperations(rewritten);
+    REQUIRE(std::count_if(rewritten.begin(), rewritten.end(), [](const auto &operation)
+        { return operation->Type() == OpType::Dfl; }) == 3);
+    REQUIRE(std::count_if(rewritten.begin(), rewritten.end(), [](const auto &operation)
+        { return operation->Type() == OpType::LUT; }) == 0);
+    REQUIRE(std::count_if(rewritten.begin(), rewritten.end(), [](const auto &operation)
+        { return operation->Type() == OpType::Concat; }) == 2);
+
+    const std::unordered_map<UniqueId, UniqueId> equivalenceIds;
+    SchedulerPacking packing(&arch, false, equivalenceIds);
+    auto scheduleOps = packing.Process(graph.get());
+    SchedulerOptions schedulerOptions;
+    schedulerOptions.disabled.Set(SchedulerFeature::Cascading);
+    schedulerOptions.disabled.Set(SchedulerFeature::WeightBuffering);
+    Scheduler scheduler(
+        &arch, schedulerOptions, "neural-ai-distributed-head", scheduleOps,
+        packing.OpConfigCompatablility());
+    auto schedule = scheduler.Process();
+
+    CompiledNeuralAIArtifact artifact;
+    std::string error;
+    NeuralAICommandGenerator commandGenerator;
+    const bool generated = commandGenerator.Generate(
+        graph.get(), scheduleOps, schedule.get(), artifact, error);
+    INFO(error);
+    REQUIRE(generated);
+    uint32_t dflCommands = 0;
+    uint32_t lutCommands = 0;
+    uint32_t concatCommands = 0;
+    std::vector<uint32_t> commandLocations;
+    size_t offset = 0;
+    while ( offset < artifact.commands.size() )
+    {
+        const uint16_t type = Read16(artifact.commands, offset);
+        const uint16_t bytes = Read16(artifact.commands, offset + 2);
+        REQUIRE(bytes >= 32);
+        if ( type == uint16_t(neuralai::CommandType::AFUDFL16) )
+        {
+            commandLocations.push_back(Read32(artifact.commands, offset + 56));
+            ++dflCommands;
+        }
+        else if ( type == uint16_t(neuralai::CommandType::AFULut) ) ++lutCommands;
+        else if ( type == uint16_t(neuralai::CommandType::DMA3D) &&
+                  Read32(artifact.commands, offset + 60) ==
+                      uint32_t(neuralai::DMADirection::LocalToLocal) )
+            ++concatCommands;
+        offset += bytes;
+    }
+    std::sort(commandLocations.begin(), commandLocations.end());
+    REQUIRE(commandLocations == std::vector<uint32_t>{3, 5, 7});
+    REQUIRE(dflCommands == 3);
+    REQUIRE(lutCommands == 3);
+    REQUIRE(concatCommands == 6);
+    REQUIRE(offset == artifact.commands.size());
+    REQUIRE(artifact.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);
+}
+
 TEST_CASE("Neural-AI scheduler lowers a complete FullyConnected graph")
 {
     constexpr int depthK = 33;

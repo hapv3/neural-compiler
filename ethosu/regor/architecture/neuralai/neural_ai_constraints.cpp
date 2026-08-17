@@ -267,8 +267,11 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
 
     if ( opType == OpType::Dfl )
     {
+        const int locations = query->ifm[0].shape.Size() == 4 ?
+            query->ifm[0].shape.Depth() : 0;
         if ( query->ifm[0].type != DataType::Int8 || query->ofm.type != DataType::Int8 ||
-             query->ifm[0].shape != Shape(1, 1, 144, 2100) || query->ofm.shape != Shape(1, 1, 4, 2100) )
+             locations <= 0 || query->ifm[0].shape != Shape(1, 1, 144, locations) ||
+             query->ofm.shape != Shape(1, 1, 4, locations) )
             return QueryResult::Unsupported;
         if ( req != nullptr )
         {
@@ -295,6 +298,16 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
                                        lhsShape.Height() > 0 && lhsShape.Width() > 0 &&
                                        lhsShape.Depth() == 16 && rhsShape == lhsShape &&
                                        ofmShape == lhsShape.WithDepth(48);
+        const bool compactHeadConcat =
+            ((lhsShape.Size() == 3 && lhsShape[0] == 1 &&
+                 (lhsShape[1] == 4 || lhsShape[1] == 80 || lhsShape[1] == 144)) ||
+                (lhsShape.Size() == 4 && lhsShape.Batch() == 1 && lhsShape.Height() == 1 &&
+                    (lhsShape.Width() == 4 || lhsShape.Width() == 80 || lhsShape.Width() == 144))) &&
+            lhsShape.Depth() > 0 && rhsShape.Depth() > 0 &&
+            lhsShape.WithDepth(1) == rhsShape.WithDepth(1) &&
+            lhsShape.WithDepth(1) == ofmShape.WithDepth(1) &&
+            ofmShape.Depth() > lhsShape.Depth() + rhsShape.Depth();
+        const bool compactThreeWay = structuralCspConcat || compactHeadConcat;
         if ( query->ifm[0].type != DataType::Int8 || query->ifm[1].type != DataType::Int8 ||
              query->ofm.type != DataType::Int8 || query->axis != -1 ||
              !IsStaticPositiveShape(lhsShape) || !IsStaticPositiveShape(rhsShape) ||
@@ -302,26 +315,27 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
              lhsShape.Size() != rhsShape.Size() || lhsShape.Size() != ofmShape.Size() ||
              lhsShape.WithDepth(1) != rhsShape.WithDepth(1) ||
              lhsShape.WithDepth(1) != ofmShape.WithDepth(1) ||
-             (lhsShape.Depth() % 32 != 0 && !structuralCspConcat) ||
+             (lhsShape.Depth() % 32 != 0 && !compactThreeWay) ||
              (rhsShape.Depth() % 32 != 0 &&
-                 !structuralCspConcat && !(lhsShape.Depth() == 64 && rhsShape.Depth() == 80 &&
+                 !compactThreeWay && !(lhsShape.Depth() == 64 && rhsShape.Depth() == 80 &&
                    (lhsShape.Height() == 10 || lhsShape.Height() == 20 || lhsShape.Height() == 40) &&
                    lhsShape.Width() == lhsShape.Height())) ||
-             (!structuralCspConcat && ofmShape.Depth() != lhsShape.Depth() + rhsShape.Depth()) )
+             (!compactThreeWay && ofmShape.Depth() != lhsShape.Depth() + rhsShape.Depth()) )
             return QueryResult::Unsupported;
         if ( req != nullptr )
         {
             Set(s_tensorRequirements[0], TensorUsage::IFM0,
-                structuralCspConcat ? TensorFormat::CompactNHWC : TensorFormat::C32Blocked);
+                compactThreeWay ? TensorFormat::CompactNHWC : TensorFormat::C32Blocked);
             Set(s_tensorRequirements[1], TensorUsage::IFM1,
-                structuralCspConcat ? TensorFormat::CompactNHWC : TensorFormat::C32Blocked);
-            Set(s_tensorRequirements[2], structuralCspConcat ? TensorUsage::IFM2 : TensorUsage::OFM,
-                structuralCspConcat ? TensorFormat::CompactNHWC : TensorFormat::C32Blocked);
+                compactThreeWay ? TensorFormat::CompactNHWC : TensorFormat::C32Blocked);
+            Set(s_tensorRequirements[2], compactThreeWay ? TensorUsage::IFM2 : TensorUsage::OFM,
+                compactThreeWay ? TensorFormat::CompactNHWC : TensorFormat::C32Blocked);
             s_tensorRequirements[0].next = &s_tensorRequirements[1];
             s_tensorRequirements[1].next = &s_tensorRequirements[2];
-            if ( structuralCspConcat )
+            if ( compactThreeWay )
             {
-                Set(s_tensorRequirements[3], TensorUsage::OFM, TensorFormat::C32Blocked);
+                Set(s_tensorRequirements[3], TensorUsage::OFM,
+                    structuralCspConcat ? TensorFormat::C32Blocked : TensorFormat::CompactNHWC);
                 s_tensorRequirements[2].next = &s_tensorRequirements[3];
                 s_tensorRequirements[3].next = nullptr;
             }

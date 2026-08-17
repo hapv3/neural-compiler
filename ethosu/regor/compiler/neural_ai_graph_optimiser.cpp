@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <string>
 
 namespace regor
 {
@@ -363,6 +364,120 @@ void NeuralAIGraphOptimiser::MaterializeStructuralCspConcatInputs(Operation *ope
     }
 }
 
+void NeuralAIGraphOptimiser::DistributeStructuralHeadMerge(Graph *graph, Operation *operation)
+{
+    if ( operation->Type() != OpType::Concat ) return;
+    TensorConnection *mergeOutput = operation->Output(TensorUsage::OFM);
+    TensorConnection *lhs = operation->Input(TensorUsage::IFM0);
+    TensorConnection *rhs = operation->Input(TensorUsage::IFM1);
+    TensorConnection *tail = operation->Input(TensorUsage::IFM2);
+    if ( mergeOutput == nullptr || lhs == nullptr || rhs == nullptr || tail == nullptr ) return;
+
+    const Shape outputShape = Shape::PadAxes(mergeOutput->shape, 4, 1);
+    const std::array<TensorConnection *, 3> inputs{lhs, rhs, tail};
+    std::array<Shape, 3> inputShapes;
+    int locations = 0;
+    for ( int index = 0; index < int(inputs.size()); ++index )
+    {
+        inputShapes[index] = Shape::PadAxes(inputs[index]->SliceShape(), 4, 1);
+        if ( inputShapes[index].Batch() != 1 || inputShapes[index].Height() != 1 ||
+             inputShapes[index].Width() != 144 || inputShapes[index].Depth() <= 0 ) return;
+        locations += inputShapes[index].Depth();
+    }
+    if ( outputShape != Shape(1, 1, 144, locations) ) return;
+
+    Operation *dfl = nullptr;
+    Operation *lut = nullptr;
+    auto readers = mergeOutput->tensor->Readers();
+    for ( const auto &reader : readers )
+    {
+        TensorConnection *readerOutput = reader->Output(TensorUsage::OFM);
+        if ( reader->Type() == OpType::MemoryCopy && readerOutput != nullptr &&
+             !graph->IsOutput(readerOutput->tensor.get()) && readerOutput->tensor->Readers().empty() )
+        {
+            reader->Disconnect();
+        }
+    }
+    readers = mergeOutput->tensor->Readers();
+    if ( readers.size() != 2 ) return;
+    for ( const auto &reader : readers )
+    {
+        if ( reader->Type() == OpType::Dfl ) dfl = reader.get();
+        else if ( reader->Type() == OpType::LUT ) lut = reader.get();
+    }
+    if ( dfl == nullptr || lut == nullptr ) return;
+
+    TensorConnection *dflInput = dfl->Input(TensorUsage::IFM0);
+    TensorConnection *dflOutput = dfl->Output(TensorUsage::OFM);
+    TensorConnection *lutInput = lut->Input(TensorUsage::IFM0);
+    TensorConnection *lutTable = lut->Input(TensorUsage::LUT);
+    TensorConnection *lutOutput = lut->Output(TensorUsage::OFM);
+    if ( dflInput == nullptr || dflOutput == nullptr || lutInput == nullptr ||
+         lutTable == nullptr || lutOutput == nullptr || dflInput->tensor != mergeOutput->tensor ||
+         lutInput->tensor != mergeOutput->tensor || !lutTable->tensor->IsConstant() ||
+         Shape::PadAxes(dflInput->SliceShape(), 4, 1) != outputShape ||
+         Shape::PadAxes(dflOutput->shape, 4, 1) != Shape(1, 1, 4, locations) ||
+         Shape::PadAxes(lutInput->SliceShape(), 4, 1) != Shape(1, 1, 80, locations) ||
+         Shape::PadAxes(lutOutput->shape, 4, 1) != Shape(1, 1, 80, locations) ) return;
+    const Shape lutOffset = lutInput->slice.offset ?
+        Shape::PadAxes(lutInput->slice.offset, 4, 0) : outputShape.WithZeros();
+    const Shape lutStride = lutInput->slice.stride ?
+        Shape::PadAxes(lutInput->slice.stride, 4, 1) : outputShape.WithOnes();
+    if ( lutOffset != Shape(0, 0, 64, 0) || lutStride != lutStride.WithOnes() ) return;
+
+    std::array<std::shared_ptr<Tensor>, 3> dflParts;
+    std::array<std::shared_ptr<Tensor>, 3> classParts;
+    std::array<std::shared_ptr<Operation>, 3> dflOperations;
+    for ( int index = 0; index < int(inputs.size()); ++index )
+    {
+        const int partLocations = inputShapes[index].Depth();
+        const Shape dflShape = Shape(1, 1, 4, partLocations);
+        dflParts[index] = std::make_shared<Tensor>(
+            mergeOutput->tensor->Name() + "/dfl_part" + std::to_string(index),
+            dflOutput->tensor->Type(), dflShape);
+        dflOperations[index] = std::make_shared<Operation>(OpType::Dfl);
+        dflOperations[index]->CopyInput(TensorUsage::IFM0, *inputs[index]);
+        dflOperations[index]->ConnectOutput(TensorUsage::OFM, dflParts[index])
+            .Set(dflShape)
+            .Set(dflOutput->quantization)
+            .Set(dflOutput->rounding);
+
+        const Shape classShape = Shape(1, 1, 80, partLocations);
+        classParts[index] = std::make_shared<Tensor>(
+            mergeOutput->tensor->Name() + "/class_part" + std::to_string(index),
+            lutOutput->tensor->Type(), classShape);
+        dflOperations[index]->CopyInput(TensorUsage::LUT, *lutTable);
+        dflOperations[index]->ConnectOutput(MakeTensorUsage(TensorUsage::OFM, 1), classParts[index])
+            .Set(classShape)
+            .Set(lutOutput->quantization)
+            .Set(lutOutput->rounding);
+        RecordOptimisation(*operation, dflOperations[index].get());
+    }
+
+    auto dflMerge = std::make_shared<Operation>(OpType::Concat);
+    auto classMerge = std::make_shared<Operation>(OpType::Concat);
+    for ( int index = 0; index < int(inputs.size()); ++index )
+    {
+        const TensorUsage usage = MakeTensorUsage(TensorUsage::IFM, index);
+        dflMerge->ConnectInput(usage, dflParts[index])
+            .Set(Shape(1, 1, 4, inputShapes[index].Depth()))
+            .Set(dflOutput->quantization);
+        classMerge->ConnectInput(usage, classParts[index])
+            .Set(Shape(1, 1, 80, inputShapes[index].Depth()))
+            .Set(lutOutput->quantization);
+    }
+    dflMerge->CopyOutput(TensorUsage::OFM, *dflOutput);
+    dflMerge->Attribute<axis_attr_t>()->axis = -1;
+    classMerge->CopyOutput(TensorUsage::OFM, *lutOutput);
+    classMerge->Attribute<axis_attr_t>()->axis = -1;
+    RecordOptimisation(*operation, dflMerge.get());
+    RecordOptimisation(*operation, classMerge.get());
+
+    dfl->Disconnect();
+    lut->Disconnect();
+    operation->Disconnect();
+}
+
 void NeuralAIGraphOptimiser::OptimiseGraph(Graph *graph)
 {
     std::vector<std::shared_ptr<Operation>> operations;
@@ -373,6 +488,9 @@ void NeuralAIGraphOptimiser::OptimiseGraph(Graph *graph)
         return;
     }
     for ( const auto &operation : operations ) CanonicalizeConvAdd(graph, operation.get());
+    for ( const auto &operation : operations ) DistributeStructuralHeadMerge(graph, operation.get());
+    operations.clear();
+    graph->GetAllOperations(operations);
     for ( const auto &operation : operations ) MaterializeStructuralCspConcatInputs(operation.get());
     for ( const auto &operation : operations )
     {

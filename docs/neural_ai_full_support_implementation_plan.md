@@ -207,16 +207,20 @@ the focused test had not written its invocation and binding table to L2.
 - C32-to-C16 high-half slice materializes once with local DMA3D plus Spatz
   vector copy; the focused H2/W3/C32 package passes at 105,347 ns.
 - Full YOLO compilation now passes both resize operations, all three MaxPools,
-  the first three head transposes, and the fused DFL16 chain, then stops at the
+  all three head transposes, and the DFL16/class chain, then stops at the
   full-schedule TCDM capacity check. Structural compact C16 handling and striped
-  DMA3D Concat gathering reduce the peak from 1,659,008 to 604,800 bytes
-  (63.5%). The selected C144-to-C80 class slice is now a compact metadata view;
-  AFU LUT reads that contiguous view directly and its point drops to 470,400
-  bytes. The 80x80 C16x3 CSP cascade and 40x40 C128+C64 neck cascade each use
-  517,120 bytes. The next maximum is the out-of-place compact three-head
-  C144x2100 Concat, whose 302,400-byte input and output live ranges overlap.
-  Stem cascade 3 is also still 563,200 bytes and must be brought below the
-  520,192-byte release limit.
+  DMA3D Concat gathering reduced the original peak from 1,659,008 bytes.
+  The compact C144x2100 merge is no longer materialized: each scale runs one
+  fused scheduler operation that emits DFL16 plus class LUT, followed by compact
+  three-way DMA3D gathers of only the 4xL and 80xL results. The former 604,800
+  byte point is now 344,416 bytes.
+- The next schedule maximum remains stem cascade 3 at 563,200 bytes, where the
+  complete 307,200-byte RGB input overlaps a 204,800-byte rolling output and a
+  51,200-byte cascade buffer. A direct-binding optimization must be selected by
+  the scheduler only for a striped cascade; applying it unconditionally would
+  leave standalone RGB Conv without a valid TCDM source. After the stem, each
+  C64+C80-to-C144 head Concat reaches 554,016 bytes. Fuse that Concat with its
+  C32-to-CHW head pack after fixing the stem lifetime.
 
 ### Other retained evidence
 
@@ -246,7 +250,7 @@ compiler-runtime package is byte-exact and passes in 468,781 cycles under the
 
 ### P0 — Full-graph memory feasibility
 
-The current full YOLO compile reaches scheduling and requests 604,800 bytes of
+The current full YOLO compile reaches scheduling and reports 563,200 bytes of
 TCDM, down from 1,659,008 bytes. Reduce this to the 520,192-byte allocatable
 limit without adding a scalar or CPU fallback:
 
@@ -269,9 +273,14 @@ limit without adding a scalar or CPU fallback:
   unstrided compact view for any positive location count `L`; AFU LUT accepts
   the contiguous slice without a C32 conversion. No overlapping AFU buffers or
   firmware/RTL relaxation is used.
-- Next measured blocker: eliminate the 604,800-byte out-of-place compact
-  three-head C144 Concat peak by streaming/fusing its pack/consumer path. Then
-  remove the remaining 43,008-byte excess in stem cascade 3. Retain full tensor
+- Completed compact head distribution: the three C144 heads are consumed
+  independently by fused DFL16+class-LUT scheduler operations. Compact 4xL and
+  80xL DMA3D gathers replace the full C144x2100 materialization and reduce that
+  point to 344,416 bytes.
+- Next measured blocker: make the scheduler select direct input-binding staging
+  only for the striped RGB stem cascade, removing its 43,008-byte excess without
+  breaking standalone Conv. Then fuse each C64+C80 head Concat with its following
+  C32-to-CHW pack to remove the 554,016-byte peak. Retain full tensor
   materialization only as the correctness fallback.
 - Prove compact public bindings and native internal layouts end to end.
 - Use Regor cascading, tiling, live ranges, and allocator before adding target
