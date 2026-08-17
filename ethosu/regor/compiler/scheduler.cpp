@@ -447,7 +447,12 @@ int Scheduler::UpdateSchedulerTensor(TensorUsage usage, SchedulerConnection *con
     conn->requireFullTensor = conn->requireFullTensor || cpuTensor;
     tensor->needsLinearFormat = tensor->needsLinearFormat || cpuTensor;
 
-    if ( (_options.separateIORegions || tensor->IsConstant() || unknownShape) && cpuTensor && !tensor->hasNPUWriters &&
+    if ( _arch->UsesExternalBindings() && !tensor->IsConstant() &&
+         (tensor->isGraphInput || tensor->isGraphOutput) )
+    {
+        tensor->memArea = _arch->CPUMemory();
+    }
+    else if ( (_options.separateIORegions || tensor->IsConstant() || unknownShape) && cpuTensor && !tensor->hasNPUWriters &&
          !tensor->hasNPUReaders )
     {
         tensor->memArea = _arch->CPUMemory();

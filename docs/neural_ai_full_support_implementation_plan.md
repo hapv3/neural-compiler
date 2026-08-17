@@ -214,13 +214,12 @@ the focused test had not written its invocation and binding table to L2.
   fused scheduler operation that emits DFL16 plus class LUT, followed by compact
   three-way DMA3D gathers of only the 4xL and 80xL results. The former 604,800
   byte point is now 344,416 bytes.
-- The next schedule maximum remains stem cascade 3 at 563,200 bytes, where the
-  complete 307,200-byte RGB input overlaps a 204,800-byte rolling output and a
-  51,200-byte cascade buffer. A direct-binding optimization must be selected by
-  the scheduler only for a striped cascade; applying it unconditionally would
-  leave standalone RGB Conv without a valid TCDM source. After the stem, each
-  C64+C80-to-C144 head Concat reaches 554,016 bytes. Fuse that Concat with its
-  C32-to-CHW head pack after fixing the stem lifetime.
+- The structural RGB Conv -> LUT -> Conv stem now stages 160 input-binding row
+  stripes directly into TCDM and uses 256,000 bytes, down from 563,200 bytes.
+  Neural-AI public bindings are excluded from internal arena allocation; RGB
+  Conv outside this topology retains the full-copy fallback. The next schedule
+  maximum is 554,016 bytes at each C64+C80-to-C144 head Concat. Fuse that Concat
+  with its C32-to-CHW head pack.
 
 ### Other retained evidence
 
@@ -250,7 +249,7 @@ compiler-runtime package is byte-exact and passes in 468,781 cycles under the
 
 ### P0 — Full-graph memory feasibility
 
-The current full YOLO compile reaches scheduling and reports 563,200 bytes of
+The current full YOLO compile reaches scheduling and reports 554,016 bytes of
 TCDM, down from 1,659,008 bytes. Reduce this to the 520,192-byte allocatable
 limit without adding a scalar or CPU fallback:
 
@@ -277,9 +276,13 @@ limit without adding a scalar or CPU fallback:
   independently by fused DFL16+class-LUT scheduler operations. Compact 4xL and
   80xL DMA3D gathers replace the full C144x2100 materialization and reduce that
   point to 344,416 bytes.
-- Next measured blocker: make the scheduler select direct input-binding staging
-  only for the striped RGB stem cascade, removing its 43,008-byte excess without
-  breaking standalone Conv. Then fuse each C64+C80 head Concat with its following
+- Completed structural RGB binding staging: graph inputs/outputs use external
+  binding regions, the selected three-op stem omits its full native input copy,
+  and each striped RGB command DMA-stages its required rows. The focused block
+  test checks 160 binding-to-TCDM DMA2D commands, one shared cascade, and a
+  313,440-byte compiled-block TCDM requirement; standalone RGB Conv keeps its
+  validated full-copy path.
+- Next measured blocker: fuse each C64+C80 head Concat with its following
   C32-to-CHW pack to remove the 554,016-byte peak. Retain full tensor
   materialization only as the correctness fallback.
 - Prove compact public bindings and native internal layouts end to end.

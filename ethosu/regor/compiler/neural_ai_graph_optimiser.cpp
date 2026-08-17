@@ -284,6 +284,33 @@ void NeuralAIGraphOptimiser::InsertInputConversion(Graph *graph, Operation *oper
 {
     const TensorConnection original = *operation->Input(usage);
     if ( !graph->IsInput(original.tensor.get()) ) return;
+    const Kernel *kernel = operation->Kernel();
+    TensorConnection *stemOutput = operation->Output(TensorUsage::OFM);
+    const bool rgbStemCandidate = operation->Type() == OpType::Conv2D &&
+        usage == TensorUsage::IFM0 && original.SliceShape().Depth() == 3 && kernel != nullptr &&
+        kernel->Size() == Point2i(3, 3) && kernel->Stride() == Point2i(2, 2) &&
+        kernel->Dilation() == Point2i(1, 1) && stemOutput != nullptr &&
+        stemOutput->tensor->Readers().size() == 1;
+    if ( rgbStemCandidate )
+    {
+        Operation *activation = stemOutput->tensor->Readers().front().get();
+        TensorConnection *activationOutput = activation->Output(TensorUsage::OFM);
+        if ( activation->Type() == OpType::LUT && activationOutput != nullptr &&
+             activationOutput->tensor->Readers().size() == 1 )
+        {
+            Operation *consumer = activationOutput->tensor->Readers().front().get();
+            const Kernel *consumerKernel = consumer->Kernel();
+            if ( consumer->Type() == OpType::Conv2D && consumerKernel != nullptr &&
+                 consumerKernel->Size() == Point2i(3, 3) &&
+                 consumerKernel->Stride() == Point2i(2, 2) &&
+                 consumerKernel->Dilation() == Point2i(1, 1) )
+            {
+                // This structural stem is scheduled as RGB Conv -> LUT -> Conv.
+                // The striped RGB command stages its rows from the public binding.
+                return;
+            }
+        }
+    }
 
     auto nativeTensor = std::shared_ptr<Tensor>(original.tensor->Clone().release());
     nativeTensor->SetName(original.tensor->Name() + "/row32");

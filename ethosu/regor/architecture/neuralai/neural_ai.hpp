@@ -63,6 +63,11 @@ public:
     {
         return opType == OpType::LUT || opType == OpType::Concat;
     }
+    bool SupportsCascadedConvolution(OpType opType) const override
+    {
+        return opType == OpType::Conv2D;
+    }
+    bool UsesExternalBindings() const override { return true; }
     bool SupportsScalar(OpType opType, DataType dataType, TensorUsage usage) override;
     Flags<WeightFormat> SupportedWeightFormat(OpType op) override;
     void Call(std::function<void(const std::string &)> callBack) override;

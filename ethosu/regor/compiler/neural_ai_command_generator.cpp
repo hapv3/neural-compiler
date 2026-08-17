@@ -2146,8 +2146,9 @@ struct GeneratorContext
         }
         if ( config == nullptr || !IsLinebufferConvMode(config->Mode()) || cost->npuWeightsTensor == nullptr ||
              stripe == nullptr || stripe->stripeAreas.size() != 1 )
-            return SetError(error, std::string("Neural-AI striped matrix path requires linebuffer Conv2D, got ") +
-                (config == nullptr ? "no config" : NeuralAIOpModeName(config->Mode())));
+            return SetError(error, fmt::format(
+                "Neural-AI striped matrix operation {} requires linebuffer Conv2D, got {}",
+                operation->Index(), config == nullptr ? "no config" : NeuralAIOpModeName(config->Mode())));
         const SchedulerConnection *ifm = operation->IFM(0);
         const SchedulerConnection *ofm = operation->OFM();
         const StripeArea &area = stripe->stripeAreas.front();
@@ -2297,6 +2298,9 @@ struct GeneratorContext
         if ( isK3Conv )
         {
             const bool directRgb = config->DirectNhwcInput();
+            if ( directRgb && ifm->tensor->isGraphInput )
+                return SetError(error,
+                    "Neural-AI direct RGB binding requires a striped stem cascade");
             if ( (!directRgb && ifm->tensor->format != TensorFormat::C32Blocked) ||
                  ofm->tensor->format != TensorFormat::C32Blocked )
                 return SetError(error, "Neural-AI linebuffer Conv requires C32-blocked input and output");

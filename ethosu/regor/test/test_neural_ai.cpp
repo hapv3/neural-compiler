@@ -2025,6 +2025,114 @@ TEST_CASE("Neural-AI scheduler emits interleaved Conv LUT stripes")
     REQUIRE(artifact.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);
 }
 
+TEST_CASE("Neural-AI compiler streams a structural RGB stem from its binding")
+{
+    constexpr int inputHeight = 320;
+    constexpr int inputWidth = 320;
+    constexpr int stemHeight = 160;
+    constexpr int stemWidth = 160;
+    constexpr int outputHeight = 80;
+    constexpr int outputWidth = 80;
+    ArchNeuralAI arch;
+    auto input = CreateTensor("input", Shape(1, inputHeight, inputWidth, 3), DataType::Int8);
+    auto stem = CreateTensor("stem", Shape(1, stemHeight, stemWidth, 16), DataType::Int8);
+    auto activated = CreateTensor(
+        "stem_activation", Shape(1, stemHeight, stemWidth, 16), DataType::Int8);
+    auto output = CreateTensor("output", Shape(1, outputHeight, outputWidth, 32), DataType::Int8);
+    auto stemWeights = CreateTensor("stem_weights", Shape(16, 3, 3, 3), DataType::Int8,
+        std::vector<int8_t>(16 * 3 * 3 * 3, 1));
+    auto stemScales = CreateTensor(
+        "stem_scales", Shape(16), DataType::Int32, std::vector<int32_t>(16, 0));
+    auto nextWeights = CreateTensor("next_weights", Shape(32, 3, 3, 16), DataType::Int8,
+        std::vector<int8_t>(32 * 3 * 3 * 16, 1));
+    auto nextScales = CreateTensor(
+        "next_scales", Shape(32), DataType::Int32, std::vector<int32_t>(32, 0));
+    std::vector<int8_t> lutValues(256);
+    for ( int index = 0; index < 256; ++index ) lutValues[index] = int8_t(index - 128);
+    auto lut = CreateTensor("lut", Shape(256), DataType::Int8, std::move(lutValues));
+
+    auto stemConv = CreateOperation(
+        OpType::Conv2D, TensorUsage::IFM0, input, TensorUsage::OFM, stem);
+    stemConv->Input(TensorUsage::IFM0)->Set(Quantization::Unit());
+    stemConv->Output(TensorUsage::OFM)->Set(Quantization::Unit());
+    stemConv->ConnectInput(TensorUsage::Weights, stemWeights).Set(Quantization::Unit());
+    stemConv->ConnectInput(TensorUsage::Scales, stemScales).Set(Quantization::Unit());
+    stemConv->SetKernel(std::make_unique<Kernel>(Point2i(3, 3), Point2i(2, 2),
+        Point2i(1, 1), Margin(1, 1, 0, 0)));
+    auto activation = CreateOperation(
+        OpType::LUT, TensorUsage::IFM0, stem, TensorUsage::OFM, activated);
+    activation->Input(TensorUsage::IFM0)->Set(Quantization::Unit());
+    activation->Output(TensorUsage::OFM)->Set(Quantization::Unit());
+    activation->ConnectInput(TensorUsage::LUT, lut);
+    auto nextConv = CreateOperation(
+        OpType::Conv2D, TensorUsage::IFM0, activated, TensorUsage::OFM, output);
+    nextConv->Input(TensorUsage::IFM0)->Set(Quantization::Unit());
+    nextConv->Output(TensorUsage::OFM)->Set(Quantization::Unit());
+    nextConv->ConnectInput(TensorUsage::Weights, nextWeights).Set(Quantization::Unit());
+    nextConv->ConnectInput(TensorUsage::Scales, nextScales).Set(Quantization::Unit());
+    nextConv->SetKernel(std::make_unique<Kernel>(Point2i(3, 3), Point2i(2, 2),
+        Point2i(1, 1), Margin(1, 1, 0, 0)));
+    std::vector<std::shared_ptr<Operation>> sourceOps = {stemConv, activation, nextConv};
+    auto graph = CreateGraph(sourceOps);
+
+    GraphOptimiserOptions graphOptions;
+    NeuralAIGraphOptimiser optimiser(arch.Constraints(), graphOptions, nullptr);
+    optimiser.Process(graph.get());
+    std::vector<std::shared_ptr<Operation>> rewritten;
+    graph->GetAllOperations(rewritten);
+    REQUIRE(stemConv->Input(TensorUsage::IFM0)->tensor == input);
+    REQUIRE(std::count_if(rewritten.begin(), rewritten.end(), [](const auto &operation)
+        { return operation->Type() == OpType::MemoryCopy; }) == 1);
+
+    const std::unordered_map<UniqueId, UniqueId> equivalenceIds;
+    SchedulerPacking packing(&arch, false, equivalenceIds);
+    auto scheduleOps = packing.Process(graph.get());
+    SchedulerOptions schedulerOptions;
+    schedulerOptions.optimizationStrategy = OptimizationStrategy::Performance;
+    schedulerOptions.optimizationStagingLimit = ArchNeuralAI::AllocatableTCDMBytes;
+    schedulerOptions.disabled.Set(SchedulerFeature::WeightBuffering);
+    Scheduler scheduler(&arch, schedulerOptions, "neural-ai-rgb-stem-binding", scheduleOps,
+        packing.OpConfigCompatablility());
+    auto schedule = scheduler.Process();
+
+    int cascade = 0;
+    for ( const auto &operation : scheduleOps )
+    {
+        const SchedulerOpInfo *cost = schedule->Cost(operation.get());
+        REQUIRE(cost != nullptr);
+        if ( operation->Type() == OpType::Conv2D || operation->Type() == OpType::LUT )
+        {
+            if ( cascade == 0 ) cascade = cost->cascade;
+            REQUIRE(cost->cascade == cascade);
+        }
+    }
+    REQUIRE(cascade > 0);
+
+    CompiledNeuralAIArtifact artifact;
+    std::string error;
+    NeuralAICommandGenerator commandGenerator;
+    const bool generated = commandGenerator.Generate(
+        graph.get(), scheduleOps, schedule.get(), artifact, error);
+    INFO(error);
+    REQUIRE(generated);
+    uint32_t bindingCopies = 0;
+    size_t offset = 0;
+    while ( offset < artifact.commands.size() )
+    {
+        const uint16_t type = Read16(artifact.commands, offset);
+        const uint16_t bytes = Read16(artifact.commands, offset + 2);
+        REQUIRE(bytes >= 32);
+        if ( type == uint16_t(neuralai::CommandType::DMA2D) &&
+             Read16(artifact.commands, offset + 16) == uint16_t(neuralai::Region::InputBinding) &&
+             Read16(artifact.commands, offset + 24) == uint16_t(neuralai::Region::TCDMScratch) )
+            ++bindingCopies;
+        offset += bytes;
+    }
+    REQUIRE(offset == artifact.commands.size());
+    REQUIRE(bindingCopies == stemHeight);
+    REQUIRE(artifact.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);
+}
+
 TEST_CASE("Neural-AI scheduler gathers native Concat stripes with DMA3D")
 {
     constexpr int height = 40;
@@ -3498,8 +3606,9 @@ TEST_CASE("Neural-AI compiler lowers the complete Micro-MobileNet topology")
         REQUIRE(prefixCompiler.ParseOptions(prefixOptions.c_str(), prefixOptions.size()));
         const auto prefixModel = BuildMicroMobileNetModel(stage);
         REQUIRE(prefixCompiler.LoadTflite(prefixModel.data(), prefixModel.size()));
-        INFO("Micro-MobileNet stage " << stage);
-        REQUIRE(prefixCompiler.Compile());
+        const bool prefixCompiled = prefixCompiler.Compile();
+        INFO("Micro-MobileNet stage " << stage << ": " << prefixCompiler.LastError());
+        REQUIRE(prefixCompiled);
     }
 
     std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();

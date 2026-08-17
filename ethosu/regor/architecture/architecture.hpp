@@ -402,6 +402,8 @@ public:
     virtual int UpscaleAndRounding(ArchResampling resampling, int &rounding) = 0;
     virtual AxisMask CanSubdivide(OpType opType, TransposeType transpose, ReverseType reverse) = 0;
     virtual bool SupportsCascadedOperator(OpType opType) const { return false; }
+    virtual bool SupportsCascadedConvolution(OpType) const { return true; }
+    virtual bool UsesExternalBindings() const { return false; }
     virtual bool SupportsScalar(OpType opType, DataType dataType, TensorUsage usage) = 0;
     virtual Flags<WeightFormat> SupportedWeightFormat(OpType op) = 0;
     // helper for arch-dependent callbacks outside of arch
