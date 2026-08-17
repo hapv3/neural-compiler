@@ -8,6 +8,7 @@
 
 #include "compiler/operation_util.hpp"
 
+#include <array>
 #include <limits>
 #include <set>
 
@@ -27,6 +28,7 @@ const std::set<OpType> s_supportedOpTypes = {
     OpType::FullyConnected,
     OpType::LUT,
     OpType::MaxPool,
+    OpType::Mul,
     OpType::Reshape,
     OpType::ResizeNearestNeighbor,
     OpType::Sigmoid,
@@ -168,6 +170,65 @@ bool SupportedDfl16(const Operation *operation)
     return true;
 }
 
+bool SupportedBoxScaleMul(const Operation *operation)
+{
+    const TensorConnection *boxes = operation->Input(TensorUsage::IFM0);
+    const TensorConnection *scales = operation->Input(TensorUsage::IFM1);
+    const TensorConnection *ofm = operation->Output(TensorUsage::OFM);
+    if ( boxes == nullptr || scales == nullptr || ofm == nullptr ||
+         boxes->tensor->Type() != DataType::Int8 || scales->tensor->Type() != DataType::Int8 ||
+         ofm->tensor->Type() != DataType::Int8 || !scales->tensor->IsConstant() ||
+         boxes->shape != Shape(1, 1, 4, 2100) || scales->shape != Shape(1, 4, 2100) ||
+         ofm->shape != boxes->shape || scales->quantization.scales.size() != 1 ||
+         scales->quantization.zeroPoints.size() != 1 )
+    {
+        Failure(operation, "Neural-AI Mul requires the selected constant three-head box-scale contract");
+        return false;
+    }
+    const auto values = scales->tensor->View().Values<int>(DataType::Int8);
+    const Shape valueShape = scales->tensor->View().ViewShape();
+    constexpr std::array<int, 3> lengths{1600, 400, 100};
+    std::array<int, 3> expected{};
+    if ( values.Count() != 4 * 2100 )
+    {
+        Failure(operation, "Neural-AI box-scale constant has an invalid byte count");
+        return false;
+    }
+    const auto scaleValue = [&](int side, int location)
+    {
+        return valueShape.Size() == 3 ? values[Shape(0, side, location)] :
+            values[Shape(0, 0, side, location)];
+    };
+    int first = 0;
+    for ( int part = 0; part < int(lengths.size()); ++part )
+    {
+        expected[part] = scaleValue(0, first);
+        if ( expected[part] <= scales->quantization.zeroPoints[0] )
+        {
+            Failure(operation, "Neural-AI box scales must be positive");
+            return false;
+        }
+        first += lengths[part];
+    }
+    for ( int side = 0; side < 4; ++side )
+    {
+        first = 0;
+        for ( int part = 0; part < int(lengths.size()); ++part )
+        {
+            for ( int location = 0; location < lengths[part]; ++location )
+            {
+                if ( scaleValue(side, first + location) != expected[part] )
+                {
+                    Failure(operation, "Neural-AI box scales must be constant within each detection head");
+                    return false;
+                }
+            }
+            first += lengths[part];
+        }
+    }
+    return true;
+}
+
 bool SupportedC32DepthSlice(const Operation *operation)
 {
     const TensorConnection *ifm = operation->Input(TensorUsage::IFM0);
@@ -260,6 +321,9 @@ TfLiteSupportedOperatorsNeuralAI::TfLiteSupportedOperatorsNeuralAI() :
     opConstraints[OpType::Transpose].push_back(&s_supportedHeadTranspose);
     static ConstraintCheck s_supportedDfl16 = {&SupportedDfl16, "DFL must match the selected four-coordinate, 16-bin, 2100-location contract."};
     opConstraints[OpType::Dfl].push_back(&s_supportedDfl16);
+    static ConstraintCheck s_supportedBoxScaleMul = {&SupportedBoxScaleMul,
+        "Mul must match the selected constant three-head box-scale contract."};
+    opConstraints[OpType::Mul].push_back(&s_supportedBoxScaleMul);
     static ConstraintCheck s_supportedC32DepthSlice = {&SupportedC32DepthSlice,
         "StridedSlice must match the C32-aligned view or C32-to-C16 half-depth contract."};
     opConstraints[OpType::StridedSlice].push_back(&s_supportedC32DepthSlice);

@@ -9,6 +9,7 @@
 #include "compiler/quantization.hpp"
 
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 namespace regor::neuralai
@@ -17,7 +18,8 @@ namespace regor::neuralai
 // Selects an integer multiplier and right shift for a positive real scale.
 // The search is deliberately independent of signed right-shift behaviour so
 // that the compiler reference and the RTL model use the same result.
-bool CalculateQuantizedMultiplier(double realScale, int32_t &multiplier, int32_t &shift);
+bool CalculateQuantizedMultiplier(double realScale, int32_t &multiplier, int32_t &shift,
+    int32_t maximumMultiplier = std::numeric_limits<int32_t>::max());
 
 bool GenerateQuantizationParameters(const Quantization &ifmQuant, const Quantization &weightQuant,
     const Quantization &ofmQuant, std::vector<QuantizedScale> &outScales);

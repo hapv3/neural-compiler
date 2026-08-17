@@ -73,6 +73,11 @@ TEST_CASE("Neural-AI Phase 3 quantization is deterministic and symmetric")
     REQUIRE(CalculateQuantizedMultiplier(0.5, multiplier, shift));
     REQUIRE(multiplier == (1 << 30));
     REQUIRE(shift == 31);
+    REQUIRE(CalculateQuantizedMultiplier(59665434.0 / double(1ULL << 31),
+        multiplier, shift, 65535));
+    REQUIRE(multiplier == 58267);
+    REQUIRE(shift == 21);
+    REQUIRE_FALSE(CalculateQuantizedMultiplier(0.5, multiplier, shift, 0));
     REQUIRE_FALSE(CalculateQuantizedMultiplier(0.0, multiplier, shift));
     REQUIRE_FALSE(CalculateQuantizedMultiplier(-1.0, multiplier, shift));
 

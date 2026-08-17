@@ -10,6 +10,7 @@
 
 #include "architecture/neuralai/neural_ai.hpp"
 #include "architecture/neuralai/neural_ai_op_config.hpp"
+#include "architecture/neuralai/neural_ai_quantization.hpp"
 #include "compiler/high_level_command_stream_generator.hpp"
 #include "compiler/shape_util.hpp"
 #include "tflite/tflite_schema_generated.hpp"
@@ -2064,6 +2065,7 @@ struct GeneratorContext
         const SchedulerConnection *classOfm = operation->outputs.try_ref(MakeTensorUsage(TensorUsage::OFM, 1));
         const SchedulerConnection *classLut = operation->TryInput(TensorUsage::LUT);
         const SchedulerConnection *scratch = operation->TryInput(TensorUsage::Scratch);
+        const SchedulerConnection *boxScale = operation->TryInput(TensorUsage::Params);
         const bool splitHead = ifm != nullptr && ifm1 != nullptr && ifm->shape.Size() == 4 &&
                                ifm->shape.Batch() == 1 && ifm->shape.Depth() == 64 &&
                                ifm1->shape == ifm->shape.WithDepth(80);
@@ -2096,6 +2098,31 @@ struct GeneratorContext
         if ( ofm->quantization.scales.size() != 1 || ofm->quantization.zeroPoints.size() != 1 ||
              ofm->quantization.zeroPoints[0] != -128 )
             return SetError(error, "Neural-AI DFL16 requires the selected scalar output quantization");
+        double boxScaleValue = 1.0;
+        if ( boxScale != nullptr )
+        {
+            if ( !boxScale->tensor->IsConstant() || boxScale->Type() != regor::DataType::Int8 ||
+                 boxScale->tensor->bufferView.Elements() != 1 ||
+                 boxScale->quantization.scales.size() != 1 ||
+                 boxScale->quantization.zeroPoints.size() != 1 )
+                return SetError(error, "Neural-AI DFL16 box scale must be one scalar INT8 constant");
+            const int rawScale = boxScale->tensor->bufferView.Values<int>(regor::DataType::Int8)[0];
+            boxScaleValue = (double(rawScale) - double(boxScale->quantization.zeroPoints[0])) *
+                boxScale->quantization.scales[0].Dequantize();
+        }
+        const double outputScale = ofm->quantization.scales[0].Dequantize();
+        int32_t outputMultiplier = 0;
+        int32_t outputShift = 0;
+        const int clampMin = ofm->quantization.quantMin.empty() ? -128 :
+            int(ofm->quantization.quantMin[0]);
+        const int clampMax = ofm->quantization.quantMax.empty() ? 127 :
+            int(ofm->quantization.quantMax[0]);
+        if ( boxScaleValue <= 0 || outputScale <= 0 ||
+             !neuralai::CalculateQuantizedMultiplier(
+                 boxScaleValue / (256.0 * outputScale), outputMultiplier, outputShift, 65535) ||
+             outputShift < 17 ||
+             clampMin < -128 || clampMax > 127 || clampMin > clampMax )
+            return SetError(error, "Neural-AI DFL16 output requantization is outside the INT8 contract");
         if ( splitHead &&
              (ifm->tensor->AllocationSizeBytes() != int64_t(locations) * 64 ||
                  ifm1->tensor->AllocationSizeBytes() != int64_t(locations) * 96) )
@@ -2147,7 +2174,7 @@ struct GeneratorContext
         };
         const RefV1 expLut = appendLut(false);
         const RefV1 recipLut = appendLut(true);
-        AppendHeader(artifact->commands, CommandType::AFUDFL16, 64, uint32_t(operation->Index()), 0);
+        AppendHeader(artifact->commands, CommandType::AFUDFL16, 96, uint32_t(operation->Index()), 0);
         AppendRef(artifact->commands, source);
         AppendRef(artifact->commands, destination);
         AppendRef(artifact->commands, scratchRef);
@@ -2155,6 +2182,12 @@ struct GeneratorContext
         AppendRef(artifact->commands, recipLut);
         Append32(artifact->commands, uint32_t(locations));
         Append32(artifact->commands, splitHead ? 1u : 0u);
+        Append32(artifact->commands, uint32_t(outputMultiplier));
+        Append32(artifact->commands, uint32_t(outputShift));
+        Append32(artifact->commands, uint32_t(ofm->quantization.zeroPoints[0]));
+        Append32(artifact->commands, uint32_t(clampMin));
+        Append32(artifact->commands, uint32_t(clampMax));
+        AppendZeros(artifact->commands, 3);
         ++artifact->commandCount;
         if ( classOfm != nullptr )
         {

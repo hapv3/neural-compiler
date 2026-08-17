@@ -40,6 +40,7 @@ private:
     void FuseStructuralHeadPack(Graph *graph, Operation *operation);
     void FuseStructuralHeadPostprocess(Graph *graph, Operation *operation);
     void DistributeStructuralHeadMerge(Graph *graph, Operation *operation);
+    void FuseStructuralBoxScale(Graph *graph, Operation *operation);
 };
 
 }  // namespace regor

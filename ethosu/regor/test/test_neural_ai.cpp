@@ -2332,10 +2332,18 @@ TEST_CASE("Neural-AI compiler distributes DFL and class LUT across compact heads
             Shape(1, 1, 144, locations[index]), DataType::Int8);
     auto merged = CreateTensor("merged", Shape(1, 1, 144, 15), DataType::Int8);
     auto dflOutput = CreateTensor("dfl_output", Shape(1, 1, 4, 15), DataType::Int8);
+    auto scaledOutput = CreateTensor("scaled_output", Shape(1, 1, 4, 15), DataType::Int8);
     auto classOutput = CreateTensor("class_output", Shape(1, 1, 80, 15), DataType::Int8);
     std::vector<int8_t> lutValues(256);
     for ( int index = 0; index < 256; ++index ) lutValues[index] = int8_t(index - 128);
     auto lutTable = CreateTensor("lut", Shape(256), DataType::Int8, std::move(lutValues));
+    std::vector<int8_t> boxScaleValues;
+    for ( int side = 0; side < 4; ++side )
+        for ( int index = 0; index < int(locations.size()); ++index )
+            boxScaleValues.insert(boxScaleValues.end(), locations[index],
+                std::array<int8_t, 3>{-64, 0, 127}[index]);
+    auto boxScales = CreateTensor(
+        "box_scales", Shape(1, 4, 15), DataType::Int8, std::move(boxScaleValues));
 
     auto merge = std::make_shared<Operation>(OpType::Concat);
     for ( int index = 0; index < int(inputs.size()); ++index )
@@ -2348,6 +2356,7 @@ TEST_CASE("Neural-AI compiler distributes DFL and class LUT across compact heads
     dfl->Input(TensorUsage::IFM0)->Set(Quantization::Unit());
     Quantization dflQuantization = Quantization::Unit();
     dflQuantization.zeroPoints = {-128};
+    dflQuantization.scales = {QuantizedScale(0.0449872725)};
     dfl->Output(TensorUsage::OFM)->Set(dflQuantization);
     auto activation = CreateOperation(
         OpType::LUT, TensorUsage::IFM0, merged, TensorUsage::OFM, classOutput);
@@ -2356,7 +2365,18 @@ TEST_CASE("Neural-AI compiler distributes DFL and class LUT across compact heads
     activation->Input(TensorUsage::IFM0)->Set(Quantization::Unit());
     activation->Output(TensorUsage::OFM)->Set(Quantization::Unit());
     activation->ConnectInput(TensorUsage::LUT, lutTable);
-    std::vector<std::shared_ptr<Operation>> sourceOps = {merge, dfl, activation};
+    auto boxScale = CreateOperation(
+        OpType::Mul, TensorUsage::IFM0, dflOutput, TensorUsage::OFM, scaledOutput);
+    boxScale->Input(TensorUsage::IFM0)->Set(dflQuantization);
+    Quantization scaleQuantization = Quantization::Unit();
+    scaleQuantization.scales = {QuantizedScale(0.000392156857)};
+    scaleQuantization.zeroPoints = {-128};
+    boxScale->ConnectInput(TensorUsage::IFM1, boxScales).Set(scaleQuantization);
+    Quantization scaledQuantization = Quantization::Unit();
+    scaledQuantization.scales = {QuantizedScale(0.00352863618)};
+    scaledQuantization.zeroPoints = {-128};
+    boxScale->Output(TensorUsage::OFM)->Set(scaledQuantization);
+    std::vector<std::shared_ptr<Operation>> sourceOps = {merge, dfl, activation, boxScale};
     auto graph = CreateGraph(sourceOps);
 
     GraphOptimiserOptions graphOptions;
@@ -2370,6 +2390,19 @@ TEST_CASE("Neural-AI compiler distributes DFL and class LUT across compact heads
         { return operation->Type() == OpType::LUT; }) == 0);
     REQUIRE(std::count_if(rewritten.begin(), rewritten.end(), [](const auto &operation)
         { return operation->Type() == OpType::Concat; }) == 2);
+    REQUIRE(std::none_of(rewritten.begin(), rewritten.end(), [](const auto &operation)
+        { return operation->Type() == OpType::Mul; }));
+    std::vector<int> fusedRawScales;
+    for ( const auto &rewrittenOperation : rewritten )
+    {
+        if ( rewrittenOperation->Type() != OpType::Dfl ) continue;
+        const TensorConnection *scale = rewrittenOperation->Input(TensorUsage::Params);
+        REQUIRE(scale != nullptr);
+        fusedRawScales.push_back(scale->tensor->View().Values<int>(DataType::Int8)[0]);
+        REQUIRE(rewrittenOperation->Output(TensorUsage::OFM)->quantization == scaledQuantization);
+    }
+    std::sort(fusedRawScales.begin(), fusedRawScales.end());
+    REQUIRE(fusedRawScales == std::vector<int>{-64, 0, 127});
 
     const std::unordered_map<UniqueId, UniqueId> equivalenceIds;
     SchedulerPacking packing(&arch, false, equivalenceIds);
@@ -2393,6 +2426,7 @@ TEST_CASE("Neural-AI compiler distributes DFL and class LUT across compact heads
     uint32_t lutCommands = 0;
     uint32_t concatCommands = 0;
     std::vector<uint32_t> commandLocations;
+    std::vector<std::tuple<uint32_t, int32_t, uint32_t>> dflRequantization;
     size_t offset = 0;
     while ( offset < artifact.commands.size() )
     {
@@ -2401,7 +2435,11 @@ TEST_CASE("Neural-AI compiler distributes DFL and class LUT across compact heads
         REQUIRE(bytes >= 32);
         if ( type == uint16_t(neuralai::CommandType::AFUDFL16) )
         {
+            REQUIRE(bytes == sizeof(neuralai::CommandAFUDFL16V2));
             commandLocations.push_back(Read32(artifact.commands, offset + 56));
+            dflRequantization.emplace_back(Read32(artifact.commands, offset + 56),
+                int32_t(Read32(artifact.commands, offset + 64)),
+                Read32(artifact.commands, offset + 68));
             ++dflCommands;
         }
         else if ( type == uint16_t(neuralai::CommandType::AFULut) ) ++lutCommands;
@@ -2413,6 +2451,10 @@ TEST_CASE("Neural-AI compiler distributes DFL and class LUT across compact heads
     }
     std::sort(commandLocations.begin(), commandLocations.end());
     REQUIRE(commandLocations == std::vector<uint32_t>{3, 5, 7});
+    REQUIRE(std::all_of(dflRequantization.begin(), dflRequantization.end(),
+        [](const auto &requantization)
+        { return std::get<1>(requantization) > 0 && std::get<1>(requantization) <= 65535 &&
+                 std::get<2>(requantization) >= 17 && std::get<2>(requantization) <= 31; }));
     REQUIRE(dflCommands == 3);
     REQUIRE(lutCommands == 3);
     REQUIRE(concatCommands == 6);

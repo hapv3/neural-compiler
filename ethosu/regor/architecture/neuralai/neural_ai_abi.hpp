@@ -459,6 +459,12 @@ struct CommandAFUDFL16V2
     RefV1 recipLut;
     uint32_t locations;
     uint32_t sourceLayout;
+    int32_t outputMultiplier;
+    uint32_t outputShift;
+    int32_t outputZeroPoint;
+    int32_t clampMin;
+    int32_t clampMax;
+    uint32_t reserved[3];
 };
 
 static_assert(sizeof(ModelHeaderV1) == 64);
@@ -489,7 +495,7 @@ static_assert(sizeof(LinebufJobWireV1) == 124);
 static_assert(sizeof(CommandLineBufferJobV2) == 160);
 static_assert(sizeof(CommandCopyLayoutV2) == 96);
 
-static_assert(sizeof(CommandAFUDFL16V2) == 64);
+static_assert(sizeof(CommandAFUDFL16V2) == 96);
 
 using SerializedModelHeaderV1 = std::array<uint8_t, sizeof(ModelHeaderV1)>;
 using SerializedSectionV1 = std::array<uint8_t, sizeof(SectionV1)>;

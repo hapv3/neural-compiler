@@ -155,11 +155,11 @@ new runtime path has not yet passed E2E.
 | StridedSlice | Verified | C32-aligned aliases; multi-group C32 DMA materialization; exact C32-to-C16 high-half materialization |
 | Concat | Compiler verified | striped two-input gather; structural C16x3 gather; aligned multi-input/multi-group DMA gather |
 | YOLO C144 head transpose | Verified fallback | standalone heads retain vectorized C32-to-CHW materialization |
-| DFL16 projection | Compiler/runtime verified | selected heads feed C64/C80 C32 directly; focused cluster verification pending |
+| DFL16 projection | Verified | selected heads feed C64/C80 C32 directly; box-scale requant is folded into each DFL command |
 | Async DMA and overlap | Not implemented | blocking execution remains correct; performance phase |
-| Full selected graphs | P1 operator blocked | scheduled peak is 517,120 bytes; command generation reaches final box-scale Mul |
+| Full selected graphs | P1 operator blocked | scheduled peak is 517,120 bytes; command generation reaches the first final box StridedSlice |
 
-The focused Regor suite passes 110 Neural-AI cases and 38,951 assertions; the
+The focused Regor suite passes 110 Neural-AI cases and 38,967 assertions; the
 complete suite passes 253 cases and 649,508 assertions (the randomized suite's
 assertion total varies with its reported seed).
 Runtime ABI/host checks, cross-builds, firmware-size gates, and focused C144,
@@ -240,8 +240,10 @@ the focused test had not written its invocation and binding table to L2.
   to scale 0.00419446919, zero point -128) is folded into the existing 256-byte
   AFU LUT with TFLite-compatible fixed-point rounding. This removes a separate
   168,000-byte read/write pass and keeps the one-LUT structure used by the
-  Micro-YOLO activation baseline. Command generation now stops at the final
-  two-input box-scale Mul (`[1,1,4,2100]`).
+  Micro-YOLO activation baseline. The final box-scale Mul is now distributed
+  into the three DFL producers and removed without materializing its 8,400-byte
+  constant/output pass. Command generation now stops at the following
+  `[1,1,2,2100]` box StridedSlice.
 
 ### Other retained evidence
 
@@ -256,7 +258,7 @@ the focused test had not written its invocation and binding table to L2.
   73,728-element diagnostic exceeded 2,000,000 cluster cycles and is prohibited
   on selected hot paths; raw AFU or exact producer canonicalization is required.
 - Runtime `.text` must be rechecked after every runtime increment. Trusted V2-only
-  firmware currently reports 24,084 bytes, leaving 8,684 bytes of ITCM margin.
+  firmware currently reports 24,100 bytes, leaving 8,668 bytes of ITCM margin.
 
 ## 5. Remaining work, in execution order
 
@@ -265,9 +267,13 @@ the focused test had not written its invocation and binding table to L2.
 The selected four-coordinate, 16-bin, 2,100-location chain is fused into one
 DFL operation. The approved RTL generalization preserves DFL4 and adds DFL16;
 firmware performs one Spatz gather/pack call per 32-location tile, one AFU call,
-and one vector requant/pack. Host tests and the Spatz block test pass. The full
-compiler-runtime package is byte-exact and passes in 468,781 cycles under the
-1,000,000-cycle gate. Compiler lowering now passes this graph point.
+and one vector requant/pack. The three piecewise box scales are folded into the
+corresponding DFL commands with exact 16-bit multiplier/right-shift pairs. Host,
+block, and focused cluster tests pass. The full compiler-runtime package is
+byte-exact at 445,750 cycles under the 1,000,000-cycle gate. This is 4.9% below
+the earlier 468,781-cycle DFL-only reference; performance remains a regression
+guide rather than a requirement to match one implementation cycle-for-cycle.
+Compiler lowering now passes the box-scale Mul.
 
 ### Completed P0 — Full-graph memory feasibility
 
@@ -325,12 +331,12 @@ The completed path adds no scalar or CPU fallback:
 ### P1 — Close remaining selected detection-tail contracts
 
 The graph is memory-feasible and detection-tail aligned slices, residual Add,
-four-way multi-group gathers, and class Sigmoid output Quantize are lowered
-without scalar packing or an extra tensor pass. Command generation now stops at
-the final two-input box-scale Mul. Characterize its constant/broadcast and
-quantization contract, then prefer folding into the DFL/box producer or one
-native vector call per tile. Continue one unsupported source ID at a time
-through the remaining Mul/Sub, reshape, slice, and final output handling.
+four-way multi-group gathers, class Sigmoid output Quantize, and the final
+piecewise box-scale Mul are lowered without scalar packing or an extra tensor
+pass. Command generation now stops at source op 242, the first final box
+StridedSlice (`[1,1,4,2100] -> [1,1,2,2100]`). Characterize this compact
+coordinate split and continue one unsupported source ID at a time through the
+remaining Sub, reshape, slice, and final output handling.
 
 ### P3 — Performance and DMA overlap
 

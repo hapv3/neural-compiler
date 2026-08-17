@@ -13,9 +13,10 @@
 namespace regor::neuralai
 {
 
-bool CalculateQuantizedMultiplier(double realScale, int32_t &multiplier, int32_t &shift)
+bool CalculateQuantizedMultiplier(double realScale, int32_t &multiplier, int32_t &shift,
+    int32_t maximumMultiplier)
 {
-    if ( !std::isfinite(realScale) || realScale <= 0.0 ) return false;
+    if ( !std::isfinite(realScale) || realScale <= 0.0 || maximumMultiplier <= 0 ) return false;
 
     double bestError = std::numeric_limits<double>::infinity();
     int32_t bestMultiplier = 0;
@@ -23,10 +24,9 @@ bool CalculateQuantizedMultiplier(double realScale, int32_t &multiplier, int32_t
     for ( int32_t candidateShift = 0; candidateShift <= 31; ++candidateShift )
     {
         const double scaled = std::ldexp(realScale, candidateShift);
-        if ( !std::isfinite(scaled) || scaled < 1.0 ||
-             scaled > double(std::numeric_limits<int32_t>::max()) ) continue;
+        if ( !std::isfinite(scaled) || scaled < 1.0 || scaled > double(maximumMultiplier) ) continue;
         const double rounded = std::round(scaled);
-        if ( rounded <= 0.0 || rounded > double(std::numeric_limits<int32_t>::max()) ) continue;
+        if ( rounded <= 0.0 || rounded > double(maximumMultiplier) ) continue;
         const int32_t candidateMultiplier = int32_t(rounded);
         const double error = std::abs(std::ldexp(double(candidateMultiplier), -candidateShift) - realScale);
         if ( error < bestError || (error == bestError && candidateShift > bestShift) )

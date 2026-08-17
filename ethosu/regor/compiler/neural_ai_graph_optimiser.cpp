@@ -667,6 +667,101 @@ void NeuralAIGraphOptimiser::DistributeStructuralHeadMerge(Graph *graph, Operati
     operation->Disconnect();
 }
 
+void NeuralAIGraphOptimiser::FuseStructuralBoxScale(Graph *graph, Operation *operation)
+{
+    if ( operation->Type() != OpType::Mul ) return;
+    TensorConnection *boxInput = operation->Input(TensorUsage::IFM0);
+    TensorConnection *scaleInput = operation->Input(TensorUsage::IFM1);
+    TensorConnection *output = operation->Output(TensorUsage::OFM);
+    if ( boxInput == nullptr || scaleInput == nullptr || output == nullptr ||
+         !scaleInput->tensor->IsConstant() || boxInput->tensor->Type() != DataType::Int8 ||
+         scaleInput->tensor->Type() != DataType::Int8 || output->tensor->Type() != DataType::Int8 ||
+         boxInput->tensor->Readers().size() != 1 || graph->IsOutput(boxInput->tensor.get()) ||
+         !HasScalarQuantization(scaleInput->quantization) ||
+         !HasScalarQuantization(output->quantization) ) return;
+
+    const Shape boxShape = Shape::PadAxes(boxInput->shape, 4, 1);
+    const Shape scaleShape = Shape::PadAxes(scaleInput->shape, 4, 1);
+    const Shape outputShape = Shape::PadAxes(output->shape, 4, 1);
+    if ( boxShape.Batch() != 1 || boxShape.Height() != 1 || boxShape.Width() != 4 ||
+         boxShape.Depth() <= 0 || scaleShape != boxShape || outputShape != boxShape ) return;
+
+    std::vector<Operation *> views;
+    Tensor *mergeTensor = boxInput->tensor.get();
+    while ( mergeTensor->Writers().size() == 1 )
+    {
+        Operation *view = mergeTensor->Writers().front().get();
+        if ( view->Type() != OpType::Reshape && view->Type() != OpType::Passthrough ) break;
+        TensorConnection *viewInput = view->Input(TensorUsage::IFM0);
+        TensorConnection *viewOutput = view->Output(TensorUsage::OFM);
+        if ( viewInput == nullptr || viewOutput == nullptr || viewOutput->tensor.get() != mergeTensor ||
+             mergeTensor->Readers().size() != 1 || graph->IsOutput(mergeTensor) ||
+             viewInput->shape.Elements64() != viewOutput->shape.Elements64() ||
+             viewInput->quantization != viewOutput->quantization ) return;
+        views.push_back(view);
+        mergeTensor = viewInput->tensor.get();
+    }
+    if ( mergeTensor->Writers().size() != 1 ) return;
+    Operation *merge = mergeTensor->Writers().front().get();
+    if ( merge->Type() != OpType::Concat || merge->Output(TensorUsage::OFM) == nullptr ||
+         merge->Output(TensorUsage::OFM)->tensor.get() != mergeTensor ||
+         mergeTensor->Readers().size() != 1 || graph->IsOutput(mergeTensor) ) return;
+
+    const auto values = scaleInput->tensor->View().Values<int>(DataType::Int8);
+    const Shape valueShape = scaleInput->tensor->View().ViewShape();
+    const int locations = boxShape.Depth();
+    if ( values.Count() != size_t(4 * locations) ) return;
+    const auto scaleValue = [&](int side, int location)
+    {
+        return valueShape.Size() == 3 ? values[Shape(0, side, location)] :
+            values[Shape(0, 0, side, location)];
+    };
+    const int64_t scaleZeroPoint = ScalarZeroPoint(scaleInput->quantization);
+    const double scale = scaleInput->quantization.scales[0].Dequantize();
+    if ( scale <= 0 || scaleZeroPoint < -128 || scaleZeroPoint > 127 ) return;
+
+    int firstLocation = 0;
+    std::array<Operation *, 3> dflOperations{};
+    std::array<int8_t, 3> rawScales{};
+    for ( int part = 0; part < int(dflOperations.size()); ++part )
+    {
+        TensorConnection *partInput = merge->Input(MakeTensorUsage(TensorUsage::IFM, part));
+        if ( partInput == nullptr || partInput->tensor->Writers().size() != 1 ) return;
+        Operation *dfl = partInput->tensor->Writers().front().get();
+        const Shape partShape = Shape::PadAxes(partInput->shape, 4, 1);
+        const int partLocations = partShape.Depth();
+        if ( dfl->Type() != OpType::Dfl || dfl->Output(TensorUsage::OFM) == nullptr ||
+             dfl->Output(TensorUsage::OFM)->tensor != partInput->tensor ||
+             partShape != Shape(1, 1, 4, partLocations) || partLocations <= 0 ||
+             dfl->Input(TensorUsage::Params) != nullptr ||
+             firstLocation + partLocations > locations ) return;
+        const int rawScale = scaleValue(0, firstLocation);
+        if ( rawScale < -128 || rawScale > 127 ||
+             (double(rawScale) - double(scaleZeroPoint)) * scale <= 0 ) return;
+        for ( int side = 0; side < 4; ++side )
+            for ( int location = firstLocation; location < firstLocation + partLocations; ++location )
+                if ( scaleValue(side, location) != rawScale ) return;
+        dflOperations[part] = dfl;
+        rawScales[part] = int8_t(rawScale);
+        firstLocation += partLocations;
+    }
+    if ( firstLocation != locations || merge->Input(MakeTensorUsage(TensorUsage::IFM, 3)) != nullptr ) return;
+
+    for ( int part = 0; part < int(dflOperations.size()); ++part )
+    {
+        auto scaleTensor = CreateConstTensor(scaleInput->tensor->Name() + "/part" + std::to_string(part),
+            DataType::Int8, std::make_shared<Buffer>(std::vector<int8_t>{rawScales[part]}));
+        dflOperations[part]->ConnectInput(TensorUsage::Params, scaleTensor)
+            .Set(scaleInput->quantization);
+        dflOperations[part]->Output(TensorUsage::OFM)->Set(output->quantization).Set(output->rounding);
+        merge->Input(MakeTensorUsage(TensorUsage::IFM, part))->Set(output->quantization);
+    }
+    merge->CopyOutput(TensorUsage::OFM, *output);
+    RecordOptimisation(*operation, merge);
+    for ( Operation *view : views ) view->Disconnect();
+    operation->Disconnect();
+}
+
 void NeuralAIGraphOptimiser::OptimiseGraph(Graph *graph)
 {
     std::vector<std::shared_ptr<Operation>> operations;
@@ -679,6 +774,9 @@ void NeuralAIGraphOptimiser::OptimiseGraph(Graph *graph)
     for ( const auto &operation : operations ) CanonicalizeConvAdd(graph, operation.get());
     for ( const auto &operation : operations ) FuseLutQuantize(graph, operation.get());
     for ( const auto &operation : operations ) DistributeStructuralHeadMerge(graph, operation.get());
+    operations.clear();
+    graph->GetAllOperations(operations);
+    for ( const auto &operation : operations ) FuseStructuralBoxScale(graph, operation.get());
     operations.clear();
     graph->GetAllOperations(operations);
     for ( const auto &operation : operations ) FuseStructuralHeadPack(graph, operation.get());
