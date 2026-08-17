@@ -9,8 +9,11 @@
 #include "common/buffer_view.hpp"
 #include "kernel.hpp"
 #include "operation_util.hpp"
+#include "tflite/tflite_schema_generated.hpp"
 
+#include <fixedpoint/fixedpoint.h>
 #include <algorithm>
+#include <cstdint>
 #include <limits>
 #include <string>
 
@@ -51,6 +54,31 @@ bool ShiftClamp(Quantization &quantization, int64_t delta)
     quantization.quantMin[0] = shiftedMin;
     quantization.quantMax[0] = shiftedMax;
     return true;
+}
+
+bool IsTFLiteBuiltin(const Graph *graph, const Operation *operation, tflite::BuiltinOperator expected)
+{
+    if ( graph->Notation() != GraphNotation::TFLite || graph->Passthrough() == nullptr ||
+         operation->Passthrough() == nullptr ) return false;
+    const auto *model = static_cast<const tflite::Model *>(graph->Passthrough());
+    const auto *source = static_cast<const tflite::Operator *>(operation->Passthrough());
+    const auto *codes = model->operator_codes();
+    if ( codes == nullptr || source->opcode_index() >= codes->size() ) return false;
+    const auto *code = codes->Get(source->opcode_index());
+    if ( code == nullptr ) return false;
+    const auto builtin = unsigned(code->builtin_code()) != 0 ?
+        code->builtin_code() : tflite::BuiltinOperator(code->deprecated_builtin_code());
+    return builtin == expected;
+}
+
+int32_t MultiplyByQuantizedMultiplier(int32_t value, const QuantizedScale &scale)
+{
+    const int leftShift = scale.shift > 0 ? scale.shift : 0;
+    const int rightShift = scale.shift < 0 ? -scale.shift : 0;
+    const int32_t shifted = value * (int32_t(1) << leftShift);
+    const int32_t multiplied =
+        gemmlowp::SaturatingRoundingDoublingHighMul(shifted, scale.scale);
+    return gemmlowp::RoundingDivideByPOT<int32_t>(multiplied, rightShift);
 }
 
 }  // namespace
@@ -391,6 +419,64 @@ void NeuralAIGraphOptimiser::MaterializeStructuralCspConcatInputs(Operation *ope
     }
 }
 
+void NeuralAIGraphOptimiser::FuseLutQuantize(Graph *graph, Operation *operation)
+{
+    if ( operation->Type() != OpType::Passthrough ||
+         !IsTFLiteBuiltin(graph, operation, tflite::BuiltinOperator::QUANTIZE) ) return;
+    TensorConnection *quantInput = operation->Input(TensorUsage::IFM0);
+    TensorConnection *quantOutput = operation->Output(TensorUsage::OFM);
+    if ( quantInput == nullptr || quantOutput == nullptr ||
+         quantInput->tensor->Type() != DataType::Int8 ||
+         quantOutput->tensor->Type() != DataType::Int8 ||
+         quantInput->shape != quantOutput->shape ||
+         !HasScalarQuantization(quantInput->quantization) ||
+         !HasScalarQuantization(quantOutput->quantization) ||
+         quantInput->tensor->Writers().size() != 1 ||
+         quantInput->tensor->Readers().size() != 1 ) return;
+
+    const auto lut = quantInput->tensor->Writers().front();
+    if ( lut->Type() != OpType::LUT || lut->Output(TensorUsage::OFM) == nullptr ||
+         lut->Output(TensorUsage::OFM)->tensor != quantInput->tensor ) return;
+    TensorConnection *lutInput = lut->Input(TensorUsage::IFM0);
+    TensorConnection *lutTable = lut->Input(TensorUsage::LUT);
+    if ( lutInput == nullptr || lutTable == nullptr || !lutTable->tensor->IsConstant() ||
+         lutTable->tensor->Type() != DataType::Int8 ||
+         lutTable->tensor->View().Elements() != 256 ) return;
+
+    const float inputScale = float(quantInput->quantization.scales[0].Dequantize());
+    const float outputScale = float(quantOutput->quantization.scales[0].Dequantize());
+    if ( inputScale <= 0 || outputScale <= 0 ) return;
+    QuantizedScale scale(double(inputScale) / double(outputScale));
+    if ( scale.scale <= 0 || scale.Dequantize() > 1.0 ) return;
+    // gemmlowp uses left-shift-positive notation, while QuantizedScale stores a
+    // right shift. This is the same conversion used by the TFLite rewrites.
+    scale.shift = 31 - scale.shift;
+    if ( scale.shift < -31 || scale.shift > 23 ) return;
+    const int64_t inputZeroPoint = ScalarZeroPoint(quantInput->quantization);
+    const int64_t outputZeroPoint = ScalarZeroPoint(quantOutput->quantization);
+    if ( inputZeroPoint < -128 || inputZeroPoint > 127 ||
+         outputZeroPoint < -128 || outputZeroPoint > 127 ) return;
+
+    const auto values = lutTable->tensor->View().Values<int>(DataType::Int8);
+    std::vector<int8_t> fusedValues;
+    fusedValues.reserve(256);
+    for ( int index = 0; index < 256; ++index )
+    {
+        const int32_t requantized = int32_t(outputZeroPoint) +
+            MultiplyByQuantizedMultiplier(values[index] - int32_t(inputZeroPoint), scale);
+        fusedValues.push_back(int8_t(std::clamp(requantized, -128, 127)));
+    }
+    auto fusedTable = CreateConstTensor(lutTable->tensor->Name() + "/requantized", DataType::Int8,
+        std::make_shared<Buffer>(std::move(fusedValues)));
+    auto fused = std::make_shared<Operation>(OpType::LUT);
+    fused->CopyInput(TensorUsage::IFM0, *lutInput);
+    fused->ConnectInput(TensorUsage::LUT, fusedTable);
+    fused->CopyOutput(TensorUsage::OFM, *quantOutput);
+    RecordOptimisation(*operation, fused.get());
+    lut->Disconnect();
+    operation->Disconnect();
+}
+
 void NeuralAIGraphOptimiser::FuseStructuralHeadPack(Graph *graph, Operation *operation)
 {
     if ( operation->Type() != OpType::Transpose ) return;
@@ -591,6 +677,7 @@ void NeuralAIGraphOptimiser::OptimiseGraph(Graph *graph)
         return;
     }
     for ( const auto &operation : operations ) CanonicalizeConvAdd(graph, operation.get());
+    for ( const auto &operation : operations ) FuseLutQuantize(graph, operation.get());
     for ( const auto &operation : operations ) DistributeStructuralHeadMerge(graph, operation.get());
     operations.clear();
     graph->GetAllOperations(operations);

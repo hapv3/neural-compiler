@@ -224,17 +224,20 @@ flatbuffers::DetachedBuffer BuildAddModel(float lhsScale = 1.0f, float rhsScale 
     return builder.Release();
 }
 
-flatbuffers::DetachedBuffer BuildSigmoidModel()
+flatbuffers::DetachedBuffer BuildSigmoidModel(bool requantize = false)
 {
     flatbuffers::FlatBufferBuilder builder;
     const std::vector<float> inputScales = {0.125f};
     const std::vector<float> outputScales = {1.0f / 256.0f};
+    const std::vector<float> requantizedScales = {0.00419446919f};
     const std::vector<int64_t> inputZeroPoints = {0};
     const std::vector<int64_t> outputZeroPoints = {-128};
     const auto inputQuant = tflite::CreateQuantizationParametersDirect(
         builder, nullptr, nullptr, &inputScales, &inputZeroPoints);
     const auto outputQuant = tflite::CreateQuantizationParametersDirect(
         builder, nullptr, nullptr, &outputScales, &outputZeroPoints);
+    const auto requantizedQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &requantizedScales, &outputZeroPoints);
     std::vector<flatbuffers::Offset<tflite::Buffer>> buffers = {
         tflite::CreateBufferDirect(builder),
     };
@@ -242,14 +245,20 @@ flatbuffers::DetachedBuffer BuildSigmoidModel()
     std::vector<flatbuffers::Offset<tflite::Tensor>> tensors = {
         tflite::CreateTensorDirect(builder, &shape, tflite::TensorType::INT8, 0, "input", inputQuant),
         tflite::CreateTensorDirect(builder, &shape, tflite::TensorType::INT8, 0, "output", outputQuant),
+        tflite::CreateTensorDirect(
+            builder, &shape, tflite::TensorType::INT8, 0, "requantized", requantizedQuant),
     };
-    const std::vector<int32_t> opInputs = {0};
-    const std::vector<int32_t> opOutputs = {1};
-    const std::vector<flatbuffers::Offset<tflite::Operator>> operations = {
-        tflite::CreateOperatorDirect(builder, 0, &opInputs, &opOutputs),
+    const std::vector<int32_t> sigmoidInputs = {0};
+    const std::vector<int32_t> sigmoidOutputs = {1};
+    const std::vector<int32_t> quantizeInputs = {1};
+    const std::vector<int32_t> quantizeOutputs = {2};
+    std::vector<flatbuffers::Offset<tflite::Operator>> operations = {
+        tflite::CreateOperatorDirect(builder, 0, &sigmoidInputs, &sigmoidOutputs),
     };
+    if ( requantize )
+        operations.push_back(tflite::CreateOperatorDirect(builder, 1, &quantizeInputs, &quantizeOutputs));
     const std::vector<int32_t> graphInputs = {0};
-    const std::vector<int32_t> graphOutputs = {1};
+    const std::vector<int32_t> graphOutputs = {requantize ? 2 : 1};
     const std::vector<flatbuffers::Offset<tflite::SubGraph>> subgraphs = {
         tflite::CreateSubGraphDirect(
             builder, &tensors, &graphInputs, &graphOutputs, &operations, "main"),
@@ -257,6 +266,8 @@ flatbuffers::DetachedBuffer BuildSigmoidModel()
     const std::vector<flatbuffers::Offset<tflite::OperatorCode>> operatorCodes = {
         tflite::CreateOperatorCodeDirect(builder, int8_t(tflite::BuiltinOperator::LOGISTIC),
             nullptr, 1, tflite::BuiltinOperator::LOGISTIC),
+        tflite::CreateOperatorCodeDirect(builder, int8_t(tflite::BuiltinOperator::QUANTIZE),
+            nullptr, 1, tflite::BuiltinOperator::QUANTIZE),
     };
     const auto model = tflite::CreateModelDirect(
         builder, 3, &operatorCodes, &subgraphs, "Neural-AI Sigmoid test", &buffers);
@@ -3260,6 +3271,59 @@ TEST_CASE("Neural-AI compiler lowers INT8 Sigmoid through a raw-byte AFU LUT")
                 const int32_t quantized = std::max(-128,
                     std::min(127, int32_t(std::round(-128.0 + 256.0 * sigmoid))));
                 REQUIRE(data[constantsOffset + lutOffset + raw] == uint8_t(quantized));
+            }
+            ++lutCommands;
+        }
+        offset += commandSize;
+    }
+    REQUIRE(offset == 224 + commandBytes);
+    REQUIRE(lutCommands == 1);
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
+}
+
+TEST_CASE("Neural-AI compiler fuses Sigmoid Quantize into one AFU LUT")
+{
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildSigmoidModel(true);
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+    const bool compiled = compiler.Compile();
+    INFO(compiler.LastError());
+    REQUIRE(compiled);
+
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    const uint32_t commandBytes = Read32(data + 64 + 12);
+    const uint32_t constantsOffset = Read32(data + 96 + 8);
+    const uint32_t constantsBytes = Read32(data + 96 + 12);
+    uint32_t offset = 224;
+    uint32_t lutCommands = 0;
+    while ( offset < 224 + commandBytes )
+    {
+        const uint16_t type = Read16(data + offset);
+        const uint16_t commandSize = Read16(data + offset + 2);
+        REQUIRE(commandSize >= 32);
+        if ( type == uint16_t(neuralai::CommandType::AFULut) )
+        {
+            const uint32_t lutOffset = Read32(data + offset + 36);
+            REQUIRE(lutOffset <= constantsBytes);
+            REQUIRE(256 <= constantsBytes - lutOffset);
+            for ( uint32_t raw = 0; raw < 256; ++raw )
+            {
+                const int32_t input = raw < 128 ? int32_t(raw) : int32_t(raw) - 256;
+                const double real = std::max(-8.0, std::min(8.0, 0.125 * double(input)));
+                const double sigmoid = 1.0 / (1.0 + std::exp(-real));
+                const int32_t intermediate = std::clamp(
+                    int32_t(std::round(-128.0 + 256.0 * sigmoid)), -128, 127);
+                const int32_t requantized = std::clamp(int32_t(std::round(
+                    -128.0 + double(intermediate + 128) / (256.0 * 0.00419446919))),
+                    -128, 127);
+                REQUIRE(data[constantsOffset + lutOffset + raw] == uint8_t(requantized));
             }
             ++lutCommands;
         }

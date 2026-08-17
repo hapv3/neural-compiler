@@ -146,7 +146,7 @@ new runtime path has not yet passed E2E.
 | Depthwise Conv K3 | Verified | selected S1/S2 contracts |
 | Asymmetric Conv canonicalization | Verified | exact bias correction and padding behavior |
 | Add | Verified | raw AFU, exact producer canonicalization, or quantized Spatz fallback |
-| Activations | Verified | fused RQ clamps; standalone AFU LUT Sigmoid/clipping |
+| Activations | Verified | fused RQ clamps; standalone AFU LUT Sigmoid/clipping; LUT-fused output Quantize |
 | YOLO SiLU | Verified | exact `x * Sigmoid(x)` LUT fusion; no generic Mul |
 | Global AvgPool | Verified | full-spatial, equal quantization, C32 internal |
 | YOLO MaxPool | Verified | K5/S1/P2, C32 or selected C128, systolic fast path |
@@ -157,10 +157,11 @@ new runtime path has not yet passed E2E.
 | YOLO C144 head transpose | Verified fallback | standalone heads retain vectorized C32-to-CHW materialization |
 | DFL16 projection | Compiler/runtime verified | selected heads feed C64/C80 C32 directly; focused cluster verification pending |
 | Async DMA and overlap | Not implemented | blocking execution remains correct; performance phase |
-| Full selected graphs | P1 operator blocked | scheduled peak is 517,120 bytes; command generation reaches final unary Quantize passthrough |
+| Full selected graphs | P1 operator blocked | scheduled peak is 517,120 bytes; command generation reaches final box-scale Mul |
 
-The focused Regor suite passes 109 Neural-AI cases and 38,683 assertions; the
-complete suite passes 252 cases and 642,034 assertions.
+The focused Regor suite passes 110 Neural-AI cases and 38,951 assertions; the
+complete suite passes 253 cases and 649,508 assertions (the randomized suite's
+assertion total varies with its reported seed).
 Runtime ABI/host checks, cross-builds, firmware-size gates, and focused C144,
 DFL16, and MatMul V2 E2E tests pass.
 
@@ -235,9 +236,12 @@ the focused test had not written its invocation and binding table to L2.
   now consumes aligned C32 slices directly, C128-to-C64 high-half views
   materialize as two grouped DMA3D transfers, and aligned four-way C64-to-C256
   merges gather per C32 plane (DMA1D for C32 storage and DMA3D for compact
-  storage). Command generation now stops at the final unary Quantize
-  passthrough; it must be lowered as a real requantization unless its input and
-  output quantization are proven identical.
+  storage). The class Sigmoid output Quantize (`scale 1/256`, zero point -128,
+  to scale 0.00419446919, zero point -128) is folded into the existing 256-byte
+  AFU LUT with TFLite-compatible fixed-point rounding. This removes a separate
+  168,000-byte read/write pass and keeps the one-LUT structure used by the
+  Micro-YOLO activation baseline. Command generation now stops at the final
+  two-input box-scale Mul (`[1,1,4,2100]`).
 
 ### Other retained evidence
 
@@ -321,12 +325,12 @@ The completed path adds no scalar or CPU fallback:
 ### P1 — Close remaining selected detection-tail contracts
 
 The graph is memory-feasible and detection-tail aligned slices, residual Add,
-and four-way multi-group gathers are lowered without scalar packing. Command
-generation now stops at the final unary Quantize passthrough. Characterize its
-input/output quantization first, then prefer producer requantization or a native
-vector requant command; use memcpy only when scale, zero-point, type, shape, and
-layout are all identical. Continue one unsupported source ID at a time through
-the remaining class sigmoid, Mul/Sub, reshape, slice, and final output handling.
+four-way multi-group gathers, and class Sigmoid output Quantize are lowered
+without scalar packing or an extra tensor pass. Command generation now stops at
+the final two-input box-scale Mul. Characterize its constant/broadcast and
+quantization contract, then prefer folding into the DFL/box producer or one
+native vector call per tile. Continue one unsupported source ID at a time
+through the remaining Mul/Sub, reshape, slice, and final output handling.
 
 ### P3 — Performance and DMA overlap
 
