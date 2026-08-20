@@ -8,6 +8,9 @@
 
 #include "scheduler_operation.hpp"
 
+#include <unordered_map>
+#include <unordered_set>
+
 namespace regor
 {
 
@@ -98,6 +101,53 @@ bool IsNeuralAIL2SpillCandidate(const SchedulerTensor *tensor)
                [tensor](const SchedulerOperation *operation) { return SupportsL2Output(operation, tensor); }) &&
            std::all_of(tensor->consumers.begin(), tensor->consumers.end(),
                [tensor](const SchedulerOperation *operation) { return SupportsL2Input(operation, tensor); });
+}
+
+NeuralAIMemoryPlacementStats ApplyNeuralAIMemoryPlacement(
+    const std::vector<std::unique_ptr<SchedulerOperation>> &operations,
+    const MemArea &l2Memory, const MemArea &tcdmMemory)
+{
+    std::unordered_map<UniqueId, std::vector<SchedulerTensor *>> equivalenceGroups;
+    std::unordered_set<SchedulerTensor *> collected;
+    const auto collectTensor = [&](const SchedulerConnection &connection)
+    {
+        SchedulerTensor *tensor = connection.tensor.get();
+        if ( tensor == nullptr || tensor->IsConstant() || !collected.insert(tensor).second ) return;
+        equivalenceGroups[tensor->equivalenceId].push_back(tensor);
+    };
+    const auto collectOperation = [&](const SchedulerOperation *operation)
+    {
+        for ( const auto &[usage, connection] : operation->inputs.pairs() )
+        {
+            UNUSED(usage);
+            collectTensor(connection);
+        }
+        for ( const auto &[usage, connection] : operation->outputs.pairs() )
+        {
+            UNUSED(usage);
+            collectTensor(connection);
+        }
+    };
+    for ( const auto &operation : operations )
+    {
+        collectOperation(operation.get());
+        for ( const auto &subOperation : operation->SubOps() ) collectOperation(subOperation.get());
+    }
+
+    NeuralAIMemoryPlacementStats stats;
+    for ( auto &[equivalenceId, tensors] : equivalenceGroups )
+    {
+        UNUSED(equivalenceId);
+        const bool spill = std::all_of(tensors.begin(), tensors.end(), IsNeuralAIL2SpillCandidate);
+        const MemArea &target = spill ? l2Memory : tcdmMemory;
+        for ( SchedulerTensor *tensor : tensors )
+        {
+            tensor->memArea = target;
+            if ( spill ) ++stats.l2Tensors;
+            else ++stats.tcdmTensors;
+        }
+    }
+    return stats;
 }
 
 }  // namespace regor

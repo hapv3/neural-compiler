@@ -1557,6 +1557,50 @@ TEST_CASE("Neural-AI L2 placement excludes RGB and C16 convolution paths")
     }
 }
 
+TEST_CASE("Neural-AI memory placement applies decisions to equivalence groups")
+{
+    ArchNeuralAI arch;
+    const Shape shape(1, 4, 4, 32);
+    auto lhs = std::make_shared<SchedulerTensor>(DataType::Int8, shape, TensorFormat::C32Blocked);
+    auto rhs = std::make_shared<SchedulerTensor>(DataType::Int8, shape, TensorFormat::C32Blocked);
+    auto candidate = std::make_shared<SchedulerTensor>(DataType::Int8, shape, TensorFormat::C32Blocked);
+    auto output = std::make_shared<SchedulerTensor>(DataType::Int8, shape, TensorFormat::C32Blocked);
+    auto producer = std::make_unique<SchedulerOperation>(OpType::Add);
+    producer->ConnectInput(TensorUsage::IFM0, lhs);
+    producer->ConnectInput(TensorUsage::IFM1, rhs);
+    producer->ConnectOutput(TensorUsage::OFM, candidate);
+    auto consumer = std::make_unique<SchedulerOperation>(OpType::Conv2D);
+    consumer->SetKernel(Kernel::UnitKernel());
+    consumer->ConnectInput(TensorUsage::IFM0, candidate);
+    consumer->ConnectOutput(TensorUsage::OFM, output);
+    std::vector<std::unique_ptr<SchedulerOperation>> operations;
+    operations.push_back(std::move(producer));
+    operations.push_back(std::move(consumer));
+    const MemArea l2(arch.L2Memory(), MemUsage::FeatureMap);
+
+    SECTION("eligible group spills")
+    {
+        const auto stats = ApplyNeuralAIMemoryPlacement(
+            operations, l2, arch.FeatureMapMemory());
+        REQUIRE(candidate->memArea == l2);
+        REQUIRE(lhs->memArea == arch.FeatureMapMemory());
+        REQUIRE(rhs->memArea == arch.FeatureMapMemory());
+        REQUIRE(output->memArea == arch.FeatureMapMemory());
+        REQUIRE(stats.l2Tensors == 1);
+        REQUIRE(stats.tcdmTensors == 3);
+    }
+    SECTION("ineligible alias pins the complete group")
+    {
+        output->equivalenceId = candidate->equivalenceId;
+        const auto stats = ApplyNeuralAIMemoryPlacement(
+            operations, l2, arch.FeatureMapMemory());
+        REQUIRE(candidate->memArea == arch.FeatureMapMemory());
+        REQUIRE(output->memArea == arch.FeatureMapMemory());
+        REQUIRE(stats.l2Tensors == 0);
+        REQUIRE(stats.tcdmTensors == 4);
+    }
+}
+
 TEST_CASE("Neural-AI architecture exposes fixed hardware configuration")
 {
     ArchNeuralAI arch;
