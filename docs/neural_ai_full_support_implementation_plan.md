@@ -158,9 +158,9 @@ new runtime path has not yet passed E2E.
 | YOLO C144 head transpose | Verified fallback | standalone heads retain vectorized C32-to-CHW materialization |
 | DFL16 projection | Verified | selected heads feed C64/C80 C32 directly; box-scale requant is folded into each DFL command |
 | Async DMA and overlap | Not implemented | blocking execution remains correct; performance phase |
-| Full selected graphs | P0 workspace blocked | all selected operators lower; scheduled tensors use 517,120 bytes, but conservatively appended command workspaces total 1,054,752 bytes |
+| Full selected graphs | P0 workspace blocked | all selected operators lower; scheduled tensors use 517,120 bytes, while conservatively appended command workspaces now total 833,568 bytes |
 
-The focused Regor suite passes 114 Neural-AI cases and 39,649 assertions; the
+The focused Regor suite passes 114 Neural-AI cases and 39,656 assertions; the
 complete suite passes 253 cases and 649,508 assertions (the randomized suite's
 assertion total varies with its reported seed).
 Runtime ABI/host checks, cross-builds, firmware-size gates, and focused C144,
@@ -310,12 +310,13 @@ the 445,750-cycle fast-path reference, but still about 1.2% below the older
 The current full YOLO schedule has a 517,120-byte tensor high-water mark, down
 from 1,659,008 bytes and below the 520,192-byte limit. All selected operators
 now reach the final command-workspace check without scalar or CPU fallback.
-That check currently reports 1,054,752 bytes because it conservatively appends
-294,912 bytes of linebuffer weight staging, 32,768 bytes of partial sums, and
+That check currently reports 833,568 bytes because it conservatively appends
+73,728 bytes of linebuffer weight staging, 32,768 bytes of partial sums, and
 209,952 bytes of stripe staging after the global tensor high-water mark. These
 workspaces are not all live with the graph's peak tensors; place/reuse them by
-operation lifetime and reduce weight staging to the active output group before
-claiming full-graph memory feasibility.
+operation lifetime before claiming full-graph memory feasibility. K3 weights
+are now DMA-staged one output group at a time; the focused C96-to-C64 block test
+checks both 27,648-byte group transfers and reset weight offsets.
 
 Completed path:
 

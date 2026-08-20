@@ -2730,14 +2730,6 @@ struct GeneratorContext
             RefV1 stagedWeights{};
             stagedWeights.region = uint16_t(Region::TCDMScratch);
             stagedWeights.offset = weightStageOffset;
-            if ( !materialized.linebufferWeightsStaged )
-            {
-                if ( !AppendDMA2D(modelWeights, stagedWeights, 32, 32, 32, weightBytes / 32u,
-                         uint32_t(operation->Index()), 1, error) )
-                    return false;
-                materialized.linebufferWeightsStaged = true;
-            }
-
             uint32_t ifmSliceOffset = 0;
             if ( !directRgb && !C32SliceByteOffset(ifm, ifmSliceOffset, error) ) return false;
             auto logicalIfm = ReshapeToNHWC(ifmShape);
@@ -2777,9 +2769,15 @@ struct GeneratorContext
             const uint32_t outputGroups = uint32_t(RoundAway(int(depthN), 32)) / 32u;
             const uint32_t kernelTilesPerInputGroup =
                 uint32_t(operation->Kernel()->Size().x * operation->Kernel()->Size().y);
-            uint32_t tileId = 2;
+            const uint32_t outputGroupWeightBytes = weightBytes / outputGroups;
+            uint32_t tileId = 1;
             for ( uint32_t outputGroup = 0; outputGroup < outputGroups; ++outputGroup )
             {
+                RefV1 groupWeights = modelWeights;
+                groupWeights.offset += outputGroup * outputGroupWeightBytes;
+                if ( !AppendDMA2D(groupWeights, stagedWeights, 32, 32, 32,
+                         outputGroupWeightBytes / 32u, uint32_t(operation->Index()), tileId++, error) )
+                    return false;
                 AppendRQLoad(qparamBase + outputGroup * 32u, outputGroup,
                     uint32_t(operation->Index()), tileId++);
                 std::vector<std::vector<neuralai::LinebufferJob>> groupJobs(inputGroups);
@@ -2809,8 +2807,8 @@ struct GeneratorContext
                                 tapH * uint32_t(logicalIfm.Width()) * 32u + tapW * 32u;
                             plannerInput.ofmBase = uint32_t(ofm->tensor->AllocatedAddress());
                             plannerInput.weightBase = uint32_t(weightStageOffset +
-                                (outputGroup * inputGroups + inputGroup) *
-                                    kernelTilesPerInputGroup * 32u * 32u + tap * 32u * 32u);
+                                inputGroup * kernelTilesPerInputGroup * 32u * 32u +
+                                tap * 32u * 32u);
                             plannerInput.psumBase = uint32_t(partialOffset);
                             plannerInput.kernelH = 1;
                             plannerInput.kernelW = 1;
@@ -2838,7 +2836,7 @@ struct GeneratorContext
                     plannerInput.ifmBase = linebufferIfmBase;
                     plannerInput.ofmBase = uint32_t(ofm->tensor->AllocatedAddress());
                     plannerInput.weightBase = uint32_t(weightStageOffset +
-                        (outputGroup * inputGroups + inputGroup) * kernelTilesPerInputGroup * 32u * 32u);
+                        inputGroup * kernelTilesPerInputGroup * 32u * 32u);
                     plannerInput.psumBase = uint32_t(partialOffset);
                     plannerInput.kernelH = operation->Kernel()->Size().y;
                     plannerInput.kernelW = operation->Kernel()->Size().x;
@@ -3170,7 +3168,7 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
                 const uint32_t kGroups = directRgb ? 1u :
                     9u * uint32_t(RoundAway(int(ifmShape.Depth()), 32)) / 32u;
                 linebufferWeightBytes = std::max(linebufferWeightBytes,
-                    uint32_t(kGroups * (paddedN / 32u) * 32u * 32u));
+                    uint32_t(kGroups * 32u * 32u));
             }
             context.partialBytes = std::max(context.partialBytes, stripeRows * 32 * 4);
         }

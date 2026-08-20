@@ -5022,6 +5022,7 @@ TEST_CASE("Neural-AI compiler emits grouped linebuffer jobs for generic K3 Conv2
     uint32_t finalAccumMode = 0xffffffffu;
     std::vector<uint32_t> accumModes;
     std::vector<uint32_t> weightOffsets;
+    std::vector<uint32_t> weightStageBytes;
     std::vector<uint32_t> psumOffsets;
     std::vector<uint32_t> ofmOffsets;
     while ( offset < 224 + commandBytes )
@@ -5042,6 +5043,16 @@ TEST_CASE("Neural-AI compiler emits grouped linebuffer jobs for generic K3 Conv2
             psumOffsets.push_back(Read32(data + offset + 16 + 80 + 4));
             ofmOffsets.push_back(Read32(data + offset + 16 + 80 + 12));
         }
+        if ( type == uint16_t(neuralai::CommandType::DMA2D) &&
+             Read16(data + offset + 16) == uint16_t(neuralai::Region::ModelConstants) &&
+             Read16(data + offset + 24) == uint16_t(neuralai::Region::TCDMScratch) )
+        {
+            REQUIRE(commandSize == sizeof(neuralai::CommandDMA2DV2));
+            REQUIRE(Read32(data + offset + 48) ==
+                uint32_t(neuralai::DMADirection::ExternalToLocal));
+            weightStageBytes.push_back(
+                Read32(data + offset + 32) * Read32(data + offset + 44));
+        }
         offset += commandSize;
     }
     REQUIRE(offset == 224 + commandBytes);
@@ -5052,12 +5063,10 @@ TEST_CASE("Neural-AI compiler emits grouped linebuffer jobs for generic K3 Conv2
     const uint32_t inputGroupWeightBytes = 9u * 32u * 32u;
     for ( int job = 0; job < int(weightOffsets.size()); job += 3 )
     {
-        const int outputGroup = job / 9;
         REQUIRE(accumModes[job] == 1);
         REQUIRE(accumModes[job + 1] == 3);
         REQUIRE(accumModes[job + 2] == 2);
-        REQUIRE(weightOffsets[job] ==
-            weightOffsets.front() + uint32_t(outputGroup * 3) * inputGroupWeightBytes);
+        REQUIRE(weightOffsets[job] == weightOffsets.front());
         REQUIRE(weightOffsets[job + 1] == weightOffsets[job] + inputGroupWeightBytes);
         REQUIRE(weightOffsets[job + 2] == weightOffsets[job + 1] + inputGroupWeightBytes);
         REQUIRE(psumOffsets[job] == psumOffsets[job + 1]);
@@ -5065,7 +5074,9 @@ TEST_CASE("Neural-AI compiler emits grouped linebuffer jobs for generic K3 Conv2
         REQUIRE(ofmOffsets[job] == ofmOffsets[job + 1]);
         REQUIRE(ofmOffsets[job] == ofmOffsets[job + 2]);
     }
-    REQUIRE(Read32(data + 36) >= weightOffsets.front() + 6u * 9u * 32u * 32u);
+    REQUIRE(weightStageBytes == std::vector<uint32_t>{
+        3u * 9u * 32u * 32u, 3u * 9u * 32u * 32u});
+    REQUIRE(Read32(data + 36) >= weightOffsets.front() + 3u * 9u * 32u * 32u);
     blob->Unmap(const_cast<uint8_t *>(data));
     blob->Release();
 }
