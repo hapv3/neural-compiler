@@ -2120,9 +2120,12 @@ struct GeneratorContext
         if ( boxScaleValue <= 0 || outputScale <= 0 ||
              !neuralai::CalculateQuantizedMultiplier(
                  boxScaleValue / (256.0 * outputScale), outputMultiplier, outputShift, 65535) ||
-             outputShift < 17 ||
+             outputShift < 0 ||
              clampMin < -128 || clampMax > 127 || clampMin > clampMax )
-            return SetError(error, "Neural-AI DFL16 output requantization is outside the INT8 contract");
+            return SetError(error, fmt::format(
+                "Neural-AI DFL16 output requantization is outside the INT8 contract "
+                "(box_scale={}, output_scale={}, multiplier={}, shift={}, clamp=[{},{}])",
+                boxScaleValue, outputScale, outputMultiplier, outputShift, clampMin, clampMax));
         if ( splitHead &&
              (ifm->tensor->AllocationSizeBytes() != int64_t(locations) * 64 ||
                  ifm1->tensor->AllocationSizeBytes() != int64_t(locations) * 96) )

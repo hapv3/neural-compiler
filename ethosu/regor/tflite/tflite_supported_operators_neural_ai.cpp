@@ -268,19 +268,22 @@ bool SupportedC32DepthSlice(const Operation *operation)
     {
         return (options->end_mask() & (1 << axis)) != 0 ? ifm->shape[axis] : end[axis];
     };
-    const bool compactClassHead = ifm->shape.Size() == 3 && ofm->shape.Size() == 3 &&
-        ifm->shape[0] == 1 && ifm->shape[1] == 144 && ifm->shape[2] > 0 &&
-        ofm->shape == Shape(1, 80, ifm->shape[2]) && effectiveBegin(0) == 0 &&
-        effectiveEnd(0) == 1 && effectiveBegin(1) == 64 && effectiveEnd(1) == 144 &&
+    const int compactBegin = ifm->shape.Size() == 3 ? effectiveBegin(1) : 0;
+    const int compactEnd = ifm->shape.Size() == 3 ? effectiveEnd(1) : 0;
+    const bool compactContiguousSlice = ifm->shape.Size() == 3 && ofm->shape.Size() == 3 &&
+        ifm->shape[0] == 1 && ifm->shape[1] > 0 && ifm->shape[2] > 0 &&
+        compactBegin >= 0 && compactEnd > compactBegin && compactEnd <= ifm->shape[1] &&
+        ofm->shape == Shape(1, compactEnd - compactBegin, ifm->shape[2]) &&
+        effectiveBegin(0) == 0 && effectiveEnd(0) == 1 &&
         effectiveBegin(2) == 0 && effectiveEnd(2) == ifm->shape[2];
-    if ( compactClassHead ) return true;
+    if ( compactContiguousSlice ) return true;
 
     if ( ifm->shape.Size() != 4 || ofm->shape.Size() != 4 ||
          ifm->shape.WithDepth(1) != ofm->shape.WithDepth(1) ||
          (options->begin_mask() & 0x7) != 0x7 || (options->end_mask() & 0x7) != 0x7 )
     {
         Failure(operation,
-            "Neural-AI StridedSlice requires a full-spatial rank-4 depth slice or selected C144-to-C80 class view");
+            "Neural-AI StridedSlice requires a full-spatial rank-4 depth slice or contiguous compact plane slice");
         return false;
     }
 

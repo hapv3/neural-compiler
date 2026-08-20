@@ -806,6 +806,86 @@ flatbuffers::DetachedBuffer BuildViewModel(
     return builder.Release();
 }
 
+flatbuffers::DetachedBuffer BuildCompactPlaneSliceModel(int planeBegin)
+{
+    flatbuffers::FlatBufferBuilder builder;
+    const std::vector<int64_t> zeroPoints = {0};
+    const std::vector<float> scales = {1.0f};
+    const auto inputQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &scales, &zeroPoints);
+    const auto sliceQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &scales, &zeroPoints);
+    const auto producerQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &scales, &zeroPoints);
+    const std::vector<int32_t> begin = {0, planeBegin, 0};
+    const std::vector<int32_t> end = {0, planeBegin + 2, 0};
+    const std::vector<int32_t> strides = {1, 1, 1};
+    const auto Int32Bytes = [](const std::vector<int32_t> &values)
+    {
+        std::vector<uint8_t> bytes(values.size() * sizeof(int32_t));
+        std::memcpy(bytes.data(), values.data(), bytes.size());
+        return bytes;
+    };
+    const auto beginData = Int32Bytes(begin);
+    const auto endData = Int32Bytes(end);
+    const auto stridesData = Int32Bytes(strides);
+    std::vector<flatbuffers::Offset<tflite::Buffer>> buffers = {
+        tflite::CreateBufferDirect(builder),
+        tflite::CreateBufferDirect(builder, &beginData),
+        tflite::CreateBufferDirect(builder, &endData),
+        tflite::CreateBufferDirect(builder, &stridesData),
+    };
+    const std::vector<int32_t> sourceShape = {1, 4, 32};
+    const std::vector<int32_t> outputShape = {1, 2, 32};
+    const std::vector<int32_t> parameterShape = {3};
+    std::vector<flatbuffers::Offset<tflite::Tensor>> tensors = {
+        tflite::CreateTensorDirect(builder, &sourceShape, tflite::TensorType::INT8, 0,
+            "lhs", inputQuant),
+        tflite::CreateTensorDirect(builder, &sourceShape, tflite::TensorType::INT8, 0,
+            "rhs", inputQuant),
+        tflite::CreateTensorDirect(builder, &parameterShape, tflite::TensorType::INT32, 1,
+            "begin"),
+        tflite::CreateTensorDirect(builder, &parameterShape, tflite::TensorType::INT32, 2,
+            "end"),
+        tflite::CreateTensorDirect(builder, &parameterShape, tflite::TensorType::INT32, 3,
+            "strides"),
+        tflite::CreateTensorDirect(builder, &sourceShape, tflite::TensorType::INT8, 0,
+            "boxes", producerQuant),
+        tflite::CreateTensorDirect(builder, &outputShape, tflite::TensorType::INT8, 0,
+            "slice", sliceQuant),
+    };
+    const auto sliceOptions = tflite::CreateStridedSliceOptions(
+        builder, planeBegin == 0 ? 7 : 5, 5, 0, 0, 0);
+    const auto addOptions = tflite::CreateAddOptions(
+        builder, tflite::ActivationFunctionType::NONE, false);
+    const std::vector<int32_t> addInputs = {0, 1};
+    const std::vector<int32_t> addOutputs = {5};
+    const std::vector<int32_t> sliceInputs = {5, 2, 3, 4};
+    const std::vector<int32_t> sliceOutputs = {6};
+    const std::vector<flatbuffers::Offset<tflite::Operator>> operations = {
+        tflite::CreateOperatorDirect(builder, 0, &addInputs, &addOutputs,
+            tflite::BuiltinOptions::AddOptions, addOptions.Union()),
+        tflite::CreateOperatorDirect(builder, 1, &sliceInputs, &sliceOutputs,
+            tflite::BuiltinOptions::StridedSliceOptions, sliceOptions.Union()),
+    };
+    const std::vector<int32_t> graphInputs = {0, 1};
+    const std::vector<int32_t> graphOutputs = {6};
+    const std::vector<flatbuffers::Offset<tflite::SubGraph>> subgraphs = {
+        tflite::CreateSubGraphDirect(
+            builder, &tensors, &graphInputs, &graphOutputs, &operations, "main"),
+    };
+    const std::vector<flatbuffers::Offset<tflite::OperatorCode>> operatorCodes = {
+        tflite::CreateOperatorCodeDirect(builder, int8_t(tflite::BuiltinOperator::ADD),
+            nullptr, 2, tflite::BuiltinOperator::ADD),
+        tflite::CreateOperatorCodeDirect(builder, int8_t(tflite::BuiltinOperator::STRIDED_SLICE),
+            nullptr, 2, tflite::BuiltinOperator::STRIDED_SLICE),
+    };
+    const auto model = tflite::CreateModelDirect(builder, 3, &operatorCodes, &subgraphs,
+        "Neural-AI compact plane slice test", &buffers);
+    tflite::FinishModelBuffer(builder, model);
+    return builder.Release();
+}
+
 flatbuffers::DetachedBuffer BuildK3ConvModel(int height, int width, int depthK, int depthN, int stride,
     int64_t inputZeroPoint = 0, tflite::Padding padding = tflite::Padding::SAME,
     float inputScaleValue = 1.0f, float outputScaleValue = 1.0f)
@@ -2369,11 +2449,11 @@ TEST_CASE("Neural-AI compiler distributes DFL and class LUT across compact heads
         OpType::Mul, TensorUsage::IFM0, dflOutput, TensorUsage::OFM, scaledOutput);
     boxScale->Input(TensorUsage::IFM0)->Set(dflQuantization);
     Quantization scaleQuantization = Quantization::Unit();
-    scaleQuantization.scales = {QuantizedScale(0.000392156857)};
+    scaleQuantization.scales = {QuantizedScale(1.0)};
     scaleQuantization.zeroPoints = {-128};
     boxScale->ConnectInput(TensorUsage::IFM1, boxScales).Set(scaleQuantization);
     Quantization scaledQuantization = Quantization::Unit();
-    scaledQuantization.scales = {QuantizedScale(0.00352863618)};
+    scaledQuantization.scales = {QuantizedScale(0.00499968417)};
     scaledQuantization.zeroPoints = {-128};
     boxScale->Output(TensorUsage::OFM)->Set(scaledQuantization);
     std::vector<std::shared_ptr<Operation>> sourceOps = {merge, dfl, activation, boxScale};
@@ -2454,7 +2534,9 @@ TEST_CASE("Neural-AI compiler distributes DFL and class LUT across compact heads
     REQUIRE(std::all_of(dflRequantization.begin(), dflRequantization.end(),
         [](const auto &requantization)
         { return std::get<1>(requantization) > 0 && std::get<1>(requantization) <= 65535 &&
-                 std::get<2>(requantization) >= 17 && std::get<2>(requantization) <= 31; }));
+                 std::get<2>(requantization) <= 31; }));
+    REQUIRE(std::all_of(dflRequantization.begin(), dflRequantization.end(),
+        [](const auto &requantization) { return std::get<2>(requantization) < 17; }));
     REQUIRE(dflCommands == 3);
     REQUIRE(lutCommands == 3);
     REQUIRE(concatCommands == 6);
@@ -4231,6 +4313,28 @@ TEST_CASE("Neural-AI compiler removes internal reshape-like views without adding
         REQUIRE(addCommands == 1);
         blob->Unmap(const_cast<uint8_t *>(data));
         blob->Release();
+    }
+}
+
+TEST_CASE("Neural-AI compiler aliases contiguous compact plane slices")
+{
+    ArchNeuralAI arch;
+    REQUIRE(arch.Constraints()->CanAliasSlice(
+        Shape(1, 1, 4, 32), Shape(0, 0, 0, 0), Shape(1, 1, 2, 32)));
+    REQUIRE(arch.Constraints()->CanAliasSlice(
+        Shape(1, 1, 4, 32), Shape(0, 0, 2, 0), Shape(1, 1, 2, 32)));
+    for ( const int planeBegin : {0, 2} )
+    {
+        INFO("planeBegin=" << planeBegin);
+        std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+        Compiler compiler(architecture);
+        const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+        REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+        const auto model = BuildCompactPlaneSliceModel(planeBegin);
+        REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+        const bool compiled = compiler.Compile();
+        INFO(compiler.LastError());
+        REQUIRE(compiled);
     }
 }
 

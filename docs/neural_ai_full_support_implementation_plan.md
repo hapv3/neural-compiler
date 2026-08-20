@@ -152,14 +152,14 @@ new runtime path has not yet passed E2E.
 | YOLO MaxPool | Verified | K5/S1/P2, C32 or selected C128, systolic fast path |
 | Nearest resize | Verified | exact 2x, selected C32/C128/C256, native Spatz kernel |
 | Storage-preserving views | Verified | reshape/squeeze/expand-dims; public output is materialized |
-| StridedSlice | Verified | C32-aligned aliases; multi-group C32 DMA materialization; exact C32-to-C16 high-half materialization |
+| StridedSlice | Verified | C32-aligned aliases; multi-group C32 DMA materialization; C32-to-C16 materialization; contiguous compact plane aliases |
 | Concat | Compiler verified | striped two-input gather; structural C16x3 gather; aligned multi-input/multi-group DMA gather |
 | YOLO C144 head transpose | Verified fallback | standalone heads retain vectorized C32-to-CHW materialization |
 | DFL16 projection | Verified | selected heads feed C64/C80 C32 directly; box-scale requant is folded into each DFL command |
 | Async DMA and overlap | Not implemented | blocking execution remains correct; performance phase |
-| Full selected graphs | P1 operator blocked | scheduled peak is 517,120 bytes; command generation reaches the first final box StridedSlice |
+| Full selected graphs | P1 operator blocked | scheduled peak is 517,120 bytes; compact box slices pass and command generation now reaches a compact Concat contract |
 
-The focused Regor suite passes 110 Neural-AI cases and 38,967 assertions; the
+The focused Regor suite passes 111 Neural-AI cases and 38,976 assertions; the
 complete suite passes 253 cases and 649,508 assertions (the randomized suite's
 assertion total varies with its reported seed).
 Runtime ABI/host checks, cross-builds, firmware-size gates, and focused C144,
@@ -242,8 +242,9 @@ the focused test had not written its invocation and binding table to L2.
   168,000-byte read/write pass and keeps the one-LUT structure used by the
   Micro-YOLO activation baseline. The final box-scale Mul is now distributed
   into the three DFL producers and removed without materializing its 8,400-byte
-  constant/output pass. Command generation now stops at the following
-  `[1,1,2,2100]` box StridedSlice.
+  constant/output pass. Both contiguous coordinate-plane splits of
+  `[1,4,2100]` into `[1,2,2100]` are now zero-copy aliases. Full-model command
+  generation passes these slices and next stops at a compact Concat contract.
 
 ### Other retained evidence
 
@@ -258,7 +259,7 @@ the focused test had not written its invocation and binding table to L2.
   73,728-element diagnostic exceeded 2,000,000 cluster cycles and is prohibited
   on selected hot paths; raw AFU or exact producer canonicalization is required.
 - Runtime `.text` must be rechecked after every runtime increment. Trusted V2-only
-  firmware currently reports 24,100 bytes, leaving 8,668 bytes of ITCM margin.
+  firmware currently reports 24,260 bytes, leaving 8,508 bytes of ITCM margin.
 
 ## 5. Remaining work, in execution order
 
@@ -273,7 +274,12 @@ block, and focused cluster tests pass. The full compiler-runtime package is
 byte-exact at 445,750 cycles under the 1,000,000-cycle gate. This is 4.9% below
 the earlier 468,781-cycle DFL-only reference; performance remains a regression
 guide rather than a requirement to match one implementation cycle-for-cycle.
-Compiler lowering now passes the box-scale Mul.
+Compiler lowering now passes the box-scale Mul. Models whose exact output scale
+uses a right shift below 17 retain the existing fast path for larger shifts and
+use a vector-only Spatz e16-to-e32 widening path for the final requant/pack. The
+selected `(51003, 8)` package is byte-exact at 463,094 cycles: about 3.9% above
+the 445,750-cycle fast-path reference, but still about 1.2% below the older
+468,781-cycle DFL16 reference and well below the 1,000,000-cycle gate.
 
 ### Completed P0 — Full-graph memory feasibility
 
@@ -330,13 +336,14 @@ The completed path adds no scalar or CPU fallback:
 
 ### P1 — Close remaining selected detection-tail contracts
 
-The graph is memory-feasible and detection-tail aligned slices, residual Add,
+The graph is memory-feasible and detection-tail aligned/compact slices, residual Add,
 four-way multi-group gathers, class Sigmoid output Quantize, and the final
 piecewise box-scale Mul are lowered without scalar packing or an extra tensor
-pass. Command generation now stops at source op 242, the first final box
-StridedSlice (`[1,1,4,2100] -> [1,1,2,2100]`). Characterize this compact
-coordinate split and continue one unsupported source ID at a time through the
-remaining Sub, reshape, slice, and final output handling.
+pass. The source-op 242/244 coordinate splits preserve the full innermost 2,100
+locations and alias the low/high two-plane intervals at offsets 0 and 4,200.
+Command generation now stops at a compact Concat contract. Identify its exact
+source ID, layout and consumers, then continue one unsupported source ID at a
+time through the remaining Sub, reshape and final output handling.
 
 ### P3 — Performance and DMA overlap
 
