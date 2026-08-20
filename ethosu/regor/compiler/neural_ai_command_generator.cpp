@@ -151,6 +151,12 @@ bool IsExternalDMARegion(uint16_t region)
            region == uint16_t(Region::L2TemporaryBinding);
 }
 
+bool IsL2ArenaTensor(const SchedulerTensor *tensor)
+{
+    return tensor != nullptr && tensor->memArea.memory != nullptr &&
+           tensor->memArea.memory->Name() == "l2";
+}
+
 bool ResolveDMADirection(const RefV1 &source, const RefV1 &destination, DMADirection &direction)
 {
     const bool sourceLocal = IsLocalDMARegion(source.region);
@@ -500,7 +506,8 @@ struct GeneratorContext
                 error = "Neural-AI scratch tensor has no valid allocated address";
                 return reference;
             }
-            reference.region = uint16_t(Region::TCDMScratch);
+            reference.region = IsL2ArenaTensor(tensor) ?
+                uint16_t(Region::L2TemporaryBinding) : uint16_t(Region::TCDMScratch);
             reference.offset = uint32_t(tensor->AllocatedAddress());
         }
         if ( offset > std::numeric_limits<uint32_t>::max() - reference.offset )
@@ -1287,10 +1294,9 @@ struct GeneratorContext
         if ( !error.empty() ) return false;
         RefV1 ofmRef = TensorRef(ofm->tensor.get(), ofmOffset, error);
         if ( !error.empty() ) return false;
-        if ( lhsRef.region != uint16_t(Region::TCDMScratch) ||
-             rhsRef.region != uint16_t(Region::TCDMScratch) ||
-             ofmRef.region != uint16_t(Region::TCDMScratch) )
-            return SetError(error, "Neural-AI Add requires internal TCDM tensors");
+        const bool directLocal = lhsRef.region == uint16_t(Region::TCDMScratch) &&
+                                 rhsRef.region == uint16_t(Region::TCDMScratch) &&
+                                 ofmRef.region == uint16_t(Region::TCDMScratch);
         const auto overlaps = [lhsBytes](const RefV1 &first, const RefV1 &second)
         {
             if ( first.region != second.region || first.index != second.index ) return false;
@@ -1322,52 +1328,81 @@ struct GeneratorContext
             (ofm->quantization.quantMin.empty() ||
                 ofm->quantization.quantMin[0] <= -128) &&
             (ofm->quantization.quantMax.empty() || ofm->quantization.quantMax[0] >= 127);
-        if ( rawSafe )
+        const auto appendBinary = [&](const RefV1 &tileLhs, const RefV1 &tileRhs,
+                                      const RefV1 &tileOfm, uint32_t bytes,
+                                      uint32_t tileId)
         {
-            AppendHeader(artifact->commands, CommandType::AFUBinary, 64,
-                uint32_t(operation->Index()), 0);
-            AppendRef(artifact->commands, lhsRef);
-            AppendRef(artifact->commands, rhsRef);
-            AppendRef(artifact->commands, ofmRef);
-            Append32(artifact->commands, uint32_t(lhsBytes));
-            Append32(artifact->commands, uint32_t(AFUBinaryMode::AddI8));
-            AppendZeros(artifact->commands, 4);
-        }
-        else
+            if ( rawSafe )
+            {
+                AppendHeader(artifact->commands, CommandType::AFUBinary, 64,
+                    uint32_t(operation->Index()), tileId);
+                AppendRef(artifact->commands, tileLhs);
+                AppendRef(artifact->commands, tileRhs);
+                AppendRef(artifact->commands, tileOfm);
+                Append32(artifact->commands, bytes);
+                Append32(artifact->commands, uint32_t(AFUBinaryMode::AddI8));
+                AppendZeros(artifact->commands, 4);
+            }
+            else
+            {
+                const auto *round = operation->Attribute<double_round_shift_attr_t>();
+                const int clampMin = ofm->quantization.quantMin.empty() ? -128 :
+                    int(ofm->quantization.quantMin[0]);
+                const int clampMax = ofm->quantization.quantMax.empty() ? 127 :
+                    int(ofm->quantization.quantMax[0]);
+                if ( round == nullptr || (round->shift != 0 && round->shift != 20) ||
+                     ofm->rounding != RoundMode::DBL || lhsScale.scale <= 0 || rhsScale.scale <= 0 ||
+                     outputScale.scale <= 0 || lhsScale.shift < 0 || lhsScale.shift > 63 ||
+                     rhsScale.shift < 0 || rhsScale.shift > 63 || outputScale.shift < 0 ||
+                     outputScale.shift > 63 || clampMin < -128 || clampMax > 127 || clampMin > clampMax )
+                    return SetError(error, "Neural-AI SPATZ_ADD quantization is outside the INT8 contract");
+                AppendHeader(artifact->commands, CommandType::SpatzAdd, 96,
+                    uint32_t(operation->Index()), tileId);
+                AppendRef(artifact->commands, tileLhs);
+                AppendRef(artifact->commands, tileRhs);
+                AppendRef(artifact->commands, tileOfm);
+                Append32(artifact->commands, bytes);
+                Append32(artifact->commands, uint32_t(lhsScale.scale));
+                Append32(artifact->commands, uint32_t(lhsScale.shift));
+                Append32(artifact->commands, uint32_t(rhsScale.scale));
+                Append32(artifact->commands, uint32_t(rhsScale.shift));
+                Append32(artifact->commands, uint32_t(outputScale.scale));
+                Append32(artifact->commands, uint32_t(outputScale.shift));
+                Append32(artifact->commands, uint32_t(lhsZeroPoint));
+                Append32(artifact->commands, uint32_t(rhsZeroPoint));
+                Append32(artifact->commands, uint32_t(outputZeroPoint));
+                Append32(artifact->commands, uint32_t(clampMin));
+                Append32(artifact->commands, uint32_t(clampMax));
+                Append32(artifact->commands, uint32_t(round->shift));
+                Append32(artifact->commands, uint32_t(subtract ? SpatzBinaryMode::Subtract :
+                                                            SpatzBinaryMode::Add));
+            }
+            ++artifact->commandCount;
+            return true;
+        };
+        if ( directLocal ) return appendBinary(lhsRef, rhsRef, ofmRef, uint32_t(lhsBytes), 0);
+
+        constexpr uint32_t spillTileBytes = 4096;
+        const uint32_t tileCapacity = std::min(spillTileBytes, uint32_t(lhsBytes));
+        RefV1 localLhs{uint16_t(Region::TCDMScratch), 0, stageOffset};
+        RefV1 localRhs{uint16_t(Region::TCDMScratch), 0, stageOffset + tileCapacity};
+        RefV1 localOfm{uint16_t(Region::TCDMScratch), 0, stageOffset + tileCapacity * 2u};
+        uint32_t tileId = 0;
+        for ( uint32_t base = 0; base < uint32_t(lhsBytes); base += tileCapacity )
         {
-            const auto *round = operation->Attribute<double_round_shift_attr_t>();
-            const int clampMin = ofm->quantization.quantMin.empty() ? -128 :
-                int(ofm->quantization.quantMin[0]);
-            const int clampMax = ofm->quantization.quantMax.empty() ? 127 :
-                int(ofm->quantization.quantMax[0]);
-            if ( round == nullptr || (round->shift != 0 && round->shift != 20) ||
-                 ofm->rounding != RoundMode::DBL || lhsScale.scale <= 0 || rhsScale.scale <= 0 ||
-                 outputScale.scale <= 0 || lhsScale.shift < 0 || lhsScale.shift > 63 ||
-                 rhsScale.shift < 0 || rhsScale.shift > 63 || outputScale.shift < 0 ||
-                 outputScale.shift > 63 || clampMin < -128 || clampMax > 127 || clampMin > clampMax )
-                return SetError(error, "Neural-AI SPATZ_ADD quantization is outside the INT8 contract");
-            AppendHeader(artifact->commands, CommandType::SpatzAdd, 96,
-                uint32_t(operation->Index()), 0);
-            AppendRef(artifact->commands, lhsRef);
-            AppendRef(artifact->commands, rhsRef);
-            AppendRef(artifact->commands, ofmRef);
-            Append32(artifact->commands, uint32_t(lhsBytes));
-            Append32(artifact->commands, uint32_t(lhsScale.scale));
-            Append32(artifact->commands, uint32_t(lhsScale.shift));
-            Append32(artifact->commands, uint32_t(rhsScale.scale));
-            Append32(artifact->commands, uint32_t(rhsScale.shift));
-            Append32(artifact->commands, uint32_t(outputScale.scale));
-            Append32(artifact->commands, uint32_t(outputScale.shift));
-            Append32(artifact->commands, uint32_t(lhsZeroPoint));
-            Append32(artifact->commands, uint32_t(rhsZeroPoint));
-            Append32(artifact->commands, uint32_t(outputZeroPoint));
-            Append32(artifact->commands, uint32_t(clampMin));
-            Append32(artifact->commands, uint32_t(clampMax));
-            Append32(artifact->commands, uint32_t(round->shift));
-            Append32(artifact->commands, uint32_t(subtract ? SpatzBinaryMode::Subtract :
-                                                        SpatzBinaryMode::Add));
+            const uint32_t bytes = std::min(tileCapacity, uint32_t(lhsBytes) - base);
+            RefV1 sourceLhs = lhsRef;
+            RefV1 sourceRhs = rhsRef;
+            RefV1 destination = ofmRef;
+            sourceLhs.offset += base;
+            sourceRhs.offset += base;
+            destination.offset += base;
+            if ( !AppendDMA1D(sourceLhs, localLhs, bytes, uint32_t(operation->Index()), tileId++, error) ||
+                 !AppendDMA1D(sourceRhs, localRhs, bytes, uint32_t(operation->Index()), tileId++, error) ||
+                 !appendBinary(localLhs, localRhs, localOfm, bytes, tileId++) ||
+                 !AppendDMA1D(localOfm, destination, bytes, uint32_t(operation->Index()), tileId++, error) )
+                return false;
         }
-        ++artifact->commandCount;
         return true;
     }
 
@@ -3193,6 +3228,42 @@ struct GeneratorContext
         std::vector<std::pair<UniqueId, const SchedulerTensor *>> orderedTensors(tensors.begin(), tensors.end());
         std::sort(orderedTensors.begin(), orderedTensors.end(),
             [](const auto &lhs, const auto &rhs) { return lhs.first < rhs.first; });
+        uint32_t l2ArenaBytes = 0;
+        for ( const auto &[uid, tensor] : orderedTensors )
+        {
+            UNUSED(uid);
+            if ( tensor->isGraphInput || tensor->isGraphOutput || tensor->IsConstant() ||
+                 !IsL2ArenaTensor(tensor) ) continue;
+            const int64_t end = tensor->AllocatedAddress() + TensorStorageBytes(tensor);
+            if ( tensor->AllocatedAddress() < 0 || end <= 0 ||
+                 end > std::numeric_limits<uint32_t>::max() )
+                return SetError(error, "Neural-AI L2 arena tensor has an invalid allocated range");
+            l2ArenaBytes = std::max(l2ArenaBytes, uint32_t(end));
+        }
+        if ( l2ArenaBytes != 0 )
+        {
+            l2ArenaBytes = uint32_t(RoundAway(int(l2ArenaBytes), ArchNeuralAI::DMAAlignment));
+            neuralai::BindingV1 binding{};
+            binding.direction = uint16_t(BindingDirection::L2Temporary);
+            binding.index = 0;
+            binding.dataType = uint16_t(DataType::Int8);
+            binding.layout = uint16_t(TensorLayout::NHWC);
+            binding.rank = 1;
+            binding.tensorId = nextTensorId++;
+            binding.dimensions[0] = l2ArenaBytes;
+            binding.byteSize = l2ArenaBytes;
+            artifact->bindings.push_back(binding);
+
+            neuralai::TensorV1 description{};
+            description.tensorId = binding.tensorId;
+            description.dataType = binding.dataType;
+            description.layout = binding.layout;
+            description.rank = binding.rank;
+            description.dimensions[0] = l2ArenaBytes;
+            description.byteSize = l2ArenaBytes;
+            description.alignment = ArchNeuralAI::DMAAlignment;
+            artifact->tensors.push_back(description);
+        }
         for ( const auto &[uid, tensor] : orderedTensors )
         {
             UNUSED(uid);
@@ -3230,7 +3301,11 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
     }
     artifact = {};
     GeneratorContext context(graph, schedule, &artifact);
-    if ( !context.BuildBindings(operations, error) ) return false;
+    if ( !context.BuildBindings(operations, error) )
+    {
+        if ( error.empty() ) error = "Neural-AI binding construction failed without a diagnostic";
+        return false;
+    }
     HLCStreamGenerator hlcGenerator(0, false);
     HLCStream hlcCommands = hlcGenerator.GenerateCommandStream(
         vector_span<std::unique_ptr<SchedulerOperation>>(operations, 0, int(operations.size())),
@@ -3262,6 +3337,22 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
     for ( const auto &operation : operations )
     {
         GeneratorContext::WorkspaceSize &workspace = context.workspaceSizes[operation->Uid()];
+        if ( (operation->Type() == OpType::Add || operation->Type() == OpType::Sub) &&
+             (IsL2ArenaTensor(operation->IFM(0)->tensor.get()) ||
+                 IsL2ArenaTensor(operation->IFM(1)->tensor.get()) ||
+                 IsL2ArenaTensor(operation->OFM()->tensor.get())) )
+        {
+            constexpr uint32_t spillTileBytes = 4096;
+            const int64_t tensorBytes = TensorStorageBytes(operation->OFM()->tensor.get());
+            if ( tensorBytes <= 0 || tensorBytes > std::numeric_limits<uint32_t>::max() )
+            {
+                error = "Neural-AI binary spill tensor size is invalid";
+                return false;
+            }
+            const uint32_t tileBytes = std::min(spillTileBytes, uint32_t(tensorBytes));
+            workspace.stage = std::max(workspace.stage, tileBytes * 3u);
+            context.stageBytes = std::max(context.stageBytes, tileBytes * 3u);
+        }
         if ( operation->Type() == OpType::MemoryCopy &&
              operation->IFM(0)->tensor->format == TensorFormat::NHWC &&
              operation->OFM()->tensor->format == TensorFormat::NHWC )
@@ -3430,10 +3521,21 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
             }
             continue;
         }
-        if ( !context.SelectWorkspace(operation.get(), error) ) return false;
+        if ( !context.SelectWorkspace(operation.get(), error) )
+        {
+            if ( error.empty() ) error = fmt::format(
+                "Neural-AI workspace selection for operation {} failed without a diagnostic",
+                operation->Index());
+            return false;
+        }
         if ( operation->Type() == OpType::MemoryCopy )
         {
-            if ( !context.AppendCopy(operation.get(), error) ) return false;
+            if ( !context.AppendCopy(operation.get(), error) )
+            {
+                if ( error.empty() ) error = fmt::format(
+                    "Neural-AI MemoryCopy operation {} failed without a diagnostic", operation->Index());
+                return false;
+            }
         }
         else if ( operation->Type() == OpType::DepthwiseConv2D )
         {
@@ -3441,7 +3543,12 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         }
         else if ( operation->Type() == OpType::Add || operation->Type() == OpType::Sub )
         {
-            if ( !context.AppendAdd(operation.get(), error) ) return false;
+            if ( !context.AppendAdd(operation.get(), error) )
+            {
+                if ( error.empty() ) error = fmt::format(
+                    "Neural-AI binary operation {} failed without a diagnostic", operation->Index());
+                return false;
+            }
         }
         else if ( operation->Type() == OpType::LUT )
         {

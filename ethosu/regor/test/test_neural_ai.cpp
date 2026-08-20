@@ -3313,6 +3313,94 @@ TEST_CASE("Neural-AI AFU Add reads a C32-aligned slice without materialization")
     }
     REQUIRE(offset == artifact.commands.size());
     REQUIRE(addCommands == 1);
+
+}
+
+TEST_CASE("Neural-AI binary chain reloads one spilled intermediate through TCDM")
+{
+    ArchNeuralAI arch;
+    const Shape shape(1, 2, 3, 32);
+    auto lhs = CreateTensor("lhs", shape, DataType::Int8);
+    auto rhs0 = CreateTensor("rhs0", shape, DataType::Int8);
+    auto rhs1 = CreateTensor("rhs1", shape, DataType::Int8);
+    auto intermediate = CreateTensor("intermediate", shape, DataType::Int8);
+    auto output = CreateTensor("output", shape, DataType::Int8);
+    auto add0 = CreateOperation(
+        OpType::Add, TensorUsage::IFM0, lhs, TensorUsage::IFM1, rhs0,
+        TensorUsage::OFM, intermediate);
+    auto add1 = CreateOperation(
+        OpType::Add, TensorUsage::IFM0, intermediate, TensorUsage::IFM1, rhs1,
+        TensorUsage::OFM, output);
+    Quantization inputQuantization;
+    inputQuantization.scales = {QuantizedScale(32768.0)};
+    inputQuantization.zeroPoints = {0};
+    inputQuantization.quantMin = {-128};
+    inputQuantization.quantMax = {127};
+    Quantization outputQuantization = inputQuantization;
+    outputQuantization.scales = {QuantizedScale(1.0 / 32768.0)};
+    for ( Operation *operation : {add0.get(), add1.get()} )
+    {
+        operation->Input(TensorUsage::IFM0)->Set(inputQuantization);
+        operation->Input(TensorUsage::IFM1)->Set(inputQuantization);
+        operation->Output(TensorUsage::OFM)->Set(outputQuantization);
+    }
+    std::vector<std::shared_ptr<Operation>> sourceOps = {add0, add1};
+    auto graph = CreateGraph(sourceOps);
+
+    GraphOptimiserOptions graphOptions;
+    NeuralAIGraphOptimiser optimiser(arch.Constraints(), graphOptions, nullptr);
+    optimiser.OptimiseGraph(graph.get());
+    const std::unordered_map<UniqueId, UniqueId> equivalenceIds;
+    SchedulerPacking packing(&arch, false, equivalenceIds);
+    auto scheduleOps = packing.Process(graph.get());
+    SchedulerOptions schedulerOptions;
+    schedulerOptions.disabled.Set(SchedulerFeature::Cascading);
+    schedulerOptions.disabled.Set(SchedulerFeature::WeightBuffering);
+    Scheduler scheduler(&arch, schedulerOptions, "neural-ai-spilled-add-chain", scheduleOps,
+        packing.OpConfigCompatablility());
+    auto schedule = scheduler.Process();
+
+    std::vector<const SchedulerOperation *> adds;
+    for ( const auto &operation : scheduleOps )
+        if ( operation->Type() == OpType::Add ) adds.push_back(operation.get());
+    REQUIRE(adds.size() == 2);
+    REQUIRE(adds[0]->OFM()->tensor == adds[1]->IFM(0)->tensor);
+    adds[0]->OFM()->tensor->memArea = MemArea(arch.L2Memory(), MemUsage::FeatureMap);
+
+    CompiledNeuralAIArtifact artifact;
+    std::string error;
+    NeuralAICommandGenerator commandGenerator;
+    const bool generated = commandGenerator.Generate(
+        graph.get(), scheduleOps, schedule.get(), artifact, error);
+    INFO(error);
+    REQUIRE(generated);
+    REQUIRE(artifact.bindings.size() == 5);  // Four public bindings plus one L2 arena.
+
+    uint32_t dmaCommands = 0;
+    uint32_t addCommands = 0;
+    size_t offset = 0;
+    while ( offset < artifact.commands.size() )
+    {
+        const uint16_t type = Read16(artifact.commands, offset);
+        const uint16_t bytes = Read16(artifact.commands, offset + 2);
+        REQUIRE(bytes >= 32);
+        if ( type == uint16_t(neuralai::CommandType::DMA1D) ) ++dmaCommands;
+        if ( type == uint16_t(neuralai::CommandType::AFUBinary) )
+        {
+            REQUIRE(Read16(artifact.commands, offset + 16) ==
+                uint16_t(neuralai::Region::TCDMScratch));
+            REQUIRE(Read16(artifact.commands, offset + 24) ==
+                uint16_t(neuralai::Region::TCDMScratch));
+            REQUIRE(Read16(artifact.commands, offset + 32) ==
+                uint16_t(neuralai::Region::TCDMScratch));
+            REQUIRE(Read32(artifact.commands, offset + 40) == 192);
+            ++addCommands;
+        }
+        offset += bytes;
+    }
+    REQUIRE(offset == artifact.commands.size());
+    REQUIRE(dmaCommands == 6);
+    REQUIRE(addCommands == 2);
 }
 
 TEST_CASE("Neural-AI compiler lowers quantized Add through Spatz")
