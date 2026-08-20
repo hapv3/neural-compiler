@@ -2128,15 +2128,14 @@ struct GeneratorContext
         if ( !error.empty() ) return false;
         RefV1 ofmRhsRef = TensorRef(ofm->tensor.get(), uint32_t(lhsBytes), error);
         if ( !error.empty() ) return false;
-        if ( lhsRef.region != uint16_t(Region::TCDMScratch) ||
-             rhsRef.region != uint16_t(Region::TCDMScratch) ||
-             ofmLhsRef.region != uint16_t(Region::TCDMScratch) )
-            return SetError(error, "Neural-AI Concat requires internal TCDM tensors");
+        if ( ofmLhsRef.region != uint16_t(Region::TCDMScratch) )
+            return SetError(error, "Neural-AI Concat requires an internal TCDM output");
         const auto overlaps = [](const RefV1 &source, uint32_t sourceBytes,
                                   const RefV1 &destination, uint32_t destinationBytes)
         {
-            return source.offset < destination.offset + destinationBytes &&
-                   destination.offset < source.offset + sourceBytes;
+            if ( source.region != destination.region || source.index != destination.index ) return false;
+            return uint64_t(source.offset) < uint64_t(destination.offset) + destinationBytes &&
+                   uint64_t(destination.offset) < uint64_t(source.offset) + sourceBytes;
         };
         if ( overlaps(lhsRef, uint32_t(lhsBytes), ofmLhsRef, uint32_t(ofmBytes)) ||
              overlaps(rhsRef, uint32_t(rhsBytes), ofmLhsRef, uint32_t(ofmBytes)) )

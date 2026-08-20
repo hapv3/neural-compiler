@@ -3403,6 +3403,132 @@ TEST_CASE("Neural-AI binary chain reloads one spilled intermediate through TCDM"
     REQUIRE(addCommands == 2);
 }
 
+TEST_CASE("Neural-AI Concat reloads one spilled producer through TCDM")
+{
+    ArchNeuralAI arch;
+    const Shape c32Shape(1, 2, 3, 32);
+    const Shape c64Shape(1, 2, 3, 64);
+    std::array<std::shared_ptr<Tensor>, 5> inputs;
+    for ( int index = 0; index < 4; ++index )
+        inputs[index] = CreateTensor(
+            "input" + std::to_string(index), c32Shape, DataType::Int8);
+    inputs[4] = CreateTensor("input4", c64Shape, DataType::Int8);
+    auto lhs = CreateTensor("lhs", c32Shape, DataType::Int8);
+    auto rhs = CreateTensor("rhs", c32Shape, DataType::Int8);
+    auto merged = CreateTensor("merged", c64Shape, DataType::Int8);
+    auto output = CreateTensor("output", c64Shape, DataType::Int8);
+    auto add0 = CreateOperation(
+        OpType::Add, TensorUsage::IFM0, inputs[0], TensorUsage::IFM1, inputs[1],
+        TensorUsage::OFM, lhs);
+    auto add1 = CreateOperation(
+        OpType::Add, TensorUsage::IFM0, inputs[2], TensorUsage::IFM1, inputs[3],
+        TensorUsage::OFM, rhs);
+    auto concat = std::make_shared<Operation>(OpType::Concat);
+    concat->ConnectInput(TensorUsage::IFM0, lhs);
+    concat->ConnectInput(TensorUsage::IFM1, rhs);
+    concat->ConnectOutput(TensorUsage::OFM, merged);
+    concat->Attribute<axis_attr_t>()->axis = -1;
+    auto add2 = CreateOperation(
+        OpType::Add, TensorUsage::IFM0, merged, TensorUsage::IFM1, inputs[4],
+        TensorUsage::OFM, output);
+
+    Quantization inputQuantization;
+    inputQuantization.scales = {QuantizedScale(32768.0)};
+    inputQuantization.zeroPoints = {0};
+    inputQuantization.quantMin = {-128};
+    inputQuantization.quantMax = {127};
+    Quantization outputQuantization = inputQuantization;
+    outputQuantization.scales = {QuantizedScale(1.0 / 32768.0)};
+    for ( Operation *operation : {add0.get(), add1.get(), add2.get()} )
+    {
+        operation->Input(TensorUsage::IFM0)->Set(inputQuantization);
+        operation->Input(TensorUsage::IFM1)->Set(inputQuantization);
+        operation->Output(TensorUsage::OFM)->Set(outputQuantization);
+    }
+    concat->Input(TensorUsage::IFM0)->Set(outputQuantization);
+    concat->Input(TensorUsage::IFM1)->Set(outputQuantization);
+    concat->Output(TensorUsage::OFM)->Set(outputQuantization);
+    std::vector<std::shared_ptr<Operation>> sourceOps = {add0, add1, concat, add2};
+    auto graph = CreateGraph(sourceOps);
+
+    GraphOptimiserOptions graphOptions;
+    NeuralAIGraphOptimiser optimiser(arch.Constraints(), graphOptions, nullptr);
+    optimiser.OptimiseGraph(graph.get());
+    const std::unordered_map<UniqueId, UniqueId> equivalenceIds;
+    SchedulerPacking packing(&arch, false, equivalenceIds);
+    auto scheduleOps = packing.Process(graph.get());
+    SchedulerOptions schedulerOptions;
+    schedulerOptions.disabled.Set(SchedulerFeature::Cascading);
+    schedulerOptions.disabled.Set(SchedulerFeature::WeightBuffering);
+    Scheduler scheduler(&arch, schedulerOptions, "neural-ai-spilled-concat", scheduleOps,
+        packing.OpConfigCompatablility());
+    auto schedule = scheduler.Process();
+
+    const SchedulerOperation *scheduledConcat = nullptr;
+    uint32_t scheduledAdds = 0;
+    for ( const auto &operation : scheduleOps )
+    {
+        if ( operation->Type() == OpType::Concat ) scheduledConcat = operation.get();
+        if ( operation->Type() == OpType::Add ) ++scheduledAdds;
+    }
+    REQUIRE(scheduledConcat != nullptr);
+    REQUIRE(scheduledAdds == 3);
+    scheduledConcat->IFM(0)->tensor->memArea =
+        MemArea(arch.L2Memory(), MemUsage::FeatureMap);
+
+    CompiledNeuralAIArtifact artifact;
+    std::string error;
+    NeuralAICommandGenerator commandGenerator;
+    const bool generated = commandGenerator.Generate(
+        graph.get(), scheduleOps, schedule.get(), artifact, error);
+    INFO(error);
+    REQUIRE(generated);
+    REQUIRE(artifact.bindings.size() == 7);  // Six public bindings plus one L2 arena.
+
+    uint32_t concatReloads = 0;
+    uint32_t localConcatCopies = 0;
+    uint32_t addCommands = 0;
+    size_t offset = 0;
+    while ( offset < artifact.commands.size() )
+    {
+        const uint16_t type = Read16(artifact.commands, offset);
+        const uint16_t bytes = Read16(artifact.commands, offset + 2);
+        REQUIRE(bytes >= 32);
+        if ( type == uint16_t(neuralai::CommandType::DMA1D) &&
+             Read32(artifact.commands, offset + 32) == 192 )
+        {
+            const uint16_t sourceRegion = Read16(artifact.commands, offset + 16);
+            const uint16_t destinationRegion = Read16(artifact.commands, offset + 24);
+            const uint32_t direction = Read32(artifact.commands, offset + 36);
+            if ( sourceRegion == uint16_t(neuralai::Region::L2TemporaryBinding) )
+            {
+                REQUIRE(destinationRegion == uint16_t(neuralai::Region::TCDMScratch));
+                REQUIRE(direction == uint32_t(neuralai::DMADirection::ExternalToLocal));
+                ++concatReloads;
+            }
+            else if ( sourceRegion == uint16_t(neuralai::Region::TCDMScratch) &&
+                      destinationRegion == uint16_t(neuralai::Region::TCDMScratch) &&
+                      direction == uint32_t(neuralai::DMADirection::LocalToLocal) )
+                ++localConcatCopies;
+        }
+        if ( type == uint16_t(neuralai::CommandType::AFUBinary) )
+        {
+            REQUIRE(Read16(artifact.commands, offset + 16) ==
+                uint16_t(neuralai::Region::TCDMScratch));
+            REQUIRE(Read16(artifact.commands, offset + 24) ==
+                uint16_t(neuralai::Region::TCDMScratch));
+            REQUIRE(Read16(artifact.commands, offset + 32) ==
+                uint16_t(neuralai::Region::TCDMScratch));
+            ++addCommands;
+        }
+        offset += bytes;
+    }
+    REQUIRE(offset == artifact.commands.size());
+    REQUIRE(concatReloads == 1);
+    REQUIRE(localConcatCopies >= 1);
+    REQUIRE(addCommands == 3);
+}
+
 TEST_CASE("Neural-AI compiler lowers quantized Add through Spatz")
 {
     const auto lowersToSpatz = [](flatbuffers::DetachedBuffer model, uint32_t expectedBytes,
