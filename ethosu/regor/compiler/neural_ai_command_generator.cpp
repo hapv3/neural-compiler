@@ -236,6 +236,47 @@ std::array<uint32_t, 4> Dimensions(const Shape &shape)
     return {uint32_t(nhwc.Batch()), uint32_t(nhwc.Height()), uint32_t(nhwc.Width()), uint32_t(nhwc.Depth())};
 }
 
+uint32_t LinebufferSpillStripeRows(const Shape &ofmShape)
+{
+    const Shape ofm = ReshapeToNHWC(ofmShape);
+    return uint32_t(std::min(ofm.Height(), std::max(1, 256 / ofm.Width())));
+}
+
+neuralai::StripeStagingInput MakeLinebufferSpillStaging(
+    const Shape &ifmShape, const Shape &ifmStorageShape, const Shape &ofmShape,
+    const Kernel *kernel, int outputY, int outputRows, uint32_t sourceBase,
+    uint32_t stagingBase)
+{
+    const Shape ifm = ReshapeToNHWC(ifmShape);
+    const Shape storage = ReshapeToNHWC(ifmStorageShape);
+    const Shape ofm = ReshapeToNHWC(ofmShape);
+    const Margin &padding = kernel->Padding();
+    const int inputYStart = outputY * kernel->Stride().y - padding.Top();
+    const int inputYEnd = (outputY + outputRows - 1) * kernel->Stride().y -
+        padding.Top() + kernel->Size().y;
+    const int inputXStart = -padding.Left();
+    const int inputXEnd = (ofm.Width() - 1) * kernel->Stride().x -
+        padding.Left() + kernel->Size().x;
+    const int validYStart = std::clamp(inputYStart, 0, ifm.Height());
+    const int validYEnd = std::clamp(inputYEnd, 0, ifm.Height());
+    const int validXStart = std::clamp(inputXStart, 0, ifm.Width());
+    const int validXEnd = std::clamp(inputXEnd, 0, ifm.Width());
+    neuralai::StripeStagingInput staging{};
+    staging.logicalIfm = ifm;
+    staging.storageIfm = storage;
+    staging.validArea = Box(Shape(0, validYStart, validXStart, 0),
+        Box::Size(Shape(1, validYEnd - validYStart, validXEnd - validXStart,
+            ifm.Depth())));
+    staging.sourceBase = sourceBase;
+    staging.stagingBase = stagingBase;
+    staging.padTop = std::max(0, -inputYStart);
+    staging.padLeft = std::max(0, -inputXStart);
+    staging.padBottom = std::max(0, inputYEnd - ifm.Height());
+    staging.padRight = std::max(0, inputXEnd - ifm.Width());
+    staging.channels = ifm.Depth();
+    return staging;
+}
+
 uint32_t FloatBits(float value)
 {
     uint32_t bits;
@@ -2834,6 +2875,159 @@ struct GeneratorContext
         return true;
     }
 
+    bool AppendSpilledLinebuffer(const SchedulerOperation *operation,
+        const NeuralAIOpConfig *config, const WeightRange &range,
+        MatrixData &materialized, std::string &error)
+    {
+        const SchedulerConnection *ifm = operation->IFM(0);
+        const SchedulerConnection *ofm = operation->OFM();
+        const Shape ifmShape = ReshapeToNHWC(ifm->SliceShape());
+        const Shape ofmShape = ReshapeToNHWC(ofm->SliceShape());
+        if ( config->DirectNhwcInput() || ifm->tensor->format != TensorFormat::C32Blocked ||
+             ofm->tensor->format != TensorFormat::C32Blocked || ifmShape.Depth() % 32 != 0 )
+            return SetError(error,
+                "Neural-AI spilled linebuffer Conv requires aligned C32 feature maps");
+        uint32_t ifmSliceOffset = 0;
+        if ( !C32SliceByteOffset(ifm, ifmSliceOffset, error) ) return false;
+        RefV1 ifmBase = TensorRef(ifm->tensor.get(), ifmSliceOffset, error);
+        if ( !error.empty() ) return false;
+        RefV1 ofmBase = TensorRef(ofm->tensor.get(), 0, error);
+        if ( !error.empty() ) return false;
+        const bool spillIfm = ifmBase.region == uint16_t(Region::L2TemporaryBinding);
+        const bool spillOfm = ofmBase.region == uint16_t(Region::L2TemporaryBinding);
+        if ( !spillIfm && !spillOfm )
+            return SetError(error, "Neural-AI spilled linebuffer Conv has no L2 feature map");
+        if ( (ifmBase.region != uint16_t(Region::TCDMScratch) && !spillIfm) ||
+             (ofmBase.region != uint16_t(Region::TCDMScratch) && !spillOfm) )
+            return SetError(error,
+                "Neural-AI linebuffer Conv feature maps require TCDM or the L2 temporary arena");
+
+        const uint32_t inputGroups = uint32_t(ifmShape.Depth()) / 32u;
+        const uint32_t outputGroups =
+            uint32_t(RoundAway(ofmShape.Depth(), 32)) / 32u;
+        const uint64_t outputGroupStride64 =
+            uint64_t(ofmShape.Height()) * uint64_t(ofmShape.Width()) * 32u;
+        if ( inputGroups == 0 || outputGroups == 0 ||
+             range.weightBytes % int(outputGroups) != 0 ||
+             outputGroupStride64 > std::numeric_limits<uint32_t>::max() )
+            return SetError(error, "Neural-AI spilled linebuffer dimensions overflow the ABI");
+        const uint32_t outputGroupWeightBytes = uint32_t(range.weightBytes) / outputGroups;
+        const uint32_t outputGroupStride = uint32_t(outputGroupStride64);
+        const uint32_t stripeCapacity = LinebufferSpillStripeRows(ofmShape);
+        RefV1 modelWeights{};
+        modelWeights.region = uint16_t(Region::ModelConstants);
+        modelWeights.offset = materialized.weightBase;
+        RefV1 stagedWeights{};
+        stagedWeights.region = uint16_t(Region::TCDMScratch);
+        stagedWeights.offset = weightStageOffset;
+        int8_t paddingValue = 0;
+        if ( const SchedulerConnection *padding = operation->TryInput(TensorUsage::Params1) )
+        {
+            if ( !padding->tensor->IsConstant() || padding->Type() != regor::DataType::Int8 ||
+                 padding->tensor->bufferView.Elements() != 1 )
+                return SetError(error, "Neural-AI Conv padding value is invalid");
+            paddingValue = padding->tensor->bufferView.Values<int8_t>()[0];
+        }
+
+        uint32_t tileId = 0;
+        for ( uint32_t outputGroup = 0; outputGroup < outputGroups; ++outputGroup )
+        {
+            RefV1 groupWeights = modelWeights;
+            groupWeights.offset += outputGroup * outputGroupWeightBytes;
+            if ( !AppendDMA2D(groupWeights, stagedWeights, 32, 32, 32,
+                     outputGroupWeightBytes / 32u, uint32_t(operation->Index()),
+                     tileId++, error) )
+                return false;
+            AppendRQLoad(materialized.qparamBase + outputGroup * 32u, outputGroup,
+                uint32_t(operation->Index()), tileId++);
+            for ( uint32_t outputY = 0; outputY < uint32_t(ofmShape.Height());
+                  outputY += stripeCapacity )
+            {
+                const uint32_t outputRows = std::min(
+                    stripeCapacity, uint32_t(ofmShape.Height()) - outputY);
+                auto stagingInput = MakeLinebufferSpillStaging(ifmShape,
+                    ifm->tensor->storageShape, ofmShape, operation->Kernel(), int(outputY),
+                    int(outputRows), ifmSliceOffset, stripeStageOffset);
+                const auto staging =
+                    neuralai::LinebufferPlanner().PlanStripeStaging(stagingInput);
+                const uint64_t localOutputOffset64 =
+                    (uint64_t(stripeStageOffset) + staging.bytes +
+                        ArchNeuralAI::DMAAlignment - 1u) /
+                    ArchNeuralAI::DMAAlignment * ArchNeuralAI::DMAAlignment;
+                if ( localOutputOffset64 > std::numeric_limits<uint32_t>::max() )
+                    return SetError(error,
+                        "Neural-AI linebuffer Conv local output reference overflows the ABI");
+                const uint32_t localOutputOffset = uint32_t(localOutputOffset64);
+                const uint64_t stripeEnd = uint64_t(localOutputOffset) +
+                    uint64_t(outputRows) * uint32_t(ofmShape.Width()) * 32u;
+                if ( stripeEnd > uint64_t(stripeStageOffset) +
+                        workspaceSizes[operation->Uid()].stripe )
+                    return SetError(error,
+                        "Neural-AI linebuffer Conv exceeds its spill stripe workspace");
+                const bool needsFill = stagingInput.padTop != 0 || stagingInput.padLeft != 0 ||
+                    stagingInput.padBottom != 0 || stagingInput.padRight != 0;
+                if ( !AppendStripeStaging(ifm, staging, paddingValue,
+                         uint32_t(operation->Index()), tileId, needsFill, error) )
+                    return false;
+
+                std::vector<std::vector<neuralai::LinebufferJob>> groupJobs(inputGroups);
+                for ( uint32_t inputGroup = 0; inputGroup < inputGroups; ++inputGroup )
+                {
+                    neuralai::LinebufferPlannerInput plannerInput{};
+                    plannerInput.logicalIfm = staging.stagedIfm;
+                    plannerInput.logicalOfm =
+                        Shape(1, int(outputRows), ofmShape.Width(), 32);
+                    plannerInput.ifmBase = stripeStageOffset;
+                    plannerInput.ofmBase = localOutputOffset;
+                    plannerInput.weightBase = weightStageOffset + inputGroup * 9u * 32u * 32u;
+                    plannerInput.psumBase = partialOffset;
+                    plannerInput.kernelH = operation->Kernel()->Size().y;
+                    plannerInput.kernelW = operation->Kernel()->Size().x;
+                    plannerInput.strideH = operation->Kernel()->Stride().y;
+                    plannerInput.strideW = operation->Kernel()->Stride().x;
+                    plannerInput.ic = 32;
+                    plannerInput.oc = 32;
+                    plannerInput.inputGroupIndex = int(inputGroup);
+                    plannerInput.validLaneCount = 32;
+                    plannerInput.ifmPixelStride = 32;
+                    plannerInput.maxM = MaxExternalPsumLinebufferM;
+                    plannerInput.tcdmBudget = ArchNeuralAI::AllocatableTCDMBytes;
+                    plannerInput.accumMode = inputGroups == 1u ? 0 :
+                        (inputGroup == 0u ? 1 :
+                            (inputGroup + 1u == inputGroups ? 2 : 3));
+                    groupJobs[inputGroup] =
+                        neuralai::LinebufferPlanner().Plan(plannerInput);
+                }
+                const int spatialJobs = int(groupJobs.front().size());
+                for ( const auto &jobs : groupJobs )
+                    if ( int(jobs.size()) != spatialJobs )
+                        return SetError(error,
+                            "Neural-AI spilled linebuffer input groups have inconsistent tiling");
+                for ( int job = 0; job < spatialJobs; ++job )
+                    for ( uint32_t inputGroup = 0; inputGroup < inputGroups; ++inputGroup )
+                        AppendLineBufferJob(groupJobs[inputGroup][job],
+                            uint32_t(operation->Index()), tileId++);
+
+                RefV1 source{};
+                source.region = uint16_t(Region::TCDMScratch);
+                source.offset = localOutputOffset;
+                const uint64_t outputOffset64 = uint64_t(outputGroup) * outputGroupStride +
+                    uint64_t(outputY) * uint32_t(ofmShape.Width()) * 32u;
+                if ( outputOffset64 > std::numeric_limits<uint32_t>::max() )
+                    return SetError(error,
+                        "Neural-AI linebuffer Conv output reference overflows the ABI");
+                RefV1 destination = TensorRef(
+                    ofm->tensor.get(), uint32_t(outputOffset64), error);
+                if ( !error.empty() ) return false;
+                if ( !AppendDMA1D(source, destination,
+                         outputRows * uint32_t(ofmShape.Width()) * 32u,
+                         uint32_t(operation->Index()), tileId++, error) )
+                    return false;
+            }
+        }
+        return true;
+    }
+
     bool AppendMatrix(const SchedulerOperation *operation, std::string &error)
     {
         const SchedulerOpInfo *cost = schedule->Cost(operation);
@@ -2891,6 +3085,9 @@ struct GeneratorContext
             if ( (!directRgb && ifm->tensor->format != TensorFormat::C32Blocked) ||
                  ofm->tensor->format != TensorFormat::C32Blocked )
                 return SetError(error, "Neural-AI linebuffer Conv requires C32-blocked input and output");
+            if ( IsL2ArenaTensor(ifm->tensor.get()) || IsL2ArenaTensor(ofm->tensor.get()) )
+                return AppendSpilledLinebuffer(
+                    operation, config, range, materialized, error);
             const uint32_t weightBytes = uint32_t(range.weightBytes);
             if ( weightBytes == 0 || (weightBytes % 32u) != 0u )
                 return SetError(error, "Neural-AI linebuffer weights are not 32-byte tiled");
@@ -3561,11 +3758,44 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         const auto *config = cost != nullptr && cost->Config() != nullptr ?
             static_cast<const NeuralAIOpConfig *>(cost->Config()) : nullptr;
         if ( cost == nullptr || cost->cascade != 0 || operation->Type() != OpType::Conv2D ||
-             config == nullptr || !IsLinebufferConvMode(config->Mode()) ||
-             operation->TryInput(TensorUsage::Params1) == nullptr )
+             config == nullptr || !IsLinebufferConvMode(config->Mode()) )
             continue;
         const SchedulerConnection *ifm = operation->IFM(0);
         const Shape logicalIfm = ReshapeToNHWC(ifm->shape);
+        const Shape logicalOfm = ReshapeToNHWC(operation->OFM()->shape);
+        if ( IsL2ArenaTensor(ifm->tensor.get()) ||
+             IsL2ArenaTensor(operation->OFM()->tensor.get()) )
+        {
+            const uint32_t stripeRows = LinebufferSpillStripeRows(logicalOfm);
+            uint32_t requiredBytes = 0;
+            for ( uint32_t outputY = 0; outputY < uint32_t(logicalOfm.Height());
+                  outputY += stripeRows )
+            {
+                const uint32_t outputRows = std::min(
+                    stripeRows, uint32_t(logicalOfm.Height()) - outputY);
+                const auto stagingInput = MakeLinebufferSpillStaging(logicalIfm,
+                    ifm->tensor->storageShape, logicalOfm, operation->Kernel(), int(outputY),
+                    int(outputRows), 0, 0);
+                const auto staging =
+                    neuralai::LinebufferPlanner().PlanStripeStaging(stagingInput);
+                const uint64_t alignedStagingBytes =
+                    (uint64_t(staging.bytes) + ArchNeuralAI::DMAAlignment - 1u) /
+                    ArchNeuralAI::DMAAlignment * ArchNeuralAI::DMAAlignment;
+                const uint64_t bytes = alignedStagingBytes +
+                    uint64_t(outputRows) * uint32_t(logicalOfm.Width()) * 32u;
+                if ( bytes > std::numeric_limits<uint32_t>::max() )
+                {
+                    error = "Neural-AI linebuffer Conv spill stripe workspace overflows";
+                    return false;
+                }
+                requiredBytes = std::max(requiredBytes, uint32_t(bytes));
+            }
+            context.stripeStageBytes = std::max(context.stripeStageBytes, requiredBytes);
+            context.workspaceSizes[operation->Uid()].stripe = std::max(
+                context.workspaceSizes[operation->Uid()].stripe, requiredBytes);
+            continue;
+        }
+        if ( operation->TryInput(TensorUsage::Params1) == nullptr ) continue;
         const Margin &padding = operation->Kernel()->Padding();
         neuralai::StripeStagingInput stagingInput{};
         stagingInput.logicalIfm = logicalIfm;
