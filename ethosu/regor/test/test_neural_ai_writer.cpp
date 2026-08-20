@@ -82,3 +82,29 @@ TEST_CASE("neural_ai_writer rejects native public layout")
     REQUIRE_FALSE(WriteNeuralAIModel(artifact, output, error));
     REQUIRE(error.find("NHWC") != std::string::npos);
 }
+
+TEST_CASE("neural_ai_writer describes one relocatable L2 temporary arena")
+{
+    CompiledNeuralAIArtifact artifact;
+    artifact.commands.resize(32);
+    artifact.bindings.push_back(MakeBinding(neuralai::BindingDirection::Input, 0));
+    artifact.bindings.push_back(MakeBinding(neuralai::BindingDirection::Output, 0));
+    auto temporary = MakeBinding(neuralai::BindingDirection::L2Temporary, 0);
+    temporary.rank = 1;
+    temporary.dimensions[0] = 123456;
+    temporary.dimensions[1] = 0;
+    temporary.dimensions[2] = 0;
+    temporary.dimensions[3] = 0;
+    temporary.byteSize = 123456;
+    artifact.bindings.push_back(temporary);
+
+    std::vector<uint8_t> output;
+    std::string error;
+    REQUIRE(WriteNeuralAIModel(artifact, output, error));
+    REQUIRE(Read32(output, 44) == 1);  // Public input count excludes the arena.
+    REQUIRE(Read32(output, 48) == 1);  // Public output count excludes the arena.
+
+    artifact.bindings.push_back(temporary);
+    REQUIRE_FALSE(WriteNeuralAIModel(artifact, output, error));
+    REQUIRE(error.find("L2 temporary index") != std::string::npos);
+}

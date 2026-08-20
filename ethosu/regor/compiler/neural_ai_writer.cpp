@@ -120,6 +120,7 @@ bool WriteNeuralAIModel(const CompiledNeuralAIArtifact &artifact, std::vector<ui
 
     uint32_t inputCount = 0;
     uint32_t outputCount = 0;
+    uint32_t l2TemporaryCount = 0;
     for ( const auto &binding : artifact.bindings )
     {
         uint32_t compactBytes = 0;
@@ -128,16 +129,25 @@ bool WriteNeuralAIModel(const CompiledNeuralAIArtifact &artifact, std::vector<ui
             error = "NeuralAI public binding has an invalid compact byte size";
             return false;
         }
-        if ( binding.rank == 4 && binding.layout != uint16_t(neuralai::TensorLayout::NHWC) )
+        const bool publicIO = binding.direction == uint16_t(neuralai::BindingDirection::Input) ||
+                              binding.direction == uint16_t(neuralai::BindingDirection::Output);
+        if ( publicIO && binding.rank == 4 &&
+             binding.layout != uint16_t(neuralai::TensorLayout::NHWC) )
         {
             error = "NeuralAI ABI v1 rank-4 public bindings must use NHWC";
             return false;
         }
         if ( binding.direction == uint16_t(neuralai::BindingDirection::Input) ) ++inputCount;
         else if ( binding.direction == uint16_t(neuralai::BindingDirection::Output) ) ++outputCount;
+        else if ( binding.direction == uint16_t(neuralai::BindingDirection::L2Temporary) &&
+                  binding.index == 0 && l2TemporaryCount++ == 0 )
+        {
+            // The model owns one relocatable L2 arena.  Its runtime base is
+            // supplied alongside the public bindings at invocation time.
+        }
         else
         {
-            error = "NeuralAI public binding has an invalid direction";
+            error = "NeuralAI binding has an invalid direction or L2 temporary index";
             return false;
         }
     }
