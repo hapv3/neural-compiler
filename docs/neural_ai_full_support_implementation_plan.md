@@ -160,8 +160,8 @@ new runtime path has not yet passed E2E.
 | Async DMA and overlap | Not implemented | blocking execution remains correct; performance phase |
 | Full selected graphs | P0 memory-placement blocked | all selected operators lower; lifetime-aware command workspaces reuse TCDM gaps, but op 7 still sees 512,000 live tensor bytes before its local stage/partial buffers |
 
-The focused Regor suite passes 123 Neural-AI cases and 40,559 assertions; the
-complete suite passes 267 cases and 632,428 assertions (the randomized suite's
+The focused Regor suite passes 124 Neural-AI cases and 40,569 assertions; the
+complete suite passes 268 cases and 625,419 assertions (the randomized suite's
 assertion total varies with its reported seed).
 Runtime ABI/host checks, cross-builds, firmware-size gates, and focused C144,
 DFL16, and MatMul V2 E2E tests pass.
@@ -339,13 +339,17 @@ The conservative placement classifier is complete: a candidate must be a
 private aligned C32 tensor whose producer and every consumer use a reviewed L2
 path. Public/CPU/persistent tensors, RGB/C16/compact paths, views, LUT, DFL,
 pool, resize, head-pack, and other unreviewed paths remain pinned to TCDM. Four
-focused cases cover 20 positive and negative assertions.
+focused cases cover 20 positive and negative assertions. Placement is applied
+to complete tensor-equivalence groups, so one pinned alias pins the whole group.
+FastStorageAllocator now accepts time-indexed command-workspace reservations,
+counts them while choosing keep/evict candidates, and ignores tensors already
+pinned in fast storage.
 
 Next verified increments:
 
-1. Integrate the classifier with scheduler memory roles and reserve each
-   operation's command workspaces before FastStorageAllocator spends the
-   remaining TCDM budget.
+1. Generate the Neural-AI per-operation/cascade workspace snapshot and pass it
+   through the scheduler to FastStorageAllocator before it spends the remaining
+   TCDM budget; then integrate the classifier with scheduler memory roles.
 2. Complete any remaining eligible view/boundary materialization spill paths.
    Pointwise Conv L2 IFM/OFM use tiles of up to 256 spatial rows, stage every C32
    input group once, and reuse one output
