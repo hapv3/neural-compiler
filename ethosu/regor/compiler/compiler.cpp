@@ -690,6 +690,15 @@ std::unique_ptr<CompiledGraph> Compiler::CompileGraph(
     auto schedulerOptions = _schedulerOptions;
     // Only use separate IO regions on the main graph
     if ( graph != _entryPoint ) schedulerOptions.separateIORegions = false;
+    if ( IsNeuralAI(_architecture.get()) )
+    {
+        schedulerOptions.commandWorkspaceReservation =
+            [](const std::vector<std::unique_ptr<SchedulerOperation>> &operations,
+                const Schedule *schedule)
+            {
+                return NeuralAICommandGenerator::WorkspaceReservation(operations, schedule);
+            };
+    }
     Scheduler scheduler(_architecture.get(), schedulerOptions, "graph", scheduleOps, packing.OpConfigCompatablility());
     std::shared_ptr<Schedule> schedule;
     try
