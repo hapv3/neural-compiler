@@ -343,13 +343,14 @@ focused cases cover 20 positive and negative assertions. Placement is applied
 to complete tensor-equivalence groups, so one pinned alias pins the whole group.
 FastStorageAllocator now accepts time-indexed command-workspace reservations,
 counts them while choosing keep/evict candidates, and ignores tensors already
-pinned in fast storage.
+pinned in fast storage. The scheduler obtains that snapshot from a target
+callback after cascade/time-index selection and before fast-storage allocation.
 
 Next verified increments:
 
-1. Generate the Neural-AI per-operation/cascade workspace snapshot and pass it
-   through the scheduler to FastStorageAllocator before it spends the remaining
-   TCDM budget; then integrate the classifier with scheduler memory roles.
+1. Generate the Neural-AI per-operation/cascade workspace snapshot through the
+   scheduler callback; then integrate the classifier with scheduler memory
+   roles.
 2. Complete any remaining eligible view/boundary materialization spill paths.
    Pointwise Conv L2 IFM/OFM use tiles of up to 256 spatial rows, stage every C32
    input group once, and reuse one output
