@@ -14,6 +14,7 @@
 #include "compiler/high_level_command_stream_generator.hpp"
 #include "compiler/neural_ai_command_generator.hpp"
 #include "compiler/neural_ai_graph_optimiser.hpp"
+#include "compiler/neural_ai_memory_placement.hpp"
 #include "compiler/neural_ai_writer.hpp"
 #include "compiler/scheduler.hpp"
 #include "compiler/scheduler_packing.hpp"
@@ -1417,6 +1418,143 @@ TEST_CASE("Neural-AI architecture factory")
     REQUIRE(regor_create(&context, REGOR_ARCH_NEURALAI) == 1);
     REQUIRE(context != 0);
     regor_destroy(context);
+}
+
+TEST_CASE("Neural-AI L2 placement admits only fully reviewed internal paths")
+{
+    const Shape shape(1, 4, 4, 32);
+    auto lhs = std::make_shared<SchedulerTensor>(DataType::Int8, shape, TensorFormat::C32Blocked);
+    auto rhs = std::make_shared<SchedulerTensor>(DataType::Int8, shape, TensorFormat::C32Blocked);
+    auto candidate = std::make_shared<SchedulerTensor>(DataType::Int8, shape, TensorFormat::C32Blocked);
+    auto convOutput = std::make_shared<SchedulerTensor>(DataType::Int8, shape, TensorFormat::C32Blocked);
+
+    SchedulerOperation producer(OpType::Add);
+    producer.ConnectInput(TensorUsage::IFM0, lhs);
+    producer.ConnectInput(TensorUsage::IFM1, rhs);
+    producer.ConnectOutput(TensorUsage::OFM, candidate);
+
+    SchedulerOperation consumer(OpType::Conv2D);
+    consumer.SetKernel(Kernel::UnitKernel());
+    consumer.ConnectInput(TensorUsage::IFM0, candidate);
+    consumer.ConnectOutput(TensorUsage::OFM, convOutput);
+    REQUIRE(IsNeuralAIL2SpillCandidate(candidate.get()));
+
+    auto concatPeer = std::make_shared<SchedulerTensor>(DataType::Int8, shape, TensorFormat::C32Blocked);
+    auto concatOutput = std::make_shared<SchedulerTensor>(
+        DataType::Int8, Shape(1, 4, 4, 64), TensorFormat::C32Blocked);
+    SchedulerOperation concat(OpType::Concat);
+    concat.ConnectInput(TensorUsage::IFM0, candidate);
+    concat.ConnectInput(TensorUsage::IFM1, concatPeer);
+    concat.ConnectOutput(TensorUsage::OFM, concatOutput);
+    REQUIRE(IsNeuralAIL2SpillCandidate(candidate.get()));
+}
+
+TEST_CASE("Neural-AI L2 placement pins public and unreviewed paths to TCDM")
+{
+    const Shape shape(1, 4, 4, 32);
+    auto lhs = std::make_shared<SchedulerTensor>(DataType::Int8, shape, TensorFormat::C32Blocked);
+    auto rhs = std::make_shared<SchedulerTensor>(DataType::Int8, shape, TensorFormat::C32Blocked);
+    auto candidate = std::make_shared<SchedulerTensor>(DataType::Int8, shape, TensorFormat::C32Blocked);
+    auto output = std::make_shared<SchedulerTensor>(DataType::Int8, shape, TensorFormat::C32Blocked);
+
+    SchedulerOperation producer(OpType::Add);
+    producer.ConnectInput(TensorUsage::IFM0, lhs);
+    producer.ConnectInput(TensorUsage::IFM1, rhs);
+    producer.ConnectOutput(TensorUsage::OFM, candidate);
+    SchedulerOperation consumer(OpType::Add);
+    consumer.ConnectInput(TensorUsage::IFM0, candidate);
+    consumer.ConnectInput(TensorUsage::IFM1, rhs);
+    consumer.ConnectOutput(TensorUsage::OFM, output);
+    REQUIRE(IsNeuralAIL2SpillCandidate(candidate.get()));
+
+    SECTION("graph boundary")
+    {
+        candidate->isGraphOutput = true;
+        REQUIRE_FALSE(IsNeuralAIL2SpillCandidate(candidate.get()));
+    }
+    SECTION("persistent tensor")
+    {
+        candidate->isPersistent = true;
+        REQUIRE_FALSE(IsNeuralAIL2SpillCandidate(candidate.get()));
+    }
+    SECTION("CPU-visible tensor")
+    {
+        candidate->hasCPUReaders = true;
+        REQUIRE_FALSE(IsNeuralAIL2SpillCandidate(candidate.get()));
+    }
+    SECTION("compact tensor")
+    {
+        candidate->format = TensorFormat::CompactNHWC;
+        REQUIRE_FALSE(IsNeuralAIL2SpillCandidate(candidate.get()));
+    }
+}
+
+TEST_CASE("Neural-AI L2 placement excludes operators without L2 staging")
+{
+    const std::vector<OpType> pinnedConsumers = {
+        OpType::MemoryCopy, OpType::LUT, OpType::AvgPool, OpType::MaxPool,
+        OpType::Resize, OpType::Transpose, OpType::Dfl, OpType::Passthrough,
+    };
+    const Shape shape(1, 4, 4, 32);
+    for ( OpType type : pinnedConsumers )
+    {
+        DYNAMIC_SECTION(OpTypeToString(type))
+        {
+            auto lhs = std::make_shared<SchedulerTensor>(DataType::Int8, shape, TensorFormat::C32Blocked);
+            auto rhs = std::make_shared<SchedulerTensor>(DataType::Int8, shape, TensorFormat::C32Blocked);
+            auto candidate = std::make_shared<SchedulerTensor>(DataType::Int8, shape, TensorFormat::C32Blocked);
+            auto output = std::make_shared<SchedulerTensor>(DataType::Int8, shape, TensorFormat::C32Blocked);
+            SchedulerOperation producer(OpType::Add);
+            producer.ConnectInput(TensorUsage::IFM0, lhs);
+            producer.ConnectInput(TensorUsage::IFM1, rhs);
+            producer.ConnectOutput(TensorUsage::OFM, candidate);
+            SchedulerOperation consumer(type);
+            consumer.ConnectInput(TensorUsage::IFM0, candidate);
+            consumer.ConnectOutput(TensorUsage::OFM, output);
+            REQUIRE_FALSE(IsNeuralAIL2SpillCandidate(candidate.get()));
+        }
+    }
+}
+
+TEST_CASE("Neural-AI L2 placement excludes RGB and C16 convolution paths")
+{
+    SECTION("direct RGB producer")
+    {
+        auto rgb = std::make_shared<SchedulerTensor>(
+            DataType::Int8, Shape(1, 8, 8, 3), TensorFormat::NHWC);
+        auto candidate = std::make_shared<SchedulerTensor>(
+            DataType::Int8, Shape(1, 4, 4, 32), TensorFormat::C32Blocked);
+        auto peer = std::make_shared<SchedulerTensor>(
+            DataType::Int8, Shape(1, 4, 4, 32), TensorFormat::C32Blocked);
+        auto output = std::make_shared<SchedulerTensor>(
+            DataType::Int8, Shape(1, 4, 4, 32), TensorFormat::C32Blocked);
+        SchedulerOperation producer(OpType::Conv2D);
+        producer.SetKernel(Kernel::UnitKernel().WithSize(Point2i(3, 3)));
+        producer.ConnectInput(TensorUsage::IFM0, rgb);
+        producer.ConnectOutput(TensorUsage::OFM, candidate);
+        SchedulerOperation consumer(OpType::Add);
+        consumer.ConnectInput(TensorUsage::IFM0, candidate);
+        consumer.ConnectInput(TensorUsage::IFM1, peer);
+        consumer.ConnectOutput(TensorUsage::OFM, output);
+        REQUIRE_FALSE(IsNeuralAIL2SpillCandidate(candidate.get()));
+    }
+    SECTION("C16 tail")
+    {
+        const Shape tailShape(1, 4, 4, 16);
+        auto lhs = std::make_shared<SchedulerTensor>(DataType::Int8, tailShape, TensorFormat::C32Blocked);
+        auto rhs = std::make_shared<SchedulerTensor>(DataType::Int8, tailShape, TensorFormat::C32Blocked);
+        auto candidate = std::make_shared<SchedulerTensor>(DataType::Int8, tailShape, TensorFormat::C32Blocked);
+        auto output = std::make_shared<SchedulerTensor>(DataType::Int8, tailShape, TensorFormat::C32Blocked);
+        SchedulerOperation producer(OpType::Add);
+        producer.ConnectInput(TensorUsage::IFM0, lhs);
+        producer.ConnectInput(TensorUsage::IFM1, rhs);
+        producer.ConnectOutput(TensorUsage::OFM, candidate);
+        SchedulerOperation consumer(OpType::Conv2D);
+        consumer.SetKernel(Kernel::UnitKernel().WithSize(Point2i(3, 3)));
+        consumer.ConnectInput(TensorUsage::IFM0, candidate);
+        consumer.ConnectOutput(TensorUsage::OFM, output);
+        REQUIRE_FALSE(IsNeuralAIL2SpillCandidate(candidate.get()));
+    }
 }
 
 TEST_CASE("Neural-AI architecture exposes fixed hardware configuration")
