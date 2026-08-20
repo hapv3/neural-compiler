@@ -3778,6 +3778,12 @@ TEST_CASE("Neural-AI pointwise Conv tiles spilled feature maps through TCDM")
         MemArea(arch.L2Memory(), MemUsage::FeatureMap);
     scheduledConv->OFM()->tensor->memArea =
         MemArea(arch.L2Memory(), MemUsage::FeatureMap);
+    const MemorySnapshot reservation =
+        NeuralAICommandGenerator::WorkspaceReservation(scheduleOps, schedule.get());
+    const SchedulerOpInfo *convCost = schedule->Cost(scheduledConv);
+    REQUIRE(convCost != nullptr);
+    REQUIRE(reservation[convCost->timeIndex].Used() == 65536);
+    REQUIRE(reservation.maxMemory == 65536);
 
     CompiledNeuralAIArtifact artifact;
     std::string error;

@@ -15,6 +15,9 @@ namespace regor
 class NeuralAICommandGenerator
 {
 public:
+    static MemorySnapshot WorkspaceReservation(
+        const std::vector<std::unique_ptr<SchedulerOperation>> &operations,
+        const Schedule *schedule);
     bool Generate(const Graph *graph, const std::vector<std::unique_ptr<SchedulerOperation>> &operations,
         const Schedule *schedule, CompiledNeuralAIArtifact &artifact, std::string &error);
 };

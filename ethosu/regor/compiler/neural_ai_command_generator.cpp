@@ -3672,6 +3672,178 @@ struct GeneratorContext
 
 }  // namespace
 
+MemorySnapshot NeuralAICommandGenerator::WorkspaceReservation(
+    const std::vector<std::unique_ptr<SchedulerOperation>> &operations,
+    const Schedule *schedule)
+{
+    struct WorkspaceSize
+    {
+        uint32_t stage = 0;
+        uint32_t partial = 0;
+        uint32_t stripe = 0;
+    };
+    if ( schedule == nullptr ) throw std::runtime_error(
+        "Neural-AI workspace reservation requires a schedule");
+
+    std::unordered_map<UniqueId, WorkspaceSize> sizes;
+    int maxTime = 0;
+    for ( const auto &operation : operations )
+    {
+        const SchedulerOpInfo *cost = schedule->Cost(operation.get());
+        if ( cost == nullptr || cost->timeIndex < 0 ) throw std::runtime_error(
+            "Neural-AI workspace reservation operation has no schedule time");
+        maxTime = std::max(maxTime, cost->timeIndex);
+        WorkspaceSize &workspace = sizes[operation->Uid()];
+        if ( (operation->Type() == OpType::Add || operation->Type() == OpType::Sub) &&
+             (IsL2ArenaTensor(operation->IFM(0)->tensor.get()) ||
+                 IsL2ArenaTensor(operation->IFM(1)->tensor.get()) ||
+                 IsL2ArenaTensor(operation->OFM()->tensor.get())) )
+        {
+            constexpr uint32_t spillTileBytes = 4096;
+            const int64_t tensorBytes = TensorStorageBytes(operation->OFM()->tensor.get());
+            if ( tensorBytes <= 0 || tensorBytes > std::numeric_limits<uint32_t>::max() )
+                throw std::runtime_error("Neural-AI binary spill tensor size is invalid");
+            workspace.stage = std::min(spillTileBytes, uint32_t(tensorBytes)) * 3u;
+        }
+        if ( operation->Type() == OpType::MemoryCopy &&
+             operation->IFM(0)->tensor->format == TensorFormat::NHWC &&
+             operation->OFM()->tensor->format == TensorFormat::NHWC )
+        {
+            const uint32_t elementBytes =
+                operation->OFM()->Type() == regor::DataType::Int32 ? 4u : 1u;
+            const int64_t bytes = operation->OFM()->shape.Elements64() * elementBytes;
+            if ( bytes <= 0 || bytes > std::numeric_limits<uint32_t>::max() )
+                throw std::runtime_error("Neural-AI compact copy staging size is invalid");
+            workspace.stage = std::max(workspace.stage, uint32_t(bytes));
+        }
+        if ( operation->Type() != OpType::FullyConnected && operation->Type() != OpType::MatMul &&
+             operation->Type() != OpType::Conv2D && operation->Type() != OpType::DepthwiseConv2D )
+            continue;
+        if ( cost->Config() == nullptr ) throw std::runtime_error(
+            "Neural-AI workspace reservation operation has no target mode");
+        const auto *config = static_cast<const NeuralAIOpConfig *>(cost->Config());
+        const NeuralAIOpMode mode = config->Mode();
+        const Shape ifmShape = operation->IFM(0)->SliceShape();
+        const Shape ofmShape = operation->OFM()->SliceShape();
+        if ( ofmShape.Depth() <= 0 ) throw std::runtime_error(
+            "Neural-AI workspace reservation has an invalid OFM depth");
+        const uint32_t rows = uint32_t(ofmShape.Elements64() / ofmShape.Depth());
+        const bool linebuffer = IsLinebufferConvMode(mode);
+        const uint32_t logicalK = uint32_t(ifmShape.Depth()) * (linebuffer ? 9u : 1u);
+        const uint32_t paddedK = uint32_t(RoundAway(int(logicalK), 32));
+        const uint32_t matrixRows = std::min<uint32_t>(rows, 256);
+        if ( mode == NeuralAIOpMode::Conv2DPointwiseC32Requant &&
+             (IsL2ArenaTensor(operation->IFM(0)->tensor.get()) ||
+                 IsL2ArenaTensor(operation->OFM()->tensor.get())) )
+        {
+            const uint32_t stagedGroups =
+                (IsL2ArenaTensor(operation->IFM(0)->tensor.get()) ? paddedK / 32u : 0u) +
+                (IsL2ArenaTensor(operation->OFM()->tensor.get()) ? 1u : 0u);
+            const uint64_t bytes = uint64_t(std::min(rows, MaxPointwiseSpillRows)) *
+                stagedGroups * 32u;
+            if ( stagedGroups == 0 || bytes > std::numeric_limits<uint32_t>::max() )
+                throw std::runtime_error("Neural-AI pointwise Conv spill workspace is invalid");
+            workspace.stage = std::max(workspace.stage, uint32_t(bytes));
+        }
+        if ( paddedK != 32 ) workspace.stage = std::max(workspace.stage, matrixRows * 32u);
+        if ( paddedK > 32 ) workspace.partial = std::max(workspace.partial, matrixRows * 32u * 4u);
+        if ( linebuffer )
+        {
+            const uint32_t kGroups = config->DirectNhwcInput() ? 1u :
+                9u * uint32_t(RoundAway(ifmShape.Depth(), 32)) / 32u;
+            workspace.stage = std::max(workspace.stage, kGroups * 32u * 32u);
+            workspace.partial = std::max(workspace.partial, matrixRows * 32u * 4u);
+        }
+        const bool spilledLinebuffer = (linebuffer || IsDepthwiseMode(mode)) &&
+            (IsL2ArenaTensor(operation->IFM(0)->tensor.get()) ||
+                IsL2ArenaTensor(operation->OFM()->tensor.get()));
+        if ( spilledLinebuffer )
+        {
+            const Shape logicalIfm = ReshapeToNHWC(ifmShape);
+            const Shape logicalOfm = ReshapeToNHWC(ofmShape);
+            const uint32_t stripeRows = LinebufferSpillStripeRows(logicalOfm);
+            for ( uint32_t outputY = 0; outputY < uint32_t(logicalOfm.Height()); outputY += stripeRows )
+            {
+                const uint32_t outputRows = std::min(
+                    stripeRows, uint32_t(logicalOfm.Height()) - outputY);
+                const auto stagingInput = MakeLinebufferSpillStaging(logicalIfm,
+                    operation->IFM(0)->tensor->storageShape, logicalOfm,
+                    operation->Kernel(), int(outputY), int(outputRows), 0, 0);
+                const auto staging = neuralai::LinebufferPlanner().PlanStripeStaging(stagingInput);
+                const uint32_t alignedStaging = uint32_t(RoundAway(
+                    int(staging.bytes), ArchNeuralAI::DMAAlignment));
+                const uint64_t bytes = uint64_t(alignedStaging) +
+                    uint64_t(outputRows) * uint32_t(logicalOfm.Width()) * 32u;
+                if ( bytes > std::numeric_limits<uint32_t>::max() ) throw std::runtime_error(
+                    "Neural-AI linebuffer spill workspace overflows");
+                workspace.stripe = std::max(workspace.stripe, uint32_t(bytes));
+            }
+        }
+        else if ( linebuffer && operation->TryInput(TensorUsage::Params1) != nullptr )
+        {
+            neuralai::StripeStagingInput input{};
+            input.logicalIfm = ReshapeToNHWC(ifmShape);
+            input.storageIfm = ReshapeToNHWC(operation->IFM(0)->tensor->storageShape);
+            input.validArea = Box(input.logicalIfm);
+            const Margin &padding = operation->Kernel()->Padding();
+            input.padTop = padding.Top();
+            input.padLeft = padding.Left();
+            input.padBottom = padding.Bottom();
+            input.padRight = padding.Right();
+            input.channels = input.logicalIfm.Depth();
+            input.directNhwc = config->DirectNhwcInput();
+            workspace.stripe = neuralai::LinebufferPlanner().PlanStripeStaging(input).bytes;
+        }
+    }
+
+    MemorySnapshot reservation(maxTime + 1);
+    struct CascadeWorkspace
+    {
+        uint64_t stages = 0;
+        uint64_t transient = 0;
+        int start = std::numeric_limits<int>::max();
+        int end = 0;
+    };
+    std::unordered_map<int, CascadeWorkspace> cascades;
+    for ( const auto &operation : operations )
+    {
+        const SchedulerOpInfo *cost = schedule->Cost(operation.get());
+        const WorkspaceSize &size = sizes[operation->Uid()];
+        const uint32_t stage = uint32_t(RoundAway(int(size.stage), ArchNeuralAI::DMAAlignment));
+        const uint32_t transient = uint32_t(RoundAway(int(size.partial), ArchNeuralAI::DMAAlignment)) +
+            uint32_t(RoundAway(int(size.stripe), ArchNeuralAI::DMAAlignment));
+        if ( cost->cascade == 0 )
+        {
+            const uint64_t bytes = uint64_t(stage) + transient;
+            if ( bytes > std::numeric_limits<int>::max() ) throw std::runtime_error(
+                "Neural-AI command workspace reservation overflows");
+            reservation[cost->timeIndex].op = std::max(
+                reservation[cost->timeIndex].op, int(bytes));
+        }
+        else
+        {
+            CascadeWorkspace &cascade = cascades[cost->cascade];
+            cascade.stages += stage;
+            cascade.transient = std::max(cascade.transient, uint64_t(transient));
+            cascade.start = std::min(cascade.start, cost->timeIndex);
+            cascade.end = std::max(cascade.end, cost->timeIndex);
+        }
+    }
+    for ( const auto &[id, cascade] : cascades )
+    {
+        UNUSED(id);
+        const uint64_t reservedBytes = cascade.stages + cascade.transient;
+        if ( reservedBytes > std::numeric_limits<int>::max() ) throw std::runtime_error(
+            "Neural-AI cascade workspace reservation overflows");
+        const int bytes = int(reservedBytes);
+        for ( int time = cascade.start; time <= cascade.end; ++time )
+            reservation[time].op = std::max(reservation[time].op, bytes);
+    }
+    for ( const LRMemory &usage : reservation.memory )
+        reservation.maxMemory = std::max(reservation.maxMemory, usage.Used());
+    return reservation;
+}
+
 bool NeuralAICommandGenerator::Generate(const Graph *graph,
     const std::vector<std::unique_ptr<SchedulerOperation>> &operations, const Schedule *schedule,
     CompiledNeuralAIArtifact &artifact, std::string &error)
