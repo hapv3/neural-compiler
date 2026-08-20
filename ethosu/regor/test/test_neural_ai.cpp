@@ -4135,6 +4135,90 @@ TEST_CASE("Neural-AI compiler gathers structural three-way C16 Concat with DMA3D
     }
 }
 
+TEST_CASE("Neural-AI compiler gathers compact plane-axis Concat with DMA1D")
+{
+    ArchNeuralAI arch;
+    const std::array<Shape, 3> inputShapes = {
+        Shape(1, 2, 37), Shape(1, 3, 37), Shape(1, 5, 37)};
+    std::array<std::shared_ptr<Tensor>, 3> inputs;
+    std::array<std::shared_ptr<Tensor>, 3> staged;
+    std::vector<std::shared_ptr<Operation>> sourceOps;
+    for ( int index = 0; index < 3; ++index )
+    {
+        inputs[index] = CreateTensor(
+            "input" + std::to_string(index), inputShapes[index], DataType::Int8);
+        staged[index] = CreateTensor(
+            "staged" + std::to_string(index), inputShapes[index], DataType::Int8);
+        auto copy = CreateOperation(
+            OpType::MemoryCopy, TensorUsage::IFM0, inputs[index], TensorUsage::OFM, staged[index]);
+        copy->Input(TensorUsage::IFM0)->Set(Quantization::Unit());
+        copy->Output(TensorUsage::OFM)->Set(Quantization::Unit());
+        sourceOps.push_back(copy);
+    }
+    auto output = CreateTensor("output", Shape(1, 10, 37), DataType::Int8);
+    auto passthrough = std::make_shared<Operation>(OpType::Passthrough);
+    for ( int index = 0; index < 3; ++index )
+        passthrough->ConnectInput(MakeTensorUsage(TensorUsage::IFM, index), staged[index])
+            .Set(Quantization::Unit());
+    passthrough->ConnectOutput(TensorUsage::OFM, output).Set(Quantization::Unit());
+    sourceOps.push_back(passthrough);
+    auto graph = CreateGraph(sourceOps);
+
+    const std::unordered_map<UniqueId, UniqueId> equivalenceIds;
+    SchedulerPacking packing(&arch, false, equivalenceIds);
+    auto scheduleOps = packing.Process(graph.get());
+    const SchedulerOperation *scheduledPassthrough = nullptr;
+    for ( const auto &operation : scheduleOps )
+    {
+        if ( operation->Type() != OpType::Passthrough ) continue;
+        scheduledPassthrough = operation.get();
+        for ( int index = 0; index < 3; ++index )
+            operation->IFM(index)->tensor->format = TensorFormat::CompactNHWC;
+        operation->OFM()->tensor->format = TensorFormat::NHWC;
+    }
+    REQUIRE(scheduledPassthrough != nullptr);
+    SchedulerOptions schedulerOptions;
+    schedulerOptions.disabled.Set(SchedulerFeature::Cascading);
+    schedulerOptions.disabled.Set(SchedulerFeature::WeightBuffering);
+    Scheduler scheduler(&arch, schedulerOptions, "neural-ai-compact-plane-concat", scheduleOps,
+        packing.OpConfigCompatablility());
+    auto schedule = scheduler.Process();
+
+    CompiledNeuralAIArtifact artifact;
+    std::string error;
+    NeuralAICommandGenerator commandGenerator;
+    const bool generated = commandGenerator.Generate(
+        graph.get(), scheduleOps, schedule.get(), artifact, error);
+    INFO(error);
+    REQUIRE(generated);
+
+    std::vector<uint32_t> copyBytes;
+    std::vector<uint32_t> destinationOffsets;
+    size_t offset = 0;
+    while ( offset < artifact.commands.size() )
+    {
+        const uint16_t commandSize = Read16(artifact.commands, offset + 2);
+        REQUIRE(commandSize >= 32);
+        if ( Read16(artifact.commands, offset) == uint16_t(neuralai::CommandType::DMA1D) &&
+             Read32(artifact.commands, offset + 36) ==
+                 uint32_t(neuralai::DMADirection::LocalToExternal) )
+        {
+            REQUIRE(Read16(artifact.commands, offset + 16) ==
+                uint16_t(neuralai::Region::TCDMScratch));
+            REQUIRE(Read16(artifact.commands, offset + 24) ==
+                uint16_t(neuralai::Region::OutputBinding));
+            copyBytes.push_back(Read32(artifact.commands, offset + 32));
+            destinationOffsets.push_back(Read32(artifact.commands, offset + 28));
+        }
+        offset += commandSize;
+    }
+    REQUIRE(offset == artifact.commands.size());
+    REQUIRE(copyBytes == std::vector<uint32_t>{2u * 37u, 3u * 37u, 5u * 37u});
+    REQUIRE(destinationOffsets.size() == 3);
+    REQUIRE(destinationOffsets[1] - destinationOffsets[0] == 2u * 37u);
+    REQUIRE(destinationOffsets[2] - destinationOffsets[1] == 3u * 37u);
+}
+
 TEST_CASE("Neural-AI compiler gathers an aligned four-way multi-group Passthrough Concat")
 {
     ArchNeuralAI arch;

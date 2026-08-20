@@ -1245,6 +1245,64 @@ struct GeneratorContext
         {
             if ( IsIFM(usage) ) inputs.push_back(&connection);
         }
+        const Shape compactOutputShape =
+            ofm != nullptr ? ReshapeToNHWC(ofm->SliceShape()) : Shape();
+        bool compactPlaneOutput = ofm != nullptr && inputs.size() == 3 &&
+            IsFullTensorConnection(ofm) && ofm->Type() == regor::DataType::Int8 &&
+            IsCompactNHWC(ofm->tensor->format) && compactOutputShape.Batch() == 1 &&
+            compactOutputShape.Height() == 1 && compactOutputShape.Width() > 0 &&
+            compactOutputShape.Depth() > 0;
+        int outputPlanes = 0;
+        for ( const SchedulerConnection *input : inputs )
+        {
+            const Shape inputShape = ReshapeToNHWC(input->SliceShape());
+            compactPlaneOutput = compactPlaneOutput && IsFullTensorConnection(input) &&
+                input->Type() == regor::DataType::Int8 && IsCompactNHWC(input->tensor->format) &&
+                inputShape.Batch() == 1 && inputShape.Height() == 1 && inputShape.Width() > 0 &&
+                inputShape.Depth() == compactOutputShape.Depth() &&
+                input->quantization == ofm->quantization;
+            outputPlanes += inputShape.Width();
+        }
+        compactPlaneOutput = compactPlaneOutput && outputPlanes == compactOutputShape.Width();
+        if ( compactPlaneOutput )
+        {
+            const uint64_t outputBytes64 = uint64_t(compactOutputShape.Elements64());
+            if ( outputBytes64 == 0 || outputBytes64 > std::numeric_limits<uint32_t>::max() ||
+                 outputBytes64 > uint64_t(TensorStorageBytes(ofm->tensor.get())) )
+                return SetError(error,
+                    "Neural-AI compact plane Passthrough Concat output storage is invalid");
+            RefV1 output = TensorRef(ofm->tensor.get(), 0, error);
+            if ( !error.empty() ) return false;
+            if ( output.region != uint16_t(Region::OutputBinding) )
+                return SetError(error,
+                    "Neural-AI compact plane Passthrough Concat requires a public output binding");
+            uint32_t destinationOffset = 0;
+            for ( int index = 0; index < int(inputs.size()); ++index )
+            {
+                const SchedulerConnection *input = inputs[index];
+                const uint64_t inputBytes64 = uint64_t(input->SliceShape().Elements64());
+                if ( inputBytes64 == 0 || inputBytes64 > std::numeric_limits<uint32_t>::max() ||
+                     inputBytes64 > uint64_t(TensorStorageBytes(input->tensor.get())) )
+                    return SetError(error,
+                        "Neural-AI compact plane Passthrough Concat input storage is invalid");
+                RefV1 source = TensorRef(input->tensor.get(), 0, error);
+                if ( !error.empty() ) return false;
+                if ( source.region != uint16_t(Region::TCDMScratch) )
+                    return SetError(error,
+                        "Neural-AI compact plane Passthrough Concat requires internal inputs");
+                RefV1 destination = output;
+                destination.offset += destinationOffset;
+                const uint32_t inputBytes = uint32_t(inputBytes64);
+                if ( !AppendDMA1D(source, destination, inputBytes,
+                        uint32_t(operation->Index()), uint32_t(index), error) )
+                    return false;
+                destinationOffset += inputBytes;
+            }
+            if ( destinationOffset != outputBytes64 )
+                return SetError(error,
+                    "Neural-AI compact plane Passthrough Concat byte count is inconsistent");
+            return true;
+        }
         if ( ofm == nullptr || inputs.size() < 3 || !IsFullTensorConnection(ofm) ||
              ofm->Type() != regor::DataType::Int8 ||
              ofm->tensor->format != TensorFormat::C32Blocked )
@@ -3300,8 +3358,12 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         int(context.stripeStageOffset + context.stripeStageBytes), ArchNeuralAI::DMAAlignment));
     if ( artifact.requiredTCDMBytes > ArchNeuralAI::AllocatableTCDMBytes )
     {
-        error = fmt::format("Neural-AI generated command workspace {} exceeds allocatable TCDM {}",
-            artifact.requiredTCDMBytes, ArchNeuralAI::AllocatableTCDMBytes);
+        error = fmt::format(
+            "Neural-AI generated command workspace {} exceeds allocatable TCDM {} "
+            "(scheduled scratch {}, stage {}, partial {}, stripe {})",
+            artifact.requiredTCDMBytes, ArchNeuralAI::AllocatableTCDMBytes,
+            context.scratchEnd, context.stageBytes, context.partialBytes,
+            context.stripeStageBytes);
         return false;
     }
     return true;

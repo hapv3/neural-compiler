@@ -154,13 +154,13 @@ new runtime path has not yet passed E2E.
 | Nearest resize | Verified | exact 2x, selected C32/C128/C256, native Spatz kernel |
 | Storage-preserving views | Verified | reshape/squeeze/expand-dims; public output is materialized |
 | StridedSlice | Verified | C32-aligned aliases; multi-group C32 DMA materialization; C32-to-C16 materialization; contiguous compact plane aliases |
-| Concat | Compiler verified | striped two-input gather; structural C16x3 gather; aligned multi-input/multi-group DMA gather |
+| Concat | Compiler verified | striped/tail gathers plus final compact plane-axis DMA directly to the public output binding |
 | YOLO C144 head transpose | Verified fallback | standalone heads retain vectorized C32-to-CHW materialization |
 | DFL16 projection | Verified | selected heads feed C64/C80 C32 directly; box-scale requant is folded into each DFL command |
 | Async DMA and overlap | Not implemented | blocking execution remains correct; performance phase |
-| Full selected graphs | P1 operator blocked | scheduled peak is 517,120 bytes; compact box slices/Add/Sub/Mul pass and command generation now reaches the final compact plane Concat |
+| Full selected graphs | P0 workspace blocked | all selected operators lower; scheduled tensors use 517,120 bytes, but conservatively appended command workspaces total 1,054,752 bytes |
 
-The focused Regor suite passes 113 Neural-AI cases and 39,629 assertions; the
+The focused Regor suite passes 114 Neural-AI cases and 39,649 assertions; the
 complete suite passes 253 cases and 649,508 assertions (the randomized suite's
 assertion total varies with its reported seed).
 Runtime ABI/host checks, cross-builds, firmware-size gates, and focused C144,
@@ -277,6 +277,11 @@ the focused test had not written its invocation and binding table to L2.
   with no generic scalar or Spatz Mul path. The compiler test checks all LUT
   entries against TFLite fixed-point arithmetic; focused E2E matches all 74
   output bytes against TFLite `BUILTIN_REF` at 79,417 ns.
+- The final compact plane-axis Concat writes `[1,2,L]`, `[1,2,L]`, and
+  `[1,80,L]` directly from internal TCDM tensors to consecutive public L2 output
+  offsets with three DMA1D commands. It does not allocate the 84xL output in
+  TCDM. The structural block test uses 2+3+5 planes at arbitrary `L=37` and
+  checks all three byte counts, regions, direction, and destination offsets.
 - Runtime `.text` must be rechecked after every runtime increment. Trusted V2-only
   firmware currently reports 24,260 bytes, leaving 8,508 bytes of ITCM margin.
 
@@ -300,11 +305,19 @@ selected `(51003, 8)` package is byte-exact at 463,094 cycles: about 3.9% above
 the 445,750-cycle fast-path reference, but still about 1.2% below the older
 468,781-cycle DFL16 reference and well below the 1,000,000-cycle gate.
 
-### Completed P0 — Full-graph memory feasibility
+### P0 — Complete full-graph command-workspace feasibility
 
-The current full YOLO compile reaches command generation with a 517,120-byte
-scheduled peak, down from 1,659,008 bytes and below the 520,192-byte limit.
-The completed path adds no scalar or CPU fallback:
+The current full YOLO schedule has a 517,120-byte tensor high-water mark, down
+from 1,659,008 bytes and below the 520,192-byte limit. All selected operators
+now reach the final command-workspace check without scalar or CPU fallback.
+That check currently reports 1,054,752 bytes because it conservatively appends
+294,912 bytes of linebuffer weight staging, 32,768 bytes of partial sums, and
+209,952 bytes of stripe staging after the global tensor high-water mark. These
+workspaces are not all live with the graph's peak tensors; place/reuse them by
+operation lifetime and reduce weight staging to the active output group before
+claiming full-graph memory feasibility.
+
+Completed path:
 
 - Completed: Y subdivision and target-gated LUT cascading; non-owning HLC stripe
   sequencing; compact RGB/C32 row staging; rolling row wrap; per-stripe Conv and
@@ -363,10 +376,10 @@ locations and alias the low/high two-plane intervals at offsets 0 and 4,200.
 The following constant Add stages its 4,200-byte operand with one DMA and runs
 one contiguous Spatz call. Both compact Sub instances use the same contiguous
 Spatz binary path and preserve positive-scale rounding. Source op 247 scalar
-Mul is one exact AFU LUT pass. Command generation now stops at source op 252,
-the final compact plane-axis Concat of `[1,2,2100]`, `[1,2,2100]`, and
-`[1,80,2100]`; lower it as three contiguous local DMA segments, then continue
-one unsupported source ID at a time through reshape and final output handling.
+Mul is one exact AFU LUT pass. Source op 252 final compact plane-axis Concat
+writes its three input intervals directly to the public output binding. All
+selected operators now lower; next make auxiliary command workspaces
+lifetime-aware and fit the final package within 520,192 bytes.
 
 ### P3 — Performance and DMA overlap
 
