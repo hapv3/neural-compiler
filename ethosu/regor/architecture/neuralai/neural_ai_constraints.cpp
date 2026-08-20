@@ -498,7 +498,14 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
             const bool structuralCspAdd = query->ofm.shape.Size() == 4 &&
                 query->ofm.shape.Batch() == 1 && query->ofm.shape.Height() > 0 &&
                 query->ofm.shape.Width() > 0 && query->ofm.shape.Depth() == 16;
-            const TensorFormat format = structuralCspAdd ?
+            const bool compactPlaneAdd = query->ofm.shape.Size() == 3 &&
+                query->ofm.shape[0] == 1 && query->ofm.shape[1] > 0 &&
+                query->ofm.shape[1] <= 4 && query->ofm.shape[2] > 0;
+            const bool normalizedCompactPlaneAdd = query->ofm.shape.Size() == 4 &&
+                query->ofm.shape.Batch() == 1 && query->ofm.shape.Height() == 1 &&
+                query->ofm.shape.Width() > 0 && query->ofm.shape.Width() <= 4 &&
+                query->ofm.shape.Depth() > 0;
+            const TensorFormat format = structuralCspAdd || compactPlaneAdd || normalizedCompactPlaneAdd ?
                 TensorFormat::CompactNHWC : TensorFormat::C32Blocked;
             Set(s_tensorRequirements[0], TensorUsage::IFM0, format);
             Set(s_tensorRequirements[1], TensorUsage::IFM1, format);

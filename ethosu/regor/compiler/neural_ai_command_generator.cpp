@@ -105,6 +105,36 @@ bool C32SliceByteOffset(const SchedulerConnection *connection, uint32_t &offset,
     return true;
 }
 
+bool CompactPlaneSliceByteOffset(const SchedulerConnection *connection, uint32_t &offset,
+    std::string &error)
+{
+    const Shape fullShape = ReshapeToNHWC(connection->shape);
+    const Shape sliceShape = ReshapeToNHWC(connection->SliceShape());
+    const Shape sliceOffset = connection->slice.offset ?
+        ReshapeToNHWC(connection->slice.offset) : fullShape.WithZeros();
+    const Shape sliceStride = connection->slice.stride ?
+        ReshapeToNHWC(connection->slice.stride) : fullShape.WithOnes();
+    if ( !IsCompactNHWC(connection->tensor->format) || fullShape.Batch() != 1 ||
+         fullShape.Height() != 1 || fullShape.Width() <= 0 || fullShape.Depth() <= 0 ||
+         sliceShape.Batch() != 1 || sliceShape.Height() != 1 || sliceShape.Width() <= 0 ||
+         sliceShape.Depth() != fullShape.Depth() || sliceOffset.Batch() != 0 ||
+         sliceOffset.Height() != 0 || sliceOffset.Width() < 0 || sliceOffset.Depth() != 0 ||
+         sliceOffset.Width() + sliceShape.Width() > fullShape.Width() ||
+         sliceStride != fullShape.WithOnes() )
+    {
+        error = "Neural-AI compact plane view must retain the full innermost dimension";
+        return false;
+    }
+    const uint64_t byteOffset = uint64_t(sliceOffset.Width()) * uint64_t(fullShape.Depth());
+    if ( byteOffset > std::numeric_limits<uint32_t>::max() )
+    {
+        error = "Neural-AI compact plane view offset overflows the ABI";
+        return false;
+    }
+    offset = uint32_t(byteOffset);
+    return true;
+}
+
 bool IsLocalDMARegion(uint16_t region)
 {
     return region == uint16_t(Region::TCDMScratch) ||
@@ -1072,11 +1102,20 @@ struct GeneratorContext
             rhsShape == lhsShape && ofmShape == lhsShape &&
             IsCompactNHWC(lhs->tensor->format) &&
             IsCompactNHWC(rhs->tensor->format) && IsCompactNHWC(ofm->tensor->format);
+        const bool compactPlane = lhs != nullptr && rhs != nullptr && ofm != nullptr &&
+            ((lhsShape.Size() == 3 && lhsShape[0] == 1 &&
+                 lhsShape[1] > 0 && lhsShape[1] <= 4 && lhsShape[2] > 0) ||
+                (lhsShape.Size() == 4 && lhsShape.Batch() == 1 && lhsShape.Height() == 1 &&
+                    lhsShape.Width() > 0 && lhsShape.Width() <= 4 && lhsShape.Depth() > 0)) &&
+            rhsShape == lhsShape && ofmShape == lhsShape &&
+            IsCompactNHWC(lhs->tensor->format) &&
+            IsCompactNHWC(rhs->tensor->format) && IsCompactNHWC(ofm->tensor->format);
         if ( lhs == nullptr || rhs == nullptr || ofm == nullptr ||
-             (!c32 && (!IsFullTensorConnection(lhs) || !IsFullTensorConnection(rhs) ||
+             (!c32 && !compactPlane && (!IsFullTensorConnection(lhs) || !IsFullTensorConnection(rhs) ||
                  !IsFullTensorConnection(ofm))) || lhs->Type() != regor::DataType::Int8 ||
              rhs->Type() != regor::DataType::Int8 || ofm->Type() != regor::DataType::Int8 ||
-             (!structuralCompactCsp && !c32) || lhsShape != rhsShape || lhsShape != ofmShape ||
+             (!structuralCompactCsp && !compactPlane && !c32) ||
+             lhsShape != rhsShape || lhsShape != ofmShape ||
              lhsShape.Depth() <= 0 || lhsShape.Elements64() <= 0 )
             return SetError(error, fmt::format(
                 "Neural-AI AFU Add operation {} requires equal C32 or selected compact tensors "
@@ -1088,11 +1127,15 @@ struct GeneratorContext
                 ofm == nullptr ? "missing" : ofm->shape.ToString(),
                 ofm == nullptr ? "missing" : EnumToString(ofm->tensor->format)));
         const int64_t pixels = lhsShape.Elements64() / lhsShape.Depth();
-        const int64_t lhsBytes = structuralCompactCsp ? lhsShape.Elements64() :
+        const int64_t lhsBytes = structuralCompactCsp || compactPlane ? lhsShape.Elements64() :
             pixels * RoundAway(lhsShape.Depth(), 32);
         uint32_t lhsOffset = 0;
         uint32_t rhsOffset = 0;
         uint32_t ofmOffset = 0;
+        if ( compactPlane && (!CompactPlaneSliceByteOffset(lhs, lhsOffset, error) ||
+                                !CompactPlaneSliceByteOffset(rhs, rhsOffset, error) ||
+                                !CompactPlaneSliceByteOffset(ofm, ofmOffset, error)) )
+            return false;
         if ( c32 && (!C32SliceByteOffset(lhs, lhsOffset, error) ||
                        !C32SliceByteOffset(rhs, rhsOffset, error) ||
                        !C32SliceByteOffset(ofm, ofmOffset, error)) )
@@ -1813,7 +1856,22 @@ struct GeneratorContext
              lhs->tensor->format != TensorFormat::C32Blocked ||
              rhs->tensor->format != TensorFormat::C32Blocked ||
              ofm->tensor->format != TensorFormat::C32Blocked )
-            return SetError(error, "Neural-AI Concat requires full C32-blocked INT8 tensors");
+            return SetError(error, fmt::format(
+                "Neural-AI Concat {} requires full C32-blocked INT8 tensors "
+                "(lhs={} shape={} format={} full={}, rhs={} shape={} format={} full={}, "
+                "ofm={} shape={} format={} full={})",
+                operation->Index(), lhs == nullptr ? "missing" : lhs->tensor->Name(),
+                lhs == nullptr ? "missing" : lhs->shape.ToString(),
+                lhs == nullptr ? "missing" : EnumToString(lhs->tensor->format),
+                lhs != nullptr && IsFullTensorConnection(lhs),
+                rhs == nullptr ? "missing" : rhs->tensor->Name(),
+                rhs == nullptr ? "missing" : rhs->shape.ToString(),
+                rhs == nullptr ? "missing" : EnumToString(rhs->tensor->format),
+                rhs != nullptr && IsFullTensorConnection(rhs),
+                ofm == nullptr ? "missing" : ofm->tensor->Name(),
+                ofm == nullptr ? "missing" : ofm->shape.ToString(),
+                ofm == nullptr ? "missing" : EnumToString(ofm->tensor->format),
+                ofm != nullptr && IsFullTensorConnection(ofm)));
         const Shape lhsShape = ReshapeToNHWC(lhs->shape);
         const Shape rhsShape = ReshapeToNHWC(rhs->shape);
         const Shape ofmShape = ReshapeToNHWC(ofm->shape);

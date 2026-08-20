@@ -311,10 +311,12 @@ void NeuralAIGraphOptimiser::CanonicalizeConvAdd(Graph *graph, Operation *operat
 void NeuralAIGraphOptimiser::InsertInputConversion(Graph *graph, Operation *operation, TensorUsage usage)
 {
     const TensorConnection original = *operation->Input(usage);
-    if ( !graph->IsInput(original.tensor.get()) ) return;
+    const bool graphInput = graph->IsInput(original.tensor.get());
+    const bool stagedAddConstant = operation->Type() == OpType::Add && original.tensor->IsConstant();
+    if ( !graphInput && !stagedAddConstant ) return;
     const Kernel *kernel = operation->Kernel();
     TensorConnection *stemOutput = operation->Output(TensorUsage::OFM);
-    const bool rgbStemCandidate = operation->Type() == OpType::Conv2D &&
+    const bool rgbStemCandidate = graphInput && operation->Type() == OpType::Conv2D &&
         usage == TensorUsage::IFM0 && original.SliceShape().Depth() == 3 && kernel != nullptr &&
         kernel->Size() == Point2i(3, 3) && kernel->Stride() == Point2i(2, 2) &&
         kernel->Dilation() == Point2i(1, 1) && stemOutput != nullptr &&
@@ -341,7 +343,8 @@ void NeuralAIGraphOptimiser::InsertInputConversion(Graph *graph, Operation *oper
     }
 
     auto nativeTensor = std::shared_ptr<Tensor>(original.tensor->Clone().release());
-    nativeTensor->SetName(original.tensor->Name() + "/row32");
+    nativeTensor->SetBuffer(nullptr);
+    nativeTensor->SetName(original.tensor->Name() + (stagedAddConstant ? "/staged" : "/row32"));
     auto copy = std::make_shared<Operation>(OpType::MemoryCopy);
     copy->CopyInput(TensorUsage::IFM, original);
     copy->ConnectOutput(TensorUsage::OFM, nativeTensor)

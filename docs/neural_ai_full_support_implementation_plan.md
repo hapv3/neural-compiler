@@ -145,7 +145,7 @@ new runtime path has not yet passed E2E.
 | Rolling Conv/LUT/Concat cascade | Compiler verified | full-width Y stripes; DMA3D Concat gather; rolling pointwise Conv; asymmetric padding fill |
 | Depthwise Conv K3 | Verified | selected S1/S2 contracts |
 | Asymmetric Conv canonicalization | Verified | exact bias correction and padding behavior |
-| Add | Verified | raw AFU, exact producer canonicalization, or quantized Spatz fallback |
+| Add | Verified | raw AFU, exact producer canonicalization, or quantized Spatz fallback; compact coordinate planes and staged constants |
 | Activations | Verified | fused RQ clamps; standalone AFU LUT Sigmoid/clipping; LUT-fused output Quantize |
 | YOLO SiLU | Verified | exact `x * Sigmoid(x)` LUT fusion; no generic Mul |
 | Global AvgPool | Verified | full-spatial, equal quantization, C32 internal |
@@ -157,9 +157,9 @@ new runtime path has not yet passed E2E.
 | YOLO C144 head transpose | Verified fallback | standalone heads retain vectorized C32-to-CHW materialization |
 | DFL16 projection | Verified | selected heads feed C64/C80 C32 directly; box-scale requant is folded into each DFL command |
 | Async DMA and overlap | Not implemented | blocking execution remains correct; performance phase |
-| Full selected graphs | P1 operator blocked | scheduled peak is 517,120 bytes; compact box slices pass and command generation now reaches a compact Concat contract |
+| Full selected graphs | P1 operator blocked | scheduled peak is 517,120 bytes; compact box slices/Add pass and command generation now reaches the first compact Sub |
 
-The focused Regor suite passes 111 Neural-AI cases and 38,976 assertions; the
+The focused Regor suite passes 112 Neural-AI cases and 39,037 assertions; the
 complete suite passes 253 cases and 649,508 assertions (the randomized suite's
 assertion total varies with its reported seed).
 Runtime ABI/host checks, cross-builds, firmware-size gates, and focused C144,
@@ -244,7 +244,8 @@ the focused test had not written its invocation and binding table to L2.
   into the three DFL producers and removed without materializing its 8,400-byte
   constant/output pass. Both contiguous coordinate-plane splits of
   `[1,4,2100]` into `[1,2,2100]` are now zero-copy aliases. Full-model command
-  generation passes these slices and next stops at a compact Concat contract.
+  generation passes these slices, the compact three-head Concat, and the
+  following constant Add; it next stops at the first compact Sub.
 
 ### Other retained evidence
 
@@ -258,6 +259,11 @@ the focused test had not written its invocation and binding table to L2.
 - Generic quantized Spatz Add is correctness-only for uncommon cases. A
   73,728-element diagnostic exceeded 2,000,000 cluster cycles and is prohibited
   on selected hot paths; raw AFU or exact producer canonicalization is required.
+- Selected compact coordinate-plane Add preserves `[1,P,L]`/`[1,1,P,L]`
+  storage for `P <= 4`; full-length plane slices use direct byte offsets. A
+  constant operand is staged once from model constants to TCDM with DMA1D.
+  Compiler tests cover the 74-byte structural case and all Spatz references;
+  focused quantized-Add Verilator E2E passes byte-exactly at 86,504 ns.
 - Runtime `.text` must be rechecked after every runtime increment. Trusted V2-only
   firmware currently reports 24,260 bytes, leaving 8,508 bytes of ITCM margin.
 
@@ -341,9 +347,10 @@ four-way multi-group gathers, class Sigmoid output Quantize, and the final
 piecewise box-scale Mul are lowered without scalar packing or an extra tensor
 pass. The source-op 242/244 coordinate splits preserve the full innermost 2,100
 locations and alias the low/high two-plane intervals at offsets 0 and 4,200.
-Command generation now stops at a compact Concat contract. Identify its exact
-source ID, layout and consumers, then continue one unsupported source ID at a
-time through the remaining Sub, reshape and final output handling.
+The following constant Add stages its 4,200-byte operand with one DMA and runs
+one contiguous Spatz call. Command generation now stops at source op 243 Sub;
+lower the two selected compact Sub instances next, then continue one unsupported
+source ID at a time through reshape and final output handling.
 
 ### P3 — Performance and DMA overlap
 

@@ -179,7 +179,8 @@ flatbuffers::DetachedBuffer BuildPointwiseConvModel(int height, int width, int d
 
 flatbuffers::DetachedBuffer BuildAddModel(float lhsScale = 1.0f, float rhsScale = 1.0f,
     float outputScale = 1.0f, int64_t zeroPoint = 0,
-    tflite::ActivationFunctionType activation = tflite::ActivationFunctionType::NONE)
+    tflite::ActivationFunctionType activation = tflite::ActivationFunctionType::NONE,
+    int compactLocations = 0, bool constantRhs = false)
 {
     flatbuffers::FlatBufferBuilder builder;
     const std::vector<int64_t> zeroPoints = {zeroPoint};
@@ -192,13 +193,19 @@ flatbuffers::DetachedBuffer BuildAddModel(float lhsScale = 1.0f, float rhsScale 
         builder, nullptr, nullptr, &rhsScales, &zeroPoints);
     const auto outputQuant = tflite::CreateQuantizationParametersDirect(
         builder, nullptr, nullptr, &outputScales, &zeroPoints);
+    const std::vector<int32_t> shape = compactLocations > 0 ?
+        std::vector<int32_t>{1, 2, compactLocations} :
+        std::vector<int32_t>{1, 2, 2, 32};
+    const int elements = compactLocations > 0 ? 2 * compactLocations : 2 * 2 * 32;
+    const std::vector<uint8_t> rhsData(constantRhs ? elements : 0, uint8_t(7));
     std::vector<flatbuffers::Offset<tflite::Buffer>> buffers = {
         tflite::CreateBufferDirect(builder),
+        tflite::CreateBufferDirect(builder, constantRhs ? &rhsData : nullptr),
     };
-    const std::vector<int32_t> shape = {1, 2, 2, 32};
     std::vector<flatbuffers::Offset<tflite::Tensor>> tensors = {
         tflite::CreateTensorDirect(builder, &shape, tflite::TensorType::INT8, 0, "lhs", lhsQuant),
-        tflite::CreateTensorDirect(builder, &shape, tflite::TensorType::INT8, 0, "rhs", rhsQuant),
+        tflite::CreateTensorDirect(builder, &shape, tflite::TensorType::INT8,
+            constantRhs ? 1 : 0, "rhs", rhsQuant),
         tflite::CreateTensorDirect(builder, &shape, tflite::TensorType::INT8, 0, "output", outputQuant),
     };
     const auto options = tflite::CreateAddOptions(builder, activation, false);
@@ -208,7 +215,8 @@ flatbuffers::DetachedBuffer BuildAddModel(float lhsScale = 1.0f, float rhsScale 
         tflite::CreateOperatorDirect(builder, 0, &opInputs, &opOutputs,
             tflite::BuiltinOptions::AddOptions, options.Union()),
     };
-    const std::vector<int32_t> graphInputs = {0, 1};
+    const std::vector<int32_t> graphInputs = constantRhs ?
+        std::vector<int32_t>{0} : std::vector<int32_t>{0, 1};
     const std::vector<int32_t> graphOutputs = {2};
     const std::vector<flatbuffers::Offset<tflite::SubGraph>> subgraphs = {
         tflite::CreateSubGraphDirect(
@@ -1813,6 +1821,33 @@ TEST_CASE("Neural-AI constraints keep selected CSP Add compact")
     }
 }
 
+TEST_CASE("Neural-AI constraints keep compact plane Add linear")
+{
+    ArchNeuralAI arch;
+    auto *constraints = arch.Constraints();
+    Quantization quantization = Quantization::Unit();
+    ArchOperatorQuery query;
+    for ( const Shape &shape : {Shape(1, 2, 37), Shape(1, 1, 2, 37)} )
+    {
+        for ( ArchFM &ifm : query.ifm )
+        {
+            ifm.type = DataType::Int8;
+            ifm.shape = shape;
+            ifm.quantization = &quantization;
+        }
+        query.ofm.type = DataType::Int8;
+        query.ofm.shape = shape;
+        query.ofm.quantization = &quantization;
+
+        ArchRequirements requirements;
+        REQUIRE(constraints->OperatorQuery(OpType::Add, &query, &requirements) ==
+            QueryResult::NativeHasReq);
+        for ( const ArchTensorRequirement *tensor = &requirements.tensor; tensor != nullptr;
+              tensor = tensor->next )
+            REQUIRE(tensor->format == TensorFormat::CompactNHWC);
+    }
+}
+
 TEST_CASE("Neural-AI admits only native-depth-preserving reshape-like views")
 {
     auto checker = MakeSupportedOpsChecker(REGOR_ARCH_NEURALAI);
@@ -3213,7 +3248,8 @@ TEST_CASE("Neural-AI AFU Add reads a C32-aligned slice without materialization")
 
 TEST_CASE("Neural-AI compiler lowers quantized Add through Spatz")
 {
-    const auto lowersToSpatz = [](flatbuffers::DetachedBuffer model)
+    const auto lowersToSpatz = [](flatbuffers::DetachedBuffer model, uint32_t expectedBytes,
+                                   bool expectConstantStaging = false)
     {
         std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
         Compiler compiler(architecture);
@@ -3230,6 +3266,7 @@ TEST_CASE("Neural-AI compiler lowers quantized Add through Spatz")
         const uint32_t commandBytes = Read32(data + 64 + 12);
         uint32_t offset = 224;
         uint32_t spatzCommands = 0;
+        uint32_t constantStagingCommands = 0;
         while ( offset < 224 + commandBytes )
         {
             const uint16_t type = Read16(data + offset);
@@ -3238,23 +3275,41 @@ TEST_CASE("Neural-AI compiler lowers quantized Add through Spatz")
             if ( type == uint16_t(neuralai::CommandType::SpatzAdd) )
             {
                 REQUIRE(commandSize == sizeof(neuralai::CommandSpatzAddV2));
-                REQUIRE(Read32(data + offset + 40) == 128);
+                REQUIRE(Read16(data + offset + 16) == uint16_t(neuralai::Region::TCDMScratch));
+                REQUIRE(Read16(data + offset + 24) == uint16_t(neuralai::Region::TCDMScratch));
+                REQUIRE(Read16(data + offset + 32) == uint16_t(neuralai::Region::TCDMScratch));
+                REQUIRE(Read32(data + offset + 40) == expectedBytes);
                 REQUIRE(int32_t(Read32(data + offset + 44)) > 0);
                 REQUIRE(int32_t(Read32(data + offset + 52)) > 0);
                 REQUIRE(int32_t(Read32(data + offset + 60)) > 0);
                 REQUIRE(Read32(data + offset + 88) == 20);
                 ++spatzCommands;
             }
+            if ( type == uint16_t(neuralai::CommandType::DMA1D) &&
+                 Read16(data + offset + 16) == uint16_t(neuralai::Region::ModelConstants) &&
+                 Read16(data + offset + 24) == uint16_t(neuralai::Region::TCDMScratch) )
+            {
+                REQUIRE(commandSize == sizeof(neuralai::CommandDMA1DV2));
+                REQUIRE(Read32(data + offset + 32) == expectedBytes);
+                REQUIRE(Read32(data + offset + 36) ==
+                    uint32_t(neuralai::DMADirection::ExternalToLocal));
+                ++constantStagingCommands;
+            }
             offset += commandSize;
         }
         REQUIRE(offset == 224 + commandBytes);
         REQUIRE(spatzCommands == 1);
+        REQUIRE(constantStagingCommands == uint32_t(expectConstantStaging));
         blob->Unmap(const_cast<uint8_t *>(data));
         blob->Release();
     };
 
-    lowersToSpatz(BuildAddModel(1.0f, 1.0f, 1.0f, 1));
-    lowersToSpatz(BuildAddModel(1.0f, 0.5f, 1.0f));
+    lowersToSpatz(BuildAddModel(1.0f, 1.0f, 1.0f, 1), 128);
+    lowersToSpatz(BuildAddModel(1.0f, 0.5f, 1.0f), 128);
+    lowersToSpatz(BuildAddModel(1.0f, 0.5f, 1.0f, 0,
+        tflite::ActivationFunctionType::NONE, 37), 74);
+    lowersToSpatz(BuildAddModel(1.0f, 0.5f, 1.0f, 0,
+        tflite::ActivationFunctionType::NONE, 37, true), 74, true);
 }
 
 TEST_CASE("Neural-AI canonicalizes a private clamped Conv producer for raw AFU Add")
