@@ -160,7 +160,7 @@ new runtime path has not yet passed E2E.
 | Async DMA and overlap | Not implemented | blocking execution remains correct; performance phase |
 | Full selected graphs | P0 memory-placement blocked | all selected operators lower; lifetime-aware command workspaces reuse TCDM gaps, but op 7 still sees 512,000 live tensor bytes before its local stage/partial buffers |
 
-The focused Regor suite passes 114 Neural-AI cases and 39,658 assertions; the
+The focused Regor suite passes 115 Neural-AI cases and 39,686 assertions; the
 complete suite passes 253 cases and 649,508 assertions (the randomized suite's
 assertion total varies with its reported seed).
 Runtime ABI/host checks, cross-builds, firmware-size gates, and focused C144,
@@ -336,7 +336,9 @@ transfers and was not committed.
 Next verified increments:
 
 1. Add scheduler-visible L2 spill slots and reserve per-op TCDM tile workspace.
-2. Block-test DMA L2→TCDM→operator→TCDM→L2 for Conv, Add/Sub, and Concat.
+2. Block-test DMA L2→TCDM→operator→TCDM→L2 for Conv and Concat. Add/Sub is
+   complete: a 4 KiB tiled spill path stores and reloads a shared intermediate,
+   while every AFU/Spatz binary command remains TCDM-local.
 3. Enable `FeatureMapMemory=L2`, `StagingMemory=TCDM`, then rerun all 114 unit
    tests and full YOLO compilation before any Verilator run.
 
