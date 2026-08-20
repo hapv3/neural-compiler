@@ -39,6 +39,7 @@ using neuralai::TensorLayout;
 
 constexpr int MaxDirectLinebufferM = 1024;
 constexpr int MaxExternalPsumLinebufferM = 256;
+constexpr uint32_t MaxPointwiseSpillRows = 256;
 
 bool IsLinebufferConvMode(NeuralAIOpMode mode)
 {
@@ -376,7 +377,8 @@ struct GeneratorContext
                 for ( const SchedulerTensor *tensor : range->tensors )
                 {
                     if ( tensor->AllocatedAddress() < 0 || tensor->isGraphInput ||
-                         tensor->isGraphOutput || tensor->IsConstant() ) continue;
+                         tensor->isGraphOutput || tensor->IsConstant() ||
+                         IsL2ArenaTensor(tensor) ) continue;
                     const uint64_t begin = uint64_t(tensor->AllocatedAddress());
                     const uint64_t end = begin + uint64_t(range->size);
                     if ( end <= ArchNeuralAI::AllocatableTCDMBytes )
@@ -3078,7 +3080,95 @@ struct GeneratorContext
             const uint32_t groupStride = uint32_t(groupStride64);
             uint32_t ifmSliceOffset = 0;
             if ( !C32SliceByteOffset(ifm, ifmSliceOffset, error) ) return false;
+            RefV1 ifmBase = TensorRef(ifm->tensor.get(), ifmSliceOffset, error);
+            if ( !error.empty() ) return false;
+            RefV1 ofmBase = TensorRef(ofm->tensor.get(), 0, error);
+            if ( !error.empty() ) return false;
+            const bool spillIfm = ifmBase.region == uint16_t(Region::L2TemporaryBinding);
+            const bool spillOfm = ofmBase.region == uint16_t(Region::L2TemporaryBinding);
+            if ( (ifmBase.region != uint16_t(Region::TCDMScratch) && !spillIfm) ||
+                 (ofmBase.region != uint16_t(Region::TCDMScratch) && !spillOfm) )
+                return SetError(error,
+                    "Neural-AI pointwise Conv feature maps require TCDM or the L2 temporary arena");
             uint32_t tileId = 0;
+            if ( spillIfm || spillOfm )
+            {
+                const uint32_t stagedGroups = (spillIfm ? kGroups : 0u) + (spillOfm ? 1u : 0u);
+                const uint32_t tileCapacity = std::min(rows, MaxPointwiseSpillRows);
+                const uint64_t inputStageBytes64 = spillIfm ?
+                    uint64_t(tileCapacity) * kGroups * 32u : 0u;
+                const uint64_t outputStageBytes64 = spillOfm ?
+                    uint64_t(tileCapacity) * 32u : 0u;
+                if ( stagedGroups == 0 || inputStageBytes64 + outputStageBytes64 >
+                         std::numeric_limits<uint32_t>::max() ||
+                     inputStageBytes64 + outputStageBytes64 >
+                     workspaceSizes[operation->Uid()].stage )
+                    return SetError(error, "Neural-AI pointwise Conv exceeds its spill workspace");
+                RefV1 stagedInput{uint16_t(Region::TCDMScratch), 0, stageOffset};
+                RefV1 stagedOutput{uint16_t(Region::TCDMScratch), 0,
+                    stageOffset + uint32_t(inputStageBytes64)};
+                for ( uint32_t rowBase = 0; rowBase < rows; rowBase += tileCapacity )
+                {
+                    const uint32_t tileRows = std::min(tileCapacity, rows - rowBase);
+                    RefV1 input = ifmBase;
+                    uint32_t inputGroupStride = groupStride;
+                    if ( spillIfm )
+                    {
+                        input = stagedInput;
+                        inputGroupStride = tileCapacity * 32u;
+                        for ( uint32_t kGroup = 0; kGroup < kGroups; ++kGroup )
+                        {
+                            RefV1 source = ifmBase;
+                            source.offset += kGroup * groupStride + rowBase * 32u;
+                            RefV1 destination = stagedInput;
+                            destination.offset += kGroup * inputGroupStride;
+                            if ( !AppendDMA1D(source, destination, tileRows * 32u,
+                                     uint32_t(operation->Index()), tileId++, error) )
+                                return false;
+                        }
+                    }
+                    else input.offset += rowBase * 32u;
+                    for ( uint32_t nGroup = 0; nGroup < nGroups; ++nGroup )
+                    {
+                        AppendRQLoad(qparamBase + nGroup * 32u, nGroup,
+                            uint32_t(operation->Index()), tileId++);
+                        const uint64_t weightOffset64 = uint64_t(weightBase) +
+                            uint64_t(nGroup) * kGroups * 32u * 32u;
+                        if ( weightOffset64 > std::numeric_limits<uint32_t>::max() )
+                            return SetError(error,
+                                "Neural-AI pointwise Conv weight reference overflows the ABI");
+                        RefV1 weights{};
+                        weights.region = uint16_t(Region::ModelConstants);
+                        weights.offset = uint32_t(weightOffset64);
+                        RefV1 partial{};
+                        if ( kGroups > 1 )
+                        {
+                            partial.region = uint16_t(Region::TCDMScratch);
+                            partial.offset = partialOffset;
+                        }
+                        RefV1 output = ofmBase;
+                        uint32_t outputGroupStride = groupStride;
+                        if ( spillOfm )
+                        {
+                            output = stagedOutput;
+                            outputGroupStride = tileCapacity * 32u;
+                        }
+                        else output.offset += nGroup * groupStride + rowBase * 32u;
+                        AppendPointwiseC32(weights, input, partial, output, tileRows,
+                            kGroups, 1, nGroup, inputGroupStride, outputGroupStride,
+                            uint32_t(operation->Index()), tileId++);
+                        if ( spillOfm )
+                        {
+                            RefV1 destination = ofmBase;
+                            destination.offset += nGroup * groupStride + rowBase * 32u;
+                            if ( !AppendDMA1D(output, destination, tileRows * 32u,
+                                     uint32_t(operation->Index()), tileId++, error) )
+                                return false;
+                        }
+                    }
+                }
+                return true;
+            }
             for ( uint32_t nGroup = 0; nGroup < nGroups; ++nGroup )
             {
                 AppendRQLoad(qparamBase + nGroup * 32, nGroup,
@@ -3089,8 +3179,6 @@ struct GeneratorContext
                 if ( weightOffset64 > std::numeric_limits<uint32_t>::max() ||
                      outputOffset64 > std::numeric_limits<uint32_t>::max() )
                     return SetError(error, "Neural-AI pointwise Conv tensor reference overflows the ABI");
-                RefV1 ifmRef = TensorRef(ifm->tensor.get(), ifmSliceOffset, error);
-                if ( !error.empty() ) return false;
                 RefV1 weights{};
                 weights.region = uint16_t(Region::ModelConstants);
                 weights.offset = uint32_t(weightOffset64);
@@ -3100,9 +3188,9 @@ struct GeneratorContext
                     partial.region = uint16_t(Region::TCDMScratch);
                     partial.offset = partialOffset;
                 }
-                RefV1 output = TensorRef(ofm->tensor.get(), uint32_t(outputOffset64), error);
-                if ( !error.empty() ) return false;
-                AppendPointwiseC32(weights, ifmRef, partial, output, rows,
+                RefV1 output = ofmBase;
+                output.offset += uint32_t(outputOffset64);
+                AppendPointwiseC32(weights, ifmBase, partial, output, rows,
                     kGroups, 1, nGroup, groupStride, groupStride,
                     uint32_t(operation->Index()), tileId++);
             }
@@ -3319,14 +3407,15 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         {
             UNUSED(usage);
             if ( !connection.tensor->isGraphInput && !connection.tensor->isGraphOutput &&
-                 !connection.tensor->IsConstant() )
+                 !connection.tensor->IsConstant() && !IsL2ArenaTensor(connection.tensor.get()) )
                 scratchBytes = std::max(scratchBytes, uint32_t(connection.tensor->AllocatedAddress() +
                     TensorStorageBytes(connection.tensor.get())));
         }
         for ( const auto &[usage, connection] : operation->outputs.pairs() )
         {
             UNUSED(usage);
-            if ( !connection.tensor->isGraphInput && !connection.tensor->isGraphOutput )
+            if ( !connection.tensor->isGraphInput && !connection.tensor->isGraphOutput &&
+                 !IsL2ArenaTensor(connection.tensor.get()) )
                 scratchBytes = std::max(scratchBytes, uint32_t(connection.tensor->AllocatedAddress() +
                     TensorStorageBytes(connection.tensor.get())));
         }
@@ -3383,6 +3472,26 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         const uint32_t logicalK = uint32_t(ifmShape.Depth()) * (isK3Conv ? 9u : 1u);
         const uint32_t paddedK = uint32_t(RoundAway(int(logicalK), 32));
         const uint32_t stripeRows = std::min<uint32_t>(rows, 256);
+        if ( mode == NeuralAIOpMode::Conv2DPointwiseC32Requant &&
+             (IsL2ArenaTensor(operation->IFM(0)->tensor.get()) ||
+                 IsL2ArenaTensor(operation->OFM()->tensor.get())) )
+        {
+            const uint32_t kGroups = paddedK / 32u;
+            const uint32_t stagedGroups =
+                (IsL2ArenaTensor(operation->IFM(0)->tensor.get()) ? kGroups : 0u) +
+                (IsL2ArenaTensor(operation->OFM()->tensor.get()) ? 1u : 0u);
+            const uint32_t tileRows = std::min(rows, MaxPointwiseSpillRows);
+            const uint64_t spillStageBytes64 =
+                uint64_t(tileRows) * stagedGroups * 32u;
+            if ( stagedGroups == 0 || spillStageBytes64 > std::numeric_limits<uint32_t>::max() )
+            {
+                error = "Neural-AI pointwise Conv spill workspace is invalid";
+                return false;
+            }
+            const uint32_t spillStageBytes = uint32_t(spillStageBytes64);
+            context.stageBytes = std::max(context.stageBytes, spillStageBytes);
+            workspace.stage = std::max(workspace.stage, spillStageBytes);
+        }
         if ( paddedK != 32 )
         {
             context.stageBytes = std::max(context.stageBytes, stripeRows * 32);
