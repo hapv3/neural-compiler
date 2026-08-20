@@ -3793,6 +3793,138 @@ TEST_CASE("Neural-AI K3 Conv tiles spilled feature maps through TCDM stripes")
     REQUIRE(artifact.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);
 }
 
+TEST_CASE("Neural-AI Depthwise Conv tiles spilled feature maps through TCDM stripes")
+{
+    ArchNeuralAI arch;
+    const Shape ifmShape(1, 65, 33, 64);
+    const Shape ofmShape(1, 33, 17, 64);
+    auto lhs = CreateTensor("lhs", ifmShape, DataType::Int8);
+    auto rhs = CreateTensor("rhs", ifmShape, DataType::Int8);
+    auto skip = CreateTensor("skip", ofmShape, DataType::Int8);
+    auto convIfm = CreateTensor("conv_ifm", ifmShape, DataType::Int8);
+    auto convOfm = CreateTensor("conv_ofm", ofmShape, DataType::Int8);
+    auto output = CreateTensor("output", ofmShape, DataType::Int8);
+    auto weights = CreateTensor("weights", Shape(1, 3, 3, 64), DataType::Int8,
+        std::vector<int8_t>(3 * 3 * 64, 1));
+    auto scales = CreateTensor(
+        "scales", Shape(1, 1, 1, 64), DataType::Int32, std::vector<int32_t>(64, 0));
+    auto add0 = CreateOperation(
+        OpType::Add, TensorUsage::IFM0, lhs, TensorUsage::IFM1, rhs,
+        TensorUsage::OFM, convIfm);
+    auto depthwise = CreateOperation(OpType::DepthwiseConv2D,
+        TensorUsage::IFM0, convIfm, TensorUsage::OFM, convOfm);
+    depthwise->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
+    depthwise->ConnectInput(TensorUsage::Scales, scales).Set(Quantization::Unit());
+    depthwise->SetKernel(std::make_unique<Kernel>(
+        Point2i(3, 3), Point2i(2, 2), Point2i(1, 1), Margin(1, 1, 1, 1)));
+    auto add1 = CreateOperation(
+        OpType::Add, TensorUsage::IFM0, convOfm, TensorUsage::IFM1, skip,
+        TensorUsage::OFM, output);
+
+    Quantization inputQuantization;
+    inputQuantization.scales = {QuantizedScale(32768.0)};
+    inputQuantization.zeroPoints = {0};
+    inputQuantization.quantMin = {-128};
+    inputQuantization.quantMax = {127};
+    Quantization outputQuantization = inputQuantization;
+    outputQuantization.scales = {QuantizedScale(1.0 / 32768.0)};
+    for ( Operation *operation : {add0.get(), add1.get()} )
+    {
+        operation->Input(TensorUsage::IFM0)->Set(inputQuantization);
+        operation->Input(TensorUsage::IFM1)->Set(inputQuantization);
+        operation->Output(TensorUsage::OFM)->Set(outputQuantization);
+    }
+    depthwise->Input(TensorUsage::IFM0)->Set(Quantization::Unit());
+    depthwise->Output(TensorUsage::OFM)->Set(Quantization::Unit());
+    std::vector<std::shared_ptr<Operation>> sourceOps = {add0, depthwise, add1};
+    auto graph = CreateGraph(sourceOps);
+
+    GraphOptimiserOptions graphOptions;
+    NeuralAIGraphOptimiser optimiser(arch.Constraints(), graphOptions, nullptr);
+    optimiser.OptimiseGraph(graph.get());
+    const std::unordered_map<UniqueId, UniqueId> equivalenceIds;
+    SchedulerPacking packing(&arch, false, equivalenceIds);
+    auto scheduleOps = packing.Process(graph.get());
+    SchedulerOptions schedulerOptions;
+    schedulerOptions.disabled.Set(SchedulerFeature::Cascading);
+    schedulerOptions.disabled.Set(SchedulerFeature::WeightBuffering);
+    Scheduler scheduler(&arch, schedulerOptions, "neural-ai-spilled-depthwise", scheduleOps,
+        packing.OpConfigCompatablility());
+    auto schedule = scheduler.Process();
+
+    const SchedulerOperation *scheduledDepthwise = nullptr;
+    for ( const auto &operation : scheduleOps )
+        if ( operation->Type() == OpType::DepthwiseConv2D )
+            scheduledDepthwise = operation.get();
+    REQUIRE(scheduledDepthwise != nullptr);
+    scheduledDepthwise->IFM(0)->tensor->memArea =
+        MemArea(arch.L2Memory(), MemUsage::FeatureMap);
+    scheduledDepthwise->OFM()->tensor->memArea =
+        MemArea(arch.L2Memory(), MemUsage::FeatureMap);
+
+    CompiledNeuralAIArtifact artifact;
+    std::string error;
+    NeuralAICommandGenerator commandGenerator;
+    const bool generated = commandGenerator.Generate(
+        graph.get(), scheduleOps, schedule.get(), artifact, error);
+    INFO(error);
+    REQUIRE(generated);
+    REQUIRE(artifact.bindings.size() == 5);  // Four public bindings plus one L2 arena.
+
+    uint32_t reloads = 0;
+    uint32_t stores = 0;
+    uint32_t depthwiseCommands = 0;
+    std::vector<uint32_t> spatialRows;
+    size_t offset = 0;
+    while ( offset < artifact.commands.size() )
+    {
+        const uint16_t type = Read16(artifact.commands, offset);
+        const uint16_t bytes = Read16(artifact.commands, offset + 2);
+        REQUIRE(bytes >= 32);
+        const bool depthwiseCommand =
+            Read32(artifact.commands, offset + 8) == uint32_t(scheduledDepthwise->Index());
+        if ( depthwiseCommand && type == uint16_t(neuralai::CommandType::DMA2D) &&
+             Read16(artifact.commands, offset + 16) ==
+                 uint16_t(neuralai::Region::L2TemporaryBinding) )
+        {
+            REQUIRE(Read16(artifact.commands, offset + 24) ==
+                uint16_t(neuralai::Region::TCDMScratch));
+            REQUIRE(Read32(artifact.commands, offset + 48) ==
+                uint32_t(neuralai::DMADirection::ExternalToLocal));
+            ++reloads;
+        }
+        if ( depthwiseCommand && type == uint16_t(neuralai::CommandType::DMA1D) &&
+             Read16(artifact.commands, offset + 24) ==
+                 uint16_t(neuralai::Region::L2TemporaryBinding) )
+        {
+            REQUIRE(Read16(artifact.commands, offset + 16) ==
+                uint16_t(neuralai::Region::TCDMScratch));
+            REQUIRE(Read32(artifact.commands, offset + 36) ==
+                uint32_t(neuralai::DMADirection::LocalToExternal));
+            spatialRows.push_back(Read32(artifact.commands, offset + 32) /
+                uint32_t(ofmShape.Width() * 32));
+            ++stores;
+        }
+        if ( type == uint16_t(neuralai::CommandType::DepthwiseC32) )
+        {
+            REQUIRE(Read16(artifact.commands, offset + 24) ==
+                uint16_t(neuralai::Region::TCDMScratch));
+            REQUIRE(Read16(artifact.commands, offset + 32) ==
+                uint16_t(neuralai::Region::TCDMScratch));
+            REQUIRE(Read32(artifact.commands, offset + 40) ==
+                Read32(artifact.commands, offset + 48) * 2 + 1);
+            ++depthwiseCommands;
+        }
+        offset += bytes;
+    }
+    REQUIRE(offset == artifact.commands.size());
+    REQUIRE(reloads == 6);
+    REQUIRE(stores == 6);
+    REQUIRE(depthwiseCommands == 6);
+    REQUIRE(spatialRows == std::vector<uint32_t>{15, 15, 15, 15, 3, 3});
+    REQUIRE(artifact.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);
+}
+
 TEST_CASE("Neural-AI compiler lowers quantized Add through Spatz")
 {
     const auto lowersToSpatz = [](flatbuffers::DetachedBuffer model, uint32_t expectedBytes,

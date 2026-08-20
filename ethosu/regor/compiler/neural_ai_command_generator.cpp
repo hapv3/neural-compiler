@@ -1231,6 +1231,104 @@ struct GeneratorContext
 
         const uint32_t inputPixels = uint32_t(ifm->shape.Height() * ifm->shape.Width());
         const uint32_t outputPixels = uint32_t(ofm->shape.Height() * ofm->shape.Width());
+        RefV1 ifmBase = TensorRef(ifm->tensor.get(), 0, error);
+        if ( !error.empty() ) return false;
+        RefV1 ofmBase = TensorRef(ofm->tensor.get(), 0, error);
+        if ( !error.empty() ) return false;
+        const bool spillIfm = ifmBase.region == uint16_t(Region::L2TemporaryBinding);
+        const bool spillOfm = ofmBase.region == uint16_t(Region::L2TemporaryBinding);
+        if ( spillIfm || spillOfm )
+        {
+            if ( ifm->tensor->format != TensorFormat::C32Blocked ||
+                 ofm->tensor->format != TensorFormat::C32Blocked ||
+                 (ifmBase.region != uint16_t(Region::TCDMScratch) && !spillIfm) ||
+                 (ofmBase.region != uint16_t(Region::TCDMScratch) && !spillOfm) )
+                return SetError(error,
+                    "Neural-AI spilled Depthwise Conv requires C32 TCDM/L2 feature maps");
+            const Shape ifmShape = ReshapeToNHWC(ifm->shape);
+            const Shape ofmShape = ReshapeToNHWC(ofm->shape);
+            const uint32_t stripeRows = LinebufferSpillStripeRows(ofmShape);
+            const int64_t zeroPoint = ifm->quantization.zeroPoints.empty() ? 0 :
+                ifm->quantization.zeroPoints[0];
+            if ( zeroPoint < -128 || zeroPoint > 127 )
+                return SetError(error, "Neural-AI Depthwise Conv padding byte is invalid");
+            uint32_t tileId = 0;
+            for ( uint32_t outputY = 0; outputY < uint32_t(ofmShape.Height());
+                  outputY += stripeRows )
+            {
+                const uint32_t outputRows = std::min(
+                    stripeRows, uint32_t(ofmShape.Height()) - outputY);
+                auto stagingInput = MakeLinebufferSpillStaging(ifmShape,
+                    ifm->tensor->storageShape, ofmShape, kernel, int(outputY),
+                    int(outputRows), 0, stripeStageOffset);
+                const auto staging =
+                    neuralai::LinebufferPlanner().PlanStripeStaging(stagingInput);
+                const uint64_t localOutputOffset64 =
+                    (uint64_t(stripeStageOffset) + staging.bytes +
+                        ArchNeuralAI::DMAAlignment - 1u) /
+                    ArchNeuralAI::DMAAlignment * ArchNeuralAI::DMAAlignment;
+                const uint64_t stripeEnd = localOutputOffset64 +
+                    uint64_t(outputRows) * uint32_t(ofmShape.Width()) * 32u;
+                if ( localOutputOffset64 > std::numeric_limits<uint32_t>::max() ||
+                     stripeEnd > uint64_t(stripeStageOffset) +
+                         workspaceSizes[operation->Uid()].stripe )
+                    return SetError(error,
+                        "Neural-AI Depthwise Conv exceeds its spill stripe workspace");
+                const uint32_t localOutputOffset = uint32_t(localOutputOffset64);
+                const bool needsFill = stagingInput.padTop != 0 || stagingInput.padLeft != 0 ||
+                    stagingInput.padBottom != 0 || stagingInput.padRight != 0;
+                if ( !AppendStripeStaging(ifm, staging, int8_t(zeroPoint),
+                         uint32_t(operation->Index()), tileId, needsFill, error) )
+                    return false;
+                const uint32_t stagedGroupBytes =
+                    uint32_t(staging.stagedIfm.Height() * staging.stagedIfm.Width()) * 32u;
+                for ( uint32_t group = 0; group < groups; ++group )
+                {
+                    const uint32_t validChannels = std::min(32u, channels - group * 32u);
+                    AppendRQLoad(qparamBase + group * 32u, group,
+                        uint32_t(operation->Index()), tileId++);
+                    RefV1 weights{};
+                    weights.region = uint16_t(Region::ModelConstants);
+                    weights.offset = weightBase + group * 3u * 3u * 32u;
+                    RefV1 localIfm{};
+                    localIfm.region = uint16_t(Region::TCDMScratch);
+                    localIfm.offset = stripeStageOffset + group * stagedGroupBytes;
+                    RefV1 localOfm{};
+                    localOfm.region = uint16_t(Region::TCDMScratch);
+                    localOfm.offset = localOutputOffset;
+                    AppendHeader(artifact->commands, CommandType::DepthwiseC32, 96,
+                        uint32_t(operation->Index()), tileId++);
+                    AppendRef(artifact->commands, weights);
+                    AppendRef(artifact->commands, localIfm);
+                    AppendRef(artifact->commands, localOfm);
+                    Append32(artifact->commands, uint32_t(staging.stagedIfm.Height()));
+                    Append32(artifact->commands, uint32_t(staging.stagedIfm.Width()));
+                    Append32(artifact->commands, outputRows);
+                    Append32(artifact->commands, uint32_t(ofmShape.Width()));
+                    Append32(artifact->commands, validChannels);
+                    Append32(artifact->commands, uint32_t(kernel->Stride().y));
+                    Append32(artifact->commands, uint32_t(kernel->Stride().x));
+                    Append32(artifact->commands, 0);
+                    Append32(artifact->commands, 0);
+                    Append32(artifact->commands, group);
+                    AppendZeros(artifact->commands, 4);
+                    ++artifact->commandCount;
+                    const uint64_t outputOffset64 = uint64_t(group) * outputPixels * 32u +
+                        uint64_t(outputY) * uint32_t(ofmShape.Width()) * 32u;
+                    if ( outputOffset64 > std::numeric_limits<uint32_t>::max() )
+                        return SetError(error,
+                            "Neural-AI Depthwise Conv output reference overflows the ABI");
+                    RefV1 destination = TensorRef(
+                        ofm->tensor.get(), uint32_t(outputOffset64), error);
+                    if ( !error.empty() ) return false;
+                    if ( !AppendDMA1D(localOfm, destination,
+                             outputRows * uint32_t(ofmShape.Width()) * 32u,
+                             uint32_t(operation->Index()), tileId++, error) )
+                        return false;
+                }
+            }
+            return true;
+        }
         for ( uint32_t group = 0; group < groups; ++group )
         {
             const uint32_t validChannels = std::min(32u, channels - group * 32u);
@@ -3669,6 +3767,39 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         const uint32_t logicalK = uint32_t(ifmShape.Depth()) * (isK3Conv ? 9u : 1u);
         const uint32_t paddedK = uint32_t(RoundAway(int(logicalK), 32));
         const uint32_t stripeRows = std::min<uint32_t>(rows, 256);
+        if ( operation->Type() == OpType::DepthwiseConv2D &&
+             (IsL2ArenaTensor(operation->IFM(0)->tensor.get()) ||
+                 IsL2ArenaTensor(operation->OFM()->tensor.get())) )
+        {
+            const Shape logicalIfm = ReshapeToNHWC(ifmShape);
+            const Shape logicalOfm = ReshapeToNHWC(ofmShape);
+            const uint32_t depthwiseStripeRows = LinebufferSpillStripeRows(logicalOfm);
+            uint32_t requiredBytes = 0;
+            for ( uint32_t outputY = 0; outputY < uint32_t(logicalOfm.Height());
+                  outputY += depthwiseStripeRows )
+            {
+                const uint32_t outputRows = std::min(
+                    depthwiseStripeRows, uint32_t(logicalOfm.Height()) - outputY);
+                const auto stagingInput = MakeLinebufferSpillStaging(logicalIfm,
+                    operation->IFM(0)->tensor->storageShape, logicalOfm,
+                    operation->Kernel(), int(outputY), int(outputRows), 0, 0);
+                const auto staging =
+                    neuralai::LinebufferPlanner().PlanStripeStaging(stagingInput);
+                const uint64_t alignedStagingBytes =
+                    (uint64_t(staging.bytes) + ArchNeuralAI::DMAAlignment - 1u) /
+                    ArchNeuralAI::DMAAlignment * ArchNeuralAI::DMAAlignment;
+                const uint64_t bytes = alignedStagingBytes +
+                    uint64_t(outputRows) * uint32_t(logicalOfm.Width()) * 32u;
+                if ( bytes > std::numeric_limits<uint32_t>::max() )
+                {
+                    error = "Neural-AI Depthwise Conv spill stripe workspace overflows";
+                    return false;
+                }
+                requiredBytes = std::max(requiredBytes, uint32_t(bytes));
+            }
+            context.stripeStageBytes = std::max(context.stripeStageBytes, requiredBytes);
+            workspace.stripe = std::max(workspace.stripe, requiredBytes);
+        }
         if ( mode == NeuralAIOpMode::Conv2DPointwiseC32Requant &&
              (IsL2ArenaTensor(operation->IFM(0)->tensor.get()) ||
                  IsL2ArenaTensor(operation->OFM()->tensor.get())) )
