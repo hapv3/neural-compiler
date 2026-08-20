@@ -265,6 +265,28 @@ struct GeneratorContext
         bool linebufferWeightsStaged = false;
     };
 
+    struct WorkspaceSize
+    {
+        uint32_t stage = 0;
+        uint32_t partial = 0;
+        uint32_t stripe = 0;
+    };
+
+    struct WorkspaceAllocation
+    {
+        int startTime = 0;
+        int endTime = 0;
+        uint32_t start = 0;
+        uint32_t end = 0;
+    };
+
+    struct WorkspacePlacement
+    {
+        uint32_t stage = 0;
+        uint32_t partial = 0;
+        uint32_t stripe = 0;
+    };
+
     const Graph *graph;
     const Schedule *schedule;
     CompiledNeuralAIArtifact *artifact;
@@ -274,6 +296,9 @@ struct GeneratorContext
     std::unordered_map<UniqueId, RefV1> lutReferences;
     std::unordered_map<int, RefV1> fillReferences;
     std::unordered_map<UniqueId, MatrixData> matrixData;
+    std::unordered_map<UniqueId, WorkspaceSize> workspaceSizes;
+    std::unordered_map<UniqueId, WorkspacePlacement> workspaceOffsets;
+    std::vector<WorkspaceAllocation> workspaceAllocations;
     uint32_t nextTensorId = 0;
     uint32_t scratchEnd = 0;
     uint32_t stageOffset = 0;
@@ -283,6 +308,7 @@ struct GeneratorContext
     uint32_t stageBytes = 0;
     uint32_t partialBytes = 0;
     uint32_t stripeStageBytes = 0;
+    uint32_t workspaceEnd = 0;
 
     GeneratorContext(const Graph *sourceGraph, const Schedule *sourceSchedule,
         CompiledNeuralAIArtifact *output) :
@@ -294,6 +320,114 @@ struct GeneratorContext
     {
         error = message;
         return false;
+    }
+
+    bool SelectWorkspace(const SchedulerOperation *operation, std::string &error)
+    {
+        const WorkspaceSize size = workspaceSizes[operation->Uid()];
+        const uint32_t selectedStageBytes =
+            uint32_t(RoundAway(int(size.stage), ArchNeuralAI::DMAAlignment));
+        const uint32_t selectedPartialBytes =
+            uint32_t(RoundAway(int(size.partial), ArchNeuralAI::DMAAlignment));
+        const uint32_t selectedStripeBytes =
+            uint32_t(RoundAway(int(size.stripe), ArchNeuralAI::DMAAlignment));
+        const uint32_t total = selectedStageBytes + selectedPartialBytes + selectedStripeBytes;
+        if ( total == 0 ) return true;
+
+        auto cached = workspaceOffsets.find(operation->Uid());
+        if ( cached != workspaceOffsets.end() )
+        {
+            stageOffset = cached->second.stage;
+            weightStageOffset = stageOffset;
+            partialOffset = cached->second.partial;
+            stripeStageOffset = cached->second.stripe;
+            return true;
+        }
+
+        const SchedulerOpInfo *cost = schedule->Cost(operation);
+        if ( cost == nullptr || cost->timeIndex < 0 )
+            return SetError(error, "Neural-AI workspace operation has no schedule time");
+        int startTime = cost->timeIndex;
+        int endTime = cost->timeIndex;
+        if ( cost->cascade != 0 )
+        {
+            for ( const auto &[uid, other] : schedule->Costs() )
+            {
+                UNUSED(uid);
+                if ( other->cascade != cost->cascade ) continue;
+                startTime = std::min(startTime, other->timeIndex);
+                endTime = std::max(endTime, other->timeIndex);
+            }
+        }
+
+        std::vector<std::pair<uint32_t, uint32_t>> occupied;
+        const auto addLiveRanges = [&](const std::unique_ptr<LiveRangeGraph> &liveGraph)
+        {
+            if ( liveGraph == nullptr ) return;
+            for ( const auto &range : liveGraph->LiveRanges() )
+            {
+                if ( range->endTime < startTime || range->startTime > endTime ) continue;
+                for ( const SchedulerTensor *tensor : range->tensors )
+                {
+                    if ( tensor->AllocatedAddress() < 0 || tensor->isGraphInput ||
+                         tensor->isGraphOutput || tensor->IsConstant() ) continue;
+                    const uint64_t begin = uint64_t(tensor->AllocatedAddress());
+                    const uint64_t end = begin + uint64_t(range->size);
+                    if ( end <= ArchNeuralAI::AllocatableTCDMBytes )
+                        occupied.emplace_back(uint32_t(begin), uint32_t(end));
+                    break;
+                }
+            }
+        };
+        addLiveRanges(schedule->featureMapLRGraph);
+        addLiveRanges(schedule->stagingLRGraph);
+        for ( const WorkspaceAllocation &allocation : workspaceAllocations )
+        {
+            if ( allocation.endTime < startTime || allocation.startTime > endTime ) continue;
+            occupied.emplace_back(allocation.start, allocation.end);
+        }
+        const auto allocatePart = [&](uint32_t bytes, const char *name, bool persistent,
+                                      uint32_t &result) -> bool
+        {
+            if ( bytes == 0 )
+            {
+                result = 0;
+                return true;
+            }
+            std::sort(occupied.begin(), occupied.end());
+            uint32_t base = 0;
+            for ( const auto &[begin, end] : occupied )
+            {
+                base = uint32_t(RoundAway(int(base), ArchNeuralAI::DMAAlignment));
+                if ( uint64_t(base) + bytes <= begin ) break;
+                if ( base < end ) base = end;
+            }
+            base = uint32_t(RoundAway(int(base), ArchNeuralAI::DMAAlignment));
+            if ( uint64_t(base) + bytes > ArchNeuralAI::AllocatableTCDMBytes )
+                return SetError(error, fmt::format(
+                    "Neural-AI operation {} needs {} {} workspace bytes at schedule time {}-{} "
+                    "(temporal tensors {}, stage {}, partial {}, stripe {}, prior workspaces {})",
+                    operation->Index(), bytes, name, startTime, endTime,
+                    schedule->MemoryUsageAt(startTime), selectedStageBytes,
+                    selectedPartialBytes, selectedStripeBytes, workspaceAllocations.size()));
+            result = base;
+            occupied.emplace_back(base, base + bytes);
+            if ( persistent )
+                workspaceAllocations.push_back({startTime, endTime, base, base + bytes});
+            workspaceEnd = std::max(workspaceEnd, base + bytes);
+            return true;
+        };
+        WorkspacePlacement placement;
+        const bool persistentStage = cost->cascade != 0;
+        if ( !allocatePart(selectedStageBytes, "stage", persistentStage, placement.stage) ||
+             !allocatePart(selectedPartialBytes, "partial", false, placement.partial) ||
+             !allocatePart(selectedStripeBytes, "stripe", false, placement.stripe) ) return false;
+        workspaceOffsets.emplace(operation->Uid(), placement);
+        stageOffset = placement.stage;
+        weightStageOffset = placement.stage;
+        partialOffset = placement.partial;
+        stripeStageOffset = placement.stripe;
+        return true;
     }
 
     RefV1 TensorRef(const SchedulerTensor *tensor, uint32_t offset, std::string &error)
@@ -3127,6 +3261,7 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
     uint32_t linebufferWeightBytes = 0;
     for ( const auto &operation : operations )
     {
+        GeneratorContext::WorkspaceSize &workspace = context.workspaceSizes[operation->Uid()];
         if ( operation->Type() == OpType::MemoryCopy &&
              operation->IFM(0)->tensor->format == TensorFormat::NHWC &&
              operation->OFM()->tensor->format == TensorFormat::NHWC )
@@ -3139,6 +3274,7 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
                 return false;
             }
             context.stageBytes = std::max(context.stageBytes, uint32_t(bytes));
+            workspace.stage = std::max(workspace.stage, uint32_t(bytes));
         }
         if ( operation->Type() != OpType::FullyConnected && operation->Type() != OpType::MatMul &&
              operation->Type() != OpType::Conv2D && operation->Type() != OpType::DepthwiseConv2D ) continue;
@@ -3157,8 +3293,16 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         const uint32_t logicalK = uint32_t(ifmShape.Depth()) * (isK3Conv ? 9u : 1u);
         const uint32_t paddedK = uint32_t(RoundAway(int(logicalK), 32));
         const uint32_t stripeRows = std::min<uint32_t>(rows, 256);
-        if ( paddedK != 32 ) context.stageBytes = std::max(context.stageBytes, stripeRows * 32);
-        if ( paddedK > 32 ) context.partialBytes = std::max(context.partialBytes, stripeRows * 32 * 4);
+        if ( paddedK != 32 )
+        {
+            context.stageBytes = std::max(context.stageBytes, stripeRows * 32);
+            workspace.stage = std::max(workspace.stage, stripeRows * 32);
+        }
+        if ( paddedK > 32 )
+        {
+            context.partialBytes = std::max(context.partialBytes, stripeRows * 32 * 4);
+            workspace.partial = std::max(workspace.partial, stripeRows * 32 * 4);
+        }
         if ( isK3Conv )
         {
             const bool directRgb = config->DirectNhwcInput();
@@ -3169,8 +3313,11 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
                     9u * uint32_t(RoundAway(int(ifmShape.Depth()), 32)) / 32u;
                 linebufferWeightBytes = std::max(linebufferWeightBytes,
                     uint32_t(kGroups * 32u * 32u));
+                workspace.stage = std::max(workspace.stage,
+                    uint32_t(kGroups * 32u * 32u));
             }
             context.partialBytes = std::max(context.partialBytes, stripeRows * 32 * 4);
+            workspace.partial = std::max(workspace.partial, stripeRows * 32 * 4);
         }
     }
     context.stageBytes = std::max(context.stageBytes, linebufferWeightBytes);
@@ -3206,6 +3353,8 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         stagingInput.directNhwc = config->DirectNhwcInput();
         const auto staging = neuralai::LinebufferPlanner().PlanStripeStaging(stagingInput);
         context.stripeStageBytes = std::max(context.stripeStageBytes, staging.bytes);
+        context.workspaceSizes[operation->Uid()].stripe = std::max(
+            context.workspaceSizes[operation->Uid()].stripe, staging.bytes);
     }
     for ( const auto &operation : operations )
     {
@@ -3231,6 +3380,8 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         stagingInput.directNhwc = config->DirectNhwcInput();
         const auto staging = neuralai::LinebufferPlanner().PlanStripeStaging(stagingInput);
         context.stripeStageBytes = std::max(context.stripeStageBytes, staging.bytes);
+        context.workspaceSizes[operation->Uid()].stripe = std::max(
+            context.workspaceSizes[operation->Uid()].stripe, staging.bytes);
     }
 
     for ( const auto &operation : operations )
@@ -3256,6 +3407,7 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
                 const SchedulerOpInfo *stripeCost = schedule->Cost(stripeOperation);
                 if ( stripeCost == nullptr || stripeCost->cascade != operationCost->cascade ) continue;
                 uint32_t &tileId = tileIds[stripeOperation->Uid()];
+                if ( !context.SelectWorkspace(stripeOperation, error) ) return false;
                 if ( stripeOperation->Type() == OpType::Conv2D )
                 {
                     if ( !context.AppendC32MatrixStripe(stripeOperation, stripe, tileId, error) )
@@ -3278,6 +3430,7 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
             }
             continue;
         }
+        if ( !context.SelectWorkspace(operation.get(), error) ) return false;
         if ( operation->Type() == OpType::MemoryCopy )
         {
             if ( !context.AppendCopy(operation.get(), error) ) return false;
@@ -3353,7 +3506,7 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
     }
     context.AppendControl(CommandType::End, 0, 0);
     artifact.requiredTCDMBytes = uint32_t(RoundAway(
-        int(context.stripeStageOffset + context.stripeStageBytes), ArchNeuralAI::DMAAlignment));
+        int(std::max(context.scratchEnd, context.workspaceEnd)), ArchNeuralAI::DMAAlignment));
     if ( artifact.requiredTCDMBytes > ArchNeuralAI::AllocatableTCDMBytes )
     {
         error = fmt::format(
