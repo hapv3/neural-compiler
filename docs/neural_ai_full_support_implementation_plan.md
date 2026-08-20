@@ -329,16 +329,21 @@ Neural-AI difference:
 The package writer, runtime loader/resolver, and trusted dispatcher now accept
 exactly one `L2Temporary` binding at index 0, and the architecture models a
 separate 32-bit L2 arena. Do not switch `FeatureMapMemory` to L2 until block
-tests prove spill/reload/store for Conv, Add/Sub, Concat/view materialization,
-and public-boundary copies. A trial role switch correctly exposed these missing
-transfers and was not committed.
+tests prove spill/reload/store for every eligible producer/consumer pair and
+public-boundary copies remain pinned locally. A repeated role-switch trial after
+the Conv spill work still produced 46 focused failures: FastStorageAllocator
+moved LUT/DFL/pool/resize/view tensors to L2, changed cascade choices, and filled
+TCDM without reserving command workspaces. The trial was fully reverted.
 
 Next verified increments:
 
-1. Add scheduler-visible L2 spill slots and reserve per-op TCDM tile workspace.
-2. Complete the remaining view/boundary materialization spill paths. Pointwise
-   Conv L2 IFM/OFM use tiles of up
-   to 256 spatial rows, stage every C32 input group once, and reuse one output
+1. Add an eligibility-based placement pass: spill only an internal tensor whose
+   producer and every consumer have reviewed L2 paths; pin public boundaries,
+   LUT/DFL/pool/resize/head-pack and unsupported views to TCDM; reserve per-op
+   command workspaces before FastStorageAllocator spends the remaining budget.
+2. Complete the remaining eligible view/boundary materialization spill paths.
+   Pointwise Conv L2 IFM/OFM use tiles of up to 256 spatial rows, stage every C32
+   input group once, and reuse one output
    group slot. Aligned K3 Conv uses full-width stripes of about 256 output pixels,
    stages halo/padding and one output group, and keeps weights/partial sums in
    separate TCDM workspaces. The C96-to-C64 K3/S2 block graph verifies odd-shape
@@ -347,8 +352,9 @@ Next verified increments:
    stripe, reuses one local output-group slot, and is verified on the same odd
    K3/S2 geometry. Add/Sub and native two-input C32 Concat spill/reload paths are
    also complete.
-3. Enable `FeatureMapMemory=L2`, `StagingMemory=TCDM`, then rerun all 119 unit
-   tests and full YOLO compilation before any Verilator run.
+3. Only then enable `FeatureMapMemory=L2`, `StagingMemory=TCDM` behind that
+   placement policy, rerun all 119 unit tests, and compile full YOLO before any
+   Verilator run.
 
 Completed path:
 
