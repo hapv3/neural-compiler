@@ -18,10 +18,12 @@
 #include "compiler/scheduler.hpp"
 #include "compiler/scheduler_packing.hpp"
 #include "tflite/tflite_schema_generated.hpp"
+#include "tflite/tflite_scaling.hpp"
 #include "tflite/tflite_supported_operators.hpp"
 #include "util.hpp"
 
 #include <catch_all.hpp>
+#include <fixedpoint/fixedpoint.h>
 
 #include <cmath>
 #include <cstring>
@@ -336,6 +338,55 @@ flatbuffers::DetachedBuffer BuildSiluModel(bool reverseMulInputs = false)
     };
     const auto model = tflite::CreateModelDirect(
         builder, 3, &operatorCodes, &subgraphs, "Neural-AI SiLU test", &buffers);
+    tflite::FinishModelBuffer(builder, model);
+    return builder.Release();
+}
+
+flatbuffers::DetachedBuffer BuildCompactScalarMulModel(bool reverseInputs = false)
+{
+    flatbuffers::FlatBufferBuilder builder;
+    const std::vector<float> inputScales = {0.007780293f};
+    const std::vector<float> scalarScales = {0.00196078443f};
+    const std::vector<float> outputScales = {0.00419446919f};
+    const std::vector<int64_t> zeroPoints = {-128};
+    const auto inputQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &inputScales, &zeroPoints);
+    const auto scalarQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &scalarScales, &zeroPoints);
+    const auto outputQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &outputScales, &zeroPoints);
+    const std::vector<uint8_t> scalarData = {127};
+    std::vector<flatbuffers::Offset<tflite::Buffer>> buffers = {
+        tflite::CreateBufferDirect(builder),
+        tflite::CreateBufferDirect(builder, &scalarData),
+    };
+    const std::vector<int32_t> shape = {1, 2, 37};
+    const std::vector<int32_t> scalarShape = {1, 1, 1};
+    std::vector<flatbuffers::Offset<tflite::Tensor>> tensors = {
+        tflite::CreateTensorDirect(builder, &shape, tflite::TensorType::INT8, 0, "input", inputQuant),
+        tflite::CreateTensorDirect(builder, &scalarShape, tflite::TensorType::INT8, 1, "scalar", scalarQuant),
+        tflite::CreateTensorDirect(builder, &shape, tflite::TensorType::INT8, 0, "output", outputQuant),
+    };
+    const std::vector<int32_t> inputs = reverseInputs ?
+        std::vector<int32_t>{1, 0} : std::vector<int32_t>{0, 1};
+    const std::vector<int32_t> outputs = {2};
+    const auto options = tflite::CreateMulOptions(builder);
+    const std::vector<flatbuffers::Offset<tflite::Operator>> operations = {
+        tflite::CreateOperatorDirect(builder, 0, &inputs, &outputs,
+            tflite::BuiltinOptions::MulOptions, options.Union()),
+    };
+    const std::vector<int32_t> graphInputs = {0};
+    const std::vector<int32_t> graphOutputs = {2};
+    const std::vector<flatbuffers::Offset<tflite::SubGraph>> subgraphs = {
+        tflite::CreateSubGraphDirect(
+            builder, &tensors, &graphInputs, &graphOutputs, &operations, "main"),
+    };
+    const std::vector<flatbuffers::Offset<tflite::OperatorCode>> operatorCodes = {
+        tflite::CreateOperatorCodeDirect(builder, int8_t(tflite::BuiltinOperator::MUL),
+            nullptr, 1, tflite::BuiltinOperator::MUL),
+    };
+    const auto model = tflite::CreateModelDirect(
+        builder, 3, &operatorCodes, &subgraphs, "Neural-AI scalar Mul test", &buffers);
     tflite::FinishModelBuffer(builder, model);
     return builder.Release();
 }
@@ -1749,6 +1800,15 @@ TEST_CASE("Neural-AI constraints substitute INT8 Sigmoid with an AFU LUT")
     REQUIRE(classHeadRequirements.tensor.format == TensorFormat::NHWC);
     REQUIRE(classHeadRequirements.tensor.next != nullptr);
     REQUIRE(classHeadRequirements.tensor.next->format == TensorFormat::NHWC);
+
+    query.ifm[0].shape = Shape(1, 2, 37);
+    query.ofm.shape = query.ifm[0].shape;
+    ArchRequirements coordinateRequirements;
+    REQUIRE(constraints->OperatorQuery(OpType::LUT, &query, &coordinateRequirements) ==
+        QueryResult::NativeHasReq);
+    REQUIRE(coordinateRequirements.tensor.format == TensorFormat::NHWC);
+    REQUIRE(coordinateRequirements.tensor.next != nullptr);
+    REQUIRE(coordinateRequirements.tensor.next->format == TensorFormat::NHWC);
 
     query.transposeMask = TransposeType::NCHW;
     REQUIRE(constraints->OperatorQuery(OpType::LUT, &query) == QueryResult::Unsupported);
@@ -3583,6 +3643,75 @@ TEST_CASE("Neural-AI compiler fuses quantized YOLO SiLU into one AFU LUT")
                         (product + 64) / 128 : -((-product + 64) / 128);
                     const int expected = std::clamp(rounded, -128, 127);
                     REQUIRE(data[constantsOffset + lutOffset + raw] == uint8_t(expected));
+                }
+                ++lutCommands;
+            }
+            offset += commandSize;
+        }
+        REQUIRE(offset == 224 + commandBytes);
+        REQUIRE(lutCommands == 1);
+        blob->Unmap(const_cast<uint8_t *>(data));
+        blob->Release();
+    }
+}
+
+TEST_CASE("Neural-AI compiler rewrites compact scalar Mul as one AFU LUT")
+{
+    for ( const bool reverseInputs : {false, true} )
+    {
+        INFO("reverseInputs=" << reverseInputs);
+        std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+        Compiler compiler(architecture);
+        const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+        REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+        const auto model = BuildCompactScalarMulModel(reverseInputs);
+        REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+        const bool compiled = compiler.Compile();
+        INFO(compiler.LastError());
+        REQUIRE(compiled);
+
+        IRegorBlob *blob = compiler.Output();
+        REQUIRE(blob != nullptr);
+        int64_t size = 0;
+        const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+        const uint32_t commandBytes = Read32(data + 64 + 12);
+        const uint32_t constantsOffset = Read32(data + 96 + 8);
+        const uint32_t constantsBytes = Read32(data + 96 + 12);
+        uint32_t offset = 224;
+        uint32_t lutCommands = 0;
+        while ( offset < 224 + commandBytes )
+        {
+            const uint16_t type = Read16(data + offset);
+            const uint16_t commandSize = Read16(data + offset + 2);
+            REQUIRE(commandSize >= 32);
+            REQUIRE(type != uint16_t(neuralai::CommandType::SpatzMul));
+            if ( type == uint16_t(neuralai::CommandType::AFULut) )
+            {
+                REQUIRE(commandSize == sizeof(neuralai::CommandAFULutV2));
+                REQUIRE(Read16(data + offset + 16) == uint16_t(neuralai::Region::TCDMScratch));
+                REQUIRE(Read16(data + offset + 24) == uint16_t(neuralai::Region::TCDMScratch));
+                REQUIRE(Read16(data + offset + 32) == uint16_t(neuralai::Region::ModelConstants));
+                REQUIRE(Read32(data + offset + 40) == 74);
+                const uint32_t lutOffset = Read32(data + offset + 36);
+                REQUIRE(lutOffset <= constantsBytes);
+                REQUIRE(256 <= constantsBytes - lutOffset);
+                QuantizedScale expectedScale =
+                    ElementwiseMulScale(0.007780293, 0.00196078443, 0.00419446919);
+                expectedScale.shift = 31 - expectedScale.shift;
+                const auto multiply = [](int value, const QuantizedScale &scale)
+                {
+                    const int leftShift = scale.shift > 0 ? scale.shift : 0;
+                    const int rightShift = scale.shift < 0 ? -scale.shift : 0;
+                    const int32_t product = gemmlowp::SaturatingRoundingDoublingHighMul(
+                        value * (1 << leftShift), scale.scale);
+                    return gemmlowp::RoundingDivideByPOT<int32_t>(product, rightShift);
+                };
+                for ( uint32_t raw = 0; raw < 256; ++raw )
+                {
+                    const int input = raw < 128 ? int(raw) : int(raw) - 256;
+                    const int expected = std::clamp(-128 +
+                        multiply((input + 128) * 255, expectedScale), -128, 127);
+                    REQUIRE(data[constantsOffset + lutOffset + raw] == uint8_t(int8_t(expected)));
                 }
                 ++lutCommands;
             }

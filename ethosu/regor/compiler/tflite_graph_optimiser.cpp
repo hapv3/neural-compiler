@@ -1811,7 +1811,7 @@ Operation *TFLiteGraphOptimiser::RewriteYoloDfl16(Graph *const graph, Operation 
     return dfl.get();
 }
 
-Operation *TFLiteGraphOptimiser::RewriteSiluToLUT(Graph *const graph, Operation *const operation)
+Operation *TFLiteGraphOptimiser::RewriteMulToLUT(Graph *const graph, Operation *const operation)
 {
     if ( operation->Type() != OpType::Mul || !_constraints->SupportsSiluLUTFusion() ) return operation;
 
@@ -1820,13 +1820,81 @@ Operation *TFLiteGraphOptimiser::RewriteSiluToLUT(Graph *const graph, Operation 
     auto *ofm = operation->Output(TensorUsage::OFM);
     if ( lhs == nullptr || rhs == nullptr || ofm == nullptr ) return operation;
 
+    const auto hasScalarQuantization = [](const Quantization &quantization)
+    {
+        return quantization.type == QuantizationType::TFLITE &&
+               quantization.scales.size() == 1 && quantization.zeroPoints.size() == 1 &&
+               quantization.scales[0].scale > 0 && quantization.zeroPoints[0] >= -128 &&
+               quantization.zeroPoints[0] <= 127;
+    };
+
+    TensorConnection *value = nullptr;
+    TensorConnection *scalar = nullptr;
+    for ( auto [candidateValue, candidateScalar] : {std::pair{lhs, rhs}, std::pair{rhs, lhs}} )
+    {
+        if ( candidateScalar->tensor->IsConstant() && candidateScalar->shape.Elements64() == 1 )
+        {
+            value = candidateValue;
+            scalar = candidateScalar;
+            break;
+        }
+    }
+    const Shape valueShape = value == nullptr ? Shape() : Shape::PadAxes(value->shape, 4, 1);
+    const bool compactPlane = value != nullptr &&
+        valueShape.Batch() == 1 && valueShape.Height() == 1 &&
+        valueShape.Width() > 0 && valueShape.Width() <= 4 && valueShape.Depth() > 0;
+    if ( value != nullptr && scalar != nullptr && compactPlane && value->shape == ofm->shape &&
+         value->tensor->Type() == DataType::Int8 && scalar->tensor->Type() == DataType::Int8 &&
+         ofm->tensor->Type() == DataType::Int8 && !value->slice && !scalar->slice && !ofm->slice &&
+         hasScalarQuantization(value->quantization) && hasScalarQuantization(scalar->quantization) &&
+         hasScalarQuantization(ofm->quantization) )
+    {
+        const auto scalarValues = scalar->tensor->View().Values<int>(DataType::Int8);
+        if ( scalarValues.Count() == 1 )
+        {
+            const double valueScale = value->quantization.scales[0].Dequantize();
+            const double scalarScale = scalar->quantization.scales[0].Dequantize();
+            const double outputScale = ofm->quantization.scales[0].Dequantize();
+            QuantizedScale multiplyScale = ElementwiseMulScale(valueScale, scalarScale, outputScale);
+            multiplyScale.shift = 31 - multiplyScale.shift;
+            if ( multiplyScale.scale > 0 && multiplyScale.shift >= -31 && multiplyScale.shift <= 30 )
+            {
+                const int valueZeroPoint = int(value->quantization.zeroPoints[0]);
+                const int scalarZeroPoint = int(scalar->quantization.zeroPoints[0]);
+                const int outputZeroPoint = int(ofm->quantization.zeroPoints[0]);
+                const int scalarValue = scalarValues[0] - scalarZeroPoint;
+                std::vector<int8_t> lut;
+                lut.reserve(256);
+                for ( int input = -128; input <= 127; ++input )
+                {
+                    const int product = (input - valueZeroPoint) * scalarValue;
+                    const int result = std::clamp(outputZeroPoint +
+                        MultiplyByQuantizedMultiplier(product, multiplyScale), -128, 127);
+                    lut.push_back(int8_t(result));
+                }
+                auto lutTensor = CreateConstTensor("scalar_mul", DataType::Int8,
+                    std::make_shared<Buffer>(std::move(lut)));
+                Operation *lutOp = CreateLUT(value->tensor, lutTensor, value->quantization,
+                    value->quantization, DataType::Int8, &value->shape, ofm->tensor);
+                lutOp->Output(TensorUsage::OFM)->Set(RoundMode::NATURAL);
+                if ( _supportedOps->Check(lutOp) )
+                {
+                    RecordOptimisation(*operation, lutOp);
+                    operation->Disconnect();
+                    return lutOp;
+                }
+                lutOp->Disconnect();
+            }
+        }
+    }
+
     ArchOperatorQuery mulQuery;
     Set(mulQuery.ifm[0], lhs);
     Set(mulQuery.ifm[1], rhs);
     Set(mulQuery.ofm, ofm);
     if ( _constraints->OperatorQuery(OpType::Mul, &mulQuery).Any(QueryResult::Native) ) return operation;
 
-    TensorConnection *value = nullptr;
+    value = nullptr;
     TensorConnection *sigmoidOutput = nullptr;
     std::shared_ptr<Operation> sigmoid;
     for ( auto [candidateValue, candidateSigmoid] : {std::pair{lhs, rhs}, std::pair{rhs, lhs}} )
@@ -1856,13 +1924,6 @@ Operation *TFLiteGraphOptimiser::RewriteSiluToLUT(Graph *const graph, Operation 
          value->quantization != sigmoidInput->quantization )
         return operation;
 
-    const auto hasScalarQuantization = [](const Quantization &quantization)
-    {
-        return quantization.type == QuantizationType::TFLITE &&
-               quantization.scales.size() == 1 && quantization.zeroPoints.size() == 1 &&
-               quantization.scales[0].scale > 0 && quantization.zeroPoints[0] >= -128 &&
-               quantization.zeroPoints[0] <= 127;
-    };
     if ( !hasScalarQuantization(value->quantization) ||
          !hasScalarQuantization(sigmoidOutput->quantization) ||
          !hasScalarQuantization(ofm->quantization) )

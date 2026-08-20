@@ -457,7 +457,12 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
                 (shape.Size() == 3 && shape[0] == 1 && shape[1] == 80 && shape[2] > 0) ||
                 (shape.Size() == 4 && shape.Batch() == 1 && shape.Height() == 1 &&
                     shape.Width() == 80 && shape.Depth() > 0);
-            const TensorFormat format = compactClassHead ?
+            const bool compactCoordinatePlanes =
+                (shape.Size() == 3 && shape[0] == 1 && shape[1] > 0 &&
+                    shape[1] <= 4 && shape[2] > 0) ||
+                (shape.Size() == 4 && shape.Batch() == 1 && shape.Height() == 1 &&
+                    shape.Width() > 0 && shape.Width() <= 4 && shape.Depth() > 0);
+            const TensorFormat format = compactClassHead || compactCoordinatePlanes ?
                 TensorFormat::NHWC : TensorFormat::C32Blocked;
             Set(s_tensorRequirements[0], TensorUsage::IFM0, format);
             Set(s_tensorRequirements[1], TensorUsage::OFM, format);

@@ -146,6 +146,7 @@ new runtime path has not yet passed E2E.
 | Depthwise Conv K3 | Verified | selected S1/S2 contracts |
 | Asymmetric Conv canonicalization | Verified | exact bias correction and padding behavior |
 | Add/Sub | Verified | raw AFU Add, exact producer canonicalization, or quantized Spatz binary fallback; compact coordinate planes and staged constants |
+| Compact scalar Mul | Verified | exact TFLite integer rewrite to one 256-byte AFU LUT; no scalar or Spatz Mul loop |
 | Activations | Verified | fused RQ clamps; standalone AFU LUT Sigmoid/clipping; LUT-fused output Quantize |
 | YOLO SiLU | Verified | exact `x * Sigmoid(x)` LUT fusion; no generic Mul |
 | Global AvgPool | Verified | full-spatial, equal quantization, C32 internal |
@@ -157,9 +158,9 @@ new runtime path has not yet passed E2E.
 | YOLO C144 head transpose | Verified fallback | standalone heads retain vectorized C32-to-CHW materialization |
 | DFL16 projection | Verified | selected heads feed C64/C80 C32 directly; box-scale requant is folded into each DFL command |
 | Async DMA and overlap | Not implemented | blocking execution remains correct; performance phase |
-| Full selected graphs | P1 operator blocked | scheduled peak is 517,120 bytes; compact box slices/Add/Sub pass and command generation now reaches scalar box Mul |
+| Full selected graphs | P1 operator blocked | scheduled peak is 517,120 bytes; compact box slices/Add/Sub/Mul pass and command generation now reaches the final compact plane Concat |
 
-The focused Regor suite passes 112 Neural-AI cases and 39,071 assertions; the
+The focused Regor suite passes 113 Neural-AI cases and 39,629 assertions; the
 complete suite passes 253 cases and 649,508 assertions (the randomized suite's
 assertion total varies with its reported seed).
 Runtime ABI/host checks, cross-builds, firmware-size gates, and focused C144,
@@ -249,7 +250,7 @@ the focused test had not written its invocation and binding table to L2.
 
 ### Other retained evidence
 
-- Cross-repository ABI manifest currently checks 6 constants, 59 enums, and 26
+- Cross-repository ABI manifest currently checks 6 constants, 61 enums, and 26
   structures.
 - Unaligned DMA and C3/C31 boundary round trips are byte-exact; the ROW32 matrix
   covers C3, C31, C32, C33, C63, C64, and C65.
@@ -270,6 +271,12 @@ the focused test had not written its invocation and binding table to L2.
   word as Add/Sub mode. Host tests, the compiler suite, and focused Sub E2E pass
   byte-exactly at 13,941 ns. Firmware `.text` is 24,288 bytes, leaving 8,480
   bytes of ITCM margin.
+- Compact scalar INT8 Mul with one constant operand and at most four coordinate
+  planes is rewritten before support checking to one exact 256-byte AFU LUT.
+  The selected 4,200-element box-scale Mul is therefore one contiguous AFU pass,
+  with no generic scalar or Spatz Mul path. The compiler test checks all LUT
+  entries against TFLite fixed-point arithmetic; focused E2E matches all 74
+  output bytes against TFLite `BUILTIN_REF` at 79,417 ns.
 - Runtime `.text` must be rechecked after every runtime increment. Trusted V2-only
   firmware currently reports 24,260 bytes, leaving 8,508 bytes of ITCM margin.
 
@@ -348,17 +355,18 @@ The completed path adds no scalar or CPU fallback:
 
 ### P1 — Close remaining selected detection-tail contracts
 
-The graph is memory-feasible and detection-tail aligned/compact slices, residual Add,
-four-way multi-group gathers, class Sigmoid output Quantize, and the final
-piecewise box-scale Mul are lowered without scalar packing or an extra tensor
-pass. The source-op 242/244 coordinate splits preserve the full innermost 2,100
+The graph is memory-feasible and detection-tail aligned/compact slices, residual
+Add/Sub, four-way multi-group gathers, class Sigmoid output Quantize, and the
+final box-scale scalar Mul are lowered without scalar packing or an extra tensor
+loop. The source-op 242/244 coordinate splits preserve the full innermost 2,100
 locations and alias the low/high two-plane intervals at offsets 0 and 4,200.
 The following constant Add stages its 4,200-byte operand with one DMA and runs
 one contiguous Spatz call. Both compact Sub instances use the same contiguous
-Spatz binary path and preserve positive-scale rounding. Command generation now
-stops at source op 247 scalar Mul; lower that selected contract next, then
-continue one unsupported source ID at a time through reshape and final output
-handling.
+Spatz binary path and preserve positive-scale rounding. Source op 247 scalar
+Mul is one exact AFU LUT pass. Command generation now stops at source op 252,
+the final compact plane-axis Concat of `[1,2,2100]`, `[1,2,2100]`, and
+`[1,80,2100]`; lower it as three contiguous local DMA segments, then continue
+one unsupported source ID at a time through reshape and final output handling.
 
 ### P3 — Performance and DMA overlap
 
