@@ -1434,6 +1434,8 @@ TEST_CASE("Neural-AI architecture exposes fixed hardware configuration")
     REQUIRE(arch.TensorAlignment(TensorUsage::IFM, TensorFormat::CompactNHWC) == 1);
     REQUIRE(arch.FeatureMapMemory().memory->Name() == "tcdm");
     REQUIRE(arch.FeatureMapMemory().memory->SizeBytes() == ArchNeuralAI::AllocatableTCDMBytes);
+    REQUIRE(arch.L2Memory()->Name() == "l2");
+    REQUIRE(arch.L2Memory()->SizeBytes() == arch.MaxAddress());
     REQUIRE(arch.ReadonlyMemory().memory->Name() == "model");
     REQUIRE(arch.ModelBindingFormat(TensorUsage::IFM) == TensorFormat::NHWC);
     REQUIRE(arch.DefaultInternalTensorFormat(TensorUsage::IFM, false) == TensorFormat::Row32);

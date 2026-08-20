@@ -27,6 +27,7 @@ public:
 
 private:
     ArchitectureMemory *_modelMemory = nullptr;
+    ArchitectureMemory *_l2Memory = nullptr;
     ArchitectureMemory *_tcdmMemory = nullptr;
     std::unique_ptr<IArchitectureConstraints> _constraints;
     std::unique_ptr<class WeightEncoder> _weightEncoder;
@@ -41,6 +42,7 @@ public:
     std::unique_ptr<ArchitectureOpConfig> GetOpConfig(OpType opType, const ArchitectureConfigQuery &query) override;
     std::unique_ptr<ArchitectureOpGroup> CreateOpGroup(const ArchitectureOpGroupQuery &op) override;
     class WeightEncoder *WeightEncoder() override { return _weightEncoder.get(); }
+    ArchitectureMemory *L2Memory() const { return _l2Memory; }
     ArchitecturePerformance *Performance() override { return _performance.get(); }
     IRegisterCommandStreamGenerator *RegisterCommandStreamGenerator() override { return nullptr; }
     IArchitectureConstraints *Constraints() override { return _constraints.get(); }

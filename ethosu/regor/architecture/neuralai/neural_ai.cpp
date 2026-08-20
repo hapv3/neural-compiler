@@ -43,6 +43,11 @@ ArchNeuralAI::ArchNeuralAI()
     _modelMemory = modelMemory.get();
     _memories.emplace("model", std::move(modelMemory));
 
+    auto l2Memory = std::make_unique<ArchitectureMemory>("l2", MaxAddress());
+    l2Memory->SetParameters(DMAAlignment, 1, 1, DMAAlignment, 1, 1, 1);
+    _l2Memory = l2Memory.get();
+    _memories.emplace("l2", std::move(l2Memory));
+
     auto tcdmMemory = std::make_unique<ArchitectureMemory>("tcdm", AllocatableTCDMBytes);
     tcdmMemory->SetParameters(DMAAlignment, 1, 1, DMAAlignment, 1, 1, 1);
     _tcdmMemory = tcdmMemory.get();
@@ -81,7 +86,8 @@ bool ArchNeuralAI::ParseConfig(IniReader *reader)
 bool ArchNeuralAI::CheckConfiguration(std::string &error)
 {
     if ( !Architecture::CheckConfiguration(error) ) return false;
-    if ( _readonlyMemory != _modelMemory || _featuremapMemory != _tcdmMemory || _stagingMemory != _tcdmMemory ||
+    if ( _readonlyMemory != _modelMemory || _l2Memory == nullptr || _featuremapMemory != _tcdmMemory ||
+         _stagingMemory != _tcdmMemory ||
          _lutMemory != _tcdmMemory )
     {
         error = "Neural-AI memory roles must use the fixed model and TCDM arenas";
@@ -90,6 +96,11 @@ bool ArchNeuralAI::CheckConfiguration(std::string &error)
     if ( _tcdmMemory->SizeBytes() != AllocatableTCDMBytes )
     {
         error = "Neural-AI allocatable TCDM size conflicts with the hardware contract";
+        return false;
+    }
+    if ( _l2Memory->SizeBytes() != MaxAddress() )
+    {
+        error = "Neural-AI L2 arena must cover the 32-bit address space";
         return false;
     }
     return true;
