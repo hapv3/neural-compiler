@@ -141,7 +141,7 @@ new runtime path has not yet passed E2E.
 | GEMM32, FC, MatMul | Verified | compiler-generated packages; invalid dimensions/quantization rejected |
 | Pointwise Conv | Verified | K1/S1/P0, C32 groups/tails, per-channel RQ; L2 feature-map tiling is compiler verified for up to 256 spatial rows |
 | RGB stem Conv | Verified | selected K3/S2 contract |
-| Generic C32 Conv K3 | Verified | full input/output groups; linebuffer path |
+| Generic C32 Conv K3 | Verified | full input/output groups; linebuffer path; aligned L2 feature-map stripes are compiler verified |
 | Rolling Conv/LUT/Concat cascade | Compiler verified | full-width Y stripes; DMA3D Concat gather; rolling pointwise Conv; asymmetric padding fill |
 | Depthwise Conv K3 | Verified | selected S1/S2 contracts |
 | Asymmetric Conv canonicalization | Verified | exact bias correction and padding behavior |
@@ -160,7 +160,7 @@ new runtime path has not yet passed E2E.
 | Async DMA and overlap | Not implemented | blocking execution remains correct; performance phase |
 | Full selected graphs | P0 memory-placement blocked | all selected operators lower; lifetime-aware command workspaces reuse TCDM gaps, but op 7 still sees 512,000 live tensor bytes before its local stage/partial buffers |
 
-The focused Regor suite passes 117 Neural-AI cases and 39,840 assertions; the
+The focused Regor suite passes 118 Neural-AI cases and 40,284 assertions; the
 complete suite passes 253 cases and 649,508 assertions (the randomized suite's
 assertion total varies with its reported seed).
 Runtime ABI/host checks, cross-builds, firmware-size gates, and focused C144,
@@ -336,13 +336,16 @@ transfers and was not committed.
 Next verified increments:
 
 1. Add scheduler-visible L2 spill slots and reserve per-op TCDM tile workspace.
-2. Complete the linebuffer K3 Conv spill path. Pointwise Conv is complete: its
-   L2 IFM/OFM use shape-derived tiles of up to 256 spatial rows, stage every C32
-   input group once per tile, reuse one output-group slot, and keep partial sums
-   separate. The C96-to-C64, 257-row block graph verifies two tiles, six reloads,
-   four stores, and four TCDM-only PointwiseC32 commands. Add/Sub and native
-   two-input C32 Concat spill/reload paths are also complete.
-3. Enable `FeatureMapMemory=L2`, `StagingMemory=TCDM`, then rerun all 117 unit
+2. Complete the remaining engine-local spill users, starting with Depthwise Conv
+   and view/boundary materialization. Pointwise Conv L2 IFM/OFM use tiles of up
+   to 256 spatial rows, stage every C32 input group once, and reuse one output
+   group slot. Aligned K3 Conv uses full-width stripes of about 256 output pixels,
+   stages halo/padding and one output group, and keeps weights/partial sums in
+   separate TCDM workspaces. The C96-to-C64 K3/S2 block graph verifies odd-shape
+   SAME padding over three 15/15/3-row stripes, 18 reloads, six stores, and 18
+   TCDM-only linebuffer jobs. Add/Sub and native two-input C32 Concat spill/reload
+   paths are also complete.
+3. Enable `FeatureMapMemory=L2`, `StagingMemory=TCDM`, then rerun all 118 unit
    tests and full YOLO compilation before any Verilator run.
 
 Completed path:
