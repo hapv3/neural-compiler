@@ -160,8 +160,8 @@ new runtime path has not yet passed E2E.
 | Async DMA and overlap | Not implemented | blocking execution remains correct; performance phase |
 | Full selected graphs | P0 memory-placement blocked | all selected operators lower; lifetime-aware command workspaces reuse TCDM gaps, but op 7 still sees 512,000 live tensor bytes before its local stage/partial buffers |
 
-The focused Regor suite passes 119 Neural-AI cases and 40,539 assertions; the
-complete suite passes 253 cases and 649,508 assertions (the randomized suite's
+The focused Regor suite passes 123 Neural-AI cases and 40,559 assertions; the
+complete suite passes 267 cases and 632,428 assertions (the randomized suite's
 assertion total varies with its reported seed).
 Runtime ABI/host checks, cross-builds, firmware-size gates, and focused C144,
 DFL16, and MatMul V2 E2E tests pass.
@@ -335,13 +335,18 @@ the Conv spill work still produced 46 focused failures: FastStorageAllocator
 moved LUT/DFL/pool/resize/view tensors to L2, changed cascade choices, and filled
 TCDM without reserving command workspaces. The trial was fully reverted.
 
+The conservative placement classifier is complete: a candidate must be a
+private aligned C32 tensor whose producer and every consumer use a reviewed L2
+path. Public/CPU/persistent tensors, RGB/C16/compact paths, views, LUT, DFL,
+pool, resize, head-pack, and other unreviewed paths remain pinned to TCDM. Four
+focused cases cover 20 positive and negative assertions.
+
 Next verified increments:
 
-1. Add an eligibility-based placement pass: spill only an internal tensor whose
-   producer and every consumer have reviewed L2 paths; pin public boundaries,
-   LUT/DFL/pool/resize/head-pack and unsupported views to TCDM; reserve per-op
-   command workspaces before FastStorageAllocator spends the remaining budget.
-2. Complete the remaining eligible view/boundary materialization spill paths.
+1. Integrate the classifier with scheduler memory roles and reserve each
+   operation's command workspaces before FastStorageAllocator spends the
+   remaining TCDM budget.
+2. Complete any remaining eligible view/boundary materialization spill paths.
    Pointwise Conv L2 IFM/OFM use tiles of up to 256 spatial rows, stage every C32
    input group once, and reuse one output
    group slot. Aligned K3 Conv uses full-width stripes of about 256 output pixels,
@@ -353,7 +358,7 @@ Next verified increments:
    K3/S2 geometry. Add/Sub and native two-input C32 Concat spill/reload paths are
    also complete.
 3. Only then enable `FeatureMapMemory=L2`, `StagingMemory=TCDM` behind that
-   placement policy, rerun all 119 unit tests, and compile full YOLO before any
+   placement policy, rerun all 123 unit tests, and compile full YOLO before any
    Verilator run.
 
 Completed path:
