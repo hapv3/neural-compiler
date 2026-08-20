@@ -194,6 +194,34 @@ TEST_CASE("test_fast_storage_allocator")
         REQUIRE(tens3->memArea != fast);
     }
 
+    SECTION("Scheduler supplies command workspace reservation after scheduling")
+    {
+        std::vector<std::unique_ptr<SchedulerOperation>> ops;
+        ops.push_back(CreateSchedulerOperation(arch, OpType::AvgPool, true, TensorUsage::IFM, tens1, TensorUsage::OFM, tens2));
+        ops.push_back(CreateSchedulerOperation(arch, OpType::AvgPool, true, TensorUsage::IFM, tens2, TensorUsage::OFM, tens3));
+        bool called = false;
+        SchedulerOptions opts;
+        opts.optimizationStagingLimit = 32 * 1024;
+        opts.commandWorkspaceReservation = [&called](
+            const std::vector<std::unique_ptr<SchedulerOperation>> &scheduledOps,
+            const Schedule *schedule)
+        {
+            called = true;
+            REQUIRE(schedule != nullptr);
+            MemorySnapshot reserved(scheduledOps.size() + 1);
+            for ( auto &usage : reserved.memory ) usage.op = 32 * 1024;
+            reserved.maxMemory = 32 * 1024;
+            return reserved;
+        };
+        SchedulerOpConfigMap configMap;
+        Scheduler scheduler(arch.get(), opts, "reserved-test", ops, configMap);
+        auto schedule = scheduler.Process();
+
+        REQUIRE(schedule != nullptr);
+        REQUIRE(called);
+        REQUIRE(tens2->memArea != fast);
+    }
+
     SECTION("Mixed NPU/CPU network with a live range covering CPU operation")
     {
         std::vector<std::unique_ptr<SchedulerOperation>> ops;

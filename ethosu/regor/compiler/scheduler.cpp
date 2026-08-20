@@ -161,9 +161,17 @@ std::shared_ptr<Schedule> Scheduler::Process()
     if ( _spilling && !_options.disabled.All(SchedulerFeature::FMStaging) )
     {
         // Use fast storage for feature maps
+        MemorySnapshot reservedUsage;
+        const MemorySnapshot *reservedUsagePtr = nullptr;
+        if ( _options.commandWorkspaceReservation )
+        {
+            reservedUsage = _options.commandWorkspaceReservation(_ops, chosenSchedule.get());
+            reservedUsagePtr = &reservedUsage;
+        }
         FastStorageAllocator allocator;
         const auto reuseIfms = !_options.disabled.All(SchedulerFeature::ReuseIFM);
-        allocator.AllocateFeatureMaps(_ops, chosenSchedule.get(), _arch->StagingMemory(), _options.optimizationStagingLimit, reuseIfms);
+        allocator.AllocateFeatureMaps(_ops, chosenSchedule.get(), _arch->StagingMemory(),
+            _options.optimizationStagingLimit, reuseIfms, reservedUsagePtr);
     }
 
     UpdateOpMemorySnapshot(chosenSchedule.get());

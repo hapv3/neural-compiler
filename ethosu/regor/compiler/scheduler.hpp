@@ -30,6 +30,7 @@
 #include "scheduler_operation.hpp"
 
 #include <algorithm>
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -39,6 +40,7 @@ namespace regor
 {
 
 class IncrementalLinearAllocator;
+class Schedule;
 
 enum class OptimizationStrategy
 {
@@ -79,6 +81,9 @@ struct SchedulerOptions
     bool separateIORegions = false;
     int cpuTensorAlignment = 16;
     TensorAllocator tensorAllocator = TensorAllocator::HillClimb;
+    std::function<MemorySnapshot(
+        const std::vector<std::unique_ptr<SchedulerOperation>> &, const Schedule *)>
+        commandWorkspaceReservation;
 };
 
 struct WeightScaleEncoding
