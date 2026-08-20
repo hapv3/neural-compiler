@@ -139,7 +139,7 @@ new runtime path has not yet passed E2E.
 | `.nai`, ABI v2, streaming dispatcher | Verified | V2-only firmware; relocatable references; malformed packages fail closed |
 | DMA 1D/2D/3D and boundaries | Verified | unaligned compact L2; native TCDM alignment; direction validation |
 | GEMM32, FC, MatMul | Verified | compiler-generated packages; invalid dimensions/quantization rejected |
-| Pointwise Conv | Verified | K1/S1/P0, C32 groups/tails, per-channel RQ |
+| Pointwise Conv | Verified | K1/S1/P0, C32 groups/tails, per-channel RQ; L2 feature-map tiling is compiler verified for up to 256 spatial rows |
 | RGB stem Conv | Verified | selected K3/S2 contract |
 | Generic C32 Conv K3 | Verified | full input/output groups; linebuffer path |
 | Rolling Conv/LUT/Concat cascade | Compiler verified | full-width Y stripes; DMA3D Concat gather; rolling pointwise Conv; asymmetric padding fill |
@@ -160,7 +160,7 @@ new runtime path has not yet passed E2E.
 | Async DMA and overlap | Not implemented | blocking execution remains correct; performance phase |
 | Full selected graphs | P0 memory-placement blocked | all selected operators lower; lifetime-aware command workspaces reuse TCDM gaps, but op 7 still sees 512,000 live tensor bytes before its local stage/partial buffers |
 
-The focused Regor suite passes 116 Neural-AI cases and 39,720 assertions; the
+The focused Regor suite passes 117 Neural-AI cases and 39,840 assertions; the
 complete suite passes 253 cases and 649,508 assertions (the randomized suite's
 assertion total varies with its reported seed).
 Runtime ABI/host checks, cross-builds, firmware-size gates, and focused C144,
@@ -336,13 +336,13 @@ transfers and was not committed.
 Next verified increments:
 
 1. Add scheduler-visible L2 spill slots and reserve per-op TCDM tile workspace.
-2. Block-test DMA L2→TCDM→operator→TCDM→L2 for Conv. Add/Sub is complete: a
-   4 KiB tiled spill path stores and reloads a shared intermediate, while every
-   AFU/Spatz binary command remains TCDM-local. Native two-input C32 Concat now
-   reloads an L2 producer into its TCDM output; a producer/Concat/consumer block
-   graph verifies one 192-byte external-to-local reload without exposing L2 to
-   an AFU command.
-3. Enable `FeatureMapMemory=L2`, `StagingMemory=TCDM`, then rerun all 116 unit
+2. Complete the linebuffer K3 Conv spill path. Pointwise Conv is complete: its
+   L2 IFM/OFM use shape-derived tiles of up to 256 spatial rows, stage every C32
+   input group once per tile, reuse one output-group slot, and keep partial sums
+   separate. The C96-to-C64, 257-row block graph verifies two tiles, six reloads,
+   four stores, and four TCDM-only PointwiseC32 commands. Add/Sub and native
+   two-input C32 Concat spill/reload paths are also complete.
+3. Enable `FeatureMapMemory=L2`, `StagingMemory=TCDM`, then rerun all 117 unit
    tests and full YOLO compilation before any Verilator run.
 
 Completed path:
