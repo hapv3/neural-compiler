@@ -119,7 +119,8 @@ void FastStorageComponentAllocator::UpdateMemUsage(MemorySnapshot &memUsage, Liv
 // FastStorageAllocator
 
 void FastStorageAllocator::AllocateFeatureMaps(const std::vector<std::unique_ptr<SchedulerOperation>> &schedOps,
-    Schedule *schedule, const MemArea &fastStorage, Address stagingLimit, bool reuseIfms)
+    Schedule *schedule, const MemArea &fastStorage, Address stagingLimit, bool reuseIfms,
+    const MemorySnapshot *reservedUsage)
 {
     _stagingLimit = int(std::min(INT64_C(1) << 30, stagingLimit));
     // Force all OFMs to fast-storage (except final outputs)
@@ -137,7 +138,8 @@ void FastStorageAllocator::AllocateFeatureMaps(const std::vector<std::unique_ptr
         if ( cost->cascade == 0 )
         {
             SchedulerConnection *ofm = schedOp->OFM();
-            if ( !ofm->tensor->consumers.empty() && !ofm->tensor->hasCPUReaders && !ofm->tensor->isGraphOutput &&
+            if ( ofm->tensor->memArea != fastStorage && !ofm->tensor->consumers.empty() &&
+                 !ofm->tensor->hasCPUReaders && !ofm->tensor->isGraphOutput &&
                  !ofm->tensor->isPersistent && _scratchedFms.count(ofm->tensor.get()) == 0 &&
                  opGroup->NeedsAllocation(ofm->tensor->uid) )
             {
@@ -148,7 +150,8 @@ void FastStorageAllocator::AllocateFeatureMaps(const std::vector<std::unique_ptr
             for ( auto &subOp : schedOp->SubOps() )
             {
                 ofm = subOp->OFM();
-                if ( !ofm->tensor->consumers.empty() && !ofm->tensor->hasCPUReaders && !ofm->tensor->isGraphOutput &&
+                if ( ofm->tensor->memArea != fastStorage && !ofm->tensor->consumers.empty() &&
+                     !ofm->tensor->hasCPUReaders && !ofm->tensor->isGraphOutput &&
                      !ofm->tensor->isPersistent && _scratchedFms.count(ofm->tensor.get()) == 0 &&
                      opGroup->NeedsAllocation(ofm->tensor->uid) )
                 {
@@ -164,6 +167,16 @@ void FastStorageAllocator::AllocateFeatureMaps(const std::vector<std::unique_ptr
     lrGraph.ExtractLiveRangesFromCascades(schedOps, schedule, fastStorage, true);
     // Populate time-array with memory used by live ranges
     _maxMemUsage = lrGraph.GetTemporalMemoryUsage();
+    if ( reservedUsage != nullptr )
+    {
+        const int count = std::min(int(_maxMemUsage.size()), int(reservedUsage->size()));
+        for ( int time = 0; time < count; ++time )
+        {
+            _maxMemUsage[time].op += (*reservedUsage)[time].Used();
+            _maxMemUsage.maxMemory = std::max(
+                _maxMemUsage.maxMemory, _maxMemUsage[time].Used());
+        }
+    }
     int maxMemoryUsage = _maxMemUsage.maxMemory;
 
     // Collect all live ranges that can potentially be in fast storage

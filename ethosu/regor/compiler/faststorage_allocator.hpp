@@ -84,7 +84,8 @@ private:
 
 public:
     void AllocateFeatureMaps(const std::vector<std::unique_ptr<SchedulerOperation>> &schedOps, Schedule *schedule,
-        const MemArea &fastStorage, Address stagingLimit, bool reuseIfms);
+        const MemArea &fastStorage, Address stagingLimit, bool reuseIfms,
+        const MemorySnapshot *reservedUsage = nullptr);
 
 private:
     // Allocates a connected range of live ranges

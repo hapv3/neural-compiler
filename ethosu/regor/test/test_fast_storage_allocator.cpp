@@ -175,6 +175,25 @@ TEST_CASE("test_fast_storage_allocator")
         REQUIRE(tens3->memArea != fast);  // Because no consumers
     }
 
+    SECTION("Command workspace reservation reduces available fast storage")
+    {
+        std::vector<std::unique_ptr<SchedulerOperation>> ops;
+        ops.push_back(CreateSchedulerOperation(arch, OpType::AvgPool, true, TensorUsage::IFM, tens1, TensorUsage::OFM, tens2));
+        ops.push_back(CreateSchedulerOperation(arch, OpType::AvgPool, true, TensorUsage::IFM, tens2, TensorUsage::OFM, tens3));
+
+        auto schedule = CreateSchedule(arch, ops);
+        MemorySnapshot reserved(ops.size() + 1);
+        for ( auto &usage : reserved.memory ) usage.op = 32 * 1024;
+        reserved.maxMemory = 32 * 1024;
+        FastStorageAllocator allocator;
+        allocator.AllocateFeatureMaps(
+            ops, schedule.get(), fast, 32 * 1024, true, &reserved);
+
+        REQUIRE(tens1->memArea != fast);
+        REQUIRE(tens2->memArea != fast);
+        REQUIRE(tens3->memArea != fast);
+    }
+
     SECTION("Mixed NPU/CPU network with a live range covering CPU operation")
     {
         std::vector<std::unique_ptr<SchedulerOperation>> ops;
