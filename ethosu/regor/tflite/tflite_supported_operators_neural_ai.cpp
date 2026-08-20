@@ -33,6 +33,7 @@ const std::set<OpType> s_supportedOpTypes = {
     OpType::ResizeNearestNeighbor,
     OpType::Sigmoid,
     OpType::StridedSlice,
+    OpType::Sub,
     OpType::Squeeze,
     OpType::Transpose,
 };

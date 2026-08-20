@@ -34,6 +34,7 @@ using neuralai::DataType;
 using neuralai::DMADirection;
 using neuralai::RefV1;
 using neuralai::Region;
+using neuralai::SpatzBinaryMode;
 using neuralai::TensorLayout;
 
 constexpr int MaxDirectLinebufferM = 1024;
@@ -1080,6 +1081,7 @@ struct GeneratorContext
 
     bool AppendAdd(const SchedulerOperation *operation, std::string &error)
     {
+        const bool subtract = operation->Type() == OpType::Sub;
         const SchedulerOpInfo *cost = schedule->Cost(operation);
         if ( cost == nullptr || cost->Config() == nullptr )
             return SetError(error, "Neural-AI Add operation has no validated target mode");
@@ -1180,7 +1182,7 @@ struct GeneratorContext
         const int outputZeroPoint = scalarZeroPoint(ofm->quantization);
         const QuantizedScale inputIdentity(32768.0);
         const QuantizedScale outputIdentity(1.0 / 32768.0);
-        const bool rawSafe = lhsScale == inputIdentity && rhsScale == inputIdentity &&
+        const bool rawSafe = !subtract && lhsScale == inputIdentity && rhsScale == inputIdentity &&
             outputScale == outputIdentity &&
             int64_t(lhsZeroPoint) + int64_t(rhsZeroPoint) == int64_t(outputZeroPoint) &&
             (ofm->quantization.quantMin.empty() ||
@@ -1228,7 +1230,8 @@ struct GeneratorContext
             Append32(artifact->commands, uint32_t(clampMin));
             Append32(artifact->commands, uint32_t(clampMax));
             Append32(artifact->commands, uint32_t(round->shift));
-            Append32(artifact->commands, 0);
+            Append32(artifact->commands, uint32_t(subtract ? SpatzBinaryMode::Subtract :
+                                                        SpatzBinaryMode::Add));
         }
         ++artifact->commandCount;
         return true;
@@ -3227,7 +3230,7 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         {
             if ( !context.AppendDepthwise(operation.get(), error) ) return false;
         }
-        else if ( operation->Type() == OpType::Add )
+        else if ( operation->Type() == OpType::Add || operation->Type() == OpType::Sub )
         {
             if ( !context.AppendAdd(operation.get(), error) ) return false;
         }

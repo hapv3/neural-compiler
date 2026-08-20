@@ -145,7 +145,7 @@ new runtime path has not yet passed E2E.
 | Rolling Conv/LUT/Concat cascade | Compiler verified | full-width Y stripes; DMA3D Concat gather; rolling pointwise Conv; asymmetric padding fill |
 | Depthwise Conv K3 | Verified | selected S1/S2 contracts |
 | Asymmetric Conv canonicalization | Verified | exact bias correction and padding behavior |
-| Add | Verified | raw AFU, exact producer canonicalization, or quantized Spatz fallback; compact coordinate planes and staged constants |
+| Add/Sub | Verified | raw AFU Add, exact producer canonicalization, or quantized Spatz binary fallback; compact coordinate planes and staged constants |
 | Activations | Verified | fused RQ clamps; standalone AFU LUT Sigmoid/clipping; LUT-fused output Quantize |
 | YOLO SiLU | Verified | exact `x * Sigmoid(x)` LUT fusion; no generic Mul |
 | Global AvgPool | Verified | full-spatial, equal quantization, C32 internal |
@@ -157,9 +157,9 @@ new runtime path has not yet passed E2E.
 | YOLO C144 head transpose | Verified fallback | standalone heads retain vectorized C32-to-CHW materialization |
 | DFL16 projection | Verified | selected heads feed C64/C80 C32 directly; box-scale requant is folded into each DFL command |
 | Async DMA and overlap | Not implemented | blocking execution remains correct; performance phase |
-| Full selected graphs | P1 operator blocked | scheduled peak is 517,120 bytes; compact box slices/Add pass and command generation now reaches the first compact Sub |
+| Full selected graphs | P1 operator blocked | scheduled peak is 517,120 bytes; compact box slices/Add/Sub pass and command generation now reaches scalar box Mul |
 
-The focused Regor suite passes 112 Neural-AI cases and 39,037 assertions; the
+The focused Regor suite passes 112 Neural-AI cases and 39,071 assertions; the
 complete suite passes 253 cases and 649,508 assertions (the randomized suite's
 assertion total varies with its reported seed).
 Runtime ABI/host checks, cross-builds, firmware-size gates, and focused C144,
@@ -264,6 +264,12 @@ the focused test had not written its invocation and binding table to L2.
   constant operand is staged once from model constants to TCDM with DMA1D.
   Compiler tests cover the 74-byte structural case and all Spatz references;
   focused quantized-Add Verilator E2E passes byte-exactly at 86,504 ns.
+- The same compact contract lowers selected Sub without a negative multiplier:
+  each positive input scale is applied first, then the Spatz vector kernel uses
+  `vsub` before output scaling. ABI minor 2 reuses the 96-byte command's final
+  word as Add/Sub mode. Host tests, the compiler suite, and focused Sub E2E pass
+  byte-exactly at 13,941 ns. Firmware `.text` is 24,288 bytes, leaving 8,480
+  bytes of ITCM margin.
 - Runtime `.text` must be rechecked after every runtime increment. Trusted V2-only
   firmware currently reports 24,260 bytes, leaving 8,508 bytes of ITCM margin.
 
@@ -348,9 +354,11 @@ piecewise box-scale Mul are lowered without scalar packing or an extra tensor
 pass. The source-op 242/244 coordinate splits preserve the full innermost 2,100
 locations and alias the low/high two-plane intervals at offsets 0 and 4,200.
 The following constant Add stages its 4,200-byte operand with one DMA and runs
-one contiguous Spatz call. Command generation now stops at source op 243 Sub;
-lower the two selected compact Sub instances next, then continue one unsupported
-source ID at a time through reshape and final output handling.
+one contiguous Spatz call. Both compact Sub instances use the same contiguous
+Spatz binary path and preserve positive-scale rounding. Command generation now
+stops at source op 247 scalar Mul; lower that selected contract next, then
+continue one unsupported source ID at a time through reshape and final output
+handling.
 
 ### P3 — Performance and DMA overlap
 

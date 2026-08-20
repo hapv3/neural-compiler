@@ -180,7 +180,8 @@ flatbuffers::DetachedBuffer BuildPointwiseConvModel(int height, int width, int d
 flatbuffers::DetachedBuffer BuildAddModel(float lhsScale = 1.0f, float rhsScale = 1.0f,
     float outputScale = 1.0f, int64_t zeroPoint = 0,
     tflite::ActivationFunctionType activation = tflite::ActivationFunctionType::NONE,
-    int compactLocations = 0, bool constantRhs = false)
+    int compactLocations = 0, bool constantRhs = false,
+    tflite::BuiltinOperator binaryOperator = tflite::BuiltinOperator::ADD)
 {
     flatbuffers::FlatBufferBuilder builder;
     const std::vector<int64_t> zeroPoints = {zeroPoint};
@@ -208,12 +209,15 @@ flatbuffers::DetachedBuffer BuildAddModel(float lhsScale = 1.0f, float rhsScale 
             constantRhs ? 1 : 0, "rhs", rhsQuant),
         tflite::CreateTensorDirect(builder, &shape, tflite::TensorType::INT8, 0, "output", outputQuant),
     };
-    const auto options = tflite::CreateAddOptions(builder, activation, false);
+    const auto addOptions = tflite::CreateAddOptions(builder, activation, false);
+    const auto subOptions = tflite::CreateSubOptions(builder, activation, false);
+    const bool subtract = binaryOperator == tflite::BuiltinOperator::SUB;
     const std::vector<int32_t> opInputs = {0, 1};
     const std::vector<int32_t> opOutputs = {2};
     const std::vector<flatbuffers::Offset<tflite::Operator>> operations = {
         tflite::CreateOperatorDirect(builder, 0, &opInputs, &opOutputs,
-            tflite::BuiltinOptions::AddOptions, options.Union()),
+            subtract ? tflite::BuiltinOptions::SubOptions : tflite::BuiltinOptions::AddOptions,
+            subtract ? subOptions.Union() : addOptions.Union()),
     };
     const std::vector<int32_t> graphInputs = constantRhs ?
         std::vector<int32_t>{0} : std::vector<int32_t>{0, 1};
@@ -223,8 +227,8 @@ flatbuffers::DetachedBuffer BuildAddModel(float lhsScale = 1.0f, float rhsScale 
             builder, &tensors, &graphInputs, &graphOutputs, &operations, "main"),
     };
     const std::vector<flatbuffers::Offset<tflite::OperatorCode>> operatorCodes = {
-        tflite::CreateOperatorCodeDirect(builder, int8_t(tflite::BuiltinOperator::ADD),
-            nullptr, 1, tflite::BuiltinOperator::ADD),
+        tflite::CreateOperatorCodeDirect(builder, int8_t(binaryOperator),
+            nullptr, 1, binaryOperator),
     };
     const auto model = tflite::CreateModelDirect(
         builder, 3, &operatorCodes, &subgraphs, "Neural-AI Add test", &buffers);
@@ -1840,11 +1844,14 @@ TEST_CASE("Neural-AI constraints keep compact plane Add linear")
         query.ofm.quantization = &quantization;
 
         ArchRequirements requirements;
-        REQUIRE(constraints->OperatorQuery(OpType::Add, &query, &requirements) ==
-            QueryResult::NativeHasReq);
-        for ( const ArchTensorRequirement *tensor = &requirements.tensor; tensor != nullptr;
-              tensor = tensor->next )
-            REQUIRE(tensor->format == TensorFormat::CompactNHWC);
+        for ( const OpType opType : {OpType::Add, OpType::Sub} )
+        {
+            REQUIRE(constraints->OperatorQuery(opType, &query, &requirements) ==
+                QueryResult::NativeHasReq);
+            for ( const ArchTensorRequirement *tensor = &requirements.tensor; tensor != nullptr;
+                  tensor = tensor->next )
+                REQUIRE(tensor->format == TensorFormat::CompactNHWC);
+        }
     }
 }
 
@@ -3249,7 +3256,9 @@ TEST_CASE("Neural-AI AFU Add reads a C32-aligned slice without materialization")
 TEST_CASE("Neural-AI compiler lowers quantized Add through Spatz")
 {
     const auto lowersToSpatz = [](flatbuffers::DetachedBuffer model, uint32_t expectedBytes,
-                                   bool expectConstantStaging = false)
+                                   bool expectConstantStaging = false,
+                                   neuralai::SpatzBinaryMode expectedMode =
+                                       neuralai::SpatzBinaryMode::Add)
     {
         std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
         Compiler compiler(architecture);
@@ -3283,6 +3292,7 @@ TEST_CASE("Neural-AI compiler lowers quantized Add through Spatz")
                 REQUIRE(int32_t(Read32(data + offset + 52)) > 0);
                 REQUIRE(int32_t(Read32(data + offset + 60)) > 0);
                 REQUIRE(Read32(data + offset + 88) == 20);
+                REQUIRE(Read32(data + offset + 92) == uint32_t(expectedMode));
                 ++spatzCommands;
             }
             if ( type == uint16_t(neuralai::CommandType::DMA1D) &&
@@ -3310,6 +3320,9 @@ TEST_CASE("Neural-AI compiler lowers quantized Add through Spatz")
         tflite::ActivationFunctionType::NONE, 37), 74);
     lowersToSpatz(BuildAddModel(1.0f, 0.5f, 1.0f, 0,
         tflite::ActivationFunctionType::NONE, 37, true), 74, true);
+    lowersToSpatz(BuildAddModel(1.0f, 0.5f, 1.0f, 0,
+        tflite::ActivationFunctionType::NONE, 37, false,
+        tflite::BuiltinOperator::SUB), 74, false, neuralai::SpatzBinaryMode::Subtract);
 }
 
 TEST_CASE("Neural-AI canonicalizes a private clamped Conv producer for raw AFU Add")

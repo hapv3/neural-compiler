@@ -19,7 +19,7 @@ namespace regor::neuralai
 constexpr uint32_t ModelMagic = 0x4D49414EU;       // "NAIM" in little-endian storage
 constexpr uint32_t InvocationMagic = 0x5649414EU;  // "NAIV" in little-endian storage
 constexpr uint16_t AbiMajor = 1;
-constexpr uint16_t AbiMinor = 1;
+constexpr uint16_t AbiMinor = 2;
 constexpr uint32_t TargetId = 1;
 constexpr uint32_t Alignment = 32;
 
@@ -335,6 +335,12 @@ enum class AFUBinaryMode : uint32_t
     AddI8 = 1,
 };
 
+enum class SpatzBinaryMode : uint32_t
+{
+    Add = 0,
+    Subtract = 1,
+};
+
 struct CommandAFUBinaryV2
 {
     CommandHeaderV2 header;
@@ -365,7 +371,7 @@ struct CommandSpatzAddV2
     int32_t clampMin;
     int32_t clampMax;
     uint32_t doubleRoundShift;
-    uint32_t reserved;
+    uint32_t mode;
 };
 
 struct CommandAFUGlobalAvgPoolV2

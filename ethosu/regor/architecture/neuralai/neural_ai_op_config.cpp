@@ -60,7 +60,8 @@ int NeuralAIOpGroup::Add(const ArchitectureOpGroupQuery &op, const std::vector<i
     if ( !dependsOn.empty() ||
          (op.type != OpType::FullyConnected && op.type != OpType::MatMul &&
              op.type != OpType::Conv2D && op.type != OpType::DepthwiseConv2D &&
-             op.type != OpType::LUT && op.type != OpType::Add && op.type != OpType::AvgPool &&
+             op.type != OpType::LUT && op.type != OpType::Add && op.type != OpType::Sub &&
+             op.type != OpType::AvgPool &&
              op.type != OpType::MaxPool &&
             op.type != OpType::Concat &&
             op.type != OpType::Transpose &&
@@ -72,7 +73,7 @@ int NeuralAIOpGroup::Add(const ArchitectureOpGroupQuery &op, const std::vector<i
     _hasOp = true;
     _allowsActivation = op.type == OpType::FullyConnected || op.type == OpType::MatMul ||
                         op.type == OpType::Conv2D || op.type == OpType::DepthwiseConv2D;
-    _allowsIFMReuse = op.type != OpType::Add && op.type != OpType::LUT &&
+    _allowsIFMReuse = op.type != OpType::Add && op.type != OpType::Sub && op.type != OpType::LUT &&
                       op.type != OpType::AvgPool && op.type != OpType::MaxPool &&
                       op.type != OpType::Concat && op.type != OpType::Transpose;
     if ( op.type == OpType::Dfl ) _allowsIFMReuse = false;

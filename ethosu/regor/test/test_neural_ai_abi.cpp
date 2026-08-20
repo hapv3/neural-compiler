@@ -108,6 +108,7 @@ TEST_CASE("neural_ai_abi freezes Spatz quantized Add command layout")
     command.clampMin = -100;
     command.clampMax = 100;
     command.doubleRoundShift = 20;
+    command.mode = uint32_t(SpatzBinaryMode::Subtract);
 
     REQUIRE(command.header.type == 16);
     REQUIRE(command.header.sizeBytes == 96);
@@ -116,7 +117,7 @@ TEST_CASE("neural_ai_abi freezes Spatz quantized Add command layout")
     REQUIRE(command.lhsZeroPoint == -3);
     REQUIRE(command.clampMax == 100);
     REQUIRE(command.doubleRoundShift == 20);
-    REQUIRE(command.reserved == 0);
+    REQUIRE(command.mode == 1);
 }
 
 TEST_CASE("neural_ai_abi freezes AFU LUT command layout")

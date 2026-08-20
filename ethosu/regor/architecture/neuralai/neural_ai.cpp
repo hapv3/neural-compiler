@@ -100,7 +100,7 @@ std::unique_ptr<ArchitectureOpConfig> ArchNeuralAI::GetOpConfig(OpType opType, c
     if ( opType != OpType::FullyConnected && opType != OpType::MatMul && opType != OpType::Conv2D &&
          opType != OpType::DepthwiseConv2D &&
          opType != OpType::LUT &&
-         opType != OpType::Add &&
+         opType != OpType::Add && opType != OpType::Sub &&
          opType != OpType::AvgPool &&
          opType != OpType::MaxPool &&
          opType != OpType::Concat &&
@@ -130,7 +130,7 @@ std::unique_ptr<ArchitectureOpConfig> ArchNeuralAI::GetOpConfig(OpType opType, c
     if ( opType == OpType::FullyConnected ) mode = NeuralAIOpMode::FullyConnectedRow32;
     else if ( opType == OpType::MatMul ) mode = NeuralAIOpMode::MatMulRow32;
     else if ( opType == OpType::LUT ) mode = NeuralAIOpMode::AFULutI8;
-    else if ( opType == OpType::Add ) mode = NeuralAIOpMode::AddI8;
+    else if ( opType == OpType::Add || opType == OpType::Sub ) mode = NeuralAIOpMode::AddI8;
     else if ( opType == OpType::AvgPool )
         mode = query.ifmResampling == ArchResampling::Nearest ?
             NeuralAIOpMode::UpsampleNearestC32 : NeuralAIOpMode::AFUGlobalAvgPoolC32;

@@ -312,7 +312,9 @@ void NeuralAIGraphOptimiser::InsertInputConversion(Graph *graph, Operation *oper
 {
     const TensorConnection original = *operation->Input(usage);
     const bool graphInput = graph->IsInput(original.tensor.get());
-    const bool stagedAddConstant = operation->Type() == OpType::Add && original.tensor->IsConstant();
+    const bool stagedAddConstant =
+        (operation->Type() == OpType::Add || operation->Type() == OpType::Sub) &&
+        original.tensor->IsConstant();
     if ( !graphInput && !stagedAddConstant ) return;
     const Kernel *kernel = operation->Kernel();
     TensorConnection *stemOutput = operation->Output(TensorUsage::OFM);
@@ -794,13 +796,15 @@ void NeuralAIGraphOptimiser::OptimiseGraph(Graph *graph)
         if ( operation->Type() != OpType::FullyConnected && operation->Type() != OpType::MatMul &&
              operation->Type() != OpType::Conv2D && operation->Type() != OpType::DepthwiseConv2D &&
              operation->Type() != OpType::LUT && operation->Type() != OpType::Add &&
+             operation->Type() != OpType::Sub &&
              operation->Type() != OpType::AvgPool && operation->Type() != OpType::Resize &&
              operation->Type() != OpType::MaxPool && operation->Type() != OpType::Concat &&
              operation->Type() != OpType::Transpose && operation->Type() != OpType::Dfl ) continue;
         InsertInputConversion(graph, operation.get(), TensorUsage::IFM0);
         if ( operation->Type() == OpType::Concat && operation->Input(TensorUsage::IFM2) != nullptr )
             InsertInputConversion(graph, operation.get(), TensorUsage::IFM2);
-        if ( operation->Type() == OpType::Add || operation->Type() == OpType::Concat ||
+        if ( operation->Type() == OpType::Add || operation->Type() == OpType::Sub ||
+             operation->Type() == OpType::Concat ||
              ((operation->Type() == OpType::Transpose || operation->Type() == OpType::Dfl) &&
                  operation->Input(TensorUsage::IFM1) != nullptr) )
             InsertInputConversion(graph, operation.get(), TensorUsage::IFM1);

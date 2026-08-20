@@ -93,7 +93,7 @@ bool HasRawAverageQuantization(const ArchFM &ifm, const ArchFM &ofm)
 bool NeuralAIConstraints::IsSupportedOp(OpType opType)
 {
     return opType == OpType::FullyConnected || opType == OpType::MatMul || opType == OpType::Conv2D ||
-           opType == OpType::Add || opType == OpType::AvgPool || opType == OpType::LUT ||
+           opType == OpType::Add || opType == OpType::Sub || opType == OpType::AvgPool || opType == OpType::LUT ||
            opType == OpType::Sigmoid || IsClipping(opType) ||
            opType == OpType::DepthwiseConv2D || opType == OpType::Resize ||
            opType == OpType::MaxPool || opType == OpType::Concat ||
@@ -476,7 +476,7 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
     {
         return QueryResult::Unsupported;
     }
-    if ( opType == OpType::Add )
+    if ( opType == OpType::Add || opType == OpType::Sub )
     {
         if ( query->ifm[0].type != DataType::Int8 || query->ifm[1].type != DataType::Int8 ||
              query->ofm.type != DataType::Int8 ||
@@ -636,7 +636,7 @@ bool NeuralAIConstraints::SupportedZeroPoint(int64_t zeroPoint, TensorUsage usag
          opType == OpType::Concat ||
          IsClipping(opType) )
         return (IsIFM(usage) || IsOFM(usage)) && zeroPoint >= -128 && zeroPoint <= 127;
-    if ( opType == OpType::Add )
+    if ( opType == OpType::Add || opType == OpType::Sub )
         return (IsIFM(usage) || IsOFM(usage)) && zeroPoint >= -128 && zeroPoint <= 127;
     if ( opType == OpType::AvgPool )
         return (IsIFM(usage) || IsOFM(usage)) && zeroPoint >= -128 && zeroPoint <= 127;
