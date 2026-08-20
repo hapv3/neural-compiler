@@ -158,7 +158,7 @@ new runtime path has not yet passed E2E.
 | YOLO C144 head transpose | Verified fallback | standalone heads retain vectorized C32-to-CHW materialization |
 | DFL16 projection | Verified | selected heads feed C64/C80 C32 directly; box-scale requant is folded into each DFL command |
 | Async DMA and overlap | Not implemented | blocking execution remains correct; performance phase |
-| Full selected graphs | P0 workspace blocked | all selected operators lower; scheduled tensors use 517,120 bytes, while conservatively appended command workspaces now total 833,568 bytes |
+| Full selected graphs | P0 memory-placement blocked | all selected operators lower; lifetime-aware command workspaces reuse TCDM gaps, but op 7 still sees 512,000 live tensor bytes before its local stage/partial buffers |
 
 The focused Regor suite passes 114 Neural-AI cases and 39,656 assertions; the
 complete suite passes 253 cases and 649,508 assertions (the randomized suite's
@@ -308,15 +308,37 @@ the 445,750-cycle fast-path reference, but still about 1.2% below the older
 ### P0 — Complete full-graph command-workspace feasibility
 
 The current full YOLO schedule has a 517,120-byte tensor high-water mark, down
-from 1,659,008 bytes and below the 520,192-byte limit. All selected operators
-now reach the final command-workspace check without scalar or CPU fallback.
-That check currently reports 833,568 bytes because it conservatively appends
-73,728 bytes of linebuffer weight staging, 32,768 bytes of partial sums, and
-209,952 bytes of stripe staging after the global tensor high-water mark. These
-workspaces are not all live with the graph's peak tensors; place/reuse them by
-operation lifetime before claiming full-graph memory feasibility. K3 weights
-are now DMA-staged one output group at a time; the focused C96-to-C64 block test
-checks both 27,648-byte group transfers and reset weight offsets.
+from 1,659,008 bytes and below the 520,192-byte limit. Command workspaces are
+now placed in free TCDM gaps by operation/cascade lifetime rather than appended
+after the global peak. The focused suite remains green, but the full graph
+stops at op 7: 512,000 live tensor bytes leave no room for its 9,216-byte stage
+and 32,768-byte partial buffers. K3 weights are DMA-staged one output group at
+a time; the C96-to-C64 block test checks both 27,648-byte transfers.
+
+Adopt the U85 dedicated-SRAM policy at the memory-role level, with one crucial
+Neural-AI difference:
+
+- U85 arena DRAM maps to a relocatable Neural-AI L2 temporary arena.
+- U85 cache SRAM maps to the 520,192-byte allocatable TCDM arena.
+- Long-lived/cold feature maps spill to L2; operator tiles, rolling buffers,
+  weights, partial sums, LUTs, and other hot data remain in TCDM.
+- Unlike U85, Neural-AI AFU/Spatz/systolic engines cannot consume arbitrary L2
+  feature maps directly. Every spilled operand therefore needs compiler-owned
+  tiled DMA reload/store commands around the local operator tile.
+
+The package writer, runtime loader/resolver, and trusted dispatcher now accept
+exactly one `L2Temporary` binding at index 0, and the architecture models a
+separate 32-bit L2 arena. Do not switch `FeatureMapMemory` to L2 until block
+tests prove spill/reload/store for Conv, Add/Sub, Concat/view materialization,
+and public-boundary copies. A trial role switch correctly exposed these missing
+transfers and was not committed.
+
+Next verified increments:
+
+1. Add scheduler-visible L2 spill slots and reserve per-op TCDM tile workspace.
+2. Block-test DMA L2→TCDM→operator→TCDM→L2 for Conv, Add/Sub, and Concat.
+3. Enable `FeatureMapMemory=L2`, `StagingMemory=TCDM`, then rerun all 114 unit
+   tests and full YOLO compilation before any Verilator run.
 
 Completed path:
 
