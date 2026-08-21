@@ -5295,6 +5295,8 @@ TEST_CASE("Neural-AI compiler materializes selected YOLO C64+C80 head Concat")
     const bool compiled = compiler.Compile();
     INFO(compiler.LastError());
     REQUIRE(compiled);
+    REQUIRE(compiler.LastPerfResult().cpuOps == 0);
+    REQUIRE(compiler.LastPerfResult().npuOps > 0);
 
     IRegorBlob *blob = compiler.Output();
     REQUIRE(blob != nullptr);

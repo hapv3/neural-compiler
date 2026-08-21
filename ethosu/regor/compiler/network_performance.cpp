@@ -258,6 +258,15 @@ PerformanceResult NetworkPerformance::ProcessOpPerformance(SchedulerOperation *s
         perf.npuOps = 1;
         perf.memory[_arch->StagingMemory().memory].peakUsage = schedule->MemoryUsageAt(cost->timeIndex);
     }
+    else if ( _arch->UsesSelectiveSpilling() && schedOp->Type() == OpType::Passthrough )
+    {
+        // Neural-AI lowers its constrained Passthrough Concat forms directly to
+        // package DMA commands. They intentionally remain outside the generic
+        // architecture op-group path, but are not firmware CPU operations.
+        perf.npuOps = 1;
+        perf.memory[_arch->StagingMemory().memory].peakUsage =
+            schedule->MemoryUsageAt(cost->timeIndex);
+    }
     else
     {
         perf.cpuCycles = 1;  // TODO: model CPU cycle counts
