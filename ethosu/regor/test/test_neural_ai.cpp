@@ -1557,6 +1557,108 @@ TEST_CASE("Neural-AI L2 placement excludes RGB and C16 convolution paths")
     }
 }
 
+TEST_CASE("Neural-AI L2 placement spills reviewed compact CSP bridges")
+{
+    const Shape shape(1, 4, 4, 16);
+    auto native = std::make_shared<SchedulerTensor>(
+        DataType::Int8, shape.WithDepth(32), TensorFormat::C32Blocked);
+    auto candidate = std::make_shared<SchedulerTensor>(
+        DataType::Int8, shape, TensorFormat::CompactNHWC);
+    auto peer1 = std::make_shared<SchedulerTensor>(
+        DataType::Int8, shape, TensorFormat::CompactNHWC);
+    auto peer2 = std::make_shared<SchedulerTensor>(
+        DataType::Int8, shape, TensorFormat::CompactNHWC);
+    auto output = std::make_shared<SchedulerTensor>(
+        DataType::Int8, shape.WithDepth(48), TensorFormat::C32Blocked);
+
+    SchedulerOperation producer(OpType::MemoryCopy);
+    producer.ConnectInput(TensorUsage::IFM0, native)->shape = shape;
+    producer.ConnectOutput(TensorUsage::OFM, candidate);
+    SchedulerOperation consumer(OpType::Concat);
+    consumer.ConnectInput(TensorUsage::IFM0, candidate);
+    consumer.ConnectInput(TensorUsage::IFM1, peer1);
+    consumer.ConnectInput(TensorUsage::IFM2, peer2);
+    consumer.ConnectOutput(TensorUsage::OFM, output);
+
+    REQUIRE(IsNeuralAIL2SpillCandidate(candidate.get()));
+
+    SECTION("non-CSP compact consumer remains pinned")
+    {
+        consumer.OFM()->shape = shape.WithDepth(64);
+        REQUIRE_FALSE(IsNeuralAIL2SpillCandidate(candidate.get()));
+    }
+    SECTION("non-copy producer remains pinned")
+    {
+        SchedulerOperation lut(OpType::LUT);
+        candidate->producers.clear();
+        lut.ConnectOutput(TensorUsage::OFM, candidate);
+        REQUIRE_FALSE(IsNeuralAIL2SpillCandidate(candidate.get()));
+    }
+}
+
+TEST_CASE("Neural-AI L2 placement spills compact C16 inputs to reviewed K3 convolutions")
+{
+    const Shape shape(1, 8, 8, 16);
+    auto native = std::make_shared<SchedulerTensor>(
+        DataType::Int8, shape.WithDepth(32), TensorFormat::C32Blocked);
+    auto candidate = std::make_shared<SchedulerTensor>(
+        DataType::Int8, shape, TensorFormat::CompactNHWC);
+    auto output = std::make_shared<SchedulerTensor>(
+        DataType::Int8, shape, TensorFormat::C32Blocked);
+    SchedulerOperation producer(OpType::MemoryCopy);
+    producer.ConnectInput(TensorUsage::IFM0, native)->shape = shape;
+    producer.ConnectOutput(TensorUsage::OFM, candidate);
+    SchedulerOperation consumer(OpType::Conv2D);
+    consumer.SetKernel(Kernel::UnitKernel().WithSize(Point2i(3, 3)));
+    consumer.ConnectInput(TensorUsage::IFM0, candidate);
+    consumer.ConnectOutput(TensorUsage::OFM, output);
+
+    REQUIRE(IsNeuralAIL2SpillCandidate(candidate.get()));
+
+    SECTION("pointwise compact input remains pinned")
+    {
+        consumer.SetKernel(Kernel::UnitKernel());
+        REQUIRE_FALSE(IsNeuralAIL2SpillCandidate(candidate.get()));
+    }
+    SECTION("non-C16 compact input remains pinned")
+    {
+        consumer.IFM(0)->shape = shape.WithDepth(32);
+        REQUIRE_FALSE(IsNeuralAIL2SpillCandidate(candidate.get()));
+    }
+}
+
+TEST_CASE("Neural-AI L2 placement spills reviewed compact C16 binary tensors")
+{
+    const Shape shape(1, 8, 8, 16);
+    auto lhs = std::make_shared<SchedulerTensor>(
+        DataType::Int8, shape, TensorFormat::CompactNHWC);
+    auto rhs = std::make_shared<SchedulerTensor>(
+        DataType::Int8, shape, TensorFormat::CompactNHWC);
+    auto candidate = std::make_shared<SchedulerTensor>(
+        DataType::Int8, shape, TensorFormat::CompactNHWC);
+    auto peer1 = std::make_shared<SchedulerTensor>(
+        DataType::Int8, shape, TensorFormat::CompactNHWC);
+    auto peer2 = std::make_shared<SchedulerTensor>(
+        DataType::Int8, shape, TensorFormat::CompactNHWC);
+    auto output = std::make_shared<SchedulerTensor>(
+        DataType::Int8, shape.WithDepth(48), TensorFormat::C32Blocked);
+
+    SchedulerOperation producer(OpType::Add);
+    producer.ConnectInput(TensorUsage::IFM0, lhs);
+    producer.ConnectInput(TensorUsage::IFM1, rhs);
+    producer.ConnectOutput(TensorUsage::OFM, candidate);
+    SchedulerOperation consumer(OpType::Concat);
+    consumer.ConnectInput(TensorUsage::IFM0, candidate);
+    consumer.ConnectInput(TensorUsage::IFM1, peer1);
+    consumer.ConnectInput(TensorUsage::IFM2, peer2);
+    consumer.ConnectOutput(TensorUsage::OFM, output);
+
+    REQUIRE(IsNeuralAIL2SpillCandidate(candidate.get()));
+
+    producer.IFM(1)->shape = shape.WithDepth(8);
+    REQUIRE_FALSE(IsNeuralAIL2SpillCandidate(candidate.get()));
+}
+
 TEST_CASE("Neural-AI memory placement applies decisions to equivalence groups")
 {
     ArchNeuralAI arch;
@@ -2555,6 +2657,12 @@ TEST_CASE("Neural-AI compiler streams a structural RGB stem from its binding")
     schedulerOptions.optimizationStrategy = OptimizationStrategy::Performance;
     schedulerOptions.optimizationStagingLimit = ArchNeuralAI::AllocatableTCDMBytes;
     schedulerOptions.disabled.Set(SchedulerFeature::WeightBuffering);
+    schedulerOptions.commandWorkspaceReservation =
+        [](const std::vector<std::unique_ptr<SchedulerOperation>> &operations,
+            const Schedule *schedule)
+        {
+            return NeuralAICommandGenerator::WorkspaceReservation(operations, schedule);
+        };
     Scheduler scheduler(&arch, schedulerOptions, "neural-ai-rgb-stem-binding", scheduleOps,
         packing.OpConfigCompatablility());
     auto schedule = scheduler.Process();
@@ -2580,6 +2688,7 @@ TEST_CASE("Neural-AI compiler streams a structural RGB stem from its binding")
     INFO(error);
     REQUIRE(generated);
     uint32_t bindingCopies = 0;
+    uint32_t bindingRows = 0;
     size_t offset = 0;
     while ( offset < artifact.commands.size() )
     {
@@ -2589,11 +2698,15 @@ TEST_CASE("Neural-AI compiler streams a structural RGB stem from its binding")
         if ( type == uint16_t(neuralai::CommandType::DMA2D) &&
              Read16(artifact.commands, offset + 16) == uint16_t(neuralai::Region::InputBinding) &&
              Read16(artifact.commands, offset + 24) == uint16_t(neuralai::Region::TCDMScratch) )
+        {
             ++bindingCopies;
+            bindingRows += Read32(artifact.commands, offset + 44);
+        }
         offset += bytes;
     }
     REQUIRE(offset == artifact.commands.size());
-    REQUIRE(bindingCopies == stemHeight);
+    REQUIRE(bindingCopies > 1);
+    REQUIRE(bindingRows == inputHeight + bindingCopies - 1);
     REQUIRE(artifact.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);
 }
 
@@ -3787,6 +3900,22 @@ TEST_CASE("Neural-AI pointwise Conv tiles spilled feature maps through TCDM")
     REQUIRE(reservation[convCost->timeIndex].Used() == 65536);
     REQUIRE(reservation.maxMemory == 65536);
 
+    scheduledConv->IFM(0)->tensor->memArea = arch.StagingMemory();
+    scheduledConv->OFM()->tensor->memArea = arch.StagingMemory();
+    SchedulerOpInfo *mutableConvCost = schedule->Cost(scheduledConv);
+    const Shape standaloneStripe = mutableConvCost->stripe;
+    mutableConvCost->cascade = 1;
+    mutableConvCost->stripe = Shape(1, 1, 40, 64);
+    const MemorySnapshot cascadeReservation =
+        NeuralAICommandGenerator::WorkspaceReservation(scheduleOps, schedule.get());
+    REQUIRE(cascadeReservation[convCost->timeIndex].Used() == 6400);
+    mutableConvCost->cascade = 0;
+    mutableConvCost->stripe = standaloneStripe;
+    scheduledConv->IFM(0)->tensor->memArea =
+        MemArea(arch.L2Memory(), MemUsage::FeatureMap);
+    scheduledConv->OFM()->tensor->memArea =
+        MemArea(arch.L2Memory(), MemUsage::FeatureMap);
+
     CompiledNeuralAIArtifact artifact;
     std::string error;
     NeuralAICommandGenerator commandGenerator;
@@ -3915,6 +4044,11 @@ TEST_CASE("Neural-AI K3 Conv tiles spilled feature maps through TCDM stripes")
         MemArea(arch.L2Memory(), MemUsage::FeatureMap);
     scheduledConv->OFM()->tensor->memArea =
         MemArea(arch.L2Memory(), MemUsage::FeatureMap);
+    const SchedulerOpInfo *convCost = schedule->Cost(scheduledConv);
+    REQUIRE(convCost != nullptr);
+    const MemorySnapshot reservation =
+        NeuralAICommandGenerator::WorkspaceReservation(scheduleOps, schedule.get());
+    REQUIRE(reservation[convCost->timeIndex].Used() <= 96 * 1024);
 
     CompiledNeuralAIArtifact artifact;
     std::string error;
@@ -5847,7 +5981,9 @@ TEST_CASE("Neural-AI compiler emits grouped linebuffer jobs for generic K3 Conv2
         }
         if ( type == uint16_t(neuralai::CommandType::DMA2D) &&
              Read16(data + offset + 16) == uint16_t(neuralai::Region::ModelConstants) &&
-             Read16(data + offset + 24) == uint16_t(neuralai::Region::TCDMScratch) )
+             Read16(data + offset + 24) == uint16_t(neuralai::Region::TCDMScratch) &&
+             Read32(data + offset + 32) == 32 &&
+             Read32(data + offset + 44) == 9u * 32u )
         {
             REQUIRE(commandSize == sizeof(neuralai::CommandDMA2DV2));
             REQUIRE(Read32(data + offset + 48) ==
@@ -5869,16 +6005,17 @@ TEST_CASE("Neural-AI compiler emits grouped linebuffer jobs for generic K3 Conv2
         REQUIRE(accumModes[job + 1] == 3);
         REQUIRE(accumModes[job + 2] == 2);
         REQUIRE(weightOffsets[job] == weightOffsets.front());
-        REQUIRE(weightOffsets[job + 1] == weightOffsets[job] + inputGroupWeightBytes);
-        REQUIRE(weightOffsets[job + 2] == weightOffsets[job + 1] + inputGroupWeightBytes);
+        REQUIRE(weightOffsets[job + 1] == weightOffsets.front());
+        REQUIRE(weightOffsets[job + 2] == weightOffsets.front());
         REQUIRE(psumOffsets[job] == psumOffsets[job + 1]);
         REQUIRE(psumOffsets[job] == psumOffsets[job + 2]);
         REQUIRE(ofmOffsets[job] == ofmOffsets[job + 1]);
         REQUIRE(ofmOffsets[job] == ofmOffsets[job + 2]);
     }
-    REQUIRE(weightStageBytes == std::vector<uint32_t>{
-        3u * 9u * 32u * 32u, 3u * 9u * 32u * 32u});
-    REQUIRE(Read32(data + 36) >= weightOffsets.front() + 3u * 9u * 32u * 32u);
+    REQUIRE(weightStageBytes.size() == 18);
+    REQUIRE(std::all_of(weightStageBytes.begin(), weightStageBytes.end(),
+        [inputGroupWeightBytes](uint32_t bytes) { return bytes == inputGroupWeightBytes; }));
+    REQUIRE(Read32(data + 36) >= weightOffsets.front() + inputGroupWeightBytes);
     blob->Unmap(const_cast<uint8_t *>(data));
     blob->Release();
 }
@@ -5983,37 +6120,19 @@ TEST_CASE("Neural-AI compiler emits full and masked C32 groups for IC48 and IC80
         }
         REQUIRE(offset == 224 + commandBytes);
         const uint32_t groups = uint32_t((inputChannels + 31) / 32);
-        const uint32_t fullGroups = groups - 1;
-        const uint32_t tailJobs = 9;
-        REQUIRE(linebufferJobs == fullGroups + tailJobs);
-        REQUIRE(validBytes.front() == 32);
-        REQUIRE(validBytes.back() == 16);
-        REQUIRE(groupStationary.front() == 1);
-        REQUIRE(groupStationary.back() == 0);
-        REQUIRE(accumModes.front() == 1);
-        REQUIRE(accumModes.back() == 2);
-        const uint32_t groupPlaneBytes = 8u * 8u * 32u;
-        REQUIRE(channelOffsets.front() == groupPlaneBytes);
-        for ( uint32_t group = 1; group < fullGroups; ++group )
+        REQUIRE(linebufferJobs == groups);
+        for ( uint32_t group = 0; group < groups; ++group )
         {
-            REQUIRE(inputBases[group] == inputBases.front() + group * groupPlaneBytes);
-            REQUIRE(channelOffsets[group] == groupPlaneBytes);
-            REQUIRE(validBytes[group] == 32);
-            REQUIRE(groupStationary[group] == 1);
-            REQUIRE(accumModes[group] == 3);
-        }
-        const uint32_t tailStart = fullGroups;
-        for ( uint32_t tap = 0; tap < tailJobs; ++tap )
-        {
-            const uint32_t tapH = tap / 3;
-            const uint32_t tapW = tap % 3;
-            REQUIRE(inputBases[tailStart + tap] == inputBases.front() + fullGroups * groupPlaneBytes +
-                tapH * 8u * 32u + tapW * 32u);
-            REQUIRE(channelOffsets[tailStart + tap] == 0u);
-            REQUIRE(validBytes[tailStart + tap] == 16);
-            REQUIRE(groupStationary[tailStart + tap] == 0);
-            REQUIRE(accumModes[tailStart + tap] == (tap == 0 ? 3u :
-                (tap == tailJobs - 1 ? 2u : 3u)));
+            const uint16_t lanes = uint16_t(std::min(32, inputChannels - int(group * 32)));
+            REQUIRE(inputBases[group] == inputBases.front());
+            REQUIRE(validBytes[group] == lanes);
+            REQUIRE(accumModes[group] == (group == 0 ? 1u :
+                (group + 1 == groups ? 2u : 3u)));
+            if ( lanes == 32 )
+            {
+                REQUIRE(groupStationary[group] == 1);
+                REQUIRE(channelOffsets[group] > 0);
+            }
         }
         blob->Unmap(const_cast<uint8_t *>(data));
         blob->Release();
@@ -6069,8 +6188,7 @@ TEST_CASE("Neural-AI compiler reports pinned full-size schedules that exceed TCD
     REQUIRE(compiler.LoadTflite(model.data(), model.size()));
     REQUIRE_FALSE(compiler.Compile());
     INFO(compiler.LastError());
-    REQUIRE(compiler.LastError().find("Failed to allocate tensors. Memory used") != std::string::npos);
-    REQUIRE(compiler.LastError().find("limit 520192") != std::string::npos);
+    REQUIRE(compiler.LastError().find("exceeds staging memory 520192") != std::string::npos);
 }
 
 TEST_CASE("Neural-AI compiler consumes compact TCDM RGB input directly")

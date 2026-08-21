@@ -185,3 +185,41 @@ TEST_CASE("Cascade builder requests rolling-buffer reuse for binary op with prim
 
     REQUIRE(tensB->AllocatedAddress() == tensC->AllocatedAddress());
 }
+
+TEST_CASE("Cascade builder excludes an external first IFM from local cascade cost")
+{
+    auto arch = CreateArchDefault<ArchEthosU85>();
+    std::string error = "noerror";
+    arch->CheckConfiguration(error);
+    REQUIRE(error == "noerror");
+
+    const MemArea fast = arch->StagingMemory();
+    auto input = CreateTestTensor("external_input", Shape(8, 8, 16), arch->FeatureMapMemory());
+    auto intermediate = CreateTestTensor("intermediate", Shape(8, 8, 16), fast);
+    auto output = CreateTestTensor("output", Shape(8, 8, 16), fast);
+    std::vector<std::unique_ptr<SchedulerOperation>> ops;
+    ops.push_back(CreateTestSchedulerOperation(
+        arch, OpType::Abs, TensorUsage::IFM, input, TensorUsage::OFM, intermediate));
+    ops.push_back(CreateTestSchedulerOperation(
+        arch, OpType::Abs, TensorUsage::IFM, intermediate, TensorUsage::OFM, output));
+    SetOpIndices(ops);
+
+    auto refSchedule = CreateTestSchedule(arch, ops);
+    auto fallbackSchedule = CreateTestSchedule(arch, ops);
+    const Shape fullStripe = input->storageShape;
+    SetScheduleStripes(refSchedule.get(), ops, Shape(1, fullStripe.Width(), fullStripe.Depth()));
+    SetScheduleStripes(fallbackSchedule.get(), ops, fullStripe);
+
+    std::unordered_map<UniqueId, int> opLocalMemUsage;
+    opLocalMemUsage[ops[0]->Uid()] = intermediate->AllocationSizeBytes();
+    opLocalMemUsage[ops[1]->Uid()] =
+        intermediate->AllocationSizeBytes() + output->AllocationSizeBytes();
+    std::unordered_map<UniqueId, int> nonLocalMemUsage;
+    std::unordered_map<UniqueId, LiveRangeSummary> liveRanges;
+    CascadeBuilder cascadeBuilder(
+        arch.get(), ops, nonLocalMemUsage, opLocalMemUsage, liveRanges, false);
+    cascadeBuilder.BuildCascades(refSchedule.get(), fallbackSchedule.get(), 4096);
+
+    REQUIRE(refSchedule->Cost(ops[0].get())->cascade != 0);
+    REQUIRE(refSchedule->Cost(ops[0].get())->cascade == refSchedule->Cost(ops[1].get())->cascade);
+}

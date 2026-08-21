@@ -154,6 +154,56 @@ std::shared_ptr<Schedule> Scheduler::Process()
         }
     }
 
+    if ( _options.commandWorkspaceReservation && chosenSchedule != nullptr )
+    {
+        const Address physicalLimit = _options.allocationStagingLimit;
+        Address workspaceAwareLimit = physicalLimit;
+        while ( true )
+        {
+            UpdateOpMemorySnapshot(chosenSchedule.get());
+            const MemorySnapshot workspace =
+                _options.commandWorkspaceReservation(_ops, chosenSchedule.get());
+            Address tighterLimit = workspaceAwareLimit;
+            const int times = std::min(
+                int(chosenSchedule->memorySnapshot.memory.size()), int(workspace.memory.size()));
+            for ( int time = 0; time < times; ++time )
+            {
+                const Address tensorBytes = chosenSchedule->memorySnapshot[time].Used();
+                const Address workspaceBytes = workspace[time].Used();
+                if ( tensorBytes + workspaceBytes <= physicalLimit ) continue;
+                if ( workspaceBytes >= physicalLimit )
+                {
+                    throw std::runtime_error(fmt::format(
+                        "Command workspace reservation {} exceeds staging memory {} at time {}",
+                        workspaceBytes, physicalLimit, time));
+                }
+                tighterLimit = std::min(tighterLimit, physicalLimit - workspaceBytes);
+            }
+            if ( tighterLimit >= workspaceAwareLimit ) break;
+            workspaceAwareLimit = tighterLimit;
+            if ( !_options.disabled.All(SchedulerFeature::Cascading) )
+            {
+                auto workspaceMinSchedule = ProposeMinimalSchedule();
+                std::unordered_map<UniqueId, LiveRangeSummary> liveRanges;
+                std::unordered_map<UniqueId, int> opLocalMemUsage;
+                auto nonLocal = ComputeNonLocalUsage(
+                    workspaceMinSchedule.get(), &liveRanges, &opLocalMemUsage);
+                CascadeBuilder cascadeBuilder(
+                    _arch, _ops, nonLocal, opLocalMemUsage, liveRanges, _spilling);
+                cascadeBuilder.BuildCascades(workspaceMinSchedule.get(), _maxSchedule.get(),
+                    workspaceAwareLimit);
+                UpdateOpMemorySnapshot(workspaceMinSchedule.get());
+                chosenSchedule = OptimizeSchedule(
+                    workspaceMinSchedule.get(), optMaxSchedule, workspaceAwareLimit);
+            }
+            else
+            {
+                chosenSchedule = OptimizeSchedule(
+                    minSchedule.get(), optMaxSchedule, workspaceAwareLimit);
+            }
+        }
+    }
+
     if ( !_options.disabled.All(SchedulerFeature::WeightBuffering) )
     {
         CoalesceWeightBufferTensors(chosenSchedule.get());
@@ -182,6 +232,46 @@ std::shared_ptr<Schedule> Scheduler::Process()
     }
 
     UpdateOpMemorySnapshot(chosenSchedule.get());
+
+    if ( _options.commandWorkspaceReservation )
+    {
+        const MemorySnapshot workspace =
+            _options.commandWorkspaceReservation(_ops, chosenSchedule.get());
+        const int times = std::min(
+            int(chosenSchedule->memorySnapshot.memory.size()), int(workspace.memory.size()));
+        for ( int time = 0; time < times; ++time )
+        {
+            const Address tensorBytes = chosenSchedule->memorySnapshot[time].Used();
+            const Address workspaceBytes = workspace[time].Used();
+            if ( tensorBytes + workspaceBytes > _options.allocationStagingLimit )
+            {
+                std::string liveRanges;
+                LiveRangeGraph graph{!_options.disabled.All(SchedulerFeature::ReuseIFM)};
+                graph.ExtractLiveRangesFromCascades(
+                    _ops, chosenSchedule.get(), _arch->StagingMemory(), true);
+                for ( const auto &range : graph.LiveRanges() )
+                {
+                    if ( range->startTime > time || range->endTime < time || range->tensors.empty() )
+                        continue;
+                    liveRanges += fmt::format(" {}:{}", (*range->tensors.begin())->Name(), range->size);
+                }
+                std::string scheduledOperations;
+                for ( const auto &operation : _ops )
+                {
+                    const SchedulerOpInfo *cost = chosenSchedule->Cost(operation.get());
+                    if ( cost == nullptr || cost->timeIndex != time ) continue;
+                    scheduledOperations += fmt::format(" {}:{}:cascade{}:stripe{}",
+                        operation->Index(), operation->Type(), cost->cascade,
+                        cost->stripe.ToString());
+                }
+                throw std::runtime_error(fmt::format(
+                    "Fast-storage allocation uses {} tensor bytes plus {} command workspace bytes, "
+                    "exceeding staging memory {} at time {}; operations:{}; live ranges:{}",
+                    tensorBytes, workspaceBytes, _options.allocationStagingLimit, time,
+                    scheduledOperations, liveRanges));
+            }
+        }
+    }
 
     if ( _options.verboseSchedule )
     {

@@ -112,7 +112,7 @@ public:
     CascadeBuilder(const Architecture *arch, vector_span<std::unique_ptr<SchedulerOperation>> ops,
         const std::unordered_map<UniqueId, int> &nonLocalMemUsage, const std::unordered_map<UniqueId, int> &opLocalMemUsage,
         const std::unordered_map<UniqueId, LiveRangeSummary> &tensorLiveRanges, bool spilling);
-    static bool CanReuseCascadeRollingBuffer(const SchedulerOperation *op, const SchedulerOpInfo *opInfo,
+    bool CanReuseCascadeRollingBuffer(const SchedulerOperation *op, const SchedulerOpInfo *opInfo,
         const CascadeBuffer &ifmBuffer, const CascadeBuffer &ofmBuffer);
 
 public:

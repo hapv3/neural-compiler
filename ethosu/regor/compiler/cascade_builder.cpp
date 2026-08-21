@@ -175,8 +175,11 @@ void CascadeBuilder::BuildCascades(Schedule *refSchedule, Schedule *fallbackSche
         auto *refCost = refSchedule->Cost(op);
         int weightBufferSize = refCost->bufferedWeightTensor.AllocatedSize();
 
-        // The first IFM is stored in full unless spilling disables it.
-        const int ifmStoredSize = spillCascade ? 0 : ifm->tensor->AllocationSizeBytes();
+        // Count the first IFM only when it is physically resident in staging memory.
+        // Selective spilling can place an L2 IFM in front of an otherwise local
+        // rolling cascade, where it is reloaded stripe by stripe.
+        const int ifmStoredSize = ifm->tensor->memArea == _arch->StagingMemory() ?
+            ifm->tensor->AllocationSizeBytes() : 0;
 
         // Sum of all intermediate cascade buffers (including weight buffers)
         int cascadeBuffersSize = weightBufferSize;
@@ -412,6 +415,12 @@ bool CascadeBuilder::IsCascadable(const SchedulerOperation *op, SchedulerConnect
     OpType type = op->Type();
     auto ifm = ifmConn->tensor;
 
+    if ( _arch->UsesSelectiveSpilling() && IsConvolution(type) &&
+         op->Kernel()->Size() == Point2i(3, 3) && op->OFM()->shape.Depth() > 32 )
+    {
+        return false;
+    }
+
     if ( ifm->IsConstant() )
     {
         return false;
@@ -436,6 +445,12 @@ bool CascadeBuilder::IsCascadable(const SchedulerOperation *op, SchedulerConnect
 bool CascadeBuilder::CanReuseCascadeRollingBuffer(const SchedulerOperation *op, const SchedulerOpInfo *opInfo,
     const CascadeBuffer &ifmBuffer, const CascadeBuffer &ofmBuffer)
 {
+    // Neural-AI AFU LUT consumes and produces separate C32 buffers. It can
+    // remain inside a rolling cascade, but must not alias its input buffer.
+    if ( _arch->UsesSelectiveSpilling() && op->Type() == OpType::LUT )
+    {
+        return false;
+    }
     if ( !LiveRangeGraph::IsOp1To1(op) )
     {
         return false;

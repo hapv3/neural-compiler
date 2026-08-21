@@ -383,6 +383,7 @@ def print_regor_performance_metrics(
         "lutram": MemArea.Shram,
         "shram": MemArea.Shram,
         "tcdm": MemArea.Sram,
+        "l2": MemArea.Dram,
         "model": MemArea.Dram,
     }
 
@@ -392,6 +393,7 @@ def print_regor_performance_metrics(
         "onchipflash": PassCycles.OnChipFlashAccess,
         "offchipflash": PassCycles.OffChipFlashAccess,
         "tcdm": PassCycles.SramAccess,
+        "l2": PassCycles.DramAccess,
         "model": PassCycles.DramAccess,
     }
 

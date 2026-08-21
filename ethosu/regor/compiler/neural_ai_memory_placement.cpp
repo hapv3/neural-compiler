@@ -25,11 +25,28 @@ bool IsC32FeatureMap(const SchedulerConnection *connection)
            connection->SliceShape().Depth() > 0 && connection->SliceShape().Depth() % 32 == 0;
 }
 
+bool IsCompactC16FeatureMap(const SchedulerConnection *connection)
+{
+    return connection != nullptr && connection->tensor != nullptr &&
+           connection->tensor->format == TensorFormat::CompactNHWC &&
+           connection->Type() == DataType::Int8 && connection->shape.Size() == 4 &&
+           connection->shape.Batch() == 1 && connection->shape.Depth() == 16;
+}
+
 bool IsAlignedBinary(const SchedulerOperation *operation)
 {
     return IsC32FeatureMap(operation->TryIFM(0)) &&
            IsC32FeatureMap(operation->TryIFM(1)) &&
            IsC32FeatureMap(operation->outputs.try_ref(TensorUsage::OFM));
+}
+
+bool IsReviewedCompactBinary(const SchedulerOperation *operation)
+{
+    const SchedulerConnection *lhs = operation->TryIFM(0);
+    const SchedulerConnection *rhs = operation->TryIFM(1);
+    const SchedulerConnection *ofm = operation->outputs.try_ref(TensorUsage::OFM);
+    return IsCompactC16FeatureMap(lhs) && IsCompactC16FeatureMap(rhs) &&
+           IsCompactC16FeatureMap(ofm) && lhs->shape == rhs->shape && lhs->shape == ofm->shape;
 }
 
 bool IsReviewedConv(const SchedulerOperation *operation)
@@ -54,6 +71,41 @@ bool IsReviewedConcatInput(const SchedulerOperation *operation)
            IsC32FeatureMap(operation->outputs.try_ref(TensorUsage::OFM));
 }
 
+bool IsReviewedCompactCspConcatInput(const SchedulerOperation *operation)
+{
+    const SchedulerConnection *ifm0 = operation->TryIFM(0);
+    const SchedulerConnection *ifm1 = operation->TryIFM(1);
+    const SchedulerConnection *ifm2 = operation->TryIFM(2);
+    const SchedulerConnection *ofm = operation->outputs.try_ref(TensorUsage::OFM);
+    return IsCompactC16FeatureMap(ifm0) && IsCompactC16FeatureMap(ifm1) &&
+           IsCompactC16FeatureMap(ifm2) && ofm != nullptr &&
+           ofm->tensor->format == TensorFormat::C32Blocked && ofm->Type() == DataType::Int8 &&
+           ofm->shape.Size() == 4 && ofm->shape.Batch() == 1 && ofm->shape.Depth() == 48 &&
+           ifm0->shape.WithDepth(48) == ofm->shape &&
+           ifm1->shape == ifm0->shape && ifm2->shape == ifm0->shape;
+}
+
+bool IsReviewedCompactCopyOutput(const SchedulerOperation *operation)
+{
+    const SchedulerConnection *ifm = operation->TryIFM(0);
+    const SchedulerConnection *ofm = operation->outputs.try_ref(TensorUsage::OFM);
+    return ifm != nullptr && ifm->tensor->format == TensorFormat::C32Blocked &&
+           IsCompactC16FeatureMap(ofm) && ifm->Type() == DataType::Int8 &&
+           ifm->SliceShape() == ofm->SliceShape();
+}
+
+bool IsReviewedCompactLinebufferInput(
+    const SchedulerOperation *operation, const SchedulerTensor *tensor)
+{
+    const SchedulerConnection *ifm = operation->TryIFM(0);
+    const SchedulerConnection *ofm = operation->outputs.try_ref(TensorUsage::OFM);
+    return operation->Type() == OpType::Conv2D && operation->Kernel()->Size() == Point2i(3, 3) &&
+           ifm != nullptr && ifm->tensor.get() == tensor && IsCompactC16FeatureMap(ifm) &&
+           ofm != nullptr && ofm->tensor->format == TensorFormat::C32Blocked &&
+           ofm->Type() == DataType::Int8 && ofm->shape.Size() == 4 && ofm->shape.Batch() == 1 &&
+           ofm->shape.Height() > 0 && ofm->shape.Width() > 0 && ofm->shape.Depth() == 16;
+}
+
 bool SupportsL2Output(const SchedulerOperation *operation, const SchedulerTensor *tensor)
 {
     const SchedulerConnection *ofm = operation->outputs.try_ref(TensorUsage::OFM);
@@ -61,27 +113,35 @@ bool SupportsL2Output(const SchedulerOperation *operation, const SchedulerTensor
     switch ( operation->Type() )
     {
     case OpType::Add:
-    case OpType::Sub: return IsAlignedBinary(operation);
+    case OpType::Sub:
+        return IsAlignedBinary(operation) || IsReviewedCompactBinary(operation);
     case OpType::Conv2D: return IsReviewedConv(operation);
     case OpType::DepthwiseConv2D: return IsReviewedDepthwise(operation);
+    case OpType::MemoryCopy: return IsReviewedCompactCopyOutput(operation);
     default: return false;
     }
 }
 
 bool SupportsL2Input(const SchedulerOperation *operation, const SchedulerTensor *tensor)
 {
-    const SchedulerConnection *ifm0 = operation->TryIFM(0);
-    const SchedulerConnection *ifm1 = operation->TryIFM(1);
-    if ( (ifm0 == nullptr || ifm0->tensor.get() != tensor) &&
-         (ifm1 == nullptr || ifm1->tensor.get() != tensor) )
+    bool consumesTensor = false;
+    for ( const auto &[usage, connection] : operation->inputs.pairs() )
+    {
+        UNUSED(usage);
+        consumesTensor = consumesTensor || connection.tensor.get() == tensor;
+    }
+    if ( !consumesTensor )
         return false;
     switch ( operation->Type() )
     {
     case OpType::Add:
-    case OpType::Sub: return IsAlignedBinary(operation);
-    case OpType::Conv2D: return IsReviewedConv(operation);
+    case OpType::Sub:
+        return IsAlignedBinary(operation) || IsReviewedCompactBinary(operation);
+    case OpType::Conv2D:
+        return IsReviewedConv(operation) || IsReviewedCompactLinebufferInput(operation, tensor);
     case OpType::DepthwiseConv2D: return IsReviewedDepthwise(operation);
-    case OpType::Concat: return IsReviewedConcatInput(operation);
+    case OpType::Concat:
+        return IsReviewedConcatInput(operation) || IsReviewedCompactCspConcatInput(operation);
     default: return false;
     }
 }
@@ -91,7 +151,8 @@ bool SupportsL2Input(const SchedulerOperation *operation, const SchedulerTensor 
 bool IsNeuralAIL2SpillCandidate(const SchedulerTensor *tensor)
 {
     if ( tensor == nullptr || tensor->IsConstant() ||
-         tensor->format != TensorFormat::C32Blocked ||
+         (tensor->format != TensorFormat::C32Blocked &&
+             tensor->format != TensorFormat::CompactNHWC) ||
          tensor->isGraphInput || tensor->isGraphOutput || tensor->isPersistent ||
          tensor->hasCPUReaders || tensor->hasCPUWriters ||
          tensor->producers.empty() || tensor->consumers.empty() )
