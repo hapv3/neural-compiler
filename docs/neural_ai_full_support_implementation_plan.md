@@ -311,10 +311,10 @@ the 445,750-cycle fast-path reference, but still about 1.2% below the older
 
 Compiler feasibility is complete for the selected YOLO320 artifact. Commit
 `9e8b1962` emits a 3.7 MiB `.nai` with a 490 KiB TCDM peak and 3,440.88 KiB
-total DRAM/L2-backed memory. The compiler report contains 164 NPU and nine residual CPU
-graph operations and 968,004,000 MACs; the residual operations must be audited
-against the optimized command package before declaring model-level runtime
-support.
+total DRAM/L2-backed memory. The compiler report contains 173 command-lowered
+NPU operations, zero CPU operations, and 968,004,000 MACs. The nine operations
+previously reported as CPU were constrained Passthrough Concats already emitted
+as Neural-AI DMA commands; commit `601ea62c` corrects their accounting.
 
 The memory fix is time- and tile-aware rather than a global SRAM subtraction:
 
@@ -360,12 +360,9 @@ callback after cascade/time-index selection and before fast-storage allocation.
 
 Next verified increments:
 
-1. Audit the nine reported CPU operations against the optimized graph and
-   generated command coverage; add a constrained lowering or prove each is
-   removed/materialized by an existing reviewed path.
-2. Run focused runtime/block tests for adaptive pointwise tiles and grouped K3
+1. Run focused runtime/block tests for adaptive pointwise tiles and grouped K3
    C16-tail staging. Unit/block verification precedes any cluster test.
-3. Start the selected YOLO320 Verilator cluster test only after those blocks
+2. Start the selected YOLO320 Verilator cluster test only after those blocks
    pass; starting Verilator ends the Codex section immediately.
 
 Completed path:
@@ -429,8 +426,8 @@ one contiguous Spatz call. Both compact Sub instances use the same contiguous
 Spatz binary path and preserve positive-scale rounding. Source op 247 scalar
 Mul is one exact AFU LUT pass. Source op 252 final compact plane-axis Concat
 writes its three input intervals directly to the public output binding. The
-compiler package now fits within 520,192 bytes; next audit the nine residual
-CPU graph operations and verify the new tiled paths from block to cluster.
+compiler package now fits within 520,192 bytes with zero reported CPU fallback;
+next verify the new tiled paths from block to cluster.
 
 ### P3 — Performance and DMA overlap
 
