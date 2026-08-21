@@ -139,9 +139,9 @@ new runtime path has not yet passed E2E.
 | `.nai`, ABI v2, streaming dispatcher | Verified | V2-only firmware; relocatable references; malformed packages fail closed |
 | DMA 1D/2D/3D and boundaries | Verified | unaligned compact L2; native TCDM alignment; direction validation |
 | GEMM32, FC, MatMul | Verified | compiler-generated packages; invalid dimensions/quantization rejected |
-| Pointwise Conv | Verified | K1/S1/P0, C32 groups/tails, per-channel RQ; L2 feature-map tiling is compiler verified for up to 256 spatial rows |
+| Pointwise Conv | Verified | K1/S1/P0, C32 groups/tails, per-channel RQ; L2 tiles adapt from 1 to 256 rows to the TCDM available at the scheduled time |
 | RGB stem Conv | Verified | selected K3/S2 contract |
-| Generic C32 Conv K3 | Verified | full input/output groups; linebuffer path; aligned L2 feature-map stripes are compiler verified |
+| Generic C32 Conv K3 | Verified | input/output groups and C16 tails; standalone multi-group paths reuse one C32 feature/weight staging slot per input group |
 | Rolling Conv/LUT/Concat cascade | Compiler verified | full-width Y stripes; DMA3D Concat gather; rolling pointwise Conv; asymmetric padding fill |
 | Depthwise Conv K3 | Verified | selected S1/S2 contracts; multi-group L2 feature-map stripes are compiler verified |
 | Asymmetric Conv canonicalization | Verified | exact bias correction and padding behavior |
@@ -158,10 +158,10 @@ new runtime path has not yet passed E2E.
 | YOLO C144 head transpose | Verified fallback | standalone heads retain vectorized C32-to-CHW materialization |
 | DFL16 projection | Verified | selected heads feed C64/C80 C32 directly; box-scale requant is folded into each DFL command |
 | Async DMA and overlap | Not implemented | blocking execution remains correct; performance phase |
-| Full selected graphs | P0 memory-placement blocked | all selected operators lower; lifetime-aware command workspaces reuse TCDM gaps, but op 7 still sees 512,000 live tensor bytes before its local stage/partial buffers |
+| Full selected graphs | Compiler verified | selected YOLO320 emits a `.nai`; reported peaks are 490 KiB TCDM and 3,440.88 KiB total DRAM/L2-backed memory; block and cluster E2E remain |
 
-The focused Regor suite passes 124 Neural-AI cases and 40,569 assertions; the
-complete suite passes 268 cases and 625,419 assertions (the randomized suite's
+The focused Regor suite passes 127 Neural-AI cases and 39,622 assertions; the
+complete suite passes 272 cases and 631,246 assertions (the randomized suite's
 assertion total varies with its reported seed).
 Runtime ABI/host checks, cross-builds, firmware-size gates, and focused C144,
 DFL16, and MatMul V2 E2E tests pass.
@@ -216,9 +216,9 @@ the focused test had not written its invocation and binding table to L2.
   multi-group gather is therefore restricted to selected detection-tail merges
   that cannot be consumed as a split Conv; Micro-MobileNet has no corresponding
   Concat performance baseline.
-- Full YOLO compilation now passes both resize operations, all three MaxPools,
-  all three head transposes, and the DFL16/class chain, then stops at the
-  full-schedule TCDM capacity check. Structural compact C16 handling and striped
+- An earlier full-YOLO checkpoint passed both resize operations, all three
+  MaxPools, all three head transposes, and the DFL16/class chain, then stopped
+  at the full-schedule TCDM capacity check. Structural compact C16 handling and striped
   DMA3D Concat gathering reduced the original peak from 1,659,008 bytes.
   The compact C144x2100 merge is no longer materialized: each scale runs one
   fused scheduler operation that emits DFL16 plus class LUT, followed by compact
@@ -245,8 +245,10 @@ the focused test had not written its invocation and binding table to L2.
   into the three DFL producers and removed without materializing its 8,400-byte
   constant/output pass. Both contiguous coordinate-plane splits of
   `[1,4,2100]` into `[1,2,2100]` are now zero-copy aliases. Full-model command
-  generation passes these slices, the compact three-head Concat, and the
-  following constant Add; it next stops at the first compact Sub.
+  generation passed these slices, the compact three-head Concat, and the
+  following constant Add before stopping at the first compact Sub.
+- The current compiler passes those checkpoints and emits the selected YOLO320
+  `.nai` at a 490 KiB TCDM peak; runtime/block and cluster verification remain.
 
 ### Other retained evidence
 
@@ -305,15 +307,28 @@ selected `(51003, 8)` package is byte-exact at 463,094 cycles: about 3.9% above
 the 445,750-cycle fast-path reference, but still about 1.2% below the older
 468,781-cycle DFL16 reference and well below the 1,000,000-cycle gate.
 
-### P0 — Complete full-graph command-workspace feasibility
+### P0 — Verify the memory-feasible full graph end to end
 
-The current full YOLO schedule has a 517,120-byte tensor high-water mark, down
-from 1,659,008 bytes and below the 520,192-byte limit. Command workspaces are
-now placed in free TCDM gaps by operation/cascade lifetime rather than appended
-after the global peak. The focused suite remains green, but the full graph
-stops at op 7: 512,000 live tensor bytes leave no room for its 9,216-byte stage
-and 32,768-byte partial buffers. K3 weights are DMA-staged one output group at
-a time; the C96-to-C64 block test checks both 27,648-byte transfers.
+Compiler feasibility is complete for the selected YOLO320 artifact. Commit
+`9e8b1962` emits a 3.7 MiB `.nai` with a 490 KiB TCDM peak and 3,440.88 KiB
+total DRAM/L2-backed memory. The compiler report contains 164 NPU and nine residual CPU
+graph operations and 968,004,000 MACs; the residual operations must be audited
+against the optimized command package before declaring model-level runtime
+support.
+
+The memory fix is time- and tile-aware rather than a global SRAM subtraction:
+
+- scheduler feedback rebuilds cascades until tensor plus command-workspace
+  usage converges, then audits the post-cache schedule;
+- cascade matrix workspaces use scheduled stripe rows rather than the
+  standalone 256-row maximum;
+- L2 pointwise tiles choose the largest 1-to-256-row tile that fits the TCDM
+  available at that operation;
+- standalone multi-group K3 stages one physical C32 feature plane and one
+  9x32x32 weight group at a time, including logical C16 tails, and accumulates
+  through the existing partial buffer;
+- compact C16 CSP bridges, K3 inputs, and binary tensors can use the reviewed
+  L2 paths; unreviewed forms remain pinned.
 
 Adopt the U85 dedicated-SRAM policy at the memory-role level, with one crucial
 Neural-AI difference:
@@ -326,20 +341,17 @@ Neural-AI difference:
   feature maps directly. Every spilled operand therefore needs compiler-owned
   tiled DMA reload/store commands around the local operator tile.
 
-The package writer, runtime loader/resolver, and trusted dispatcher now accept
+The package writer, runtime loader/resolver, and trusted dispatcher accept
 exactly one `L2Temporary` binding at index 0, and the architecture models a
-separate 32-bit L2 arena. Do not switch `FeatureMapMemory` to L2 until block
-tests prove spill/reload/store for every eligible producer/consumer pair and
-public-boundary copies remain pinned locally. A repeated role-switch trial after
-the Conv spill work still produced 46 focused failures: FastStorageAllocator
-moved LUT/DFL/pool/resize/view tensors to L2, changed cascade choices, and filled
-TCDM without reserving command workspaces. The trial was fully reverted.
+separate 32-bit L2 arena. Selective placement, not an unrestricted role switch,
+controls which equivalence groups may spill. Public-boundary copies remain
+pinned locally.
 
-The conservative placement classifier is complete: a candidate must be a
-private aligned C32 tensor whose producer and every consumer use a reviewed L2
-path. Public/CPU/persistent tensors, RGB/C16/compact paths, views, LUT, DFL,
-pool, resize, head-pack, and other unreviewed paths remain pinned to TCDM. Four
-focused cases cover 20 positive and negative assertions. Placement is applied
+The conservative placement classifier requires every producer and consumer to
+use a reviewed L2 path. Public/CPU/persistent tensors, RGB, views, LUT, DFL,
+pool, resize, head-pack, and other unreviewed paths remain pinned to TCDM.
+Reviewed compact C16 copy, binary, structural C16x3 Concat, and K3 paths are
+included. Placement is applied
 to complete tensor-equivalence groups, so one pinned alias pins the whole group.
 FastStorageAllocator now accepts time-indexed command-workspace reservations,
 counts them while choosing keep/evict candidates, and ignores tensors already
@@ -348,23 +360,13 @@ callback after cascade/time-index selection and before fast-storage allocation.
 
 Next verified increments:
 
-1. Generate the Neural-AI per-operation/cascade workspace snapshot through the
-   scheduler callback; then integrate the classifier with scheduler memory
-   roles.
-2. Complete any remaining eligible view/boundary materialization spill paths.
-   Pointwise Conv L2 IFM/OFM use tiles of up to 256 spatial rows, stage every C32
-   input group once, and reuse one output
-   group slot. Aligned K3 Conv uses full-width stripes of about 256 output pixels,
-   stages halo/padding and one output group, and keeps weights/partial sums in
-   separate TCDM workspaces. The C96-to-C64 K3/S2 block graph verifies odd-shape
-   SAME padding over three 15/15/3-row stripes, 18 reloads, six stores, and 18
-   TCDM-only linebuffer jobs. Depthwise stages all C32 groups once per halo
-   stripe, reuses one local output-group slot, and is verified on the same odd
-   K3/S2 geometry. Add/Sub and native two-input C32 Concat spill/reload paths are
-   also complete.
-3. Only then enable `FeatureMapMemory=L2`, `StagingMemory=TCDM` behind that
-   placement policy, rerun all 123 unit tests, and compile full YOLO before any
-   Verilator run.
+1. Audit the nine reported CPU operations against the optimized graph and
+   generated command coverage; add a constrained lowering or prove each is
+   removed/materialized by an existing reviewed path.
+2. Run focused runtime/block tests for adaptive pointwise tiles and grouped K3
+   C16-tail staging. Unit/block verification precedes any cluster test.
+3. Start the selected YOLO320 Verilator cluster test only after those blocks
+   pass; starting Verilator ends the Codex section immediately.
 
 Completed path:
 
@@ -426,9 +428,9 @@ The following constant Add stages its 4,200-byte operand with one DMA and runs
 one contiguous Spatz call. Both compact Sub instances use the same contiguous
 Spatz binary path and preserve positive-scale rounding. Source op 247 scalar
 Mul is one exact AFU LUT pass. Source op 252 final compact plane-axis Concat
-writes its three input intervals directly to the public output binding. All
-selected operators now lower; next make auxiliary command workspaces
-lifetime-aware and fit the final package within 520,192 bytes.
+writes its three input intervals directly to the public output binding. The
+compiler package now fits within 520,192 bytes; next audit the nine residual
+CPU graph operations and verify the new tiled paths from block to cluster.
 
 ### P3 — Performance and DMA overlap
 
