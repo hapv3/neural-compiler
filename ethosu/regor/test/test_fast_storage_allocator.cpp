@@ -202,6 +202,7 @@ TEST_CASE("test_fast_storage_allocator")
         bool called = false;
         SchedulerOptions opts;
         opts.optimizationStagingLimit = 32 * 1024;
+        opts.allocationStagingLimit = 32 * 1024;
         opts.commandWorkspaceReservation = [&called](
             const std::vector<std::unique_ptr<SchedulerOperation>> &scheduledOps,
             const Schedule *schedule)

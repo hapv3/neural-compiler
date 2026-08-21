@@ -107,13 +107,13 @@ Shape Architecture::RollingBufferShape(const Shape &producerShape, const Shape &
     return consumerShape.With(-3, bufferHeight).WithDepth(RoundAway(producerShape.Depth(), 16));
 }
 
-MemArea Architecture::ReadonlyMemory()
+MemArea Architecture::ReadonlyMemory() const
 {
     assert(_readonlyMemory);
     return MemArea(_readonlyMemory, MemUsage::ReadOnly);
 }
 
-MemArea Architecture::FeatureMapMemory()
+MemArea Architecture::FeatureMapMemory() const
 {
     assert(_featuremapMemory);
     Flags<MemUsage> usage = MemUsage::FeatureMap;
@@ -124,13 +124,13 @@ MemArea Architecture::FeatureMapMemory()
     return MemArea(_featuremapMemory, usage);
 }
 
-MemArea Architecture::LUTMemory()
+MemArea Architecture::LUTMemory() const
 {
     assert(_lutMemory);
     return MemArea(_lutMemory, MemUsage::LUT);
 }
 
-MemArea Architecture::StagingMemory()
+MemArea Architecture::StagingMemory() const
 {
     assert(_stagingMemory);
     Flags<MemUsage> usage = MemUsage::Staging;
@@ -141,21 +141,21 @@ MemArea Architecture::StagingMemory()
     return MemArea(_stagingMemory, usage);
 }
 
-MemArea Architecture::InputFeatureMapMemory()
+MemArea Architecture::InputFeatureMapMemory() const
 {
     assert(_featuremapMemory);
     Flags<MemUsage> usage(MemUsage::Input, MemUsage::FeatureMap);
     return MemArea(_featuremapMemory, usage);
 }
 
-MemArea Architecture::OutputFeatureMapMemory()
+MemArea Architecture::OutputFeatureMapMemory() const
 {
     assert(_featuremapMemory);
     Flags<MemUsage> usage(MemUsage::Output, MemUsage::FeatureMap);
     return MemArea(_featuremapMemory, usage);
 }
 
-MemArea Architecture::CPUMemory()
+MemArea Architecture::CPUMemory() const
 {
     return MemArea(_featuremapMemory, MemUsage::None);
 }

@@ -403,19 +403,20 @@ public:
     virtual AxisMask CanSubdivide(OpType opType, TransposeType transpose, ReverseType reverse) = 0;
     virtual bool SupportsCascadedOperator(OpType opType) const { return false; }
     virtual bool SupportsCascadedConvolution(OpType) const { return true; }
+    virtual bool UsesSelectiveSpilling() const { return false; }
     virtual bool UsesExternalBindings() const { return false; }
     virtual bool SupportsScalar(OpType opType, DataType dataType, TensorUsage usage) = 0;
     virtual Flags<WeightFormat> SupportedWeightFormat(OpType op) = 0;
     // helper for arch-dependent callbacks outside of arch
     virtual void Call(std::function<void(const std::string &)> callBack) = 0;
 
-    MemArea ReadonlyMemory();
-    MemArea FeatureMapMemory();
-    MemArea LUTMemory();
-    MemArea StagingMemory();
-    MemArea InputFeatureMapMemory();
-    MemArea OutputFeatureMapMemory();
-    MemArea CPUMemory();
+    MemArea ReadonlyMemory() const;
+    MemArea FeatureMapMemory() const;
+    MemArea LUTMemory() const;
+    MemArea StagingMemory() const;
+    MemArea InputFeatureMapMemory() const;
+    MemArea OutputFeatureMapMemory() const;
+    MemArea CPUMemory() const;
 
     IniParseResult ParseSection(const std::string &section, IniReader *reader);
 

@@ -54,7 +54,7 @@ ArchNeuralAI::ArchNeuralAI()
     _memories.emplace("tcdm", std::move(tcdmMemory));
 
     _readonlyMemory = _modelMemory;
-    _featuremapMemory = _tcdmMemory;
+    _featuremapMemory = _l2Memory;
     _stagingMemory = _tcdmMemory;
     _lutMemory = _tcdmMemory;
 }
@@ -86,11 +86,11 @@ bool ArchNeuralAI::ParseConfig(IniReader *reader)
 bool ArchNeuralAI::CheckConfiguration(std::string &error)
 {
     if ( !Architecture::CheckConfiguration(error) ) return false;
-    if ( _readonlyMemory != _modelMemory || _l2Memory == nullptr || _featuremapMemory != _tcdmMemory ||
+    if ( _readonlyMemory != _modelMemory || _l2Memory == nullptr || _featuremapMemory != _l2Memory ||
          _stagingMemory != _tcdmMemory ||
          _lutMemory != _tcdmMemory )
     {
-        error = "Neural-AI memory roles must use the fixed model and TCDM arenas";
+        error = "Neural-AI memory roles must use the fixed model, L2, and TCDM arenas";
         return false;
     }
     if ( _tcdmMemory->SizeBytes() != AllocatableTCDMBytes )

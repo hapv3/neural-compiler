@@ -148,12 +148,16 @@ void CascadeBuilder::BuildCascades(Schedule *refSchedule, Schedule *fallbackSche
         auto fallbackCost = fallbackSchedule->Cost(op);
 
         SchedulerConnection *ifm = op->IFM(op->PrimaryIfmIndex());
+        const bool spillCascade = _spilling &&
+            (!_arch->UsesSelectiveSpilling() ||
+                (ifm->tensor->memArea != _arch->StagingMemory() &&
+                    op->OFM()->tensor->memArea != _arch->StagingMemory()));
 
         // If Op is not a candidate for cascading - assign fallback cost
         if ( !IsCascadable(op, ifm, refSchedule->Cost(op)) )
         {
             costs[*op] = std::make_unique<SchedulerOpInfo>(*fallbackCost);
-            if ( !_spilling )
+            if ( !spillCascade )
             {
                 peakStagingUsage = std::max(EstimateUncascadedBufferUsage(op, fallbackCost), peakStagingUsage);
             }
@@ -172,7 +176,7 @@ void CascadeBuilder::BuildCascades(Schedule *refSchedule, Schedule *fallbackSche
         int weightBufferSize = refCost->bufferedWeightTensor.AllocatedSize();
 
         // The first IFM is stored in full unless spilling disables it.
-        const int ifmStoredSize = _spilling ? 0 : ifm->tensor->AllocationSizeBytes();
+        const int ifmStoredSize = spillCascade ? 0 : ifm->tensor->AllocationSizeBytes();
 
         // Sum of all intermediate cascade buffers (including weight buffers)
         int cascadeBuffersSize = weightBufferSize;
@@ -297,7 +301,7 @@ void CascadeBuilder::BuildCascades(Schedule *refSchedule, Schedule *fallbackSche
                 currentIfm->shape.ToString(), opFullIfmSize, currentOfm->shape.ToString(), opFullOfmSize);
             LOG_TRACE1("\t\tCascade buffer bytes = {0} - [{1}]\n", cascadeBuffersSize, bufferInfo.shape.ToString());
 
-            if ( _spilling )
+            if ( spillCascade )
             {
                 // Set uncascadedStagingUsage to usage if the op where to be run fully in staging
                 const CascadeBuffer fullIfmBuffer(currentIfm->shape, opFullIfmSize);
@@ -381,7 +385,7 @@ void CascadeBuilder::BuildCascades(Schedule *refSchedule, Schedule *fallbackSche
             // Create a CascadeInfo for the cascade
             cascadeMap.emplace(cascadeEnd,
                 CascadeInfo(cascadeStart, cascadeEnd, bestCascadeSize, bestCascadeLocalSize, std::move(buffersInCascade)));
-            if ( !_spilling )
+            if ( !spillCascade )
             {
                 // Update peak memory usage
                 peakStagingUsage = std::max(bestCascadeSize, peakStagingUsage);
@@ -391,7 +395,7 @@ void CascadeBuilder::BuildCascades(Schedule *refSchedule, Schedule *fallbackSche
         {
             // Assign fallback cost to the initial Op
             costs.emplace(*op, std::make_unique<SchedulerOpInfo>(*fallbackCost));
-            if ( !_spilling )
+            if ( !spillCascade )
             {
                 peakStagingUsage = std::max(EstimateUncascadedBufferUsage(op, fallbackCost), peakStagingUsage);
             }

@@ -18,6 +18,8 @@
 
 #include "scheduler_packing.hpp"
 
+#include "neural_ai_memory_placement.hpp"
+
 #include "common/common.hpp"
 #include "common/logging.hpp"
 
@@ -26,6 +28,8 @@
 #include "operation.hpp"
 #include "scheduler_operation.hpp"
 #include "shape_util.hpp"
+
+#include "include/regor.h"
 #include "tensor.hpp"
 
 #include <vector>
@@ -129,6 +133,12 @@ std::vector<std::unique_ptr<SchedulerOperation>> SchedulerPacking::Process(const
     PackOperations();
 
     ReorderOperations();
+
+    std::string architectureName;
+    _arch->Call([&architectureName](const std::string &name) { architectureName = name; });
+    if ( architectureName == REGOR_ARCH_NEURALAI )
+        ApplyNeuralAIMemoryPlacement(
+            _schedList, _arch->FeatureMapMemory(), _arch->StagingMemory());
 
     _graph = nullptr;
     return std::move(_schedList);

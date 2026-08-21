@@ -713,9 +713,9 @@ std::unique_ptr<CompiledGraph> Compiler::CompileGraph(
 
     if ( IsNeuralAI(_architecture.get()) )
     {
-        const MemArea featureMapMemory = _architecture->FeatureMapMemory();
-        const int allocatedBytes = schedule->memoryUsage.at(featureMapMemory);
-        const int64_t availableBytes = featureMapMemory.memory->SizeBytes();
+        const MemArea tcdmMemory = _architecture->StagingMemory();
+        const int allocatedBytes = schedule->memoryUsage.at(tcdmMemory);
+        const int64_t availableBytes = tcdmMemory.memory->SizeBytes();
         if ( allocatedBytes > availableBytes )
         {
             SetLastError(fmt::format(

@@ -87,6 +87,13 @@ Scheduler::Scheduler(Architecture *arch, const SchedulerOptions &options, const 
     _options = options;
     _name = name;
     _spilling = _arch->StagingMemory() != _arch->FeatureMapMemory();
+    if ( _spilling )
+    {
+        if ( _options.optimizationStagingLimit == 0 )
+            _options.optimizationStagingLimit = _arch->StagingMemory().memory->SizeBytes();
+        if ( _options.allocationStagingLimit == 0 )
+            _options.allocationStagingLimit = _arch->StagingMemory().memory->SizeBytes();
+    }
 }
 
 std::shared_ptr<Schedule> Scheduler::Process()
@@ -171,7 +178,7 @@ std::shared_ptr<Schedule> Scheduler::Process()
         FastStorageAllocator allocator;
         const auto reuseIfms = !_options.disabled.All(SchedulerFeature::ReuseIFM);
         allocator.AllocateFeatureMaps(_ops, chosenSchedule.get(), _arch->StagingMemory(),
-            _options.optimizationStagingLimit, reuseIfms, reservedUsagePtr);
+            _options.allocationStagingLimit, reuseIfms, reservedUsagePtr);
     }
 
     UpdateOpMemorySnapshot(chosenSchedule.get());
@@ -184,7 +191,8 @@ std::shared_ptr<Schedule> Scheduler::Process()
     if ( !AllocateAddresses(chosenSchedule.get()) )
     {
         int used = chosenSchedule->memoryUsage[_arch->StagingMemory()];
-        throw std::runtime_error(fmt::format("Failed to allocate tensors. Memory used {}, limit {})\n", used, _options.optimizationStagingLimit));
+        throw std::runtime_error(fmt::format("Failed to allocate tensors. Memory used {}, limit {})\n",
+            used, _options.allocationStagingLimit));
     }
 
     return chosenSchedule;
@@ -943,7 +951,7 @@ bool Scheduler::AllocateAddresses(Schedule *schedule)
         _options.separateIORegions ? featureMapAlignment : sharedAlignment, verbose);
     if ( _spilling )
     {
-        const auto limit = _options.optimizationStagingLimit;
+        const auto limit = _options.allocationStagingLimit;
         schedule->stagingLRGraph = std::make_unique<LiveRangeGraph>(reuseIfms);
         AllocateTensors(_ops, schedule, *schedule->stagingLRGraph, _arch->StagingMemory(), _options.tensorAllocator,
             featureMapAlignment, verbose, limit);

@@ -1576,16 +1576,16 @@ TEST_CASE("Neural-AI memory placement applies decisions to equivalence groups")
     std::vector<std::unique_ptr<SchedulerOperation>> operations;
     operations.push_back(std::move(producer));
     operations.push_back(std::move(consumer));
-    const MemArea l2(arch.L2Memory(), MemUsage::FeatureMap);
+    const MemArea l2 = arch.FeatureMapMemory();
 
     SECTION("eligible group spills")
     {
         const auto stats = ApplyNeuralAIMemoryPlacement(
-            operations, l2, arch.FeatureMapMemory());
+            operations, l2, arch.StagingMemory());
         REQUIRE(candidate->memArea == l2);
-        REQUIRE(lhs->memArea == arch.FeatureMapMemory());
-        REQUIRE(rhs->memArea == arch.FeatureMapMemory());
-        REQUIRE(output->memArea == arch.FeatureMapMemory());
+        REQUIRE(lhs->memArea == arch.StagingMemory());
+        REQUIRE(rhs->memArea == arch.StagingMemory());
+        REQUIRE(output->memArea == arch.StagingMemory());
         REQUIRE(stats.l2Tensors == 1);
         REQUIRE(stats.tcdmTensors == 3);
     }
@@ -1593,9 +1593,9 @@ TEST_CASE("Neural-AI memory placement applies decisions to equivalence groups")
     {
         output->equivalenceId = candidate->equivalenceId;
         const auto stats = ApplyNeuralAIMemoryPlacement(
-            operations, l2, arch.FeatureMapMemory());
-        REQUIRE(candidate->memArea == arch.FeatureMapMemory());
-        REQUIRE(output->memArea == arch.FeatureMapMemory());
+            operations, l2, arch.StagingMemory());
+        REQUIRE(candidate->memArea == arch.StagingMemory());
+        REQUIRE(output->memArea == arch.StagingMemory());
         REQUIRE(stats.l2Tensors == 0);
         REQUIRE(stats.tcdmTensors == 4);
     }
@@ -1614,8 +1614,10 @@ TEST_CASE("Neural-AI architecture exposes fixed hardware configuration")
     REQUIRE(arch.TensorAlignment(TensorUsage::IFM, TensorFormat::WeightsEncoded) == 32);
     REQUIRE(arch.TensorAlignment(TensorUsage::IFM, TensorFormat::NHWC) == 1);
     REQUIRE(arch.TensorAlignment(TensorUsage::IFM, TensorFormat::CompactNHWC) == 1);
-    REQUIRE(arch.FeatureMapMemory().memory->Name() == "tcdm");
-    REQUIRE(arch.FeatureMapMemory().memory->SizeBytes() == ArchNeuralAI::AllocatableTCDMBytes);
+    REQUIRE(arch.FeatureMapMemory().memory->Name() == "l2");
+    REQUIRE(arch.FeatureMapMemory().memory->SizeBytes() == arch.MaxAddress());
+    REQUIRE(arch.StagingMemory().memory->Name() == "tcdm");
+    REQUIRE(arch.StagingMemory().memory->SizeBytes() == ArchNeuralAI::AllocatableTCDMBytes);
     REQUIRE(arch.L2Memory()->Name() == "l2");
     REQUIRE(arch.L2Memory()->SizeBytes() == arch.MaxAddress());
     REQUIRE(arch.ReadonlyMemory().memory->Name() == "model");
@@ -6056,7 +6058,7 @@ TEST_CASE("Neural-AI compiler splits a width-641 Conv into legal linebuffer jobs
     blob->Release();
 }
 
-TEST_CASE("Neural-AI compiler reports full-size schedules that require spatial tiling")
+TEST_CASE("Neural-AI compiler reports pinned full-size schedules that exceed TCDM")
 {
     std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
     Compiler compiler(architecture);
@@ -6066,9 +6068,9 @@ TEST_CASE("Neural-AI compiler reports full-size schedules that require spatial t
         224, 224, 3, 32, 2, -1, tflite::Padding::SAME, 1.0f / 127.5f, 1.0f);
     REQUIRE(compiler.LoadTflite(model.data(), model.size()));
     REQUIRE_FALSE(compiler.Compile());
-    REQUIRE(compiler.LastError().find("Neural-AI schedule requires") != std::string::npos);
-    REQUIRE(compiler.LastError().find("spatial tiling or rolling-buffer scheduling is required") !=
-        std::string::npos);
+    INFO(compiler.LastError());
+    REQUIRE(compiler.LastError().find("Failed to allocate tensors. Memory used") != std::string::npos);
+    REQUIRE(compiler.LastError().find("limit 520192") != std::string::npos);
 }
 
 TEST_CASE("Neural-AI compiler consumes compact TCDM RGB input directly")

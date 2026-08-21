@@ -75,6 +75,7 @@ struct SchedulerOptions
 {
     OptimizationStrategy optimizationStrategy = OptimizationStrategy::Size;
     Address optimizationStagingLimit = 0;
+    Address allocationStagingLimit = 0;
     bool verboseSchedule = false;
     bool verboseAllocation = false;
     Flags<SchedulerFeature> disabled;

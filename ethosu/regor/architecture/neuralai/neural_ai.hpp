@@ -69,6 +69,7 @@ public:
     {
         return opType == OpType::Conv2D;
     }
+    bool UsesSelectiveSpilling() const override { return true; }
     bool UsesExternalBindings() const override { return true; }
     bool SupportsScalar(OpType opType, DataType dataType, TensorUsage usage) override;
     Flags<WeightFormat> SupportedWeightFormat(OpType op) override;
