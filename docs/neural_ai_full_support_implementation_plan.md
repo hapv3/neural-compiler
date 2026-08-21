@@ -360,8 +360,9 @@ callback after cascade/time-index selection and before fast-storage allocation.
 
 Next verified increments:
 
-1. Run focused runtime/block tests for adaptive pointwise tiles and grouped K3
-   C16-tail staging. Unit/block verification precedes any cluster test.
+1. Run the focused runtime/block test for adaptive pointwise tiles, then add or
+   select a fixture that exercises grouped K3 C16-tail staging end to end.
+   Unit/block verification precedes any cluster test.
 2. Start the selected YOLO320 Verilator cluster test only after those blocks
    pass; starting Verilator ends the Codex section immediately.
 
@@ -373,6 +374,11 @@ Completed path:
 - Completed: asymmetric Conv padding is metadata, not a full Pad tensor. DMA2D
   fills each staging stripe from one 32-byte raw-zero-point pattern, then copies
   valid rows. Exact bias correction and padding tests pass.
+- Completed generic K3 runtime block: the generated K32 package is byte-exact
+  in Verilator (`test_compiler_generated_generic_k3_conv_package`, 86,222.016 ns
+  simulation time). Compiler unit tests separately verify the grouped C96 and
+  logical C16-tail command structures; this K32 fixture is not claimed as
+  direct end-to-end evidence for those wider/tail cases.
 - Completed P0 stem contract: cascade 3 is RGB K3/S2 Conv -> LUT -> K3/S2 Conv.
   The focused block test proves every logical Conv/LUT output row is emitted
   exactly once.
