@@ -360,9 +360,8 @@ callback after cascade/time-index selection and before fast-storage allocation.
 
 Next verified increments:
 
-1. Run the focused runtime/block test for adaptive pointwise tiles, then add or
-   select a fixture that exercises grouped K3 C16-tail staging end to end.
-   Unit/block verification precedes any cluster test.
+1. Add or select a fixture that exercises grouped K3 C16-tail staging end to
+   end. Unit/block verification precedes any cluster test.
 2. Start the selected YOLO320 Verilator cluster test only after those blocks
    pass; starting Verilator ends the Codex section immediately.
 
@@ -379,6 +378,13 @@ Completed path:
   simulation time). Compiler unit tests separately verify the grouped C96 and
   logical C16-tail command structures; this K32 fixture is not claimed as
   direct end-to-end evidence for those wider/tail cases.
+- Completed adaptive pointwise composite block: the focused compiler test
+  passes 124 assertions and verifies the 64 KiB time-local workspace, six L2
+  reloads, four L2 stores, and `256,256,1,1` command rows. The M257 Verilator
+  block is byte-exact at 84,002.257 ns and verifies firmware execution of the
+  striped pointwise command. The current TFLite fixture does not itself force
+  compiler L2 placement, so these are complementary rather than single-fixture
+  end-to-end evidence.
 - Completed P0 stem contract: cascade 3 is RGB K3/S2 Conv -> LUT -> K3/S2 Conv.
   The focused block test proves every logical Conv/LUT output row is emitted
   exactly once.
