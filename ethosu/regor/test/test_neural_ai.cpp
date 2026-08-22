@@ -6081,7 +6081,7 @@ TEST_CASE("Neural-AI compiler stages a zero-padded C16 linebuffer group for YOLO
     blob->Release();
 }
 
-TEST_CASE("Neural-AI compiler emits full and masked C32 groups for IC48 and IC80 K3 Conv")
+TEST_CASE("Neural-AI compiler emits physical C32 groups for IC48 and IC80 K3 Conv")
 {
     for ( const int inputChannels : {48, 80} )
     {
@@ -6104,6 +6104,7 @@ TEST_CASE("Neural-AI compiler emits full and masked C32 groups for IC48 and IC80
         std::vector<uint16_t> groupStationary;
         std::vector<uint32_t> inputBases;
         std::vector<uint32_t> channelOffsets;
+        std::vector<uint32_t> coalescedBytes;
         while ( offset < 224 + commandBytes )
         {
             const uint16_t type = Read16(data + offset);
@@ -6116,6 +6117,7 @@ TEST_CASE("Neural-AI compiler emits full and masked C32 groups for IC48 and IC80
                 accumModes.push_back(Read32(data + offset + 16 + 80 + 20));
                 inputBases.push_back(Read32(data + offset + 16));
                 channelOffsets.push_back(Read32(data + offset + 16 + 72));
+                coalescedBytes.push_back(Read32(data + offset + 16 + 76));
                 ++linebufferJobs;
             }
             offset += commandSize;
@@ -6125,16 +6127,13 @@ TEST_CASE("Neural-AI compiler emits full and masked C32 groups for IC48 and IC80
         REQUIRE(linebufferJobs == groups);
         for ( uint32_t group = 0; group < groups; ++group )
         {
-            const uint16_t lanes = uint16_t(std::min(32, inputChannels - int(group * 32)));
             REQUIRE(inputBases[group] == inputBases.front());
-            REQUIRE(validBytes[group] == lanes);
+            REQUIRE(validBytes[group] == 32);
             REQUIRE(accumModes[group] == (group == 0 ? 1u :
                 (group + 1 == groups ? 2u : 3u)));
-            if ( lanes == 32 )
-            {
-                REQUIRE(groupStationary[group] == 1);
-                REQUIRE(channelOffsets[group] > 0);
-            }
+            REQUIRE(groupStationary[group] == 1);
+            REQUIRE(channelOffsets[group] > 0);
+            REQUIRE(coalescedBytes[group] == 9 * 32);
         }
         blob->Unmap(const_cast<uint8_t *>(data));
         blob->Release();

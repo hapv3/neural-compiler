@@ -3113,8 +3113,12 @@ struct GeneratorContext
                     plannerInput.ic = 32;
                     plannerInput.oc = 32;
                     plannerInput.inputGroupIndex = 0;
-                    plannerInput.validLaneCount = int(std::min(
-                        32u, uint32_t(ifmShape.Depth()) - inputGroup * 32u));
+                    // Staged multi-group K3 input and weight tiles are both
+                    // physical C32.  Encoded tail weights are zero-padded, so
+                    // keeping all 32 lanes preserves the logical C16 tail and
+                    // keeps the formatter's nine K tiles aligned with the
+                    // nine 32x32 weight tiles.
+                    plannerInput.validLaneCount = 32;
                     plannerInput.ifmPixelStride = 32;
                     plannerInput.maxM = MaxExternalPsumLinebufferM;
                     plannerInput.tcdmBudget = ArchNeuralAI::AllocatableTCDMBytes;
