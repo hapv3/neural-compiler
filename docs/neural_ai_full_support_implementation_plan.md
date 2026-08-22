@@ -448,8 +448,22 @@ next verify the new tiled paths from block to cluster.
 
 Only after correctness and SRAM feasibility:
 
+- Preserve the existing intra-GEMM shadow-register pipeline: for a large GEMM,
+  firmware preloads tile `N+1` while tile `N` runs, then waits and launches the
+  preloaded tile. This optimization is already implemented and is the baseline,
+  not future work.
+- Extend shadow-register use across eligible command boundaries. Split
+  systolic/linebuffer execution into prepare, launch, and wait phases, and let
+  the dispatcher look ahead to preload the next GEMM or linebuffer job while
+  the current job runs. Only do this when dependency analysis proves that no
+  intervening DMA, RQ update, buffer hazard, or configuration ownership change
+  must complete first; otherwise retain the current blocking path.
 - Add asynchronous DMA submit/wait with event IDs.
 - Add ping-pong IFM, weight, and OFM buffers and dependency-aware scheduling.
+- Combine dispatcher look-ahead with asynchronous DMA only after both paths are
+  independently byte-exact. Prove actual overlap with PMU busy/stall attribution
+  and blocking-versus-pipelined output equivalence; do not infer overlap merely
+  from writes to shadow registers.
 - Calibrate tile selection and the performance model with PMU attribution.
 - Remove avoidable boundary conversions, materializations, repeated qparam/LUT
   staging, one-byte commands, and scalar loops from selected hot paths.
