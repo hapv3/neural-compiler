@@ -1738,6 +1738,36 @@ TEST_CASE("Neural-AI architecture exposes fixed hardware configuration")
     REQUIRE(target == REGOR_ARCH_NEURALAI);
 }
 
+TEST_CASE("Neural-AI estimator shares U85-style DRAM contention")
+{
+    ArchNeuralAI arch;
+    REQUIRE(arch.ConfigureExternalMemory(0.5f, 64, 16, 128, 1, 2, 4));
+
+    const ArchitectureMemory *model = arch.ReadonlyMemory().memory;
+    const ArchitectureMemory *l2 = arch.L2Memory();
+    REQUIRE(model->BurstBandwidth(false) == Catch::Approx(2.56f));
+    REQUIRE(l2->BurstBandwidth(false) == Catch::Approx(2.56f));
+    REQUIRE(l2->BurstBandwidth(true) == Catch::Approx(16.0f));
+
+    PerformanceQuery query{};
+    query.ifm[0].shape = Shape(1);
+    query.ifm[0].memory = l2;
+    query.ofm.shape = Shape(1);
+    query.ofm.memory = l2;
+    query.constMemory = const_cast<ArchitectureMemory *>(model);
+    ElementAccess bytes{};
+    bytes.ifmRead[0] = 256;
+    bytes.ofmWrite = 256;
+    bytes.constRead[0] = 256;
+
+    auto cycles = arch.Performance()->MeasureAccessCycles(query, bytes);
+    REQUIRE(cycles.size() == 1);
+    REQUIRE(cycles.count(l2) == 1);
+    REQUIRE(cycles[l2].fmAccessCycles == 100);
+    REQUIRE(cycles[l2].weightsAccessCycles == 100);
+    REQUIRE(cycles[l2].totalAccessCycles == 200);
+}
+
 TEST_CASE("Neural-AI ROW32 storage and alignment")
 {
     ArchNeuralAI arch;

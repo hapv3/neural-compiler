@@ -808,6 +808,11 @@ class NeuralAIArchitectureFeatures:
         self.memory_mode = "Neural_AI_TCDM" if memory_mode == self.DEFAULT_CONFIG else memory_mode
         default_config = os.path.join(CONFIG_FILES_PATH, "NeuralAI", "neural-ai.ini")
         self.vela_config_files = vela_config_files if vela_config_files is not None else [default_config]
+        vela_config = ConfigParser()
+        vela_config.read(self.vela_config_files)
+        dram_clock_scale = vela_config.getfloat(
+            f"System_Config.{self.system_config}", "Dram_clock_scale", fallback=1.0
+        )
         self.num_macs_per_cycle = 32 * 32
         self.ncores = 1
         self.core_clock = 500e6
@@ -815,7 +820,7 @@ class NeuralAIArchitectureFeatures:
         self.arena_cache_size = arena_cache_size if arena_cache_size is not None else 512 * 1024 - 4 * 1024
         self.memory_bandwidths_per_second = np.zeros(MemArea.Size)
         self.memory_bandwidths_per_second[MemArea.Sram] = 32 * self.core_clock
-        self.memory_bandwidths_per_second[MemArea.Dram] = 32 * self.core_clock
+        self.memory_bandwidths_per_second[MemArea.Dram] = max(0.0001, dram_clock_scale) * 32 * self.core_clock
         self.tensor_storage_mem_area = {
             TensorPurpose.Weights: MemArea.Dram,
             TensorPurpose.FeatureMap: MemArea.Sram,

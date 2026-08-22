@@ -36,6 +36,7 @@
 #include "mlw_encode.hpp"
 
 #include <functional>
+#include <limits>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -98,6 +99,16 @@ public:
     int MaxReads() const { return _maxReads; }
     int MaxWrites() const { return _maxWrites; }
     std::string Name() const { return _name; }
+
+    float BurstBandwidth(bool write, float transactionLimit = std::numeric_limits<float>::max()) const
+    {
+        const int latency = std::max(write ? _writeLatencyCycles : _readLatencyCycles, 1);
+        const int maxOutstanding = write ? _maxWrites : _maxReads;
+        const float transactionUtil = std::min(
+            transactionLimit, static_cast<float>(maxOutstanding * _portsUsed) * 0.8f);
+        return std::min(_bandwidthPerCycle,
+            static_cast<float>(_maxBurstLengthBytes) * transactionUtil / latency * 0.8f);
+    }
 };
 
 struct MemArea
@@ -378,6 +389,7 @@ protected:
 public:
     virtual ~Architecture() = default;
     virtual bool ParseConfig(IniReader *reader) = 0;
+    virtual bool ConfigureExternalMemory(float, int, int, int, int, int, int) { return false; }
     virtual bool CheckConfiguration(std::string &error);
     virtual std::unique_ptr<ArchitectureOpConfig> GetOpConfig(OpType opType, const ArchitectureConfigQuery &query) = 0;
     virtual std::unique_ptr<ArchitectureOpGroup> CreateOpGroup(const ArchitectureOpGroupQuery &op) = 0;

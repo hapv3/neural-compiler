@@ -19,7 +19,7 @@ namespace
 int64_t TransferCycles(const ArchitectureMemory *memory, int64_t bytes, bool write)
 {
     if ( memory == nullptr || bytes <= 0 ) return 0;
-    const int64_t transfer = int64_t(std::ceil(double(bytes) / memory->Bandwidth()));
+    const int64_t transfer = int64_t(std::ceil(double(bytes) / memory->BurstBandwidth(write)));
     return transfer + (write ? memory->WriteLatency() : memory->ReadLatency());
 }
 
@@ -28,15 +28,20 @@ int64_t ElementBytes(int64_t elements, DataType type)
     return (elements * DataTypeSizeBits(type) + 7) / 8;
 }
 
-void AddTransfer(std::unordered_map<const ArchitectureMemory *, AccessCycles> &result,
-    const ArchitectureMemory *memory, int64_t fmBytes, int64_t weightBytes, int64_t scaleBytes)
+struct DomainTransfers
 {
-    if ( memory == nullptr ) return;
-    auto &cycles = result[memory];
-    cycles.fmAccessCycles += TransferCycles(memory, fmBytes, false);
-    cycles.weightsAccessCycles += TransferCycles(memory, weightBytes, false);
-    cycles.scalesAccessCycles += TransferCycles(memory, scaleBytes, false);
-    cycles.totalAccessCycles += TransferCycles(memory, fmBytes + weightBytes + scaleBytes, false);
+    int64_t fmRead = 0;
+    int64_t fmWrite = 0;
+    int64_t weightRead = 0;
+    int64_t scaleRead = 0;
+};
+
+int64_t GroupCycles(const ArchitectureMemory *memory, int64_t readBytes, int64_t writeBytes)
+{
+    const int64_t rawCycles = int64_t(std::ceil(double(readBytes + writeBytes) / memory->Bandwidth()));
+    const int64_t readCycles = int64_t(std::ceil(double(readBytes) / memory->BurstBandwidth(false)));
+    const int64_t writeCycles = int64_t(std::ceil(double(writeBytes) / memory->BurstBandwidth(true)));
+    return std::max(rawCycles, std::max(readCycles, writeCycles));
 }
 
 }  // namespace
@@ -122,14 +127,34 @@ int64_t NeuralAIPerformance::MinWriteCycles(const ArchitectureMemory *mem, int64
 std::unordered_map<const ArchitectureMemory *, AccessCycles>
 NeuralAIPerformance::MeasureAccessCycles(const PerformanceQuery &query, const ElementAccess &byteAccess)
 {
+    const auto domain = [this](const ArchitectureMemory *memory)
+    {
+        return memory == _modelMemory ? _l2Memory : memory;
+    };
+    std::unordered_map<const ArchitectureMemory *, DomainTransfers> transfers;
     std::unordered_map<const ArchitectureMemory *, AccessCycles> result;
-    AddTransfer(result, query.ifm[0].memory, byteAccess.ifmRead[0], 0, 0);
-    if ( query.ifm[1].shape ) AddTransfer(result, query.ifm[1].memory, byteAccess.ifmRead[1], 0, 0);
-    AddTransfer(result, query.ofm.memory, byteAccess.ofmWrite, 0, 0);
-    AddTransfer(result, query.constMemory, 0, byteAccess.constRead[0], byteAccess.constRead[1]);
+    transfers[domain(query.ifm[0].memory)].fmRead += byteAccess.ifmRead[0];
+    if ( query.ifm[1].shape ) transfers[domain(query.ifm[1].memory)].fmRead += byteAccess.ifmRead[1];
+    transfers[domain(query.ofm.memory)].fmWrite += byteAccess.ofmWrite;
+    if ( query.constMemory )
+    {
+        transfers[domain(query.constMemory)].weightRead += byteAccess.constRead[0];
+        transfers[domain(query.constMemory)].scaleRead += byteAccess.constRead[1];
+    }
     if ( query.tmpMemory )
     {
-        AddTransfer(result, query.tmpMemory, byteAccess.tmpRead + byteAccess.tmpWrite, 0, 0);
+        transfers[domain(query.tmpMemory)].fmRead += byteAccess.tmpRead;
+        transfers[domain(query.tmpMemory)].fmWrite += byteAccess.tmpWrite;
+    }
+    for ( const auto &[memory, transfer] : transfers )
+    {
+        if ( memory == nullptr ) continue;
+        AccessCycles &cycles = result[memory];
+        cycles.fmAccessCycles = GroupCycles(memory, transfer.fmRead, transfer.fmWrite);
+        cycles.weightsAccessCycles = GroupCycles(memory, transfer.weightRead, 0);
+        cycles.scalesAccessCycles = GroupCycles(memory, transfer.scaleRead, 0);
+        cycles.totalAccessCycles = GroupCycles(memory,
+            transfer.fmRead + transfer.weightRead + transfer.scaleRead, transfer.fmWrite);
     }
     return result;
 }

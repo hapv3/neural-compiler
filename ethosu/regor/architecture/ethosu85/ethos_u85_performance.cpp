@@ -759,33 +759,15 @@ float EthosU85Performance::ChannelBW(const ArchitectureMemory *mem, const MemCha
     int burstLenWords = std::max(mem->MaxBurstLength() / 16, 1);
 
     float read_rb_lim;
-    int maxOutstanding;
-    int latency;
-    if ( channel == MemChannel::None )
+    read_rb_lim = std::numeric_limits<float>::max();
+    if ( channel != MemChannel::None && channel != MemChannel::Write )
     {
-        latency = mem->ReadLatency();
-        maxOutstanding = mem->MaxReads();
-        read_rb_lim = std::numeric_limits<float>::max();
-    }
-    else if ( channel == MemChannel::Write )
-    {
-        maxOutstanding = mem->MaxWrites();
-        latency = mem->WriteLatency();
-        read_rb_lim = std::numeric_limits<float>::max();
-    }
-    else
-    {
-        maxOutstanding = mem->MaxReads();
-        latency = mem->ReadLatency();
         auto channelIdx = std::max(static_cast<int>(channel) - 1, 0);
         int channelRB = _arch->_channelRBs->at(channelIdx);
         read_rb_lim = static_cast<float>(channelRB) / burstLenWords;
     }
 
-    float transactionUtil = std::min(read_rb_lim, static_cast<float>(maxOutstanding * mem->PortsUsed() * 0.8));
-    float channelBW = std::min(mem->Bandwidth(), static_cast<float>(mem->MaxBurstLength() * transactionUtil / latency * 0.8));
-
-    return channelBW;
+    return mem->BurstBandwidth(channel == MemChannel::Write, read_rb_lim);
 }
 
 void EthosU85Performance::InitDatabase(Database *optDB)

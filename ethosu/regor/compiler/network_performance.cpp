@@ -678,7 +678,6 @@ PerformanceResult NetworkPerformance::EstimateFullOpPerformance(SchedulerOperati
 
     for ( auto &[mem, accessCycles] : memoryAccessCycles )
     {
-        assert(result.memory.count(mem) > 0);
         result.memory[mem].accessCycles = accessCycles.totalAccessCycles;
         result.memory[mem].access[AccessType::FeatureMap].accessCycles = accessCycles.fmAccessCycles;
         result.memory[mem].access[AccessType::Weights].accessCycles = accessCycles.weightsAccessCycles;

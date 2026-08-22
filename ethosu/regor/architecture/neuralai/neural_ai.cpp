@@ -37,14 +37,13 @@ ArchNeuralAI::ArchNeuralAI()
 {
     _constraints = std::make_unique<NeuralAIConstraints>();
     _weightEncoder = std::make_unique<NeuralAIWeightEncoder>();
-    _performance = std::make_unique<NeuralAIPerformance>();
     auto modelMemory = std::make_unique<ArchitectureMemory>("model", MaxAddress());
-    modelMemory->SetParameters(DMAAlignment, 1, 1, DMAAlignment, 1, 1, 1);
+    modelMemory->SetParameters(DMAAlignment, 1, 1, 2 * DMAAlignment, 1, 1, 1);
     _modelMemory = modelMemory.get();
     _memories.emplace("model", std::move(modelMemory));
 
     auto l2Memory = std::make_unique<ArchitectureMemory>("l2", MaxAddress());
-    l2Memory->SetParameters(DMAAlignment, 1, 1, DMAAlignment, 1, 1, 1);
+    l2Memory->SetParameters(DMAAlignment, 1, 1, 2 * DMAAlignment, 1, 1, 1);
     _l2Memory = l2Memory.get();
     _memories.emplace("l2", std::move(l2Memory));
 
@@ -57,9 +56,27 @@ ArchNeuralAI::ArchNeuralAI()
     _featuremapMemory = _l2Memory;
     _stagingMemory = _tcdmMemory;
     _lutMemory = _tcdmMemory;
+    _performance = std::make_unique<NeuralAIPerformance>(_modelMemory, _l2Memory);
 }
 
 ArchNeuralAI::~ArchNeuralAI() = default;
+
+bool ArchNeuralAI::ConfigureExternalMemory(float clockScale, int readLatency, int writeLatency,
+    int burstLength, int portsUsed, int maxReads, int maxWrites)
+{
+    const float bandwidth = std::max(0.0001f, clockScale * DMAAlignment);
+    readLatency = std::max(0, readLatency);
+    writeLatency = std::max(0, writeLatency);
+    burstLength = std::max(1, burstLength);
+    portsUsed = std::max(1, portsUsed);
+    maxReads = std::max(1, maxReads);
+    maxWrites = std::max(1, maxWrites);
+    _modelMemory->SetParameters(
+        bandwidth, readLatency, writeLatency, burstLength, portsUsed, maxReads, maxWrites);
+    _l2Memory->SetParameters(
+        bandwidth, readLatency, writeLatency, burstLength, portsUsed, maxReads, maxWrites);
+    return true;
+}
 
 bool ArchNeuralAI::ParseConfig(IniReader *reader)
 {

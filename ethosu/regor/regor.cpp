@@ -340,6 +340,24 @@ DLL_EXPORT int regor_set_system_config(regor_context_t ctx, const char *config_t
     bool isU55 = vela.system_config_name.substr(0, u55String.size()) == u55String;
     int axiWidthBytes = isU55 ? 8 : 16;
 
+    if ( foundSystemConfig )
+    {
+        const auto external = memories.memories.find("Dram");
+        if ( external != memories.memories.end() )
+        {
+            const auto &config = external->second;
+            if ( compiler->Arch()->ConfigureExternalMemory(
+                     config.clock_scale,
+                     config.read_latency, config.write_latency, config.burst_length,
+                     config.ports_used, config.max_reads, config.max_writes) )
+            {
+                if ( !regorIniUnknown.empty() &&
+                     !compiler->ParseConfig(regorIniUnknown.c_str(), regorIniUnknown.length()) ) return 0;
+                return 1;
+            }
+        }
+    }
+
     if ( (foundSystemConfig && foundMemoryMode) || !regorIniUnknown.empty() )
     {
         for ( auto &it : memories.memories )

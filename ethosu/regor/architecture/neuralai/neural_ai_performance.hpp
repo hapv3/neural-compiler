@@ -13,7 +13,15 @@ namespace regor
 
 class NeuralAIPerformance final : public ArchitecturePerformance
 {
+private:
+    const ArchitectureMemory *_modelMemory;
+    const ArchitectureMemory *_l2Memory;
+
 public:
+    NeuralAIPerformance(const ArchitectureMemory *modelMemory, const ArchitectureMemory *l2Memory) :
+            _modelMemory(modelMemory), _l2Memory(l2Memory)
+    {
+    }
     CycleCost MeasureCycleCost(const PerformanceQuery &query) override;
     int64_t MemToMemCycles(
         const ArchitectureMemory *dest, const ArchitectureMemory *source, int sizeBytes) override;

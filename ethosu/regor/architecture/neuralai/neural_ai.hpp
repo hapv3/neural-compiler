@@ -43,6 +43,8 @@ public:
     std::unique_ptr<ArchitectureOpGroup> CreateOpGroup(const ArchitectureOpGroupQuery &op) override;
     class WeightEncoder *WeightEncoder() override { return _weightEncoder.get(); }
     ArchitectureMemory *L2Memory() const { return _l2Memory; }
+    bool ConfigureExternalMemory(float clockScale, int readLatency, int writeLatency,
+        int burstLength, int portsUsed, int maxReads, int maxWrites) override;
     ArchitecturePerformance *Performance() override { return _performance.get(); }
     IRegisterCommandStreamGenerator *RegisterCommandStreamGenerator() override { return nullptr; }
     IArchitectureConstraints *Constraints() override { return _constraints.get(); }

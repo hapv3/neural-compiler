@@ -420,12 +420,12 @@ def print_regor_performance_metrics(
 
         mem_area = memory_mapping.get(mem_name_lower, MemArea.Unknown)
         mem_areas_present.add(mem_area)
-        memory_used[mem_area] = memory.peakUsage
+        memory_used[mem_area] += memory.peakUsage
 
         for _, a in memory.accesses.items():
             purpose = purpose_mapping.get(str(a.accessType).lower(), TensorPurpose.Unknown)
-            bandwidths[mem_area][purpose][BandwidthDirection.Read] = a.bytesRead
-            bandwidths[mem_area][purpose][BandwidthDirection.Write] = a.bytesWritten
+            bandwidths[mem_area][purpose][BandwidthDirection.Read] += a.bytesRead
+            bandwidths[mem_area][purpose][BandwidthDirection.Write] += a.bytesWritten
 
     read_only_area = arch.tensor_storage_mem_area[TensorPurpose.Weights]
     if (

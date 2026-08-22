@@ -160,10 +160,10 @@ new runtime path has not yet passed E2E.
 | YOLO C144 head transpose | Verified fallback | standalone heads retain vectorized C32-to-CHW materialization |
 | DFL16 projection | Verified | selected heads feed C64/C80 C32 directly; box-scale requant is folded into each DFL command |
 | Async DMA and overlap | Not implemented | blocking execution remains correct; performance phase |
-| Full selected graphs | Compiler verified | selected YOLO320 emits a `.nai`; reported peaks are 490 KiB TCDM and 3,440.88 KiB total DRAM/L2-backed memory; block and cluster E2E remain |
+| Full selected graphs | Compiler verified | selected YOLO320 emits a `.nai`; reported peaks are 490 KiB TCDM and 3,740.88 KiB total DRAM/L2-backed memory; block and cluster E2E remain |
 
 The focused Regor suite passes 127 Neural-AI cases and 39,622 assertions; the
-complete suite passes 272 cases and 631,246 assertions (the randomized suite's
+complete suite passes 273 cases and 651,179 assertions (the randomized suite's
 assertion total varies with its reported seed).
 Runtime ABI/host checks, cross-builds, firmware-size gates, and focused C144,
 DFL16, and MatMul V2 E2E tests pass.
@@ -312,7 +312,7 @@ the 445,750-cycle fast-path reference, but still about 1.2% below the older
 ### P0 — Verify the memory-feasible full graph end to end
 
 Compiler feasibility is complete for the selected YOLO320 artifact. Commit
-`9e8b1962` emits a 3.7 MiB `.nai` with a 490 KiB TCDM peak and 3,440.88 KiB
+`9e8b1962` emits a 3.7 MiB `.nai` with a 490 KiB TCDM peak and 3,740.88 KiB
 total DRAM/L2-backed memory. The compiler report contains 173 command-lowered
 NPU operations, zero CPU operations, and 968,004,000 MACs. The nine operations
 previously reported as CPU were constrained Passthrough Concats already emitted
@@ -457,6 +457,16 @@ next verify the new tiled paths from block to cluster.
 
 Only after correctness and SRAM feasibility:
 
+- Use the shared U85 burst/outstanding memory-bandwidth calculation for the
+  Neural-AI estimator. `Dram_clock_scale`, `Dram_read_latency`,
+  `Dram_write_latency`, `Dram_burst_length`, `Dram_max_reads`, and
+  `Dram_max_writes` configure the fixed 32-byte external datapath directly;
+  no Ethos AXI0/AXI1 topology is exposed. Model constants and mutable L2
+  feature-map traffic retain separate ABI regions but contend in one physical
+  DRAM performance domain. Reporting sums the logical model and L2 traffic into
+  that domain and derives peak DRAM bandwidth from `Dram_clock_scale`; the raw
+  datapath remains 32 bytes/cycle while latency, burst, and outstanding limits
+  reduce its effective bandwidth.
 - Preserve the existing intra-GEMM shadow-register pipeline: for a large GEMM,
   firmware preloads tile `N+1` while tile `N` runs, then waits and launches the
   preloaded tile. This optimization is already implemented and is the baseline,
