@@ -360,10 +360,9 @@ callback after cascade/time-index selection and before fast-storage allocation.
 
 Next verified increments:
 
-1. Add or select a fixture that exercises grouped K3 C16-tail staging end to
-   end. Unit/block verification precedes any cluster test.
-2. Start the selected YOLO320 Verilator cluster test only after those blocks
-   pass; starting Verilator ends the Codex section immediately.
+1. Start the selected YOLO320 Verilator cluster test; all prerequisite focused
+   pointwise and grouped-K3 blocks now pass. Starting Verilator ends the Codex
+   section immediately.
 
 Completed path:
 
@@ -375,9 +374,13 @@ Completed path:
   valid rows. Exact bias correction and padding tests pass.
 - Completed generic K3 runtime block: the generated K32 package is byte-exact
   in Verilator (`test_compiler_generated_generic_k3_conv_package`, 86,222.016 ns
-  simulation time). Compiler unit tests separately verify the grouped C96 and
-  logical C16-tail command structures; this K32 fixture is not claimed as
-  direct end-to-end evidence for those wider/tail cases.
+  simulation time).
+- Completed grouped K3 C16-tail block: a generated `[1,4,4,48] -> K3/S1/P1 ->
+  [1,4,4,32]` fixture compares against TFLite `BUILTIN_REF` and is byte-exact
+  in Verilator at 101,276.016 ns. Compiler commit `69c21ed4` keeps the staged
+  tail as a physical C32 formatter tile; zero-padded encoded weight lanes
+  preserve the logical C16 result while keeping all nine K tiles aligned.
+  Runtime regression commit `f188517` requires exactly two linebuffer jobs.
 - Completed adaptive pointwise composite block: the focused compiler test
   passes 124 assertions and verifies the 64 KiB time-local workspace, six L2
   reloads, four L2 stores, and `256,256,1,1` command rows. The M257 Verilator
