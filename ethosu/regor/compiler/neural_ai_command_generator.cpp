@@ -172,6 +172,15 @@ bool ResolveDMADirection(const RefV1 &source, const RefV1 &destination, DMADirec
     return true;
 }
 
+bool ValidDMASpan(uint32_t length, uint32_t stride2, uint32_t repetitions2,
+    uint32_t stride3 = 0, uint32_t repetitions3 = 1)
+{
+    if ( length == 0 || repetitions2 == 0 || repetitions3 == 0 ) return false;
+    const uint64_t span = uint64_t(stride2) * (repetitions2 - 1u) +
+        uint64_t(stride3) * (repetitions3 - 1u) + length;
+    return span <= std::numeric_limits<uint32_t>::max();
+}
+
 void Append16(std::vector<uint8_t> &output, uint16_t value)
 {
     output.push_back(uint8_t(value));
@@ -598,6 +607,9 @@ struct GeneratorContext
         uint32_t layerId, uint32_t tileId, std::string &error)
     {
         DMADirection direction;
+        if ( !ValidDMASpan(length, sourceStride, repetitions) ||
+             !ValidDMASpan(length, destinationStride, repetitions) )
+            return SetError(error, "Neural-AI DMA2D has an invalid or overflowing span");
         if ( !ResolveDMADirection(source, destination, direction) )
             return SetError(error, "Neural-AI DMA2D requires a local source or destination");
         AppendHeader(artifact->commands, CommandType::DMA2D, 64, layerId, tileId);
@@ -619,6 +631,9 @@ struct GeneratorContext
         uint32_t layerId, uint32_t tileId, std::string &error)
     {
         DMADirection direction;
+        if ( !ValidDMASpan(length, sourceStride2, repetitions2, sourceStride3, repetitions3) ||
+             !ValidDMASpan(length, destinationStride2, repetitions2, destinationStride3, repetitions3) )
+            return SetError(error, "Neural-AI DMA3D has an invalid or overflowing span");
         if ( !ResolveDMADirection(source, destination, direction) )
             return SetError(error, "Neural-AI DMA3D requires a local source or destination");
         AppendHeader(artifact->commands, CommandType::DMA3D, 64, layerId, tileId);
@@ -640,6 +655,7 @@ struct GeneratorContext
         uint32_t layerId, uint32_t tileId, std::string &error)
     {
         DMADirection direction;
+        if ( length == 0 ) return SetError(error, "Neural-AI DMA1D length must be nonzero");
         if ( !ResolveDMADirection(source, destination, direction) )
             return SetError(error, "Neural-AI DMA1D requires a local source or destination");
         AppendHeader(artifact->commands, CommandType::DMA1D, 64, layerId, tileId);

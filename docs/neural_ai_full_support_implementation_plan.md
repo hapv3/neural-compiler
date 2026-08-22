@@ -66,9 +66,11 @@ Ethos `NHCWB16` is unreachable from Neural-AI. Shared Ethos assumptions such as
   relocatable region/offset references, and contains no native pointers.
 - ABI v2 is the only firmware command path; legacy `NPUC` parsing and its test
   firmware were removed after migrating MatMul to a V2 package/invocation.
-- Regor validates semantic command constraints. Trusted firmware retains the
-  structural, overflow, reference, binding, address-range, and transfer checks
-  required to resolve and execute the package safely.
+- Regor validates compiler-owned command semantics, spans, directions, and
+  reference offsets. Trusted firmware validates the invocation and dynamic
+  binding bases/sizes once, then uses canonical O(1) binding slots and performs
+  only the address relocation and hardware sequencing required at runtime.
+  Non-trusted host dispatch retains the full malformed-package checks.
 
 ### Layouts and data representation
 
@@ -285,7 +287,7 @@ the focused test had not written its invocation and binding table to L2.
   TCDM. The structural block test uses 2+3+5 planes at arbitrary `L=37` and
   checks all three byte counts, regions, direction, and destination offsets.
 - Runtime `.text` must be rechecked after every runtime increment. Trusted V2-only
-  firmware currently reports 24,260 bytes, leaving 8,508 bytes of ITCM margin.
+  firmware currently reports 23,548 bytes, leaving 9,220 bytes of ITCM margin.
 
 ## 5. Remaining work, in execution order
 
@@ -360,9 +362,9 @@ callback after cascade/time-index selection and before fast-storage allocation.
 
 Next verified increments:
 
-1. Start the selected YOLO320 Verilator cluster test; all prerequisite focused
-   pointwise and grouped-K3 blocks now pass. Starting Verilator ends the Codex
-   section immediately.
+1. Rerun the selected YOLO320 Verilator cluster test with the trusted-dispatch
+   reduction; all prerequisite focused pointwise and grouped-K3 blocks pass.
+   Starting Verilator ends the Codex section immediately.
 
 Completed path:
 
@@ -417,6 +419,13 @@ Completed path:
   exactly the 64- and 80-channel commands and no local-to-local DMA. This follows
   the Micro-YOLO reference strategy of bypassing a logical Concat rather than
   copying it; cycle counts remain reference-only until cluster verification.
+- Completed trusted-dispatch reduction: Regor rejects zero-length and
+  overflowing DMA1D/2D/3D spans, runtime binding validation canonicalizes the
+  invocation table once, and trusted reference resolution uses direct binding
+  slots. DMA2D/3D and RQ-load no longer repeat compiler-owned span, direction,
+  qparam-bound, range, or alignment validation per command. Non-trusted host
+  malformed-command tests remain unchanged. Full compiler tests and firmware
+  build pass; firmware `.text` falls from 24,468 to 23,548 bytes.
 - Completed direct head postprocess: fused DFL consumes C64 and C80 C32 inputs,
   marks the ABI source layout, gathers each DFL16 tile once, packs C80 directly
   to the compact class output, and applies the class LUT in place. Standalone
