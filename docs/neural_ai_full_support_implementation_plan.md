@@ -160,7 +160,7 @@ new runtime path has not yet passed E2E.
 | YOLO C144 head transpose | Verified fallback | standalone heads retain vectorized C32-to-CHW materialization |
 | DFL16 projection | Verified | selected heads feed C64/C80 C32 directly; box-scale requant is folded into each DFL command |
 | Async DMA and overlap | Not implemented | blocking execution remains correct; performance phase |
-| Full selected graphs | Compiler verified | selected YOLO320 emits a `.nai`; reported peaks are 490 KiB TCDM and 3,740.88 KiB total DRAM/L2-backed memory; block and cluster E2E remain |
+| Full selected graphs | Compiler verified | selected YOLO320 emits a `.nai`; reported peaks are 490 KiB TCDM and 3,740.88 KiB total DRAM/L2-backed memory; the first 22 commands pass cluster E2E, while later prefixes and the full graph remain |
 
 The focused Regor suite passes 127 Neural-AI cases and 39,622 assertions; the
 complete suite passes 273 cases and 651,179 assertions (the randomized suite's
@@ -362,9 +362,9 @@ callback after cascade/time-index selection and before fast-storage allocation.
 
 Next verified increments:
 
-1. Rerun the selected YOLO320 Verilator cluster test with the trusted-dispatch
-   reduction; all prerequisite focused pointwise and grouped-K3 blocks pass.
-   Starting Verilator ends the Codex section immediately.
+1. Extend the selected YOLO320 cluster checkpoint from 22 commands to 129,
+   then continue by bounded prefixes to the full 3,910-command graph. Starting
+   each Verilator run ends the Codex section immediately.
 
 Completed path:
 
@@ -377,6 +377,12 @@ Completed path:
 - Completed generic K3 runtime block: the generated K32 package is byte-exact
   in Verilator (`test_compiler_generated_generic_k3_conv_package`, 86,222.016 ns
   simulation time).
+- Completed the padded-C16 generic KGEN checkpoint without adding generic
+  arithmetic to RTL. Regor prevalidates the physical-C32 linear schedule and
+  encodes schedule bit 1; firmware maps it to `LB_CTRL[7]`; RTL advances one
+  K32 tap by incrementing KW and wrapping KH. The 16-case systolic controller
+  suite passes, and selected YOLO320 commands 1-22 pass cluster E2E in 214,193
+  measured cycles with all 22 commands completed.
 - Completed grouped K3 C16-tail block: a generated `[1,4,4,48] -> K3/S1/P1 ->
   [1,4,4,32]` fixture compares against TFLite `BUILTIN_REF` and is byte-exact
   in Verilator at 101,276.016 ns. Compiler commit `69c21ed4` keeps the staged

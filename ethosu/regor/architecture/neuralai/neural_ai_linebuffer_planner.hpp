@@ -15,6 +15,10 @@
 namespace regor::neuralai
 {
 
+constexpr uint16_t KGEN_SCHEDULE_NONE = 0;
+constexpr uint16_t KGEN_SCHEDULE_C32_GROUP_STATIONARY = 1U << 0;
+constexpr uint16_t KGEN_SCHEDULE_GENERIC_LINEAR_K32 = 1U << 1;
+
 struct SystolicLinebufCfg
 {
     uint32_t inputBase = 0;
@@ -39,7 +43,8 @@ struct SystolicLinebufCfg
     uint16_t pool = 0;
     uint16_t c32Fast = 0;
     uint16_t depthwise = 0;
-    uint16_t c32GroupStationary = 0;
+    // ABI-compatible bit mask selecting a Regor-prevalidated KGEN schedule.
+    uint16_t c32GroupStationary = KGEN_SCHEDULE_NONE;
     uint16_t blockValidBytes = 0;
     uint16_t kSeedKh = 0;
     uint16_t kSeedKw = 0;

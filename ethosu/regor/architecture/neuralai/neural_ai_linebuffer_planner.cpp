@@ -78,6 +78,8 @@ LinebufferJob MakeJob(const LinebufferPlannerInput &input, int ohBase, int owBas
     const bool kgen = coalesce && kTiles64 > 1;
     const bool groupStationary = c32Fast && coalesce && kgen && input.logicalIfm.Depth() >= C32 &&
                                  inputGroup >= 0;
+    const bool genericLinearK32 = !c32Fast && coalesce && kgen && inputCStride == C32 &&
+                                  input.ic == C32 && groupBase % C32 == 0;
     const uint64_t groupPlaneBytes = uint64_t(ifmH) * uint64_t(ifmW) * C32;
     // C32-blocked tensors store each channel group as a complete H*W plane,
     // including a masked tail group.  The direct NHWC path is the only path
@@ -114,7 +116,8 @@ LinebufferJob MakeJob(const LinebufferPlannerInput &input, int ohBase, int owBas
     job.linebuf.kgen = kgen ? 1 : 0;
     job.linebuf.c32Fast = c32Fast ? 1 : 0;
     job.linebuf.depthwise = input.isDepthwise ? 1 : 0;
-    job.linebuf.c32GroupStationary = groupStationary ? 1 : 0;
+    job.linebuf.c32GroupStationary = groupStationary ? KGEN_SCHEDULE_C32_GROUP_STATIONARY :
+        genericLinearK32 ? KGEN_SCHEDULE_GENERIC_LINEAR_K32 : KGEN_SCHEDULE_NONE;
     job.linebuf.blockValidBytes = CheckedU16(valid, "valid channel bytes");
     job.linebuf.kTiles = CheckedU32(kTiles64, "K-tile count");
     job.linebuf.spatialM = CheckedU32(uint64_t(tileOh) * uint64_t(tileOw), "spatial M");

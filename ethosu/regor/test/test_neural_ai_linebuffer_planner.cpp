@@ -246,6 +246,24 @@ TEST_CASE("Neural-AI linebuffer planner matches the C31 tail golden fields")
         0u, 279u, 0x2000u, 0x3000u, 64u, 0u, 256u, 8u, 1024u);
 }
 
+TEST_CASE("Neural-AI linebuffer planner marks padded C16 as generic linear K32")
+{
+    auto input = GoldenInputForShape(7, 161, 16, 3, 80);
+    input.ic = 32;
+    input.ifmPixelStride = 32;
+    input.validLaneCount = 16;
+    input.strideH = 2;
+    input.strideW = 2;
+    input.padTop = input.padLeft = input.padBottom = input.padRight = 0;
+    const auto jobs = LinebufferPlanner().Plan(input);
+    REQUIRE(jobs.size() == 1);
+    REQUIRE(jobs.front().linebuf.c32Fast == 0u);
+    REQUIRE(jobs.front().linebuf.c32GroupStationary == KGEN_SCHEDULE_GENERIC_LINEAR_K32);
+    REQUIRE(jobs.front().linebuf.blockValidBytes == 16u);
+    REQUIRE(jobs.front().linebuf.kTiles == 9u);
+    REQUIRE(jobs.front().linebuf.coalesceKBytes == 144u);
+}
+
 TEST_CASE("Neural-AI linebuffer planner disables fast mode for an unaligned base")
 {
     auto input = GoldenInputForShape(8, 8, 64, 8, 8);
