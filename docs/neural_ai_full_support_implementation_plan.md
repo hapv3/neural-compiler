@@ -432,6 +432,14 @@ Completed path:
   qparam-bound, range, or alignment validation per command. Non-trusted host
   malformed-command tests remain unchanged. Full compiler tests and firmware
   build pass; firmware `.text` falls from 24,468 to 23,548 bytes.
+- Completed Neural-AI scheduler isolation from generic weight buffering. The
+  target command generator owns packed-weight staging and requires one encoded
+  constant range; generic performance scheduling could split operation 22 into
+  two incompatible ranges after DRAM-estimator tuning. The compiler now
+  disables that unsupported scheduler feature at the Neural-AI target boundary.
+  The selected YOLO320 model again compiles to 3,910 commands, including 27
+  biased AFU binary commands and the expected command 879 payload
+  `(length=51,200, mode=2, bias=110)`.
 - Completed direct head postprocess: fused DFL consumes C64 and C80 C32 inputs,
   marks the ABI source layout, gathers each DFL16 tile once, packs C80 directly
   to the compact class output, and applies the class LUT in place. Standalone

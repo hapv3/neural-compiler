@@ -3188,7 +3188,9 @@ struct GeneratorContext
             return SetError(error, "Neural-AI matrix operation has no validated matrix or Conv mode");
         const NpuWeightTensor *encoded = cost->npuWeightsTensor.get();
         if ( encoded->encodedRanges.size() != 1 || !encoded->bufferView.HasBuffer() )
-            return SetError(error, "Neural-AI matrix operation requires one encoded constant range");
+            return SetError(error, fmt::format(
+                "Neural-AI matrix operation {} requires one encoded constant range, got {}",
+                operation->Index(), encoded->encodedRanges.size()));
         const WeightRange &range = encoded->encodedRanges.begin()->second;
         const uint8_t *data = encoded->bufferView.RawData<uint8_t>() + range.offset;
         if ( range.scaleBytes <= 0 || range.scaleBytes % int(sizeof(neuralai::QParamV1)) != 0 ||

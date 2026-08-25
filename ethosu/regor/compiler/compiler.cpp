@@ -692,6 +692,10 @@ std::unique_ptr<CompiledGraph> Compiler::CompileGraph(
     if ( graph != _entryPoint ) schedulerOptions.separateIORegions = false;
     if ( IsNeuralAI(_architecture.get()) )
     {
+        // Neural-AI commands reference one target-packed constant range and
+        // perform target-owned weight staging. Generic scheduler weight
+        // buffering can split that range into an ABI-incompatible layout.
+        schedulerOptions.disabled.Set(SchedulerFeature::WeightBuffering);
         schedulerOptions.commandWorkspaceReservation =
             [](const std::vector<std::unique_ptr<SchedulerOperation>> &operations,
                 const Schedule *schedule)
