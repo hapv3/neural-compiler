@@ -28,6 +28,7 @@
 #include "graph_validator.hpp"
 #include "high_level_command_stream_generator.hpp"
 #include "network_performance.hpp"
+#include "neural_ai_command_performance.hpp"
 #include "neural_ai_command_generator.hpp"
 #include "neural_ai_writer.hpp"
 #include "raw_writer.hpp"
@@ -738,11 +739,13 @@ std::unique_ptr<CompiledGraph> Compiler::CompileGraph(
 
     scheduler.AllocateReadOnlyAddresses(schedule.get(), readOnlyAllocator);
 
-    // Calculate full network performance
+    // Calculate the scheduler-level estimate used by every architecture. Neural-AI
+    // replaces its cycle and traffic totals after lowering to the actual ABI.
+    PerformanceResult schedulePerformance;
     if ( _compilerOptions.perfReport )
     {
         NetworkPerformance perf(_architecture.get(), scheduleOps);
-        _perfResult += perf.Measure(schedule.get(), _optDb.get());
+        schedulePerformance = perf.Measure(schedule.get(), _optDb.get());
     }
 
     if ( IsNeuralAI(_architecture.get()) )
@@ -755,10 +758,31 @@ std::unique_ptr<CompiledGraph> Compiler::CompileGraph(
             SetLastError(error);
             return nullptr;
         }
+        if ( _compilerOptions.perfReport )
+        {
+            auto commandPerformance = MeasureNeuralAICommandPerformance(
+                *artifact, _architecture.get(), _optDb ? _optDb->Get() : nullptr);
+            auto &measured = commandPerformance.performance;
+            measured.cpuCycles = schedulePerformance.cpuCycles;
+            measured.macCount = schedulePerformance.macCount;
+            measured.cpuOps = schedulePerformance.cpuOps;
+            measured.npuOps = schedulePerformance.npuOps;
+            measured.cascadedOps = schedulePerformance.cascadedOps;
+            measured.cascades = schedulePerformance.cascades;
+            measured.originalWeights = schedulePerformance.originalWeights;
+            measured.encodedWeights = schedulePerformance.encodedWeights;
+            measured.readOnlyPeakUsage = schedulePerformance.readOnlyPeakUsage;
+            measured.totalCycles += measured.cpuCycles;
+            for ( const auto &[memory, accesses] : schedulePerformance.memory )
+                measured.memory[memory].peakUsage = accesses.peakUsage;
+            _perfResult += measured;
+        }
         return std::make_unique<CompiledGraph>(std::move(schedule),
             std::vector<std::pair<Operation *, std::unique_ptr<NPUOperation>>>{}, nullptr,
             TensorAddressMap{}, std::move(compiledSubgraphs), std::move(artifact));
     }
+
+    _perfResult += schedulePerformance;
 
     // Get a new graph and NPU operations from the scheduled operations
     std::vector<std::pair<Operation *, std::unique_ptr<NPUOperation>>> npuOps;

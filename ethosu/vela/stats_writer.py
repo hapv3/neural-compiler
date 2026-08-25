@@ -683,6 +683,20 @@ def write_regor_perlayer_performance_csv(arch, opt_database, performance_report,
             csv_file.write("\n")
 
 
+def write_neural_ai_command_performance_csv(opt_database, output_basename):
+    """Write the post-lowering Neural-AI ABI estimate without postprocessing operator rows."""
+    table_name = "nai_command_perf"
+    if table_name not in opt_database.tables:
+        return
+
+    table = opt_database.tables[table_name]
+    filename = output_basename + "_command_performance.csv"
+    with open(filename, "w", newline="") as csv_file:
+        writer = csv.writer(csv_file)
+        writer.writerow(table.header)
+        writer.writerows(table.data)
+
+
 def print_regor_perlayer_performance(arch, opt_database, performance_report, output_basename):
     if "perf" not in opt_database.tables:
         return

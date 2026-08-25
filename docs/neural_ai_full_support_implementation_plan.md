@@ -471,6 +471,15 @@ next verify the new tiled paths from block to cluster.
 
 Only after correctness and SRAM feasibility:
 
+- Implemented the initial final-ABI estimator as a linear post-lowering pass.
+  Report every command's index/type/layer/tile, compute cycles, memory cycles,
+  total cycles, and Model/L2/TCDM bytes in `nai_command_perf`. Keep the earlier
+  operator estimator for scheduler decisions, but use the command-level totals
+  for the public Neural-AI inference estimate. Calibrate command dispatch and
+  engine-specific constants later against PMU measurements; the first model is
+  architectural and deliberately does not add compiler search or scheduling
+  work.
+
 - Use the shared U85 burst/outstanding memory-bandwidth calculation for the
   Neural-AI estimator. `Dram_clock_scale`, `Dram_read_latency`,
   `Dram_write_latency`, `Dram_burst_length`, `Dram_max_reads`, and
@@ -480,7 +489,10 @@ Only after correctness and SRAM feasibility:
   DRAM performance domain. Reporting sums the logical model and L2 traffic into
   that domain and derives peak DRAM bandwidth from `Dram_clock_scale`; the raw
   datapath remains 32 bytes/cycle while latency, burst, and outstanding limits
-  reduce its effective bandwidth.
+  reduce its effective bandwidth. The default read/write outstanding limits are
+  both 16, matching `NumAxInFlight=16` in the two RTL iDMA backends; the AXI
+  simulation memory can queue multiple requests but currently adds no DRAM
+  response latency.
 - Preserve the existing intra-GEMM shadow-register pipeline: for a large GEMM,
   firmware preloads tile `N+1` while tile `N` runs, then waits and launches the
   preloaded tile. This optimization is already implemented and is the baseline,

@@ -101,6 +101,7 @@ def process_regor(
         stats_writer.write_regor_perlayer_performance_csv(
             arch, compiled_model.opt_database, compiled_model.perf_report, output_basename
         )
+        stats_writer.write_neural_ai_command_performance_csv(compiled_model.opt_database, output_basename)
         stats_writer.print_regor_perlayer_performance(
             arch, compiled_model.opt_database, compiled_model.perf_report, output_basename
         )

@@ -2,7 +2,9 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import csv
 import os
+from configparser import ConfigParser
 from types import SimpleNamespace
 
 import pytest
@@ -26,6 +28,10 @@ def test_neural_ai_architecture_features_match_fixed_target():
     assert arch.tensor_storage_mem_area[TensorPurpose.Weights] == MemArea.Dram
     assert arch.tensor_storage_mem_area[TensorPurpose.FeatureMap] == MemArea.Sram
     assert os.path.basename(arch.vela_config_files[0]) == "neural-ai.ini"
+    config = ConfigParser()
+    config.read(arch.vela_config_files)
+    assert config.getint("System_Config.Neural_AI", "Dram_max_reads") == 16
+    assert config.getint("System_Config.Neural_AI", "Dram_max_writes") == 16
 
 
 def test_neural_ai_dram_peak_bandwidth_uses_clock_scale(tmp_path):
@@ -91,6 +97,20 @@ def test_neural_ai_report_aggregates_model_and_l2_as_dram(monkeypatch):
     assert dram[TensorPurpose.Weights][BandwidthDirection.Read] == 1000
     assert dram[TensorPurpose.FeatureMap][BandwidthDirection.Read] == 20
     assert dram[TensorPurpose.FeatureMap][BandwidthDirection.Write] == 30
+
+
+def test_neural_ai_command_performance_csv_preserves_abi_rows(tmp_path):
+    header = ["command_index", "command", "cycles"]
+    rows = [["0", "DMA1D", "17"], ["1", "END", "1"]]
+    database = SimpleNamespace(
+        tables={"nai_command_perf": SimpleNamespace(header=header, data=rows)}
+    )
+    output_basename = str(tmp_path / "network")
+
+    stats_writer.write_neural_ai_command_performance_csv(database, output_basename)
+
+    with open(output_basename + "_command_performance.csv", newline="") as csv_file:
+        assert list(csv.reader(csv_file)) == [header, *rows]
 
 
 def test_neural_ai_cli_requires_nai_output(capsys):
