@@ -333,6 +333,7 @@ struct CommandAFULutV2
 enum class AFUBinaryMode : uint32_t
 {
     AddI8 = 1,
+    AddI8Bias = 2,
 };
 
 enum class SpatzBinaryMode : uint32_t
@@ -349,7 +350,8 @@ struct CommandAFUBinaryV2
     RefV1 ofm;
     uint32_t length;
     uint32_t mode;
-    uint32_t reserved[4];
+    int32_t bias;
+    uint32_t reserved[3];
 };
 
 struct CommandSpatzAddV2

@@ -490,16 +490,19 @@ Only after correctness and SRAM feasibility:
   and blocking-versus-pipelined output equivalence; do not infer overlap merely
   from writes to shadow registers.
 - Calibrate tile selection and the performance model with PMU attribution.
-- Evaluate an AFU quantized-binary fast path after the vectorized general Spatz
-  path is fully verified. Regor, not firmware, must prove identity input/output
-  scaling and encode the route; the AFU candidate then computes saturating
-  `lhs + rhs + bias`, where `bias = -lhs_zp - rhs_zp + output_zp`. The current
-  YOLO320 inventory has 27 candidate commands (the 25 command 591--687 adds,
-  plus commands 879 and 1134). Commands 864, 1055, 1464, 3902, 3904, 3905,
-  and 3906 retain the general quantized Spatz ADD/SUB path unless a separately
-  justified general AFU pipeline is approved. Any AFU RTL extension requires
-  explicit permission, lint, focused unit/block byte-exact tests, synthesis
-  review for the 1 GHz target, and PMU comparison before cluster adoption.
+- Implemented the initial AFU quantized-binary fast path after verifying the
+  vectorized general Spatz path. Regor, not firmware, proves identity
+  input/output scaling and encodes saturating `lhs + rhs + bias`, where
+  `bias = -lhs_zp - rhs_zp + output_zp`; the existing `ADD_I8` RTL mode remains
+  unchanged and a shadow `ADD_BIAS` CSR carries the extension. RTL lint, AFU
+  unit tests at bias `110` and the lower supported bound `-382`, cross-ABI and
+  trusted-firmware host tests, and a 128-byte cluster block test are byte-exact.
+  The current YOLO320 inventory has 27 eligible commands (the 25 command
+  591--687 adds, plus commands 879 and 1134). Command 879 and the full eligible
+  inventory still require compiler-generated cluster and PMU comparison before
+  this path is considered fully adopted. Commands 864, 1055, 1464, 3902, 3904,
+  3905, and 3906 retain the general quantized Spatz ADD/SUB path unless a
+  separately justified general AFU pipeline is approved.
 - Remove avoidable boundary conversions, materializations, repeated qparam/LUT
   staging, one-byte commands, and scalar loops from selected hot paths.
 - Add layer/tile-to-command-byte debug mapping and L2-traffic/command-count

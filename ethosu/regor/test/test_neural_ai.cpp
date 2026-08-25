@@ -3571,6 +3571,48 @@ TEST_CASE("Neural-AI compiler lowers quantization-safe Add through AFU binary")
     blob->Release();
 }
 
+TEST_CASE("Neural-AI compiler lowers equal-scale offset Add through biased AFU binary")
+{
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildAddModel(1.0f, 1.0f, 1.0f, -110);
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+    const bool compiled = compiler.Compile();
+    INFO(compiler.LastError());
+    REQUIRE(compiled);
+
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    const uint32_t commandBytes = Read32(data + 64 + 12);
+    uint32_t offset = 224;
+    uint32_t biasedAdds = 0;
+    while ( offset < 224 + commandBytes )
+    {
+        const uint16_t type = Read16(data + offset);
+        const uint16_t commandSize = Read16(data + offset + 2);
+        REQUIRE(commandSize >= 32);
+        if ( type == uint16_t(neuralai::CommandType::AFUBinary) )
+        {
+            REQUIRE(commandSize == sizeof(neuralai::CommandAFUBinaryV2));
+            REQUIRE(Read32(data + offset + 40) == 128);
+            REQUIRE(Read32(data + offset + 44) ==
+                uint32_t(neuralai::AFUBinaryMode::AddI8Bias));
+            REQUIRE(int32_t(Read32(data + offset + 48)) == 110);
+            ++biasedAdds;
+        }
+        REQUIRE(type != uint16_t(neuralai::CommandType::SpatzAdd));
+        offset += commandSize;
+    }
+    REQUIRE(offset == 224 + commandBytes);
+    REQUIRE(biasedAdds == 1);
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
+}
+
 TEST_CASE("Neural-AI AFU Add reads a C32-aligned slice without materialization")
 {
     ArchNeuralAI arch;
@@ -4340,7 +4382,6 @@ TEST_CASE("Neural-AI compiler lowers quantized Add through Spatz")
         blob->Release();
     };
 
-    lowersToSpatz(BuildAddModel(1.0f, 1.0f, 1.0f, 1), 128);
     lowersToSpatz(BuildAddModel(1.0f, 0.5f, 1.0f), 128);
     lowersToSpatz(BuildAddModel(1.0f, 0.5f, 1.0f, 0,
         tflite::ActivationFunctionType::NONE, 37), 74);

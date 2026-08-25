@@ -80,7 +80,8 @@ TEST_CASE("neural_ai_abi freezes AFU binary command layout")
     command.rhs = {uint16_t(Region::TCDMScratch), 0, 0x100};
     command.ofm = {uint16_t(Region::TCDMScratch), 0, 0x200};
     command.length = 64;
-    command.mode = uint32_t(AFUBinaryMode::AddI8);
+    command.mode = uint32_t(AFUBinaryMode::AddI8Bias);
+    command.bias = 110;
 
     REQUIRE(command.header.type == 13);
     REQUIRE(command.header.sizeBytes == 64);
@@ -88,7 +89,8 @@ TEST_CASE("neural_ai_abi freezes AFU binary command layout")
     REQUIRE(command.rhs.offset == 0x100);
     REQUIRE(command.ofm.offset == 0x200);
     REQUIRE(command.length == 64);
-    REQUIRE(command.mode == 1);
+    REQUIRE(command.mode == 2);
+    REQUIRE(command.bias == 110);
 }
 
 TEST_CASE("neural_ai_abi freezes Spatz quantized Add command layout")

@@ -1494,9 +1494,14 @@ struct GeneratorContext
         const int outputZeroPoint = scalarZeroPoint(ofm->quantization);
         const QuantizedScale inputIdentity(32768.0);
         const QuantizedScale outputIdentity(1.0 / 32768.0);
-        const bool rawSafe = !subtract && lhsScale == inputIdentity && rhsScale == inputIdentity &&
+        const int64_t fastBias64 = int64_t(outputZeroPoint) - int64_t(lhsZeroPoint) -
+            int64_t(rhsZeroPoint);
+        const bool fastSafe = !subtract && lhsScale == inputIdentity && rhsScale == inputIdentity &&
             outputScale == outputIdentity &&
-            int64_t(lhsZeroPoint) + int64_t(rhsZeroPoint) == int64_t(outputZeroPoint) &&
+            lhsZeroPoint >= -128 && lhsZeroPoint <= 127 &&
+            rhsZeroPoint >= -128 && rhsZeroPoint <= 127 &&
+            outputZeroPoint >= -128 && outputZeroPoint <= 127 &&
+            fastBias64 >= -382 && fastBias64 <= 383 &&
             (ofm->quantization.quantMin.empty() ||
                 ofm->quantization.quantMin[0] <= -128) &&
             (ofm->quantization.quantMax.empty() || ofm->quantization.quantMax[0] >= 127);
@@ -1504,7 +1509,7 @@ struct GeneratorContext
                                       const RefV1 &tileOfm, uint32_t bytes,
                                       uint32_t tileId)
         {
-            if ( rawSafe )
+            if ( fastSafe )
             {
                 AppendHeader(artifact->commands, CommandType::AFUBinary, 64,
                     uint32_t(operation->Index()), tileId);
@@ -1512,8 +1517,10 @@ struct GeneratorContext
                 AppendRef(artifact->commands, tileRhs);
                 AppendRef(artifact->commands, tileOfm);
                 Append32(artifact->commands, bytes);
-                Append32(artifact->commands, uint32_t(AFUBinaryMode::AddI8));
-                AppendZeros(artifact->commands, 4);
+                Append32(artifact->commands, uint32_t(fastBias64 == 0 ?
+                    AFUBinaryMode::AddI8 : AFUBinaryMode::AddI8Bias));
+                Append32(artifact->commands, uint32_t(fastBias64));
+                AppendZeros(artifact->commands, 3);
             }
             else
             {
