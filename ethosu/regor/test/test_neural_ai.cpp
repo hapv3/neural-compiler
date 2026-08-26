@@ -4199,10 +4199,11 @@ TEST_CASE("Neural-AI K3 Conv tiles spilled feature maps through TCDM stripes")
     REQUIRE(artifact.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);
 }
 
-TEST_CASE("Neural-AI spilled single-group K3 Conv reuses staged weights across stripes")
+TEST_CASE("Neural-AI spilled small K3 Conv reuses staged weights across stripes")
 {
     ArchNeuralAI arch;
-    const Shape ifmShape(1, 65, 33, 32);
+    const int inputChannels = GENERATE(32, 64);
+    const Shape ifmShape(1, 65, 33, inputChannels);
     const Shape ofmShape(1, 33, 17, 64);
     auto lhs = CreateTensor("lhs", ifmShape, DataType::Int8);
     auto rhs = CreateTensor("rhs", ifmShape, DataType::Int8);
@@ -4210,8 +4211,8 @@ TEST_CASE("Neural-AI spilled single-group K3 Conv reuses staged weights across s
     auto convIfm = CreateTensor("conv_ifm", ifmShape, DataType::Int8);
     auto convOfm = CreateTensor("conv_ofm", ofmShape, DataType::Int8);
     auto output = CreateTensor("output", ofmShape, DataType::Int8);
-    auto weights = CreateTensor("weights", Shape(64, 3, 3, 32), DataType::Int8,
-        std::vector<int8_t>(64 * 3 * 3 * 32, 1));
+    auto weights = CreateTensor("weights", Shape(64, 3, 3, inputChannels), DataType::Int8,
+        std::vector<int8_t>(64 * 3 * 3 * inputChannels, 1));
     auto scales = CreateTensor(
         "scales", Shape(1, 1, 1, 64), DataType::Int32, std::vector<int32_t>(64, 0));
     auto add0 = CreateOperation(
@@ -4291,7 +4292,7 @@ TEST_CASE("Neural-AI spilled single-group K3 Conv reuses staged weights across s
              Read16(artifact.commands, offset + 24) ==
                  uint16_t(neuralai::Region::TCDMScratch) &&
              Read32(artifact.commands, offset + 32) == 32 &&
-             Read32(artifact.commands, offset + 44) == 9u * 32u )
+             Read32(artifact.commands, offset + 36) == 32 )
             ++weightLoads;
         if ( convCommand && type == uint16_t(neuralai::CommandType::LineBufferJob) )
             ++linebufferJobs;
@@ -4299,7 +4300,7 @@ TEST_CASE("Neural-AI spilled single-group K3 Conv reuses staged weights across s
     }
     REQUIRE(offset == artifact.commands.size());
     REQUIRE(weightLoads == 2);
-    REQUIRE(linebufferJobs == 6);
+    REQUIRE(linebufferJobs == uint32_t(inputChannels == 32 ? 6 : 12));
     REQUIRE(artifact.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);
 }
 

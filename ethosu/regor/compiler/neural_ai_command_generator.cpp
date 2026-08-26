@@ -3054,6 +3054,12 @@ struct GeneratorContext
             return SetError(error, "Neural-AI spilled linebuffer dimensions overflow the ABI");
         const uint32_t outputGroupWeightBytes = uint32_t(range.weightBytes) / outputGroups;
         const uint32_t outputGroupStride = uint32_t(outputGroupStride64);
+        const uint64_t expectedOutputGroupWeightBytes =
+            uint64_t(inputGroups) * 9u * 32u * 32u;
+        if ( expectedOutputGroupWeightBytes > std::numeric_limits<uint32_t>::max() ||
+             outputGroupWeightBytes != uint32_t(expectedOutputGroupWeightBytes) )
+            return SetError(error,
+                "Neural-AI spilled linebuffer weights do not match the input groups");
         const uint32_t stripeCapacity = LinebufferSpillStripeRows(ofmShape);
         RefV1 modelWeights{};
         modelWeights.region = uint16_t(Region::ModelConstants);
@@ -3071,7 +3077,8 @@ struct GeneratorContext
         }
 
         uint32_t tileId = 0;
-        const bool weightsRemainResident = inputGroups == 1u;
+        const bool weightsRemainResident =
+            workspaceSizes[operation->Uid()].stage >= outputGroupWeightBytes;
         for ( uint32_t outputGroup = 0; outputGroup < outputGroups; ++outputGroup )
         {
             RefV1 groupWeights = modelWeights;
@@ -3080,7 +3087,8 @@ struct GeneratorContext
                 uint32_t(operation->Index()), tileId++);
             if ( weightsRemainResident &&
                  !AppendDMA2D(groupWeights, stagedWeights, 32, 32, 32,
-                     9u * 32u, uint32_t(operation->Index()), tileId++, error) )
+                     outputGroupWeightBytes / 32u,
+                     uint32_t(operation->Index()), tileId++, error) )
                 return false;
             for ( uint32_t outputY = 0; outputY < uint32_t(ofmShape.Height());
                   outputY += stripeCapacity )
@@ -3133,7 +3141,8 @@ struct GeneratorContext
                         Shape(1, int(outputRows), ofmShape.Width(), 32);
                     plannerInput.ifmBase = stripeStageOffset;
                     plannerInput.ofmBase = localOutputOffset;
-                    plannerInput.weightBase = weightStageOffset;
+                    plannerInput.weightBase = weightStageOffset +
+                        (weightsRemainResident ? inputGroup * 9u * 32u * 32u : 0u);
                     plannerInput.psumBase = partialOffset;
                     plannerInput.kernelH = operation->Kernel()->Size().y;
                     plannerInput.kernelW = operation->Kernel()->Size().x;
@@ -3819,8 +3828,10 @@ MemorySnapshot NeuralAICommandGenerator::WorkspaceReservation(
                 (ifmShape.Depth() > 32 || ofmShape.Depth() > 32));
         if ( linebuffer )
         {
+            const uint32_t inputGroups =
+                uint32_t(RoundAway(ifmShape.Depth(), 32)) / 32u;
             const uint32_t kGroups = config->DirectNhwcInput() ? 1u :
-                (tiledLinebuffer ? 9u :
+                (tiledLinebuffer ? (inputGroups <= 2u ? 9u * inputGroups : 9u) :
                     9u * uint32_t(RoundAway(ifmShape.Depth(), 32)) / 32u);
             workspace.stage = std::max(workspace.stage, kGroups * 32u * 32u);
             workspace.partial = std::max(workspace.partial, matrixRows * 32u * 4u);
@@ -4095,8 +4106,10 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
             if ( directRgb || paddedK > 0 )
             {
                 const uint32_t paddedN = uint32_t(RoundAway(int(ofmShape.Depth()), 32));
+                const uint32_t inputGroups =
+                    uint32_t(RoundAway(int(ifmShape.Depth()), 32)) / 32u;
                 const uint32_t kGroups = directRgb ? 1u :
-                    (tiledLinebuffer ? 9u :
+                    (tiledLinebuffer ? (inputGroups <= 2u ? 9u * inputGroups : 9u) :
                         9u * uint32_t(RoundAway(int(ifmShape.Depth()), 32)) / 32u);
                 linebufferWeightBytes = std::max(linebufferWeightBytes,
                     uint32_t(kGroups * 32u * 32u));
