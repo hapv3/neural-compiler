@@ -52,12 +52,16 @@ TEST_CASE("Neural-AI command memory state tracks content and invalidation")
     REQUIRE_FALSE(state.Contains(32, 96, newer, 100));
     REQUIRE(state.Find(first, 116, 16) == 48);
     REQUIRE_FALSE(state.Find(first, 90, 16));
+    REQUIRE(state.FindExtent(first, 116, 64) ==
+        std::pair<uint32_t, uint32_t>{48, 64});
+    REQUIRE(state.MatchedPrefix(48, 64, first, 116) == 64);
 
     state.Invalidate(64, 32);
     REQUIRE(state.Contains(32, 32, first, 100));
     REQUIRE_FALSE(state.Contains(32, 96, first, 100));
     REQUIRE(state.Contains(96, 32, first, 164));
     REQUIRE_FALSE(state.Find(first, 132, 32));
+    REQUIRE(state.MatchedPrefix(32, 96, first, 100) == 32);
 
     state.Write(64, 32, other, 0);
     REQUIRE(state.Contains(64, 32, other));
@@ -2752,6 +2756,7 @@ TEST_CASE("Neural-AI compiler streams a structural RGB stem from its binding")
     REQUIRE(generated);
     uint32_t bindingCopies = 0;
     uint32_t bindingRows = 0;
+    uint32_t bindingBytes = 0;
     uint32_t paddingSeeds = 0;
     uint32_t rollingCopies = 0;
     size_t offset = 0;
@@ -2766,6 +2771,8 @@ TEST_CASE("Neural-AI compiler streams a structural RGB stem from its binding")
         {
             ++bindingCopies;
             bindingRows += Read32(artifact.commands, offset + 44);
+            bindingBytes += Read32(artifact.commands, offset + 32) *
+                Read32(artifact.commands, offset + 44);
         }
         if ( type == uint16_t(neuralai::CommandType::DMA1D) &&
              Read16(artifact.commands, offset + 16) ==
@@ -2779,17 +2786,18 @@ TEST_CASE("Neural-AI compiler streams a structural RGB stem from its binding")
                  uint16_t(neuralai::Region::TCDMScratch) &&
              Read16(artifact.commands, offset + 24) ==
                  uint16_t(neuralai::Region::TCDMScratch) &&
-             Read32(artifact.commands, offset + 32) == inputWidth * 3 &&
+             Read32(artifact.commands, offset + 32) < inputWidth * 3 &&
              Read32(artifact.commands, offset + 48) ==
                  uint32_t(neuralai::DMADirection::LocalToLocal) )
             ++rollingCopies;
         offset += bytes;
     }
     REQUIRE(offset == artifact.commands.size());
-    CAPTURE(bindingCopies, bindingRows, rollingCopies);
+    CAPTURE(bindingCopies, bindingRows, bindingBytes, rollingCopies);
     REQUIRE(bindingCopies > 1);
     REQUIRE(rollingCopies > 0);
-    REQUIRE(bindingRows == inputHeight + bindingCopies - 1 - rollingCopies);
+    REQUIRE(bindingBytes >= inputHeight * inputWidth * 3);
+    REQUIRE(bindingBytes < (inputHeight + 15) * inputWidth * 3);
     REQUIRE(paddingSeeds > 0);
     REQUIRE(paddingSeeds < bindingCopies);
     REQUIRE(artifact.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);

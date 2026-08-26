@@ -160,6 +160,93 @@ bool IsL2ArenaTensor(const SchedulerTensor *tensor)
            tensor->memArea.memory->Name() == "l2";
 }
 
+struct HaloWorkspace
+{
+    uint32_t bytes = 0;
+    uint32_t rows = 0;
+};
+
+HaloWorkspace CascadeHaloWorkspace(const SchedulerOperation *operation,
+    const SchedulerOpInfo *cost, const NeuralAIOpConfig *config)
+{
+    if ( operation == nullptr || cost == nullptr || config == nullptr ||
+         cost->cascade == 0 || !IsLinebufferConvMode(config->Mode()) )
+        return {};
+    const SchedulerConnection *ifm = operation->IFM(0);
+    if ( ifm == nullptr ||
+         (!ifm->tensor->isGraphInput && !IsL2ArenaTensor(ifm->tensor.get())) )
+        return {};
+    const Kernel *kernel = operation->Kernel();
+    if ( kernel == nullptr ) return {};
+    const int overlapRows = std::max(0, kernel->Size().y - kernel->Stride().y);
+    if ( overlapRows == 0 ) return {};
+    const Shape storage = ReshapeToNHWC(ifm->tensor->storageShape);
+    const int storedChannels = config->DirectNhwcInput() ? ifm->SliceShape().Depth() :
+        RoundAway(ifm->SliceShape().Depth(), 32);
+    const uint64_t bytes = uint64_t(overlapRows) * uint64_t(storage.Width()) *
+        uint64_t(storedChannels);
+    if ( bytes > std::numeric_limits<uint32_t>::max() )
+        throw std::runtime_error("Neural-AI cascade halo workspace overflows");
+    return {uint32_t(bytes), uint32_t(overlapRows)};
+}
+
+template<typename WorkspaceMap>
+void FitCascadeHaloWorkspaces(
+    const std::vector<std::unique_ptr<SchedulerOperation>> &operations,
+    const Schedule *schedule, WorkspaceMap &sizes)
+{
+    struct CascadeUsage
+    {
+        uint64_t persistent = 0;
+        uint64_t transient = 0;
+        int start = std::numeric_limits<int>::max();
+        int end = 0;
+        std::vector<UniqueId> operations;
+    };
+    std::unordered_map<int, CascadeUsage> cascades;
+    const auto aligned = [](uint32_t bytes)
+    {
+        return uint64_t(RoundAway(int(bytes), ArchNeuralAI::DMAAlignment));
+    };
+    for ( const auto &operation : operations )
+    {
+        const SchedulerOpInfo *cost = schedule->Cost(operation.get());
+        if ( cost == nullptr || cost->cascade == 0 ) continue;
+        auto position = sizes.find(operation->Uid());
+        if ( position == sizes.end() ) continue;
+        auto &size = position->second;
+        CascadeUsage &usage = cascades[cost->cascade];
+        usage.persistent += aligned(size.stage);
+        usage.transient = std::max(
+            usage.transient, aligned(size.partial) + aligned(size.stripe));
+        usage.start = std::min(usage.start, cost->timeIndex);
+        usage.end = std::max(usage.end, cost->timeIndex);
+        usage.operations.push_back(operation->Uid());
+    }
+    for ( auto &[cascadeId, usage] : cascades )
+    {
+        UNUSED(cascadeId);
+        uint64_t available = ArchNeuralAI::AllocatableTCDMBytes;
+        for ( int time = usage.start; time <= usage.end; ++time )
+        {
+            const int live = schedule->MemoryUsageAt(time);
+            available = std::min(available, live < ArchNeuralAI::AllocatableTCDMBytes ?
+                uint64_t(ArchNeuralAI::AllocatableTCDMBytes - live) : 0u);
+        }
+        uint64_t remaining = available > usage.persistent + usage.transient ?
+            available - usage.persistent - usage.transient : 0u;
+        remaining = remaining / ArchNeuralAI::DMAAlignment * ArchNeuralAI::DMAAlignment;
+        for ( UniqueId uid : usage.operations )
+        {
+            auto &size = sizes.at(uid);
+            const uint32_t selected = uint32_t(std::min(
+                aligned(size.halo), remaining));
+            size.halo = std::min(size.halo, selected);
+            remaining -= selected;
+        }
+    }
+}
+
 bool ResolveDMADirection(const RefV1 &source, const RefV1 &destination, DMADirection &direction)
 {
     const bool sourceLocal = IsLocalDMARegion(source.region);
@@ -375,6 +462,8 @@ struct GeneratorContext
     struct WorkspaceSize
     {
         uint32_t stage = 0;
+        uint32_t halo = 0;
+        uint32_t haloRows = 0;
         uint32_t partial = 0;
         uint32_t stripe = 0;
     };
@@ -390,6 +479,7 @@ struct GeneratorContext
     struct WorkspacePlacement
     {
         uint32_t stage = 0;
+        uint32_t halo = 0;
         uint32_t partial = 0;
         uint32_t stripe = 0;
     };
@@ -410,6 +500,9 @@ struct GeneratorContext
     uint32_t scratchEnd = 0;
     uint32_t stageOffset = 0;
     uint32_t weightStageOffset = 0;
+    uint32_t haloOffset = 0;
+    uint32_t activeHaloBytes = 0;
+    uint32_t activeHaloRows = 0;
     uint32_t partialOffset = 0;
     uint32_t stripeStageOffset = 0;
     uint32_t paddingSeedOffset = 0;
@@ -438,11 +531,14 @@ struct GeneratorContext
         const WorkspaceSize size = workspaceSizes[operation->Uid()];
         const uint32_t selectedStageBytes =
             uint32_t(RoundAway(int(size.stage), ArchNeuralAI::DMAAlignment));
+        const uint32_t selectedHaloBytes =
+            uint32_t(RoundAway(int(size.halo), ArchNeuralAI::DMAAlignment));
         const uint32_t selectedPartialBytes =
             uint32_t(RoundAway(int(size.partial), ArchNeuralAI::DMAAlignment));
         const uint32_t selectedStripeBytes =
             uint32_t(RoundAway(int(size.stripe), ArchNeuralAI::DMAAlignment));
-        const uint32_t total = selectedStageBytes + selectedPartialBytes + selectedStripeBytes;
+        const uint32_t total = selectedStageBytes + selectedHaloBytes +
+            selectedPartialBytes + selectedStripeBytes;
         const SchedulerOpInfo *cost = schedule->Cost(operation);
         if ( cost == nullptr || cost->timeIndex < 0 )
             return SetError(error, "Neural-AI workspace operation has no schedule time");
@@ -452,15 +548,18 @@ struct GeneratorContext
         if ( !sameContentScope ) tcdmContent.Clear();
         contentCascade = cost->cascade;
         paddingSeedOffset = 0;
+        activeHaloBytes = size.halo;
+        activeHaloRows = size.haloRows;
         if ( total == 0 ) return true;
         const bool sameWorkspaceOwner = contentOperation == operation->Uid();
         contentOperation = operation->Uid();
 
-        const auto activatePlacement = [&]()
+        const auto activatePlacement = [&](bool cachedPlacement)
         {
             if ( sameWorkspaceOwner ) return;
-            tcdmContent.Invalidate(stageOffset, selectedStageBytes);
             tcdmContent.Invalidate(partialOffset, selectedPartialBytes);
+            tcdmContent.Invalidate(stageOffset, selectedStageBytes);
+            if ( !cachedPlacement ) tcdmContent.Invalidate(haloOffset, selectedHaloBytes);
             const uint32_t writableStripeBytes = selectedStripeBytes >= PaddingSeedBytes ?
                 selectedStripeBytes - PaddingSeedBytes : selectedStripeBytes;
             tcdmContent.Invalidate(stripeStageOffset, writableStripeBytes);
@@ -471,11 +570,12 @@ struct GeneratorContext
         {
             stageOffset = cached->second.stage;
             weightStageOffset = stageOffset;
+            haloOffset = cached->second.halo;
             partialOffset = cached->second.partial;
             stripeStageOffset = cached->second.stripe;
             if ( selectedStripeBytes >= PaddingSeedBytes )
                 paddingSeedOffset = stripeStageOffset + selectedStripeBytes - PaddingSeedBytes;
-            activatePlacement();
+            activatePlacement(true);
             return true;
         }
         int startTime = cost->timeIndex;
@@ -552,16 +652,18 @@ struct GeneratorContext
         WorkspacePlacement placement;
         const bool persistentStage = cost->cascade != 0;
         if ( !allocatePart(selectedStageBytes, "stage", persistentStage, placement.stage) ||
+             !allocatePart(selectedHaloBytes, "halo", persistentStage, placement.halo) ||
              !allocatePart(selectedPartialBytes, "partial", false, placement.partial) ||
              !allocatePart(selectedStripeBytes, "stripe", false, placement.stripe) ) return false;
         workspaceOffsets.emplace(operation->Uid(), placement);
         stageOffset = placement.stage;
         weightStageOffset = placement.stage;
+        haloOffset = placement.halo;
         partialOffset = placement.partial;
         stripeStageOffset = placement.stripe;
         if ( selectedStripeBytes >= PaddingSeedBytes )
             paddingSeedOffset = stripeStageOffset + selectedStripeBytes - PaddingSeedBytes;
-        activatePlacement();
+        activatePlacement(false);
         return true;
     }
 
@@ -3006,43 +3108,50 @@ struct GeneratorContext
                         if ( tcdmContent.Contains(destinationOffset,
                                  copy.length, tensorContent, contentOffset) )
                             continue;
-                        const std::optional<uint32_t> resident =
-                            tcdmContent.Find(tensorContent, contentOffset, copy.length);
-                        if ( !resident ||
-                             (uint64_t(*resident) < uint64_t(destinationOffset) + copy.length &&
-                                 uint64_t(destinationOffset) < uint64_t(*resident) + copy.length) )
+                        const auto resident = tcdmContent.FindExtent(
+                            tensorContent, contentOffset, copy.length);
+                        if ( !resident || resident->second == 0 ||
+                             (uint64_t(resident->first) <
+                                     uint64_t(destinationOffset) + resident->second &&
+                                 uint64_t(destinationOffset) <
+                                     uint64_t(resident->first) + resident->second) )
                             continue;
                         RefV1 localSource{
-                            uint16_t(Region::TCDMScratch), 0, *resident};
+                            uint16_t(Region::TCDMScratch), 0, resident->first};
                         RefV1 localDestination{
                             uint16_t(Region::TCDMScratch), 0, destinationOffset};
-                        if ( !AppendDMA2D(localSource, localDestination, copy.length,
-                                 copy.length, copy.length, 1,
+                        if ( !AppendDMA2D(localSource, localDestination, resident->second,
+                                 resident->second, resident->second, 1,
                                  layerId, tileId++, error) )
                             return false;
                         tcdmContent.Write(destinationOffset,
-                            copy.length, tensorContent, contentOffset);
+                            resident->second, tensorContent, contentOffset);
                     }
                 }
                 uint32_t runStart = 0;
                 while ( runStart < copy.repetitions )
                 {
-                    const auto rowResident = [&](uint32_t row)
+                    const auto rowPrefix = [&](uint32_t row)
                     {
-                        return externalSource && tcdmContent.Contains(
+                        return externalSource ? tcdmContent.MatchedPrefix(
                             copy.destination + row * copy.destinationStride,
                             copy.length, tensorContent,
-                            uint64_t(copy.source) + uint64_t(row) * copy.sourceStride);
+                            uint64_t(copy.source) + uint64_t(row) * copy.sourceStride) : 0u;
                     };
-                    while ( runStart < copy.repetitions && rowResident(runStart) ) ++runStart;
+                    while ( runStart < copy.repetitions &&
+                            rowPrefix(runStart) == copy.length )
+                        ++runStart;
                     if ( runStart == copy.repetitions ) break;
+                    const uint32_t prefix = rowPrefix(runStart);
                     uint32_t runEnd = runStart + 1;
-                    while ( runEnd < copy.repetitions && !rowResident(runEnd) ) ++runEnd;
+                    while ( runEnd < copy.repetitions &&
+                            rowPrefix(runEnd) == prefix )
+                        ++runEnd;
                     RefV1 runSource = source;
                     RefV1 runDestination = destination;
-                    runSource.offset += runStart * copy.sourceStride;
-                    runDestination.offset += runStart * copy.destinationStride;
-                    if ( !AppendDMA2D(runSource, runDestination, copy.length,
+                    runSource.offset += runStart * copy.sourceStride + prefix;
+                    runDestination.offset += runStart * copy.destinationStride + prefix;
+                    if ( !AppendDMA2D(runSource, runDestination, copy.length - prefix,
                              copy.sourceStride, copy.destinationStride, runEnd - runStart,
                              layerId, tileId++, error) )
                         return false;
@@ -3058,6 +3167,44 @@ struct GeneratorContext
                     else
                         tcdmContent.Invalidate(destinationOffset, copy.length);
                 }
+            }
+        }
+        if ( activeHaloBytes != 0 && activeHaloRows != 0 )
+        {
+            uint32_t haloCursor = haloOffset;
+            const uint64_t haloEnd = uint64_t(haloOffset) + activeHaloBytes;
+            for ( const auto &copy : plan.copies )
+            {
+                // A DMA2D copy describes complete physical rows for direct
+                // NHWC and non-tail C32 staging.  Cache the final source rows
+                // of every group compactly; DMA3D compact-tail rows retain
+                // their existing safe reload path until a strided halo cache
+                // is represented explicitly.
+                if ( copy.repetitions3 != 0 || copy.repetitions == 0 ) continue;
+                const uint32_t rows = std::min(activeHaloRows, copy.repetitions);
+                const uint32_t firstRow = copy.repetitions - rows;
+                const uint64_t remaining = haloEnd - haloCursor;
+                const uint32_t cachedLength = uint32_t(std::min<uint64_t>(
+                    copy.length, remaining / rows /
+                        ArchNeuralAI::DMAAlignment * ArchNeuralAI::DMAAlignment));
+                if ( cachedLength == 0 ) continue;
+                const uint64_t bytes = uint64_t(rows) * cachedLength;
+                RefV1 localSource{uint16_t(Region::TCDMScratch), 0,
+                    copy.destination + firstRow * copy.destinationStride};
+                RefV1 localDestination{
+                    uint16_t(Region::TCDMScratch), 0, haloCursor};
+                if ( !AppendDMA2D(localSource, localDestination, cachedLength,
+                         copy.destinationStride, cachedLength, rows,
+                         layerId, tileId++, error) )
+                    return false;
+                for ( uint32_t row = 0; row < rows; ++row )
+                {
+                    tcdmContent.Write(haloCursor + row * cachedLength,
+                        cachedLength, tensorContent,
+                        uint64_t(copy.source) +
+                            uint64_t(firstRow + row) * copy.sourceStride);
+                }
+                haloCursor += uint32_t(bytes);
             }
         }
         return true;
@@ -4014,6 +4161,7 @@ MemorySnapshot NeuralAICommandGenerator::WorkspaceReservation(
     struct WorkspaceSize
     {
         uint32_t stage = 0;
+        uint32_t halo = 0;
         uint32_t partial = 0;
         uint32_t stripe = 0;
     };
@@ -4058,6 +4206,8 @@ MemorySnapshot NeuralAICommandGenerator::WorkspaceReservation(
             "Neural-AI workspace reservation operation has no target mode");
         const auto *config = static_cast<const NeuralAIOpConfig *>(cost->Config());
         const NeuralAIOpMode mode = config->Mode();
+        workspace.halo = CascadeHaloWorkspace(
+            operation.get(), cost, config).bytes;
         const Shape ifmShape = operation->IFM(0)->SliceShape();
         const Shape ofmShape = operation->OFM()->SliceShape();
         if ( ofmShape.Depth() <= 0 ) throw std::runtime_error(
@@ -4153,10 +4303,11 @@ MemorySnapshot NeuralAICommandGenerator::WorkspaceReservation(
         }
     }
 
+    FitCascadeHaloWorkspaces(operations, schedule, sizes);
     MemorySnapshot reservation(maxTime + 1);
     struct CascadeWorkspace
     {
-        uint64_t stages = 0;
+        uint64_t persistent = 0;
         uint64_t transient = 0;
         int start = std::numeric_limits<int>::max();
         int end = 0;
@@ -4167,11 +4318,14 @@ MemorySnapshot NeuralAICommandGenerator::WorkspaceReservation(
         const SchedulerOpInfo *cost = schedule->Cost(operation.get());
         const WorkspaceSize &size = sizes[operation->Uid()];
         const uint32_t stage = uint32_t(RoundAway(int(size.stage), ArchNeuralAI::DMAAlignment));
-        const uint32_t transient = uint32_t(RoundAway(int(size.partial), ArchNeuralAI::DMAAlignment)) +
-            uint32_t(RoundAway(int(size.stripe), ArchNeuralAI::DMAAlignment));
+        const uint32_t halo = uint32_t(RoundAway(int(size.halo), ArchNeuralAI::DMAAlignment));
+        const uint32_t partial = uint32_t(RoundAway(
+            int(size.partial), ArchNeuralAI::DMAAlignment));
+        const uint32_t stripe = uint32_t(RoundAway(
+            int(size.stripe), ArchNeuralAI::DMAAlignment));
         if ( cost->cascade == 0 )
         {
-            const uint64_t bytes = uint64_t(stage) + transient;
+            const uint64_t bytes = uint64_t(stage) + halo + partial + stripe;
             if ( bytes > std::numeric_limits<int>::max() ) throw std::runtime_error(
                 "Neural-AI command workspace reservation overflows");
             reservation[cost->timeIndex].op = std::max(
@@ -4180,8 +4334,9 @@ MemorySnapshot NeuralAICommandGenerator::WorkspaceReservation(
         else
         {
             CascadeWorkspace &cascade = cascades[cost->cascade];
-            cascade.stages += stage;
-            cascade.transient = std::max(cascade.transient, uint64_t(transient));
+            cascade.persistent += uint64_t(stage) + halo;
+            cascade.transient = std::max(cascade.transient,
+                uint64_t(partial) + stripe);
             cascade.start = std::min(cascade.start, cost->timeIndex);
             cascade.end = std::max(cascade.end, cost->timeIndex);
         }
@@ -4189,7 +4344,7 @@ MemorySnapshot NeuralAICommandGenerator::WorkspaceReservation(
     for ( const auto &[id, cascade] : cascades )
     {
         UNUSED(id);
-        const uint64_t reservedBytes = cascade.stages + cascade.transient;
+        const uint64_t reservedBytes = cascade.persistent + cascade.transient;
         if ( reservedBytes > std::numeric_limits<int>::max() ) throw std::runtime_error(
             "Neural-AI cascade workspace reservation overflows");
         const int bytes = int(reservedBytes);
@@ -4289,6 +4444,10 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         }
         const auto *config = static_cast<const NeuralAIOpConfig *>(cost->Config());
         const NeuralAIOpMode mode = config->Mode();
+        const HaloWorkspace halo = CascadeHaloWorkspace(
+            operation.get(), cost, config);
+        workspace.halo = std::max(workspace.halo, halo.bytes);
+        workspace.haloRows = std::max(workspace.haloRows, halo.rows);
         const Shape ifmShape = operation->IFM(0)->SliceShape();
         const Shape ofmShape = operation->OFM()->SliceShape();
         const uint32_t rows = uint32_t(ofmShape.Elements64() / ofmShape.Depth());
@@ -4494,6 +4653,8 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         context.workspaceSizes[operation->Uid()].stripe = std::max(
             context.workspaceSizes[operation->Uid()].stripe, stagingBytes);
     }
+
+    FitCascadeHaloWorkspaces(operations, schedule, context.workspaceSizes);
 
     for ( const auto &operation : operations )
     {

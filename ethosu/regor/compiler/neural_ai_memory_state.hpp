@@ -82,6 +82,47 @@ public:
         return std::nullopt;
     }
 
+    std::optional<std::pair<uint32_t, uint32_t>> FindExtent(
+        MemoryContent content, uint64_t contentOffset, uint32_t maxSize) const
+    {
+        if ( maxSize == 0 ) return std::pair<uint32_t, uint32_t>{0, 0};
+        for ( const Span &span : _spans )
+        {
+            const uint64_t spanContentEnd = span.contentOffset + span.end - span.begin;
+            if ( span.content == content && contentOffset >= span.contentOffset &&
+                 contentOffset < spanContentEnd )
+            {
+                const uint64_t address = span.begin + contentOffset - span.contentOffset;
+                const uint64_t bytes = std::min<uint64_t>(
+                    maxSize, spanContentEnd - contentOffset);
+                if ( address <= UINT32_MAX && bytes <= UINT32_MAX )
+                    return std::pair<uint32_t, uint32_t>{
+                        uint32_t(address), uint32_t(bytes)};
+            }
+        }
+        return std::nullopt;
+    }
+
+    uint32_t MatchedPrefix(uint32_t address, uint32_t maxSize,
+        MemoryContent content, uint64_t contentOffset) const
+    {
+        uint32_t matched = 0;
+        while ( matched < maxSize )
+        {
+            const uint64_t cursor = uint64_t(address) + matched;
+            auto position = std::find_if(_spans.begin(), _spans.end(),
+                [cursor](const Span &span)
+                { return span.begin <= cursor && cursor < span.end; });
+            if ( position == _spans.end() || !(position->content == content) ||
+                 position->contentOffset + cursor - position->begin != contentOffset + matched )
+                break;
+            const uint64_t bytes = std::min<uint64_t>(
+                maxSize - matched, position->end - cursor);
+            matched += uint32_t(bytes);
+        }
+        return matched;
+    }
+
 private:
     struct Span
     {
