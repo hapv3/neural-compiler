@@ -14,6 +14,7 @@
 #include "compiler/high_level_command_stream_generator.hpp"
 #include "compiler/neural_ai_command_generator.hpp"
 #include "compiler/neural_ai_graph_optimiser.hpp"
+#include "compiler/neural_ai_memory_state.hpp"
 #include "compiler/neural_ai_memory_placement.hpp"
 #include "compiler/neural_ai_writer.hpp"
 #include "compiler/scheduler.hpp"
@@ -36,6 +37,35 @@ using namespace regor;
 
 namespace
 {
+
+TEST_CASE("Neural-AI command memory state tracks content and invalidation")
+{
+    neuralai::CommandMemoryState state;
+    const neuralai::MemoryContent first{7, 2};
+    const neuralai::MemoryContent newer{7, 3};
+    const neuralai::MemoryContent other{8, 0};
+
+    state.Write(32, 96, first, 100);
+    REQUIRE(state.Contains(32, 96, first, 100));
+    REQUIRE(state.Contains(48, 16, first, 116));
+    REQUIRE_FALSE(state.Contains(48, 16, first, 100));
+    REQUIRE_FALSE(state.Contains(32, 96, newer, 100));
+
+    state.Invalidate(64, 32);
+    REQUIRE(state.Contains(32, 32, first, 100));
+    REQUIRE_FALSE(state.Contains(32, 96, first, 100));
+    REQUIRE(state.Contains(96, 32, first, 164));
+
+    state.Write(64, 32, other, 0);
+    REQUIRE(state.Contains(64, 32, other));
+    REQUIRE_FALSE(state.Contains(32, 96, first, 100));
+    state.Write(64, 32, first, 132);
+    REQUIRE(state.Contains(32, 96, first, 100));
+
+    state.Clear();
+    REQUIRE_FALSE(state.Contains(32, 1, first, 100));
+    REQUIRE(state.Contains(32, 0, first, 100));
+}
 
 uint32_t Read32(const uint8_t *data)
 {
@@ -2719,6 +2749,7 @@ TEST_CASE("Neural-AI compiler streams a structural RGB stem from its binding")
     REQUIRE(generated);
     uint32_t bindingCopies = 0;
     uint32_t bindingRows = 0;
+    uint32_t paddingSeeds = 0;
     size_t offset = 0;
     while ( offset < artifact.commands.size() )
     {
@@ -2732,11 +2763,20 @@ TEST_CASE("Neural-AI compiler streams a structural RGB stem from its binding")
             ++bindingCopies;
             bindingRows += Read32(artifact.commands, offset + 44);
         }
+        if ( type == uint16_t(neuralai::CommandType::DMA1D) &&
+             Read16(artifact.commands, offset + 16) ==
+                 uint16_t(neuralai::Region::ModelConstants) &&
+             Read16(artifact.commands, offset + 24) ==
+                 uint16_t(neuralai::Region::TCDMScratch) &&
+             Read32(artifact.commands, offset + 32) == 32 )
+            ++paddingSeeds;
         offset += bytes;
     }
     REQUIRE(offset == artifact.commands.size());
     REQUIRE(bindingCopies > 1);
     REQUIRE(bindingRows == inputHeight + bindingCopies - 1);
+    REQUIRE(paddingSeeds > 0);
+    REQUIRE(paddingSeeds < bindingCopies);
     REQUIRE(artifact.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);
 }
 

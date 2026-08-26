@@ -12,6 +12,7 @@
 #include "architecture/neuralai/neural_ai_op_config.hpp"
 #include "architecture/neuralai/neural_ai_quantization.hpp"
 #include "compiler/high_level_command_stream_generator.hpp"
+#include "compiler/neural_ai_memory_state.hpp"
 #include "compiler/shape_util.hpp"
 #include "tflite/tflite_schema_generated.hpp"
 
@@ -412,8 +413,9 @@ struct GeneratorContext
     uint32_t partialOffset = 0;
     uint32_t stripeStageOffset = 0;
     uint32_t paddingSeedOffset = 0;
-    bool paddingSeedValid = false;
-    int8_t paddingSeedValue = 0;
+    neuralai::CommandMemoryState tcdmContent;
+    int contentCascade = 0;
+    UniqueId contentOperation = INVALID_UID;
     uint32_t stageBytes = 0;
     uint32_t partialBytes = 0;
     uint32_t stripeStageBytes = 0;
@@ -441,9 +443,26 @@ struct GeneratorContext
         const uint32_t selectedStripeBytes =
             uint32_t(RoundAway(int(size.stripe), ArchNeuralAI::DMAAlignment));
         const uint32_t total = selectedStageBytes + selectedPartialBytes + selectedStripeBytes;
+        const SchedulerOpInfo *cost = schedule->Cost(operation);
+        if ( cost == nullptr || cost->timeIndex < 0 )
+            return SetError(error, "Neural-AI workspace operation has no schedule time");
+        const bool sameContentScope = cost->cascade != 0 ?
+            contentCascade == cost->cascade :
+            contentCascade == 0 && contentOperation == operation->Uid();
+        if ( !sameContentScope ) tcdmContent.Clear();
+        contentCascade = cost->cascade;
+        contentOperation = operation->Uid();
         paddingSeedOffset = 0;
-        paddingSeedValid = false;
         if ( total == 0 ) return true;
+
+        const auto activatePlacement = [&]()
+        {
+            tcdmContent.Invalidate(stageOffset, selectedStageBytes);
+            tcdmContent.Invalidate(partialOffset, selectedPartialBytes);
+            const uint32_t writableStripeBytes = selectedStripeBytes >= PaddingSeedBytes ?
+                selectedStripeBytes - PaddingSeedBytes : selectedStripeBytes;
+            tcdmContent.Invalidate(stripeStageOffset, writableStripeBytes);
+        };
 
         auto cached = workspaceOffsets.find(operation->Uid());
         if ( cached != workspaceOffsets.end() )
@@ -454,12 +473,9 @@ struct GeneratorContext
             stripeStageOffset = cached->second.stripe;
             if ( selectedStripeBytes >= PaddingSeedBytes )
                 paddingSeedOffset = stripeStageOffset + selectedStripeBytes - PaddingSeedBytes;
+            activatePlacement();
             return true;
         }
-
-        const SchedulerOpInfo *cost = schedule->Cost(operation);
-        if ( cost == nullptr || cost->timeIndex < 0 )
-            return SetError(error, "Neural-AI workspace operation has no schedule time");
         int startTime = cost->timeIndex;
         int endTime = cost->timeIndex;
         if ( cost->cascade != 0 )
@@ -543,6 +559,7 @@ struct GeneratorContext
         stripeStageOffset = placement.stripe;
         if ( selectedStripeBytes >= PaddingSeedBytes )
             paddingSeedOffset = stripeStageOffset + selectedStripeBytes - PaddingSeedBytes;
+        activatePlacement();
         return true;
     }
 
@@ -2811,13 +2828,17 @@ struct GeneratorContext
             {
                 fillSource.region = uint16_t(Region::TCDMScratch);
                 fillSource.offset = paddingSeedOffset;
-                if ( !paddingSeedValid || paddingSeedValue != paddingValue )
+                constexpr uint64_t paddingContentClass = UINT64_C(0x5041440000000000);
+                const neuralai::MemoryContent content{
+                    paddingContentClass | uint8_t(paddingValue), 0};
+                if ( !tcdmContent.Contains(
+                         paddingSeedOffset, PaddingSeedBytes, content) )
                 {
                     if ( !AppendDMA1D(pattern, fillSource, PaddingSeedBytes,
                              layerId, tileId++, error) )
                         return false;
-                    paddingSeedValid = true;
-                    paddingSeedValue = paddingValue;
+                    tcdmContent.Write(
+                        paddingSeedOffset, PaddingSeedBytes, content);
                 }
             }
             const uint32_t blocks = plan.bytes / 32u;
