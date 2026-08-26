@@ -3278,12 +3278,11 @@ struct GeneratorContext
             {
                 const int inputY = (ifmAreaStart.Height() + rowsDone) % ifmStorage.Height();
                 const int outputY = (ofmAreaStart.Height() + rowsDone) % ofmStorage.Height();
-                const int tileRows = std::max(
-                    1, int(MaxPointwiseSpillRows) / ofmAreaShape.Width());
                 const int rows = std::min({ofmAreaShape.Height() - rowsDone,
-                    ifmStorage.Height() - inputY, ofmStorage.Height() - outputY, tileRows});
+                    ifmStorage.Height() - inputY, ofmStorage.Height() - outputY});
                 const uint32_t matrixRows = uint32_t(rows * ofmAreaShape.Width());
-                if ( kGroups > 1u && uint64_t(matrixRows) * 32u * 4u > partialBytes )
+                const uint32_t partialRows = std::min(matrixRows, MaxPointwiseSpillRows);
+                if ( kGroups > 1u && uint64_t(partialRows) * 32u * 4u > partialBytes )
                     return SetError(error, "Neural-AI striped pointwise Conv exceeds its partial buffer");
                 for ( uint32_t nGroup = 0; nGroup < nGroups; ++nGroup )
                 {

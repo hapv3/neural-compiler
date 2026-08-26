@@ -5833,7 +5833,7 @@ TEST_CASE("Neural-AI compiler aliases C32-aligned YOLO depth slices into pointwi
     Compiler compiler(architecture);
     const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
     REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
-    const auto model = BuildC32SliceConvModel(2, 3, 64, 32, 32, 32);
+    const auto model = BuildC32SliceConvModel(20, 20, 64, 32, 32, 32);
     REQUIRE(compiler.LoadTflite(model.data(), model.size()));
     const bool compiled = compiler.Compile();
     INFO(compiler.LastError());
@@ -5849,6 +5849,7 @@ TEST_CASE("Neural-AI compiler aliases C32-aligned YOLO depth slices into pointwi
     uint32_t consumerInputOffset = 0;
     uint32_t copyCommands = 0;
     uint32_t pointwiseCommands = 0;
+    uint32_t maxPointwiseRows = 0;
     while ( offset < 224 + commandBytes )
     {
         const auto type = neuralai::CommandType(Read16(data + offset));
@@ -5862,6 +5863,7 @@ TEST_CASE("Neural-AI compiler aliases C32-aligned YOLO depth slices into pointwi
         {
             if ( pointwiseCommands == 1 ) producerOutputOffset = Read32(data + offset + 44);
             else if ( pointwiseCommands == 2 ) consumerInputOffset = Read32(data + offset + 28);
+            maxPointwiseRows = std::max(maxPointwiseRows, Read32(data + offset + 48));
             ++pointwiseCommands;
         }
         offset += commandSize;
@@ -5869,6 +5871,7 @@ TEST_CASE("Neural-AI compiler aliases C32-aligned YOLO depth slices into pointwi
     REQUIRE(offset == 224 + commandBytes);
     REQUIRE(copyCommands == 2);
     REQUIRE(pointwiseCommands == 3);
+    REQUIRE(maxPointwiseRows > 256);
     REQUIRE(consumerInputOffset == producerOutputOffset);
     blob->Unmap(const_cast<uint8_t *>(data));
     blob->Release();
