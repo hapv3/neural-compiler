@@ -4120,7 +4120,8 @@ TEST_CASE("Neural-AI K3 Conv tiles spilled feature maps through TCDM stripes")
     REQUIRE(convCost != nullptr);
     const MemorySnapshot reservation =
         NeuralAICommandGenerator::WorkspaceReservation(scheduleOps, schedule.get());
-    REQUIRE(reservation[convCost->timeIndex].Used() <= 96 * 1024);
+    REQUIRE(reservation[convCost->timeIndex].Used() <=
+        ArchNeuralAI::AllocatableTCDMBytes);
 
     CompiledNeuralAIArtifact artifact;
     std::string error;
@@ -4160,7 +4161,7 @@ TEST_CASE("Neural-AI K3 Conv tiles spilled feature maps through TCDM stripes")
              Read16(artifact.commands, offset + 24) ==
                  uint16_t(neuralai::Region::TCDMScratch) &&
              Read32(artifact.commands, offset + 32) == 32 &&
-             Read32(artifact.commands, offset + 44) == 9u * 32u )
+             Read32(artifact.commands, offset + 36) == 32 )
             ++weightLoads;
         if ( convCommand && type == uint16_t(neuralai::CommandType::DMA1D) &&
              Read16(artifact.commands, offset + 24) ==
@@ -4192,19 +4193,30 @@ TEST_CASE("Neural-AI K3 Conv tiles spilled feature maps through TCDM stripes")
     }
     REQUIRE(offset == artifact.commands.size());
     REQUIRE(reloads == 18);
-    REQUIRE(weightLoads == 18);
+    REQUIRE(weightLoads == 2);
     REQUIRE(stores == 6);
     REQUIRE(linebufferJobs == 18);
     REQUIRE(spatialRows == std::vector<uint32_t>{15, 15, 3, 15, 15, 3});
     REQUIRE(artifact.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);
 }
 
-TEST_CASE("Neural-AI spilled small K3 Conv reuses staged weights across stripes")
+TEST_CASE("Neural-AI spilled K3 Conv uses capacity-based weight residency")
 {
     ArchNeuralAI arch;
-    const int inputChannels = GENERATE(32, 64);
-    const Shape ifmShape(1, 65, 33, inputChannels);
-    const Shape ofmShape(1, 33, 17, 64);
+    const int scenario = GENERATE(0, 1, 2, 3);
+    const std::array<int, 4> inputChannelsByScenario = {32, 64, 96, 96};
+    const std::array<int, 4> inputHeightByScenario = {65, 65, 65, 9};
+    const std::array<int, 4> inputWidthByScenario = {33, 33, 33, 9};
+    const std::array<int, 4> outputHeightByScenario = {33, 33, 33, 5};
+    const std::array<int, 4> outputWidthByScenario = {17, 17, 17, 5};
+    const std::array<uint32_t, 4> expectedWeightLoads = {2, 2, 2, 2};
+    const std::array<uint32_t, 4> expectedLinebufferJobs = {6, 12, 18, 6};
+    const int inputChannels = inputChannelsByScenario[scenario];
+    const Shape ifmShape(1, inputHeightByScenario[scenario],
+        inputWidthByScenario[scenario], inputChannels);
+    const Shape ofmShape(1, outputHeightByScenario[scenario],
+        outputWidthByScenario[scenario], 64);
+    CAPTURE(scenario, ifmShape, ofmShape);
     auto lhs = CreateTensor("lhs", ifmShape, DataType::Int8);
     auto rhs = CreateTensor("rhs", ifmShape, DataType::Int8);
     auto skip = CreateTensor("skip", ofmShape, DataType::Int8);
@@ -4299,8 +4311,8 @@ TEST_CASE("Neural-AI spilled small K3 Conv reuses staged weights across stripes"
         offset += bytes;
     }
     REQUIRE(offset == artifact.commands.size());
-    REQUIRE(weightLoads == 2);
-    REQUIRE(linebufferJobs == uint32_t(inputChannels == 32 ? 6 : 12));
+    REQUIRE(weightLoads == expectedWeightLoads[scenario]);
+    REQUIRE(linebufferJobs == expectedLinebufferJobs[scenario]);
     REQUIRE(artifact.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);
 }
 
@@ -6171,7 +6183,7 @@ TEST_CASE("Neural-AI compiler emits grouped linebuffer jobs for generic K3 Conv2
              Read16(data + offset + 16) == uint16_t(neuralai::Region::ModelConstants) &&
              Read16(data + offset + 24) == uint16_t(neuralai::Region::TCDMScratch) &&
              Read32(data + offset + 32) == 32 &&
-             Read32(data + offset + 44) == 9u * 32u )
+             Read32(data + offset + 36) == 32 )
         {
             REQUIRE(commandSize == sizeof(neuralai::CommandDMA2DV2));
             REQUIRE(Read32(data + offset + 48) ==
@@ -6193,17 +6205,17 @@ TEST_CASE("Neural-AI compiler emits grouped linebuffer jobs for generic K3 Conv2
         REQUIRE(accumModes[job + 1] == 3);
         REQUIRE(accumModes[job + 2] == 2);
         REQUIRE(weightOffsets[job] == weightOffsets.front());
-        REQUIRE(weightOffsets[job + 1] == weightOffsets.front());
-        REQUIRE(weightOffsets[job + 2] == weightOffsets.front());
+        REQUIRE(weightOffsets[job + 1] == weightOffsets.front() + inputGroupWeightBytes);
+        REQUIRE(weightOffsets[job + 2] == weightOffsets.front() + 2u * inputGroupWeightBytes);
         REQUIRE(psumOffsets[job] == psumOffsets[job + 1]);
         REQUIRE(psumOffsets[job] == psumOffsets[job + 2]);
         REQUIRE(ofmOffsets[job] == ofmOffsets[job + 1]);
         REQUIRE(ofmOffsets[job] == ofmOffsets[job + 2]);
     }
-    REQUIRE(weightStageBytes.size() == 18);
+    REQUIRE(weightStageBytes.size() == 2);
     REQUIRE(std::all_of(weightStageBytes.begin(), weightStageBytes.end(),
-        [inputGroupWeightBytes](uint32_t bytes) { return bytes == inputGroupWeightBytes; }));
-    REQUIRE(Read32(data + 36) >= weightOffsets.front() + inputGroupWeightBytes);
+        [inputGroupWeightBytes](uint32_t bytes) { return bytes == 3u * inputGroupWeightBytes; }));
+    REQUIRE(Read32(data + 36) >= weightOffsets.front() + 3u * inputGroupWeightBytes);
     blob->Unmap(const_cast<uint8_t *>(data));
     blob->Release();
 }

@@ -266,6 +266,32 @@ uint32_t PointwiseSpillTileRows(uint32_t rows, uint32_t paddedK, uint32_t staged
     return std::max(1u, std::min(cap, available / bytesPerRow));
 }
 
+uint32_t ExpandResidentLinebufferWeightStage(uint32_t currentStage,
+    uint32_t partialBytes, uint32_t stripeBytes, int ifmDepth,
+    const Schedule *schedule, const SchedulerOpInfo *cost)
+{
+    if ( ifmDepth <= 0 || schedule == nullptr || cost == nullptr || cost->timeIndex < 0 )
+        return currentStage;
+    const uint32_t inputGroups = uint32_t(RoundAway(ifmDepth, 32)) / 32u;
+    const uint64_t fullWeightBytes64 = uint64_t(inputGroups) * 9u * 32u * 32u;
+    if ( inputGroups == 0 || fullWeightBytes64 > std::numeric_limits<uint32_t>::max() )
+        return currentStage;
+    const uint32_t fullWeightBytes = uint32_t(fullWeightBytes64);
+    if ( currentStage >= fullWeightBytes ) return currentStage;
+
+    const int used = schedule->MemoryUsageAt(cost->timeIndex);
+    if ( used < 0 || used >= ArchNeuralAI::AllocatableTCDMBytes ) return currentStage;
+    const auto aligned = [](uint32_t bytes)
+    {
+        return (uint64_t(bytes) + ArchNeuralAI::DMAAlignment - 1u) /
+            ArchNeuralAI::DMAAlignment * ArchNeuralAI::DMAAlignment;
+    };
+    const uint64_t required =
+        aligned(fullWeightBytes) + aligned(partialBytes) + aligned(stripeBytes);
+    const uint32_t available = uint32_t(ArchNeuralAI::AllocatableTCDMBytes - used);
+    return required <= available ? fullWeightBytes : currentStage;
+}
+
 neuralai::StripeStagingInput MakeLinebufferSpillStaging(
     const Shape &ifmShape, const Shape &ifmStorageShape, const Shape &ofmShape,
     const Kernel *kernel, int outputY, int outputRows, uint32_t sourceBase,
@@ -3828,10 +3854,8 @@ MemorySnapshot NeuralAICommandGenerator::WorkspaceReservation(
                 (ifmShape.Depth() > 32 || ofmShape.Depth() > 32));
         if ( linebuffer )
         {
-            const uint32_t inputGroups =
-                uint32_t(RoundAway(ifmShape.Depth(), 32)) / 32u;
             const uint32_t kGroups = config->DirectNhwcInput() ? 1u :
-                (tiledLinebuffer ? (inputGroups <= 2u ? 9u * inputGroups : 9u) :
+                (tiledLinebuffer ? 9u :
                     9u * uint32_t(RoundAway(ifmShape.Depth(), 32)) / 32u);
             workspace.stage = std::max(workspace.stage, kGroups * 32u * 32u);
             workspace.partial = std::max(workspace.partial, matrixRows * 32u * 4u);
@@ -3865,6 +3889,9 @@ MemorySnapshot NeuralAICommandGenerator::WorkspaceReservation(
                     "Neural-AI linebuffer spill workspace overflows");
                 workspace.stripe = std::max(workspace.stripe, uint32_t(bytes));
             }
+            if ( linebuffer && tiledLinebuffer && !config->DirectNhwcInput() )
+                workspace.stage = ExpandResidentLinebufferWeightStage(workspace.stage,
+                    workspace.partial, workspace.stripe, ifmShape.Depth(), schedule, cost);
         }
         else if ( linebuffer && operation->TryInput(TensorUsage::Params1) != nullptr )
         {
@@ -4106,10 +4133,8 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
             if ( directRgb || paddedK > 0 )
             {
                 const uint32_t paddedN = uint32_t(RoundAway(int(ofmShape.Depth()), 32));
-                const uint32_t inputGroups =
-                    uint32_t(RoundAway(int(ifmShape.Depth()), 32)) / 32u;
                 const uint32_t kGroups = directRgb ? 1u :
-                    (tiledLinebuffer ? (inputGroups <= 2u ? 9u * inputGroups : 9u) :
+                    (tiledLinebuffer ? 9u :
                         9u * uint32_t(RoundAway(int(ifmShape.Depth()), 32)) / 32u);
                 linebufferWeightBytes = std::max(linebufferWeightBytes,
                     uint32_t(kGroups * 32u * 32u));
@@ -4198,8 +4223,13 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
                 requiredBytes = std::max(requiredBytes, uint32_t(bytes));
             }
             context.stripeStageBytes = std::max(context.stripeStageBytes, requiredBytes);
-            context.workspaceSizes[operation->Uid()].stripe = std::max(
-                context.workspaceSizes[operation->Uid()].stripe, requiredBytes);
+            GeneratorContext::WorkspaceSize &workspace =
+                context.workspaceSizes[operation->Uid()];
+            workspace.stripe = std::max(workspace.stripe, requiredBytes);
+            if ( !config->DirectNhwcInput() )
+                workspace.stage = ExpandResidentLinebufferWeightStage(workspace.stage,
+                    workspace.partial, workspace.stripe, ifm->SliceShape().Depth(),
+                    schedule, cost);
             continue;
         }
         if ( operation->TryInput(TensorUsage::Params1) == nullptr ) continue;
