@@ -412,6 +412,8 @@ struct GeneratorContext
     uint32_t partialOffset = 0;
     uint32_t stripeStageOffset = 0;
     uint32_t paddingSeedOffset = 0;
+    bool paddingSeedValid = false;
+    int8_t paddingSeedValue = 0;
     uint32_t stageBytes = 0;
     uint32_t partialBytes = 0;
     uint32_t stripeStageBytes = 0;
@@ -440,6 +442,7 @@ struct GeneratorContext
             uint32_t(RoundAway(int(size.stripe), ArchNeuralAI::DMAAlignment));
         const uint32_t total = selectedStageBytes + selectedPartialBytes + selectedStripeBytes;
         paddingSeedOffset = 0;
+        paddingSeedValid = false;
         if ( total == 0 ) return true;
 
         auto cached = workspaceOffsets.find(operation->Uid());
@@ -2808,9 +2811,14 @@ struct GeneratorContext
             {
                 fillSource.region = uint16_t(Region::TCDMScratch);
                 fillSource.offset = paddingSeedOffset;
-                if ( !AppendDMA1D(pattern, fillSource, PaddingSeedBytes,
-                         layerId, tileId++, error) )
-                    return false;
+                if ( !paddingSeedValid || paddingSeedValue != paddingValue )
+                {
+                    if ( !AppendDMA1D(pattern, fillSource, PaddingSeedBytes,
+                             layerId, tileId++, error) )
+                        return false;
+                    paddingSeedValid = true;
+                    paddingSeedValue = paddingValue;
+                }
             }
             const uint32_t blocks = plan.bytes / 32u;
             if ( blocks != 0 && !AppendDMA2D(fillSource, destination, 32, 0, 32, blocks,

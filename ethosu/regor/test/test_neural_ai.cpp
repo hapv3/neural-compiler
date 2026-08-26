@@ -4134,6 +4134,7 @@ TEST_CASE("Neural-AI K3 Conv tiles spilled feature maps through TCDM stripes")
 
     uint32_t reloads = 0;
     uint32_t weightLoads = 0;
+    uint32_t paddingSeeds = 0;
     uint32_t stores = 0;
     uint32_t linebufferJobs = 0;
     std::vector<uint32_t> spatialRows;
@@ -4163,6 +4164,13 @@ TEST_CASE("Neural-AI K3 Conv tiles spilled feature maps through TCDM stripes")
              Read32(artifact.commands, offset + 32) == 32 &&
              Read32(artifact.commands, offset + 36) == 32 )
             ++weightLoads;
+        if ( convCommand && type == uint16_t(neuralai::CommandType::DMA1D) &&
+             Read16(artifact.commands, offset + 16) ==
+                 uint16_t(neuralai::Region::ModelConstants) &&
+             Read16(artifact.commands, offset + 24) ==
+                 uint16_t(neuralai::Region::TCDMScratch) &&
+             Read32(artifact.commands, offset + 32) == 32 )
+            ++paddingSeeds;
         if ( convCommand && type == uint16_t(neuralai::CommandType::DMA1D) &&
              Read16(artifact.commands, offset + 24) ==
                  uint16_t(neuralai::Region::L2TemporaryBinding) )
@@ -4194,6 +4202,7 @@ TEST_CASE("Neural-AI K3 Conv tiles spilled feature maps through TCDM stripes")
     REQUIRE(offset == artifact.commands.size());
     REQUIRE(reloads == 18);
     REQUIRE(weightLoads == 2);
+    REQUIRE(paddingSeeds == 1);
     REQUIRE(stores == 6);
     REQUIRE(linebufferJobs == 18);
     REQUIRE(spatialRows == std::vector<uint32_t>{15, 15, 3, 15, 15, 3});
