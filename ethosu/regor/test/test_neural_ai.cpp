@@ -4132,6 +4132,7 @@ TEST_CASE("Neural-AI K3 Conv tiles spilled feature maps through TCDM stripes")
     REQUIRE(artifact.bindings.size() == 5);  // Four public bindings plus one L2 arena.
 
     uint32_t reloads = 0;
+    uint32_t weightLoads = 0;
     uint32_t stores = 0;
     uint32_t linebufferJobs = 0;
     std::vector<uint32_t> spatialRows;
@@ -4153,6 +4154,14 @@ TEST_CASE("Neural-AI K3 Conv tiles spilled feature maps through TCDM stripes")
                 uint32_t(neuralai::DMADirection::ExternalToLocal));
             ++reloads;
         }
+        if ( convCommand && type == uint16_t(neuralai::CommandType::DMA2D) &&
+             Read16(artifact.commands, offset + 16) ==
+                 uint16_t(neuralai::Region::ModelConstants) &&
+             Read16(artifact.commands, offset + 24) ==
+                 uint16_t(neuralai::Region::TCDMScratch) &&
+             Read32(artifact.commands, offset + 32) == 32 &&
+             Read32(artifact.commands, offset + 44) == 9u * 32u )
+            ++weightLoads;
         if ( convCommand && type == uint16_t(neuralai::CommandType::DMA1D) &&
              Read16(artifact.commands, offset + 24) ==
                  uint16_t(neuralai::Region::L2TemporaryBinding) )
@@ -4183,9 +4192,114 @@ TEST_CASE("Neural-AI K3 Conv tiles spilled feature maps through TCDM stripes")
     }
     REQUIRE(offset == artifact.commands.size());
     REQUIRE(reloads == 18);
+    REQUIRE(weightLoads == 18);
     REQUIRE(stores == 6);
     REQUIRE(linebufferJobs == 18);
     REQUIRE(spatialRows == std::vector<uint32_t>{15, 15, 3, 15, 15, 3});
+    REQUIRE(artifact.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);
+}
+
+TEST_CASE("Neural-AI spilled single-group K3 Conv reuses staged weights across stripes")
+{
+    ArchNeuralAI arch;
+    const Shape ifmShape(1, 65, 33, 32);
+    const Shape ofmShape(1, 33, 17, 64);
+    auto lhs = CreateTensor("lhs", ifmShape, DataType::Int8);
+    auto rhs = CreateTensor("rhs", ifmShape, DataType::Int8);
+    auto skip = CreateTensor("skip", ofmShape, DataType::Int8);
+    auto convIfm = CreateTensor("conv_ifm", ifmShape, DataType::Int8);
+    auto convOfm = CreateTensor("conv_ofm", ofmShape, DataType::Int8);
+    auto output = CreateTensor("output", ofmShape, DataType::Int8);
+    auto weights = CreateTensor("weights", Shape(64, 3, 3, 32), DataType::Int8,
+        std::vector<int8_t>(64 * 3 * 3 * 32, 1));
+    auto scales = CreateTensor(
+        "scales", Shape(1, 1, 1, 64), DataType::Int32, std::vector<int32_t>(64, 0));
+    auto add0 = CreateOperation(
+        OpType::Add, TensorUsage::IFM0, lhs, TensorUsage::IFM1, rhs,
+        TensorUsage::OFM, convIfm);
+    auto conv = CreateOperation(
+        OpType::Conv2D, TensorUsage::IFM0, convIfm, TensorUsage::OFM, convOfm);
+    conv->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
+    conv->ConnectInput(TensorUsage::Scales, scales).Set(Quantization::Unit());
+    conv->SetKernel(std::make_unique<Kernel>(
+        Point2i(3, 3), Point2i(2, 2), Point2i(1, 1), Margin(1, 1, 1, 1)));
+    auto add1 = CreateOperation(
+        OpType::Add, TensorUsage::IFM0, convOfm, TensorUsage::IFM1, skip,
+        TensorUsage::OFM, output);
+
+    Quantization inputQuantization;
+    inputQuantization.scales = {QuantizedScale(32768.0)};
+    inputQuantization.zeroPoints = {0};
+    inputQuantization.quantMin = {-128};
+    inputQuantization.quantMax = {127};
+    Quantization outputQuantization = inputQuantization;
+    outputQuantization.scales = {QuantizedScale(1.0 / 32768.0)};
+    for ( Operation *operation : {add0.get(), add1.get()} )
+    {
+        operation->Input(TensorUsage::IFM0)->Set(inputQuantization);
+        operation->Input(TensorUsage::IFM1)->Set(inputQuantization);
+        operation->Output(TensorUsage::OFM)->Set(outputQuantization);
+    }
+    conv->Input(TensorUsage::IFM0)->Set(Quantization::Unit());
+    conv->Output(TensorUsage::OFM)->Set(Quantization::Unit());
+    std::vector<std::shared_ptr<Operation>> sourceOps = {add0, conv, add1};
+    auto graph = CreateGraph(sourceOps);
+
+    GraphOptimiserOptions graphOptions;
+    NeuralAIGraphOptimiser optimiser(arch.Constraints(), graphOptions, nullptr);
+    optimiser.OptimiseGraph(graph.get());
+    const std::unordered_map<UniqueId, UniqueId> equivalenceIds;
+    SchedulerPacking packing(&arch, false, equivalenceIds);
+    auto scheduleOps = packing.Process(graph.get());
+    SchedulerOptions schedulerOptions;
+    schedulerOptions.disabled.Set(SchedulerFeature::Cascading);
+    schedulerOptions.disabled.Set(SchedulerFeature::WeightBuffering);
+    Scheduler scheduler(&arch, schedulerOptions, "neural-ai-spilled-single-group-k3", scheduleOps,
+        packing.OpConfigCompatablility());
+    auto schedule = scheduler.Process();
+
+    const SchedulerOperation *scheduledConv = nullptr;
+    for ( const auto &operation : scheduleOps )
+        if ( operation->Type() == OpType::Conv2D ) scheduledConv = operation.get();
+    REQUIRE(scheduledConv != nullptr);
+    scheduledConv->IFM(0)->tensor->memArea =
+        MemArea(arch.L2Memory(), MemUsage::FeatureMap);
+    scheduledConv->OFM()->tensor->memArea =
+        MemArea(arch.L2Memory(), MemUsage::FeatureMap);
+
+    CompiledNeuralAIArtifact artifact;
+    std::string error;
+    NeuralAICommandGenerator commandGenerator;
+    const bool generated = commandGenerator.Generate(
+        graph.get(), scheduleOps, schedule.get(), artifact, error);
+    INFO(error);
+    REQUIRE(generated);
+
+    uint32_t weightLoads = 0;
+    uint32_t linebufferJobs = 0;
+    size_t offset = 0;
+    while ( offset < artifact.commands.size() )
+    {
+        const uint16_t type = Read16(artifact.commands, offset);
+        const uint16_t bytes = Read16(artifact.commands, offset + 2);
+        REQUIRE(bytes >= 32);
+        const bool convCommand =
+            Read32(artifact.commands, offset + 8) == uint32_t(scheduledConv->Index());
+        if ( convCommand && type == uint16_t(neuralai::CommandType::DMA2D) &&
+             Read16(artifact.commands, offset + 16) ==
+                 uint16_t(neuralai::Region::ModelConstants) &&
+             Read16(artifact.commands, offset + 24) ==
+                 uint16_t(neuralai::Region::TCDMScratch) &&
+             Read32(artifact.commands, offset + 32) == 32 &&
+             Read32(artifact.commands, offset + 44) == 9u * 32u )
+            ++weightLoads;
+        if ( convCommand && type == uint16_t(neuralai::CommandType::LineBufferJob) )
+            ++linebufferJobs;
+        offset += bytes;
+    }
+    REQUIRE(offset == artifact.commands.size());
+    REQUIRE(weightLoads == 2);
+    REQUIRE(linebufferJobs == 6);
     REQUIRE(artifact.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);
 }
 

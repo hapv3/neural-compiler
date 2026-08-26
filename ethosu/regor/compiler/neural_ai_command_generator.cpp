@@ -3071,12 +3071,17 @@ struct GeneratorContext
         }
 
         uint32_t tileId = 0;
+        const bool weightsRemainResident = inputGroups == 1u;
         for ( uint32_t outputGroup = 0; outputGroup < outputGroups; ++outputGroup )
         {
             RefV1 groupWeights = modelWeights;
             groupWeights.offset += outputGroup * outputGroupWeightBytes;
             AppendRQLoad(materialized.qparamBase + outputGroup * 32u, outputGroup,
                 uint32_t(operation->Index()), tileId++);
+            if ( weightsRemainResident &&
+                 !AppendDMA2D(groupWeights, stagedWeights, 32, 32, 32,
+                     9u * 32u, uint32_t(operation->Index()), tileId++, error) )
+                return false;
             for ( uint32_t outputY = 0; outputY < uint32_t(ofmShape.Height());
                   outputY += stripeCapacity )
             {
@@ -3107,7 +3112,8 @@ struct GeneratorContext
                 {
                     RefV1 inputGroupWeights = groupWeights;
                     inputGroupWeights.offset += inputGroup * 9u * 32u * 32u;
-                    if ( !AppendDMA2D(inputGroupWeights, stagedWeights, 32, 32, 32,
+                    if ( !weightsRemainResident &&
+                         !AppendDMA2D(inputGroupWeights, stagedWeights, 32, 32, 32,
                              9u * 32u, uint32_t(operation->Index()), tileId++, error) )
                         return false;
                     auto inputGroupStaging = staging;
