@@ -6566,6 +6566,7 @@ TEST_CASE("Neural-AI compiler serializes asymmetric Conv padding at the raw zero
     REQUIRE(constantOffset != 0);
     REQUIRE(constantBytes != 0);
 
+    uint32_t paddingSeeds = 0;
     uint32_t paddingFills = 0;
     uint32_t offset = commandOffset;
     while ( offset < commandOffset + commandBytes )
@@ -6578,20 +6579,29 @@ TEST_CASE("Neural-AI compiler serializes asymmetric Conv padding at the raw zero
             const uint16_t sourceRegion = Read16(data + offset + 16);
             const uint32_t sourceOffset = Read32(data + offset + 20);
             const uint32_t length = Read32(data + offset + 32);
-            if ( type == uint16_t(neuralai::CommandType::DMA2D) &&
+            if ( type == uint16_t(neuralai::CommandType::DMA1D) &&
                  sourceRegion == uint16_t(neuralai::Region::ModelConstants) &&
-                 length == 32 && Read32(data + offset + 36) == 0 )
+                 length == 32 )
             {
                 REQUIRE(sourceOffset + length <= constantBytes);
                 for ( uint32_t index = 0; index < length; ++index )
                     REQUIRE(int8_t(data[constantOffset + sourceOffset + index]) == inputZeroPoint);
+                ++paddingSeeds;
+            }
+            if ( type == uint16_t(neuralai::CommandType::DMA2D) &&
+                 sourceRegion == uint16_t(neuralai::Region::TCDMScratch) &&
+                 length == 32 && Read32(data + offset + 36) == 0 )
+            {
                 REQUIRE(Read32(data + offset + 44) > 1);
+                REQUIRE(Read32(data + offset + 48) ==
+                    uint32_t(neuralai::DMADirection::LocalToLocal));
                 ++paddingFills;
             }
         }
         offset += commandSize;
     }
     REQUIRE(offset == commandOffset + commandBytes);
+    REQUIRE(paddingSeeds == 1);
     REQUIRE(paddingFills == 1);
     blob->Unmap(const_cast<uint8_t *>(data));
     blob->Release();

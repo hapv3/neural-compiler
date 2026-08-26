@@ -40,6 +40,7 @@ using neuralai::TensorLayout;
 constexpr int MaxDirectLinebufferM = 1024;
 constexpr int MaxExternalPsumLinebufferM = 256;
 constexpr uint32_t MaxPointwiseSpillRows = 256;
+constexpr uint32_t PaddingSeedBytes = 32;
 
 bool IsLinebufferConvMode(NeuralAIOpMode mode)
 {
@@ -251,6 +252,13 @@ uint32_t LinebufferSpillStripeRows(const Shape &ofmShape)
     return uint32_t(std::min(ofm.Height(), std::max(1, 256 / ofm.Width())));
 }
 
+uint32_t WithPaddingSeed(uint32_t bytes)
+{
+    if ( bytes > std::numeric_limits<uint32_t>::max() - PaddingSeedBytes )
+        throw std::runtime_error("Neural-AI stripe padding seed overflows the ABI");
+    return bytes + PaddingSeedBytes;
+}
+
 uint32_t PointwiseSpillTileRows(uint32_t rows, uint32_t paddedK, uint32_t stagedGroups,
     const Schedule *schedule, const SchedulerOpInfo *cost)
 {
@@ -403,6 +411,7 @@ struct GeneratorContext
     uint32_t weightStageOffset = 0;
     uint32_t partialOffset = 0;
     uint32_t stripeStageOffset = 0;
+    uint32_t paddingSeedOffset = 0;
     uint32_t stageBytes = 0;
     uint32_t partialBytes = 0;
     uint32_t stripeStageBytes = 0;
@@ -430,6 +439,7 @@ struct GeneratorContext
         const uint32_t selectedStripeBytes =
             uint32_t(RoundAway(int(size.stripe), ArchNeuralAI::DMAAlignment));
         const uint32_t total = selectedStageBytes + selectedPartialBytes + selectedStripeBytes;
+        paddingSeedOffset = 0;
         if ( total == 0 ) return true;
 
         auto cached = workspaceOffsets.find(operation->Uid());
@@ -439,6 +449,8 @@ struct GeneratorContext
             weightStageOffset = stageOffset;
             partialOffset = cached->second.partial;
             stripeStageOffset = cached->second.stripe;
+            if ( selectedStripeBytes >= PaddingSeedBytes )
+                paddingSeedOffset = stripeStageOffset + selectedStripeBytes - PaddingSeedBytes;
             return true;
         }
 
@@ -526,6 +538,8 @@ struct GeneratorContext
         weightStageOffset = placement.stage;
         partialOffset = placement.partial;
         stripeStageOffset = placement.stripe;
+        if ( selectedStripeBytes >= PaddingSeedBytes )
+            paddingSeedOffset = stripeStageOffset + selectedStripeBytes - PaddingSeedBytes;
         return true;
     }
 
@@ -2789,15 +2803,24 @@ struct GeneratorContext
             RefV1 destination{};
             destination.region = uint16_t(Region::TCDMScratch);
             destination.offset = stripeStageOffset;
+            RefV1 fillSource = pattern;
+            if ( plan.bytes > PaddingSeedBytes )
+            {
+                fillSource.region = uint16_t(Region::TCDMScratch);
+                fillSource.offset = paddingSeedOffset;
+                if ( !AppendDMA1D(pattern, fillSource, PaddingSeedBytes,
+                         layerId, tileId++, error) )
+                    return false;
+            }
             const uint32_t blocks = plan.bytes / 32u;
-            if ( blocks != 0 && !AppendDMA2D(pattern, destination, 32, 0, 32, blocks,
+            if ( blocks != 0 && !AppendDMA2D(fillSource, destination, 32, 0, 32, blocks,
                                    layerId, tileId++, error) )
                 return false;
             const uint32_t tail = plan.bytes % 32u;
             if ( tail != 0 )
             {
                 destination.offset += blocks * 32u;
-                if ( !AppendDMA2D(pattern, destination, tail, 0, tail, 1,
+                if ( !AppendDMA2D(fillSource, destination, tail, 0, tail, 1,
                          layerId, tileId++, error) )
                     return false;
             }
@@ -3887,7 +3910,8 @@ MemorySnapshot NeuralAICommandGenerator::WorkspaceReservation(
                     uint64_t(outputRows) * uint32_t(logicalOfm.Width()) * 32u;
                 if ( bytes > std::numeric_limits<uint32_t>::max() ) throw std::runtime_error(
                     "Neural-AI linebuffer spill workspace overflows");
-                workspace.stripe = std::max(workspace.stripe, uint32_t(bytes));
+                workspace.stripe = std::max(
+                    workspace.stripe, WithPaddingSeed(uint32_t(bytes)));
             }
             if ( linebuffer && tiledLinebuffer && !config->DirectNhwcInput() )
                 workspace.stage = ExpandResidentLinebufferWeightStage(workspace.stage,
@@ -3906,8 +3930,8 @@ MemorySnapshot NeuralAICommandGenerator::WorkspaceReservation(
                 const auto stagingInput = MakeLinebufferSpillStaging(logicalIfm,
                     operation->IFM(0)->tensor->storageShape, logicalOfm,
                     operation->Kernel(), int(outputY), int(outputRows), 0, 0);
-                workspace.stripe = std::max(workspace.stripe,
-                    neuralai::LinebufferPlanner().PlanStripeStaging(stagingInput).bytes);
+                workspace.stripe = std::max(workspace.stripe, WithPaddingSeed(
+                    neuralai::LinebufferPlanner().PlanStripeStaging(stagingInput).bytes));
             }
         }
     }
@@ -4085,7 +4109,8 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
                     error = "Neural-AI Depthwise Conv spill stripe workspace overflows";
                     return false;
                 }
-                requiredBytes = std::max(requiredBytes, uint32_t(bytes));
+                requiredBytes = std::max(
+                    requiredBytes, WithPaddingSeed(uint32_t(bytes)));
             }
             context.stripeStageBytes = std::max(context.stripeStageBytes, requiredBytes);
             workspace.stripe = std::max(workspace.stripe, requiredBytes);
@@ -4177,9 +4202,10 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         stagingInput.channels = operation->IFM(0)->shape.Depth();
         stagingInput.directNhwc = config->DirectNhwcInput();
         const auto staging = neuralai::LinebufferPlanner().PlanStripeStaging(stagingInput);
-        context.stripeStageBytes = std::max(context.stripeStageBytes, staging.bytes);
+        const uint32_t stagingBytes = WithPaddingSeed(staging.bytes);
+        context.stripeStageBytes = std::max(context.stripeStageBytes, stagingBytes);
         context.workspaceSizes[operation->Uid()].stripe = std::max(
-            context.workspaceSizes[operation->Uid()].stripe, staging.bytes);
+            context.workspaceSizes[operation->Uid()].stripe, stagingBytes);
     }
     for ( const auto &operation : operations )
     {
@@ -4220,7 +4246,8 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
                     error = "Neural-AI linebuffer Conv spill stripe workspace overflows";
                     return false;
                 }
-                requiredBytes = std::max(requiredBytes, uint32_t(bytes));
+                requiredBytes = std::max(
+                    requiredBytes, WithPaddingSeed(uint32_t(bytes)));
             }
             context.stripeStageBytes = std::max(context.stripeStageBytes, requiredBytes);
             GeneratorContext::WorkspaceSize &workspace =
@@ -4245,9 +4272,10 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         stagingInput.channels = logicalIfm.Depth();
         stagingInput.directNhwc = config->DirectNhwcInput();
         const auto staging = neuralai::LinebufferPlanner().PlanStripeStaging(stagingInput);
-        context.stripeStageBytes = std::max(context.stripeStageBytes, staging.bytes);
+        const uint32_t stagingBytes = WithPaddingSeed(staging.bytes);
+        context.stripeStageBytes = std::max(context.stripeStageBytes, stagingBytes);
         context.workspaceSizes[operation->Uid()].stripe = std::max(
-            context.workspaceSizes[operation->Uid()].stripe, staging.bytes);
+            context.workspaceSizes[operation->Uid()].stripe, stagingBytes);
     }
 
     for ( const auto &operation : operations )
