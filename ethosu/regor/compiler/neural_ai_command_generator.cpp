@@ -451,12 +451,14 @@ struct GeneratorContext
             contentCascade == 0 && contentOperation == operation->Uid();
         if ( !sameContentScope ) tcdmContent.Clear();
         contentCascade = cost->cascade;
-        contentOperation = operation->Uid();
         paddingSeedOffset = 0;
         if ( total == 0 ) return true;
+        const bool sameWorkspaceOwner = contentOperation == operation->Uid();
+        contentOperation = operation->Uid();
 
         const auto activatePlacement = [&]()
         {
+            if ( sameWorkspaceOwner ) return;
             tcdmContent.Invalidate(stageOffset, selectedStageBytes);
             tcdmContent.Invalidate(partialOffset, selectedPartialBytes);
             const uint32_t writableStripeBytes = selectedStripeBytes >= PaddingSeedBytes ?
@@ -2817,6 +2819,40 @@ struct GeneratorContext
     bool AppendStripeStaging(const SchedulerConnection *ifm, const neuralai::StripeStagingPlan &plan,
         int8_t paddingValue, uint32_t layerId, uint32_t &tileId, bool fill, std::string &error)
     {
+        constexpr uint64_t paddingContentClass = UINT64_C(0x5041440000000000);
+        constexpr uint64_t tensorContentClass = UINT64_C(0x54454e0000000000);
+        const neuralai::MemoryContent paddingContent{
+            paddingContentClass | uint8_t(paddingValue), 0};
+        std::vector<std::pair<uint32_t, uint32_t>> validIntervals;
+        for ( const auto &copy : plan.copies )
+        {
+            const uint32_t repetitions3 = copy.repetitions3 == 0 ? 1 : copy.repetitions3;
+            for ( uint32_t repetition3 = 0; repetition3 < repetitions3; ++repetition3 )
+            {
+                for ( uint32_t repetition = 0; repetition < copy.repetitions; ++repetition )
+                {
+                    const uint64_t begin = uint64_t(copy.destination) +
+                        uint64_t(repetition3) * copy.destinationStride3 +
+                        uint64_t(repetition) * copy.destinationStride;
+                    const uint64_t end = begin + copy.length;
+                    if ( end > std::numeric_limits<uint32_t>::max() )
+                        return SetError(error,
+                            "Neural-AI stripe staging destination overflows the ABI");
+                    validIntervals.emplace_back(uint32_t(begin), uint32_t(end));
+                }
+            }
+        }
+        std::sort(validIntervals.begin(), validIntervals.end());
+        std::vector<std::pair<uint32_t, uint32_t>> mergedIntervals;
+        for ( const auto &interval : validIntervals )
+        {
+            if ( mergedIntervals.empty() || interval.first > mergedIntervals.back().second )
+                mergedIntervals.push_back(interval);
+            else
+                mergedIntervals.back().second = std::max(
+                    mergedIntervals.back().second, interval.second);
+        }
+
         if ( fill )
         {
             const RefV1 pattern = FillPatternRef(paddingValue);
@@ -2828,32 +2864,74 @@ struct GeneratorContext
             {
                 fillSource.region = uint16_t(Region::TCDMScratch);
                 fillSource.offset = paddingSeedOffset;
-                constexpr uint64_t paddingContentClass = UINT64_C(0x5041440000000000);
-                const neuralai::MemoryContent content{
-                    paddingContentClass | uint8_t(paddingValue), 0};
                 if ( !tcdmContent.Contains(
-                         paddingSeedOffset, PaddingSeedBytes, content) )
+                         paddingSeedOffset, PaddingSeedBytes, paddingContent) )
                 {
                     if ( !AppendDMA1D(pattern, fillSource, PaddingSeedBytes,
                              layerId, tileId++, error) )
                         return false;
                     tcdmContent.Write(
-                        paddingSeedOffset, PaddingSeedBytes, content);
+                        paddingSeedOffset, PaddingSeedBytes, paddingContent);
                 }
             }
-            const uint32_t blocks = plan.bytes / 32u;
-            if ( blocks != 0 && !AppendDMA2D(fillSource, destination, 32, 0, 32, blocks,
-                                   layerId, tileId++, error) )
-                return false;
-            const uint32_t tail = plan.bytes % 32u;
-            if ( tail != 0 )
+
+            const uint64_t stagingEnd64 = uint64_t(stripeStageOffset) + plan.bytes;
+            if ( stagingEnd64 > std::numeric_limits<uint32_t>::max() )
+                return SetError(error, "Neural-AI stripe staging range overflows the ABI");
+            const uint32_t stagingEnd = uint32_t(stagingEnd64);
+            std::vector<std::pair<uint32_t, uint32_t>> missingPadding;
+            uint32_t cursor = stripeStageOffset;
+            for ( const auto &[begin, end] : mergedIntervals )
             {
-                destination.offset += blocks * 32u;
-                if ( !AppendDMA2D(fillSource, destination, tail, 0, tail, 1,
-                         layerId, tileId++, error) )
+                if ( begin > cursor && !tcdmContent.Contains(
+                        cursor, begin - cursor, paddingContent) )
+                    missingPadding.emplace_back(cursor, begin);
+                cursor = std::max(cursor, end);
+            }
+            if ( cursor < stagingEnd && !tcdmContent.Contains(
+                    cursor, stagingEnd - cursor, paddingContent) )
+                missingPadding.emplace_back(cursor, stagingEnd);
+
+            struct FillSegment
+            {
+                uint32_t address = 0;
+                uint32_t length = 0;
+            };
+            std::vector<FillSegment> segments;
+            for ( const auto &[begin, end] : missingPadding )
+            {
+                uint32_t address = begin;
+                while ( end - address > PaddingSeedBytes )
+                {
+                    segments.push_back({address, PaddingSeedBytes});
+                    address += PaddingSeedBytes;
+                }
+                if ( address < end ) segments.push_back({address, end - address});
+                tcdmContent.Write(begin, end - begin, paddingContent);
+            }
+            for ( uint32_t first = 0; first < segments.size(); )
+            {
+                uint32_t end = first + 1;
+                uint32_t stride = segments[first].length;
+                if ( end < segments.size() &&
+                     segments[end].length == segments[first].length )
+                {
+                    stride = segments[end].address - segments[first].address;
+                    ++end;
+                    while ( end < segments.size() &&
+                            segments[end].length == segments[first].length &&
+                            segments[end].address - segments[end - 1].address == stride )
+                        ++end;
+                }
+                destination.offset = segments[first].address;
+                if ( !AppendDMA2D(fillSource, destination, segments[first].length,
+                         0, stride, end - first, layerId, tileId++, error) )
                     return false;
+                first = end;
             }
         }
+        const neuralai::MemoryContent tensorContent{
+            tensorContentClass | ifm->tensor->equivalenceId, 0};
         for ( const auto &copy : plan.copies )
         {
             RefV1 source = TensorRef(ifm->tensor.get(), copy.source, error);
@@ -2861,16 +2939,126 @@ struct GeneratorContext
             RefV1 destination{};
             destination.region = uint16_t(Region::TCDMScratch);
             destination.offset = copy.destination;
+            const bool externalSource = !IsLocalDMARegion(source.region);
             if ( copy.repetitions3 != 0 )
             {
-                if ( !AppendDMA3D(source, destination, copy.length, copy.sourceStride,
-                         copy.destinationStride, copy.repetitions, copy.sourceStride3,
-                         copy.destinationStride3, copy.repetitions3, layerId, tileId++, error) )
-                    return false;
+                uint32_t runStart = 0;
+                while ( runStart < copy.repetitions3 )
+                {
+                    const auto rowResident = [&](uint32_t row)
+                    {
+                        if ( !externalSource ) return false;
+                        for ( uint32_t repetition = 0; repetition < copy.repetitions; ++repetition )
+                        {
+                            const uint32_t destinationOffset = copy.destination +
+                                row * copy.destinationStride3 +
+                                repetition * copy.destinationStride;
+                            const uint64_t contentOffset = uint64_t(copy.source) +
+                                uint64_t(row) * copy.sourceStride3 +
+                                uint64_t(repetition) * copy.sourceStride;
+                            if ( !tcdmContent.Contains(destinationOffset,
+                                    copy.length, tensorContent, contentOffset) )
+                                return false;
+                        }
+                        return true;
+                    };
+                    while ( runStart < copy.repetitions3 && rowResident(runStart) ) ++runStart;
+                    if ( runStart == copy.repetitions3 ) break;
+                    uint32_t runEnd = runStart + 1;
+                    while ( runEnd < copy.repetitions3 && !rowResident(runEnd) ) ++runEnd;
+                    RefV1 runSource = source;
+                    RefV1 runDestination = destination;
+                    runSource.offset += runStart * copy.sourceStride3;
+                    runDestination.offset += runStart * copy.destinationStride3;
+                    if ( !AppendDMA3D(runSource, runDestination, copy.length,
+                             copy.sourceStride, copy.destinationStride, copy.repetitions,
+                             copy.sourceStride3, copy.destinationStride3, runEnd - runStart,
+                             layerId, tileId++, error) )
+                        return false;
+                    runStart = runEnd;
+                }
+                for ( uint32_t row = 0; row < copy.repetitions3; ++row )
+                {
+                    for ( uint32_t repetition = 0; repetition < copy.repetitions; ++repetition )
+                    {
+                        const uint32_t destinationOffset = copy.destination +
+                            row * copy.destinationStride3 +
+                            repetition * copy.destinationStride;
+                        if ( externalSource )
+                            tcdmContent.Write(destinationOffset, copy.length, tensorContent,
+                                uint64_t(copy.source) + uint64_t(row) * copy.sourceStride3 +
+                                    uint64_t(repetition) * copy.sourceStride);
+                        else
+                            tcdmContent.Invalidate(destinationOffset, copy.length);
+                    }
+                }
             }
-            else if ( !AppendDMA2D(source, destination, copy.length, copy.sourceStride,
-                          copy.destinationStride, copy.repetitions, layerId, tileId++, error) )
-                return false;
+            else
+            {
+                if ( externalSource )
+                {
+                    for ( uint32_t row = 0; row < copy.repetitions; ++row )
+                    {
+                        const uint32_t destinationOffset = copy.destination +
+                            row * copy.destinationStride;
+                        const uint64_t contentOffset = uint64_t(copy.source) +
+                            uint64_t(row) * copy.sourceStride;
+                        if ( tcdmContent.Contains(destinationOffset,
+                                 copy.length, tensorContent, contentOffset) )
+                            continue;
+                        const std::optional<uint32_t> resident =
+                            tcdmContent.Find(tensorContent, contentOffset, copy.length);
+                        if ( !resident ||
+                             (uint64_t(*resident) < uint64_t(destinationOffset) + copy.length &&
+                                 uint64_t(destinationOffset) < uint64_t(*resident) + copy.length) )
+                            continue;
+                        RefV1 localSource{
+                            uint16_t(Region::TCDMScratch), 0, *resident};
+                        RefV1 localDestination{
+                            uint16_t(Region::TCDMScratch), 0, destinationOffset};
+                        if ( !AppendDMA2D(localSource, localDestination, copy.length,
+                                 copy.length, copy.length, 1,
+                                 layerId, tileId++, error) )
+                            return false;
+                        tcdmContent.Write(destinationOffset,
+                            copy.length, tensorContent, contentOffset);
+                    }
+                }
+                uint32_t runStart = 0;
+                while ( runStart < copy.repetitions )
+                {
+                    const auto rowResident = [&](uint32_t row)
+                    {
+                        return externalSource && tcdmContent.Contains(
+                            copy.destination + row * copy.destinationStride,
+                            copy.length, tensorContent,
+                            uint64_t(copy.source) + uint64_t(row) * copy.sourceStride);
+                    };
+                    while ( runStart < copy.repetitions && rowResident(runStart) ) ++runStart;
+                    if ( runStart == copy.repetitions ) break;
+                    uint32_t runEnd = runStart + 1;
+                    while ( runEnd < copy.repetitions && !rowResident(runEnd) ) ++runEnd;
+                    RefV1 runSource = source;
+                    RefV1 runDestination = destination;
+                    runSource.offset += runStart * copy.sourceStride;
+                    runDestination.offset += runStart * copy.destinationStride;
+                    if ( !AppendDMA2D(runSource, runDestination, copy.length,
+                             copy.sourceStride, copy.destinationStride, runEnd - runStart,
+                             layerId, tileId++, error) )
+                        return false;
+                    runStart = runEnd;
+                }
+                for ( uint32_t row = 0; row < copy.repetitions; ++row )
+                {
+                    const uint32_t destinationOffset = copy.destination +
+                        row * copy.destinationStride;
+                    if ( externalSource )
+                        tcdmContent.Write(destinationOffset, copy.length, tensorContent,
+                            uint64_t(copy.source) + uint64_t(row) * copy.sourceStride);
+                    else
+                        tcdmContent.Invalidate(destinationOffset, copy.length);
+                }
+            }
         }
         return true;
     }

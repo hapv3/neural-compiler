@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace regor::neuralai
@@ -61,6 +62,24 @@ public:
             if ( cursor == end ) return true;
         }
         return false;
+    }
+
+    std::optional<uint32_t> Find(MemoryContent content, uint64_t contentOffset,
+        uint32_t size) const
+    {
+        if ( size == 0 ) return uint32_t(0);
+        const uint64_t contentEnd = contentOffset + size;
+        for ( const Span &span : _spans )
+        {
+            const uint64_t spanContentEnd = span.contentOffset + span.end - span.begin;
+            if ( span.content == content && contentOffset >= span.contentOffset &&
+                 contentEnd <= spanContentEnd )
+            {
+                const uint64_t address = span.begin + contentOffset - span.contentOffset;
+                if ( address <= UINT32_MAX ) return uint32_t(address);
+            }
+        }
+        return std::nullopt;
     }
 
 private:

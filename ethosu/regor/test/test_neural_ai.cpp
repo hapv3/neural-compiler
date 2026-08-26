@@ -50,11 +50,14 @@ TEST_CASE("Neural-AI command memory state tracks content and invalidation")
     REQUIRE(state.Contains(48, 16, first, 116));
     REQUIRE_FALSE(state.Contains(48, 16, first, 100));
     REQUIRE_FALSE(state.Contains(32, 96, newer, 100));
+    REQUIRE(state.Find(first, 116, 16) == 48);
+    REQUIRE_FALSE(state.Find(first, 90, 16));
 
     state.Invalidate(64, 32);
     REQUIRE(state.Contains(32, 32, first, 100));
     REQUIRE_FALSE(state.Contains(32, 96, first, 100));
     REQUIRE(state.Contains(96, 32, first, 164));
+    REQUIRE_FALSE(state.Find(first, 132, 32));
 
     state.Write(64, 32, other, 0);
     REQUIRE(state.Contains(64, 32, other));
@@ -2750,6 +2753,7 @@ TEST_CASE("Neural-AI compiler streams a structural RGB stem from its binding")
     uint32_t bindingCopies = 0;
     uint32_t bindingRows = 0;
     uint32_t paddingSeeds = 0;
+    uint32_t rollingCopies = 0;
     size_t offset = 0;
     while ( offset < artifact.commands.size() )
     {
@@ -2770,11 +2774,22 @@ TEST_CASE("Neural-AI compiler streams a structural RGB stem from its binding")
                  uint16_t(neuralai::Region::TCDMScratch) &&
              Read32(artifact.commands, offset + 32) == 32 )
             ++paddingSeeds;
+        if ( type == uint16_t(neuralai::CommandType::DMA2D) &&
+             Read16(artifact.commands, offset + 16) ==
+                 uint16_t(neuralai::Region::TCDMScratch) &&
+             Read16(artifact.commands, offset + 24) ==
+                 uint16_t(neuralai::Region::TCDMScratch) &&
+             Read32(artifact.commands, offset + 32) == inputWidth * 3 &&
+             Read32(artifact.commands, offset + 48) ==
+                 uint32_t(neuralai::DMADirection::LocalToLocal) )
+            ++rollingCopies;
         offset += bytes;
     }
     REQUIRE(offset == artifact.commands.size());
+    CAPTURE(bindingCopies, bindingRows, rollingCopies);
     REQUIRE(bindingCopies > 1);
-    REQUIRE(bindingRows == inputHeight + bindingCopies - 1);
+    REQUIRE(rollingCopies > 0);
+    REQUIRE(bindingRows == inputHeight + bindingCopies - 1 - rollingCopies);
     REQUIRE(paddingSeeds > 0);
     REQUIRE(paddingSeeds < bindingCopies);
     REQUIRE(artifact.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);
@@ -6641,7 +6656,7 @@ TEST_CASE("Neural-AI compiler serializes asymmetric Conv padding at the raw zero
                  sourceRegion == uint16_t(neuralai::Region::TCDMScratch) &&
                  length == 32 && Read32(data + offset + 36) == 0 )
             {
-                REQUIRE(Read32(data + offset + 44) > 1);
+                REQUIRE(Read32(data + offset + 44) >= 1);
                 REQUIRE(Read32(data + offset + 48) ==
                     uint32_t(neuralai::DMADirection::LocalToLocal));
                 ++paddingFills;
@@ -6651,7 +6666,7 @@ TEST_CASE("Neural-AI compiler serializes asymmetric Conv padding at the raw zero
     }
     REQUIRE(offset == commandOffset + commandBytes);
     REQUIRE(paddingSeeds == 1);
-    REQUIRE(paddingFills == 1);
+    REQUIRE(paddingFills > 0);
     blob->Unmap(const_cast<uint8_t *>(data));
     blob->Release();
 }
