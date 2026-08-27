@@ -13,7 +13,10 @@ changes are allowed within the existing workflow.
 
 ## 2. Current baseline
 
-The selected YOLO320 package currently contains 3,910 ABI commands. The largest
+The selected YOLO320 package currently contains 4,101 ABI commands after the
+corrected L2 hazard checks. Its command estimator baseline is 7,388,213 cycles;
+the earlier 7,333,818-cycle result was invalid because an asynchronous store
+could cross an L2 read of its destination. The largest
 groups are:
 
 | Command type | Count | Estimated cycles |
@@ -134,6 +137,17 @@ Implement in descending breadth:
    firmware loops only when Regor can represent every intermediate dependency.
 5. Run list scheduling across the whole stream and retile/ping-pong where the
    original buffer allocation prevents useful overlap.
+
+Current implementation status:
+
+- DMA store overlap checks both its TCDM source and L2 destination hazards.
+- The common access model now admits proven-independent GEMM, pointwise,
+  depthwise, AFU, Spatz Add, upsample, RQ-load, and DMA commands while keeping
+  unknown commands as fences.
+- ABI 1.3 reserves `LINE_BUFFER_SUBMIT` and `SYSTOLIC_WAIT`; firmware and the
+  estimator implement their pending/wait semantics using existing RTL
+  start/done signals. Compiler emission remains disabled until linebuffer
+  access spans and ping-pong ownership are proven.
 
 AFU/systolic submit support is an ABI and firmware change first. Existing RTL
 start/done interfaces appear sufficient, but this must be proven by unit/block

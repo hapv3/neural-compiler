@@ -15,6 +15,7 @@ namespace regor
 class NeuralAICommandGenerator
 {
 public:
+    static uint32_t OptimizeCommandOverlap(std::vector<uint8_t> &commands);
     static MemorySnapshot WorkspaceReservation(
         const std::vector<std::unique_ptr<SchedulerOperation>> &operations,
         const Schedule *schedule);

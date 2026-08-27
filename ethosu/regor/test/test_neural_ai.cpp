@@ -74,6 +74,60 @@ TEST_CASE("Neural-AI command memory state tracks content and invalidation")
     REQUIRE(state.Contains(32, 0, first, 100));
 }
 
+TEST_CASE("Neural-AI command overlap crosses independent compute and stops at hazards")
+{
+    neuralai::CommandDMA1DV2 store{};
+    store.header.type = uint16_t(neuralai::CommandType::DMA1D);
+    store.header.sizeBytes = sizeof(store);
+    store.header.layerId = 11;
+    store.header.tileId = 7;
+    store.source = {uint16_t(neuralai::Region::TCDMScratch), 0, 0x1000};
+    store.destination = {uint16_t(neuralai::Region::L2TemporaryBinding), 0, 0x2000};
+    store.length = 256;
+    store.direction = uint32_t(neuralai::DMADirection::LocalToExternal);
+
+    neuralai::CommandAFUBinaryV2 independent{};
+    independent.header.type = uint16_t(neuralai::CommandType::AFUBinary);
+    independent.header.sizeBytes = sizeof(independent);
+    independent.lhs = {uint16_t(neuralai::Region::TCDMScratch), 0, 0x3000};
+    independent.rhs = {uint16_t(neuralai::Region::TCDMScratch), 0, 0x3200};
+    independent.ofm = {uint16_t(neuralai::Region::TCDMScratch), 0, 0x3400};
+    independent.length = 256;
+
+    neuralai::CommandAFUBinaryV2 hazard = independent;
+    hazard.lhs.offset = store.source.offset;
+
+    std::vector<uint8_t> commands;
+    const auto append = [&](const auto &command)
+    {
+        const auto *bytes = reinterpret_cast<const uint8_t *>(&command);
+        commands.insert(commands.end(), bytes, bytes + sizeof(command));
+    };
+    append(store);
+    append(independent);
+    append(hazard);
+
+    REQUIRE(NeuralAICommandGenerator::OptimizeCommandOverlap(commands) == 1);
+    const auto read16 = [&](size_t offset)
+    {
+        return uint16_t(commands[offset]) | uint16_t(uint16_t(commands[offset + 1]) << 8);
+    };
+    const auto read32 = [&](size_t offset)
+    {
+        return uint32_t(commands[offset]) | (uint32_t(commands[offset + 1]) << 8) |
+               (uint32_t(commands[offset + 2]) << 16) | (uint32_t(commands[offset + 3]) << 24);
+    };
+    REQUIRE(commands.size() == sizeof(store) + sizeof(independent) + 32 + sizeof(hazard));
+    REQUIRE(read16(0) == uint16_t(neuralai::CommandType::DMASubmit1D));
+    REQUIRE(read16(sizeof(store)) == uint16_t(neuralai::CommandType::AFUBinary));
+    REQUIRE(read16(sizeof(store) + sizeof(independent)) ==
+        uint16_t(neuralai::CommandType::DMAWait));
+    REQUIRE(read32(sizeof(store) + sizeof(independent) + 16) ==
+        uint32_t(neuralai::DMADirection::LocalToExternal));
+    REQUIRE(read16(sizeof(store) + sizeof(independent) + 32) ==
+        uint16_t(neuralai::CommandType::AFUBinary));
+}
+
 uint32_t Read32(const uint8_t *data)
 {
     return uint32_t(data[0]) | (uint32_t(data[1]) << 8) |

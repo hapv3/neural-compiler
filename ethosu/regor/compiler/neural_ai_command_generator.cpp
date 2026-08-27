@@ -407,6 +407,134 @@ CommandType SubmitType(CommandType type)
     return CommandType::DMASubmit3D;
 }
 
+struct CommandAccess
+{
+    uint16_t region = 0;
+    uint16_t index = 0;
+    uint64_t begin = 0;
+    uint64_t end = 0;
+    bool write = false;
+};
+
+bool AddCommandAccess(std::vector<CommandAccess> &accesses, const uint8_t *command,
+    size_t referenceOffset, uint64_t bytes, bool write)
+{
+    if ( bytes == 0 ) return false;
+    const uint64_t begin = Read32(command + referenceOffset + 4);
+    if ( bytes > uint64_t(std::numeric_limits<uint32_t>::max()) + 1 - begin ) return false;
+    accesses.push_back({Read16(command + referenceOffset), Read16(command + referenceOffset + 2),
+        begin, begin + bytes, write});
+    return true;
+}
+
+bool DecodeIndependentCommandAccesses(const uint8_t *command, CommandType type,
+    std::vector<CommandAccess> &accesses)
+{
+    accesses.clear();
+    switch ( type )
+    {
+        case CommandType::RQLoad:
+            // RQ_LOAD only updates the private quantization register file.  It
+            // neither aliases a TCDM output buffer nor an L2 temporary store.
+            return true;
+        case CommandType::AFUBinary:
+        case CommandType::SpatzAdd:
+        {
+            const uint64_t bytes = Read32(command + 40);
+            return AddCommandAccess(accesses, command, 16, bytes, false) &&
+                   AddCommandAccess(accesses, command, 24, bytes, false) &&
+                   AddCommandAccess(accesses, command, 32, bytes, true);
+        }
+        case CommandType::AFULut:
+        {
+            const uint64_t bytes = Read32(command + 40);
+            return AddCommandAccess(accesses, command, 16, bytes, false) &&
+                   AddCommandAccess(accesses, command, 24, bytes, true) &&
+                   AddCommandAccess(accesses, command, 32, 256, false);
+        }
+        case CommandType::Gemm32:
+        case CommandType::Gemm32Accum:
+        case CommandType::Gemm32Requant:
+        {
+            const uint64_t rows = Read32(command + 48);
+            if ( !AddCommandAccess(accesses, command, 16, 32 * 32, false) ||
+                 !AddCommandAccess(accesses, command, 24, rows * 32, false) ) return false;
+            if ( type != CommandType::Gemm32 &&
+                 !AddCommandAccess(accesses, command, 32, rows * 32 * 4, false) ) return false;
+            const size_t outputRef = type == CommandType::Gemm32Requant ? 40 : 32;
+            const uint64_t outputBytes = type == CommandType::Gemm32Requant ? rows * 32 : rows * 32 * 4;
+            return AddCommandAccess(accesses, command, outputRef, outputBytes, true);
+        }
+        case CommandType::PointwiseC32:
+        {
+            const uint64_t rows = Read32(command + 48);
+            const uint64_t inputGroups = Read32(command + 52);
+            const uint64_t outputGroups = Read32(command + 56);
+            const uint64_t inputStride = Read32(command + 64);
+            const uint64_t outputStride = Read32(command + 68);
+            if ( inputGroups == 0 || outputGroups == 0 ||
+                 inputGroups > std::numeric_limits<uint32_t>::max() / (32 * 32) ||
+                 outputGroups > std::numeric_limits<uint32_t>::max() / inputGroups ) return false;
+            const uint64_t weightBytes = inputGroups * outputGroups * 32 * 32;
+            const uint64_t inputBytes = (inputGroups - 1) * inputStride + rows * 32;
+            const uint64_t outputBytes = (outputGroups - 1) * outputStride + rows * 32;
+            if ( !AddCommandAccess(accesses, command, 16, weightBytes, false) ||
+                 !AddCommandAccess(accesses, command, 24, inputBytes, false) ||
+                 !AddCommandAccess(accesses, command, 40, outputBytes, true) ) return false;
+            if ( inputGroups > 1 )
+            {
+                const uint64_t partialBytes = rows * 32 * 4;
+                return AddCommandAccess(accesses, command, 32, partialBytes, false) &&
+                       AddCommandAccess(accesses, command, 32, partialBytes, true);
+            }
+            return true;
+        }
+        case CommandType::DepthwiseC32:
+        {
+            const uint64_t inputPixels = uint64_t(Read32(command + 40)) * Read32(command + 44);
+            const uint64_t outputPixels = uint64_t(Read32(command + 48)) * Read32(command + 52);
+            return AddCommandAccess(accesses, command, 16, 3 * 3 * 32, false) &&
+                   AddCommandAccess(accesses, command, 24, inputPixels * 32, false) &&
+                   AddCommandAccess(accesses, command, 32, outputPixels * 32, true);
+        }
+        case CommandType::AFUGlobalAvgPool:
+        {
+            const uint64_t pixels = uint64_t(Read32(command + 32)) * Read32(command + 36);
+            const uint64_t channels = Read32(command + 40);
+            if ( pixels > std::numeric_limits<uint32_t>::max() ||
+                 (channels != 0 && pixels > std::numeric_limits<uint32_t>::max() / channels) ) return false;
+            return AddCommandAccess(accesses, command, 16, pixels * channels, false) &&
+                   AddCommandAccess(accesses, command, 24, channels, true);
+        }
+        case CommandType::UpsampleNearest:
+        {
+            const uint64_t pixels = uint64_t(Read32(command + 32)) * Read32(command + 36);
+            const uint64_t channels = Read32(command + 40);
+            const uint64_t scale = uint64_t(Read32(command + 44)) * Read32(command + 48);
+            if ( channels != 0 && pixels > std::numeric_limits<uint32_t>::max() / channels ) return false;
+            const uint64_t inputBytes = pixels * channels;
+            if ( scale != 0 && inputBytes > std::numeric_limits<uint32_t>::max() / scale ) return false;
+            return AddCommandAccess(accesses, command, 16, inputBytes, false) &&
+                   AddCommandAccess(accesses, command, 24, inputBytes * scale, true);
+        }
+        default: return false;
+    }
+}
+
+bool ConflictsWithDMAStore(const DMACommandInfo &store,
+    const std::vector<CommandAccess> &accesses)
+{
+    for ( const auto &access : accesses )
+    {
+        if ( access.region == uint16_t(Region::TCDMScratch) &&
+             Overlaps(store.sourceBegin, store.sourceEnd, access.begin, access.end) ) return true;
+        if ( SameStorage(store.destinationRegion, store.destinationIndex,
+                 access.region, access.index) &&
+             Overlaps(store.destinationBegin, store.destinationEnd, access.begin, access.end) ) return true;
+    }
+    return false;
+}
+
 bool SamePointwiseLane(const uint8_t *firstRQ, const uint8_t *firstPW,
     const uint8_t *secondRQ, const uint8_t *secondPW)
 {
@@ -530,7 +658,7 @@ uint32_t OverlapDMAStores(std::vector<uint8_t> &commands)
         bool overlap = DecodeDMACommand(command, type, store) && store.sourceLocal &&
             store.direction == DMADirection::LocalToExternal;
         size_t next = offset + size;
-        bool hasIndependentDMA = false;
+        bool hasIndependentWork = false;
         while ( overlap && next < commands.size() )
         {
             const uint8_t *candidate = commands.data() + next;
@@ -564,11 +692,16 @@ uint32_t OverlapDMAStores(std::vector<uint8_t> &commands)
                     break;
                 }
             }
-            else break;
-            hasIndependentDMA = true;
+            else
+            {
+                std::vector<CommandAccess> accesses;
+                if ( !DecodeIndependentCommandAccesses(candidate, candidateType, accesses) ||
+                     ConflictsWithDMAStore(store, accesses) ) break;
+            }
+            hasIndependentWork = true;
             next += candidateSize;
         }
-        overlap = overlap && hasIndependentDMA && next < commands.size();
+        overlap = overlap && hasIndependentWork;
         if ( overlap )
         {
             const size_t rewrittenStore = rewritten.size();
@@ -4436,6 +4569,11 @@ struct GeneratorContext
 
 }  // namespace
 
+uint32_t NeuralAICommandGenerator::OptimizeCommandOverlap(std::vector<uint8_t> &commands)
+{
+    return OverlapDMAStores(commands);
+}
+
 MemorySnapshot NeuralAICommandGenerator::WorkspaceReservation(
     const std::vector<std::unique_ptr<SchedulerOperation>> &operations,
     const Schedule *schedule)
@@ -5083,7 +5221,7 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
     const uint32_t coalescedCommands = CoalesceInterleavedPointwiseRows(artifact.commands);
     assert(coalescedCommands <= artifact.commandCount);
     artifact.commandCount -= coalescedCommands;
-    artifact.commandCount += OverlapDMAStores(artifact.commands);
+    artifact.commandCount += OptimizeCommandOverlap(artifact.commands);
     context.AppendControl(CommandType::End, 0, 0);
     artifact.requiredTCDMBytes = uint32_t(RoundAway(
         int(std::max(context.scratchEnd, context.workspaceEnd)), ArchNeuralAI::DMAAlignment));
