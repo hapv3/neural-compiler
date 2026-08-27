@@ -120,7 +120,7 @@ TEST_CASE("Neural-AI command overlap crosses independent compute and stops at ha
     append(linebuffer);
     append(hazard);
 
-    REQUIRE(NeuralAICommandGenerator::OptimizeCommandOverlap(commands) == 1);
+    REQUIRE(NeuralAICommandGenerator::OptimizeCommandOverlap(commands) == 2);
     const auto read16 = [&](size_t offset)
     {
         return uint16_t(commands[offset]) | uint16_t(uint16_t(commands[offset + 1]) << 8);
@@ -131,16 +131,18 @@ TEST_CASE("Neural-AI command overlap crosses independent compute and stops at ha
                (uint32_t(commands[offset + 2]) << 16) | (uint32_t(commands[offset + 3]) << 24);
     };
     const size_t waitOffset = sizeof(store) + sizeof(independent) + sizeof(linebuffer);
-    REQUIRE(commands.size() == waitOffset + 32 + sizeof(hazard));
+    REQUIRE(commands.size() == waitOffset + 64 + sizeof(hazard));
     REQUIRE(read16(0) == uint16_t(neuralai::CommandType::DMASubmit1D));
     REQUIRE(read16(sizeof(store)) == uint16_t(neuralai::CommandType::AFUBinary));
     REQUIRE(read16(sizeof(store) + sizeof(independent)) ==
-        uint16_t(neuralai::CommandType::LineBufferJob));
+        uint16_t(neuralai::CommandType::LineBufferSubmit));
     REQUIRE(read16(waitOffset) ==
         uint16_t(neuralai::CommandType::DMAWait));
     REQUIRE(read32(waitOffset + 16) ==
         uint32_t(neuralai::DMADirection::LocalToExternal));
     REQUIRE(read16(waitOffset + 32) ==
+        uint16_t(neuralai::CommandType::SystolicWait));
+    REQUIRE(read16(waitOffset + 64) ==
         uint16_t(neuralai::CommandType::AFUBinary));
 
     commands.clear();
@@ -4328,6 +4330,8 @@ TEST_CASE("Neural-AI K3 Conv tiles spilled feature maps through TCDM stripes")
     uint32_t asyncStores = 0;
     uint32_t dmaWaits = 0;
     uint32_t linebufferJobs = 0;
+    uint32_t linebufferSubmits = 0;
+    uint32_t systolicWaits = 0;
     std::vector<uint32_t> spatialRows;
     size_t offset = 0;
     while ( offset < artifact.commands.size() )
@@ -4377,7 +4381,8 @@ TEST_CASE("Neural-AI K3 Conv tiles spilled feature maps through TCDM stripes")
             if ( type == uint16_t(neuralai::CommandType::DMASubmit1D) ) ++asyncStores;
         }
         if ( convCommand && type == uint16_t(neuralai::CommandType::DMAWait) ) ++dmaWaits;
-        if ( type == uint16_t(neuralai::CommandType::LineBufferJob) )
+        if ( type == uint16_t(neuralai::CommandType::LineBufferJob) ||
+             type == uint16_t(neuralai::CommandType::LineBufferSubmit) )
         {
             REQUIRE(Read32(artifact.commands, offset + 16) <
                 ArchNeuralAI::AllocatableTCDMBytes);
@@ -4390,7 +4395,10 @@ TEST_CASE("Neural-AI K3 Conv tiles spilled feature maps through TCDM stripes")
             REQUIRE(Read32(artifact.commands, offset + 108) <
                 ArchNeuralAI::AllocatableTCDMBytes);
             ++linebufferJobs;
+            if ( type == uint16_t(neuralai::CommandType::LineBufferSubmit) )
+                ++linebufferSubmits;
         }
+        if ( type == uint16_t(neuralai::CommandType::SystolicWait) ) ++systolicWaits;
         offset += bytes;
     }
     REQUIRE(offset == artifact.commands.size());
@@ -4401,6 +4409,8 @@ TEST_CASE("Neural-AI K3 Conv tiles spilled feature maps through TCDM stripes")
     REQUIRE(asyncStores > 0);
     REQUIRE(dmaWaits == asyncStores);
     REQUIRE(linebufferJobs == 18);
+    REQUIRE(linebufferSubmits == 2);
+    REQUIRE(systolicWaits == linebufferSubmits);
     REQUIRE(spatialRows == std::vector<uint32_t>{15, 15, 3, 15, 15, 3});
     REQUIRE(artifact.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);
 }
@@ -4416,6 +4426,7 @@ TEST_CASE("Neural-AI spilled K3 Conv uses capacity-based weight residency")
     const std::array<int, 4> outputWidthByScenario = {17, 17, 17, 5};
     const std::array<uint32_t, 4> expectedWeightLoads = {2, 2, 2, 2};
     const std::array<uint32_t, 4> expectedLinebufferJobs = {6, 12, 18, 6};
+    const std::array<uint32_t, 4> expectedLinebufferSubmits = {3, 3, 2, 0};
     const int inputChannels = inputChannelsByScenario[scenario];
     const Shape ifmShape(1, inputHeightByScenario[scenario],
         inputWidthByScenario[scenario], inputChannels);
@@ -4495,6 +4506,8 @@ TEST_CASE("Neural-AI spilled K3 Conv uses capacity-based weight residency")
 
     uint32_t weightLoads = 0;
     uint32_t linebufferJobs = 0;
+    uint32_t linebufferSubmits = 0;
+    uint32_t systolicWaits = 0;
     size_t offset = 0;
     while ( offset < artifact.commands.size() )
     {
@@ -4511,13 +4524,22 @@ TEST_CASE("Neural-AI spilled K3 Conv uses capacity-based weight residency")
              Read32(artifact.commands, offset + 32) == 32 &&
              Read32(artifact.commands, offset + 36) == 32 )
             ++weightLoads;
-        if ( convCommand && type == uint16_t(neuralai::CommandType::LineBufferJob) )
+        if ( convCommand && (type == uint16_t(neuralai::CommandType::LineBufferJob) ||
+             type == uint16_t(neuralai::CommandType::LineBufferSubmit)) )
+        {
             ++linebufferJobs;
+            if ( type == uint16_t(neuralai::CommandType::LineBufferSubmit) )
+                ++linebufferSubmits;
+        }
+        if ( convCommand && type == uint16_t(neuralai::CommandType::SystolicWait) )
+            ++systolicWaits;
         offset += bytes;
     }
     REQUIRE(offset == artifact.commands.size());
     REQUIRE(weightLoads == expectedWeightLoads[scenario]);
     REQUIRE(linebufferJobs == expectedLinebufferJobs[scenario]);
+    REQUIRE(linebufferSubmits == expectedLinebufferSubmits[scenario]);
+    REQUIRE(systolicWaits == linebufferSubmits);
     REQUIRE(artifact.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);
 }
 

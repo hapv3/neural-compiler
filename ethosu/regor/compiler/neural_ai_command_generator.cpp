@@ -591,6 +591,19 @@ bool ConflictsWithDMAStore(const DMACommandInfo &store,
     return false;
 }
 
+bool ConflictsWithDMA(const std::vector<CommandAccess> &pending,
+    const DMACommandInfo &dma)
+{
+    for ( const auto &access : pending )
+    {
+        if ( SameStorage(access.region, access.index, dma.sourceRegion, dma.sourceIndex) &&
+             access.write && Overlaps(access.begin, access.end, dma.sourceBegin, dma.sourceEnd) ) return true;
+        if ( SameStorage(access.region, access.index, dma.destinationRegion, dma.destinationIndex) &&
+             Overlaps(access.begin, access.end, dma.destinationBegin, dma.destinationEnd) ) return true;
+    }
+    return false;
+}
+
 bool SamePointwiseLane(const uint8_t *firstRQ, const uint8_t *firstPW,
     const uint8_t *secondRQ, const uint8_t *secondPW)
 {
@@ -768,6 +781,71 @@ uint32_t OverlapDMAStores(std::vector<uint8_t> &commands)
                 Read32(command + 8), Read32(command + 12));
             Append32(rewritten, uint32_t(DMADirection::LocalToExternal));
             AppendZeros(rewritten, 3);
+            ++waits;
+            offset = next;
+        }
+        else
+        {
+            rewritten.insert(rewritten.end(), commands.begin() + offset,
+                commands.begin() + offset + size);
+            offset += size;
+        }
+    }
+    if ( offset == commands.size() ) commands = std::move(rewritten);
+    return waits;
+}
+
+uint32_t OverlapSystolicLinebuffers(std::vector<uint8_t> &commands)
+{
+    std::vector<uint8_t> rewritten;
+    rewritten.reserve(commands.size());
+    uint32_t waits = 0;
+    size_t offset = 0;
+    while ( offset < commands.size() )
+    {
+        const uint8_t *command = commands.data() + offset;
+        const CommandType type = CommandType(Read16(command));
+        const uint16_t size = Read16(command + 2);
+        if ( size < sizeof(neuralai::CommandHeaderV2) || offset + size > commands.size() ) break;
+        std::vector<CommandAccess> pending;
+        bool overlap = type == CommandType::LineBufferJob &&
+            DecodeIndependentCommandAccesses(command, type, pending);
+        bool hasIndependentDMA = false;
+        size_t next = offset + size;
+        while ( overlap && next < commands.size() )
+        {
+            const uint8_t *candidate = commands.data() + next;
+            const CommandType candidateType = CommandType(Read16(candidate));
+            const uint16_t candidateSize = Read16(candidate + 2);
+            if ( candidateSize < sizeof(neuralai::CommandHeaderV2) ||
+                 next + candidateSize > commands.size() )
+            {
+                overlap = false;
+                break;
+            }
+            if ( candidateType == CommandType::DMAWait )
+            {
+                hasIndependentDMA = true;
+                next += candidateSize;
+                continue;
+            }
+            DMACommandInfo dma;
+            if ( !DecodeDMACommand(candidate, candidateType, dma) ||
+                 ConflictsWithDMA(pending, dma) ) break;
+            hasIndependentDMA = true;
+            next += candidateSize;
+        }
+        overlap = overlap && hasIndependentDMA;
+        if ( overlap )
+        {
+            const size_t rewrittenSubmit = rewritten.size();
+            rewritten.insert(rewritten.end(), commands.begin() + offset, commands.begin() + next);
+            const CommandType submit = CommandType::LineBufferSubmit;
+            rewritten[rewrittenSubmit] = uint8_t(uint16_t(submit));
+            rewritten[rewrittenSubmit + 1] = uint8_t(uint16_t(submit) >> 8);
+            AppendHeader(rewritten, CommandType::SystolicWait, 32,
+                Read32(command + 8), Read32(command + 12));
+            AppendZeros(rewritten, 4);
             ++waits;
             offset = next;
         }
@@ -4626,7 +4704,8 @@ struct GeneratorContext
 
 uint32_t NeuralAICommandGenerator::OptimizeCommandOverlap(std::vector<uint8_t> &commands)
 {
-    return OverlapDMAStores(commands);
+    const uint32_t dmaWaits = OverlapDMAStores(commands);
+    return dmaWaits + OverlapSystolicLinebuffers(commands);
 }
 
 MemorySnapshot NeuralAICommandGenerator::WorkspaceReservation(
