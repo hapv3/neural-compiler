@@ -10,6 +10,8 @@
 
 #include <catch_all.hpp>
 
+#include <algorithm>
+
 using namespace regor;
 
 namespace
@@ -100,6 +102,52 @@ TEST_CASE("neural_ai command performance accounts AFU traffic and emits command 
     CHECK(tables->Rows() == 2);
     CHECK(tables->Columns() == 13);
     tables->Release();
+}
+
+TEST_CASE("neural_ai command performance hides asynchronous DMA store cycles")
+{
+    ArchNeuralAI architecture;
+    REQUIRE(architecture.ConfigureExternalMemory(1.0f, 10, 5, 64, 1, 64, 32));
+
+    neuralai::CommandDMA1DV2 store{};
+    store.header.type = uint16_t(neuralai::CommandType::DMASubmit1D);
+    store.header.sizeBytes = sizeof(store);
+    store.source = {uint16_t(neuralai::Region::TCDMScratch), 0, 0};
+    store.destination = {uint16_t(neuralai::Region::L2TemporaryBinding), 0, 0};
+    store.length = 256;
+    store.direction = uint32_t(neuralai::DMADirection::LocalToExternal);
+
+    neuralai::CommandDMA1DV2 load{};
+    load.header.type = uint16_t(neuralai::CommandType::DMA1D);
+    load.header.sizeBytes = sizeof(load);
+    load.source = {uint16_t(neuralai::Region::ModelConstants), 0, 0};
+    load.destination = {uint16_t(neuralai::Region::TCDMScratch), 0, 1024};
+    load.length = 256;
+    load.direction = uint32_t(neuralai::DMADirection::ExternalToLocal);
+
+    neuralai::CommandDMAWaitV2 wait{};
+    wait.header.type = uint16_t(neuralai::CommandType::DMAWait);
+    wait.header.sizeBytes = sizeof(wait);
+    wait.direction = uint32_t(neuralai::DMADirection::LocalToExternal);
+
+    CompiledNeuralAIArtifact artifact;
+    AppendCommand(artifact, store);
+    AppendCommand(artifact, load);
+    AppendCommand(artifact, wait);
+    const auto result = MeasureNeuralAICommandPerformance(artifact, &architecture);
+
+    REQUIRE(result.commands.size() == 3);
+    CHECK(result.commands[0].name == "DMA_SUBMIT_1D");
+    CHECK(result.commands[0].totalCycles == 1);
+    CHECK(result.commands[0].l2WriteBytes == 256);
+    CHECK(result.commands[1].name == "DMA1D");
+    CHECK(result.commands[2].name == "DMA_WAIT");
+    const int64_t remaining = std::max<int64_t>(0,
+        result.commands[0].memoryCycles - result.commands[1].totalCycles);
+    CHECK(result.commands[2].memoryCycles == remaining);
+    CHECK(result.commands[2].totalCycles == std::max<int64_t>(1, remaining));
+    CHECK(result.performance.npuCycles == 1 + result.commands[1].totalCycles +
+        result.commands[2].totalCycles);
 }
 
 TEST_CASE("neural_ai command performance stops at a truncated command")

@@ -290,6 +290,11 @@ uint32_t Read32(const uint8_t *data)
            (uint32_t(data[3]) << 24);
 }
 
+uint16_t Read16(const uint8_t *data)
+{
+    return uint16_t(data[0]) | uint16_t(uint16_t(data[1]) << 8);
+}
+
 void AppendRef(std::vector<uint8_t> &output, const RefV1 &reference)
 {
     Append16(output, reference.region);
@@ -310,6 +315,143 @@ void AppendHeader(std::vector<uint8_t> &output, CommandType type, uint16_t size,
 void AppendZeros(std::vector<uint8_t> &output, int words)
 {
     for ( int index = 0; index < words; ++index ) Append32(output, 0);
+}
+
+struct DMACommandInfo
+{
+    DMADirection direction = DMADirection::ExternalToLocal;
+    uint64_t sourceBegin = 0;
+    uint64_t sourceEnd = 0;
+    uint64_t destinationBegin = 0;
+    uint64_t destinationEnd = 0;
+    bool sourceLocal = false;
+    bool destinationLocal = false;
+};
+
+bool IsDMACommand(CommandType type)
+{
+    return type == CommandType::DMA1D || type == CommandType::DMA2D ||
+           type == CommandType::DMA3D;
+}
+
+bool DecodeDMACommand(const uint8_t *command, CommandType type, DMACommandInfo &info)
+{
+    if ( !IsDMACommand(type) ) return false;
+    const uint64_t length = Read32(command + 32);
+    uint64_t sourceSpan = length;
+    uint64_t destinationSpan = length;
+    uint32_t directionOffset = 36;
+    if ( type == CommandType::DMA2D )
+    {
+        const uint64_t repetitions = Read32(command + 44);
+        if ( repetitions == 0 ) return false;
+        sourceSpan += uint64_t(Read32(command + 36)) * (repetitions - 1);
+        destinationSpan += uint64_t(Read32(command + 40)) * (repetitions - 1);
+        directionOffset = 48;
+    }
+    else if ( type == CommandType::DMA3D )
+    {
+        const uint64_t repetitions2 = Read32(command + 44);
+        const uint64_t repetitions3 = Read32(command + 56);
+        if ( repetitions2 == 0 || repetitions3 == 0 ) return false;
+        sourceSpan += uint64_t(Read32(command + 36)) * (repetitions2 - 1) +
+                      uint64_t(Read32(command + 48)) * (repetitions3 - 1);
+        destinationSpan += uint64_t(Read32(command + 40)) * (repetitions2 - 1) +
+                           uint64_t(Read32(command + 52)) * (repetitions3 - 1);
+        directionOffset = 60;
+    }
+    if ( length == 0 || sourceSpan > std::numeric_limits<uint32_t>::max() ||
+         destinationSpan > std::numeric_limits<uint32_t>::max() ) return false;
+    info.direction = DMADirection(Read32(command + directionOffset));
+    info.sourceLocal = Read16(command + 16) == uint16_t(Region::TCDMScratch);
+    info.destinationLocal = Read16(command + 24) == uint16_t(Region::TCDMScratch);
+    info.sourceBegin = Read32(command + 20);
+    info.sourceEnd = info.sourceBegin + sourceSpan;
+    info.destinationBegin = Read32(command + 28);
+    info.destinationEnd = info.destinationBegin + destinationSpan;
+    return info.sourceEnd <= uint64_t(std::numeric_limits<uint32_t>::max()) + 1 &&
+           info.destinationEnd <= uint64_t(std::numeric_limits<uint32_t>::max()) + 1;
+}
+
+bool Overlaps(uint64_t lhsBegin, uint64_t lhsEnd, uint64_t rhsBegin, uint64_t rhsEnd)
+{
+    return lhsBegin < rhsEnd && rhsBegin < lhsEnd;
+}
+
+CommandType SubmitType(CommandType type)
+{
+    if ( type == CommandType::DMA1D ) return CommandType::DMASubmit1D;
+    if ( type == CommandType::DMA2D ) return CommandType::DMASubmit2D;
+    return CommandType::DMASubmit3D;
+}
+
+uint32_t OverlapDMAStores(std::vector<uint8_t> &commands)
+{
+    std::vector<uint8_t> rewritten;
+    rewritten.reserve(commands.size());
+    uint32_t waits = 0;
+    size_t offset = 0;
+    while ( offset < commands.size() )
+    {
+        const uint8_t *command = commands.data() + offset;
+        const CommandType type = CommandType(Read16(command));
+        const uint16_t size = Read16(command + 2);
+        if ( size < sizeof(neuralai::CommandHeaderV2) || offset + size > commands.size() ) break;
+
+        DMACommandInfo store;
+        bool overlap = DecodeDMACommand(command, type, store) && store.sourceLocal &&
+            store.direction == DMADirection::LocalToExternal;
+        size_t next = offset + size;
+        bool hasIndependentDMA = false;
+        while ( overlap && next < commands.size() )
+        {
+            const uint8_t *candidate = commands.data() + next;
+            const CommandType candidateType = CommandType(Read16(candidate));
+            const uint16_t candidateSize = Read16(candidate + 2);
+            if ( candidateSize < sizeof(neuralai::CommandHeaderV2) ||
+                 next + candidateSize > commands.size() )
+            {
+                overlap = false;
+                break;
+            }
+            DMACommandInfo dma;
+            if ( !DecodeDMACommand(candidate, candidateType, dma) ) break;
+            if ( dma.direction == DMADirection::LocalToExternal ||
+                 (dma.sourceLocal && Overlaps(store.sourceBegin, store.sourceEnd,
+                     dma.sourceBegin, dma.sourceEnd)) ||
+                 (dma.destinationLocal && Overlaps(store.sourceBegin, store.sourceEnd,
+                     dma.destinationBegin, dma.destinationEnd)) )
+            {
+                overlap = false;
+                break;
+            }
+            hasIndependentDMA = true;
+            next += candidateSize;
+        }
+        overlap = overlap && hasIndependentDMA && next < commands.size();
+        if ( overlap )
+        {
+            const size_t rewrittenStore = rewritten.size();
+            rewritten.insert(rewritten.end(), commands.begin() + offset, commands.begin() + next);
+            const CommandType submit = SubmitType(type);
+            rewritten[rewrittenStore] = uint8_t(uint16_t(submit));
+            rewritten[rewrittenStore + 1] = uint8_t(uint16_t(submit) >> 8);
+            AppendHeader(rewritten, CommandType::DMAWait, sizeof(neuralai::CommandDMAWaitV2),
+                Read32(command + 8), Read32(command + 12));
+            Append32(rewritten, uint32_t(DMADirection::LocalToExternal));
+            AppendZeros(rewritten, 3);
+            ++waits;
+            offset = next;
+        }
+        else
+        {
+            rewritten.insert(rewritten.end(), commands.begin() + offset,
+                commands.begin() + offset + size);
+            offset += size;
+        }
+    }
+    if ( offset == commands.size() ) commands = std::move(rewritten);
+    return waits;
 }
 
 uint16_t ABIDataType(regor::DataType type)
@@ -4791,6 +4933,7 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
             return false;
         }
     }
+    artifact.commandCount += OverlapDMAStores(artifact.commands);
     context.AppendControl(CommandType::End, 0, 0);
     artifact.requiredTCDMBytes = uint32_t(RoundAway(
         int(std::max(context.scratchEnd, context.workspaceEnd)), ArchNeuralAI::DMAAlignment));

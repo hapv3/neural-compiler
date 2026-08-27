@@ -271,6 +271,13 @@ struct CommandDMA3DV2
     uint32_t direction;
 };
 
+struct CommandDMAWaitV2
+{
+    CommandHeaderV2 header;
+    uint32_t direction;
+    uint32_t reserved[3];
+};
+
 struct CommandGemm32V2
 {
     CommandHeaderV2 header;
@@ -490,6 +497,7 @@ static_assert(offsetof(CommandRQLoadV2, qparamBlock) == 24);
 static_assert(sizeof(CommandDMA1DV2) == 64);
 static_assert(sizeof(CommandDMA2DV2) == 64);
 static_assert(sizeof(CommandDMA3DV2) == 64);
+static_assert(sizeof(CommandDMAWaitV2) == 32);
 static_assert(sizeof(CommandGemm32V2) == 96);
 static_assert(sizeof(CommandPointwiseC32V2) == 96);
 static_assert(sizeof(CommandDepthwiseC32V2) == 96);

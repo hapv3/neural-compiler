@@ -3810,13 +3810,21 @@ TEST_CASE("Neural-AI binary chain reloads one spilled intermediate through TCDM"
 
     uint32_t dmaCommands = 0;
     uint32_t addCommands = 0;
+    uint32_t asyncStores = 0;
+    uint32_t dmaWaits = 0;
     size_t offset = 0;
     while ( offset < artifact.commands.size() )
     {
         const uint16_t type = Read16(artifact.commands, offset);
         const uint16_t bytes = Read16(artifact.commands, offset + 2);
         REQUIRE(bytes >= 32);
-        if ( type == uint16_t(neuralai::CommandType::DMA1D) ) ++dmaCommands;
+        if ( type == uint16_t(neuralai::CommandType::DMA1D) ||
+             type == uint16_t(neuralai::CommandType::DMASubmit1D) )
+        {
+            ++dmaCommands;
+            if ( type == uint16_t(neuralai::CommandType::DMASubmit1D) ) ++asyncStores;
+        }
+        if ( type == uint16_t(neuralai::CommandType::DMAWait) ) ++dmaWaits;
         if ( type == uint16_t(neuralai::CommandType::AFUBinary) )
         {
             REQUIRE(Read16(artifact.commands, offset + 16) ==
@@ -3833,6 +3841,8 @@ TEST_CASE("Neural-AI binary chain reloads one spilled intermediate through TCDM"
     REQUIRE(offset == artifact.commands.size());
     REQUIRE(dmaCommands == 6);
     REQUIRE(addCommands == 2);
+    REQUIRE(asyncStores > 0);
+    REQUIRE(dmaWaits == asyncStores);
 }
 
 TEST_CASE("Neural-AI Concat reloads one spilled producer through TCDM")
@@ -4062,6 +4072,8 @@ TEST_CASE("Neural-AI pointwise Conv tiles spilled feature maps through TCDM")
 
     uint32_t reloads = 0;
     uint32_t stores = 0;
+    uint32_t asyncStores = 0;
+    uint32_t dmaWaits = 0;
     uint32_t pointwiseCommands = 0;
     std::vector<uint32_t> pointwiseRows;
     size_t offset = 0;
@@ -4070,7 +4082,8 @@ TEST_CASE("Neural-AI pointwise Conv tiles spilled feature maps through TCDM")
         const uint16_t type = Read16(artifact.commands, offset);
         const uint16_t bytes = Read16(artifact.commands, offset + 2);
         REQUIRE(bytes >= 32);
-        if ( type == uint16_t(neuralai::CommandType::DMA1D) &&
+        if ( (type == uint16_t(neuralai::CommandType::DMA1D) ||
+              type == uint16_t(neuralai::CommandType::DMASubmit1D)) &&
              Read32(artifact.commands, offset + 8) == uint32_t(scheduledConv->Index()) )
         {
             const uint16_t sourceRegion = Read16(artifact.commands, offset + 16);
@@ -4087,8 +4100,12 @@ TEST_CASE("Neural-AI pointwise Conv tiles spilled feature maps through TCDM")
                 REQUIRE(sourceRegion == uint16_t(neuralai::Region::TCDMScratch));
                 REQUIRE(direction == uint32_t(neuralai::DMADirection::LocalToExternal));
                 ++stores;
+                if ( type == uint16_t(neuralai::CommandType::DMASubmit1D) ) ++asyncStores;
             }
         }
+        if ( type == uint16_t(neuralai::CommandType::DMAWait) &&
+             Read32(artifact.commands, offset + 8) == uint32_t(scheduledConv->Index()) )
+            ++dmaWaits;
         if ( type == uint16_t(neuralai::CommandType::PointwiseC32) )
         {
             REQUIRE(Read16(artifact.commands, offset + 24) ==
@@ -4107,6 +4124,8 @@ TEST_CASE("Neural-AI pointwise Conv tiles spilled feature maps through TCDM")
     REQUIRE(offset == artifact.commands.size());
     REQUIRE(reloads == 6);
     REQUIRE(stores == 4);
+    REQUIRE(asyncStores > 0);
+    REQUIRE(dmaWaits == asyncStores);
     REQUIRE(pointwiseCommands == 4);
     REQUIRE(pointwiseRows == std::vector<uint32_t>{256, 256, 1, 1});
     REQUIRE(artifact.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);
@@ -4199,6 +4218,8 @@ TEST_CASE("Neural-AI K3 Conv tiles spilled feature maps through TCDM stripes")
     uint32_t weightLoads = 0;
     uint32_t paddingSeeds = 0;
     uint32_t stores = 0;
+    uint32_t asyncStores = 0;
+    uint32_t dmaWaits = 0;
     uint32_t linebufferJobs = 0;
     std::vector<uint32_t> spatialRows;
     size_t offset = 0;
@@ -4234,7 +4255,8 @@ TEST_CASE("Neural-AI K3 Conv tiles spilled feature maps through TCDM stripes")
                  uint16_t(neuralai::Region::TCDMScratch) &&
              Read32(artifact.commands, offset + 32) == 32 )
             ++paddingSeeds;
-        if ( convCommand && type == uint16_t(neuralai::CommandType::DMA1D) &&
+        if ( convCommand && (type == uint16_t(neuralai::CommandType::DMA1D) ||
+             type == uint16_t(neuralai::CommandType::DMASubmit1D)) &&
              Read16(artifact.commands, offset + 24) ==
                  uint16_t(neuralai::Region::L2TemporaryBinding) )
         {
@@ -4245,7 +4267,9 @@ TEST_CASE("Neural-AI K3 Conv tiles spilled feature maps through TCDM stripes")
             spatialRows.push_back(Read32(artifact.commands, offset + 32) /
                 uint32_t(ofmShape.Width() * 32));
             ++stores;
+            if ( type == uint16_t(neuralai::CommandType::DMASubmit1D) ) ++asyncStores;
         }
+        if ( convCommand && type == uint16_t(neuralai::CommandType::DMAWait) ) ++dmaWaits;
         if ( type == uint16_t(neuralai::CommandType::LineBufferJob) )
         {
             REQUIRE(Read32(artifact.commands, offset + 16) <
@@ -4267,6 +4291,8 @@ TEST_CASE("Neural-AI K3 Conv tiles spilled feature maps through TCDM stripes")
     REQUIRE(weightLoads == 2);
     REQUIRE(paddingSeeds == 1);
     REQUIRE(stores == 6);
+    REQUIRE(asyncStores > 0);
+    REQUIRE(dmaWaits == asyncStores);
     REQUIRE(linebufferJobs == 18);
     REQUIRE(spatialRows == std::vector<uint32_t>{15, 15, 3, 15, 15, 3});
     REQUIRE(artifact.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);
@@ -4468,6 +4494,8 @@ TEST_CASE("Neural-AI Depthwise Conv tiles spilled feature maps through TCDM stri
 
     uint32_t reloads = 0;
     uint32_t stores = 0;
+    uint32_t asyncStores = 0;
+    uint32_t dmaWaits = 0;
     uint32_t depthwiseCommands = 0;
     std::vector<uint32_t> spatialRows;
     size_t offset = 0;
@@ -4488,7 +4516,8 @@ TEST_CASE("Neural-AI Depthwise Conv tiles spilled feature maps through TCDM stri
                 uint32_t(neuralai::DMADirection::ExternalToLocal));
             ++reloads;
         }
-        if ( depthwiseCommand && type == uint16_t(neuralai::CommandType::DMA1D) &&
+        if ( depthwiseCommand && (type == uint16_t(neuralai::CommandType::DMA1D) ||
+             type == uint16_t(neuralai::CommandType::DMASubmit1D)) &&
              Read16(artifact.commands, offset + 24) ==
                  uint16_t(neuralai::Region::L2TemporaryBinding) )
         {
@@ -4499,7 +4528,9 @@ TEST_CASE("Neural-AI Depthwise Conv tiles spilled feature maps through TCDM stri
             spatialRows.push_back(Read32(artifact.commands, offset + 32) /
                 uint32_t(ofmShape.Width() * 32));
             ++stores;
+            if ( type == uint16_t(neuralai::CommandType::DMASubmit1D) ) ++asyncStores;
         }
+        if ( depthwiseCommand && type == uint16_t(neuralai::CommandType::DMAWait) ) ++dmaWaits;
         if ( type == uint16_t(neuralai::CommandType::DepthwiseC32) )
         {
             REQUIRE(Read16(artifact.commands, offset + 24) ==
@@ -4515,6 +4546,8 @@ TEST_CASE("Neural-AI Depthwise Conv tiles spilled feature maps through TCDM stri
     REQUIRE(offset == artifact.commands.size());
     REQUIRE(reloads == 6);
     REQUIRE(stores == 6);
+    REQUIRE(asyncStores > 0);
+    REQUIRE(dmaWaits == asyncStores);
     REQUIRE(depthwiseCommands == 6);
     REQUIRE(spatialRows == std::vector<uint32_t>{15, 15, 15, 15, 3, 3});
     REQUIRE(artifact.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);

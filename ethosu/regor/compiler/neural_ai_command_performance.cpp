@@ -11,6 +11,7 @@
 #include "compiler/database.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 
@@ -205,6 +206,8 @@ NeuralAICommandPerformanceResult MeasureNeuralAICommandPerformance(
 
     int offset = 0;
     int index = 0;
+    std::array<int64_t, 2> pendingDMACycles = {-1, -1};
+    std::array<int64_t, 2> hiddenDMACycles = {0, 0};
     while ( offset + int(sizeof(neuralai::CommandHeaderV2)) <= int(artifact.commands.size()) )
     {
         const uint8_t *command = artifact.commands.data() + offset;
@@ -218,20 +221,33 @@ NeuralAICommandPerformanceResult MeasureNeuralAICommandPerformance(
         measurement.row.layerId = Read32(command + 8);
         measurement.row.tileId = Read32(command + 12);
         measurement.row.name = CommandName(type);
+        int asyncDirection = -1;
+        const bool dmaSubmit = type == CommandType::DMASubmit1D ||
+            type == CommandType::DMASubmit2D || type == CommandType::DMASubmit3D;
+        const bool dmaWait = type == CommandType::DMAWait;
 
         switch ( type )
         {
             case CommandType::DMA1D:
+            case CommandType::DMASubmit1D:
                 if ( size >= sizeof(neuralai::CommandDMA1DV2) ) AddDMA(measurement, command, Read32(command + 32));
+                if ( dmaSubmit ) asyncDirection = int(Read32(command + 36));
                 break;
             case CommandType::DMA2D:
+            case CommandType::DMASubmit2D:
                 if ( size >= sizeof(neuralai::CommandDMA2DV2) )
                     AddDMA(measurement, command, SaturatingMultiply(Read32(command + 32), Read32(command + 44)));
+                if ( dmaSubmit ) asyncDirection = int(Read32(command + 48));
                 break;
             case CommandType::DMA3D:
+            case CommandType::DMASubmit3D:
                 if ( size >= sizeof(neuralai::CommandDMA3DV2) )
                     AddDMA(measurement, command, SaturatingMultiply(
                         SaturatingMultiply(Read32(command + 32), Read32(command + 44)), Read32(command + 56)));
+                if ( dmaSubmit ) asyncDirection = int(Read32(command + 60));
+                break;
+            case CommandType::DMAWait:
+                if ( size >= sizeof(neuralai::CommandDMAWaitV2) ) asyncDirection = int(Read32(command + 16));
                 break;
             case CommandType::RQLoad:
                 if ( size >= sizeof(neuralai::CommandRQLoadV2) )
@@ -406,6 +422,27 @@ NeuralAICommandPerformanceResult MeasureNeuralAICommandPerformance(
         measurement.row.memoryCycles = measurement.MemoryCycles();
         measurement.row.totalCycles = std::max<int64_t>(1,
             std::max(measurement.row.computeCycles, measurement.row.memoryCycles));
+        if ( dmaSubmit && asyncDirection >= 0 && asyncDirection < int(pendingDMACycles.size()) )
+        {
+            pendingDMACycles[asyncDirection] = measurement.row.memoryCycles;
+            hiddenDMACycles[asyncDirection] = 0;
+            measurement.row.totalCycles = 1;
+        }
+        else if ( dmaWait && asyncDirection >= 0 && asyncDirection < int(pendingDMACycles.size()) )
+        {
+            const int64_t remaining = pendingDMACycles[asyncDirection] < 0 ? 0 :
+                std::max<int64_t>(0, pendingDMACycles[asyncDirection] - hiddenDMACycles[asyncDirection]);
+            measurement.row.memoryCycles = remaining;
+            measurement.row.totalCycles = std::max<int64_t>(1, remaining);
+            pendingDMACycles[asyncDirection] = -1;
+            hiddenDMACycles[asyncDirection] = 0;
+        }
+        for ( int direction = 0; direction < int(pendingDMACycles.size()); ++direction )
+        {
+            if ( pendingDMACycles[direction] < 0 ||
+                 (dmaSubmit && direction == asyncDirection) ) continue;
+            hiddenDMACycles[direction] += measurement.row.totalCycles;
+        }
         result.performance.npuCycles += measurement.row.totalCycles;
         result.performance.totalCycles += measurement.row.totalCycles;
         result.commands.push_back(measurement.row);
