@@ -4053,7 +4053,9 @@ TEST_CASE("Neural-AI pointwise Conv tiles spilled feature maps through TCDM")
     mutableConvCost->stripe = Shape(1, 1, 40, 64);
     const MemorySnapshot cascadeReservation =
         NeuralAICommandGenerator::WorkspaceReservation(scheduleOps, schedule.get());
-    REQUIRE(cascadeReservation[convCost->timeIndex].Used() == 6400);
+    // Cascaded pointwise reserves two affine row stripes so interleaved output
+    // lanes can be coalesced without growing the partial buffer after allocation.
+    REQUIRE(cascadeReservation[convCost->timeIndex].Used() == 12800);
     mutableConvCost->cascade = 0;
     mutableConvCost->stripe = standaloneStripe;
     scheduledConv->IFM(0)->tensor->memArea =

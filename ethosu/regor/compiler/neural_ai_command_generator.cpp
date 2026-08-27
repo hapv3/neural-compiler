@@ -284,6 +284,14 @@ void Append32(std::vector<uint8_t> &output, uint32_t value)
     output.push_back(uint8_t(value >> 24));
 }
 
+void Write32(std::vector<uint8_t> &output, size_t offset, uint32_t value)
+{
+    output[offset] = uint8_t(value);
+    output[offset + 1] = uint8_t(value >> 8);
+    output[offset + 2] = uint8_t(value >> 16);
+    output[offset + 3] = uint8_t(value >> 24);
+}
+
 uint32_t Read32(const uint8_t *data)
 {
     return uint32_t(data[0]) | (uint32_t(data[1]) << 8) | (uint32_t(data[2]) << 16) |
@@ -383,6 +391,112 @@ CommandType SubmitType(CommandType type)
     if ( type == CommandType::DMA1D ) return CommandType::DMASubmit1D;
     if ( type == CommandType::DMA2D ) return CommandType::DMASubmit2D;
     return CommandType::DMASubmit3D;
+}
+
+bool SamePointwiseLane(const uint8_t *firstRQ, const uint8_t *firstPW,
+    const uint8_t *secondRQ, const uint8_t *secondPW)
+{
+    if ( std::memcmp(firstRQ + 16, secondRQ + 16, 12) != 0 ||
+         Read32(firstPW + 8) != Read32(secondPW + 8) ||
+         std::memcmp(firstPW + 16, secondPW + 16, 8) != 0 ||
+         std::memcmp(firstPW + 32, secondPW + 32, 8) != 0 ||
+         std::memcmp(firstPW + 24, secondPW + 24, 4) != 0 ||
+         std::memcmp(firstPW + 40, secondPW + 40, 4) != 0 ||
+         std::memcmp(firstPW + 52, secondPW + 52, 20) != 0 ) return false;
+    const uint32_t firstRows = Read32(firstPW + 48);
+    const uint32_t secondRows = Read32(secondPW + 48);
+    if ( firstRows == 0 || secondRows == 0 || firstRows > 256 - secondRows ) return false;
+    const uint64_t rowBytes = uint64_t(firstRows) * 32u;
+    return Read32(secondPW + 28) == uint64_t(Read32(firstPW + 28)) + rowBytes &&
+           Read32(secondPW + 44) == uint64_t(Read32(firstPW + 44)) + rowBytes;
+}
+
+bool PointwiseLanesIndependent(const uint8_t *firstPW, const uint8_t *secondPW,
+    const uint8_t *firstPWNext, const uint8_t *secondPWNext)
+{
+    if ( Read16(firstPW + 24) != uint16_t(Region::TCDMScratch) ||
+         Read16(firstPW + 26) != 0 ||
+         Read16(firstPW + 40) != uint16_t(Region::TCDMScratch) ||
+         Read16(firstPW + 42) != 0 ||
+         Read16(secondPW + 24) != uint16_t(Region::TCDMScratch) ||
+         Read16(secondPW + 26) != 0 ||
+         Read16(secondPW + 40) != uint16_t(Region::TCDMScratch) ) return false;
+    if ( Read16(secondPW + 42) != 0 || Read32(firstPW + 52) == 0 ||
+         Read32(secondPW + 52) == 0 ) return false;
+    const uint64_t mergedRowsA = uint64_t(Read32(firstPW + 48)) + Read32(firstPWNext + 48);
+    const uint64_t mergedRowsB = uint64_t(Read32(secondPW + 48)) + Read32(secondPWNext + 48);
+    const uint64_t outputABegin = Read32(firstPW + 44);
+    const uint64_t outputAEnd = outputABegin + mergedRowsA * 32u;
+    const uint64_t outputBBegin = Read32(secondPW + 44);
+    const uint64_t outputBEnd = outputBBegin + mergedRowsB * 32u;
+    if ( Overlaps(outputABegin, outputAEnd, outputBBegin, outputBEnd) ) return false;
+
+    const auto inputEnd = [](const uint8_t *pointwise, uint64_t rows)
+    {
+        const uint64_t groups = Read32(pointwise + 52);
+        return uint64_t(Read32(pointwise + 28)) +
+            (groups - 1u) * Read32(pointwise + 64) + rows * 32u;
+    };
+    const uint64_t inputABegin = Read32(firstPW + 28);
+    const uint64_t inputAEnd = inputEnd(firstPW, mergedRowsA);
+    const uint64_t inputBBegin = Read32(secondPW + 28);
+    const uint64_t inputBEnd = inputEnd(secondPW, mergedRowsB);
+    return !Overlaps(outputABegin, outputAEnd, inputBBegin, inputBEnd) &&
+           !Overlaps(outputBBegin, outputBEnd, inputABegin, inputAEnd);
+}
+
+uint32_t CoalesceInterleavedPointwiseRows(std::vector<uint8_t> &commands)
+{
+    constexpr size_t rqBytes = sizeof(neuralai::CommandRQLoadV2);
+    constexpr size_t pointwiseBytes = sizeof(neuralai::CommandPointwiseC32V2);
+    constexpr size_t patternBytes = 4u * (rqBytes + pointwiseBytes);
+    std::vector<uint8_t> rewritten;
+    rewritten.reserve(commands.size());
+    uint32_t removed = 0;
+    size_t offset = 0;
+    while ( offset < commands.size() )
+    {
+        bool merge = offset + patternBytes <= commands.size();
+        std::array<const uint8_t *, 4> rq{};
+        std::array<const uint8_t *, 4> pointwise{};
+        size_t cursor = offset;
+        for ( int pair = 0; merge && pair < 4; ++pair )
+        {
+            rq[pair] = commands.data() + cursor;
+            merge = CommandType(Read16(rq[pair])) == CommandType::RQLoad &&
+                Read16(rq[pair] + 2) == rqBytes;
+            cursor += rqBytes;
+            pointwise[pair] = commands.data() + cursor;
+            merge = merge && CommandType(Read16(pointwise[pair])) == CommandType::PointwiseC32 &&
+                Read16(pointwise[pair] + 2) == pointwiseBytes;
+            cursor += pointwiseBytes;
+        }
+        merge = merge && SamePointwiseLane(rq[0], pointwise[0], rq[2], pointwise[2]) &&
+            SamePointwiseLane(rq[1], pointwise[1], rq[3], pointwise[3]) &&
+            PointwiseLanesIndependent(pointwise[0], pointwise[1], pointwise[2], pointwise[3]);
+        if ( merge )
+        {
+            for ( int lane : {0, 1} )
+            {
+                rewritten.insert(rewritten.end(), rq[lane], rq[lane] + rqBytes);
+                const size_t pointwiseOffset = rewritten.size();
+                rewritten.insert(rewritten.end(), pointwise[lane], pointwise[lane] + pointwiseBytes);
+                Write32(rewritten, pointwiseOffset + 48,
+                    Read32(pointwise[lane] + 48) + Read32(pointwise[lane + 2] + 48));
+            }
+            removed += 4;
+            offset = cursor;
+            continue;
+        }
+        const uint16_t size = Read16(commands.data() + offset + 2);
+        if ( size < sizeof(neuralai::CommandHeaderV2) || offset + size > commands.size() )
+            return 0;
+        rewritten.insert(rewritten.end(), commands.begin() + offset,
+            commands.begin() + offset + size);
+        offset += size;
+    }
+    commands = std::move(rewritten);
+    return removed;
 }
 
 uint32_t OverlapDMAStores(std::vector<uint8_t> &commands)
@@ -4360,6 +4474,9 @@ MemorySnapshot NeuralAICommandGenerator::WorkspaceReservation(
         const uint32_t scheduledRows = cost->cascade != 0 ?
             uint32_t(cost->stripe.Elements64() / ofmShape.Depth()) : rows;
         uint32_t matrixRows = std::min<uint32_t>(scheduledRows, 256);
+        if ( mode == NeuralAIOpMode::Conv2DPointwiseC32Requant && cost->cascade != 0 &&
+             ofmShape.Depth() > 32 && scheduledRows <= 128 )
+            matrixRows = scheduledRows * 2u;
         if ( mode == NeuralAIOpMode::Conv2DPointwiseC32Requant &&
              cost->cascade == 0 &&
              (IsL2ArenaTensor(operation->IFM(0)->tensor.get()) ||
@@ -4598,6 +4715,9 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         const uint32_t scheduledRows = cost->cascade != 0 ?
             uint32_t(cost->stripe.Elements64() / ofmShape.Depth()) : rows;
         uint32_t stripeRows = std::min<uint32_t>(scheduledRows, 256);
+        if ( mode == NeuralAIOpMode::Conv2DPointwiseC32Requant && cost->cascade != 0 &&
+             ofmShape.Depth() > 32 && scheduledRows <= 128 )
+            stripeRows = scheduledRows * 2u;
         if ( operation->Type() == OpType::DepthwiseConv2D &&
              (IsL2ArenaTensor(operation->IFM(0)->tensor.get()) ||
                  IsL2ArenaTensor(operation->OFM()->tensor.get())) )
@@ -4933,6 +5053,9 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
             return false;
         }
     }
+    const uint32_t coalescedCommands = CoalesceInterleavedPointwiseRows(artifact.commands);
+    assert(coalescedCommands <= artifact.commandCount);
+    artifact.commandCount -= coalescedCommands;
     artifact.commandCount += OverlapDMAStores(artifact.commands);
     context.AppendControl(CommandType::End, 0, 0);
     artifact.requiredTCDMBytes = uint32_t(RoundAway(
