@@ -19,7 +19,7 @@ namespace regor::neuralai
 constexpr uint32_t ModelMagic = 0x4D49414EU;       // "NAIM" in little-endian storage
 constexpr uint32_t InvocationMagic = 0x5649414EU;  // "NAIV" in little-endian storage
 constexpr uint16_t AbiMajor = 1;
-constexpr uint16_t AbiMinor = 2;
+constexpr uint16_t AbiMinor = 3;
 constexpr uint32_t TargetId = 1;
 constexpr uint32_t Alignment = 32;
 
@@ -102,6 +102,8 @@ enum class CommandType : uint16_t
     DMASubmit3D = 26,
     DMAWait = 27,
     AFUDFL16 = 28,
+    LineBufferSubmit = 29,
+    SystolicWait = 30,
 };
 
 enum CommandFlags : uint32_t

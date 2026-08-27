@@ -150,6 +150,51 @@ TEST_CASE("neural_ai command performance hides asynchronous DMA store cycles")
         result.commands[2].totalCycles);
 }
 
+TEST_CASE("neural_ai command performance hides asynchronous systolic cycles")
+{
+    ArchNeuralAI architecture;
+
+    neuralai::CommandLineBufferJobV2 submit{};
+    submit.header.type = uint16_t(neuralai::CommandType::LineBufferSubmit);
+    submit.header.sizeBytes = sizeof(submit);
+    submit.job.rows = 64;
+    submit.job.kTiles = 9;
+
+    neuralai::CommandAFUBinaryV2 binary{};
+    binary.header.type = uint16_t(neuralai::CommandType::AFUBinary);
+    binary.header.sizeBytes = sizeof(binary);
+    binary.lhs = {uint16_t(neuralai::Region::TCDMScratch), 0, 0x1000};
+    binary.rhs = {uint16_t(neuralai::Region::TCDMScratch), 0, 0x2000};
+    binary.ofm = {uint16_t(neuralai::Region::TCDMScratch), 0, 0x3000};
+    binary.length = 320;
+
+    neuralai::CommandHeaderV2 wait{};
+    wait.type = uint16_t(neuralai::CommandType::SystolicWait);
+    wait.sizeBytes = 32;
+
+    CompiledNeuralAIArtifact artifact;
+    AppendCommand(artifact, submit);
+    AppendCommand(artifact, binary);
+    const auto *waitBytes = reinterpret_cast<const uint8_t *>(&wait);
+    artifact.commands.insert(artifact.commands.end(), waitBytes, waitBytes + sizeof(wait));
+    artifact.commands.resize(artifact.commands.size() + 16);
+    ++artifact.commandCount;
+
+    const auto result = MeasureNeuralAICommandPerformance(artifact, &architecture);
+
+    REQUIRE(result.commands.size() == 3);
+    CHECK(result.commands[0].name == "LINE_BUFFER_SUBMIT");
+    CHECK(result.commands[0].totalCycles == 1);
+    CHECK(result.commands[1].name == "AFU_BINARY");
+    CHECK(result.commands[2].name == "SYSTOLIC_WAIT");
+    const int64_t submittedCycles = std::max(result.commands[0].computeCycles,
+        result.commands[0].memoryCycles);
+    const int64_t remaining = std::max<int64_t>(0,
+        submittedCycles - result.commands[1].totalCycles);
+    CHECK(result.commands[2].computeCycles == remaining);
+    CHECK(result.commands[2].totalCycles == std::max<int64_t>(1, remaining));
+}
+
 TEST_CASE("neural_ai command performance stops at a truncated command")
 {
     ArchNeuralAI architecture;

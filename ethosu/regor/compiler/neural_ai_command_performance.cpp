@@ -85,6 +85,8 @@ const char *CommandName(CommandType type)
         case CommandType::DMASubmit3D: return "DMA_SUBMIT_3D";
         case CommandType::DMAWait: return "DMA_WAIT";
         case CommandType::AFUDFL16: return "AFU_DFL16";
+        case CommandType::LineBufferSubmit: return "LINE_BUFFER_SUBMIT";
+        case CommandType::SystolicWait: return "SYSTOLIC_WAIT";
         default: return "UNKNOWN";
     }
 }
@@ -208,6 +210,8 @@ NeuralAICommandPerformanceResult MeasureNeuralAICommandPerformance(
     int index = 0;
     std::array<int64_t, 2> pendingDMACycles = {-1, -1};
     std::array<int64_t, 2> hiddenDMACycles = {0, 0};
+    int64_t pendingSystolicCycles = -1;
+    int64_t hiddenSystolicCycles = 0;
     while ( offset + int(sizeof(neuralai::CommandHeaderV2)) <= int(artifact.commands.size()) )
     {
         const uint8_t *command = artifact.commands.data() + offset;
@@ -225,6 +229,8 @@ NeuralAICommandPerformanceResult MeasureNeuralAICommandPerformance(
         const bool dmaSubmit = type == CommandType::DMASubmit1D ||
             type == CommandType::DMASubmit2D || type == CommandType::DMASubmit3D;
         const bool dmaWait = type == CommandType::DMAWait;
+        const bool systolicSubmit = type == CommandType::LineBufferSubmit;
+        const bool systolicWait = type == CommandType::SystolicWait;
 
         switch ( type )
         {
@@ -301,6 +307,7 @@ NeuralAICommandPerformanceResult MeasureNeuralAICommandPerformance(
                 }
                 break;
             case CommandType::LineBufferJob:
+            case CommandType::LineBufferSubmit:
                 if ( size >= sizeof(neuralai::CommandLineBufferJobV2) )
                 {
                     constexpr size_t jobOffset = offsetof(neuralai::CommandLineBufferJobV2, job);
@@ -437,12 +444,30 @@ NeuralAICommandPerformanceResult MeasureNeuralAICommandPerformance(
             pendingDMACycles[asyncDirection] = -1;
             hiddenDMACycles[asyncDirection] = 0;
         }
+        if ( systolicSubmit )
+        {
+            pendingSystolicCycles = measurement.row.totalCycles;
+            hiddenSystolicCycles = 0;
+            measurement.row.totalCycles = 1;
+        }
+        else if ( systolicWait )
+        {
+            const int64_t remaining = pendingSystolicCycles < 0 ? 0 :
+                std::max<int64_t>(0, pendingSystolicCycles - hiddenSystolicCycles);
+            measurement.row.memoryCycles = 0;
+            measurement.row.computeCycles = remaining;
+            measurement.row.totalCycles = std::max<int64_t>(1, remaining);
+            pendingSystolicCycles = -1;
+            hiddenSystolicCycles = 0;
+        }
         for ( int direction = 0; direction < int(pendingDMACycles.size()); ++direction )
         {
             if ( pendingDMACycles[direction] < 0 ||
                  (dmaSubmit && direction == asyncDirection) ) continue;
             hiddenDMACycles[direction] += measurement.row.totalCycles;
         }
+        if ( pendingSystolicCycles >= 0 && !systolicSubmit )
+            hiddenSystolicCycles += measurement.row.totalCycles;
         result.performance.npuCycles += measurement.row.totalCycles;
         result.performance.totalCycles += measurement.row.totalCycles;
         result.commands.push_back(measurement.row);
