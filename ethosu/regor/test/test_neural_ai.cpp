@@ -3751,7 +3751,10 @@ TEST_CASE("Neural-AI AFU Add reads a C32-aligned slice without materialization")
 TEST_CASE("Neural-AI binary chain reloads one spilled intermediate through TCDM")
 {
     ArchNeuralAI arch;
-    const Shape shape(1, 2, 3, 32);
+    const int width = GENERATE(3, 128);
+    const Shape shape(1, 2, width, 32);
+    const uint32_t tensorBytes = uint32_t(shape.Elements64());
+    const uint32_t tileCount = (tensorBytes + 4095u) / 4096u;
     auto lhs = CreateTensor("lhs", shape, DataType::Int8);
     auto rhs0 = CreateTensor("rhs0", shape, DataType::Int8);
     auto rhs1 = CreateTensor("rhs1", shape, DataType::Int8);
@@ -3810,8 +3813,11 @@ TEST_CASE("Neural-AI binary chain reloads one spilled intermediate through TCDM"
 
     uint32_t dmaCommands = 0;
     uint32_t addCommands = 0;
+    uint32_t addBytes = 0;
     uint32_t asyncStores = 0;
     uint32_t dmaWaits = 0;
+    uint32_t addsOverlappedByStore = 0;
+    bool storePending = false;
     size_t offset = 0;
     while ( offset < artifact.commands.size() )
     {
@@ -3822,9 +3828,17 @@ TEST_CASE("Neural-AI binary chain reloads one spilled intermediate through TCDM"
              type == uint16_t(neuralai::CommandType::DMASubmit1D) )
         {
             ++dmaCommands;
-            if ( type == uint16_t(neuralai::CommandType::DMASubmit1D) ) ++asyncStores;
+            if ( type == uint16_t(neuralai::CommandType::DMASubmit1D) )
+            {
+                ++asyncStores;
+                storePending = true;
+            }
         }
-        if ( type == uint16_t(neuralai::CommandType::DMAWait) ) ++dmaWaits;
+        if ( type == uint16_t(neuralai::CommandType::DMAWait) )
+        {
+            ++dmaWaits;
+            storePending = false;
+        }
         if ( type == uint16_t(neuralai::CommandType::AFUBinary) )
         {
             REQUIRE(Read16(artifact.commands, offset + 16) ==
@@ -3833,16 +3847,30 @@ TEST_CASE("Neural-AI binary chain reloads one spilled intermediate through TCDM"
                 uint16_t(neuralai::Region::TCDMScratch));
             REQUIRE(Read16(artifact.commands, offset + 32) ==
                 uint16_t(neuralai::Region::TCDMScratch));
-            REQUIRE(Read32(artifact.commands, offset + 40) == 192);
+            const uint32_t commandBytes = Read32(artifact.commands, offset + 40);
+            REQUIRE(commandBytes > 0);
+            REQUIRE(commandBytes <= 4096);
+            addBytes += commandBytes;
+            if ( storePending ) ++addsOverlappedByStore;
             ++addCommands;
         }
         offset += bytes;
     }
     REQUIRE(offset == artifact.commands.size());
-    REQUIRE(dmaCommands == 6);
-    REQUIRE(addCommands == 2);
-    REQUIRE(asyncStores > 0);
+    REQUIRE(dmaCommands == 6 * tileCount);
+    REQUIRE(addCommands == 2 * tileCount);
+    REQUIRE(addBytes == 2 * tensorBytes);
     REQUIRE(dmaWaits == asyncStores);
+    if ( tileCount == 1 )
+    {
+        REQUIRE(asyncStores == 0);
+        REQUIRE(addsOverlappedByStore == 0);
+    }
+    else
+    {
+        REQUIRE(asyncStores > 0);
+        REQUIRE(addsOverlappedByStore == 0);
+    }
 }
 
 TEST_CASE("Neural-AI Concat reloads one spilled producer through TCDM")

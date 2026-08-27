@@ -328,6 +328,10 @@ void AppendZeros(std::vector<uint8_t> &output, int words)
 struct DMACommandInfo
 {
     DMADirection direction = DMADirection::ExternalToLocal;
+    uint16_t sourceRegion = 0;
+    uint16_t sourceIndex = 0;
+    uint16_t destinationRegion = 0;
+    uint16_t destinationIndex = 0;
     uint64_t sourceBegin = 0;
     uint64_t sourceEnd = 0;
     uint64_t destinationBegin = 0;
@@ -371,8 +375,12 @@ bool DecodeDMACommand(const uint8_t *command, CommandType type, DMACommandInfo &
     if ( length == 0 || sourceSpan > std::numeric_limits<uint32_t>::max() ||
          destinationSpan > std::numeric_limits<uint32_t>::max() ) return false;
     info.direction = DMADirection(Read32(command + directionOffset));
-    info.sourceLocal = Read16(command + 16) == uint16_t(Region::TCDMScratch);
-    info.destinationLocal = Read16(command + 24) == uint16_t(Region::TCDMScratch);
+    info.sourceRegion = Read16(command + 16);
+    info.sourceIndex = Read16(command + 18);
+    info.destinationRegion = Read16(command + 24);
+    info.destinationIndex = Read16(command + 26);
+    info.sourceLocal = info.sourceRegion == uint16_t(Region::TCDMScratch);
+    info.destinationLocal = info.destinationRegion == uint16_t(Region::TCDMScratch);
     info.sourceBegin = Read32(command + 20);
     info.sourceEnd = info.sourceBegin + sourceSpan;
     info.destinationBegin = Read32(command + 28);
@@ -384,6 +392,12 @@ bool DecodeDMACommand(const uint8_t *command, CommandType type, DMACommandInfo &
 bool Overlaps(uint64_t lhsBegin, uint64_t lhsEnd, uint64_t rhsBegin, uint64_t rhsEnd)
 {
     return lhsBegin < rhsEnd && rhsBegin < lhsEnd;
+}
+
+bool SameStorage(uint16_t lhsRegion, uint16_t lhsIndex,
+    uint16_t rhsRegion, uint16_t rhsIndex)
+{
+    return lhsRegion == rhsRegion && lhsIndex == rhsIndex;
 }
 
 CommandType SubmitType(CommandType type)
@@ -529,16 +543,28 @@ uint32_t OverlapDMAStores(std::vector<uint8_t> &commands)
                 break;
             }
             DMACommandInfo dma;
-            if ( !DecodeDMACommand(candidate, candidateType, dma) ) break;
-            if ( dma.direction == DMADirection::LocalToExternal ||
-                 (dma.sourceLocal && Overlaps(store.sourceBegin, store.sourceEnd,
-                     dma.sourceBegin, dma.sourceEnd)) ||
-                 (dma.destinationLocal && Overlaps(store.sourceBegin, store.sourceEnd,
-                     dma.destinationBegin, dma.destinationEnd)) )
+            if ( DecodeDMACommand(candidate, candidateType, dma) )
             {
-                overlap = false;
-                break;
+                const bool conflict = dma.direction == DMADirection::LocalToExternal ||
+                    (dma.sourceLocal && Overlaps(store.sourceBegin, store.sourceEnd,
+                        dma.sourceBegin, dma.sourceEnd)) ||
+                    (dma.destinationLocal && Overlaps(store.sourceBegin, store.sourceEnd,
+                        dma.destinationBegin, dma.destinationEnd)) ||
+                    (SameStorage(store.destinationRegion, store.destinationIndex,
+                         dma.sourceRegion, dma.sourceIndex) &&
+                        Overlaps(store.destinationBegin, store.destinationEnd,
+                            dma.sourceBegin, dma.sourceEnd)) ||
+                    (SameStorage(store.destinationRegion, store.destinationIndex,
+                         dma.destinationRegion, dma.destinationIndex) &&
+                        Overlaps(store.destinationBegin, store.destinationEnd,
+                            dma.destinationBegin, dma.destinationEnd));
+                if ( conflict )
+                {
+                    overlap = false;
+                    break;
+                }
             }
+            else break;
             hasIndependentDMA = true;
             next += candidateSize;
         }
@@ -1999,7 +2025,8 @@ struct GeneratorContext
             if ( !AppendDMA1D(sourceLhs, localLhs, bytes, uint32_t(operation->Index()), tileId++, error) ||
                  !AppendDMA1D(sourceRhs, localRhs, bytes, uint32_t(operation->Index()), tileId++, error) ||
                  !appendBinary(localLhs, localRhs, localOfm, bytes, tileId++) ||
-                 !AppendDMA1D(localOfm, destination, bytes, uint32_t(operation->Index()), tileId++, error) )
+                 !AppendDMA1D(localOfm, destination, bytes,
+                     uint32_t(operation->Index()), tileId++, error) )
                 return false;
         }
         return true;
