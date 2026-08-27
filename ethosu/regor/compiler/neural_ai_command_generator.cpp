@@ -427,6 +427,24 @@ bool AddCommandAccess(std::vector<CommandAccess> &accesses, const uint8_t *comma
     return true;
 }
 
+bool AddLocalCommandAccess(std::vector<CommandAccess> &accesses,
+    uint64_t begin, uint64_t bytes, bool write)
+{
+    if ( bytes == 0 || begin > std::numeric_limits<uint32_t>::max() ||
+         bytes > uint64_t(std::numeric_limits<uint32_t>::max()) + 1 - begin ) return false;
+    accesses.push_back({uint16_t(Region::TCDMScratch), 0, begin, begin + bytes, write});
+    return true;
+}
+
+uint64_t StridedTileSpan(uint64_t rows, uint64_t rowBytes,
+    uint64_t rowStride, uint64_t tileColumns)
+{
+    if ( rows == 0 ) return 0;
+    if ( rowStride == 0 || tileColumns == 0 ) return rows * rowBytes;
+    return ((rows - 1) / tileColumns) * rowStride +
+        std::min(rows, tileColumns) * rowBytes;
+}
+
 bool DecodeIndependentCommandAccesses(const uint8_t *command, CommandType type,
     std::vector<CommandAccess> &accesses)
 {
@@ -496,6 +514,44 @@ bool DecodeIndependentCommandAccesses(const uint8_t *command, CommandType type,
             return AddCommandAccess(accesses, command, 16, 3 * 3 * 32, false) &&
                    AddCommandAccess(accesses, command, 24, inputPixels * 32, false) &&
                    AddCommandAccess(accesses, command, 32, outputPixels * 32, true);
+        }
+        case CommandType::LineBufferJob:
+        {
+            constexpr size_t job = offsetof(neuralai::CommandLineBufferJobV2, job);
+            constexpr size_t cfg = job + offsetof(neuralai::LinebufJobWireV1, linebuf);
+            constexpr size_t gemm = job + offsetof(neuralai::LinebufJobWireV1, gemm);
+            const uint64_t inputRows = Read16(command + cfg + offsetof(neuralai::SystolicLinebufCfg, inputH));
+            const uint64_t inputStride = Read32(command + cfg +
+                offsetof(neuralai::SystolicLinebufCfg, rowStrideBytes));
+            const uint64_t rows = Read32(command + gemm + offsetof(neuralai::SystolicGemm32Req, dimM));
+            const uint64_t accum = Read32(command + gemm + offsetof(neuralai::SystolicGemm32Req, accumEn));
+            const uint64_t outputStride = Read32(command + gemm +
+                offsetof(neuralai::SystolicGemm32Req, ofmRowStrideBytes));
+            const uint64_t tileColumns = Read32(command + gemm +
+                offsetof(neuralai::SystolicGemm32Req, ofmTileCols));
+            const uint64_t psumStride = Read32(command + gemm +
+                offsetof(neuralai::SystolicGemm32Req, psumRowStrideBytes));
+            const uint64_t kTiles = Read32(command + job + offsetof(neuralai::LinebufJobWireV1, kTiles));
+            if ( inputRows == 0 || inputStride == 0 || rows == 0 || kTiles == 0 || accum > 3 ) return false;
+            if ( !AddLocalCommandAccess(accesses,
+                    Read32(command + cfg + offsetof(neuralai::SystolicLinebufCfg, inputBase)),
+                    inputRows * inputStride, false) ||
+                 !AddLocalCommandAccess(accesses,
+                    Read32(command + gemm + offsetof(neuralai::SystolicGemm32Req, weightAddr)),
+                    kTiles * 32 * 32, false) ) return false;
+            const uint64_t psumBytes = StridedTileSpan(rows, 32 * 4,
+                psumStride, tileColumns);
+            const uint64_t outputBytes = StridedTileSpan(rows, 32,
+                outputStride, tileColumns);
+            const uint64_t psumAddress = Read32(command + gemm +
+                offsetof(neuralai::SystolicGemm32Req, psumAddr));
+            const uint64_t outputAddress = Read32(command + gemm +
+                offsetof(neuralai::SystolicGemm32Req, ofmAddr));
+            if ( (accum == 2 || accum == 3) &&
+                 !AddLocalCommandAccess(accesses, psumAddress, psumBytes, false) ) return false;
+            if ( accum == 1 || accum == 3 )
+                return AddLocalCommandAccess(accesses, psumAddress, psumBytes, true);
+            return AddLocalCommandAccess(accesses, outputAddress, outputBytes, true);
         }
         case CommandType::AFUGlobalAvgPool:
         {
@@ -688,7 +744,6 @@ uint32_t OverlapDMAStores(std::vector<uint8_t> &commands)
                             dma.destinationBegin, dma.destinationEnd));
                 if ( conflict )
                 {
-                    overlap = false;
                     break;
                 }
             }

@@ -97,6 +97,18 @@ TEST_CASE("Neural-AI command overlap crosses independent compute and stops at ha
     neuralai::CommandAFUBinaryV2 hazard = independent;
     hazard.lhs.offset = store.source.offset;
 
+    neuralai::CommandLineBufferJobV2 linebuffer{};
+    linebuffer.header.type = uint16_t(neuralai::CommandType::LineBufferJob);
+    linebuffer.header.sizeBytes = sizeof(linebuffer);
+    linebuffer.job.linebuf.inputBase = 0x4000;
+    linebuffer.job.linebuf.inputH = 4;
+    linebuffer.job.linebuf.rowStrideBytes = 256;
+    linebuffer.job.gemm.weightAddr = 0x5000;
+    linebuffer.job.gemm.ofmAddr = 0x8000;
+    linebuffer.job.gemm.dimM = 4;
+    linebuffer.job.rows = 4;
+    linebuffer.job.kTiles = 9;
+
     std::vector<uint8_t> commands;
     const auto append = [&](const auto &command)
     {
@@ -105,6 +117,7 @@ TEST_CASE("Neural-AI command overlap crosses independent compute and stops at ha
     };
     append(store);
     append(independent);
+    append(linebuffer);
     append(hazard);
 
     REQUIRE(NeuralAICommandGenerator::OptimizeCommandOverlap(commands) == 1);
@@ -117,15 +130,25 @@ TEST_CASE("Neural-AI command overlap crosses independent compute and stops at ha
         return uint32_t(commands[offset]) | (uint32_t(commands[offset + 1]) << 8) |
                (uint32_t(commands[offset + 2]) << 16) | (uint32_t(commands[offset + 3]) << 24);
     };
-    REQUIRE(commands.size() == sizeof(store) + sizeof(independent) + 32 + sizeof(hazard));
+    const size_t waitOffset = sizeof(store) + sizeof(independent) + sizeof(linebuffer);
+    REQUIRE(commands.size() == waitOffset + 32 + sizeof(hazard));
     REQUIRE(read16(0) == uint16_t(neuralai::CommandType::DMASubmit1D));
     REQUIRE(read16(sizeof(store)) == uint16_t(neuralai::CommandType::AFUBinary));
     REQUIRE(read16(sizeof(store) + sizeof(independent)) ==
+        uint16_t(neuralai::CommandType::LineBufferJob));
+    REQUIRE(read16(waitOffset) ==
         uint16_t(neuralai::CommandType::DMAWait));
-    REQUIRE(read32(sizeof(store) + sizeof(independent) + 16) ==
+    REQUIRE(read32(waitOffset + 16) ==
         uint32_t(neuralai::DMADirection::LocalToExternal));
-    REQUIRE(read16(sizeof(store) + sizeof(independent) + 32) ==
+    REQUIRE(read16(waitOffset + 32) ==
         uint16_t(neuralai::CommandType::AFUBinary));
+
+    commands.clear();
+    append(store);
+    append(hazard);
+    REQUIRE(NeuralAICommandGenerator::OptimizeCommandOverlap(commands) == 0);
+    REQUIRE(commands.size() == sizeof(store) + sizeof(hazard));
+    REQUIRE(read16(0) == uint16_t(neuralai::CommandType::DMA1D));
 }
 
 uint32_t Read32(const uint8_t *data)
@@ -3923,7 +3946,7 @@ TEST_CASE("Neural-AI binary chain reloads one spilled intermediate through TCDM"
     else
     {
         REQUIRE(asyncStores > 0);
-        REQUIRE(addsOverlappedByStore == 0);
+        REQUIRE(addsOverlappedByStore == tileCount - 1);
     }
 }
 
