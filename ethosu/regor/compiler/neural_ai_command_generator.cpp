@@ -993,7 +993,8 @@ uint32_t ExpandResidentLinebufferWeightStage(uint32_t currentStage,
     if ( ifmDepth <= 0 || schedule == nullptr || cost == nullptr || cost->timeIndex < 0 )
         return currentStage;
     const uint32_t inputGroups = uint32_t(RoundAway(ifmDepth, 32)) / 32u;
-    const uint64_t fullWeightBytes64 = uint64_t(inputGroups) * 9u * 32u * 32u;
+    constexpr uint32_t inputGroupWeightBytes = 9u * 32u * 32u;
+    const uint64_t fullWeightBytes64 = uint64_t(inputGroups) * inputGroupWeightBytes;
     if ( inputGroups == 0 || fullWeightBytes64 > std::numeric_limits<uint32_t>::max() )
         return currentStage;
     const uint32_t fullWeightBytes = uint32_t(fullWeightBytes64);
@@ -1006,10 +1007,13 @@ uint32_t ExpandResidentLinebufferWeightStage(uint32_t currentStage,
         return (uint64_t(bytes) + ArchNeuralAI::DMAAlignment - 1u) /
             ArchNeuralAI::DMAAlignment * ArchNeuralAI::DMAAlignment;
     };
-    const uint64_t required =
-        aligned(fullWeightBytes) + aligned(partialBytes) + aligned(stripeBytes);
     const uint32_t available = uint32_t(ArchNeuralAI::AllocatableTCDMBytes - used);
-    return required <= available ? fullWeightBytes : currentStage;
+    const uint64_t transient = aligned(partialBytes) + aligned(stripeBytes);
+    if ( transient >= available ) return currentStage;
+    const uint64_t availableStage = available - transient;
+    const uint32_t stageGroups = uint32_t(std::min<uint64_t>(
+        inputGroups, availableStage / inputGroupWeightBytes));
+    return std::max(currentStage, stageGroups * inputGroupWeightBytes);
 }
 
 neuralai::StripeStagingInput MakeLinebufferSpillStaging(
@@ -1045,6 +1049,72 @@ neuralai::StripeStagingInput MakeLinebufferSpillStaging(
     staging.padRight = std::max(0, inputXEnd - ifm.Width());
     staging.channels = ifm.Depth();
     return staging;
+}
+
+uint32_t SelectLinebufferSpillStripeRows(const Shape &ifmShape,
+    const Shape &ifmStorageShape, const Shape &ofmShape, const Kernel *kernel,
+    uint32_t inputGroups, const Schedule *schedule, const SchedulerOpInfo *cost)
+{
+    constexpr uint32_t inputGroupWeightBytes = 9u * 32u * 32u;
+    constexpr uint64_t commandLatencyBytes = 16u * 1024u;
+    const Shape ofm = ReshapeToNHWC(ofmShape);
+    const uint32_t largest = LinebufferSpillStripeRows(ofm);
+    if ( kernel == nullptr || inputGroups <= 1 || schedule == nullptr || cost == nullptr ||
+         cost->timeIndex < 0 ) return largest;
+    const int used = schedule->MemoryUsageAt(cost->timeIndex);
+    if ( used < 0 || used >= ArchNeuralAI::AllocatableTCDMBytes ) return largest;
+    const uint64_t available = ArchNeuralAI::AllocatableTCDMBytes - used;
+    const auto aligned = [](uint64_t bytes)
+    {
+        return (bytes + ArchNeuralAI::DMAAlignment - 1u) /
+            ArchNeuralAI::DMAAlignment * ArchNeuralAI::DMAAlignment;
+    };
+
+    uint32_t selected = largest;
+    uint64_t selectedCost = std::numeric_limits<uint64_t>::max();
+    for ( uint32_t rows = 1; rows <= largest; ++rows )
+    {
+        uint64_t stripeWorkspace = 0;
+        uint64_t inputBytes = 0;
+        uint32_t stripes = 0;
+        for ( uint32_t outputY = 0; outputY < uint32_t(ofm.Height()); outputY += rows )
+        {
+            const uint32_t outputRows = std::min(rows, uint32_t(ofm.Height()) - outputY);
+            const auto stagingInput = MakeLinebufferSpillStaging(ifmShape,
+                ifmStorageShape, ofm, kernel, int(outputY), int(outputRows), 0, 0);
+            const auto staging = neuralai::LinebufferPlanner().PlanStripeStaging(stagingInput);
+            const uint64_t outputBytes =
+                uint64_t(outputRows) * uint32_t(ofm.Width()) * 32u;
+            stripeWorkspace = std::max(stripeWorkspace,
+                aligned(staging.bytes) + outputBytes + PaddingSeedBytes);
+            inputBytes += uint64_t(staging.bytes) * inputGroups;
+            ++stripes;
+        }
+        const uint64_t matrixRows = std::min<uint64_t>(
+            256, uint64_t(rows) * uint32_t(ofm.Width()));
+        const uint64_t partialBytes = aligned(matrixRows * 32u * 4u);
+        if ( partialBytes + aligned(stripeWorkspace) >= available ) continue;
+        const uint64_t availableStage =
+            available - partialBytes - aligned(stripeWorkspace);
+        const uint32_t stageGroups = uint32_t(std::min<uint64_t>(
+            inputGroups, availableStage / inputGroupWeightBytes));
+        const uint32_t residentGroups = stageGroups == inputGroups ? inputGroups :
+            stageGroups > 0 ? stageGroups - 1u : 0u;
+        const uint64_t weightTransfers = residentGroups != 0 ? 1u : 0u;
+        const uint64_t streamedGroups =
+            uint64_t(stripes) * (inputGroups - residentGroups);
+        const uint64_t costBytes =
+            uint64_t(residentGroups) * inputGroupWeightBytes +
+            streamedGroups * inputGroupWeightBytes + inputBytes +
+            (weightTransfers + streamedGroups + uint64_t(stripes) * inputGroups) *
+                commandLatencyBytes;
+        if ( costBytes < selectedCost || (costBytes == selectedCost && rows > selected) )
+        {
+            selected = rows;
+            selectedCost = costBytes;
+        }
+    }
+    return selected;
 }
 
 uint32_t FloatBits(float value)
@@ -4097,7 +4167,10 @@ struct GeneratorContext
              outputGroupWeightBytes != uint32_t(expectedOutputGroupWeightBytes) )
             return SetError(error,
                 "Neural-AI spilled linebuffer weights do not match the input groups");
-        const uint32_t stripeCapacity = LinebufferSpillStripeRows(ofmShape);
+        const uint32_t stripeCapacity = SelectLinebufferSpillStripeRows(
+            ifmShape.WithDepth(32), ifm->tensor->storageShape.WithDepth(32),
+            ofmShape, operation->Kernel(), inputGroups, schedule,
+            schedule->Cost(operation));
         RefV1 modelWeights{};
         modelWeights.region = uint16_t(Region::ModelConstants);
         modelWeights.offset = materialized.weightBase;
@@ -4114,17 +4187,20 @@ struct GeneratorContext
         }
 
         uint32_t tileId = 0;
-        const bool weightsRemainResident =
-            workspaceSizes[operation->Uid()].stage >= outputGroupWeightBytes;
+        constexpr uint32_t inputGroupWeightBytes = 9u * 32u * 32u;
+        const uint32_t weightStageGroups = std::min(inputGroups,
+            workspaceSizes[operation->Uid()].stage / inputGroupWeightBytes);
+        const uint32_t residentInputGroups = weightStageGroups == inputGroups ?
+            inputGroups : weightStageGroups > 0 ? weightStageGroups - 1u : 0u;
         for ( uint32_t outputGroup = 0; outputGroup < outputGroups; ++outputGroup )
         {
             RefV1 groupWeights = modelWeights;
             groupWeights.offset += outputGroup * outputGroupWeightBytes;
             AppendRQLoad(materialized.qparamBase + outputGroup * 32u, outputGroup,
                 uint32_t(operation->Index()), tileId++);
-            if ( weightsRemainResident &&
+            if ( residentInputGroups != 0 &&
                  !AppendDMA2D(groupWeights, stagedWeights, 32, 32, 32,
-                     outputGroupWeightBytes / 32u,
+                     residentInputGroups * inputGroupWeightBytes / 32u,
                      uint32_t(operation->Index()), tileId++, error) )
                 return false;
             for ( uint32_t outputY = 0; outputY < uint32_t(ofmShape.Height());
@@ -4156,10 +4232,15 @@ struct GeneratorContext
                 for ( uint32_t inputGroup = 0; inputGroup < inputGroups; ++inputGroup )
                 {
                     RefV1 inputGroupWeights = groupWeights;
-                    inputGroupWeights.offset += inputGroup * 9u * 32u * 32u;
-                    if ( !weightsRemainResident &&
-                         !AppendDMA2D(inputGroupWeights, stagedWeights, 32, 32, 32,
-                             9u * 32u, uint32_t(operation->Index()), tileId++, error) )
+                    inputGroupWeights.offset += inputGroup * inputGroupWeightBytes;
+                    RefV1 selectedWeights = stagedWeights;
+                    selectedWeights.offset += inputGroup < residentInputGroups ?
+                        inputGroup * inputGroupWeightBytes :
+                        residentInputGroups * inputGroupWeightBytes;
+                    if ( inputGroup >= residentInputGroups &&
+                         !AppendDMA2D(inputGroupWeights, selectedWeights, 32, 32, 32,
+                             inputGroupWeightBytes / 32u,
+                             uint32_t(operation->Index()), tileId++, error) )
                         return false;
                     auto inputGroupStaging = staging;
                     const uint32_t inputGroupPlane = uint32_t(ifmShape.Height()) *
@@ -4178,8 +4259,7 @@ struct GeneratorContext
                         Shape(1, int(outputRows), ofmShape.Width(), 32);
                     plannerInput.ifmBase = stripeStageOffset;
                     plannerInput.ofmBase = localOutputOffset;
-                    plannerInput.weightBase = weightStageOffset +
-                        (weightsRemainResident ? inputGroup * 9u * 32u * 32u : 0u);
+                    plannerInput.weightBase = selectedWeights.offset;
                     plannerInput.psumBase = partialOffset;
                     plannerInput.kernelH = operation->Kernel()->Size().y;
                     plannerInput.kernelW = operation->Kernel()->Size().x;
@@ -4842,7 +4922,8 @@ MemorySnapshot NeuralAICommandGenerator::WorkspaceReservation(
             operation.get(), cost, config).bytes;
         const Shape ifmShape = operation->IFM(0)->SliceShape();
         const Shape ofmShape = operation->OFM()->SliceShape();
-        if ( ofmShape.Depth() <= 0 ) throw std::runtime_error(
+        if ( ifmShape.Size() == 0 || ofmShape.Size() < 2 || ofmShape.Depth() <= 0 )
+            throw std::runtime_error(
             "Neural-AI workspace reservation has an invalid OFM depth");
         const uint32_t rows = uint32_t(ofmShape.Elements64() / ofmShape.Depth());
         const bool linebuffer = IsLinebufferConvMode(mode);
@@ -4851,6 +4932,21 @@ MemorySnapshot NeuralAICommandGenerator::WorkspaceReservation(
         const uint32_t scheduledRows = cost->cascade != 0 ?
             uint32_t(cost->stripe.Elements64() / ofmShape.Depth()) : rows;
         uint32_t matrixRows = std::min<uint32_t>(scheduledRows, 256);
+        const bool spilledLinebuffer = linebuffer &&
+            (IsL2ArenaTensor(operation->IFM(0)->tensor.get()) ||
+                IsL2ArenaTensor(operation->OFM()->tensor.get()) ||
+                ifmShape.Depth() > 32 || ofmShape.Depth() > 32);
+        if ( spilledLinebuffer )
+        {
+            const uint32_t inputGroups =
+                uint32_t(RoundAway(ifmShape.Depth(), 32)) / 32u;
+            const uint32_t selectedRows = SelectLinebufferSpillStripeRows(
+                ReshapeToNHWC(ifmShape).WithDepth(32),
+                operation->IFM(0)->tensor->storageShape.WithDepth(32),
+                ofmShape, operation->Kernel(), inputGroups, schedule, cost);
+            matrixRows = std::min(matrixRows,
+                selectedRows * uint32_t(ofmShape.Width()));
+        }
         if ( mode == NeuralAIOpMode::Conv2DPointwiseC32Requant && cost->cascade != 0 &&
              ofmShape.Depth() > 32 && scheduledRows <= 128 )
             matrixRows = scheduledRows * 2u;
@@ -4885,15 +4981,21 @@ MemorySnapshot NeuralAICommandGenerator::WorkspaceReservation(
             workspace.stage = std::max(workspace.stage, kGroups * 32u * 32u);
             workspace.partial = std::max(workspace.partial, matrixRows * 32u * 4u);
         }
-        const bool spilledLinebuffer = (linebuffer || IsDepthwiseMode(mode)) &&
+        const bool spilledOperation = (linebuffer || IsDepthwiseMode(mode)) &&
             (IsL2ArenaTensor(operation->IFM(0)->tensor.get()) ||
                 IsL2ArenaTensor(operation->OFM()->tensor.get()) ||
                 (linebuffer && (ifmShape.Depth() > 32 || ofmShape.Depth() > 32)));
-        if ( spilledLinebuffer )
+        if ( spilledOperation )
         {
             const Shape logicalIfm = ReshapeToNHWC(ifmShape);
             const Shape logicalOfm = ReshapeToNHWC(ofmShape);
-            const uint32_t stripeRows = LinebufferSpillStripeRows(logicalOfm);
+            const uint32_t inputGroups =
+                uint32_t(RoundAway(ifmShape.Depth(), 32)) / 32u;
+            const uint32_t stripeRows = linebuffer ? SelectLinebufferSpillStripeRows(
+                logicalIfm.WithDepth(32),
+                operation->IFM(0)->tensor->storageShape.WithDepth(32), logicalOfm,
+                operation->Kernel(), inputGroups, schedule, cost) :
+                LinebufferSpillStripeRows(logicalOfm);
             for ( uint32_t outputY = 0; outputY < uint32_t(logicalOfm.Height()); outputY += stripeRows )
             {
                 const uint32_t outputRows = std::min(
@@ -5092,6 +5194,21 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         const uint32_t scheduledRows = cost->cascade != 0 ?
             uint32_t(cost->stripe.Elements64() / ofmShape.Depth()) : rows;
         uint32_t stripeRows = std::min<uint32_t>(scheduledRows, 256);
+        const bool spilledLinebuffer = isK3Conv &&
+            (IsL2ArenaTensor(operation->IFM(0)->tensor.get()) ||
+                IsL2ArenaTensor(operation->OFM()->tensor.get()) ||
+                ifmShape.Depth() > 32 || ofmShape.Depth() > 32);
+        if ( spilledLinebuffer )
+        {
+            const uint32_t inputGroups =
+                uint32_t(RoundAway(ifmShape.Depth(), 32)) / 32u;
+            const uint32_t selectedRows = SelectLinebufferSpillStripeRows(
+                ReshapeToNHWC(ifmShape).WithDepth(32),
+                operation->IFM(0)->tensor->storageShape.WithDepth(32), ofmShape,
+                operation->Kernel(), inputGroups, schedule, cost);
+            stripeRows = std::min(stripeRows,
+                selectedRows * uint32_t(ofmShape.Width()));
+        }
         if ( mode == NeuralAIOpMode::Conv2DPointwiseC32Requant && cost->cascade != 0 &&
              ofmShape.Depth() > 32 && scheduledRows <= 128 )
             stripeRows = scheduledRows * 2u;
@@ -5238,7 +5355,11 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         {
             const Shape stagedIfm = logicalIfm.WithDepth(32);
             const Shape stagedStorage = ifm->tensor->storageShape.WithDepth(32);
-            const uint32_t stripeRows = LinebufferSpillStripeRows(logicalOfm);
+            const uint32_t inputGroups =
+                uint32_t(RoundAway(ifm->SliceShape().Depth(), 32)) / 32u;
+            const uint32_t stripeRows = SelectLinebufferSpillStripeRows(
+                stagedIfm, stagedStorage, logicalOfm, operation->Kernel(),
+                inputGroups, schedule, cost);
             uint32_t requiredBytes = 0;
             for ( uint32_t outputY = 0; outputY < uint32_t(logicalOfm.Height());
                   outputY += stripeRows )

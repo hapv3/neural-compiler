@@ -523,6 +523,15 @@ Only after correctness and SRAM feasibility:
   this path is considered fully adopted. Commands 864, 1055, 1464, 3902, 3904,
   3905, and 3906 retain the general quantized Spatz ADD/SUB path unless a
   separately justified general AFU pipeline is approved.
+- Candidate after PMU calibration: fuse `systolic output -> general binary
+  requant -> TCDM` for an immediately adjacent Conv+Add/Sub/Mul post-op. Prefer
+  a post-op AFU beside the systolic output FIFO over widening the systolic
+  requant critical path. It requires two independently quantized inputs and a
+  wider product path for Mul, so it is an explicit RTL increment requiring
+  approval. The current YOLO320 command estimate attributes only about 26.8K
+  cycles to all 27 AFU fast and seven general Spatz binary commands; prioritize
+  it only if PMU shows substantially larger firmware/packing cost or fusion
+  removes material L2/TCDM traffic.
 - Remove avoidable boundary conversions, materializations, repeated qparam/LUT
   staging, one-byte commands, and scalar loops from selected hot paths.
 - Add layer/tile-to-command-byte debug mapping and L2-traffic/command-count

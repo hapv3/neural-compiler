@@ -165,6 +165,14 @@ in-order dependency batching do not improve this estimate. The extra explicit
 submit/wait commands are accepted at this phase because command compaction
 follows memory scheduling.
 
+Adaptive linebuffer retile now evaluates legal stripe heights from the tensor
+shape, schedule-time live TCDM usage, partial/stripe workspace, repeated input
+weight groups, and estimated transfer cost. It can trade a smaller transient
+stripe for partial or full weight residency; there is no model-shape special
+case. On YOLO320 this removes 497,664 model-constant bytes per inference,
+reduces the package from 4,340 to 4,281 commands, and improves the estimate from
+7,223,616 to 6,862,260 cycles (-5.00%), or 69.22 to 72.86 inferences/s.
+
 AFU/systolic submit support is an ABI and firmware change first. Existing RTL
 start/done interfaces appear sufficient, but this must be proven by unit/block
 tests. If concurrent engines expose a missing event, unsafe shared state, or an

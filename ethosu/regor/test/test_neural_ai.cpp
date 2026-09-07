@@ -4517,20 +4517,22 @@ TEST_CASE("Neural-AI K3 Conv tiles spilled feature maps through TCDM stripes")
 TEST_CASE("Neural-AI spilled K3 Conv uses capacity-based weight residency")
 {
     ArchNeuralAI arch;
-    const int scenario = GENERATE(0, 1, 2, 3);
-    const std::array<int, 4> inputChannelsByScenario = {32, 64, 96, 96};
-    const std::array<int, 4> inputHeightByScenario = {65, 65, 65, 9};
-    const std::array<int, 4> inputWidthByScenario = {33, 33, 33, 9};
-    const std::array<int, 4> outputHeightByScenario = {33, 33, 33, 5};
-    const std::array<int, 4> outputWidthByScenario = {17, 17, 17, 5};
-    const std::array<uint32_t, 4> expectedWeightLoads = {2, 2, 2, 2};
-    const std::array<uint32_t, 4> expectedLinebufferJobs = {6, 12, 18, 6};
-    const std::array<uint32_t, 4> expectedLinebufferSubmits = {3, 3, 2, 0};
+    const int scenario = GENERATE(0, 1, 2, 3, 4);
+    const std::array<int, 5> inputChannelsByScenario = {32, 64, 96, 96, 256};
+    const std::array<int, 5> outputChannelsByScenario = {64, 64, 64, 64, 32};
+    const std::array<int, 5> inputHeightByScenario = {65, 65, 65, 9, 20};
+    const std::array<int, 5> inputWidthByScenario = {33, 33, 33, 9, 20};
+    const std::array<int, 5> outputHeightByScenario = {33, 33, 33, 5, 10};
+    const std::array<int, 5> outputWidthByScenario = {17, 17, 17, 5, 10};
+    const std::array<uint32_t, 5> expectedWeightLoads = {2, 2, 2, 2, 1};
+    const std::array<uint32_t, 5> expectedLinebufferJobs = {6, 12, 18, 6, 0};
+    const std::array<uint32_t, 5> expectedLinebufferSubmits = {3, 3, 2, 0, 0};
     const int inputChannels = inputChannelsByScenario[scenario];
+    const int outputChannels = outputChannelsByScenario[scenario];
     const Shape ifmShape(1, inputHeightByScenario[scenario],
         inputWidthByScenario[scenario], inputChannels);
     const Shape ofmShape(1, outputHeightByScenario[scenario],
-        outputWidthByScenario[scenario], 64);
+        outputWidthByScenario[scenario], outputChannels);
     CAPTURE(scenario, ifmShape, ofmShape);
     auto lhs = CreateTensor("lhs", ifmShape, DataType::Int8);
     auto rhs = CreateTensor("rhs", ifmShape, DataType::Int8);
@@ -4538,10 +4540,11 @@ TEST_CASE("Neural-AI spilled K3 Conv uses capacity-based weight residency")
     auto convIfm = CreateTensor("conv_ifm", ifmShape, DataType::Int8);
     auto convOfm = CreateTensor("conv_ofm", ofmShape, DataType::Int8);
     auto output = CreateTensor("output", ofmShape, DataType::Int8);
-    auto weights = CreateTensor("weights", Shape(64, 3, 3, inputChannels), DataType::Int8,
-        std::vector<int8_t>(64 * 3 * 3 * inputChannels, 1));
+    auto weights = CreateTensor("weights", Shape(outputChannels, 3, 3, inputChannels), DataType::Int8,
+        std::vector<int8_t>(outputChannels * 3 * 3 * inputChannels, 1));
     auto scales = CreateTensor(
-        "scales", Shape(1, 1, 1, 64), DataType::Int32, std::vector<int32_t>(64, 0));
+        "scales", Shape(1, 1, 1, outputChannels), DataType::Int32,
+        std::vector<int32_t>(outputChannels, 0));
     auto add0 = CreateOperation(
         OpType::Add, TensorUsage::IFM0, lhs, TensorUsage::IFM1, rhs,
         TensorUsage::OFM, convIfm);
@@ -4651,7 +4654,8 @@ TEST_CASE("Neural-AI spilled K3 Conv uses capacity-based weight residency")
     }
     REQUIRE(offset == artifact.commands.size());
     REQUIRE(weightLoads == expectedWeightLoads[scenario]);
-    REQUIRE(linebufferJobs == expectedLinebufferJobs[scenario]);
+    if ( expectedLinebufferJobs[scenario] == 0 ) REQUIRE(linebufferJobs > 0);
+    else REQUIRE(linebufferJobs == expectedLinebufferJobs[scenario]);
     if ( expectedLinebufferSubmits[scenario] != 0 )
         REQUIRE(linebufferSubmits + linebuffersOverlappedByDMA > 0);
     REQUIRE(systolicWaits == linebufferSubmits);
