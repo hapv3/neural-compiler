@@ -604,6 +604,31 @@ bool ConflictsWithDMA(const std::vector<CommandAccess> &pending,
     return false;
 }
 
+bool ConflictsWithPendingCommand(const std::vector<CommandAccess> &pending,
+    const std::vector<CommandAccess> &candidate)
+{
+    for ( const auto &lhs : pending )
+    {
+        for ( const auto &rhs : candidate )
+        {
+            if ( SameStorage(lhs.region, lhs.index, rhs.region, rhs.index) &&
+                 (lhs.write || rhs.write) &&
+                 Overlaps(lhs.begin, lhs.end, rhs.begin, rhs.end) ) return true;
+        }
+    }
+    return false;
+}
+
+bool CanRunWhileSystolicPending(CommandType type)
+{
+    // These commands use AFU or Spatz while systolic runs autonomously.  RQ
+    // loads and all other compute commands remain fences because they either
+    // modify systolic configuration or reuse its single pending slot.
+    return type == CommandType::AFUBinary || type == CommandType::AFULut ||
+           type == CommandType::AFUGlobalAvgPool || type == CommandType::SpatzAdd ||
+           type == CommandType::UpsampleNearest;
+}
+
 bool SamePointwiseLane(const uint8_t *firstRQ, const uint8_t *firstPW,
     const uint8_t *secondRQ, const uint8_t *secondPW)
 {
@@ -810,7 +835,7 @@ uint32_t OverlapSystolicLinebuffers(std::vector<uint8_t> &commands)
         std::vector<CommandAccess> pending;
         bool overlap = type == CommandType::LineBufferJob &&
             DecodeIndependentCommandAccesses(command, type, pending);
-        bool hasIndependentDMA = false;
+        bool hasIndependentWork = false;
         size_t next = offset + size;
         while ( overlap && next < commands.size() )
         {
@@ -825,17 +850,26 @@ uint32_t OverlapSystolicLinebuffers(std::vector<uint8_t> &commands)
             }
             if ( candidateType == CommandType::DMAWait )
             {
-                hasIndependentDMA = true;
+                hasIndependentWork = true;
                 next += candidateSize;
                 continue;
             }
             DMACommandInfo dma;
-            if ( !DecodeDMACommand(candidate, candidateType, dma) ||
-                 ConflictsWithDMA(pending, dma) ) break;
-            hasIndependentDMA = true;
+            if ( DecodeDMACommand(candidate, candidateType, dma) )
+            {
+                if ( ConflictsWithDMA(pending, dma) ) break;
+            }
+            else
+            {
+                std::vector<CommandAccess> candidateAccesses;
+                if ( !CanRunWhileSystolicPending(candidateType) ||
+                     !DecodeIndependentCommandAccesses(candidate, candidateType, candidateAccesses) ||
+                     ConflictsWithPendingCommand(pending, candidateAccesses) ) break;
+            }
+            hasIndependentWork = true;
             next += candidateSize;
         }
-        overlap = overlap && hasIndependentDMA;
+        overlap = overlap && hasIndependentWork;
         if ( overlap )
         {
             const size_t rewrittenSubmit = rewritten.size();

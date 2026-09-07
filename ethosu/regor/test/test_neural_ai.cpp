@@ -96,6 +96,7 @@ TEST_CASE("Neural-AI command overlap crosses independent compute and stops at ha
 
     neuralai::CommandAFUBinaryV2 hazard = independent;
     hazard.lhs.offset = store.source.offset;
+    hazard.rhs.offset = 0x8000;
 
     neuralai::CommandLineBufferJobV2 linebuffer{};
     linebuffer.header.type = uint16_t(neuralai::CommandType::LineBufferJob);
@@ -151,6 +152,27 @@ TEST_CASE("Neural-AI command overlap crosses independent compute and stops at ha
     REQUIRE(NeuralAICommandGenerator::OptimizeCommandOverlap(commands) == 0);
     REQUIRE(commands.size() == sizeof(store) + sizeof(hazard));
     REQUIRE(read16(0) == uint16_t(neuralai::CommandType::DMA1D));
+
+    neuralai::CommandAFUBinaryV2 linebufferIndependent = independent;
+    linebufferIndependent.lhs.offset = 0x9000;
+    linebufferIndependent.rhs.offset = 0x9200;
+    linebufferIndependent.ofm.offset = 0x9400;
+    neuralai::CommandAFUBinaryV2 linebufferHazard = linebufferIndependent;
+    linebufferHazard.lhs.offset = linebuffer.job.gemm.ofmAddr;
+
+    commands.clear();
+    append(linebuffer);
+    append(linebufferIndependent);
+    append(linebufferHazard);
+    REQUIRE(NeuralAICommandGenerator::OptimizeCommandOverlap(commands) == 1);
+    REQUIRE(commands.size() == sizeof(linebuffer) + sizeof(linebufferIndependent) +
+        sizeof(neuralai::CommandHeaderV2) * 2 + sizeof(linebufferHazard));
+    REQUIRE(read16(0) == uint16_t(neuralai::CommandType::LineBufferSubmit));
+    REQUIRE(read16(sizeof(linebuffer)) == uint16_t(neuralai::CommandType::AFUBinary));
+    REQUIRE(read16(sizeof(linebuffer) + sizeof(linebufferIndependent)) ==
+        uint16_t(neuralai::CommandType::SystolicWait));
+    REQUIRE(read16(sizeof(linebuffer) + sizeof(linebufferIndependent) + 32) ==
+        uint16_t(neuralai::CommandType::AFUBinary));
 }
 
 uint32_t Read32(const uint8_t *data)
@@ -2717,7 +2739,8 @@ TEST_CASE("Neural-AI scheduler emits interleaved Conv LUT stripes")
         const uint16_t type = Read16(artifact.commands, commandOffset);
         const uint16_t bytes = Read16(artifact.commands, commandOffset + 2);
         REQUIRE(bytes >= 32);
-        if ( type == uint16_t(neuralai::CommandType::LineBufferJob) )
+        if ( type == uint16_t(neuralai::CommandType::LineBufferJob) ||
+             type == uint16_t(neuralai::CommandType::LineBufferSubmit) )
         {
             ++linebufferJobs;
             linebufferRows += Read32(artifact.commands, commandOffset + 132);
@@ -6403,7 +6426,8 @@ TEST_CASE("Neural-AI compiler emits grouped linebuffer jobs for generic K3 Conv2
         const uint16_t type = uint16_t(data[offset]) | (uint16_t(data[offset + 1]) << 8);
         const uint16_t commandSize = uint16_t(data[offset + 2]) |
             (uint16_t(data[offset + 3]) << 8);
-        if ( type == uint16_t(neuralai::CommandType::LineBufferJob) )
+        if ( type == uint16_t(neuralai::CommandType::LineBufferJob) ||
+             type == uint16_t(neuralai::CommandType::LineBufferSubmit) )
         {
             REQUIRE(commandSize == 160);
             ++linebufferJobs;
@@ -6483,7 +6507,8 @@ TEST_CASE("Neural-AI compiler stages a zero-padded C16 linebuffer group for YOLO
         const uint16_t type = Read16(data + offset);
         const uint16_t commandSize = Read16(data + offset + 2);
         REQUIRE(commandSize >= 32);
-        if ( type == uint16_t(neuralai::CommandType::LineBufferJob) )
+        if ( type == uint16_t(neuralai::CommandType::LineBufferJob) ||
+             type == uint16_t(neuralai::CommandType::LineBufferSubmit) )
         {
             REQUIRE(commandSize == sizeof(neuralai::CommandLineBufferJobV2));
             REQUIRE(Read16(data + offset + 24) == 16);
@@ -6544,7 +6569,8 @@ TEST_CASE("Neural-AI compiler emits physical C32 groups for IC48 and IC80 K3 Con
         {
             const uint16_t type = Read16(data + offset);
             const uint16_t commandSize = Read16(data + offset + 2);
-            if ( type == uint16_t(neuralai::CommandType::LineBufferJob) )
+            if ( type == uint16_t(neuralai::CommandType::LineBufferJob) ||
+                 type == uint16_t(neuralai::CommandType::LineBufferSubmit) )
             {
                 REQUIRE(commandSize == sizeof(neuralai::CommandLineBufferJobV2));
                 validBytes.push_back(Read16(data + offset + 16 + 56));
@@ -6596,7 +6622,8 @@ TEST_CASE("Neural-AI compiler splits a width-641 Conv into legal linebuffer jobs
         const uint16_t type = uint16_t(data[offset]) | (uint16_t(data[offset + 1]) << 8);
         const uint16_t commandSize = uint16_t(data[offset + 2]) |
             (uint16_t(data[offset + 3]) << 8);
-        if ( type == uint16_t(neuralai::CommandType::LineBufferJob) )
+        if ( type == uint16_t(neuralai::CommandType::LineBufferJob) ||
+             type == uint16_t(neuralai::CommandType::LineBufferSubmit) )
         {
             ++jobs;
             REQUIRE(Read32(data + offset + 16 + 80 + 16) <= 1024u);
@@ -6654,7 +6681,8 @@ TEST_CASE("Neural-AI compiler consumes compact TCDM RGB input directly")
         const uint16_t type = uint16_t(data[offset]) | (uint16_t(data[offset + 1]) << 8);
         const uint16_t commandSize = uint16_t(data[offset + 2]) |
             (uint16_t(data[offset + 3]) << 8);
-        if ( type == uint16_t(neuralai::CommandType::LineBufferJob) )
+        if ( type == uint16_t(neuralai::CommandType::LineBufferJob) ||
+             type == uint16_t(neuralai::CommandType::LineBufferSubmit) )
         {
             ++linebufferJobs;
             const uint32_t rows = Read32(data + offset + 16 + 80 + 16);
@@ -6746,7 +6774,8 @@ TEST_CASE("Neural-AI compiler supports a partial output group for an RGB stem")
             stagedInput = Read32(data + offset + 28);
             REQUIRE(Read32(data + offset + 32) == 18 * 18 * 3);
         }
-        if ( type == uint16_t(neuralai::CommandType::LineBufferJob) )
+        if ( type == uint16_t(neuralai::CommandType::LineBufferJob) ||
+             type == uint16_t(neuralai::CommandType::LineBufferSubmit) )
         {
             ++linebufferJobs;
             linebufferInput = Read32(data + offset + 16);
