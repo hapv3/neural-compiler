@@ -802,16 +802,20 @@ uint32_t OverlapDMAQueue(std::vector<uint8_t> &commands, uint32_t batchDirection
             if ( DecodeDMACommand(candidate, candidateType, dma) )
             {
                 const uint32_t direction = uint32_t(dma.direction);
-                if ( std::any_of(pending.begin(), pending.end(),
-                         [&](const DMACommandInfo &active) { return ConflictsWithDMA(active, dma); }) ) break;
                 if ( direction == batchDirection )
                 {
                     if ( !IsBlockingDMACommand(candidateType) ||
                          pendingByDirection[direction] >= queueDepth ) break;
+                    // One hardware queue executes its jobs in order, so RAW,
+                    // WAR, and WAW dependencies between jobs in that queue do
+                    // not require Snitch to wait between submissions.
                     pending.push_back(dma);
                     pendingOffsets.push_back(next - offset);
                     ++pendingByDirection[direction];
                 }
+                else if ( std::any_of(pending.begin(), pending.end(),
+                              [&](const DMACommandInfo &active) { return ConflictsWithDMA(active, dma); }) )
+                    break;
             }
             else
             {

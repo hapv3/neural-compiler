@@ -154,12 +154,16 @@ Current implementation status:
   Firmware retains only the latest in-order transfer ID and queued count, so it
   does not duplicate the hardware FIFO in ITCM/DTCM.
 
-The first YOLO320 compile with queued DMA produces 4,343 package commands. It
-contains 269 DMA submits and 226 waits: 43 per-transfer waits are removed, while
-single-transfer groups still overlap independent compute. The command estimate
-improves from 7,383,829 to 7,223,612 cycles (-2.17%), or 67.72 to 69.22
-inferences/s at 500 MHz. The extra explicit submit/wait commands are accepted
-at this phase because command compaction follows memory scheduling.
+The first YOLO320 compile with queued DMA produces 4,340 package commands. It
+contains 273 DMA submits and 223 waits: 50 per-transfer waits are removed, while
+single-transfer groups still overlap independent compute. Same-direction jobs
+may retain RAW/WAR/WAW ordering inside the in-order hardware FIFO without an
+intermediate CPU wait. The command estimate improves from 7,383,829 to
+7,223,616 cycles (-2.17%), or 67.72 to 69.22 inferences/s at 500 MHz. The
+estimator does not yet price Snitch polling, so the three waits removed by
+in-order dependency batching do not improve this estimate. The extra explicit
+submit/wait commands are accepted at this phase because command compaction
+follows memory scheduling.
 
 AFU/systolic submit support is an ABI and firmware change first. Existing RTL
 start/done interfaces appear sufficient, but this must be proven by unit/block

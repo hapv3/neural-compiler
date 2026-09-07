@@ -201,7 +201,7 @@ TEST_CASE("Neural-AI command overlap crosses independent compute and stops at ha
         queued.source = {uint16_t(neuralai::Region::L2TemporaryBinding), 0,
             0x4000 + index * 0x100};
         queued.destination = {uint16_t(neuralai::Region::TCDMScratch), 0,
-            0x6000 + index * 0x100};
+            0x6000};
         queued.direction = uint32_t(neuralai::DMADirection::ExternalToLocal);
         append(queued);
     }
@@ -6228,7 +6228,7 @@ TEST_CASE("Neural-AI compiler materializes a high C64 slice from C128 with group
         const auto type = neuralai::CommandType(Read16(data + offset));
         const uint16_t commandSize = Read16(data + offset + 2);
         REQUIRE(commandSize >= sizeof(neuralai::CommandHeaderV2));
-        if ( type == neuralai::CommandType::DMA3D &&
+        if ( IsDMA3DCommand(uint16_t(type)) &&
              Read16(data + offset + 16) == uint16_t(neuralai::Region::TCDMScratch) &&
              Read16(data + offset + 24) == uint16_t(neuralai::Region::OutputBinding) )
         {
