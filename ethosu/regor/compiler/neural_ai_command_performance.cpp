@@ -431,8 +431,15 @@ NeuralAICommandPerformanceResult MeasureNeuralAICommandPerformance(
             std::max(measurement.row.computeCycles, measurement.row.memoryCycles));
         if ( dmaSubmit && asyncDirection >= 0 && asyncDirection < int(pendingDMACycles.size()) )
         {
-            pendingDMACycles[asyncDirection] = measurement.row.memoryCycles;
-            hiddenDMACycles[asyncDirection] = 0;
+            if ( pendingDMACycles[asyncDirection] < 0 )
+            {
+                pendingDMACycles[asyncDirection] = measurement.row.memoryCycles;
+                hiddenDMACycles[asyncDirection] = 0;
+            }
+            else
+            {
+                pendingDMACycles[asyncDirection] += measurement.row.memoryCycles;
+            }
             measurement.row.totalCycles = 1;
         }
         else if ( dmaWait && asyncDirection >= 0 && asyncDirection < int(pendingDMACycles.size()) )

@@ -104,7 +104,7 @@ TEST_CASE("neural_ai command performance accounts AFU traffic and emits command 
     tables->Release();
 }
 
-TEST_CASE("neural_ai command performance hides asynchronous DMA store cycles")
+TEST_CASE("neural_ai command performance accumulates queued asynchronous DMA cycles")
 {
     ArchNeuralAI architecture;
     REQUIRE(architecture.ConfigureExternalMemory(1.0f, 10, 5, 64, 1, 64, 32));
@@ -132,22 +132,28 @@ TEST_CASE("neural_ai command performance hides asynchronous DMA store cycles")
 
     CompiledNeuralAIArtifact artifact;
     AppendCommand(artifact, store);
+    store.source.offset += 256;
+    store.destination.offset += 256;
+    AppendCommand(artifact, store);
     AppendCommand(artifact, load);
     AppendCommand(artifact, wait);
     const auto result = MeasureNeuralAICommandPerformance(artifact, &architecture);
 
-    REQUIRE(result.commands.size() == 3);
+    REQUIRE(result.commands.size() == 4);
     CHECK(result.commands[0].name == "DMA_SUBMIT_1D");
     CHECK(result.commands[0].totalCycles == 1);
     CHECK(result.commands[0].l2WriteBytes == 256);
-    CHECK(result.commands[1].name == "DMA1D");
-    CHECK(result.commands[2].name == "DMA_WAIT");
+    CHECK(result.commands[1].name == "DMA_SUBMIT_1D");
+    CHECK(result.commands[1].totalCycles == 1);
+    CHECK(result.commands[2].name == "DMA1D");
+    CHECK(result.commands[3].name == "DMA_WAIT");
     const int64_t remaining = std::max<int64_t>(0,
-        result.commands[0].memoryCycles - result.commands[1].totalCycles);
-    CHECK(result.commands[2].memoryCycles == remaining);
-    CHECK(result.commands[2].totalCycles == std::max<int64_t>(1, remaining));
-    CHECK(result.performance.npuCycles == 1 + result.commands[1].totalCycles +
-        result.commands[2].totalCycles);
+        result.commands[0].memoryCycles + result.commands[1].memoryCycles -
+            result.commands[2].totalCycles);
+    CHECK(result.commands[3].memoryCycles == remaining);
+    CHECK(result.commands[3].totalCycles == std::max<int64_t>(1, remaining));
+    CHECK(result.performance.npuCycles == 2 + result.commands[2].totalCycles +
+        result.commands[3].totalCycles);
 }
 
 TEST_CASE("neural_ai command performance hides asynchronous systolic cycles")

@@ -146,8 +146,20 @@ Current implementation status:
   unknown commands as fences.
 - ABI 1.3 reserves `LINE_BUFFER_SUBMIT` and `SYSTOLIC_WAIT`; firmware and the
   estimator implement their pending/wait semantics using existing RTL
-  start/done signals. Compiler emission remains disabled until linebuffer
-  access spans and ping-pong ownership are proven.
+  start/done signals. Compiler emission is enabled only across proven-disjoint
+  command accesses.
+- Both iDMA directions use their existing 16-entry hardware job queues. Regor
+  converts up to 16 independent DMA1D/2D/3D commands per direction to submits
+  and inserts one wait at the first dependency or queue-capacity boundary.
+  Firmware retains only the latest in-order transfer ID and queued count, so it
+  does not duplicate the hardware FIFO in ITCM/DTCM.
+
+The first YOLO320 compile with queued DMA produces 4,343 package commands. It
+contains 269 DMA submits and 226 waits: 43 per-transfer waits are removed, while
+single-transfer groups still overlap independent compute. The command estimate
+improves from 7,383,829 to 7,223,612 cycles (-2.17%), or 67.72 to 69.22
+inferences/s at 500 MHz. The extra explicit submit/wait commands are accepted
+at this phase because command compaction follows memory scheduling.
 
 AFU/systolic submit support is an ABI and firmware change first. Existing RTL
 start/done interfaces appear sufficient, but this must be proven by unit/block

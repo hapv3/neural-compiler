@@ -343,6 +343,13 @@ struct DMACommandInfo
 bool IsDMACommand(CommandType type)
 {
     return type == CommandType::DMA1D || type == CommandType::DMA2D ||
+           type == CommandType::DMA3D || type == CommandType::DMASubmit1D ||
+           type == CommandType::DMASubmit2D || type == CommandType::DMASubmit3D;
+}
+
+bool IsBlockingDMACommand(CommandType type)
+{
+    return type == CommandType::DMA1D || type == CommandType::DMA2D ||
            type == CommandType::DMA3D;
 }
 
@@ -353,7 +360,7 @@ bool DecodeDMACommand(const uint8_t *command, CommandType type, DMACommandInfo &
     uint64_t sourceSpan = length;
     uint64_t destinationSpan = length;
     uint32_t directionOffset = 36;
-    if ( type == CommandType::DMA2D )
+    if ( type == CommandType::DMA2D || type == CommandType::DMASubmit2D )
     {
         const uint64_t repetitions = Read32(command + 44);
         if ( repetitions == 0 ) return false;
@@ -361,7 +368,7 @@ bool DecodeDMACommand(const uint8_t *command, CommandType type, DMACommandInfo &
         destinationSpan += uint64_t(Read32(command + 40)) * (repetitions - 1);
         directionOffset = 48;
     }
-    else if ( type == CommandType::DMA3D )
+    else if ( type == CommandType::DMA3D || type == CommandType::DMASubmit3D )
     {
         const uint64_t repetitions2 = Read32(command + 44);
         const uint64_t repetitions3 = Read32(command + 56);
@@ -577,16 +584,33 @@ bool DecodeIndependentCommandAccesses(const uint8_t *command, CommandType type,
     }
 }
 
-bool ConflictsWithDMAStore(const DMACommandInfo &store,
+bool ConflictsWithDMA(const DMACommandInfo &pending, const DMACommandInfo &candidate)
+{
+    if ( SameStorage(pending.destinationRegion, pending.destinationIndex,
+             candidate.sourceRegion, candidate.sourceIndex) &&
+         Overlaps(pending.destinationBegin, pending.destinationEnd,
+             candidate.sourceBegin, candidate.sourceEnd) ) return true;
+    if ( SameStorage(pending.sourceRegion, pending.sourceIndex,
+             candidate.destinationRegion, candidate.destinationIndex) &&
+         Overlaps(pending.sourceBegin, pending.sourceEnd,
+             candidate.destinationBegin, candidate.destinationEnd) ) return true;
+    return SameStorage(pending.destinationRegion, pending.destinationIndex,
+               candidate.destinationRegion, candidate.destinationIndex) &&
+        Overlaps(pending.destinationBegin, pending.destinationEnd,
+            candidate.destinationBegin, candidate.destinationEnd);
+}
+
+bool ConflictsWithDMA(const DMACommandInfo &dma,
     const std::vector<CommandAccess> &accesses)
 {
     for ( const auto &access : accesses )
     {
-        if ( access.region == uint16_t(Region::TCDMScratch) &&
-             Overlaps(store.sourceBegin, store.sourceEnd, access.begin, access.end) ) return true;
-        if ( SameStorage(store.destinationRegion, store.destinationIndex,
-                 access.region, access.index) &&
-             Overlaps(store.destinationBegin, store.destinationEnd, access.begin, access.end) ) return true;
+        if ( SameStorage(dma.sourceRegion, dma.sourceIndex, access.region, access.index) &&
+             access.write && Overlaps(dma.sourceBegin, dma.sourceEnd,
+                 access.begin, access.end) ) return true;
+        if ( SameStorage(dma.destinationRegion, dma.destinationIndex, access.region, access.index) &&
+             Overlaps(dma.destinationBegin, dma.destinationEnd,
+                 access.begin, access.end) ) return true;
     }
     return false;
 }
@@ -735,8 +759,9 @@ uint32_t CoalesceInterleavedPointwiseRows(std::vector<uint8_t> &commands)
     return removed;
 }
 
-uint32_t OverlapDMAStores(std::vector<uint8_t> &commands)
+uint32_t OverlapDMAQueue(std::vector<uint8_t> &commands, uint32_t batchDirection)
 {
+    constexpr uint32_t queueDepth = 16;
     std::vector<uint8_t> rewritten;
     rewritten.reserve(commands.size());
     uint32_t waits = 0;
@@ -748,9 +773,18 @@ uint32_t OverlapDMAStores(std::vector<uint8_t> &commands)
         const uint16_t size = Read16(command + 2);
         if ( size < sizeof(neuralai::CommandHeaderV2) || offset + size > commands.size() ) break;
 
-        DMACommandInfo store;
-        bool overlap = DecodeDMACommand(command, type, store) && store.sourceLocal &&
-            store.direction == DMADirection::LocalToExternal;
+        DMACommandInfo first;
+        bool overlap = IsBlockingDMACommand(type) && DecodeDMACommand(command, type, first) &&
+            uint32_t(first.direction) == batchDirection;
+        std::vector<DMACommandInfo> pending;
+        std::vector<size_t> pendingOffsets;
+        std::array<uint32_t, 2> pendingByDirection = {0, 0};
+        if ( overlap )
+        {
+            pending.push_back(first);
+            pendingOffsets.push_back(0);
+            ++pendingByDirection[uint32_t(first.direction)];
+        }
         size_t next = offset + size;
         bool hasIndependentWork = false;
         while ( overlap && next < commands.size() )
@@ -767,29 +801,24 @@ uint32_t OverlapDMAStores(std::vector<uint8_t> &commands)
             DMACommandInfo dma;
             if ( DecodeDMACommand(candidate, candidateType, dma) )
             {
-                const bool conflict = dma.direction == DMADirection::LocalToExternal ||
-                    (dma.sourceLocal && Overlaps(store.sourceBegin, store.sourceEnd,
-                        dma.sourceBegin, dma.sourceEnd)) ||
-                    (dma.destinationLocal && Overlaps(store.sourceBegin, store.sourceEnd,
-                        dma.destinationBegin, dma.destinationEnd)) ||
-                    (SameStorage(store.destinationRegion, store.destinationIndex,
-                         dma.sourceRegion, dma.sourceIndex) &&
-                        Overlaps(store.destinationBegin, store.destinationEnd,
-                            dma.sourceBegin, dma.sourceEnd)) ||
-                    (SameStorage(store.destinationRegion, store.destinationIndex,
-                         dma.destinationRegion, dma.destinationIndex) &&
-                        Overlaps(store.destinationBegin, store.destinationEnd,
-                            dma.destinationBegin, dma.destinationEnd));
-                if ( conflict )
+                const uint32_t direction = uint32_t(dma.direction);
+                if ( std::any_of(pending.begin(), pending.end(),
+                         [&](const DMACommandInfo &active) { return ConflictsWithDMA(active, dma); }) ) break;
+                if ( direction == batchDirection )
                 {
-                    break;
+                    if ( !IsBlockingDMACommand(candidateType) ||
+                         pendingByDirection[direction] >= queueDepth ) break;
+                    pending.push_back(dma);
+                    pendingOffsets.push_back(next - offset);
+                    ++pendingByDirection[direction];
                 }
             }
             else
             {
                 std::vector<CommandAccess> accesses;
                 if ( !DecodeIndependentCommandAccesses(candidate, candidateType, accesses) ||
-                     ConflictsWithDMAStore(store, accesses) ) break;
+                     std::any_of(pending.begin(), pending.end(),
+                         [&](const DMACommandInfo &active) { return ConflictsWithDMA(active, accesses); }) ) break;
             }
             hasIndependentWork = true;
             next += candidateSize;
@@ -797,16 +826,25 @@ uint32_t OverlapDMAStores(std::vector<uint8_t> &commands)
         overlap = overlap && hasIndependentWork;
         if ( overlap )
         {
-            const size_t rewrittenStore = rewritten.size();
+            const size_t rewrittenStart = rewritten.size();
             rewritten.insert(rewritten.end(), commands.begin() + offset, commands.begin() + next);
-            const CommandType submit = SubmitType(type);
-            rewritten[rewrittenStore] = uint8_t(uint16_t(submit));
-            rewritten[rewrittenStore + 1] = uint8_t(uint16_t(submit) >> 8);
-            AppendHeader(rewritten, CommandType::DMAWait, sizeof(neuralai::CommandDMAWaitV2),
-                Read32(command + 8), Read32(command + 12));
-            Append32(rewritten, uint32_t(DMADirection::LocalToExternal));
-            AppendZeros(rewritten, 3);
-            ++waits;
+            for ( size_t pendingIndex = 0; pendingIndex < pending.size(); ++pendingIndex )
+            {
+                const size_t rewrittenDMA = rewrittenStart + pendingOffsets[pendingIndex];
+                const CommandType dmaType = CommandType(Read16(rewritten.data() + rewrittenDMA));
+                const CommandType submit = SubmitType(dmaType);
+                rewritten[rewrittenDMA] = uint8_t(uint16_t(submit));
+                rewritten[rewrittenDMA + 1] = uint8_t(uint16_t(submit) >> 8);
+            }
+            for ( uint32_t direction = 0; direction < pendingByDirection.size(); ++direction )
+            {
+                if ( pendingByDirection[direction] == 0 ) continue;
+                AppendHeader(rewritten, CommandType::DMAWait, sizeof(neuralai::CommandDMAWaitV2),
+                    Read32(command + 8), Read32(command + 12));
+                Append32(rewritten, direction);
+                AppendZeros(rewritten, 3);
+                ++waits;
+            }
             offset = next;
         }
         else
@@ -4738,7 +4776,9 @@ struct GeneratorContext
 
 uint32_t NeuralAICommandGenerator::OptimizeCommandOverlap(std::vector<uint8_t> &commands)
 {
-    const uint32_t dmaWaits = OverlapDMAStores(commands);
+    const uint32_t dmaWaits =
+        OverlapDMAQueue(commands, uint32_t(DMADirection::ExternalToLocal)) +
+        OverlapDMAQueue(commands, uint32_t(DMADirection::LocalToExternal));
     return dmaWaits + OverlapSystolicLinebuffers(commands);
 }
 
