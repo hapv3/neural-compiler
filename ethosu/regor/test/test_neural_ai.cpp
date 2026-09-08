@@ -1345,6 +1345,103 @@ flatbuffers::DetachedBuffer BuildK3ConvModel(int height, int width, int depthK, 
     return builder.Release();
 }
 
+flatbuffers::DetachedBuffer BuildK3ConvBinaryPostOpModel()
+{
+    flatbuffers::FlatBufferBuilder builder;
+    const std::vector<float> halfScale = {0.5f};
+    const std::vector<float> unitScale = {1.0f};
+    const std::vector<int64_t> zeroPoint = {0};
+    const auto halfQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &halfScale, &zeroPoint);
+    const auto unitQuant = tflite::CreateQuantizationParametersDirect(
+        builder, nullptr, nullptr, &unitScale, &zeroPoint);
+
+    const std::vector<uint8_t> pointwiseWeights(32 * 32, 1);
+    const std::vector<uint8_t> k3Weights(32 * 3 * 3 * 32, 1);
+    const std::vector<int32_t> bias(32, 0);
+    std::vector<uint8_t> biasData(bias.size() * sizeof(int32_t));
+    std::memcpy(biasData.data(), bias.data(), biasData.size());
+    std::vector<flatbuffers::Offset<tflite::Buffer>> buffers = {
+        tflite::CreateBufferDirect(builder),
+        tflite::CreateBufferDirect(builder, &pointwiseWeights),
+        tflite::CreateBufferDirect(builder, &biasData),
+        tflite::CreateBufferDirect(builder, &k3Weights),
+        tflite::CreateBufferDirect(builder, &biasData),
+        tflite::CreateBufferDirect(builder, &pointwiseWeights),
+        tflite::CreateBufferDirect(builder, &biasData),
+    };
+    const std::vector<int32_t> featureShape = {1, 4, 4, 32};
+    const std::vector<int32_t> pointwiseShape = {32, 1, 1, 32};
+    const std::vector<int32_t> k3Shape = {32, 3, 3, 32};
+    const std::vector<int32_t> biasShape = {32};
+    std::vector<flatbuffers::Offset<tflite::Tensor>> tensors = {
+        tflite::CreateTensorDirect(builder, &featureShape, tflite::TensorType::INT8,
+            0, "input", halfQuant),
+        tflite::CreateTensorDirect(builder, &pointwiseShape, tflite::TensorType::INT8,
+            1, "skip_weights", unitQuant),
+        tflite::CreateTensorDirect(builder, &biasShape, tflite::TensorType::INT32,
+            2, "skip_bias", halfQuant),
+        tflite::CreateTensorDirect(builder, &featureShape, tflite::TensorType::INT8,
+            0, "skip", halfQuant),
+        tflite::CreateTensorDirect(builder, &k3Shape, tflite::TensorType::INT8,
+            3, "producer_weights", unitQuant),
+        tflite::CreateTensorDirect(builder, &biasShape, tflite::TensorType::INT32,
+            4, "producer_bias", halfQuant),
+        tflite::CreateTensorDirect(builder, &featureShape, tflite::TensorType::INT8,
+            0, "producer", unitQuant),
+        tflite::CreateTensorDirect(builder, &featureShape, tflite::TensorType::INT8,
+            0, "binary", unitQuant),
+        tflite::CreateTensorDirect(builder, &pointwiseShape, tflite::TensorType::INT8,
+            5, "consumer_weights", unitQuant),
+        tflite::CreateTensorDirect(builder, &biasShape, tflite::TensorType::INT32,
+            6, "consumer_bias", unitQuant),
+        tflite::CreateTensorDirect(builder, &featureShape, tflite::TensorType::INT8,
+            0, "output", unitQuant),
+    };
+    const auto pointwiseOptions = tflite::CreateConv2DOptions(
+        builder, tflite::Padding::VALID, 1, 1, tflite::ActivationFunctionType::NONE,
+        1, 1, tflite::TensorType::INT32);
+    const auto k3Options = tflite::CreateConv2DOptions(
+        builder, tflite::Padding::SAME, 1, 1, tflite::ActivationFunctionType::NONE,
+        1, 1, tflite::TensorType::INT32);
+    const auto addOptions = tflite::CreateAddOptions(
+        builder, tflite::ActivationFunctionType::NONE, false);
+    const std::vector<int32_t> skipInputs = {0, 1, 2};
+    const std::vector<int32_t> skipOutputs = {3};
+    const std::vector<int32_t> producerInputs = {3, 4, 5};
+    const std::vector<int32_t> producerOutputs = {6};
+    const std::vector<int32_t> addInputs = {6, 3};
+    const std::vector<int32_t> addOutputs = {7};
+    const std::vector<int32_t> consumerInputs = {7, 8, 9};
+    const std::vector<int32_t> consumerOutputs = {10};
+    const std::vector<flatbuffers::Offset<tflite::Operator>> operations = {
+        tflite::CreateOperatorDirect(builder, 0, &skipInputs, &skipOutputs,
+            tflite::BuiltinOptions::Conv2DOptions, pointwiseOptions.Union()),
+        tflite::CreateOperatorDirect(builder, 0, &producerInputs, &producerOutputs,
+            tflite::BuiltinOptions::Conv2DOptions, k3Options.Union()),
+        tflite::CreateOperatorDirect(builder, 1, &addInputs, &addOutputs,
+            tflite::BuiltinOptions::AddOptions, addOptions.Union()),
+        tflite::CreateOperatorDirect(builder, 0, &consumerInputs, &consumerOutputs,
+            tflite::BuiltinOptions::Conv2DOptions, pointwiseOptions.Union()),
+    };
+    const std::vector<int32_t> graphInputs = {0};
+    const std::vector<int32_t> graphOutputs = {10};
+    const std::vector<flatbuffers::Offset<tflite::SubGraph>> subgraphs = {
+        tflite::CreateSubGraphDirect(
+            builder, &tensors, &graphInputs, &graphOutputs, &operations, "main"),
+    };
+    const std::vector<flatbuffers::Offset<tflite::OperatorCode>> operatorCodes = {
+        tflite::CreateOperatorCodeDirect(builder, int8_t(tflite::BuiltinOperator::CONV_2D),
+            nullptr, 1, tflite::BuiltinOperator::CONV_2D),
+        tflite::CreateOperatorCodeDirect(builder, int8_t(tflite::BuiltinOperator::ADD),
+            nullptr, 2, tflite::BuiltinOperator::ADD),
+    };
+    const auto model = tflite::CreateModelDirect(builder, 3, &operatorCodes, &subgraphs,
+        "Neural-AI fused K3 Conv binary test", &buffers);
+    tflite::FinishModelBuffer(builder, model);
+    return builder.Release();
+}
+
 flatbuffers::DetachedBuffer BuildC32SliceConvModel(
     int height, int width, int inputDepth, int sliceBegin, int sliceDepth, int outputDepth,
     int consumerKernel = 1, bool sliceIsGraphOutput = false)
@@ -6607,6 +6704,56 @@ TEST_CASE("Neural-AI compiler fuses ReLU and ReLU6 into qparam clamps")
 
     checkClamp(tflite::ActivationFunctionType::RELU, 0, 127);
     checkClamp(tflite::ActivationFunctionType::RELU6, 0, 6);
+}
+
+TEST_CASE("Neural-AI compiler fuses a general Add into its K3 Conv producer")
+{
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildK3ConvBinaryPostOpModel();
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+    const bool compiled = compiler.Compile();
+    INFO(compiler.LastError());
+    REQUIRE(compiled);
+
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    const uint32_t commandBytes = Read32(data + 64 + 12);
+    uint32_t offset = 224;
+    uint32_t fusedCommands = 0;
+    uint32_t generalAdds = 0;
+    while ( offset < 224 + commandBytes )
+    {
+        const uint16_t type = Read16(data + offset);
+        const uint16_t commandSize = Read16(data + offset + 2);
+        REQUIRE(commandSize >= sizeof(neuralai::CommandHeaderV2));
+        if ( type == uint16_t(neuralai::CommandType::LineBufferBinary) ||
+             type == uint16_t(neuralai::CommandType::LineBufferBinarySubmit) )
+        {
+            REQUIRE(commandSize == sizeof(neuralai::CommandLineBufferBinaryV2));
+            REQUIRE(Read32(data + offset + 16 + 80 + 16) == 16);
+            REQUIRE(Read32(data + offset + 16 + 80 + 20) == 0);
+            constexpr size_t binary = offsetof(
+                neuralai::CommandLineBufferBinaryV2, binary);
+            REQUIRE(Read32(data + offset + binary + offsetof(
+                neuralai::SystolicBinaryCfg, lhsMultiplier)) != 0);
+            REQUIRE(Read32(data + offset + binary + offsetof(
+                neuralai::SystolicBinaryCfg, mode)) ==
+                uint32_t(neuralai::SpatzBinaryMode::Add));
+            ++fusedCommands;
+        }
+        if ( type == uint16_t(neuralai::CommandType::SpatzAdd) ) ++generalAdds;
+        offset += commandSize;
+    }
+    REQUIRE(offset == 224 + commandBytes);
+    REQUIRE(fusedCommands == 1);
+    REQUIRE(generalAdds == 0);
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
 }
 
 TEST_CASE("Neural-AI compiler emits grouped linebuffer jobs for generic K3 Conv2D")
