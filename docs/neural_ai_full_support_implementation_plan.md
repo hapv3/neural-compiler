@@ -147,7 +147,8 @@ new runtime path has not yet passed E2E.
 | Rolling Conv/LUT/Concat cascade | Compiler verified | full-width Y stripes; DMA3D Concat gather; rolling pointwise Conv; asymmetric padding fill |
 | Depthwise Conv K3 | Verified | selected S1/S2 contracts; multi-group L2 feature-map stripes are compiler verified |
 | Asymmetric Conv canonicalization | Verified | exact bias correction and padding behavior |
-| Add/Sub | Verified | raw AFU Add, exact producer canonicalization, or quantized Spatz binary fallback; compact coordinate planes and staged constants |
+| Add/Sub | Verified | raw AFU Add, exact producer canonicalization, quantized Spatz fallback, or immediate linebuffer binary fusion; compact coordinate planes and staged constants |
+| Fused Conv binary post-op | Verified | Regor fuses eligible immediate Conv/linebuffer -> Add/Sub; the 32-lane RTL datapath supports Add/Sub/Mul, while automatic compiler fusion remains limited to the defined Add/Sub ABI |
 | Compact scalar Mul | Verified | exact TFLite integer rewrite to one 256-byte AFU LUT; no scalar or Spatz Mul loop |
 | Activations | Verified | fused RQ clamps; standalone AFU LUT Sigmoid/clipping; LUT-fused output Quantize |
 | YOLO SiLU | Verified | exact `x * Sigmoid(x)` LUT fusion; no generic Mul |
@@ -159,12 +160,12 @@ new runtime path has not yet passed E2E.
 | Concat | Compiler verified | striped/tail gathers; final compact plane-axis output DMA; native two-input C32 inputs may reload from L2 into a TCDM output |
 | YOLO C144 head transpose | Verified fallback | standalone heads retain vectorized C32-to-CHW materialization |
 | DFL16 projection | Verified | selected heads feed C64/C80 C32 directly; box-scale requant is folded into each DFL command |
-| Async DMA and overlap | Not implemented | blocking execution remains correct; performance phase |
-| Full selected graphs | Compiler verified | selected YOLO320 emits a `.nai`; reported peaks are 490 KiB TCDM and 3,740.88 KiB total DRAM/L2-backed memory; the first 22 commands pass cluster E2E, while later prefixes and the full graph remain |
+| Async DMA and overlap | Verified foundation | dependency-aware submit/wait commands, systolic submit/wait, and the 16-entry iDMA job queue are active; cross-command ping-pong and broader engine overlap remain P3 work |
+| Full selected graphs | Compiler verified | current selected YOLO320 emits 4,281 executable commands, requires 514,560 bytes of TCDM, and reports 3,740.88 KiB total DRAM/L2-backed memory; focused prefixes pass, but the current full command stream still needs cluster E2E |
 
-The focused Regor suite passes 127 Neural-AI cases and 39,622 assertions; the
-complete suite passes 273 cases and 651,179 assertions (the randomized suite's
-assertion total varies with its reported seed).
+The latest focused Regor filters pass 135 `*Neural-AI*` cases and 21
+`*neural_ai*` cases respectively. The complete suite remains the release gate;
+assertion totals from randomized cases vary with their reported seed.
 Runtime ABI/host checks, cross-builds, firmware-size gates, and focused C144,
 DFL16, and MatMul V2 E2E tests pass.
 
@@ -254,7 +255,7 @@ the focused test had not written its invocation and binding table to L2.
 
 ### Other retained evidence
 
-- Cross-repository ABI manifest currently checks 6 constants, 61 enums, and 26
+- Cross-repository ABI manifest currently checks 6 constants, 66 enums, and 28
   structures.
 - Unaligned DMA and C3/C31 boundary round trips are byte-exact; the ROW32 matrix
   covers C3, C31, C32, C33, C63, C64, and C65.
@@ -287,7 +288,7 @@ the focused test had not written its invocation and binding table to L2.
   TCDM. The structural block test uses 2+3+5 planes at arbitrary `L=37` and
   checks all three byte counts, regions, direction, and destination offsets.
 - Runtime `.text` must be rechecked after every runtime increment. Trusted V2-only
-  firmware currently reports 23,548 bytes, leaving 9,220 bytes of ITCM margin.
+  firmware currently reports 24,604 bytes, leaving 8,164 bytes of ITCM margin.
 
 ## 5. Remaining work, in execution order
 
@@ -362,9 +363,14 @@ callback after cascade/time-index selection and before fast-storage allocation.
 
 Next verified increments:
 
-1. Extend the selected YOLO320 cluster checkpoint from 22 commands to 129,
-   then continue by bounded prefixes to the full 3,910-command graph. Starting
-   each Verilator run ends the Codex section immediately.
+1. Regenerate full-YOLO command-boundary expectations for the current 4,281
+   executable-command package; snapshots from the former 3,910-command package
+   are not reusable because their model CRC and command indices differ.
+2. Run bounded, dependency-safe prefixes from the latest valid boundary, save a
+   snapshot after every passing boundary, and extend cluster E2E through command
+   4,281. Starting each Verilator run ends the Codex section immediately.
+3. After the full command list completes, compare the public output byte-for-byte
+   with TFLite `BUILTIN_REF`; prefix PASS alone is not full-model correctness.
 
 Completed path:
 
@@ -432,12 +438,27 @@ Completed path:
   qparam-bound, range, or alignment validation per command. Non-trusted host
   malformed-command tests remain unchanged. Full compiler tests and firmware
   build pass; firmware `.text` falls from 24,468 to 23,548 bytes.
+- Completed initial asynchronous execution: Regor emits dependency-checked DMA
+  and linebuffer submit/wait pairs, firmware feeds the 16-entry iDMA hardware
+  queue, and runtime drains outstanding work before completion. The completion
+  predicate now accepts a `done_id` that has advanced past an older queued
+  transfer, including 32-bit wrap, instead of requiring equality and global
+  DMA-idle. The host queue test and compiler-generated cluster regression pass.
+- Completed fused linebuffer binary post-op: eligible exact-coverage local C32
+  Conv -> Add/Sub chains become one 224-byte command. Compiler positive and
+  rejection tests pass; a generated K1 -> K3 -> Add -> K1 package contains one
+  fused command and no `SPATZ_ADD`, and is byte-exact for all 512 output bytes
+  in cluster simulation. It completes 10 commands in 69,279 PMU cycles with
+  24 iDMA starts and 24 completions. The selected YOLO320 graph has no eligible
+  direct linebuffer Conv -> Add/Sub adjacency, so this does not force a slower
+  schedule merely to increase fusion count.
 - Completed Neural-AI scheduler isolation from generic weight buffering. The
   target command generator owns packed-weight staging and requires one encoded
   constant range; generic performance scheduling could split operation 22 into
   two incompatible ranges after DRAM-estimator tuning. The compiler now
   disables that unsupported scheduler feature at the Neural-AI target boundary.
-  The selected YOLO320 model again compiles to 3,910 commands, including 27
+  At that checkpoint the selected YOLO320 model compiled to 3,910 commands,
+  including 27
   biased AFU binary commands and the expected command 879 payload
   `(length=51,200, mode=2, bias=110)`.
 - Completed direct head postprocess: fused DFL consumes C64 and C80 C32 inputs,
@@ -503,7 +524,8 @@ Only after correctness and SRAM feasibility:
   the current job runs. Only do this when dependency analysis proves that no
   intervening DMA, RQ update, buffer hazard, or configuration ownership change
   must complete first; otherwise retain the current blocking path.
-- Add asynchronous DMA submit/wait with event IDs.
+- Implemented asynchronous DMA submit/wait with per-direction transfer IDs and
+  monotonic/wrap-aware completion tracking.
 - Add ping-pong IFM, weight, and OFM buffers and dependency-aware scheduling.
 - Combine dispatcher look-ahead with asynchronous DMA only after both paths are
   independently byte-exact. Prove actual overlap with PMU busy/stall attribution
@@ -523,15 +545,13 @@ Only after correctness and SRAM feasibility:
   this path is considered fully adopted. Commands 864, 1055, 1464, 3902, 3904,
   3905, and 3906 retain the general quantized Spatz ADD/SUB path unless a
   separately justified general AFU pipeline is approved.
-- Candidate after PMU calibration: fuse `systolic output -> general binary
-  requant -> TCDM` for an immediately adjacent Conv+Add/Sub/Mul post-op. Prefer
-  a post-op AFU beside the systolic output FIFO over widening the systolic
-  requant critical path. It requires two independently quantized inputs and a
-  wider product path for Mul, so it is an explicit RTL increment requiring
-  approval. The current YOLO320 command estimate attributes only about 26.8K
-  cycles to all 27 AFU fast and seven general Spatz binary commands; prioritize
-  it only if PMU shows substantially larger firmware/packing cost or fusion
-  removes material L2/TCDM traffic.
+- Implemented the approved `systolic output -> general binary requant -> TCDM`
+  datapath with a pipelined 32-lane RHS prefetch/requant stage and shadowed
+  configuration. RTL block tests cover Add/Sub/Mul byte-exactly. Regor currently
+  forms the fused command only for immediate Add/Sub whose full row coverage,
+  local C32 references, ordering, and hazards are proven; there is no general
+  compiler `SPATZ_MUL` contract to fuse. Keep unfused paths when topology does
+  not qualify rather than reshaping the schedule solely to trigger this mode.
 - Remove avoidable boundary conversions, materializations, repeated qparam/LUT
   staging, one-byte commands, and scalar loops from selected hot paths.
 - Add layer/tile-to-command-byte debug mapping and L2-traffic/command-count
