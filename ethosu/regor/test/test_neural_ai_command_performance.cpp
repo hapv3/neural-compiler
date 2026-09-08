@@ -201,6 +201,27 @@ TEST_CASE("neural_ai command performance hides asynchronous systolic cycles")
     CHECK(result.commands[2].totalCycles == std::max<int64_t>(1, remaining));
 }
 
+TEST_CASE("neural_ai command performance includes fused binary RHS traffic")
+{
+    ArchNeuralAI architecture;
+    neuralai::CommandLineBufferBinaryV2 command{};
+    command.header.type = uint16_t(neuralai::CommandType::LineBufferBinary);
+    command.header.sizeBytes = sizeof(command);
+    command.job.rows = 64;
+    command.job.kTiles = 9;
+    command.binary.rhsAddr = 0x4000;
+
+    CompiledNeuralAIArtifact artifact;
+    AppendCommand(artifact, command);
+    const auto result = MeasureNeuralAICommandPerformance(artifact, &architecture);
+
+    REQUIRE(result.commands.size() == 1);
+    CHECK(result.commands[0].name == "LINE_BUFFER_BINARY");
+    CHECK(result.commands[0].computeCycles == 64 * 9);
+    CHECK(result.commands[0].tcdmReadBytes == 9 * 32 * 32 + 64 * 9 * 32 + 64 * 32);
+    CHECK(result.commands[0].tcdmWriteBytes == 64 * 32);
+}
+
 TEST_CASE("neural_ai command performance stops at a truncated command")
 {
     ArchNeuralAI architecture;

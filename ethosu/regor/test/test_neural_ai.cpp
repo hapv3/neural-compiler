@@ -216,6 +216,123 @@ TEST_CASE("Neural-AI command overlap crosses independent compute and stops at ha
         uint32_t(neuralai::DMADirection::ExternalToLocal));
 }
 
+TEST_CASE("Neural-AI command fusion replaces linebuffer output and general binary")
+{
+    neuralai::CommandLineBufferJobV2 first{};
+    first.header.type = uint16_t(neuralai::CommandType::LineBufferJob);
+    first.header.sizeBytes = sizeof(first);
+    first.job.linebuf.inputBase = 0x6000;
+    first.job.linebuf.inputH = 3;
+    first.job.linebuf.rowStrideBytes = 96;
+    first.job.gemm.weightAddr = 0x7000;
+    first.job.gemm.ofmAddr = 0x1000;
+    first.job.gemm.dimM = 2;
+    first.job.gemm.ofmRowStrideBytes = 64;
+    first.job.gemm.ofmTileCols = 2;
+    first.job.rows = 2;
+    first.job.kTiles = 9;
+
+    neuralai::CommandLineBufferJobV2 second = first;
+    second.job.gemm.ofmAddr = 0x1040;
+
+    neuralai::CommandRQLoadV2 rq{};
+    rq.header.type = uint16_t(neuralai::CommandType::RQLoad);
+    rq.header.sizeBytes = sizeof(rq);
+
+    neuralai::CommandSpatzAddV2 add{};
+    add.header.type = uint16_t(neuralai::CommandType::SpatzAdd);
+    add.header.sizeBytes = sizeof(add);
+    add.lhs = {uint16_t(neuralai::Region::TCDMScratch), 0, 0x1000};
+    add.rhs = {uint16_t(neuralai::Region::TCDMScratch), 0, 0x2000};
+    add.ofm = {uint16_t(neuralai::Region::TCDMScratch), 0, 0x3000};
+    add.length = 128;
+    add.lhsScale = 17;
+    add.lhsShift = 8;
+    add.rhsScale = 19;
+    add.rhsShift = 9;
+    add.outputScale = 23;
+    add.outputShift = 10;
+    add.lhsZeroPoint = -7;
+    add.rhsZeroPoint = 5;
+    add.outputZeroPoint = -3;
+    add.clampMin = -100;
+    add.clampMax = 99;
+    add.doubleRoundShift = 1;
+    add.mode = uint32_t(neuralai::SpatzBinaryMode::Subtract);
+
+    std::vector<uint8_t> commands;
+    const auto append = [&](const auto &command)
+    {
+        const auto *bytes = reinterpret_cast<const uint8_t *>(&command);
+        commands.insert(commands.end(), bytes, bytes + sizeof(command));
+    };
+    append(first);
+    append(rq);
+    append(second);
+    append(add);
+
+    REQUIRE(NeuralAICommandGenerator::FuseSystolicBinaryPostOps(commands) == 1);
+    REQUIRE(commands.size() == 2 * sizeof(neuralai::CommandLineBufferBinaryV2) + sizeof(rq));
+    const auto *fusedFirst = reinterpret_cast<const neuralai::CommandLineBufferBinaryV2 *>(commands.data());
+    const auto *fusedSecond = reinterpret_cast<const neuralai::CommandLineBufferBinaryV2 *>(
+        commands.data() + sizeof(*fusedFirst) + sizeof(rq));
+    REQUIRE(fusedFirst->header.type == uint16_t(neuralai::CommandType::LineBufferBinary));
+    REQUIRE(fusedFirst->header.sizeBytes == sizeof(*fusedFirst));
+    REQUIRE(fusedFirst->job.gemm.ofmAddr == 0x3000);
+    REQUIRE(fusedFirst->binary.rhsAddr == 0x2000);
+    REQUIRE(fusedFirst->binary.rhsRowStrideBytes == 64);
+    REQUIRE(fusedFirst->binary.rhsTileCols == 2);
+    REQUIRE(fusedFirst->binary.lhsMultiplier == 17);
+    REQUIRE(fusedFirst->binary.lhsShift == 8);
+    REQUIRE(fusedFirst->binary.mode == uint32_t(neuralai::SpatzBinaryMode::Subtract));
+    REQUIRE(fusedSecond->job.gemm.ofmAddr == 0x3040);
+    REQUIRE(fusedSecond->binary.rhsAddr == 0x2040);
+
+    neuralai::CommandLineBufferBinaryV2 overlapCandidate = *fusedFirst;
+    neuralai::CommandAFUBinaryV2 independent{};
+    independent.header.type = uint16_t(neuralai::CommandType::AFUBinary);
+    independent.header.sizeBytes = sizeof(independent);
+    independent.lhs = {uint16_t(neuralai::Region::TCDMScratch), 0, 0x5000};
+    independent.rhs = {uint16_t(neuralai::Region::TCDMScratch), 0, 0x5200};
+    independent.ofm = {uint16_t(neuralai::Region::TCDMScratch), 0, 0x5400};
+    independent.length = 128;
+    commands.clear();
+    append(overlapCandidate);
+    append(independent);
+    REQUIRE(NeuralAICommandGenerator::OptimizeCommandOverlap(commands) == 1);
+    const auto commandType = [&](size_t offset)
+    {
+        return uint16_t(commands[offset]) | uint16_t(uint16_t(commands[offset + 1]) << 8);
+    };
+    REQUIRE(commandType(0) ==
+        uint16_t(neuralai::CommandType::LineBufferBinarySubmit));
+    REQUIRE(commandType(sizeof(overlapCandidate) + sizeof(independent)) ==
+        uint16_t(neuralai::CommandType::SystolicWait));
+
+    neuralai::CommandDMA1DV2 overwrite{};
+    overwrite.header.type = uint16_t(neuralai::CommandType::DMA1D);
+    overwrite.header.sizeBytes = sizeof(overwrite);
+    overwrite.source = {uint16_t(neuralai::Region::ModelConstants), 0, 0};
+    overwrite.destination = {uint16_t(neuralai::Region::TCDMScratch), 0, 0x2000};
+    overwrite.length = 64;
+    overwrite.direction = uint32_t(neuralai::DMADirection::ExternalToLocal);
+    commands.clear();
+    append(first);
+    append(overwrite);
+    append(second);
+    append(add);
+    REQUIRE(NeuralAICommandGenerator::FuseSystolicBinaryPostOps(commands) == 0);
+    REQUIRE(commands.size() == 2 * sizeof(first) + sizeof(overwrite) + sizeof(add));
+
+    commands.clear();
+    append(first);
+    append(second);
+    add.ofm.offset = add.lhs.offset;
+    append(add);
+    REQUIRE(NeuralAICommandGenerator::FuseSystolicBinaryPostOps(commands) == 0);
+    REQUIRE(commands.size() == 2 * sizeof(first) + sizeof(add));
+}
+
 uint32_t Read32(const uint8_t *data)
 {
     return uint32_t(data[0]) | (uint32_t(data[1]) << 8) |

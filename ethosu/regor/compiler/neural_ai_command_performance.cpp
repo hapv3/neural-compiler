@@ -87,6 +87,8 @@ const char *CommandName(CommandType type)
         case CommandType::AFUDFL16: return "AFU_DFL16";
         case CommandType::LineBufferSubmit: return "LINE_BUFFER_SUBMIT";
         case CommandType::SystolicWait: return "SYSTOLIC_WAIT";
+        case CommandType::LineBufferBinary: return "LINE_BUFFER_BINARY";
+        case CommandType::LineBufferBinarySubmit: return "LINE_BUFFER_BINARY_SUBMIT";
         default: return "UNKNOWN";
     }
 }
@@ -229,7 +231,8 @@ NeuralAICommandPerformanceResult MeasureNeuralAICommandPerformance(
         const bool dmaSubmit = type == CommandType::DMASubmit1D ||
             type == CommandType::DMASubmit2D || type == CommandType::DMASubmit3D;
         const bool dmaWait = type == CommandType::DMAWait;
-        const bool systolicSubmit = type == CommandType::LineBufferSubmit;
+        const bool systolicSubmit = type == CommandType::LineBufferSubmit ||
+            type == CommandType::LineBufferBinarySubmit;
         const bool systolicWait = type == CommandType::SystolicWait;
 
         switch ( type )
@@ -308,7 +311,14 @@ NeuralAICommandPerformanceResult MeasureNeuralAICommandPerformance(
                 break;
             case CommandType::LineBufferJob:
             case CommandType::LineBufferSubmit:
-                if ( size >= sizeof(neuralai::CommandLineBufferJobV2) )
+            case CommandType::LineBufferBinary:
+            case CommandType::LineBufferBinarySubmit:
+            {
+                const bool binary = type == CommandType::LineBufferBinary ||
+                    type == CommandType::LineBufferBinarySubmit;
+                const size_t expectedSize = binary ? sizeof(neuralai::CommandLineBufferBinaryV2) :
+                    sizeof(neuralai::CommandLineBufferJobV2);
+                if ( size >= expectedSize )
                 {
                     constexpr size_t jobOffset = offsetof(neuralai::CommandLineBufferJobV2, job);
                     constexpr size_t rowsOffset = jobOffset + offsetof(neuralai::LinebufJobWireV1, rows);
@@ -316,10 +326,13 @@ NeuralAICommandPerformanceResult MeasureNeuralAICommandPerformance(
                     const int64_t rows = Read32(command + rowsOffset);
                     const int64_t kTiles = Read32(command + kTilesOffset);
                     const int64_t work = SaturatingMultiply(rows, kTiles);
-                    AddTCDM(measurement, kTiles * 32 * 32 + work * 32, rows * 32);
+                    AddTCDM(measurement,
+                        kTiles * 32 * 32 + work * 32 + (binary ? rows * 32 : 0),
+                        rows * 32);
                     measurement.row.computeCycles = std::max<int64_t>(1, work);
                 }
                 break;
+            }
             case CommandType::DepthwiseC32:
                 if ( size >= sizeof(neuralai::CommandDepthwiseC32V2) )
                 {

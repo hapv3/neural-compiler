@@ -523,6 +523,9 @@ bool DecodeIndependentCommandAccesses(const uint8_t *command, CommandType type,
                    AddCommandAccess(accesses, command, 32, outputPixels * 32, true);
         }
         case CommandType::LineBufferJob:
+        case CommandType::LineBufferSubmit:
+        case CommandType::LineBufferBinary:
+        case CommandType::LineBufferBinarySubmit:
         {
             constexpr size_t job = offsetof(neuralai::CommandLineBufferJobV2, job);
             constexpr size_t cfg = job + offsetof(neuralai::LinebufJobWireV1, linebuf);
@@ -558,7 +561,21 @@ bool DecodeIndependentCommandAccesses(const uint8_t *command, CommandType type,
                  !AddLocalCommandAccess(accesses, psumAddress, psumBytes, false) ) return false;
             if ( accum == 1 || accum == 3 )
                 return AddLocalCommandAccess(accesses, psumAddress, psumBytes, true);
-            return AddLocalCommandAccess(accesses, outputAddress, outputBytes, true);
+            if ( !AddLocalCommandAccess(accesses, outputAddress, outputBytes, true) ) return false;
+            if ( type == CommandType::LineBufferBinary ||
+                 type == CommandType::LineBufferBinarySubmit )
+            {
+                constexpr size_t binary = offsetof(neuralai::CommandLineBufferBinaryV2, binary);
+                const uint64_t rhsStride = Read32(command + binary +
+                    offsetof(neuralai::SystolicBinaryCfg, rhsRowStrideBytes));
+                const uint64_t rhsColumns = Read32(command + binary +
+                    offsetof(neuralai::SystolicBinaryCfg, rhsTileCols));
+                const uint64_t rhsBytes = StridedTileSpan(rows, 32, rhsStride, rhsColumns);
+                return AddLocalCommandAccess(accesses,
+                    Read32(command + binary + offsetof(neuralai::SystolicBinaryCfg, rhsAddr)),
+                    rhsBytes, false);
+            }
+            return true;
         }
         case CommandType::AFUGlobalAvgPool:
         {
@@ -759,6 +776,209 @@ uint32_t CoalesceInterleavedPointwiseRows(std::vector<uint8_t> &commands)
     return removed;
 }
 
+bool DecodeFusionHazardAccesses(const uint8_t *command, CommandType type,
+    std::vector<CommandAccess> &accesses)
+{
+    if ( DecodeIndependentCommandAccesses(command, type, accesses) ) return true;
+    DMACommandInfo dma;
+    if ( DecodeDMACommand(command, type, dma) )
+    {
+        accesses.clear();
+        accesses.push_back({dma.sourceRegion, dma.sourceIndex,
+            dma.sourceBegin, dma.sourceEnd, false});
+        accesses.push_back({dma.destinationRegion, dma.destinationIndex,
+            dma.destinationBegin, dma.destinationEnd, true});
+        return true;
+    }
+    accesses.clear();
+    return type == CommandType::DMAWait || type == CommandType::Barrier ||
+           type == CommandType::SystolicWait;
+}
+
+bool AccessOverlapsLocal(const CommandAccess &access, uint64_t begin, uint64_t end)
+{
+    return access.region == uint16_t(Region::TCDMScratch) && access.index == 0 &&
+           Overlaps(access.begin, access.end, begin, end);
+}
+
+bool FuseOneSystolicBinaryPostOp(std::vector<uint8_t> &commands)
+{
+    std::vector<size_t> offsets;
+    for ( size_t offset = 0; offset < commands.size(); )
+    {
+        if ( offset + sizeof(neuralai::CommandHeaderV2) > commands.size() ) return false;
+        const uint16_t size = Read16(commands.data() + offset + 2);
+        if ( size < sizeof(neuralai::CommandHeaderV2) || offset + size > commands.size() ) return false;
+        offsets.push_back(offset);
+        offset += size;
+    }
+
+    constexpr size_t linebufJob = offsetof(neuralai::CommandLineBufferJobV2, job);
+    constexpr size_t gemm = linebufJob + offsetof(neuralai::LinebufJobWireV1, gemm);
+    constexpr size_t gemmOfm = gemm + offsetof(neuralai::SystolicGemm32Req, ofmAddr);
+    constexpr size_t gemmRows = gemm + offsetof(neuralai::SystolicGemm32Req, dimM);
+    constexpr size_t gemmAccum = gemm + offsetof(neuralai::SystolicGemm32Req, accumEn);
+    constexpr size_t gemmStride = gemm + offsetof(neuralai::SystolicGemm32Req, ofmRowStrideBytes);
+    constexpr size_t gemmColumns = gemm + offsetof(neuralai::SystolicGemm32Req, ofmTileCols);
+
+    for ( size_t addIndex = 0; addIndex < offsets.size(); ++addIndex )
+    {
+        const uint8_t *add = commands.data() + offsets[addIndex];
+        if ( CommandType(Read16(add)) != CommandType::SpatzAdd ||
+             Read16(add + 2) != sizeof(neuralai::CommandSpatzAddV2) ||
+             Read16(add + 16) != uint16_t(Region::TCDMScratch) || Read16(add + 18) != 0 ||
+             Read16(add + 24) != uint16_t(Region::TCDMScratch) || Read16(add + 26) != 0 ||
+             Read16(add + 32) != uint16_t(Region::TCDMScratch) || Read16(add + 34) != 0 )
+            continue;
+        const uint32_t length = Read32(add + 40);
+        const uint32_t mode = Read32(add + 92);
+        if ( length == 0 || (length & 31u) != 0 || mode > uint32_t(SpatzBinaryMode::Subtract) )
+            continue;
+        const uint64_t lhsBegin = Read32(add + 20);
+        const uint64_t lhsEnd = lhsBegin + length;
+        const uint64_t rhsBegin = Read32(add + 28);
+        const uint64_t rhsEnd = rhsBegin + length;
+        const uint64_t outputBegin = Read32(add + 36);
+        const uint64_t outputEnd = outputBegin + length;
+        if ( (lhsBegin & 31u) != 0 || (rhsBegin & 31u) != 0 ||
+             (outputBegin & 31u) != 0 ||
+             lhsEnd > uint64_t(std::numeric_limits<uint32_t>::max()) + 1 ||
+             rhsEnd > uint64_t(std::numeric_limits<uint32_t>::max()) + 1 ||
+             outputEnd > uint64_t(std::numeric_limits<uint32_t>::max()) + 1 ||
+             Overlaps(lhsBegin, lhsEnd, outputBegin, outputEnd) ||
+             Overlaps(rhsBegin, rhsEnd, outputBegin, outputEnd) )
+            continue;
+
+        std::vector<uint8_t> covered(length / 32u, 0);
+        std::vector<size_t> producers;
+        uint32_t coveredRows = 0;
+        bool valid = true;
+        for ( size_t cursor = addIndex; cursor-- > 0 && coveredRows != covered.size(); )
+        {
+            const uint8_t *candidate = commands.data() + offsets[cursor];
+            const CommandType candidateType = CommandType(Read16(candidate));
+            bool producer = candidateType == CommandType::LineBufferJob &&
+                Read16(candidate + 2) == sizeof(neuralai::CommandLineBufferJobV2);
+            const uint32_t rows = producer ? Read32(candidate + gemmRows) : 0;
+            const uint32_t accum = producer ? Read32(candidate + gemmAccum) : 0;
+            const uint32_t base = producer ? Read32(candidate + gemmOfm) : 0;
+            const uint32_t stride = producer ? Read32(candidate + gemmStride) : 0;
+            const uint32_t columns = producer ? Read32(candidate + gemmColumns) : 0;
+            producer = producer && rows != 0 && (accum == 0 || accum == 2);
+            std::vector<uint32_t> rowIndices;
+            rowIndices.reserve(rows);
+            for ( uint32_t row = 0; producer && row < rows; ++row )
+            {
+                const uint64_t address = (stride == 0 || columns == 0) ?
+                    uint64_t(base) + uint64_t(row) * 32u :
+                    uint64_t(base) + uint64_t(row / columns) * stride +
+                        uint64_t(row % columns) * 32u;
+                if ( address < lhsBegin || address + 32u > lhsEnd ||
+                     ((address - lhsBegin) & 31u) != 0 )
+                {
+                    producer = false;
+                    break;
+                }
+                const uint32_t rowIndex = uint32_t((address - lhsBegin) / 32u);
+                if ( covered[rowIndex] != 0 )
+                {
+                    producer = false;
+                    break;
+                }
+                rowIndices.push_back(rowIndex);
+            }
+            if ( producer )
+            {
+                for ( uint32_t rowIndex : rowIndices ) covered[rowIndex] = 1;
+                coveredRows += rows;
+                producers.push_back(cursor);
+                continue;
+            }
+
+            std::vector<CommandAccess> accesses;
+            if ( !DecodeFusionHazardAccesses(candidate, candidateType, accesses) )
+            {
+                valid = false;
+                break;
+            }
+            if ( std::any_of(accesses.begin(), accesses.end(), [&](const CommandAccess &access)
+                 { return AccessOverlapsLocal(access, lhsBegin, lhsEnd); }) )
+            {
+                valid = false;
+                break;
+            }
+        }
+        if ( !valid || coveredRows != covered.size() || producers.empty() ) continue;
+
+        const size_t firstProducer = *std::min_element(producers.begin(), producers.end());
+        for ( size_t cursor = firstProducer; valid && cursor < addIndex; ++cursor )
+        {
+            if ( std::find(producers.begin(), producers.end(), cursor) != producers.end() ) continue;
+            const uint8_t *candidate = commands.data() + offsets[cursor];
+            std::vector<CommandAccess> accesses;
+            if ( !DecodeFusionHazardAccesses(candidate,
+                    CommandType(Read16(candidate)), accesses) )
+            {
+                valid = false;
+                break;
+            }
+            for ( const CommandAccess &access : accesses )
+            {
+                if ( AccessOverlapsLocal(access, lhsBegin, lhsEnd) ||
+                     AccessOverlapsLocal(access, outputBegin, outputEnd) ||
+                     (access.write && AccessOverlapsLocal(access, rhsBegin, rhsEnd)) )
+                {
+                    valid = false;
+                    break;
+                }
+            }
+        }
+        if ( !valid ) continue;
+
+        std::vector<uint8_t> rewritten;
+        rewritten.reserve(commands.size() - sizeof(neuralai::CommandSpatzAddV2) +
+            producers.size() * (sizeof(neuralai::CommandLineBufferBinaryV2) -
+                sizeof(neuralai::CommandLineBufferJobV2)));
+        for ( size_t index = 0; index < offsets.size(); ++index )
+        {
+            const uint8_t *command = commands.data() + offsets[index];
+            const uint16_t size = Read16(command + 2);
+            if ( index == addIndex ) continue;
+            if ( std::find(producers.begin(), producers.end(), index) == producers.end() )
+            {
+                rewritten.insert(rewritten.end(), command, command + size);
+                continue;
+            }
+            const size_t replacement = rewritten.size();
+            rewritten.insert(rewritten.end(), command,
+                command + offsetof(neuralai::CommandLineBufferJobV2, reserved));
+            rewritten[replacement] = uint8_t(uint16_t(CommandType::LineBufferBinary));
+            rewritten[replacement + 1] = uint8_t(uint16_t(CommandType::LineBufferBinary) >> 8);
+            rewritten[replacement + 2] = uint8_t(sizeof(neuralai::CommandLineBufferBinaryV2));
+            rewritten[replacement + 3] = uint8_t(sizeof(neuralai::CommandLineBufferBinaryV2) >> 8);
+            const uint32_t outputOffset = Read32(command + gemmOfm) - uint32_t(lhsBegin);
+            Write32(rewritten, replacement + gemmOfm, uint32_t(outputBegin) + outputOffset);
+            Append32(rewritten, uint32_t(rhsBegin) + outputOffset);
+            Append32(rewritten, Read32(command + gemmStride));
+            Append32(rewritten, Read32(command + gemmColumns));
+            for ( size_t parameter = 44; parameter <= 92; parameter += 4 )
+                Append32(rewritten, Read32(add + parameter));
+            AppendZeros(rewritten, 5);
+            assert(rewritten.size() == replacement + sizeof(neuralai::CommandLineBufferBinaryV2));
+        }
+        commands = std::move(rewritten);
+        return true;
+    }
+    return false;
+}
+
+uint32_t FuseSystolicBinaryPostOpCommands(std::vector<uint8_t> &commands)
+{
+    uint32_t fused = 0;
+    while ( FuseOneSystolicBinaryPostOp(commands) ) ++fused;
+    return fused;
+}
+
 uint32_t OverlapDMAQueue(std::vector<uint8_t> &commands, uint32_t batchDirection)
 {
     constexpr uint32_t queueDepth = 16;
@@ -875,7 +1095,8 @@ uint32_t OverlapSystolicLinebuffers(std::vector<uint8_t> &commands)
         const uint16_t size = Read16(command + 2);
         if ( size < sizeof(neuralai::CommandHeaderV2) || offset + size > commands.size() ) break;
         std::vector<CommandAccess> pending;
-        bool overlap = type == CommandType::LineBufferJob &&
+        const bool binary = type == CommandType::LineBufferBinary;
+        bool overlap = (type == CommandType::LineBufferJob || binary) &&
             DecodeIndependentCommandAccesses(command, type, pending);
         bool hasIndependentWork = false;
         size_t next = offset + size;
@@ -916,7 +1137,8 @@ uint32_t OverlapSystolicLinebuffers(std::vector<uint8_t> &commands)
         {
             const size_t rewrittenSubmit = rewritten.size();
             rewritten.insert(rewritten.end(), commands.begin() + offset, commands.begin() + next);
-            const CommandType submit = CommandType::LineBufferSubmit;
+            const CommandType submit = binary ? CommandType::LineBufferBinarySubmit :
+                                                CommandType::LineBufferSubmit;
             rewritten[rewrittenSubmit] = uint8_t(uint16_t(submit));
             rewritten[rewrittenSubmit + 1] = uint8_t(uint16_t(submit) >> 8);
             AppendHeader(rewritten, CommandType::SystolicWait, 32,
@@ -4866,6 +5088,11 @@ uint32_t NeuralAICommandGenerator::OptimizeCommandOverlap(std::vector<uint8_t> &
     return dmaWaits + OverlapSystolicLinebuffers(commands);
 }
 
+uint32_t NeuralAICommandGenerator::FuseSystolicBinaryPostOps(std::vector<uint8_t> &commands)
+{
+    return FuseSystolicBinaryPostOpCommands(commands);
+}
+
 MemorySnapshot NeuralAICommandGenerator::WorkspaceReservation(
     const std::vector<std::unique_ptr<SchedulerOperation>> &operations,
     const Schedule *schedule)
@@ -5551,6 +5778,9 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
             return false;
         }
     }
+    const uint32_t fusedBinaryCommands = FuseSystolicBinaryPostOps(artifact.commands);
+    assert(fusedBinaryCommands <= artifact.commandCount);
+    artifact.commandCount -= fusedBinaryCommands;
     const uint32_t coalescedCommands = CoalesceInterleavedPointwiseRows(artifact.commands);
     assert(coalescedCommands <= artifact.commandCount);
     artifact.commandCount -= coalescedCommands;
