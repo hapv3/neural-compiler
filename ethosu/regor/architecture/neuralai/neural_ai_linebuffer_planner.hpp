@@ -68,6 +68,26 @@ struct SystolicGemm32Req
     uint32_t psumRowStrideBytes = 0;
 };
 
+struct SystolicBinaryCfg
+{
+    uint32_t rhsAddr = 0;
+    uint32_t rhsRowStrideBytes = 0;
+    uint32_t rhsTileCols = 0;
+    int32_t lhsMultiplier = 0;
+    uint32_t lhsShift = 0;
+    int32_t rhsMultiplier = 0;
+    uint32_t rhsShift = 0;
+    int32_t outputMultiplier = 0;
+    uint32_t outputShift = 0;
+    int32_t lhsZeroPoint = 0;
+    int32_t rhsZeroPoint = 0;
+    int32_t outputZeroPoint = 0;
+    int32_t clampMin = -128;
+    int32_t clampMax = 127;
+    uint32_t doubleRoundShift = 0;
+    uint32_t mode = 0;
+};
+
 struct LinebufferJob
 {
     SystolicLinebufCfg linebuf;
@@ -167,6 +187,7 @@ public:
 
 static_assert(sizeof(SystolicLinebufCfg) == 80);
 static_assert(sizeof(SystolicGemm32Req) == 36);
+static_assert(sizeof(SystolicBinaryCfg) == 64);
 static_assert(sizeof(LinebufferJob) == 124);
 
 }  // namespace regor::neuralai

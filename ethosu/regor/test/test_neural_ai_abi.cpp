@@ -49,7 +49,11 @@ TEST_CASE("neural_ai_abi freezes asynchronous systolic command types")
 {
     REQUIRE(uint16_t(CommandType::LineBufferSubmit) == 29);
     REQUIRE(uint16_t(CommandType::SystolicWait) == 30);
+    REQUIRE(uint16_t(CommandType::LineBufferBinary) == 31);
+    REQUIRE(uint16_t(CommandType::LineBufferBinarySubmit) == 32);
     REQUIRE(sizeof(CommandLineBufferJobV2) == 160);
+    REQUIRE(sizeof(SystolicBinaryCfg) == 64);
+    REQUIRE(sizeof(CommandLineBufferBinaryV2) == 224);
     REQUIRE(sizeof(CommandHeaderV2) + 16 == 32);
 }
 

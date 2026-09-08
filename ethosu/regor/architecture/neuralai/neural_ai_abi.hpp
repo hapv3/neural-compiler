@@ -104,6 +104,8 @@ enum class CommandType : uint16_t
     AFUDFL16 = 28,
     LineBufferSubmit = 29,
     SystolicWait = 30,
+    LineBufferBinary = 31,
+    LineBufferBinarySubmit = 32,
 };
 
 enum CommandFlags : uint32_t
@@ -441,6 +443,14 @@ struct CommandLineBufferJobV2
     uint8_t reserved[20];
 };
 
+struct CommandLineBufferBinaryV2
+{
+    CommandHeaderV2 header;
+    LinebufJobWireV1 job;
+    SystolicBinaryCfg binary;
+    uint8_t reserved[20];
+};
+
 enum class CopyLayoutMode : uint16_t
 {
     NHWCToRow32 = 1,
@@ -511,6 +521,7 @@ static_assert(sizeof(CommandUpsampleNearestV2) == 64);
 static_assert(sizeof(CommandMaxPoolV2) == 96);
 static_assert(sizeof(LinebufJobWireV1) == 124);
 static_assert(sizeof(CommandLineBufferJobV2) == 160);
+static_assert(sizeof(CommandLineBufferBinaryV2) == 224);
 static_assert(sizeof(CommandCopyLayoutV2) == 96);
 
 static_assert(sizeof(CommandAFUDFL16V2) == 96);
