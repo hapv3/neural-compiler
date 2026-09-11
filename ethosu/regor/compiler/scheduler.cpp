@@ -228,7 +228,8 @@ std::shared_ptr<Schedule> Scheduler::Process()
         FastStorageAllocator allocator;
         const auto reuseIfms = !_options.disabled.All(SchedulerFeature::ReuseIFM);
         allocator.AllocateFeatureMaps(_ops, chosenSchedule.get(), _arch->StagingMemory(),
-            _options.allocationStagingLimit, reuseIfms, reservedUsagePtr);
+            _options.allocationStagingLimit, reuseIfms, reservedUsagePtr,
+            _options.fastStorageScore);
     }
 
     UpdateOpMemorySnapshot(chosenSchedule.get());
@@ -1042,9 +1043,16 @@ bool Scheduler::AllocateAddresses(Schedule *schedule)
     if ( _spilling )
     {
         const auto limit = _options.allocationStagingLimit;
+        MemorySnapshot workspace;
+        const MemorySnapshot *workspacePtr = nullptr;
+        if ( _options.commandWorkspaceReservation )
+        {
+            workspace = _options.commandWorkspaceReservation(_ops, schedule);
+            workspacePtr = &workspace;
+        }
         schedule->stagingLRGraph = std::make_unique<LiveRangeGraph>(reuseIfms);
         AllocateTensors(_ops, schedule, *schedule->stagingLRGraph, _arch->StagingMemory(), _options.tensorAllocator,
-            featureMapAlignment, verbose, limit);
+            featureMapAlignment, verbose, limit, workspacePtr);
         return schedule->memoryUsage[_arch->StagingMemory()] <= limit;
     }
     return true;

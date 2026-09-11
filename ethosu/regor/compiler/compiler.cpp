@@ -30,6 +30,7 @@
 #include "network_performance.hpp"
 #include "neural_ai_command_performance.hpp"
 #include "neural_ai_command_generator.hpp"
+#include "neural_ai_memory_placement.hpp"
 #include "neural_ai_writer.hpp"
 #include "raw_writer.hpp"
 #include "scheduler_packing.hpp"
@@ -703,6 +704,7 @@ std::unique_ptr<CompiledGraph> Compiler::CompileGraph(
             {
                 return NeuralAICommandGenerator::WorkspaceReservation(operations, schedule);
             };
+        schedulerOptions.fastStorageScore = NeuralAIFastStorageScore;
     }
     Scheduler scheduler(_architecture.get(), schedulerOptions, "graph", scheduleOps, packing.OpConfigCompatablility());
     std::shared_ptr<Schedule> schedule;

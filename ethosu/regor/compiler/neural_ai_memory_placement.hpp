@@ -16,6 +16,8 @@ namespace regor
 
 struct SchedulerTensor;
 class SchedulerOperation;
+class LiveRange;
+class Schedule;
 
 struct NeuralAIMemoryPlacementStats
 {
@@ -33,5 +35,10 @@ bool IsNeuralAIL2SpillCandidate(const SchedulerTensor *tensor);
 NeuralAIMemoryPlacementStats ApplyNeuralAIMemoryPlacement(
     const std::vector<std::unique_ptr<SchedulerOperation>> &operations,
     const MemArea &l2Memory, const MemArea &tcdmMemory);
+
+// Returns the avoided transfer cost of retaining a live range in TCDM. The
+// generic fast-storage allocator combines this score with exact temporal
+// capacity constraints.
+int64_t NeuralAIFastStorageScore(const LiveRange &range, const Schedule &schedule);
 
 }  // namespace regor

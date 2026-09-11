@@ -60,6 +60,7 @@ struct LiveRange
     std::string name;
 
     LiveRange(SchedulerTensor *tensor);
+    LiveRange(int reservedSize, const MemArea &reservedArea, int start, int end, std::string reservedName);
 
     void AddTensor(SchedulerTensor *tensor) { tensors.insert(tensor); }
 
@@ -109,6 +110,7 @@ public:
     void ExtractLiveRangesFromCascades(const std::vector<std::unique_ptr<SchedulerOperation>> &schedOps,
         Schedule *schedule, const MemArea &targetMemory, bool addRollingBuffers);
     LiveRange *GetOrCreateRange(SchedulerTensor *tens, LRUsage usage);
+    void AddReservedRange(int start, int end, int size, const MemArea &memArea, std::string name);
     bool AreInSameRange(const SchedulerTensor *lhs, const SchedulerTensor *rhs) const;
     LiveRange *SplitFromRange(SchedulerTensor *tens);
     static bool CanReuseIFMTensors(const SchedulerTensor *ifmTens, const SchedulerTensor *ofmTens);

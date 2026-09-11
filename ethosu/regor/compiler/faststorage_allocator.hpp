@@ -24,6 +24,7 @@
 #include "scheduler.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <random>
 #include <unordered_map>
@@ -50,7 +51,7 @@ private:
     std::vector<bool> *_evicted = nullptr;
     // Indices of evicted lrs in current solution
     std::vector<bool> _currEvicted;
-    int _bestScore = 0;
+    int64_t _bestScore = 0;
     std::unordered_map<LiveRange *, int64_t> &_elementAccessLrs;
     // Use default seed (which is well-defined) to guarantee reproducible results
     std::mt19937 _rng;
@@ -65,7 +66,7 @@ public:
 
 private:
     // Exhaustive, recursive search, starting at the given index
-    void AllocateExhaustive(int ix, int score);
+    void AllocateExhaustive(int ix, int64_t score);
     void UpdateMemUsage(MemorySnapshot &memUsage, LiveRange *lr, bool increase);
 };
 
@@ -85,7 +86,8 @@ private:
 public:
     void AllocateFeatureMaps(const std::vector<std::unique_ptr<SchedulerOperation>> &schedOps, Schedule *schedule,
         const MemArea &fastStorage, Address stagingLimit, bool reuseIfms,
-        const MemorySnapshot *reservedUsage = nullptr);
+        const MemorySnapshot *reservedUsage = nullptr,
+        const std::function<int64_t(const LiveRange &, const Schedule &)> &score = {});
 
 private:
     // Allocates a connected range of live ranges

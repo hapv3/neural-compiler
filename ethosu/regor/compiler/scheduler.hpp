@@ -85,6 +85,9 @@ struct SchedulerOptions
     std::function<MemorySnapshot(
         const std::vector<std::unique_ptr<SchedulerOperation>> &, const Schedule *)>
         commandWorkspaceReservation;
+    // Optional architecture-specific value of retaining one live range in
+    // fast storage. The allocator still owns capacity and lifetime checks.
+    std::function<int64_t(const LiveRange &, const Schedule &)> fastStorageScore;
 };
 
 struct WeightScaleEncoding

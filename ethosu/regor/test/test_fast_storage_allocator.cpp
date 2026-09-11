@@ -24,6 +24,7 @@
 #include "util.hpp"
 
 #include <catch_all.hpp>
+#include <algorithm>
 #include <functional>
 #include <memory>
 
@@ -221,6 +222,11 @@ TEST_CASE("test_fast_storage_allocator")
         REQUIRE(schedule != nullptr);
         REQUIRE(called);
         REQUIRE(tens2->memArea != fast);
+        REQUIRE(schedule->memoryUsage.at(fast) == 32 * 1024);
+        const auto &ranges = schedule->stagingLRGraph->LiveRanges();
+        REQUIRE(std::count_if(ranges.begin(), ranges.end(), [](const auto &range) {
+            return range->tensors.empty() && range->size == 32 * 1024;
+        }) == 1);
     }
 
     SECTION("Mixed NPU/CPU network with a live range covering CPU operation")

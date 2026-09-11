@@ -47,6 +47,13 @@ LiveRange::LiveRange(SchedulerTensor *tensor)
     AddTensor(tensor);
 }
 
+LiveRange::LiveRange(int reservedSize, const MemArea &reservedArea, int start, int end, std::string reservedName) :
+        startTime(start), endTime(end), size(reservedSize), memArea(reservedArea), usage(LRUsage::OpLocal),
+        name(std::move(reservedName))
+{
+    assert(start >= 0 && end >= start && reservedSize > 0);
+}
+
 void LiveRange::SetAddress(Address address)
 {
     for ( auto &tensor : tensors )
@@ -288,6 +295,12 @@ LiveRange *LiveRangeGraph::GetOrCreateRange(SchedulerTensor *tens, LRUsage usage
     plr->usage = usage;
     _equivalenceIdToLr[tens->equivalenceId] = plr;
     return plr;
+}
+
+void LiveRangeGraph::AddReservedRange(int start, int end, int size, const MemArea &memArea, std::string name)
+{
+    assert(start >= 0 && end >= start && end <= _currentTime && size > 0);
+    _lrs.push_back(std::make_unique<LiveRange>(size, memArea, start, end, std::move(name)));
 }
 
 LiveRange *LiveRangeGraph::FuseRanges(SchedulerTensor *inTens, SchedulerTensor *outTens)

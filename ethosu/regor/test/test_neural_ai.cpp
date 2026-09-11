@@ -2128,6 +2128,43 @@ TEST_CASE("Neural-AI memory placement applies decisions to equivalence groups")
     }
 }
 
+TEST_CASE("Neural-AI residency score values avoided transfers and scheduled reuse")
+{
+    const Shape shape(1, 4, 4, 32);
+    auto input = std::make_shared<SchedulerTensor>(
+        DataType::Int8, shape, TensorFormat::C32Blocked);
+    auto candidate = std::make_shared<SchedulerTensor>(
+        DataType::Int8, shape, TensorFormat::C32Blocked);
+    auto output = std::make_shared<SchedulerTensor>(
+        DataType::Int8, shape, TensorFormat::C32Blocked);
+    SchedulerOperation producer(OpType::MemoryCopy);
+    producer.ConnectInput(TensorUsage::IFM0, input);
+    producer.ConnectOutput(TensorUsage::OFM, candidate);
+    SchedulerOperation consumer(OpType::MemoryCopy);
+    consumer.ConnectInput(TensorUsage::IFM0, candidate);
+    consumer.ConnectOutput(TensorUsage::OFM, output);
+
+    Schedule schedule("residency-score", 0, 2);
+    auto producerCost = std::make_unique<SchedulerOpInfo>(
+        nullptr, shape, Shape(), shape);
+    producerCost->timeIndex = 0;
+    producerCost->elementAccess.ofmWrite = shape.Elements64();
+    schedule.SetCost(producer.Uid(), std::move(producerCost));
+    auto consumerCost = std::make_unique<SchedulerOpInfo>(
+        nullptr, shape, Shape(), shape);
+    consumerCost->timeIndex = 1;
+    consumerCost->elementAccess.ifmRead[0] = shape.Elements64() * 2;
+    schedule.SetCost(consumer.Uid(), std::move(consumerCost));
+
+    LiveRange range(candidate.get());
+    REQUIRE(range.size == shape.Elements64());
+    REQUIRE(NeuralAIFastStorageScore(range, schedule) == 50688);
+
+    schedule.Cost(&consumer)->cascade = 1;
+    REQUIRE(NeuralAIFastStorageScore(range, schedule) ==
+        std::numeric_limits<int>::max());
+}
+
 TEST_CASE("Neural-AI architecture exposes fixed hardware configuration")
 {
     ArchNeuralAI arch;
@@ -4560,6 +4597,7 @@ TEST_CASE("Neural-AI pointwise Conv tiles spilled feature maps through TCDM")
 TEST_CASE("Neural-AI K3 Conv tiles spilled feature maps through TCDM stripes")
 {
     ArchNeuralAI arch;
+    const bool spillOutput = GENERATE(false, true);
     const Shape ifmShape(1, 65, 33, 96);
     const Shape ofmShape(1, 33, 17, 64);
     auto lhs = CreateTensor("lhs", ifmShape, DataType::Int8);
@@ -4623,7 +4661,8 @@ TEST_CASE("Neural-AI K3 Conv tiles spilled feature maps through TCDM stripes")
     scheduledConv->IFM(0)->tensor->memArea =
         MemArea(arch.L2Memory(), MemUsage::FeatureMap);
     scheduledConv->OFM()->tensor->memArea =
-        MemArea(arch.L2Memory(), MemUsage::FeatureMap);
+        spillOutput ? MemArea(arch.L2Memory(), MemUsage::FeatureMap) :
+                      arch.StagingMemory();
     const SchedulerOpInfo *convCost = schedule->Cost(scheduledConv);
     REQUIRE(convCost != nullptr);
     const MemorySnapshot reservation =
@@ -4644,6 +4683,7 @@ TEST_CASE("Neural-AI K3 Conv tiles spilled feature maps through TCDM stripes")
     uint32_t weightLoads = 0;
     uint32_t paddingSeeds = 0;
     uint32_t stores = 0;
+    uint32_t localCopies = 0;
     uint32_t asyncStores = 0;
     uint32_t asyncDMAs = 0;
     uint32_t dmaWaits = 0;
@@ -4698,6 +4738,12 @@ TEST_CASE("Neural-AI K3 Conv tiles spilled feature maps through TCDM stripes")
             ++stores;
             if ( type == uint16_t(neuralai::CommandType::DMASubmit1D) ) ++asyncStores;
         }
+        if ( convCommand && IsDMA1DCommand(type) &&
+             Read16(artifact.commands, offset + 16) ==
+                 uint16_t(neuralai::Region::TCDMScratch) &&
+             Read16(artifact.commands, offset + 24) ==
+                 uint16_t(neuralai::Region::TCDMScratch) )
+            ++localCopies;
         if ( convCommand && type == uint16_t(neuralai::CommandType::DMAWait) ) ++dmaWaits;
         if ( type == uint16_t(neuralai::CommandType::LineBufferJob) ||
              type == uint16_t(neuralai::CommandType::LineBufferSubmit) )
@@ -4712,6 +4758,16 @@ TEST_CASE("Neural-AI K3 Conv tiles spilled feature maps through TCDM stripes")
                 ArchNeuralAI::AllocatableTCDMBytes);
             REQUIRE(Read32(artifact.commands, offset + 108) <
                 ArchNeuralAI::AllocatableTCDMBytes);
+            if ( convCommand && !spillOutput )
+            {
+                const uint32_t outputAddress = Read32(artifact.commands, offset + 108);
+                const uint32_t outputBegin =
+                    uint32_t(scheduledConv->OFM()->tensor->AllocatedAddress());
+                const uint32_t outputBytes = uint32_t(
+                    ofmShape.Height() * ofmShape.Width() * ofmShape.Depth());
+                REQUIRE(outputAddress >= outputBegin);
+                REQUIRE(uint64_t(outputAddress) < uint64_t(outputBegin) + outputBytes);
+            }
             ++linebufferJobs;
             if ( type == uint16_t(neuralai::CommandType::LineBufferSubmit) )
                 ++linebufferSubmits;
@@ -4723,13 +4779,15 @@ TEST_CASE("Neural-AI K3 Conv tiles spilled feature maps through TCDM stripes")
     REQUIRE(reloads == 18);
     REQUIRE(weightLoads == 2);
     REQUIRE(paddingSeeds == 1);
-    REQUIRE(stores == 6);
-    REQUIRE(asyncStores > 0);
+    REQUIRE(stores == (spillOutput ? 6 : 0));
+    REQUIRE(localCopies == 0);
+    REQUIRE((spillOutput ? asyncStores > 0 : asyncStores == 0));
     REQUIRE(dmaWaits <= asyncDMAs);
     REQUIRE(linebufferJobs == 18);
     REQUIRE(linebufferSubmits <= 2);
     REQUIRE(systolicWaits == linebufferSubmits);
-    REQUIRE(spatialRows == std::vector<uint32_t>{15, 15, 3, 15, 15, 3});
+    REQUIRE(spatialRows == (spillOutput ?
+        std::vector<uint32_t>{15, 15, 3, 15, 15, 3} : std::vector<uint32_t>{}));
     REQUIRE(artifact.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);
 }
 

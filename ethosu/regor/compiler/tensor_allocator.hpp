@@ -50,6 +50,6 @@ private:
 // using the given tensor allocation algorithm.
 void AllocateTensors(const std::vector<std::unique_ptr<SchedulerOperation>> &schedOps, Schedule *schedule,
     LiveRangeGraph &lrGraph, const MemArea &memArea, TensorAllocator allocator, int alignment, bool verboseAllocation,
-    Address sizeLimit = std::numeric_limits<Address>::max());
+    Address sizeLimit = std::numeric_limits<Address>::max(), const MemorySnapshot *reservedUsage = nullptr);
 
 }  // namespace regor

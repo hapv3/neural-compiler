@@ -6,8 +6,12 @@
 
 #include "neural_ai_memory_placement.hpp"
 
+#include "scheduler.hpp"
 #include "scheduler_operation.hpp"
 
+#include <limits>
+#include <set>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -104,6 +108,26 @@ bool IsReviewedCompactLinebufferInput(
            ofm != nullptr && ofm->tensor->format == TensorFormat::C32Blocked &&
            ofm->Type() == DataType::Int8 && ofm->shape.Size() == 4 && ofm->shape.Batch() == 1 &&
            ofm->shape.Height() > 0 && ofm->shape.Width() > 0 && ofm->shape.Depth() == 16;
+}
+
+int64_t SaturatingAdd(int64_t lhs, int64_t rhs)
+{
+    if ( rhs > std::numeric_limits<int64_t>::max() - lhs )
+        return std::numeric_limits<int64_t>::max();
+    return lhs + rhs;
+}
+
+int64_t TransferValue(int64_t elements, DataType type, int rangeBytes)
+{
+    if ( elements <= 0 || rangeBytes <= 0 ) return 0;
+    const int64_t bytes = DataTypeStorageSizeBytes(type, elements);
+    if ( bytes <= 0 ) return 0;
+    constexpr int64_t commandSetupEquivalentBytes = 16 * 1024;
+    const int64_t transfers = std::max<int64_t>(
+        1, bytes / rangeBytes + (bytes % rangeBytes != 0));
+    if ( transfers > std::numeric_limits<int64_t>::max() / commandSetupEquivalentBytes )
+        return std::numeric_limits<int64_t>::max();
+    return SaturatingAdd(bytes, transfers * commandSetupEquivalentBytes);
 }
 
 bool SupportsL2Output(const SchedulerOperation *operation, const SchedulerTensor *tensor)
@@ -209,6 +233,48 @@ NeuralAIMemoryPlacementStats ApplyNeuralAIMemoryPlacement(
         }
     }
     return stats;
+}
+
+int64_t NeuralAIFastStorageScore(const LiveRange &range, const Schedule &schedule)
+{
+    if ( range.size <= 0 || range.tensors.empty() ) return 0;
+    int64_t value = 0;
+    std::set<std::tuple<UniqueId, uint8_t, uint8_t>> counted;
+    for ( const SchedulerTensor *tensor : range.tensors )
+    {
+        if ( tensor == nullptr ) continue;
+        for ( const SchedulerOperation *producer : tensor->producers )
+        {
+            const SchedulerOperation *scheduled = producer->Parent() != nullptr ?
+                producer->Parent() : producer;
+            const SchedulerOpInfo *cost = schedule.Cost(scheduled);
+            if ( cost == nullptr ) continue;
+            if ( cost->cascade != 0 )
+                return std::numeric_limits<int>::max();
+            if ( !counted.emplace(scheduled->Uid(), uint8_t(0), uint8_t(0)).second ) continue;
+            value = SaturatingAdd(value,
+                TransferValue(cost->elementAccess.ofmWrite, tensor->dataType, range.size));
+        }
+        for ( const SchedulerOperation *consumer : tensor->consumers )
+        {
+            const SchedulerOperation *scheduled = consumer->Parent() != nullptr ?
+                consumer->Parent() : consumer;
+            const SchedulerOpInfo *cost = schedule.Cost(scheduled);
+            if ( cost == nullptr ) continue;
+            if ( cost->cascade != 0 )
+                return std::numeric_limits<int>::max();
+            const SchedulerConnection *ifm0 = consumer->TryIFM(0);
+            const SchedulerConnection *ifm1 = consumer->TryIFM(1);
+            int input = -1;
+            if ( ifm0 != nullptr && ifm0->tensor->equivalenceId == tensor->equivalenceId ) input = 0;
+            else if ( ifm1 != nullptr && ifm1->tensor->equivalenceId == tensor->equivalenceId ) input = 1;
+            if ( input < 0 ||
+                 !counted.emplace(scheduled->Uid(), uint8_t(1), uint8_t(input)).second ) continue;
+            value = SaturatingAdd(value,
+                TransferValue(cost->elementAccess.ifmRead[input], tensor->dataType, range.size));
+        }
+    }
+    return value;
 }
 
 }  // namespace regor

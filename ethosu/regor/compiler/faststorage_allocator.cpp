@@ -57,7 +57,7 @@ void FastStorageComponentAllocator::Allocate(vector_span<LiveRange *> &lrs, std:
 }
 
 // Exhaustive, recursive search, starting at the given index
-void FastStorageComponentAllocator::AllocateExhaustive(int ix, int score)
+void FastStorageComponentAllocator::AllocateExhaustive(int ix, int64_t score)
 {
     if ( ix >= _lrs.size() )
     {
@@ -87,7 +87,7 @@ void FastStorageComponentAllocator::AllocateExhaustive(int ix, int score)
         // If alwaysFits is true, lr can be kept regardless of the allocation of the other lrs
         alwaysFits = maxUsage->Used() <= _stagingLimit;
         _currEvicted[ix] = false;
-        int lrScore = 0;
+        int64_t lrScore = 0;
         auto entry = _elementAccessLrs.find(lr);
         if ( entry != _elementAccessLrs.end() )
         {
@@ -120,7 +120,8 @@ void FastStorageComponentAllocator::UpdateMemUsage(MemorySnapshot &memUsage, Liv
 
 void FastStorageAllocator::AllocateFeatureMaps(const std::vector<std::unique_ptr<SchedulerOperation>> &schedOps,
     Schedule *schedule, const MemArea &fastStorage, Address stagingLimit, bool reuseIfms,
-    const MemorySnapshot *reservedUsage)
+    const MemorySnapshot *reservedUsage,
+    const std::function<int64_t(const LiveRange &, const Schedule &)> &score)
 {
     _stagingLimit = int(std::min(INT64_C(1) << 30, stagingLimit));
     // Force all OFMs to fast-storage (except final outputs)
@@ -339,7 +340,7 @@ void FastStorageAllocator::AllocateFeatureMaps(const std::vector<std::unique_ptr
                 access = FastStorageComponentAllocator::MAX_ACCESS_SIZE;
             }
         }
-        elementAccessLrs[lr] = access;
+        elementAccessLrs[lr] = score ? score(*lr, *schedule) : access;
     }
 
     int start = 0;

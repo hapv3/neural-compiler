@@ -97,9 +97,30 @@ void PrintAllocation(LiveRangeGraph &lrGraph, Address totalSize)
 }
 
 Address Allocate(LiveRangeGraph &lrGraph, const std::vector<std::unique_ptr<SchedulerOperation>> &schedOps,
-    Schedule *schedule, const MemArea &targetMemory, TensorAllocator allocator, int alignment, Address sizeLimit)
+    Schedule *schedule, const MemArea &targetMemory, TensorAllocator allocator, int alignment, Address sizeLimit,
+    const MemorySnapshot *reservedUsage)
 {
     lrGraph.ExtractLiveRangesFromCascades(schedOps, schedule, targetMemory, false);
+    if ( reservedUsage != nullptr )
+    {
+        // Reserve one contiguous workspace interval for every run with the same
+        // temporal requirement. Neural-AI cascades therefore keep a stable
+        // workspace address, while unrelated operations can reuse it.
+        const int times = std::min(int(reservedUsage->size()), lrGraph.EndTime());
+        int start = 0;
+        int bytes = 0;
+        for ( int time = 0; time <= times; ++time )
+        {
+            const int nextBytes = time < times ?
+                RoundAway((*reservedUsage)[time].Used(), alignment) : 0;
+            if ( nextBytes == bytes ) continue;
+            if ( bytes > 0 )
+                lrGraph.AddReservedRange(start, time - 1, bytes, targetMemory,
+                    fmt::format("command workspace {}-{}", start, time - 1));
+            start = time;
+            bytes = nextBytes;
+        }
+    }
     Address totalSize = 0;
     if ( allocator == TensorAllocator::LinearAlloc )
     {
@@ -145,9 +166,10 @@ Address IncrementalLinearAllocator::Allocate(LiveRangeGraph *lrGraph, int alignm
 }
 
 void AllocateTensors(const std::vector<std::unique_ptr<SchedulerOperation>> &schedOps, Schedule *schedule, LiveRangeGraph &lrGraph,
-    const MemArea &memArea, TensorAllocator allocator, int alignment, bool verboseAllocation, Address sizeLimit)
+    const MemArea &memArea, TensorAllocator allocator, int alignment, bool verboseAllocation, Address sizeLimit,
+    const MemorySnapshot *reservedUsage)
 {
-    auto totalSize = Allocate(lrGraph, schedOps, schedule, memArea, allocator, alignment, sizeLimit);
+    auto totalSize = Allocate(lrGraph, schedOps, schedule, memArea, allocator, alignment, sizeLimit, reservedUsage);
     if ( verboseAllocation )
     {
         LOG_PRINT("{0:#^{1}}\n", "", 80);
