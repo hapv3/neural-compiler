@@ -12,6 +12,7 @@
 #include "architecture/neuralai/neural_ai_op_config.hpp"
 #include "architecture/neuralai/neural_ai_quantization.hpp"
 #include "compiler/high_level_command_stream_generator.hpp"
+#include "compiler/neural_ai_command_ir.hpp"
 #include "compiler/neural_ai_memory_state.hpp"
 #include "compiler/shape_util.hpp"
 #include "tflite/tflite_schema_generated.hpp"
@@ -5786,6 +5787,22 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
     artifact.commandCount -= coalescedCommands;
     artifact.commandCount += OptimizeCommandOverlap(artifact.commands);
     context.AppendControl(CommandType::End, 0, 0);
+    if ( !neuralai::DecodeSemanticCommandStream(
+             artifact.commands, artifact.semanticCommands, error) )
+        return false;
+    const bool finalEnd = !artifact.semanticCommands.empty() &&
+        artifact.semanticCommands.back().type == CommandType::End;
+    if ( !finalEnd || artifact.semanticCommands.size() != uint64_t(artifact.commandCount) + 1 )
+    {
+        error = fmt::format(
+            "Neural-AI semantic command count {} does not match {} executable commands plus END",
+            artifact.semanticCommands.size(), artifact.commandCount);
+        return false;
+    }
+    if ( !neuralai::BuildCommandDependencyGraph(
+             artifact.semanticCommands, artifact.commandDependencies, error) )
+        return false;
+    artifact.commands = neuralai::SerializeSemanticCommandStream(artifact.semanticCommands);
     artifact.requiredTCDMBytes = uint32_t(RoundAway(
         int(std::max(context.scratchEnd, context.workspaceEnd)), ArchNeuralAI::DMAAlignment));
     if ( artifact.requiredTCDMBytes > ArchNeuralAI::AllocatableTCDMBytes )

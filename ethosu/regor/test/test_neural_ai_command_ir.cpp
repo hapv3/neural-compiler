@@ -1,0 +1,259 @@
+//
+// SPDX-FileCopyrightText: Copyright 2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+
+#include "compiler/neural_ai_command_ir.hpp"
+
+#include <catch_all.hpp>
+
+#include <algorithm>
+#include <cstring>
+
+using namespace regor::neuralai;
+
+namespace
+{
+
+template<typename TYPE>
+void Append(std::vector<uint8_t> &bytes, const TYPE &command)
+{
+    const auto *begin = reinterpret_cast<const uint8_t *>(&command);
+    bytes.insert(bytes.end(), begin, begin + sizeof(command));
+}
+
+void AppendControl(std::vector<uint8_t> &bytes, CommandType type,
+    uint32_t layerId = 0, uint32_t tileId = 0)
+{
+    CommandHeaderV2 command{};
+    command.type = uint16_t(type);
+    command.sizeBytes = 32;
+    command.layerId = layerId;
+    command.tileId = tileId;
+    Append(bytes, command);
+    bytes.resize(bytes.size() + 16);
+}
+
+bool HasEdge(const CommandDependencyGraph &graph, uint32_t predecessor,
+    uint32_t successor, DependencyKind kind)
+{
+    return std::any_of(graph.edges.begin(), graph.edges.end(),
+        [&](const CommandDependency &edge)
+        {
+            return edge.predecessor == predecessor && edge.successor == successor &&
+                   edge.kind == kind;
+        });
+}
+
+const SemanticStateAccess *FindState(const SemanticCommand &command,
+    SemanticState state, SemanticAccessMode mode)
+{
+    auto position = std::find_if(command.stateAccesses.begin(), command.stateAccesses.end(),
+        [&](const SemanticStateAccess &access)
+        {
+            return access.state == state && access.mode == mode;
+        });
+    return position == command.stateAccesses.end() ? nullptr : &*position;
+}
+
+}  // namespace
+
+TEST_CASE("Neural-AI semantic IR round-trips ABI commands and maps hardware resources")
+{
+    CommandDMA1DV2 load{};
+    load.header.type = uint16_t(CommandType::DMASubmit1D);
+    load.header.sizeBytes = sizeof(load);
+    load.header.layerId = 7;
+    load.header.tileId = 3;
+    load.source = {uint16_t(Region::ModelConstants), 0, 64};
+    load.destination = {uint16_t(Region::TCDMScratch), 0, 32};
+    load.length = 96;
+    load.direction = uint32_t(DMADirection::ExternalToLocal);
+
+    CommandAFUBinaryV2 add{};
+    add.header.type = uint16_t(CommandType::AFUBinary);
+    add.header.sizeBytes = sizeof(add);
+    add.lhs = load.destination;
+    add.rhs = {uint16_t(Region::TCDMScratch), 0, 256};
+    add.ofm = {uint16_t(Region::TCDMScratch), 0, 544};
+    add.length = 96;
+    add.mode = uint32_t(AFUBinaryMode::AddI8);
+
+    std::vector<uint8_t> bytes;
+    Append(bytes, load);
+    Append(bytes, add);
+    AppendControl(bytes, CommandType::End);
+
+    std::vector<SemanticCommand> commands;
+    std::string error;
+    REQUIRE(DecodeSemanticCommandStream(bytes, commands, error));
+    REQUIRE(commands.size() == 3);
+    CHECK(SerializeSemanticCommandStream(commands) == bytes);
+    CHECK(commands[0].layerId == 7);
+    CHECK(commands[0].tileId == 3);
+    CHECK(commands[0].asyncCapable);
+    CHECK(commands[0].asynchronous);
+    CHECK(commands[0].queueCapacity == 16);
+    CHECK(commands[0].resources == ResourceMask(SemanticResource::DMAExternalToLocal));
+    REQUIRE(commands[0].memoryAccesses.size() == 2);
+    CHECK(commands[0].memoryAccesses[1].bankPhase == 1);
+    CHECK(commands[1].resources == ResourceMask(SemanticResource::AFU));
+    CHECK(commands[1].estimatedCycles == 3);
+    CHECK(commands[2].controlFence);
+}
+
+TEST_CASE("Neural-AI dependency DAG records RAW WAR WAW and logical content generations")
+{
+    CommandAFUBinaryV2 producer{};
+    producer.header.type = uint16_t(CommandType::AFUBinary);
+    producer.header.sizeBytes = sizeof(producer);
+    producer.lhs = {uint16_t(Region::TCDMScratch), 0, 512};
+    producer.rhs = {uint16_t(Region::TCDMScratch), 0, 768};
+    producer.ofm = {uint16_t(Region::TCDMScratch), 0, 0};
+    producer.length = 64;
+
+    CommandAFUBinaryV2 consumer = producer;
+    consumer.lhs = producer.ofm;
+    consumer.rhs.offset = 1024;
+    consumer.ofm.offset = 256;
+
+    CommandDMA1DV2 overwrite{};
+    overwrite.header.type = uint16_t(CommandType::DMA1D);
+    overwrite.header.sizeBytes = sizeof(overwrite);
+    overwrite.source = {uint16_t(Region::ModelConstants), 0, 0};
+    overwrite.destination = producer.ofm;
+    overwrite.length = 64;
+    overwrite.direction = uint32_t(DMADirection::ExternalToLocal);
+
+    std::vector<uint8_t> bytes;
+    Append(bytes, producer);
+    Append(bytes, consumer);
+    Append(bytes, overwrite);
+
+    std::vector<SemanticCommand> commands;
+    CommandDependencyGraph graph;
+    std::string error;
+    REQUIRE(DecodeSemanticCommandStream(bytes, commands, error));
+    REQUIRE(BuildCommandDependencyGraph(commands, graph, error));
+    CHECK(HasEdge(graph, 0, 1, DependencyKind::MemoryRAW));
+    CHECK(HasEdge(graph, 0, 2, DependencyKind::MemoryWAW));
+    CHECK(HasEdge(graph, 1, 2, DependencyKind::MemoryWAR));
+
+    REQUIRE(commands[0].memoryAccesses[2].content.size() == 1);
+    REQUIRE(commands[1].memoryAccesses[0].content.size() == 1);
+    const auto &produced = commands[0].memoryAccesses[2].content[0];
+    const auto &consumed = commands[1].memoryAccesses[0].content[0];
+    CHECK(produced.identity == consumed.identity);
+    CHECK(produced.generation == 1);
+    CHECK(consumed.generation == produced.generation);
+    CHECK(commands[2].memoryAccesses[1].content[0].generation > produced.generation);
+}
+
+TEST_CASE("Neural-AI dependency DAG versions quantization systolic and DMA queue state")
+{
+    CommandRQLoadV2 rq0{};
+    rq0.header.type = uint16_t(CommandType::RQLoad);
+    rq0.header.sizeBytes = sizeof(rq0);
+    rq0.qparamIndex = 32;
+    rq0.qparamCount = 32;
+    rq0.qparamBlock = 2;
+
+    CommandGemm32V2 gemm{};
+    gemm.header.type = uint16_t(CommandType::Gemm32Requant);
+    gemm.header.sizeBytes = sizeof(gemm);
+    gemm.weights = {uint16_t(Region::TCDMScratch), 0, 0};
+    gemm.ifm = {uint16_t(Region::TCDMScratch), 0, 2048};
+    gemm.partialSums = {uint16_t(Region::TCDMScratch), 0, 4096};
+    gemm.ofm = {uint16_t(Region::TCDMScratch), 0, 8192};
+    gemm.dimM = 4;
+
+    CommandRQLoadV2 rq1 = rq0;
+    rq1.qparamIndex = 64;
+    rq1.qparamBlock = 3;
+
+    CommandDMA1DV2 submit{};
+    submit.header.type = uint16_t(CommandType::DMASubmit1D);
+    submit.header.sizeBytes = sizeof(submit);
+    submit.source = {uint16_t(Region::ModelConstants), 0, 0};
+    submit.destination = {uint16_t(Region::TCDMScratch), 0, 16384};
+    submit.length = 32;
+    submit.direction = uint32_t(DMADirection::ExternalToLocal);
+
+    CommandDMAWaitV2 wait{};
+    wait.header.type = uint16_t(CommandType::DMAWait);
+    wait.header.sizeBytes = sizeof(wait);
+    wait.direction = uint32_t(DMADirection::ExternalToLocal);
+
+    std::vector<uint8_t> bytes;
+    Append(bytes, rq0);
+    Append(bytes, gemm);
+    Append(bytes, rq1);
+    Append(bytes, submit);
+    Append(bytes, wait);
+
+    std::vector<SemanticCommand> commands;
+    CommandDependencyGraph graph;
+    std::string error;
+    REQUIRE(DecodeSemanticCommandStream(bytes, commands, error));
+    REQUIRE(BuildCommandDependencyGraph(commands, graph, error));
+    CHECK(HasEdge(graph, 0, 1, DependencyKind::StateRAW));
+    CHECK(HasEdge(graph, 1, 2, DependencyKind::StateWAR));
+    CHECK(HasEdge(graph, 3, 4, DependencyKind::StateRAW));
+    CHECK(HasEdge(graph, 3, 4, DependencyKind::StateWAW));
+
+    const auto *rqWrite = FindState(commands[0], SemanticState::Quantization,
+        SemanticAccessMode::Write);
+    const auto *rqRead = FindState(commands[1], SemanticState::Quantization,
+        SemanticAccessMode::Read);
+    const auto *nextWrite = FindState(commands[2], SemanticState::Quantization,
+        SemanticAccessMode::Write);
+    REQUIRE(rqWrite != nullptr);
+    REQUIRE(rqRead != nullptr);
+    REQUIRE(nextWrite != nullptr);
+    CHECK(rqWrite->generation == 1);
+    CHECK(rqRead->generation == rqWrite->generation);
+    CHECK(rqRead->valueIdentity == rqWrite->valueIdentity);
+    CHECK(nextWrite->generation == 2);
+    CHECK(nextWrite->valueIdentity != rqWrite->valueIdentity);
+}
+
+TEST_CASE("Neural-AI dependency DAG preserves explicit control fences")
+{
+    CommandAFUBinaryV2 first{};
+    first.header.type = uint16_t(CommandType::AFUBinary);
+    first.header.sizeBytes = sizeof(first);
+    first.lhs = {uint16_t(Region::TCDMScratch), 0, 0};
+    first.rhs = {uint16_t(Region::TCDMScratch), 0, 64};
+    first.ofm = {uint16_t(Region::TCDMScratch), 0, 128};
+    first.length = 32;
+    CommandAFUBinaryV2 last = first;
+    last.lhs.offset = 1024;
+    last.rhs.offset = 1088;
+    last.ofm.offset = 1152;
+
+    std::vector<uint8_t> bytes;
+    Append(bytes, first);
+    AppendControl(bytes, CommandType::Barrier);
+    Append(bytes, last);
+
+    std::vector<SemanticCommand> commands;
+    CommandDependencyGraph graph;
+    std::string error;
+    REQUIRE(DecodeSemanticCommandStream(bytes, commands, error));
+    REQUIRE(BuildCommandDependencyGraph(commands, graph, error));
+    CHECK(HasEdge(graph, 0, 1, DependencyKind::Control));
+    CHECK(HasEdge(graph, 1, 2, DependencyKind::Control));
+}
+
+TEST_CASE("Neural-AI semantic IR rejects malformed commands")
+{
+    std::vector<uint8_t> bytes(sizeof(CommandHeaderV2));
+    bytes[0] = uint8_t(CommandType::DMA1D);
+    bytes[2] = uint8_t(sizeof(CommandDMA1DV2));
+    std::vector<SemanticCommand> commands;
+    std::string error;
+    CHECK_FALSE(DecodeSemanticCommandStream(bytes, commands, error));
+    CHECK_FALSE(error.empty());
+    CHECK(commands.empty());
+}

@@ -3618,6 +3618,11 @@ TEST_CASE("Neural-AI scheduler lowers a complete FullyConnected graph")
     REQUIRE(commandGenerator.Generate(graph.get(), scheduleOps, schedule.get(), artifact, error));
     REQUIRE(error.empty());
     REQUIRE(artifact.commandCount == 12);
+    REQUIRE(artifact.semanticCommands.size() == artifact.commandCount + 1);
+    REQUIRE(artifact.commandDependencies.predecessors.size() == artifact.semanticCommands.size());
+    REQUIRE(neuralai::SerializeSemanticCommandStream(artifact.semanticCommands) == artifact.commands);
+    REQUIRE(neuralai::ValidateCommandDependencyGraph(
+        artifact.semanticCommands, artifact.commandDependencies, error));
     REQUIRE(artifact.commands.size() == 928);
     REQUIRE(artifact.constants.size() == 4 * 32 * 32);
     REQUIRE(artifact.qparams.size() == 2 * 32);

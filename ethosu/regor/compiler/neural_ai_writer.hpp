@@ -7,6 +7,7 @@
 #pragma once
 
 #include "architecture/neuralai/neural_ai_abi.hpp"
+#include "neural_ai_command_ir.hpp"
 
 #include <cstdint>
 #include <string>
@@ -22,6 +23,8 @@ struct CompiledNeuralAIArtifact
     std::vector<neuralai::TensorV1> tensors;
     std::vector<neuralai::BindingV1> bindings;
     std::vector<neuralai::QParamV1> qparams;
+    std::vector<neuralai::SemanticCommand> semanticCommands;
+    neuralai::CommandDependencyGraph commandDependencies;
     uint32_t commandCount = 0;
     uint32_t requiredTCDMBytes = 0;
 };
