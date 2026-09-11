@@ -13,6 +13,7 @@
 #include "architecture/neuralai/neural_ai_quantization.hpp"
 #include "compiler/high_level_command_stream_generator.hpp"
 #include "compiler/neural_ai_command_ir.hpp"
+#include "compiler/neural_ai_command_scheduler.hpp"
 #include "compiler/neural_ai_memory_state.hpp"
 #include "compiler/shape_util.hpp"
 #include "tflite/tflite_schema_generated.hpp"
@@ -348,12 +349,6 @@ bool IsDMACommand(CommandType type)
            type == CommandType::DMASubmit2D || type == CommandType::DMASubmit3D;
 }
 
-bool IsBlockingDMACommand(CommandType type)
-{
-    return type == CommandType::DMA1D || type == CommandType::DMA2D ||
-           type == CommandType::DMA3D;
-}
-
 bool DecodeDMACommand(const uint8_t *command, CommandType type, DMACommandInfo &info)
 {
     if ( !IsDMACommand(type) ) return false;
@@ -400,19 +395,6 @@ bool DecodeDMACommand(const uint8_t *command, CommandType type, DMACommandInfo &
 bool Overlaps(uint64_t lhsBegin, uint64_t lhsEnd, uint64_t rhsBegin, uint64_t rhsEnd)
 {
     return lhsBegin < rhsEnd && rhsBegin < lhsEnd;
-}
-
-bool SameStorage(uint16_t lhsRegion, uint16_t lhsIndex,
-    uint16_t rhsRegion, uint16_t rhsIndex)
-{
-    return lhsRegion == rhsRegion && lhsIndex == rhsIndex;
-}
-
-CommandType SubmitType(CommandType type)
-{
-    if ( type == CommandType::DMA1D ) return CommandType::DMASubmit1D;
-    if ( type == CommandType::DMA2D ) return CommandType::DMASubmit2D;
-    return CommandType::DMASubmit3D;
 }
 
 struct CommandAccess
@@ -600,75 +582,6 @@ bool DecodeIndependentCommandAccesses(const uint8_t *command, CommandType type,
         }
         default: return false;
     }
-}
-
-bool ConflictsWithDMA(const DMACommandInfo &pending, const DMACommandInfo &candidate)
-{
-    if ( SameStorage(pending.destinationRegion, pending.destinationIndex,
-             candidate.sourceRegion, candidate.sourceIndex) &&
-         Overlaps(pending.destinationBegin, pending.destinationEnd,
-             candidate.sourceBegin, candidate.sourceEnd) ) return true;
-    if ( SameStorage(pending.sourceRegion, pending.sourceIndex,
-             candidate.destinationRegion, candidate.destinationIndex) &&
-         Overlaps(pending.sourceBegin, pending.sourceEnd,
-             candidate.destinationBegin, candidate.destinationEnd) ) return true;
-    return SameStorage(pending.destinationRegion, pending.destinationIndex,
-               candidate.destinationRegion, candidate.destinationIndex) &&
-        Overlaps(pending.destinationBegin, pending.destinationEnd,
-            candidate.destinationBegin, candidate.destinationEnd);
-}
-
-bool ConflictsWithDMA(const DMACommandInfo &dma,
-    const std::vector<CommandAccess> &accesses)
-{
-    for ( const auto &access : accesses )
-    {
-        if ( SameStorage(dma.sourceRegion, dma.sourceIndex, access.region, access.index) &&
-             access.write && Overlaps(dma.sourceBegin, dma.sourceEnd,
-                 access.begin, access.end) ) return true;
-        if ( SameStorage(dma.destinationRegion, dma.destinationIndex, access.region, access.index) &&
-             Overlaps(dma.destinationBegin, dma.destinationEnd,
-                 access.begin, access.end) ) return true;
-    }
-    return false;
-}
-
-bool ConflictsWithDMA(const std::vector<CommandAccess> &pending,
-    const DMACommandInfo &dma)
-{
-    for ( const auto &access : pending )
-    {
-        if ( SameStorage(access.region, access.index, dma.sourceRegion, dma.sourceIndex) &&
-             access.write && Overlaps(access.begin, access.end, dma.sourceBegin, dma.sourceEnd) ) return true;
-        if ( SameStorage(access.region, access.index, dma.destinationRegion, dma.destinationIndex) &&
-             Overlaps(access.begin, access.end, dma.destinationBegin, dma.destinationEnd) ) return true;
-    }
-    return false;
-}
-
-bool ConflictsWithPendingCommand(const std::vector<CommandAccess> &pending,
-    const std::vector<CommandAccess> &candidate)
-{
-    for ( const auto &lhs : pending )
-    {
-        for ( const auto &rhs : candidate )
-        {
-            if ( SameStorage(lhs.region, lhs.index, rhs.region, rhs.index) &&
-                 (lhs.write || rhs.write) &&
-                 Overlaps(lhs.begin, lhs.end, rhs.begin, rhs.end) ) return true;
-        }
-    }
-    return false;
-}
-
-bool CanRunWhileSystolicPending(CommandType type)
-{
-    // These commands use AFU or Spatz while systolic runs autonomously.  RQ
-    // loads and all other compute commands remain fences because they either
-    // modify systolic configuration or reuse its single pending slot.
-    return type == CommandType::AFUBinary || type == CommandType::AFULut ||
-           type == CommandType::AFUGlobalAvgPool || type == CommandType::SpatzAdd ||
-           type == CommandType::UpsampleNearest;
 }
 
 bool SamePointwiseLane(const uint8_t *firstRQ, const uint8_t *firstPW,
@@ -978,185 +891,6 @@ uint32_t FuseSystolicBinaryPostOpCommands(std::vector<uint8_t> &commands)
     uint32_t fused = 0;
     while ( FuseOneSystolicBinaryPostOp(commands) ) ++fused;
     return fused;
-}
-
-uint32_t OverlapDMAQueue(std::vector<uint8_t> &commands, uint32_t batchDirection)
-{
-    constexpr uint32_t queueDepth = 16;
-    std::vector<uint8_t> rewritten;
-    rewritten.reserve(commands.size());
-    uint32_t waits = 0;
-    size_t offset = 0;
-    while ( offset < commands.size() )
-    {
-        const uint8_t *command = commands.data() + offset;
-        const CommandType type = CommandType(Read16(command));
-        const uint16_t size = Read16(command + 2);
-        if ( size < sizeof(neuralai::CommandHeaderV2) || offset + size > commands.size() ) break;
-
-        DMACommandInfo first;
-        bool overlap = IsBlockingDMACommand(type) && DecodeDMACommand(command, type, first) &&
-            uint32_t(first.direction) == batchDirection;
-        std::vector<DMACommandInfo> pending;
-        std::vector<size_t> pendingOffsets;
-        std::array<uint32_t, 2> pendingByDirection = {0, 0};
-        if ( overlap )
-        {
-            pending.push_back(first);
-            pendingOffsets.push_back(0);
-            ++pendingByDirection[uint32_t(first.direction)];
-        }
-        size_t next = offset + size;
-        bool hasIndependentWork = false;
-        while ( overlap && next < commands.size() )
-        {
-            const uint8_t *candidate = commands.data() + next;
-            const CommandType candidateType = CommandType(Read16(candidate));
-            const uint16_t candidateSize = Read16(candidate + 2);
-            if ( candidateSize < sizeof(neuralai::CommandHeaderV2) ||
-                 next + candidateSize > commands.size() )
-            {
-                overlap = false;
-                break;
-            }
-            DMACommandInfo dma;
-            if ( DecodeDMACommand(candidate, candidateType, dma) )
-            {
-                const uint32_t direction = uint32_t(dma.direction);
-                if ( direction == batchDirection )
-                {
-                    if ( !IsBlockingDMACommand(candidateType) ||
-                         pendingByDirection[direction] >= queueDepth ) break;
-                    // One hardware queue executes its jobs in order, so RAW,
-                    // WAR, and WAW dependencies between jobs in that queue do
-                    // not require Snitch to wait between submissions.
-                    pending.push_back(dma);
-                    pendingOffsets.push_back(next - offset);
-                    ++pendingByDirection[direction];
-                }
-                else if ( std::any_of(pending.begin(), pending.end(),
-                              [&](const DMACommandInfo &active) { return ConflictsWithDMA(active, dma); }) )
-                    break;
-            }
-            else
-            {
-                std::vector<CommandAccess> accesses;
-                if ( !DecodeIndependentCommandAccesses(candidate, candidateType, accesses) ||
-                     std::any_of(pending.begin(), pending.end(),
-                         [&](const DMACommandInfo &active) { return ConflictsWithDMA(active, accesses); }) ) break;
-            }
-            hasIndependentWork = true;
-            next += candidateSize;
-        }
-        overlap = overlap && hasIndependentWork;
-        if ( overlap )
-        {
-            const size_t rewrittenStart = rewritten.size();
-            rewritten.insert(rewritten.end(), commands.begin() + offset, commands.begin() + next);
-            for ( size_t pendingIndex = 0; pendingIndex < pending.size(); ++pendingIndex )
-            {
-                const size_t rewrittenDMA = rewrittenStart + pendingOffsets[pendingIndex];
-                const CommandType dmaType = CommandType(Read16(rewritten.data() + rewrittenDMA));
-                const CommandType submit = SubmitType(dmaType);
-                rewritten[rewrittenDMA] = uint8_t(uint16_t(submit));
-                rewritten[rewrittenDMA + 1] = uint8_t(uint16_t(submit) >> 8);
-            }
-            for ( uint32_t direction = 0; direction < pendingByDirection.size(); ++direction )
-            {
-                if ( pendingByDirection[direction] == 0 ) continue;
-                AppendHeader(rewritten, CommandType::DMAWait, sizeof(neuralai::CommandDMAWaitV2),
-                    Read32(command + 8), Read32(command + 12));
-                Append32(rewritten, direction);
-                AppendZeros(rewritten, 3);
-                ++waits;
-            }
-            offset = next;
-        }
-        else
-        {
-            rewritten.insert(rewritten.end(), commands.begin() + offset,
-                commands.begin() + offset + size);
-            offset += size;
-        }
-    }
-    if ( offset == commands.size() ) commands = std::move(rewritten);
-    return waits;
-}
-
-uint32_t OverlapSystolicLinebuffers(std::vector<uint8_t> &commands)
-{
-    std::vector<uint8_t> rewritten;
-    rewritten.reserve(commands.size());
-    uint32_t waits = 0;
-    size_t offset = 0;
-    while ( offset < commands.size() )
-    {
-        const uint8_t *command = commands.data() + offset;
-        const CommandType type = CommandType(Read16(command));
-        const uint16_t size = Read16(command + 2);
-        if ( size < sizeof(neuralai::CommandHeaderV2) || offset + size > commands.size() ) break;
-        std::vector<CommandAccess> pending;
-        const bool binary = type == CommandType::LineBufferBinary;
-        bool overlap = (type == CommandType::LineBufferJob || binary) &&
-            DecodeIndependentCommandAccesses(command, type, pending);
-        bool hasIndependentWork = false;
-        size_t next = offset + size;
-        while ( overlap && next < commands.size() )
-        {
-            const uint8_t *candidate = commands.data() + next;
-            const CommandType candidateType = CommandType(Read16(candidate));
-            const uint16_t candidateSize = Read16(candidate + 2);
-            if ( candidateSize < sizeof(neuralai::CommandHeaderV2) ||
-                 next + candidateSize > commands.size() )
-            {
-                overlap = false;
-                break;
-            }
-            if ( candidateType == CommandType::DMAWait )
-            {
-                hasIndependentWork = true;
-                next += candidateSize;
-                continue;
-            }
-            DMACommandInfo dma;
-            if ( DecodeDMACommand(candidate, candidateType, dma) )
-            {
-                if ( ConflictsWithDMA(pending, dma) ) break;
-            }
-            else
-            {
-                std::vector<CommandAccess> candidateAccesses;
-                if ( !CanRunWhileSystolicPending(candidateType) ||
-                     !DecodeIndependentCommandAccesses(candidate, candidateType, candidateAccesses) ||
-                     ConflictsWithPendingCommand(pending, candidateAccesses) ) break;
-            }
-            hasIndependentWork = true;
-            next += candidateSize;
-        }
-        overlap = overlap && hasIndependentWork;
-        if ( overlap )
-        {
-            const size_t rewrittenSubmit = rewritten.size();
-            rewritten.insert(rewritten.end(), commands.begin() + offset, commands.begin() + next);
-            const CommandType submit = binary ? CommandType::LineBufferBinarySubmit :
-                                                CommandType::LineBufferSubmit;
-            rewritten[rewrittenSubmit] = uint8_t(uint16_t(submit));
-            rewritten[rewrittenSubmit + 1] = uint8_t(uint16_t(submit) >> 8);
-            AppendHeader(rewritten, CommandType::SystolicWait, 32,
-                Read32(command + 8), Read32(command + 12));
-            AppendZeros(rewritten, 4);
-            ++waits;
-            offset = next;
-        }
-        else
-        {
-            rewritten.insert(rewritten.end(), commands.begin() + offset,
-                commands.begin() + offset + size);
-            offset += size;
-        }
-    }
-    if ( offset == commands.size() ) commands = std::move(rewritten);
-    return waits;
 }
 
 uint16_t ABIDataType(regor::DataType type)
@@ -5092,14 +4826,30 @@ struct GeneratorContext
     }
 };
 
+bool OptimizeGlobalCommandSchedule(std::vector<uint8_t> &commands,
+    uint32_t &insertedWaits, std::string &error)
+{
+    std::vector<neuralai::SemanticCommand> semantic;
+    neuralai::CommandDependencyGraph dependencies;
+    neuralai::GlobalCommandScheduleStats stats;
+    std::vector<uint8_t> scheduled;
+    if ( !neuralai::DecodeSemanticCommandStream(commands, semantic, error) ||
+         !neuralai::BuildCommandDependencyGraph(semantic, dependencies, error) ||
+         !neuralai::ScheduleGlobalCommandStream(
+             semantic, dependencies, scheduled, stats, error) )
+        return false;
+    commands = std::move(scheduled);
+    insertedWaits = stats.insertedWaits;
+    return true;
+}
+
 }  // namespace
 
 uint32_t NeuralAICommandGenerator::OptimizeCommandOverlap(std::vector<uint8_t> &commands)
 {
-    const uint32_t dmaWaits =
-        OverlapDMAQueue(commands, uint32_t(DMADirection::ExternalToLocal)) +
-        OverlapDMAQueue(commands, uint32_t(DMADirection::LocalToExternal));
-    return dmaWaits + OverlapSystolicLinebuffers(commands);
+    uint32_t insertedWaits = 0;
+    std::string error;
+    return OptimizeGlobalCommandSchedule(commands, insertedWaits, error) ? insertedWaits : 0;
 }
 
 uint32_t NeuralAICommandGenerator::FuseSystolicBinaryPostOps(std::vector<uint8_t> &commands)
@@ -5817,7 +5567,9 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
     const uint32_t coalescedCommands = CoalesceInterleavedPointwiseRows(artifact.commands);
     assert(coalescedCommands <= artifact.commandCount);
     artifact.commandCount -= coalescedCommands;
-    artifact.commandCount += OptimizeCommandOverlap(artifact.commands);
+    uint32_t insertedWaits = 0;
+    if ( !OptimizeGlobalCommandSchedule(artifact.commands, insertedWaits, error) ) return false;
+    artifact.commandCount += insertedWaits;
     context.AppendControl(CommandType::End, 0, 0);
     if ( !neuralai::DecodeSemanticCommandStream(
              artifact.commands, artifact.semanticCommands, error) )

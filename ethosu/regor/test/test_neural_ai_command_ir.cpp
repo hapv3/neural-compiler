@@ -5,11 +5,13 @@
 //
 
 #include "compiler/neural_ai_command_ir.hpp"
+#include "compiler/neural_ai_command_scheduler.hpp"
 
 #include <catch_all.hpp>
 
 #include <algorithm>
 #include <cstring>
+#include <numeric>
 
 using namespace regor::neuralai;
 
@@ -244,6 +246,81 @@ TEST_CASE("Neural-AI dependency DAG preserves explicit control fences")
     REQUIRE(BuildCommandDependencyGraph(commands, graph, error));
     CHECK(HasEdge(graph, 0, 1, DependencyKind::Control));
     CHECK(HasEdge(graph, 1, 2, DependencyKind::Control));
+}
+
+TEST_CASE("Neural-AI global scheduler overlaps engines and waits at first consumers")
+{
+    CommandDMA1DV2 store{};
+    store.header.type = uint16_t(CommandType::DMA1D);
+    store.header.sizeBytes = sizeof(store);
+    store.header.layerId = 11;
+    store.header.tileId = 7;
+    store.source = {uint16_t(Region::TCDMScratch), 0, 0x1000};
+    store.destination = {uint16_t(Region::L2TemporaryBinding), 0, 0x2000};
+    store.length = 256;
+    store.direction = uint32_t(DMADirection::LocalToExternal);
+
+    CommandAFUBinaryV2 independent{};
+    independent.header.type = uint16_t(CommandType::AFUBinary);
+    independent.header.sizeBytes = sizeof(independent);
+    independent.lhs = {uint16_t(Region::TCDMScratch), 0, 0x3000};
+    independent.rhs = {uint16_t(Region::TCDMScratch), 0, 0x3200};
+    independent.ofm = {uint16_t(Region::TCDMScratch), 0, 0x3400};
+    independent.length = 256;
+
+    CommandLineBufferJobV2 linebuffer{};
+    linebuffer.header.type = uint16_t(CommandType::LineBufferJob);
+    linebuffer.header.sizeBytes = sizeof(linebuffer);
+    linebuffer.job.linebuf.inputBase = 0x4000;
+    linebuffer.job.linebuf.inputH = 4;
+    linebuffer.job.linebuf.rowStrideBytes = 256;
+    linebuffer.job.gemm.weightAddr = 0x5000;
+    linebuffer.job.gemm.ofmAddr = 0x8000;
+    linebuffer.job.gemm.dimM = 4;
+    linebuffer.job.rows = 4;
+    linebuffer.job.kTiles = 9;
+
+    CommandAFUBinaryV2 consumer = independent;
+    consumer.lhs.offset = linebuffer.job.gemm.ofmAddr;
+    consumer.ofm.offset = store.source.offset;
+
+    std::vector<uint8_t> bytes;
+    Append(bytes, store);
+    Append(bytes, independent);
+    Append(bytes, linebuffer);
+    Append(bytes, consumer);
+
+    std::vector<SemanticCommand> commands;
+    CommandDependencyGraph dependencies;
+    std::string error;
+    REQUIRE(DecodeSemanticCommandStream(bytes, commands, error));
+    REQUIRE(BuildCommandDependencyGraph(commands, dependencies, error));
+    const int64_t blockingCycles = std::accumulate(commands.begin(), commands.end(), int64_t(0),
+        [](int64_t total, const SemanticCommand &command)
+        { return total + command.estimatedCycles; });
+
+    std::vector<uint8_t> scheduledBytes;
+    GlobalCommandScheduleStats stats;
+    const bool scheduledOK = ScheduleGlobalCommandStream(
+        commands, dependencies, scheduledBytes, stats, error);
+    INFO(error);
+    REQUIRE(scheduledOK);
+    CHECK(stats.asynchronousSubmits == 2);
+    CHECK(stats.insertedWaits == 2);
+    CHECK(stats.reorderedCommands > 0);
+    CHECK(stats.estimatedCycles < blockingCycles);
+
+    std::vector<SemanticCommand> scheduled;
+    CommandDependencyGraph scheduledDependencies;
+    REQUIRE(DecodeSemanticCommandStream(scheduledBytes, scheduled, error));
+    REQUIRE(BuildCommandDependencyGraph(scheduled, scheduledDependencies, error));
+    REQUIRE(scheduled.size() == commands.size() + stats.insertedWaits);
+    CHECK(scheduled[0].type == CommandType::DMASubmit1D);
+    CHECK(scheduled[1].type == CommandType::LineBufferSubmit);
+    CHECK(scheduled[2].type == CommandType::AFUBinary);
+    CHECK(scheduled[3].type == CommandType::DMAWait);
+    CHECK(scheduled[4].type == CommandType::SystolicWait);
+    CHECK(scheduled[5].type == CommandType::AFUBinary);
 }
 
 TEST_CASE("Neural-AI semantic IR rejects malformed commands")

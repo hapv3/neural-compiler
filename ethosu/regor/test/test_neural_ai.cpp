@@ -134,9 +134,10 @@ TEST_CASE("Neural-AI command overlap crosses independent compute and stops at ha
     const size_t waitOffset = sizeof(store) + sizeof(independent) + sizeof(linebuffer);
     REQUIRE(commands.size() == waitOffset + 64 + sizeof(hazard));
     REQUIRE(read16(0) == uint16_t(neuralai::CommandType::DMASubmit1D));
-    REQUIRE(read16(sizeof(store)) == uint16_t(neuralai::CommandType::AFUBinary));
-    REQUIRE(read16(sizeof(store) + sizeof(independent)) ==
+    REQUIRE(read16(sizeof(store)) ==
         uint16_t(neuralai::CommandType::LineBufferSubmit));
+    REQUIRE(read16(sizeof(store) + sizeof(linebuffer)) ==
+        uint16_t(neuralai::CommandType::AFUBinary));
     REQUIRE(read16(waitOffset) ==
         uint16_t(neuralai::CommandType::DMAWait));
     REQUIRE(read32(waitOffset + 16) ==
@@ -4294,14 +4295,8 @@ TEST_CASE("Neural-AI binary chain reloads one spilled intermediate through TCDM"
     REQUIRE(addCommands == 2 * tileCount);
     REQUIRE(addBytes == 2 * tensorBytes);
     REQUIRE(dmaWaits <= asyncDMAs);
-    if ( tileCount == 1 )
-    {
-        REQUIRE(asyncStores == 0);
-    }
-    else
-    {
-        REQUIRE(asyncDMAs > 0);
-    }
+    REQUIRE(asyncDMAs > 0);
+    REQUIRE(asyncStores <= asyncDMAs);
 }
 
 TEST_CASE("Neural-AI Concat reloads one spilled producer through TCDM")
@@ -4784,7 +4779,8 @@ TEST_CASE("Neural-AI K3 Conv tiles spilled feature maps through TCDM stripes")
     REQUIRE((spillOutput ? asyncStores > 0 : asyncStores == 0));
     REQUIRE(dmaWaits <= asyncDMAs);
     REQUIRE(linebufferJobs == 18);
-    REQUIRE(linebufferSubmits <= 2);
+    REQUIRE(linebufferSubmits > 0);
+    REQUIRE(linebufferSubmits < linebufferJobs);
     REQUIRE(systolicWaits == linebufferSubmits);
     REQUIRE(spatialRows == (spillOutput ?
         std::vector<uint32_t>{15, 15, 3, 15, 15, 3} : std::vector<uint32_t>{}));

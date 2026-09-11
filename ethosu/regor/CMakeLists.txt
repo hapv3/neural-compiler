@@ -273,6 +273,7 @@ regor_lib(
         "compiler/network_performance.cpp"
         "compiler/neural_ai_command_generator.cpp"
         "compiler/neural_ai_command_ir.cpp"
+        "compiler/neural_ai_command_scheduler.cpp"
         "compiler/neural_ai_command_performance.cpp"
         "compiler/neural_ai_memory_placement.cpp"
         "compiler/neural_ai_writer.cpp"
