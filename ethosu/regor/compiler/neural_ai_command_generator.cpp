@@ -4827,19 +4827,22 @@ struct GeneratorContext
 };
 
 bool OptimizeGlobalCommandSchedule(std::vector<uint8_t> &commands,
-    uint32_t &insertedWaits, std::string &error)
+    uint32_t &insertedWaits, uint32_t &removedQParamLoads, std::string &error)
 {
     std::vector<neuralai::SemanticCommand> semantic;
     neuralai::CommandDependencyGraph dependencies;
     neuralai::GlobalCommandScheduleStats stats;
+    neuralai::QParamResidencyStats qparamStats;
     std::vector<uint8_t> scheduled;
     if ( !neuralai::DecodeSemanticCommandStream(commands, semantic, error) ||
+         !neuralai::OptimizeQParamResidency(semantic, qparamStats, error) ||
          !neuralai::BuildCommandDependencyGraph(semantic, dependencies, error) ||
          !neuralai::ScheduleGlobalCommandStream(
              semantic, dependencies, scheduled, stats, error) )
         return false;
     commands = std::move(scheduled);
     insertedWaits = stats.insertedWaits;
+    removedQParamLoads = qparamStats.redundantLoads;
     return true;
 }
 
@@ -4848,8 +4851,10 @@ bool OptimizeGlobalCommandSchedule(std::vector<uint8_t> &commands,
 uint32_t NeuralAICommandGenerator::OptimizeCommandOverlap(std::vector<uint8_t> &commands)
 {
     uint32_t insertedWaits = 0;
+    uint32_t removedQParamLoads = 0;
     std::string error;
-    return OptimizeGlobalCommandSchedule(commands, insertedWaits, error) ? insertedWaits : 0;
+    return OptimizeGlobalCommandSchedule(
+        commands, insertedWaits, removedQParamLoads, error) ? insertedWaits : 0;
 }
 
 uint32_t NeuralAICommandGenerator::FuseSystolicBinaryPostOps(std::vector<uint8_t> &commands)
@@ -5568,7 +5573,11 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
     assert(coalescedCommands <= artifact.commandCount);
     artifact.commandCount -= coalescedCommands;
     uint32_t insertedWaits = 0;
-    if ( !OptimizeGlobalCommandSchedule(artifact.commands, insertedWaits, error) ) return false;
+    uint32_t removedQParamLoads = 0;
+    if ( !OptimizeGlobalCommandSchedule(
+             artifact.commands, insertedWaits, removedQParamLoads, error) ) return false;
+    assert(removedQParamLoads <= artifact.commandCount);
+    artifact.commandCount -= removedQParamLoads;
     artifact.commandCount += insertedWaits;
     context.AppendControl(CommandType::End, 0, 0);
     if ( !neuralai::DecodeSemanticCommandStream(

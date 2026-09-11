@@ -43,6 +43,18 @@ bool QueueOrders(const SemanticCommand &predecessor, const SemanticCommand &succ
            IsDMA(successor) && predecessor.queueId == successor.queueId;
 }
 
+bool IssueOrders(const CommandDependency &dependency,
+    const SemanticCommand &predecessor, const SemanticCommand &successor)
+{
+    if ( QueueOrders(predecessor, successor) ) return true;
+    // The systolic start pulse atomically copies the requant shadow bank into
+    // the active bank. A following RQ_LOAD must remain after that start, but it
+    // may overwrite the shadow bank while the submitted job uses its active
+    // copy. This is an issue-order dependency, not a completion dependency.
+    return dependency.kind == DependencyKind::StateWAR && IsSystolic(predecessor) &&
+           successor.type == CommandType::RQLoad;
+}
+
 int AsyncQueue(const SemanticCommand &command)
 {
     if ( IsDMA(command) && command.queueId < DMAQueues ) return int(command.queueId);
@@ -111,6 +123,50 @@ uint32_t TCDMPhaseConflicts(const SemanticCommand &lhs, const SemanticCommand &r
 
 }  // namespace
 
+bool OptimizeQParamResidency(std::vector<SemanticCommand> &commands,
+    QParamResidencyStats &stats, std::string &error)
+{
+    stats = {};
+    error.clear();
+    std::vector<SemanticCommand> compacted;
+    compacted.reserve(commands.size());
+    uint64_t residentIdentity = 0;
+    bool resident = false;
+    for ( SemanticCommand &command : commands )
+    {
+        if ( command.type != CommandType::RQLoad )
+        {
+            compacted.push_back(std::move(command));
+            continue;
+        }
+        ++stats.inputLoads;
+        const auto quantization = std::find_if(command.stateAccesses.begin(),
+            command.stateAccesses.end(), [](const SemanticStateAccess &access)
+            {
+                return access.state == SemanticState::Quantization &&
+                       access.mode == SemanticAccessMode::Write;
+            });
+        if ( quantization == command.stateAccesses.end() || quantization->valueIdentity == 0 )
+        {
+            error = "Neural-AI qparam residency encountered an RQ_LOAD without an identity";
+            return false;
+        }
+        if ( resident && residentIdentity == quantization->valueIdentity )
+        {
+            ++stats.redundantLoads;
+            continue;
+        }
+        resident = true;
+        residentIdentity = quantization->valueIdentity;
+        ++stats.retainedLoads;
+        compacted.push_back(std::move(command));
+    }
+    commands = std::move(compacted);
+    for ( int index = 0; index < int(commands.size()); ++index )
+        commands[index].sourceCommandIndex = uint32_t(index);
+    return true;
+}
+
 bool ScheduleGlobalCommandStream(const std::vector<SemanticCommand> &commands,
     const CommandDependencyGraph &dependencies, std::vector<uint8_t> &scheduledBytes,
     GlobalCommandScheduleStats &stats, std::string &error)
@@ -140,7 +196,7 @@ bool ScheduleGlobalCommandStream(const std::vector<SemanticCommand> &commands,
         indegree[index] = int(dependencies.predecessors[index].size());
     for ( const CommandDependency &edge : dependencies.edges )
     {
-        if ( !QueueOrders(commands[edge.predecessor], commands[edge.successor]) )
+        if ( !IssueOrders(edge, commands[edge.predecessor], commands[edge.successor]) )
             completionPredecessors[edge.successor].push_back(edge.predecessor);
     }
 
@@ -329,6 +385,8 @@ bool ScheduleGlobalCommandStream(const std::vector<SemanticCommand> &commands,
         const uint32_t index = uint32_t(selected);
         ready.erase(index);
         SemanticCommand scheduled = commands[index];
+        if ( scheduled.type == CommandType::RQLoad && !pending[SystolicQueue].empty() )
+            ++stats.qparamPreloads;
         const int queue = AsyncQueue(scheduled);
         const bool submit = scheduled.asyncCapable && queue >= 0 &&
             (pendingCount() != 0 || hasOverlapOpportunity(index));

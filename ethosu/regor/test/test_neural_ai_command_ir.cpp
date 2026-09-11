@@ -323,6 +323,107 @@ TEST_CASE("Neural-AI global scheduler overlaps engines and waits at first consum
     CHECK(scheduled[5].type == CommandType::AFUBinary);
 }
 
+TEST_CASE("Neural-AI qparam residency removes only unchanged resident blocks")
+{
+    CommandRQLoadV2 rq0{};
+    rq0.header.type = uint16_t(CommandType::RQLoad);
+    rq0.header.sizeBytes = sizeof(rq0);
+    rq0.qparamIndex = 32;
+    rq0.qparamCount = 32;
+    rq0.qparamBlock = 2;
+    rq0.header.layerId = 1;
+
+    CommandRQLoadV2 repeated = rq0;
+    repeated.header.layerId = 2;
+    repeated.header.tileId = 7;
+    CommandRQLoadV2 changed = rq0;
+    changed.qparamIndex = 64;
+    CommandRQLoadV2 restored = rq0;
+
+    std::vector<uint8_t> bytes;
+    Append(bytes, rq0);
+    Append(bytes, repeated);
+    Append(bytes, changed);
+    Append(bytes, restored);
+
+    std::vector<SemanticCommand> commands;
+    QParamResidencyStats stats;
+    std::string error;
+    REQUIRE(DecodeSemanticCommandStream(bytes, commands, error));
+    REQUIRE(OptimizeQParamResidency(commands, stats, error));
+    CHECK(stats.inputLoads == 4);
+    CHECK(stats.retainedLoads == 3);
+    CHECK(stats.redundantLoads == 1);
+    REQUIRE(commands.size() == 3);
+    CHECK(commands[0].layerId == 1);
+    CHECK(commands[1].stateAccesses[0].valueIdentity !=
+          commands[0].stateAccesses[0].valueIdentity);
+    CHECK(commands[2].stateAccesses[0].valueIdentity ==
+          commands[0].stateAccesses[0].valueIdentity);
+    CommandDependencyGraph dependencies;
+    REQUIRE(BuildCommandDependencyGraph(commands, dependencies, error));
+    CHECK(commands[0].stateAccesses[0].generation == 1);
+    CHECK(commands[1].stateAccesses[0].generation == 2);
+    CHECK(commands[2].stateAccesses[0].generation == 3);
+}
+
+TEST_CASE("Neural-AI scheduler preloads qparams into shadow registers during systolic work")
+{
+    CommandRQLoadV2 rq0{};
+    rq0.header.type = uint16_t(CommandType::RQLoad);
+    rq0.header.sizeBytes = sizeof(rq0);
+    rq0.qparamCount = 32;
+
+    CommandLineBufferJobV2 first{};
+    first.header.type = uint16_t(CommandType::LineBufferJob);
+    first.header.sizeBytes = sizeof(first);
+    first.job.linebuf.inputBase = 0x1000;
+    first.job.linebuf.inputH = 4;
+    first.job.linebuf.rowStrideBytes = 256;
+    first.job.gemm.weightAddr = 0x2000;
+    first.job.gemm.ofmAddr = 0x4000;
+    first.job.gemm.dimM = 64;
+    first.job.rows = 64;
+    first.job.kTiles = 9;
+
+    CommandRQLoadV2 rq1 = rq0;
+    rq1.qparamIndex = 32;
+    rq1.qparamBlock = 1;
+    CommandLineBufferJobV2 second = first;
+    second.job.linebuf.inputBase = 0x6000;
+    second.job.gemm.weightAddr = 0x7000;
+    second.job.gemm.ofmAddr = 0x9000;
+
+    std::vector<uint8_t> bytes;
+    Append(bytes, rq0);
+    Append(bytes, first);
+    Append(bytes, rq1);
+    Append(bytes, second);
+
+    std::vector<SemanticCommand> commands;
+    CommandDependencyGraph dependencies;
+    std::string error;
+    REQUIRE(DecodeSemanticCommandStream(bytes, commands, error));
+    REQUIRE(BuildCommandDependencyGraph(commands, dependencies, error));
+    REQUIRE(HasEdge(dependencies, 1, 2, DependencyKind::StateWAR));
+
+    std::vector<uint8_t> scheduledBytes;
+    GlobalCommandScheduleStats stats;
+    REQUIRE(ScheduleGlobalCommandStream(
+        commands, dependencies, scheduledBytes, stats, error));
+    CHECK(stats.qparamPreloads == 1);
+    CHECK(stats.asynchronousSubmits == 1);
+
+    std::vector<SemanticCommand> scheduled;
+    REQUIRE(DecodeSemanticCommandStream(scheduledBytes, scheduled, error));
+    REQUIRE(scheduled.size() == 5);
+    CHECK(scheduled[0].type == CommandType::RQLoad);
+    CHECK(scheduled[1].type == CommandType::LineBufferSubmit);
+    CHECK(scheduled[2].type == CommandType::RQLoad);
+    CHECK(scheduled[3].type == CommandType::SystolicWait);
+    CHECK(scheduled[4].type == CommandType::LineBufferJob);
+}
+
 TEST_CASE("Neural-AI semantic IR rejects malformed commands")
 {
     std::vector<uint8_t> bytes(sizeof(CommandHeaderV2));

@@ -21,8 +21,23 @@ struct GlobalCommandScheduleStats
     uint32_t insertedWaits = 0;
     uint32_t reorderedCommands = 0;
     uint32_t bankConflictDeferrals = 0;
+    uint32_t qparamPreloads = 0;
     int64_t estimatedCycles = 0;
 };
+
+struct QParamResidencyStats
+{
+    uint32_t inputLoads = 0;
+    uint32_t retainedLoads = 0;
+    uint32_t redundantLoads = 0;
+};
+
+// Retains the currently programmed qparam block across systolic commands and
+// removes a reload only when its immutable QParams reference, count, and
+// logical block identity are unchanged. The pass operates before dependency
+// construction so all state generations describe the compacted stream.
+bool OptimizeQParamResidency(std::vector<SemanticCommand> &commands,
+    QParamResidencyStats &stats, std::string &error);
 
 // Schedules one blocking semantic stream across the two DMA queues, systolic
 // pending slot, AFU, and Spatz. Dependencies remain authoritative; the resource
