@@ -19,6 +19,7 @@ namespace regor
 struct CompiledNeuralAIArtifact
 {
     std::vector<uint8_t> commands;
+    std::vector<uint8_t> compactCommands;
     std::vector<uint8_t> constants;
     std::vector<neuralai::TensorV1> tensors;
     std::vector<neuralai::BindingV1> bindings;
@@ -26,6 +27,8 @@ struct CompiledNeuralAIArtifact
     std::vector<neuralai::SemanticCommand> semanticCommands;
     neuralai::CommandDependencyGraph commandDependencies;
     uint32_t commandCount = 0;
+    uint32_t encodedCommandCount = 0;
+    uint32_t commandBytesBeforeCompaction = 0;
     uint32_t requiredTCDMBytes = 0;
 };
 

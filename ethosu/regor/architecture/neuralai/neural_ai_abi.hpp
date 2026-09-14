@@ -19,7 +19,7 @@ namespace regor::neuralai
 constexpr uint32_t ModelMagic = 0x4D49414EU;       // "NAIM" in little-endian storage
 constexpr uint32_t InvocationMagic = 0x5649414EU;  // "NAIV" in little-endian storage
 constexpr uint16_t AbiMajor = 1;
-constexpr uint16_t AbiMinor = 4;
+constexpr uint16_t AbiMinor = 5;
 constexpr uint32_t TargetId = 1;
 constexpr uint32_t Alignment = 32;
 
@@ -106,6 +106,7 @@ enum class CommandType : uint16_t
     SystolicWait = 30,
     LineBufferBinary = 31,
     LineBufferBinarySubmit = 32,
+    AffineLoop = 33,
 };
 
 enum CommandFlags : uint32_t
@@ -229,6 +230,24 @@ struct CommandHeaderV2
     uint32_t flags;
     uint32_t layerId;
     uint32_t tileId;
+};
+
+// Storage-only command-stream compaction. The descriptor is followed by one
+// encoded body instance. Each patch adds delta modulo 2^32 to a body word
+// before the next iteration; type, size, and flags words are never patchable.
+struct CommandAffineLoopV2
+{
+    CommandHeaderV2 header;
+    uint32_t iterationCount;
+    uint32_t bodyCommandCount;
+    uint32_t bodyBytes;
+    uint32_t patchCount;
+};
+
+struct CommandAffinePatchV2
+{
+    uint32_t bodyWordOffset;
+    uint32_t delta;
 };
 
 struct CommandRQLoadV2
@@ -506,6 +525,8 @@ static_assert(sizeof(BindingV1) == 64);
 static_assert(sizeof(BindingAddressV1) == 16);
 static_assert(sizeof(QParamV1) == 32);
 static_assert(sizeof(CommandHeaderV2) == 16);
+static_assert(sizeof(CommandAffineLoopV2) == 32);
+static_assert(sizeof(CommandAffinePatchV2) == 8);
 static_assert(sizeof(CommandRQLoadV2) == 32);
 static_assert(offsetof(CommandRQLoadV2, qparamIndex) == 16);
 static_assert(offsetof(CommandRQLoadV2, qparamBlock) == 24);

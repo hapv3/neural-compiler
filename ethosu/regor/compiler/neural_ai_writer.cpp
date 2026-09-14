@@ -107,7 +107,9 @@ struct SectionPayload
 
 bool WriteNeuralAIModel(const CompiledNeuralAIArtifact &artifact, std::vector<uint8_t> &output, std::string &error)
 {
-    if ( artifact.commands.empty() || artifact.commands.size() % neuralai::Alignment != 0 )
+    const std::vector<uint8_t> &packageCommands = artifact.compactCommands.empty() ?
+        artifact.commands : artifact.compactCommands;
+    if ( packageCommands.empty() || packageCommands.size() % neuralai::Alignment != 0 )
     {
         error = "NeuralAI commands must be non-empty and 32-byte aligned";
         return false;
@@ -153,7 +155,7 @@ bool WriteNeuralAIModel(const CompiledNeuralAIArtifact &artifact, std::vector<ui
     }
 
     std::array<SectionPayload, 5> payloads = {{
-        {neuralai::SectionType::Commands, artifact.commandCount, artifact.commands},
+        {neuralai::SectionType::Commands, artifact.commandCount, packageCommands},
         {neuralai::SectionType::Constants, 0, artifact.constants},
         {neuralai::SectionType::Tensors, uint32_t(artifact.tensors.size()), {}},
         {neuralai::SectionType::Bindings, uint32_t(artifact.bindings.size()), {}},

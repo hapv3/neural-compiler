@@ -272,6 +272,7 @@ regor_lib(
         "compiler/live_range.cpp"
         "compiler/network_performance.cpp"
         "compiler/neural_ai_command_generator.cpp"
+        "compiler/neural_ai_command_compactor.cpp"
         "compiler/neural_ai_command_ir.cpp"
         "compiler/neural_ai_command_scheduler.cpp"
         "compiler/neural_ai_command_performance.cpp"

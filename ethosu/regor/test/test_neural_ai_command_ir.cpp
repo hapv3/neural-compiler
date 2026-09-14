@@ -4,6 +4,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
+#include "compiler/neural_ai_command_compactor.hpp"
 #include "compiler/neural_ai_command_ir.hpp"
 #include "compiler/neural_ai_command_scheduler.hpp"
 
@@ -523,6 +524,66 @@ TEST_CASE("Neural-AI DMA residency removes exact weight and halo reloads until e
     REQUIRE(BuildCommandDependencyGraph(commands, dependencies, error));
     CHECK(HasEdge(dependencies, 0, 1, DependencyKind::MemoryRAW));
     CHECK(HasEdge(dependencies, 3, 4, DependencyKind::MemoryWAW));
+}
+
+TEST_CASE("Neural-AI affine loops compact and exactly restore repeated command bodies")
+{
+    std::vector<uint8_t> original;
+    for ( uint32_t iteration = 0; iteration < 4; ++iteration )
+    {
+        CommandDMA2DV2 dma{};
+        dma.header.type = uint16_t(CommandType::DMA2D);
+        dma.header.sizeBytes = sizeof(dma);
+        dma.header.layerId = 7;
+        dma.header.tileId = iteration;
+        dma.source = {uint16_t(Region::ModelConstants), 0, 4096 + iteration * 64};
+        dma.destination = {uint16_t(Region::TCDMScratch), 0, 8192 + iteration * 64};
+        dma.length = 32;
+        dma.sourceStride2 = 32;
+        dma.destinationStride2 = 32;
+        dma.repetitions2 = 1;
+        dma.direction = uint32_t(DMADirection::ExternalToLocal);
+        Append(original, dma);
+
+        CommandRQLoadV2 rq{};
+        rq.header.type = uint16_t(CommandType::RQLoad);
+        rq.header.sizeBytes = sizeof(rq);
+        rq.header.layerId = 7;
+        rq.header.tileId = iteration;
+        rq.qparamIndex = iteration * 2;
+        rq.qparamCount = 1;
+        rq.qparamBlock = iteration;
+        Append(original, rq);
+    }
+    AppendControl(original, CommandType::End);
+
+    std::vector<SemanticCommand> commands;
+    std::string error;
+    REQUIRE(DecodeSemanticCommandStream(original, commands, error));
+    std::vector<uint8_t> compacted;
+    CommandCompactionStats stats;
+    REQUIRE(CompactAffineCommandStream(commands, compacted, stats, error));
+    CHECK(stats.logicalCommands == 8);
+    CHECK(stats.encodedCommands == 3);
+    CHECK(stats.loops == 1);
+    CHECK(stats.loopedCommands == 8);
+    CHECK(stats.bytesBefore == original.size());
+    CHECK(stats.bytesAfter < stats.bytesBefore);
+    CHECK((uint16_t(compacted[0]) | uint16_t(uint16_t(compacted[1]) << 8)) ==
+          uint16_t(CommandType::AffineLoop));
+
+    std::vector<uint8_t> expanded;
+    uint32_t logicalCommands = 0;
+    REQUIRE(ExpandAffineCommandStream(compacted, expanded, logicalCommands, error));
+    CHECK(logicalCommands == 8);
+    CHECK(expanded == original);
+
+    const uint32_t firstPatchOffset = sizeof(CommandAffineLoopV2);
+    compacted[firstPatchOffset] = 0;
+    compacted[firstPatchOffset + 1] = 0;
+    compacted[firstPatchOffset + 2] = 0;
+    compacted[firstPatchOffset + 3] = 0;
+    CHECK_FALSE(ExpandAffineCommandStream(compacted, expanded, logicalCommands, error));
 }
 
 TEST_CASE("Neural-AI scheduler preloads qparams into shadow registers during systolic work")

@@ -12,6 +12,7 @@
 #include "architecture/neuralai/neural_ai_op_config.hpp"
 #include "architecture/neuralai/neural_ai_quantization.hpp"
 #include "compiler/high_level_command_stream_generator.hpp"
+#include "compiler/neural_ai_command_compactor.hpp"
 #include "compiler/neural_ai_command_ir.hpp"
 #include "compiler/neural_ai_command_scheduler.hpp"
 #include "compiler/neural_ai_memory_state.hpp"
@@ -5698,7 +5699,22 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
     if ( !neuralai::BuildCommandDependencyGraph(
              artifact.semanticCommands, artifact.commandDependencies, error) )
         return false;
-    artifact.commands = neuralai::SerializeSemanticCommandStream(artifact.semanticCommands);
+    neuralai::CommandCompactionStats compactionStats;
+    if ( !neuralai::CompactAffineCommandStream(artifact.semanticCommands,
+             artifact.compactCommands, compactionStats, error) )
+        return false;
+    constexpr uint32_t MinimumCommandCompactionSavings = 4096;
+    const uint32_t savedCommandBytes = compactionStats.bytesBefore - compactionStats.bytesAfter;
+    if ( savedCommandBytes < MinimumCommandCompactionSavings )
+    {
+        artifact.compactCommands.clear();
+        artifact.encodedCommandCount = artifact.commandCount;
+    }
+    else
+    {
+        artifact.encodedCommandCount = compactionStats.encodedCommands;
+    }
+    artifact.commandBytesBeforeCompaction = compactionStats.bytesBefore;
     artifact.requiredTCDMBytes = uint32_t(RoundAway(
         int(std::max(context.scratchEnd, context.workspaceEnd)), ArchNeuralAI::DMAAlignment));
     if ( artifact.requiredTCDMBytes > ArchNeuralAI::AllocatableTCDMBytes )

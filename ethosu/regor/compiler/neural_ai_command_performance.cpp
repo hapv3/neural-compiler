@@ -198,6 +198,7 @@ NeuralAICommandPerformanceResult MeasureNeuralAICommandPerformance(
 {
     NeuralAICommandPerformanceResult result;
     if ( architecture == nullptr ) return result;
+    const std::vector<uint8_t> &expandedCommands = artifact.commands;
 
     int table = 0;
     if ( db != nullptr )
@@ -214,13 +215,13 @@ NeuralAICommandPerformanceResult MeasureNeuralAICommandPerformance(
     std::array<int64_t, 2> hiddenDMACycles = {0, 0};
     int64_t pendingSystolicCycles = -1;
     int64_t hiddenSystolicCycles = 0;
-    while ( offset + int(sizeof(neuralai::CommandHeaderV2)) <= int(artifact.commands.size()) )
+    while ( offset + int(sizeof(neuralai::CommandHeaderV2)) <= int(expandedCommands.size()) )
     {
-        const uint8_t *command = artifact.commands.data() + offset;
+        const uint8_t *command = expandedCommands.data() + offset;
         const CommandType type = CommandType(Read16(command));
         const uint16_t size = Read16(command + 2);
         const uint32_t flags = Read32(command + 4);
-        if ( size < sizeof(neuralai::CommandHeaderV2) || offset + size > int(artifact.commands.size()) ) break;
+        if ( size < sizeof(neuralai::CommandHeaderV2) || offset + size > int(expandedCommands.size()) ) break;
 
         CommandMeasurement measurement{architecture, result.performance};
         measurement.row.index = index;

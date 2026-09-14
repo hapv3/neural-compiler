@@ -13,6 +13,7 @@
 #include "compiler/graphir_optimiser.hpp"
 #include "compiler/high_level_command_stream_generator.hpp"
 #include "compiler/neural_ai_command_generator.hpp"
+#include "compiler/neural_ai_command_compactor.hpp"
 #include "compiler/neural_ai_graph_optimiser.hpp"
 #include "compiler/neural_ai_memory_state.hpp"
 #include "compiler/neural_ai_memory_placement.hpp"
@@ -7395,28 +7396,34 @@ TEST_CASE("Neural-AI compiler copies multi-group compact NHWC into depthwise C32
         int64_t size = 0;
         const auto *data = static_cast<const uint8_t *>(blob->Map(size));
         const uint32_t commandBytes = Read32(data + 64 + 12);
-        uint32_t offset = 224;
+        std::vector<uint8_t> compactCommands(data + 224, data + 224 + commandBytes);
+        std::vector<uint8_t> commands;
+        uint32_t logicalCommands = 0;
+        std::string expansionError;
+        REQUIRE(neuralai::ExpandAffineCommandStream(
+            compactCommands, commands, logicalCommands, expansionError));
+        uint32_t offset = 0;
         uint32_t inputDma2d = 0;
         uint32_t inputDma3d = 0;
         uint32_t previousGroupDestination = 0;
-        while ( offset < 224 + commandBytes )
+        while ( offset < commands.size() )
         {
-            const uint16_t type = Read16(data + offset);
-            const uint16_t commandSize = Read16(data + offset + 2);
+            const uint16_t type = Read16(commands, offset);
+            const uint16_t commandSize = Read16(commands, offset + 2);
             if ( IsDMA3DCommand(type) &&
-                 Read16(data + offset + 16) == uint16_t(neuralai::Region::InputBinding) )
+                 Read16(commands, offset + 16) == uint16_t(neuralai::Region::InputBinding) )
             {
                 REQUIRE(commandSize == sizeof(neuralai::CommandDMA3DV2));
-                REQUIRE(Read32(data + offset + 32) == 32);
-                REQUIRE(Read32(data + offset + 36) == uint32_t(channels));
-                REQUIRE(Read32(data + offset + 40) == 32);
-                REQUIRE(Read32(data + offset + 44) == 7);
-                REQUIRE(Read32(data + offset + 48) == 7u * uint32_t(channels));
-                REQUIRE(Read32(data + offset + 52) == 9u * 32u);
-                REQUIRE(Read32(data + offset + 56) == 7);
+                REQUIRE(Read32(commands, offset + 32) == 32);
+                REQUIRE(Read32(commands, offset + 36) == uint32_t(channels));
+                REQUIRE(Read32(commands, offset + 40) == 32);
+                REQUIRE(Read32(commands, offset + 44) == 7);
+                REQUIRE(Read32(commands, offset + 48) == 7u * uint32_t(channels));
+                REQUIRE(Read32(commands, offset + 52) == 9u * 32u);
+                REQUIRE(Read32(commands, offset + 56) == 7);
                 const uint32_t group = inputDma3d;
-                const uint32_t sourceOffset = Read32(data + offset + 20);
-                const uint32_t destinationOffset = Read32(data + offset + 28);
+                const uint32_t sourceOffset = Read32(commands, offset + 20);
+                const uint32_t destinationOffset = Read32(commands, offset + 28);
                 REQUIRE(sourceOffset == group * 32u);
                 if ( group != 0 )
                     REQUIRE(destinationOffset == previousGroupDestination + 9u * 9u * 32u);
@@ -7424,13 +7431,13 @@ TEST_CASE("Neural-AI compiler copies multi-group compact NHWC into depthwise C32
                 ++inputDma3d;
             }
             if ( IsDMA2DCommand(type) &&
-                 Read16(data + offset + 16) == uint16_t(neuralai::Region::InputBinding) )
+                 Read16(commands, offset + 16) == uint16_t(neuralai::Region::InputBinding) )
             {
                 ++inputDma2d;
             }
             offset += commandSize;
         }
-        REQUIRE(offset == 224 + commandBytes);
+        REQUIRE(offset == commands.size());
         REQUIRE(inputDma2d == 0);
         REQUIRE(inputDma3d == uint32_t(channels / 32));
         blob->Unmap(const_cast<uint8_t *>(data));
