@@ -219,6 +219,7 @@ NeuralAICommandPerformanceResult MeasureNeuralAICommandPerformance(
         const uint8_t *command = artifact.commands.data() + offset;
         const CommandType type = CommandType(Read16(command));
         const uint16_t size = Read16(command + 2);
+        const uint32_t flags = Read32(command + 4);
         if ( size < sizeof(neuralai::CommandHeaderV2) || offset + size > int(artifact.commands.size()) ) break;
 
         CommandMeasurement measurement{architecture, result.performance};
@@ -351,7 +352,8 @@ NeuralAICommandPerformanceResult MeasureNeuralAICommandPerformance(
                     const int64_t length = Read32(command + 40);
                     measurement.AddAccess(ReadRef(command + 16), length, false, AccessType::FeatureMap);
                     measurement.AddAccess(ReadRef(command + 24), length, true, AccessType::FeatureMap);
-                    measurement.AddAccess(ReadRef(command + 32), 256, false, AccessType::Lut);
+                    if ( (flags & neuralai::CommandFlagAFULutReuse) == 0 )
+                        measurement.AddAccess(ReadRef(command + 32), 256, false, AccessType::Lut);
                     measurement.row.computeCycles = std::max<int64_t>(1, DivRoundUp64(length, 32));
                 }
                 break;

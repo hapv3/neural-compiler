@@ -3700,6 +3700,72 @@ struct GeneratorContext
             const bool externalSource = !IsLocalDMARegion(source.region);
             if ( copy.repetitions3 != 0 )
             {
+                // Compact channel tails use DMA3D: repetitions walk pixels and
+                // repetitions3 walk rows. Restore complete cached halo rows
+                // from their compact copy before deciding which external rows
+                // are still missing.
+                if ( externalSource && copy.repetitions != 0 )
+                {
+                    for ( uint32_t row = 0; row < copy.repetitions3; ++row )
+                    {
+                        std::vector<uint32_t> residentSegments;
+                        residentSegments.reserve(copy.repetitions);
+                        bool complete = true;
+                        for ( uint32_t repetition = 0; repetition < copy.repetitions; ++repetition )
+                        {
+                            const uint64_t contentOffset = uint64_t(copy.source) +
+                                uint64_t(row) * copy.sourceStride3 +
+                                uint64_t(repetition) * copy.sourceStride;
+                            const auto resident = tcdmContent.Find(
+                                tensorContent, contentOffset, copy.length);
+                            if ( !resident )
+                            {
+                                complete = false;
+                                break;
+                            }
+                            residentSegments.push_back(*resident);
+                        }
+                        if ( !complete || residentSegments.empty() ) continue;
+                        if ( residentSegments.size() > 1 &&
+                             residentSegments[1] < residentSegments[0] )
+                            continue;
+                        const uint32_t sourceStride = residentSegments.size() > 1 ?
+                            residentSegments[1] - residentSegments[0] : copy.length;
+                        const uint64_t destinationBegin = uint64_t(copy.destination) +
+                            uint64_t(row) * copy.destinationStride3;
+                        const uint64_t destinationEnd = destinationBegin +
+                            uint64_t(copy.repetitions - 1u) * copy.destinationStride + copy.length;
+                        for ( uint32_t repetition = 0; repetition < residentSegments.size(); ++repetition )
+                        {
+                            if ( uint64_t(residentSegments[repetition]) !=
+                                     uint64_t(residentSegments[0]) +
+                                         uint64_t(repetition) * sourceStride ||
+                                 (uint64_t(residentSegments[repetition]) < destinationEnd &&
+                                  destinationBegin < uint64_t(residentSegments[repetition]) + copy.length) )
+                            {
+                                complete = false;
+                                break;
+                            }
+                        }
+                        if ( !complete ) continue;
+                        RefV1 localSource{uint16_t(Region::TCDMScratch), 0,
+                            residentSegments[0]};
+                        RefV1 localDestination{uint16_t(Region::TCDMScratch), 0,
+                            uint32_t(destinationBegin)};
+                        if ( !AppendDMA2D(localSource, localDestination, copy.length,
+                                 sourceStride, copy.destinationStride, copy.repetitions,
+                                 layerId, tileId++, error) )
+                            return false;
+                        for ( uint32_t repetition = 0; repetition < copy.repetitions; ++repetition )
+                        {
+                            tcdmContent.Write(
+                                uint32_t(destinationBegin) + repetition * copy.destinationStride,
+                                copy.length, tensorContent,
+                                uint64_t(copy.source) + uint64_t(row) * copy.sourceStride3 +
+                                    uint64_t(repetition) * copy.sourceStride);
+                        }
+                    }
+                }
                 uint32_t runStart = 0;
                 while ( runStart < copy.repetitions3 )
                 {
@@ -3831,14 +3897,46 @@ struct GeneratorContext
             const uint64_t haloEnd = uint64_t(haloOffset) + activeHaloBytes;
             for ( const auto &copy : plan.copies )
             {
+                if ( copy.repetitions == 0 ) continue;
+                if ( copy.repetitions3 != 0 )
+                {
+                    const uint32_t rows = std::min(activeHaloRows, copy.repetitions3);
+                    const uint32_t firstRow = copy.repetitions3 - rows;
+                    const uint64_t rowBytes = uint64_t(copy.repetitions) * copy.length;
+                    const uint64_t bytes = uint64_t(rows) * rowBytes;
+                    if ( rows == 0 || haloCursor > haloEnd || bytes > haloEnd - haloCursor ||
+                         rowBytes > std::numeric_limits<uint32_t>::max() )
+                        continue;
+                    RefV1 localSource{uint16_t(Region::TCDMScratch), 0,
+                        copy.destination + firstRow * copy.destinationStride3};
+                    RefV1 localDestination{
+                        uint16_t(Region::TCDMScratch), 0, haloCursor};
+                    if ( !AppendDMA3D(localSource, localDestination, copy.length,
+                             copy.destinationStride, copy.length, copy.repetitions,
+                             copy.destinationStride3, uint32_t(rowBytes), rows,
+                             layerId, tileId++, error) )
+                        return false;
+                    for ( uint32_t row = 0; row < rows; ++row )
+                    {
+                        for ( uint32_t repetition = 0; repetition < copy.repetitions; ++repetition )
+                        {
+                            tcdmContent.Write(haloCursor + uint32_t(row * rowBytes) +
+                                    repetition * copy.length,
+                                copy.length, tensorContent,
+                                uint64_t(copy.source) +
+                                    uint64_t(firstRow + row) * copy.sourceStride3 +
+                                    uint64_t(repetition) * copy.sourceStride);
+                        }
+                    }
+                    haloCursor += uint32_t(bytes);
+                    continue;
+                }
                 // A DMA2D copy describes complete physical rows for direct
-                // NHWC and non-tail C32 staging.  Cache the final source rows
-                // of every group compactly; DMA3D compact-tail rows retain
-                // their existing safe reload path until a strided halo cache
-                // is represented explicitly.
-                if ( copy.repetitions3 != 0 || copy.repetitions == 0 ) continue;
+                // NHWC and non-tail C32 staging. Cache the final source rows
+                // of every group compactly.
                 const uint32_t rows = std::min(activeHaloRows, copy.repetitions);
                 const uint32_t firstRow = copy.repetitions - rows;
+                if ( rows == 0 || haloCursor > haloEnd ) continue;
                 const uint64_t remaining = haloEnd - haloCursor;
                 const uint32_t cachedLength = uint32_t(std::min<uint64_t>(
                     copy.length, remaining / rows /
@@ -4827,22 +4925,27 @@ struct GeneratorContext
 };
 
 bool OptimizeGlobalCommandSchedule(std::vector<uint8_t> &commands,
-    uint32_t &insertedWaits, uint32_t &removedQParamLoads, std::string &error)
+    uint32_t &insertedWaits, uint32_t &removedCommands, std::string &error)
 {
     std::vector<neuralai::SemanticCommand> semantic;
     neuralai::CommandDependencyGraph dependencies;
     neuralai::GlobalCommandScheduleStats stats;
     neuralai::QParamResidencyStats qparamStats;
+    neuralai::AFULutResidencyStats lutStats;
+    neuralai::DMAResidencyStats dmaResidencyStats;
     std::vector<uint8_t> scheduled;
-    if ( !neuralai::DecodeSemanticCommandStream(commands, semantic, error) ||
+    if ( !neuralai::DecodeSemanticCommandStream(commands, semantic, error) ) return false;
+    const uint32_t inputCommands = uint32_t(semantic.size());
+    if ( !neuralai::OptimizeDMAResidency(semantic, dmaResidencyStats, error) ||
          !neuralai::OptimizeQParamResidency(semantic, qparamStats, error) ||
+         !neuralai::OptimizeAFULutResidency(semantic, lutStats, error) ||
          !neuralai::BuildCommandDependencyGraph(semantic, dependencies, error) ||
          !neuralai::ScheduleGlobalCommandStream(
              semantic, dependencies, scheduled, stats, error) )
         return false;
     commands = std::move(scheduled);
     insertedWaits = stats.insertedWaits;
-    removedQParamLoads = qparamStats.redundantLoads;
+    removedCommands = inputCommands - uint32_t(semantic.size());
     return true;
 }
 
@@ -4851,10 +4954,10 @@ bool OptimizeGlobalCommandSchedule(std::vector<uint8_t> &commands,
 uint32_t NeuralAICommandGenerator::OptimizeCommandOverlap(std::vector<uint8_t> &commands)
 {
     uint32_t insertedWaits = 0;
-    uint32_t removedQParamLoads = 0;
+    uint32_t removedCommands = 0;
     std::string error;
     return OptimizeGlobalCommandSchedule(
-        commands, insertedWaits, removedQParamLoads, error) ? insertedWaits : 0;
+        commands, insertedWaits, removedCommands, error) ? insertedWaits : 0;
 }
 
 uint32_t NeuralAICommandGenerator::FuseSystolicBinaryPostOps(std::vector<uint8_t> &commands)
@@ -5573,11 +5676,11 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
     assert(coalescedCommands <= artifact.commandCount);
     artifact.commandCount -= coalescedCommands;
     uint32_t insertedWaits = 0;
-    uint32_t removedQParamLoads = 0;
+    uint32_t removedCommands = 0;
     if ( !OptimizeGlobalCommandSchedule(
-             artifact.commands, insertedWaits, removedQParamLoads, error) ) return false;
-    assert(removedQParamLoads <= artifact.commandCount);
-    artifact.commandCount -= removedQParamLoads;
+             artifact.commands, insertedWaits, removedCommands, error) ) return false;
+    assert(removedCommands <= artifact.commandCount);
+    artifact.commandCount -= removedCommands;
     artifact.commandCount += insertedWaits;
     context.AppendControl(CommandType::End, 0, 0);
     if ( !neuralai::DecodeSemanticCommandStream(

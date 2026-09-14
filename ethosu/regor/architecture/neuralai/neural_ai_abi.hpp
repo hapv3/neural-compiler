@@ -19,7 +19,7 @@ namespace regor::neuralai
 constexpr uint32_t ModelMagic = 0x4D49414EU;       // "NAIM" in little-endian storage
 constexpr uint32_t InvocationMagic = 0x5649414EU;  // "NAIV" in little-endian storage
 constexpr uint16_t AbiMajor = 1;
-constexpr uint16_t AbiMinor = 3;
+constexpr uint16_t AbiMinor = 4;
 constexpr uint32_t TargetId = 1;
 constexpr uint32_t Alignment = 32;
 
@@ -113,6 +113,9 @@ enum CommandFlags : uint32_t
     CommandFlagNone = 0,
     CommandFlagOptional = 1U << 0,
     CommandFlagSkippable = 1U << 1,
+    // The active AFU LUT already contains the immutable table referenced by
+    // CommandAFULutV2::lut. Firmware may skip staging and programming it.
+    CommandFlagAFULutReuse = 1U << 2,
 };
 
 struct ModelHeaderV1

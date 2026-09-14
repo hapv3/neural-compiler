@@ -104,6 +104,29 @@ TEST_CASE("neural_ai command performance accounts AFU traffic and emits command 
     tables->Release();
 }
 
+TEST_CASE("neural_ai command performance omits a resident AFU LUT reload")
+{
+    ArchNeuralAI architecture;
+    neuralai::CommandAFULutV2 command{};
+    command.header.type = uint16_t(neuralai::CommandType::AFULut);
+    command.header.sizeBytes = sizeof(command);
+    command.header.flags = neuralai::CommandFlagAFULutReuse;
+    command.ifm = {uint16_t(neuralai::Region::TCDMScratch), 0, 0};
+    command.ofm = {uint16_t(neuralai::Region::TCDMScratch), 0, 1024};
+    command.lut = {uint16_t(neuralai::Region::ModelConstants), 0, 2048};
+    command.length = 320;
+
+    CompiledNeuralAIArtifact artifact;
+    AppendCommand(artifact, command);
+    const auto result = MeasureNeuralAICommandPerformance(artifact, &architecture);
+
+    REQUIRE(result.commands.size() == 1);
+    CHECK(result.commands[0].modelReadBytes == 0);
+    CHECK(result.commands[0].tcdmReadBytes == 320);
+    CHECK(result.commands[0].tcdmWriteBytes == 320);
+    CHECK(result.commands[0].computeCycles == 10);
+}
+
 TEST_CASE("neural_ai command performance accumulates queued asynchronous DMA cycles")
 {
     ArchNeuralAI architecture;

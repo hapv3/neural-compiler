@@ -83,6 +83,18 @@ void Write32(std::vector<uint8_t> &bytes, int offset, uint32_t value)
     for ( int byte = 0; byte < 4; ++byte ) bytes[offset + byte] = uint8_t(value >> (byte * 8));
 }
 
+uint32_t Read32(const std::vector<uint8_t> &bytes, int offset)
+{
+    return uint32_t(bytes[offset]) | (uint32_t(bytes[offset + 1]) << 8) |
+           (uint32_t(bytes[offset + 2]) << 16) | (uint32_t(bytes[offset + 3]) << 24);
+}
+
+bool Overlaps(const SemanticMemoryAccess &lhs, const SemanticMemoryAccess &rhs)
+{
+    return lhs.region == rhs.region && lhs.index == rhs.index &&
+           lhs.begin < rhs.end && rhs.begin < lhs.end;
+}
+
 std::vector<uint8_t> WaitEncoding(int queue, uint32_t layerId, uint32_t tileId)
 {
     std::vector<uint8_t> bytes(sizeof(CommandHeaderV2) * 2, 0);
@@ -159,6 +171,157 @@ bool OptimizeQParamResidency(std::vector<SemanticCommand> &commands,
         resident = true;
         residentIdentity = quantization->valueIdentity;
         ++stats.retainedLoads;
+        compacted.push_back(std::move(command));
+    }
+    commands = std::move(compacted);
+    for ( int index = 0; index < int(commands.size()); ++index )
+        commands[index].sourceCommandIndex = uint32_t(index);
+    return true;
+}
+
+bool OptimizeAFULutResidency(std::vector<SemanticCommand> &commands,
+    AFULutResidencyStats &stats, std::string &error)
+{
+    stats = {};
+    error.clear();
+    uint64_t residentIdentity = 0;
+    bool resident = false;
+    for ( SemanticCommand &command : commands )
+    {
+        auto lutState = std::find_if(command.stateAccesses.begin(),
+            command.stateAccesses.end(), [](const SemanticStateAccess &access)
+            { return access.state == SemanticState::AFULut; });
+        if ( command.type == CommandType::AFULut )
+        {
+            ++stats.commands;
+            if ( lutState == command.stateAccesses.end() || lutState->valueIdentity == 0 )
+            {
+                error = "Neural-AI AFU LUT residency encountered a command without an identity";
+                return false;
+            }
+            const bool encodedReuse = (command.flags & CommandFlagAFULutReuse) != 0;
+            if ( encodedReuse && (!resident || residentIdentity != lutState->valueIdentity) )
+            {
+                error = "Neural-AI AFU LUT residency encountered an invalid resident-table reference";
+                return false;
+            }
+            if ( encodedReuse || (resident && residentIdentity == lutState->valueIdentity) )
+            {
+                command.flags |= CommandFlagAFULutReuse;
+                Write32(command.encoding, 4, command.flags);
+                lutState->mode = SemanticAccessMode::Read;
+                if ( command.memoryAccesses.size() == 3 ) command.memoryAccesses.pop_back();
+                else if ( !encodedReuse )
+                {
+                    error = "Neural-AI AFU LUT residency encountered an invalid LUT memory access";
+                    return false;
+                }
+                ++stats.reused;
+            }
+            else
+            {
+                command.flags &= ~CommandFlagAFULutReuse;
+                Write32(command.encoding, 4, command.flags);
+                lutState->mode = SemanticAccessMode::Write;
+                ++stats.loads;
+            }
+            resident = true;
+            residentIdentity = lutState->valueIdentity;
+            continue;
+        }
+        if ( lutState != command.stateAccesses.end() &&
+             lutState->mode == SemanticAccessMode::Write )
+        {
+            if ( resident ) ++stats.invalidations;
+            resident = false;
+            residentIdentity = 0;
+        }
+    }
+    return true;
+}
+
+bool OptimizeDMAResidency(std::vector<SemanticCommand> &commands,
+    DMAResidencyStats &stats, std::string &error)
+{
+    struct ResidentTransfer
+    {
+        CommandType type = CommandType::End;
+        SemanticMemoryAccess source;
+        SemanticMemoryAccess destination;
+        std::vector<uint8_t> descriptor;
+    };
+
+    stats = {};
+    error.clear();
+    std::vector<ResidentTransfer> resident;
+    std::vector<SemanticCommand> compacted;
+    compacted.reserve(commands.size());
+    for ( SemanticCommand &command : commands )
+    {
+        const bool load = (command.type == CommandType::DMA1D ||
+                           command.type == CommandType::DMA2D ||
+                           command.type == CommandType::DMA3D) &&
+            command.queueId == uint32_t(DMADirection::ExternalToLocal) &&
+            command.memoryAccesses.size() == 2 &&
+            command.memoryAccesses[0].mode == SemanticAccessMode::Read &&
+            command.memoryAccesses[1].mode == SemanticAccessMode::Write &&
+            command.memoryAccesses[1].region == uint16_t(Region::TCDMScratch);
+        std::vector<uint8_t> descriptor;
+        if ( load )
+        {
+            ++stats.inputLoads;
+            descriptor.assign(command.encoding.begin() + sizeof(CommandHeaderV2),
+                command.encoding.end());
+            const auto match = std::find_if(resident.begin(), resident.end(),
+                [&](const ResidentTransfer &entry)
+                {
+                    const SemanticMemoryAccess &source = command.memoryAccesses[0];
+                    const SemanticMemoryAccess &destination = command.memoryAccesses[1];
+                    return entry.type == command.type && entry.descriptor == descriptor &&
+                        entry.source.region == source.region && entry.source.index == source.index &&
+                        entry.source.begin == source.begin && entry.source.end == source.end &&
+                        entry.destination.region == destination.region &&
+                        entry.destination.index == destination.index &&
+                        entry.destination.begin == destination.begin &&
+                        entry.destination.end == destination.end;
+                });
+            if ( match != resident.end() )
+            {
+                const uint64_t length = Read32(command.encoding, 32);
+                uint64_t transfers = 1;
+                if ( command.type == CommandType::DMA2D )
+                    transfers = Read32(command.encoding, 44);
+                else if ( command.type == CommandType::DMA3D )
+                    transfers = uint64_t(Read32(command.encoding, 44)) *
+                        Read32(command.encoding, 56);
+                stats.redundantBytes += length * transfers;
+                if ( command.memoryAccesses[0].region == uint16_t(Region::ModelConstants) )
+                    ++stats.redundantConstantLoads;
+                else
+                    ++stats.redundantFeatureLoads;
+                continue;
+            }
+        }
+
+        for ( const SemanticMemoryAccess &access : command.memoryAccesses )
+        {
+            if ( access.mode != SemanticAccessMode::Write ) continue;
+            resident.erase(std::remove_if(resident.begin(), resident.end(),
+                [&](const ResidentTransfer &entry)
+                { return Overlaps(access, entry.source) || Overlaps(access, entry.destination); }),
+                resident.end());
+        }
+        if ( load )
+        {
+            ++stats.retainedLoads;
+            if ( Overlaps(command.memoryAccesses[0], command.memoryAccesses[1]) )
+            {
+                error = "Neural-AI DMA residency encountered an overlapping load";
+                return false;
+            }
+            resident.push_back({command.type, command.memoryAccesses[0],
+                command.memoryAccesses[1], std::move(descriptor)});
+        }
         compacted.push_back(std::move(command));
     }
     commands = std::move(compacted);

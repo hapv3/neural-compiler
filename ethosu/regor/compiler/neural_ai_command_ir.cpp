@@ -89,6 +89,13 @@ uint64_t HashWords(const uint8_t *command, int offset, int words)
     return hash;
 }
 
+uint64_t ReferenceIdentity(const uint8_t *command, int offset)
+{
+    return uint64_t(Read16(command + offset)) |
+           (uint64_t(Read16(command + offset + 2)) << 16) |
+           (uint64_t(Read32(command + offset + 4)) << 32);
+}
+
 bool SameStorage(const SemanticMemoryAccess &lhs, const SemanticMemoryAccess &rhs)
 {
     return lhs.region == rhs.region && lhs.index == rhs.index;
@@ -494,14 +501,16 @@ bool DecodeKnownCommand(SemanticCommand &command)
         case CommandType::AFULut:
         {
             const uint64_t bytes = Read32(encoded + 40);
+            const bool reuse = (command.flags & CommandFlagAFULutReuse) != 0;
             AddResource(command, SemanticResource::AFU);
             AddReadWriteState(command, SemanticState::AFUEngine, 0);
-            AddState(command, SemanticState::AFULut, 0, SemanticAccessMode::Write,
-                HashWords(encoded, 32, 2));
+            AddState(command, SemanticState::AFULut, 0,
+                reuse ? SemanticAccessMode::Read : SemanticAccessMode::Write,
+                ReferenceIdentity(encoded, 32));
             command.estimatedCycles = CycleCount(DivRoundUp(bytes, 4));
             return AddAccess(command, encoded, 16, bytes, SemanticAccessMode::Read) &&
                    AddAccess(command, encoded, 24, bytes, SemanticAccessMode::Write) &&
-                   AddAccess(command, encoded, 32, 256, SemanticAccessMode::Read);
+                   (reuse || AddAccess(command, encoded, 32, 256, SemanticAccessMode::Read));
         }
         case CommandType::AFUBinary:
         case CommandType::SpatzAdd:
@@ -522,6 +531,7 @@ bool DecodeKnownCommand(SemanticCommand &command)
             const uint64_t channels = Read32(encoded + 40);
             AddResource(command, SemanticResource::AFU);
             AddReadWriteState(command, SemanticState::AFUEngine, 0);
+            AddState(command, SemanticState::AFULut, 0, SemanticAccessMode::Write);
             command.estimatedCycles = CycleCount(SaturatingMultiply(pixels, DivRoundUp(channels, 32)));
             return AddAccess(command, encoded, 16, SaturatingMultiply(pixels, channels),
                        SemanticAccessMode::Read) &&

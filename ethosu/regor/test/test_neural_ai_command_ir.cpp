@@ -367,6 +367,164 @@ TEST_CASE("Neural-AI qparam residency removes only unchanged resident blocks")
     CHECK(commands[2].stateAccesses[0].generation == 3);
 }
 
+TEST_CASE("Neural-AI AFU LUT residency survives unrelated work and invalidates on shared LUT users")
+{
+    CommandAFULutV2 first{};
+    first.header.type = uint16_t(CommandType::AFULut);
+    first.header.sizeBytes = sizeof(first);
+    first.ifm = {uint16_t(Region::TCDMScratch), 0, 0};
+    first.ofm = {uint16_t(Region::TCDMScratch), 0, 256};
+    first.lut = {uint16_t(Region::ModelConstants), 0, 512};
+    first.length = 64;
+
+    CommandAFUBinaryV2 unrelated{};
+    unrelated.header.type = uint16_t(CommandType::AFUBinary);
+    unrelated.header.sizeBytes = sizeof(unrelated);
+    unrelated.lhs = first.ofm;
+    unrelated.rhs = {uint16_t(Region::TCDMScratch), 0, 1024};
+    unrelated.ofm = {uint16_t(Region::TCDMScratch), 0, 1280};
+    unrelated.length = 64;
+
+    CommandAFULutV2 resident = first;
+    resident.header.layerId = 2;
+    resident.ifm.offset = 1536;
+    resident.ofm.offset = 1792;
+
+    CommandAFUGlobalAvgPoolV2 invalidator{};
+    invalidator.header.type = uint16_t(CommandType::AFUGlobalAvgPool);
+    invalidator.header.sizeBytes = sizeof(invalidator);
+    invalidator.ifm = {uint16_t(Region::TCDMScratch), 0, 2048};
+    invalidator.ofm = {uint16_t(Region::TCDMScratch), 0, 4096};
+    invalidator.inputH = 2;
+    invalidator.inputW = 2;
+    invalidator.channels = 32;
+
+    CommandAFULutV2 reload = resident;
+    reload.header.layerId = 3;
+    reload.ifm.offset = 4352;
+    reload.ofm.offset = 4608;
+
+    CommandAFUDFL16V2 dfl{};
+    dfl.header.type = uint16_t(CommandType::AFUDFL16);
+    dfl.header.sizeBytes = sizeof(dfl);
+    dfl.source = {uint16_t(Region::TCDMScratch), 0, 8192};
+    dfl.destination = {uint16_t(Region::TCDMScratch), 0, 12288};
+    dfl.scratch = {uint16_t(Region::TCDMScratch), 0, 16384};
+    dfl.expLut = {uint16_t(Region::ModelConstants), 0, 2048};
+    dfl.recipLut = {uint16_t(Region::ModelConstants), 0, 3072};
+    dfl.locations = 1;
+
+    CommandAFULutV2 reloadAfterDFL = resident;
+    reloadAfterDFL.header.layerId = 4;
+    reloadAfterDFL.ifm.offset = 20480;
+    reloadAfterDFL.ofm.offset = 20736;
+
+    std::vector<uint8_t> bytes;
+    Append(bytes, first);
+    Append(bytes, unrelated);
+    Append(bytes, resident);
+    Append(bytes, invalidator);
+    Append(bytes, reload);
+    Append(bytes, dfl);
+    Append(bytes, reloadAfterDFL);
+
+    std::vector<SemanticCommand> commands;
+    AFULutResidencyStats stats;
+    std::string error;
+    REQUIRE(DecodeSemanticCommandStream(bytes, commands, error));
+    REQUIRE(OptimizeAFULutResidency(commands, stats, error));
+    CHECK(stats.commands == 4);
+    CHECK(stats.loads == 3);
+    CHECK(stats.reused == 1);
+    CHECK(stats.invalidations == 2);
+    CHECK((commands[0].flags & CommandFlagAFULutReuse) == 0);
+    CHECK((commands[2].flags & CommandFlagAFULutReuse) != 0);
+    CHECK(commands[2].memoryAccesses.size() == 2);
+    CHECK(commands[2].stateAccesses.back().mode == SemanticAccessMode::Read);
+    CHECK((commands[4].flags & CommandFlagAFULutReuse) == 0);
+    CHECK(commands[4].memoryAccesses.size() == 3);
+    CHECK((commands[6].flags & CommandFlagAFULutReuse) == 0);
+    CHECK(commands[6].memoryAccesses.size() == 3);
+
+    CommandDependencyGraph dependencies;
+    REQUIRE(BuildCommandDependencyGraph(commands, dependencies, error));
+    CHECK(HasEdge(dependencies, 0, 2, DependencyKind::StateRAW));
+
+    std::vector<SemanticCommand> roundTrip;
+    REQUIRE(DecodeSemanticCommandStream(
+        SerializeSemanticCommandStream(commands), roundTrip, error));
+    CHECK(roundTrip[2].memoryAccesses.size() == 2);
+    CHECK(roundTrip[2].stateAccesses.back().mode == SemanticAccessMode::Read);
+}
+
+TEST_CASE("Neural-AI DMA residency removes exact weight and halo reloads until either range changes")
+{
+    CommandDMA1DV2 weight{};
+    weight.header.type = uint16_t(CommandType::DMA1D);
+    weight.header.sizeBytes = sizeof(weight);
+    weight.source = {uint16_t(Region::ModelConstants), 0, 4096};
+    weight.destination = {uint16_t(Region::TCDMScratch), 0, 8192};
+    weight.length = 1024;
+    weight.direction = uint32_t(DMADirection::ExternalToLocal);
+
+    CommandAFUBinaryV2 readOnly{};
+    readOnly.header.type = uint16_t(CommandType::AFUBinary);
+    readOnly.header.sizeBytes = sizeof(readOnly);
+    readOnly.lhs = weight.destination;
+    readOnly.rhs = {uint16_t(Region::TCDMScratch), 0, 12288};
+    readOnly.ofm = {uint16_t(Region::TCDMScratch), 0, 16384};
+    readOnly.length = 1024;
+
+    CommandDMA1DV2 repeatedWeight = weight;
+    repeatedWeight.header.layerId = 2;
+
+    CommandDMA1DV2 halo = weight;
+    halo.source = {uint16_t(Region::L2TemporaryBinding), 0, 2048};
+    halo.destination.offset = 24576;
+    halo.length = 512;
+    CommandDMA1DV2 repeatedHalo = halo;
+    repeatedHalo.header.tileId = 3;
+
+    CommandAFUBinaryV2 overwrite = readOnly;
+    overwrite.lhs.offset = 32768;
+    overwrite.rhs.offset = 33792;
+    overwrite.ofm = weight.destination;
+    overwrite.length = 1024;
+    CommandDMA1DV2 reloadAfterWrite = weight;
+    reloadAfterWrite.header.layerId = 4;
+
+    std::vector<uint8_t> bytes;
+    Append(bytes, weight);
+    Append(bytes, readOnly);
+    Append(bytes, repeatedWeight);
+    Append(bytes, halo);
+    Append(bytes, repeatedHalo);
+    Append(bytes, overwrite);
+    Append(bytes, reloadAfterWrite);
+
+    std::vector<SemanticCommand> commands;
+    DMAResidencyStats stats;
+    std::string error;
+    REQUIRE(DecodeSemanticCommandStream(bytes, commands, error));
+    REQUIRE(OptimizeDMAResidency(commands, stats, error));
+    CHECK(stats.inputLoads == 5);
+    CHECK(stats.retainedLoads == 3);
+    CHECK(stats.redundantConstantLoads == 1);
+    CHECK(stats.redundantFeatureLoads == 1);
+    CHECK(stats.redundantBytes == 1536);
+    REQUIRE(commands.size() == 5);
+    CHECK(commands[0].type == CommandType::DMA1D);
+    CHECK(commands[1].type == CommandType::AFUBinary);
+    CHECK(commands[2].memoryAccesses[0].region == uint16_t(Region::L2TemporaryBinding));
+    CHECK(commands[3].type == CommandType::AFUBinary);
+    CHECK(commands[4].layerId == 4);
+
+    CommandDependencyGraph dependencies;
+    REQUIRE(BuildCommandDependencyGraph(commands, dependencies, error));
+    CHECK(HasEdge(dependencies, 0, 1, DependencyKind::MemoryRAW));
+    CHECK(HasEdge(dependencies, 3, 4, DependencyKind::MemoryWAW));
+}
+
 TEST_CASE("Neural-AI scheduler preloads qparams into shadow registers during systolic work")
 {
     CommandRQLoadV2 rq0{};

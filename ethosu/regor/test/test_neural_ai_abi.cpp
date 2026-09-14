@@ -33,7 +33,7 @@ TEST_CASE("neural_ai_abi model header has deterministic little-endian bytes")
 
     const auto bytes = Serialize(header);
     const SerializedModelHeaderV1 expected = {
-        0x4E, 0x41, 0x49, 0x4D, 0x01, 0x00, 0x03, 0x00,
+        0x4E, 0x41, 0x49, 0x4D, 0x01, 0x00, 0x04, 0x00,
         0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x04, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00,
         0x40, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
@@ -143,6 +143,7 @@ TEST_CASE("neural_ai_abi freezes AFU LUT command layout")
     command.ofm = {uint16_t(Region::TCDMScratch), 0, 0x100};
     command.lut = {uint16_t(Region::ModelConstants), 0, 0x200};
     command.length = 64;
+    command.header.flags = CommandFlagAFULutReuse;
 
     REQUIRE(command.header.type == 12);
     REQUIRE(command.header.sizeBytes == 64);
@@ -150,6 +151,7 @@ TEST_CASE("neural_ai_abi freezes AFU LUT command layout")
     REQUIRE(command.ofm.offset == 0x100);
     REQUIRE(command.lut.offset == 0x200);
     REQUIRE(command.length == 64);
+    REQUIRE(command.header.flags == 4);
 }
 
 TEST_CASE("neural_ai_abi freezes AFU global AvgPool command layout")
