@@ -43,16 +43,14 @@ bool QueueOrders(const SemanticCommand &predecessor, const SemanticCommand &succ
            IsDMA(successor) && predecessor.queueId == successor.queueId;
 }
 
-bool IssueOrders(const CommandDependency &dependency,
-    const SemanticCommand &predecessor, const SemanticCommand &successor)
+bool IssueOrders(const SemanticCommand &predecessor, const SemanticCommand &successor)
 {
-    if ( QueueOrders(predecessor, successor) ) return true;
-    // The systolic start pulse atomically copies the requant shadow bank into
-    // the active bank. A following RQ_LOAD must remain after that start, but it
-    // may overwrite the shadow bank while the submitted job uses its active
-    // copy. This is an issue-order dependency, not a completion dependency.
-    return dependency.kind == DependencyKind::StateWAR && IsSystolic(predecessor) &&
-           successor.type == CommandType::RQLoad;
+    // Only a hardware FIFO provides a general issue-order guarantee. Memory,
+    // state and control dependencies otherwise require completion ordering;
+    // an engine-specific shadow register must not silently weaken that rule
+    // because loading the shadow value can have additional runtime side
+    // effects (for example a shared DMA transfer).
+    return QueueOrders(predecessor, successor);
 }
 
 int AsyncQueue(const SemanticCommand &command)
@@ -359,7 +357,7 @@ bool ScheduleGlobalCommandStream(const std::vector<SemanticCommand> &commands,
         indegree[index] = int(dependencies.predecessors[index].size());
     for ( const CommandDependency &edge : dependencies.edges )
     {
-        if ( !IssueOrders(edge, commands[edge.predecessor], commands[edge.successor]) )
+        if ( !IssueOrders(commands[edge.predecessor], commands[edge.successor]) )
             completionPredecessors[edge.successor].push_back(edge.predecessor);
     }
 

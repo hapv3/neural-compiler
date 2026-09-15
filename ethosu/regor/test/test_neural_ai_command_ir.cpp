@@ -586,7 +586,7 @@ TEST_CASE("Neural-AI affine loops compact and exactly restore repeated command b
     CHECK_FALSE(ExpandAffineCommandStream(compacted, expanded, logicalCommands, error));
 }
 
-TEST_CASE("Neural-AI scheduler preloads qparams into shadow registers during systolic work")
+TEST_CASE("Neural-AI scheduler completion-orders state overwrite after an asynchronous reader")
 {
     CommandRQLoadV2 rq0{};
     rq0.header.type = uint16_t(CommandType::RQLoad);
@@ -608,6 +608,13 @@ TEST_CASE("Neural-AI scheduler preloads qparams into shadow registers during sys
     CommandRQLoadV2 rq1 = rq0;
     rq1.qparamIndex = 32;
     rq1.qparamBlock = 1;
+    CommandAFUBinaryV2 independent{};
+    independent.header.type = uint16_t(CommandType::AFUBinary);
+    independent.header.sizeBytes = sizeof(independent);
+    independent.lhs = {uint16_t(Region::TCDMScratch), 0, 0xa004};
+    independent.rhs = {uint16_t(Region::TCDMScratch), 0, 0xa108};
+    independent.ofm = {uint16_t(Region::TCDMScratch), 0, 0xa20c};
+    independent.length = 32;
     CommandLineBufferJobV2 second = first;
     second.job.linebuf.inputBase = 0x6000;
     second.job.gemm.weightAddr = 0x7000;
@@ -616,6 +623,7 @@ TEST_CASE("Neural-AI scheduler preloads qparams into shadow registers during sys
     std::vector<uint8_t> bytes;
     Append(bytes, rq0);
     Append(bytes, first);
+    Append(bytes, independent);
     Append(bytes, rq1);
     Append(bytes, second);
 
@@ -624,23 +632,25 @@ TEST_CASE("Neural-AI scheduler preloads qparams into shadow registers during sys
     std::string error;
     REQUIRE(DecodeSemanticCommandStream(bytes, commands, error));
     REQUIRE(BuildCommandDependencyGraph(commands, dependencies, error));
-    REQUIRE(HasEdge(dependencies, 1, 2, DependencyKind::StateWAR));
+    REQUIRE(HasEdge(dependencies, 1, 3, DependencyKind::StateWAR));
 
     std::vector<uint8_t> scheduledBytes;
     GlobalCommandScheduleStats stats;
     REQUIRE(ScheduleGlobalCommandStream(
         commands, dependencies, scheduledBytes, stats, error));
-    CHECK(stats.qparamPreloads == 1);
+    CHECK(stats.qparamPreloads == 0);
     CHECK(stats.asynchronousSubmits == 1);
+    CHECK(stats.insertedWaits == 1);
 
     std::vector<SemanticCommand> scheduled;
     REQUIRE(DecodeSemanticCommandStream(scheduledBytes, scheduled, error));
-    REQUIRE(scheduled.size() == 5);
+    REQUIRE(scheduled.size() == 6);
     CHECK(scheduled[0].type == CommandType::RQLoad);
     CHECK(scheduled[1].type == CommandType::LineBufferSubmit);
-    CHECK(scheduled[2].type == CommandType::RQLoad);
-    CHECK(scheduled[3].type == CommandType::SystolicWait);
-    CHECK(scheduled[4].type == CommandType::LineBufferJob);
+    CHECK(scheduled[2].type == CommandType::SystolicWait);
+    CHECK(scheduled[3].type == CommandType::AFUBinary);
+    CHECK(scheduled[4].type == CommandType::RQLoad);
+    CHECK(scheduled[5].type == CommandType::LineBufferJob);
 }
 
 TEST_CASE("Neural-AI semantic IR rejects malformed commands")
