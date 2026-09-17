@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <limits>
 #include <unordered_map>
@@ -1104,6 +1105,23 @@ void BindingQuantization(const Tensor *tensor, const SchedulerConnection *connec
     scaleBits = FloatBits(float(connection->quantization.Scale().Dequantize()));
     zeroPoint = connection->quantization.zeroPoints.empty() ? 0 :
         int32_t(connection->quantization.zeroPoints[0]);
+}
+
+bool OriginalTFLiteScalarQuantization(const Graph *graph, const Tensor *tensor,
+    double &scale, int64_t &zeroPoint)
+{
+    if ( tensor == nullptr || graph->Notation() != GraphNotation::TFLite ||
+         tensor->Passthrough() == nullptr ) return false;
+    const auto *source = static_cast<const tflite::Tensor *>(tensor->Passthrough());
+    const auto *quantization = source->quantization();
+    if ( quantization == nullptr || quantization->scale() == nullptr ||
+         quantization->scale()->size() != 1 || quantization->zero_point() == nullptr ||
+         quantization->zero_point()->size() != 1 ) return false;
+    const double sourceScale = (*quantization->scale())[0];
+    if ( !std::isfinite(sourceScale) || sourceScale <= 0 ) return false;
+    scale = sourceScale;
+    zeroPoint = (*quantization->zero_point())[0];
+    return true;
 }
 
 struct GeneratorContext
@@ -3419,6 +3437,15 @@ struct GeneratorContext
                  ifm1->tensor->AllocationSizeBytes() != int64_t(locations) * 96) )
             return SetError(error, "Neural-AI split DFL16 source storage size is invalid");
 
+        double inputScale = ifm->quantization.scales.size() == 1 ?
+            ifm->quantization.scales[0].Dequantize() : 0.0;
+        int64_t inputZeroPoint = ifm->quantization.zeroPoints.empty() ? 0 :
+            ifm->quantization.zeroPoints[0];
+        OriginalTFLiteScalarQuantization(
+            graph, ifm->tensor->srcTensor.get(), inputScale, inputZeroPoint);
+        if ( !std::isfinite(inputScale) || inputScale <= 0 )
+            return SetError(error, "Neural-AI DFL16 requires a positive scalar input scale");
+
         RefV1 source = TensorRef(ifm->tensor.get(), 0, error);
         if ( !error.empty() ) return false;
         RefV1 destination = TensorRef(ofm->tensor.get(), 0, error);
@@ -3430,7 +3457,7 @@ struct GeneratorContext
              scratchRef.region != uint16_t(Region::TCDMScratch) )
             return SetError(error, "Neural-AI DFL16 requires internal TCDM tensors");
 
-        const auto appendLut = [this](bool reciprocal)
+        const auto appendLut = [this, inputScale](bool reciprocal)
         {
             artifact->constants.resize(RoundAway(int(artifact->constants.size()),
                 int(ArchNeuralAI::DMAAlignment)), 0);
@@ -3445,19 +3472,12 @@ struct GeneratorContext
                     const uint32_t midpointQ9 = 513 + index * 2;
                     value = uint32_t(((uint64_t(1) << 37) + (midpointQ9 >> 1)) / midpointQ9);
                 }
-                else if ( index == 0 )
-                {
-                    value = 32768;
-                }
                 else
                 {
-                    const uint32_t negDelta = 256 - index;
-                    const uint32_t shift = negDelta >> 4;
-                    const uint32_t fraction = negDelta & 15;
-                    const uint32_t base = shift >= 15 ? 1 : 32768 >> shift;
-                    const uint32_t next = base > 1 ? base >> 1 : 1;
-                    value = ((base * (16 - fraction)) + (next * fraction) + 8) >> 4;
-                    if ( value == 0 ) value = 1;
+                    const int32_t delta = int8_t(uint8_t(index));
+                    const double exponent = std::min(0.0, double(delta) * inputScale);
+                    const double scaled = std::round(std::exp(exponent) * 32768.0);
+                    value = uint32_t(std::clamp(scaled, 1.0, 32768.0));
                 }
                 Append32(artifact->constants, value);
             }

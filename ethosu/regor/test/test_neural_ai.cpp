@@ -3347,13 +3347,18 @@ TEST_CASE("Neural-AI compiler distributes DFL and class LUT across compact heads
     };
     constexpr float originalBoxScale = 0.0003921568568330258f;
     constexpr float originalOutputScale = 0.0035286361817270517f;
+    constexpr float originalLogitScale = 0.2654646337032318f;
     const auto boxScalePassthrough = createTFLiteTensor("box_scales", originalBoxScale, -128);
     const auto scaledOutputPassthrough = createTFLiteTensor("scaled_output", originalOutputScale, -128);
+    const auto logitPassthrough = createTFLiteTensor("head", originalLogitScale, 63);
     const std::array<int, 3> locations{3, 5, 7};
     std::array<std::shared_ptr<Tensor>, 3> inputs;
     for ( int index = 0; index < int(inputs.size()); ++index )
+    {
         inputs[index] = CreateTensor("head" + std::to_string(index),
             Shape(1, 1, 144, locations[index]), DataType::Int8);
+        inputs[index]->SetPassthrough(logitPassthrough.second);
+    }
     auto merged = CreateTensor("merged", Shape(1, 1, 144, 15), DataType::Int8);
     auto dflOutput = CreateTensor("dfl_output", Shape(1, 1, 4, 15), DataType::Int8);
     auto scaledOutput = CreateTensor("scaled_output", Shape(1, 1, 4, 15), DataType::Int8);
@@ -3468,6 +3473,12 @@ TEST_CASE("Neural-AI compiler distributes DFL and class LUT across compact heads
         if ( type == uint16_t(neuralai::CommandType::AFUDFL16) )
         {
             REQUIRE(bytes == sizeof(neuralai::CommandAFUDFL16V2));
+            const uint32_t expLutOffset = Read32(artifact.commands, offset + 44);
+            REQUIRE(Read32(artifact.constants, expLutOffset) == 32768);
+            REQUIRE(Read32(artifact.constants, expLutOffset + 128 * 4) == 1);
+            REQUIRE(Read32(artifact.constants, expLutOffset + 240 * 4) == 469);
+            REQUIRE(Read32(artifact.constants, expLutOffset + 254 * 4) == 19269);
+            REQUIRE(Read32(artifact.constants, expLutOffset + 255 * 4) == 25128);
             commandLocations.push_back(Read32(artifact.commands, offset + 56));
             dflRequantization.emplace_back(Read32(artifact.commands, offset + 56),
                 int32_t(Read32(artifact.commands, offset + 64)),
