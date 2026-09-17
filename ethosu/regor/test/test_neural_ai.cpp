@@ -3327,6 +3327,28 @@ TEST_CASE("Neural-AI scheduler gathers native Concat stripes with DMA3D")
 TEST_CASE("Neural-AI compiler distributes DFL and class LUT across compact heads")
 {
     ArchNeuralAI arch;
+    const auto createTFLiteTensor = [](const char *name, float scale, int64_t zeroPoint)
+    {
+        flatbuffers::FlatBufferBuilder builder;
+        const std::vector<int32_t> shape{1};
+        const std::vector<float> scales{scale};
+        const std::vector<int64_t> zeroPoints{zeroPoint};
+        const auto quantization = tflite::CreateQuantizationParametersDirect(
+            builder, nullptr, nullptr, &scales, &zeroPoints);
+        const auto tensor = tflite::CreateTensorDirect(
+            builder, &shape, tflite::TensorType::INT8, 0, name, quantization);
+        builder.Finish(tensor);
+        size_t rawSize = 0;
+        size_t rawOffset = 0;
+        const uint8_t *raw = builder.ReleaseRaw(rawSize, rawOffset);
+        UNUSED(rawSize);
+        return std::make_pair(std::unique_ptr<const uint8_t[]>(raw),
+            flatbuffers::GetRoot<tflite::Tensor>(&raw[rawOffset]));
+    };
+    constexpr float originalBoxScale = 0.0003921568568330258f;
+    constexpr float originalOutputScale = 0.0035286361817270517f;
+    const auto boxScalePassthrough = createTFLiteTensor("box_scales", originalBoxScale, -128);
+    const auto scaledOutputPassthrough = createTFLiteTensor("scaled_output", originalOutputScale, -128);
     const std::array<int, 3> locations{3, 5, 7};
     std::array<std::shared_ptr<Tensor>, 3> inputs;
     for ( int index = 0; index < int(inputs.size()); ++index )
@@ -3346,6 +3368,8 @@ TEST_CASE("Neural-AI compiler distributes DFL and class LUT across compact heads
                 std::array<int8_t, 3>{-64, 0, 127}[index]);
     auto boxScales = CreateTensor(
         "box_scales", Shape(1, 4, 15), DataType::Int8, std::move(boxScaleValues));
+    boxScales->SetPassthrough(boxScalePassthrough.second);
+    scaledOutput->SetPassthrough(scaledOutputPassthrough.second);
 
     auto merge = std::make_shared<Operation>(OpType::Concat);
     for ( int index = 0; index < int(inputs.size()); ++index )
@@ -3378,8 +3402,11 @@ TEST_CASE("Neural-AI compiler distributes DFL and class LUT across compact heads
     scaledQuantization.scales = {QuantizedScale(0.00499968417)};
     scaledQuantization.zeroPoints = {-128};
     boxScale->Output(TensorUsage::OFM)->Set(scaledQuantization);
-    std::vector<std::shared_ptr<Operation>> sourceOps = {merge, dfl, activation, boxScale};
-    auto graph = CreateGraph(sourceOps);
+    std::vector<std::shared_ptr<Tensor>> graphInputs(inputs.begin(), inputs.end());
+    std::vector<std::shared_ptr<Tensor>> graphOutputs{scaledOutput, classOutput};
+    auto graph = std::make_unique<Graph>("neural-ai-distributed-head", graphInputs,
+        graphOutputs, std::vector<std::shared_ptr<Tensor>>{},
+        std::vector<std::shared_ptr<Tensor>>{}, GraphNotation::TFLite, 1);
 
     GraphOptimiserOptions graphOptions;
     NeuralAIGraphOptimiser optimiser(arch.Constraints(), graphOptions, nullptr);
@@ -3401,7 +3428,10 @@ TEST_CASE("Neural-AI compiler distributes DFL and class LUT across compact heads
         const TensorConnection *scale = rewrittenOperation->Input(TensorUsage::Params);
         REQUIRE(scale != nullptr);
         fusedRawScales.push_back(scale->tensor->View().Values<int>(DataType::Int8)[0]);
-        REQUIRE(rewrittenOperation->Output(TensorUsage::OFM)->quantization == scaledQuantization);
+        REQUIRE(scale->quantization.scales[0].Dequantize() ==
+            Catch::Approx(originalBoxScale));
+        REQUIRE(rewrittenOperation->Output(TensorUsage::OFM)->quantization.scales[0].Dequantize() ==
+            Catch::Approx(originalOutputScale));
     }
     std::sort(fusedRawScales.begin(), fusedRawScales.end());
     REQUIRE(fusedRawScales == std::vector<int>{-64, 0, 127});
@@ -3457,8 +3487,10 @@ TEST_CASE("Neural-AI compiler distributes DFL and class LUT across compact heads
         [](const auto &requantization)
         { return std::get<1>(requantization) > 0 && std::get<1>(requantization) <= 65535 &&
                  std::get<2>(requantization) <= 31; }));
-    REQUIRE(std::all_of(dflRequantization.begin(), dflRequantization.end(),
-        [](const auto &requantization) { return std::get<2>(requantization) < 17; }));
+    std::sort(dflRequantization.begin(), dflRequantization.end());
+    REQUIRE(dflRequantization ==
+        std::vector<std::tuple<uint32_t, int32_t, uint32_t>>{
+            {3, 58267, 21}, {5, 58267, 20}, {7, 58039, 19}});
     REQUIRE(dflCommands == 3);
     REQUIRE(lutCommands == 3);
     REQUIRE(concatCommands == 6);

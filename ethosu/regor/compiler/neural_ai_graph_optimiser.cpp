@@ -13,6 +13,7 @@
 
 #include <fixedpoint/fixedpoint.h>
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <string>
@@ -31,6 +32,22 @@ int64_t ScalarZeroPoint(const Quantization &quantization)
 bool HasScalarQuantization(const Quantization &quantization)
 {
     return quantization.scales.size() == 1 && quantization.zeroPoints.size() <= 1;
+}
+
+bool OriginalTFLiteScalarQuantization(const Graph *graph, const Tensor *tensor,
+    double &scale, int64_t &zeroPoint)
+{
+    if ( graph->Notation() != GraphNotation::TFLite || tensor->Passthrough() == nullptr ) return false;
+    const auto *source = static_cast<const tflite::Tensor *>(tensor->Passthrough());
+    const auto *quantization = source->quantization();
+    if ( quantization == nullptr || quantization->scale() == nullptr ||
+         quantization->scale()->size() != 1 || quantization->zero_point() == nullptr ||
+         quantization->zero_point()->size() != 1 ) return false;
+    const double sourceScale = (*quantization->scale())[0];
+    if ( !std::isfinite(sourceScale) || sourceScale <= 0 ) return false;
+    scale = sourceScale;
+    zeroPoint = (*quantization->zero_point())[0];
+    return true;
 }
 
 bool IsRawAddScale(const TensorConnection *lhs, const TensorConnection *rhs, const TensorConnection *ofm)
@@ -721,9 +738,23 @@ void NeuralAIGraphOptimiser::FuseStructuralBoxScale(Graph *graph, Operation *ope
         return valueShape.Size() == 3 ? values[Shape(0, side, location)] :
             values[Shape(0, 0, side, location)];
     };
-    const int64_t scaleZeroPoint = ScalarZeroPoint(scaleInput->quantization);
-    const double scale = scaleInput->quantization.scales[0].Dequantize();
+    int64_t scaleZeroPoint = ScalarZeroPoint(scaleInput->quantization);
+    double scale = scaleInput->quantization.scales[0].Dequantize();
+    OriginalTFLiteScalarQuantization(graph, scaleInput->tensor.get(), scale, scaleZeroPoint);
     if ( scale <= 0 || scaleZeroPoint < -128 || scaleZeroPoint > 127 ) return;
+
+    Quantization boxScaleQuantization = scaleInput->quantization;
+    boxScaleQuantization.scales = {QuantizedScale(scale)};
+    boxScaleQuantization.zeroPoints = {scaleZeroPoint};
+    Quantization dflOutputQuantization = output->quantization;
+    double outputScale = 0;
+    int64_t outputZeroPoint = 0;
+    if ( OriginalTFLiteScalarQuantization(
+             graph, output->tensor.get(), outputScale, outputZeroPoint) )
+    {
+        dflOutputQuantization.scales = {QuantizedScale(outputScale)};
+        dflOutputQuantization.zeroPoints = {outputZeroPoint};
+    }
 
     int firstLocation = 0;
     std::array<Operation *, 3> dflOperations{};
@@ -757,8 +788,8 @@ void NeuralAIGraphOptimiser::FuseStructuralBoxScale(Graph *graph, Operation *ope
         auto scaleTensor = CreateConstTensor(scaleInput->tensor->Name() + "/part" + std::to_string(part),
             DataType::Int8, std::make_shared<Buffer>(std::vector<int8_t>{rawScales[part]}));
         dflOperations[part]->ConnectInput(TensorUsage::Params, scaleTensor)
-            .Set(scaleInput->quantization);
-        dflOperations[part]->Output(TensorUsage::OFM)->Set(output->quantization).Set(output->rounding);
+            .Set(boxScaleQuantization);
+        dflOperations[part]->Output(TensorUsage::OFM)->Set(dflOutputQuantization).Set(output->rounding);
         merge->Input(MakeTensorUsage(TensorUsage::IFM, part))->Set(output->quantization);
     }
     merge->CopyOutput(TensorUsage::OFM, *output);
