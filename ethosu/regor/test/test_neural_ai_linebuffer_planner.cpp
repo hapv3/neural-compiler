@@ -352,6 +352,7 @@ TEST_CASE("Neural-AI stripe staging planner expands compact C16 into C32")
     input.padLeft = 1;
     input.padRight = 1;
     input.channels = 16;
+    input.compactNhwc = true;
 
     const auto plan = LinebufferPlanner().PlanStripeStaging(input);
     REQUIRE(plan.stagedIfm == Shape(1, 3, 6, 16));
@@ -380,6 +381,7 @@ TEST_CASE("Neural-AI stripe staging planner expands compact C80 groups into C96"
     input.sourceBase = 0x1000;
     input.stagingBase = 0x8000;
     input.channels = 80;
+    input.compactNhwc = true;
 
     const auto plan = LinebufferPlanner().PlanStripeStaging(input);
     REQUIRE(plan.bytes == 2u * 3u * 96u);
@@ -398,4 +400,29 @@ TEST_CASE("Neural-AI stripe staging planner expands compact C80 groups into C96"
         REQUIRE(copy.destinationStride3 == 3u * 32u);
         REQUIRE(copy.repetitions3 == 2u);
     }
+}
+
+TEST_CASE("Neural-AI stripe staging preserves physical C32 stride for a logical C16 tail")
+{
+    StripeStagingInput input{};
+    input.logicalIfm = Shape(1, 8, 4, 16);
+    input.storageIfm = Shape(1, 3, 4, 16);
+    input.validArea = Box(Shape(0, 2, 0, 0), Box::Size(Shape(1, 3, 4, 16)));
+    input.sourceBase = 0x1000;
+    input.stagingBase = 0x8000;
+    input.channels = 16;
+
+    const auto plan = LinebufferPlanner().PlanStripeStaging(input);
+    REQUIRE(plan.bytes == 3u * 4u * 32u);
+    REQUIRE(plan.copies.size() == 2);
+    REQUIRE(plan.copies[0].source == 0x1000u + 2u * 4u * 32u);
+    REQUIRE(plan.copies[0].length == 16u);
+    REQUIRE(plan.copies[0].sourceStride == 32u);
+    REQUIRE(plan.copies[0].destinationStride == 32u);
+    REQUIRE(plan.copies[0].repetitions == 4u);
+    REQUIRE(plan.copies[0].sourceStride3 == 4u * 32u);
+    REQUIRE(plan.copies[0].destinationStride3 == 4u * 32u);
+    REQUIRE(plan.copies[0].repetitions3 == 1u);
+    REQUIRE(plan.copies[1].source == 0x1000u);
+    REQUIRE(plan.copies[1].repetitions3 == 2u);
 }

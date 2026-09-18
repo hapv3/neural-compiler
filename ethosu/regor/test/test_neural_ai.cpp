@@ -6989,7 +6989,9 @@ TEST_CASE("Neural-AI compiler stages a zero-padded C16 linebuffer group for YOLO
         {
             REQUIRE(commandSize == sizeof(neuralai::CommandDMA3DV2));
             REQUIRE(Read32(data + offset + 32) == 16);
+            REQUIRE(Read32(data + offset + 36) == 32);
             REQUIRE(Read32(data + offset + 40) == 32);
+            REQUIRE(Read32(data + offset + 48) == 16u * 32u);
             ++tailCopies;
         }
         if ( IsDMA2DCommand(type) &&

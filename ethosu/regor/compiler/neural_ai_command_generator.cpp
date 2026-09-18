@@ -4135,12 +4135,13 @@ struct GeneratorContext
         stagingInput.padRight = stripe->padding.right;
         stagingInput.channels = int(channelK);
         stagingInput.directNhwc = config->DirectNhwcInput();
+        stagingInput.compactNhwc = !stagingInput.directNhwc &&
+            IsCompactNHWC(ifm->tensor->format);
         const auto staging = neuralai::LinebufferPlanner().PlanStripeStaging(stagingInput);
         if ( staging.bytes > stripeStageBytes )
             return SetError(error, "Neural-AI Conv stripe exceeds its planned staging workspace");
-        const bool compactTail = !config->DirectNhwcInput() &&
-            stagingInput.storageIfm.Depth() == int(channelK) && channelK % 32 != 0;
-        const bool needsFill = compactTail || stripe->padding.top != 0 || stripe->padding.left != 0 ||
+        const bool channelTail = !config->DirectNhwcInput() && channelK % 32 != 0;
+        const bool needsFill = channelTail || stripe->padding.top != 0 || stripe->padding.left != 0 ||
             stripe->padding.bottom != 0 || stripe->padding.right != 0;
         int8_t paddingValue = 0;
         if ( const SchedulerConnection *padding = operation->TryInput(TensorUsage::Params1) )
@@ -5466,6 +5467,8 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         stagingInput.padRight = stripe->padding.right;
         stagingInput.channels = operation->IFM(0)->shape.Depth();
         stagingInput.directNhwc = config->DirectNhwcInput();
+        stagingInput.compactNhwc = !stagingInput.directNhwc &&
+            IsCompactNHWC(operation->IFM(0)->tensor->format);
         const auto staging = neuralai::LinebufferPlanner().PlanStripeStaging(stagingInput);
         const uint32_t stagingBytes = WithPaddingSeed(staging.bytes);
         context.stripeStageBytes = std::max(context.stripeStageBytes, stagingBytes);
@@ -5545,6 +5548,8 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         stagingInput.padRight = padding.Right();
         stagingInput.channels = logicalIfm.Depth();
         stagingInput.directNhwc = config->DirectNhwcInput();
+        stagingInput.compactNhwc = !stagingInput.directNhwc &&
+            IsCompactNHWC(ifm->tensor->format);
         const auto staging = neuralai::LinebufferPlanner().PlanStripeStaging(stagingInput);
         const uint32_t stagingBytes = WithPaddingSeed(staging.bytes);
         context.stripeStageBytes = std::max(context.stripeStageBytes, stagingBytes);

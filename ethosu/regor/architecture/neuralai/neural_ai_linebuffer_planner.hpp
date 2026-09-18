@@ -167,6 +167,10 @@ struct StripeStagingInput
     int padRight = 0;
     int channels = 0;
     bool directNhwc = false;
+    // The source is compact NHWC and must be expanded into physical C32
+    // planes.  Keep this explicit: a C32 rolling tensor can retain its
+    // logical tail depth in storageIfm while still using 32 bytes per pixel.
+    bool compactNhwc = false;
 };
 
 struct StripeStagingPlan

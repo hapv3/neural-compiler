@@ -245,15 +245,15 @@ StripeStagingPlan LinebufferPlanner::PlanStripeStaging(const StripeStagingInput 
     const int stagedH = input.padTop + areaShape.Height() + input.padBottom;
     const int stagedW = input.padLeft + areaShape.Width() + input.padRight;
     const int storedChannels = input.directNhwc ? input.channels : RoundAway(input.channels, C32);
-    const bool compactTail = !input.directNhwc && storage.Depth() == input.channels &&
-        input.channels % C32 != 0;
+    const bool compactSource = !input.directNhwc && input.compactNhwc;
     if ( areaStart.Depth() != 0 || areaShape.Depth() != input.channels )
         throw std::invalid_argument("Neural-AI stripe staging requires a full-depth area");
-    if ( input.directNhwc && storage.Depth() != input.channels )
+    if ( input.directNhwc && input.compactNhwc )
+        throw std::invalid_argument("Neural-AI direct stripe staging is already compact NHWC");
+    if ( (input.directNhwc || compactSource) && storage.Depth() != input.channels )
         throw std::invalid_argument("Neural-AI direct stripe staging requires compact NHWC storage");
-    if ( !input.directNhwc && !compactTail &&
-         (storage.Depth() < storedChannels || storage.Depth() % C32 != 0) )
-        throw std::invalid_argument("Neural-AI native stripe staging requires C32 storage covering " +
+    if ( !input.directNhwc && !compactSource && storage.Depth() < input.channels )
+        throw std::invalid_argument("Neural-AI native stripe staging requires storage covering " +
             std::to_string(input.channels) + " channels, got " + storage.ToString());
 
     StripeStagingPlan plan{};
@@ -263,14 +263,12 @@ StripeStagingPlan LinebufferPlanner::PlanStripeStaging(const StripeStagingInput 
 
     const int groups = input.directNhwc ? 1 : storedChannels / C32;
     const uint32_t sourcePixelBytes = uint32_t(input.directNhwc ? input.channels :
-        (compactTail ? input.channels : C32));
+        (compactSource ? input.channels : C32));
     const uint32_t destinationPixelBytes = uint32_t(input.directNhwc ? input.channels : C32);
     const uint32_t sourceRowBytes = CheckedU32(uint64_t(storage.Width()) * sourcePixelBytes,
         "stripe source row stride");
     const uint32_t destinationRowBytes = CheckedU32(uint64_t(stagedW) * destinationPixelBytes,
         "stripe destination row stride");
-    const uint32_t copyBytes = CheckedU32(uint64_t(areaShape.Width()) * sourcePixelBytes,
-        "stripe row copy size");
     const uint32_t sourcePlaneBytes = CheckedU32(
         uint64_t(storage.Height()) * sourceRowBytes, "stripe source plane size");
     const uint32_t destinationPlaneBytes = CheckedU32(
@@ -278,24 +276,30 @@ StripeStagingPlan LinebufferPlanner::PlanStripeStaging(const StripeStagingInput 
 
     for ( int group = 0; group < groups; ++group )
     {
+        const uint32_t groupChannels = uint32_t(input.directNhwc ? input.channels :
+            std::min(C32, input.channels - group * C32));
+        const bool pixelStrided = !input.directNhwc &&
+            (compactSource || groupChannels < C32);
         int copiedRows = 0;
         while ( copiedRows < areaShape.Height() )
         {
             const int sourceY = (areaStart.Height() + copiedRows) % storage.Height();
             const int repetitions = std::min(areaShape.Height() - copiedRows, storage.Height() - sourceY);
             const uint64_t source = uint64_t(input.sourceBase) +
-                (compactTail ? uint64_t(group * C32) : uint64_t(group) * sourcePlaneBytes) +
+                (compactSource ? uint64_t(group * C32) : uint64_t(group) * sourcePlaneBytes) +
                 uint64_t(sourceY) * sourceRowBytes + uint64_t(areaStart.Width()) * sourcePixelBytes;
             const uint64_t destination = uint64_t(input.stagingBase) + uint64_t(group) * destinationPlaneBytes +
                 uint64_t(input.padTop + copiedRows) * destinationRowBytes +
                 uint64_t(input.padLeft) * destinationPixelBytes;
-            if ( compactTail )
+            if ( pixelStrided )
                 plan.copies.push_back({CheckedAddress(source), CheckedAddress(destination),
-                    uint32_t(std::min(C32, input.channels - group * C32)), sourcePixelBytes, 32,
+                    groupChannels, sourcePixelBytes, 32,
                     uint32_t(areaShape.Width()), sourceRowBytes,
                     destinationRowBytes, uint32_t(repetitions)});
             else
-                plan.copies.push_back({CheckedAddress(source), CheckedAddress(destination), copyBytes,
+                plan.copies.push_back({CheckedAddress(source), CheckedAddress(destination),
+                    CheckedU32(uint64_t(areaShape.Width()) * sourcePixelBytes,
+                        "stripe row copy size"),
                     sourceRowBytes, destinationRowBytes, uint32_t(repetitions)});
             copiedRows += repetitions;
         }
