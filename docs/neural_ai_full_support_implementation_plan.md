@@ -536,10 +536,12 @@ Only after correctness and SRAM feasibility:
   unchanged and a shadow `ADD_BIAS` CSR carries the extension. RTL lint, AFU
   unit tests at bias `110` and the lower supported bound `-382`, cross-ABI and
   trusted-firmware host tests, and a 128-byte cluster block test are byte-exact.
-  The current YOLO320 inventory has 27 identity-scale candidates (the 25 command
-  591--687 adds, plus commands 879 and 1134). These retain the smaller `ADD_I8`
-  command; all other supported quantized Add/Sub commands use the general AFU
-  path below.
+  The current post-compaction YOLO320 inventory has 27 identity-scale
+  candidates: 25 4-KiB tiles at logical commands 1121--1265 plus the direct
+  51,200-byte and 25,600-byte residuals at commands 1551 and 1804. These retain
+  the smaller `ADD_I8` command; all other supported quantized Add/Sub commands
+  use the general AFU path below. Command indices are diagnostic observations,
+  not compiler contracts.
 - Moved the general binary-requant pipeline completely from systolic to AFU.
   Standalone mode reads both operands through the AFU's two TCDM ports and
   sustains one 32-byte beat per cycle after the ten-stage pipeline fills. LUT
@@ -549,7 +551,11 @@ Only after correctness and SRAM feasibility:
   compiler/runtime cluster E2E covers command type 34, a 512-byte Conv -> Add
   chain, and a 73-byte partial-tail LUT -> Add chain. The latter completes two
   AFU operations in 62 active cycles with zero output stalls. Regor no longer
-  emits `SPATZ_ADD` or systolic binary-fusion commands.
+  emits `SPATZ_ADD` or systolic binary-fusion commands. A fresh full YOLO320
+  compile verifies seven type-34 commands: three residual Adds over 51,200,
+  25,600 and 12,800 bytes, then four 4,200-byte Add/Sub box transforms after
+  DFL. All seven use standalone AFU mode; LUT chaining remains independently
+  covered by the block and cluster tests above.
 - Remove avoidable boundary conversions, materializations, repeated qparam/LUT
   staging, one-byte commands, and scalar loops from selected hot paths.
 - Add layer/tile-to-command-byte debug mapping and L2-traffic/command-count
