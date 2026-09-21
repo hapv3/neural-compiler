@@ -147,8 +147,8 @@ new runtime path has not yet passed E2E.
 | Rolling Conv/LUT/Concat cascade | Compiler verified | full-width Y stripes; DMA3D Concat gather; rolling pointwise Conv; asymmetric padding fill |
 | Depthwise Conv K3 | Verified | selected S1/S2 contracts; multi-group L2 feature-map stripes are compiler verified |
 | Asymmetric Conv canonicalization | Verified | exact bias correction and padding behavior |
-| Add/Sub | Verified | raw AFU Add, exact producer canonicalization, quantized Spatz fallback, or immediate linebuffer binary fusion; compact coordinate planes and staged constants |
-| Fused Conv binary post-op | Verified | Regor fuses eligible immediate Conv/linebuffer -> Add/Sub; the 32-lane RTL datapath supports Add/Sub/Mul, while automatic compiler fusion remains limited to the defined Add/Sub ABI |
+| Add/Sub | Verified | raw AFU Add, exact producer canonicalization, or general 32-lane AFU binary requant; compact coordinate planes and staged constants |
+| General binary requant | Verified | AFU owns standalone Add/Sub/Mul and LUT-output-plus-TCDM modes; Regor emits standalone Add/Sub command type 34, while selected scalar Mul remains one AFU LUT |
 | Compact scalar Mul | Verified | exact TFLite integer rewrite to one 256-byte AFU LUT; no scalar or Spatz Mul loop |
 | Activations | Verified | fused RQ clamps; standalone AFU LUT Sigmoid/clipping; LUT-fused output Quantize |
 | YOLO SiLU | Verified | exact `x * Sigmoid(x)` LUT fusion; no generic Mul |
@@ -163,9 +163,9 @@ new runtime path has not yet passed E2E.
 | Async DMA and overlap | Verified foundation | dependency-aware submit/wait commands, systolic submit/wait, and the 16-entry iDMA job queue are active; cross-command ping-pong and broader engine overlap remain P3 work |
 | Full selected graphs | Compiler verified | current selected YOLO320 emits 4,281 executable commands, requires 514,560 bytes of TCDM, and reports 3,740.88 KiB total DRAM/L2-backed memory; focused prefixes pass, but the current full command stream still needs cluster E2E |
 
-The latest focused Regor filters pass 135 `*Neural-AI*` cases and 21
-`*neural_ai*` cases respectively. The complete suite remains the release gate;
-assertion totals from randomized cases vary with their reported seed.
+The current focused Regor gate passes 148 cases and 42,476 assertions. The
+complete suite remains the release gate; assertion totals from randomized cases
+vary with their reported seed.
 Runtime ABI/host checks, cross-builds, firmware-size gates, and focused C144,
 DFL16, and MatMul V2 E2E tests pass.
 
@@ -255,27 +255,27 @@ the focused test had not written its invocation and binding table to L2.
 
 ### Other retained evidence
 
-- Cross-repository ABI manifest currently checks 6 constants, 66 enums, and 28
-  structures.
+- Cross-repository ABI manifest currently checks 6 constants, 4 flags, 69
+  enums, and 31 structures.
 - Unaligned DMA and C3/C31 boundary round trips are byte-exact; the ROW32 matrix
   covers C3, C31, C32, C33, C63, C64, and C65.
 - Compiler-generated SiLU is one LUT command, byte-exact, with 52,674 PMU cycles.
 - Compiler-generated global AvgPool C33 passes byte-exactly; the matching
   compiler Micro-MobileNet graph measured 384,772 cycles.
-- Generic quantized Spatz Add is correctness-only for uncommon cases. A
-  73,728-element diagnostic exceeded 2,000,000 cluster cycles and is prohibited
-  on selected hot paths; raw AFU or exact producer canonicalization is required.
+- New generic quantized Add/Sub commands use the 32-lane AFU binary-requant
+  engine. `SPATZ_ADD` remains a legacy parser/runtime contract only and is not
+  emitted by Regor. A compiler-generated 128-byte Add package passes byte-exact
+  cluster E2E in 50,681 measured cycles; the AFU accounts for 23 active cycles,
+  one start, one completion, eight input-wait cycles, and zero output stalls.
 - Selected compact coordinate-plane Add preserves `[1,P,L]`/`[1,1,P,L]`
   storage for `P <= 4`; full-length plane slices use direct byte offsets. A
   constant operand is staged once from model constants to TCDM with DMA1D.
-  Compiler tests cover the 74-byte structural case and all Spatz references;
-  focused quantized-Add Verilator E2E passes byte-exactly at 86,504 ns.
+  Compiler tests cover the 74-byte structural case and all AFU references;
+  focused quantized-Add Verilator E2E passes byte-exactly at 84,412 ns.
 - The same compact contract lowers selected Sub without a negative multiplier:
-  each positive input scale is applied first, then the Spatz vector kernel uses
-  `vsub` before output scaling. ABI minor 2 reuses the 96-byte command's final
-  word as Add/Sub mode. Host tests, the compiler suite, and focused Sub E2E pass
-  byte-exactly at 13,941 ns. Firmware `.text` is 24,288 bytes, leaving 8,480
-  bytes of ITCM margin.
+  each positive input scale is applied first, then the AFU subtracts the scaled
+  operands before output scaling. The 96-byte command carries Add/Sub/Mul mode.
+  Host tests, the compiler suite, and focused Sub block tests are byte-exact.
 - Compact scalar INT8 Mul with one constant operand and at most four coordinate
   planes is rewritten before support checking to one exact 256-byte AFU LUT.
   The selected 4,200-element box-scale Mul is therefore one contiguous AFU pass,
@@ -288,7 +288,7 @@ the focused test had not written its invocation and binding table to L2.
   TCDM. The structural block test uses 2+3+5 planes at arbitrary `L=37` and
   checks all three byte counts, regions, direction, and destination offsets.
 - Runtime `.text` must be rechecked after every runtime increment. Trusted V2-only
-  firmware currently reports 24,604 bytes, leaving 8,164 bytes of ITCM margin.
+  firmware currently reports 25,004 bytes, leaving 7,764 bytes of ITCM margin.
 
 ## 5. Remaining work, in execution order
 
@@ -444,14 +444,11 @@ Completed path:
   predicate now accepts a `done_id` that has advanced past an older queued
   transfer, including 32-bit wrap, instead of requiring equality and global
   DMA-idle. The host queue test and compiler-generated cluster regression pass.
-- Completed fused linebuffer binary post-op: eligible exact-coverage local C32
-  Conv -> Add/Sub chains become one 224-byte command. Compiler positive and
-  rejection tests pass; a generated K1 -> K3 -> Add -> K1 package contains one
-  fused command and no `SPATZ_ADD`, and is byte-exact for all 512 output bytes
-  in cluster simulation. It completes 10 commands in 69,279 PMU cycles with
-  24 iDMA starts and 24 completions. The selected YOLO320 graph has no eligible
-  direct linebuffer Conv -> Add/Sub adjacency, so this does not force a slower
-  schedule merely to increase fusion count.
+- Retired the fused systolic binary post-op after it provided no useful mapping
+  in the selected YOLO320 graph. The binary operand reader and requant pipeline
+  were removed from the systolic RTL; legacy fused commands now fail explicitly
+  instead of silently producing requant-only data. Conv -> Add/Sub remains two
+  dependency-ordered commands, with the second command using the AFU.
 - Completed Neural-AI scheduler isolation from generic weight buffering. The
   target command generator owns packed-weight staging and requires one encoded
   constant range; generic performance scheduling could split operation 22 into
@@ -481,8 +478,8 @@ final box-scale scalar Mul are lowered without scalar packing or an extra tensor
 loop. The source-op 242/244 coordinate splits preserve the full innermost 2,100
 locations and alias the low/high two-plane intervals at offsets 0 and 4,200.
 The following constant Add stages its 4,200-byte operand with one DMA and runs
-one contiguous Spatz call. Both compact Sub instances use the same contiguous
-Spatz binary path and preserve positive-scale rounding. Source op 247 scalar
+one contiguous AFU call. Both compact Sub instances use the same contiguous
+AFU binary path and preserve positive-scale rounding. Source op 247 scalar
 Mul is one exact AFU LUT pass. Source op 252 final compact plane-axis Concat
 writes its three input intervals directly to the public output binding. The
 compiler package now fits within 520,192 bytes with zero reported CPU fallback;
@@ -532,26 +529,25 @@ Only after correctness and SRAM feasibility:
   and blocking-versus-pipelined output equivalence; do not infer overlap merely
   from writes to shadow registers.
 - Calibrate tile selection and the performance model with PMU attribution.
-- Implemented the initial AFU quantized-binary fast path after verifying the
-  vectorized general Spatz path. Regor, not firmware, proves identity
+- Implemented the initial AFU quantized-binary fast path. Regor, not firmware,
+  proves identity
   input/output scaling and encodes saturating `lhs + rhs + bias`, where
   `bias = -lhs_zp - rhs_zp + output_zp`; the existing `ADD_I8` RTL mode remains
   unchanged and a shadow `ADD_BIAS` CSR carries the extension. RTL lint, AFU
   unit tests at bias `110` and the lower supported bound `-382`, cross-ABI and
   trusted-firmware host tests, and a 128-byte cluster block test are byte-exact.
-  The current YOLO320 inventory has 27 eligible commands (the 25 command
-  591--687 adds, plus commands 879 and 1134). Command 879 and the full eligible
-  inventory still require compiler-generated cluster and PMU comparison before
-  this path is considered fully adopted. Commands 864, 1055, 1464, 3902, 3904,
-  3905, and 3906 retain the general quantized Spatz ADD/SUB path unless a
-  separately justified general AFU pipeline is approved.
-- Implemented the approved `systolic output -> general binary requant -> TCDM`
-  datapath with a pipelined 32-lane RHS prefetch/requant stage and shadowed
-  configuration. RTL block tests cover Add/Sub/Mul byte-exactly. Regor currently
-  forms the fused command only for immediate Add/Sub whose full row coverage,
-  local C32 references, ordering, and hazards are proven; there is no general
-  compiler `SPATZ_MUL` contract to fuse. Keep unfused paths when topology does
-  not qualify rather than reshaping the schedule solely to trigger this mode.
+  The current YOLO320 inventory has 27 identity-scale candidates (the 25 command
+  591--687 adds, plus commands 879 and 1134). These retain the smaller `ADD_I8`
+  command; all other supported quantized Add/Sub commands use the general AFU
+  path below.
+- Moved the general binary-requant pipeline completely from systolic to AFU.
+  Standalone mode reads both operands through the AFU's two TCDM ports and
+  sustains one 32-byte beat per cycle after the ten-stage pipeline fills. LUT
+  chain mode gathers eight four-byte LUT outputs into one 32-byte beat before
+  combining them with the TCDM RHS, retaining the LUT's average four elements
+  per cycle. RTL block tests cover Add/Sub/Mul, partial beats, and LUT chaining;
+  compiler/runtime cluster E2E covers command type 34 and exact Add output.
+  Regor no longer emits `SPATZ_ADD` or systolic binary-fusion commands.
 - Remove avoidable boundary conversions, materializations, repeated qparam/LUT
   staging, one-byte commands, and scalar loops from selected hot paths.
 - Add layer/tile-to-command-byte debug mapping and L2-traffic/command-count
