@@ -448,6 +448,7 @@ bool DecodeIndependentCommandAccesses(const uint8_t *command, CommandType type,
             // neither aliases a TCDM output buffer nor an L2 temporary store.
             return true;
         case CommandType::AFUBinary:
+        case CommandType::AFUBinaryQuant:
         case CommandType::SpatzAdd:
         {
             const uint64_t bytes = Read32(command + 40);
@@ -891,7 +892,9 @@ bool FuseOneSystolicBinaryPostOp(std::vector<uint8_t> &commands)
 uint32_t FuseSystolicBinaryPostOpCommands(std::vector<uint8_t> &commands)
 {
     uint32_t fused = 0;
-    while ( FuseOneSystolicBinaryPostOp(commands) ) ++fused;
+    constexpr bool enableSystolicBinaryPostOp = false;
+    if ( enableSystolicBinaryPostOp )
+        while ( FuseOneSystolicBinaryPostOp(commands) ) ++fused;
     return fused;
 }
 
@@ -2372,8 +2375,8 @@ struct GeneratorContext
                      outputScale.scale <= 0 || lhsScale.shift < 0 || lhsScale.shift > 63 ||
                      rhsScale.shift < 0 || rhsScale.shift > 63 || outputScale.shift < 0 ||
                      outputScale.shift > 63 || clampMin < -128 || clampMax > 127 || clampMin > clampMax )
-                    return SetError(error, "Neural-AI SPATZ_ADD quantization is outside the INT8 contract");
-                AppendHeader(artifact->commands, CommandType::SpatzAdd, 96,
+                    return SetError(error, "Neural-AI AFU binary quantization is outside the INT8 contract");
+                AppendHeader(artifact->commands, CommandType::AFUBinaryQuant, 96,
                     uint32_t(operation->Index()), tileId);
                 AppendRef(artifact->commands, tileLhs);
                 AppendRef(artifact->commands, tileRhs);

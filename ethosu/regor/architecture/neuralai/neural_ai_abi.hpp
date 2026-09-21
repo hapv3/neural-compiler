@@ -107,6 +107,7 @@ enum class CommandType : uint16_t
     LineBufferBinary = 31,
     LineBufferBinarySubmit = 32,
     AffineLoop = 33,
+    AFUBinaryQuant = 34,
 };
 
 enum CommandFlags : uint32_t
@@ -117,6 +118,7 @@ enum CommandFlags : uint32_t
     // The active AFU LUT already contains the immutable table referenced by
     // CommandAFULutV2::lut. Firmware may skip staging and programming it.
     CommandFlagAFULutReuse = 1U << 2,
+    CommandFlagAFULutChain = 1U << 3,
 };
 
 struct ModelHeaderV1
@@ -373,6 +375,7 @@ enum class SpatzBinaryMode : uint32_t
 {
     Add = 0,
     Subtract = 1,
+    Multiply = 2,
 };
 
 struct CommandAFUBinaryV2
@@ -388,6 +391,28 @@ struct CommandAFUBinaryV2
 };
 
 struct CommandSpatzAddV2
+{
+    CommandHeaderV2 header;
+    RefV1 lhs;
+    RefV1 rhs;
+    RefV1 ofm;
+    uint32_t length;
+    int32_t lhsScale;
+    uint32_t lhsShift;
+    int32_t rhsScale;
+    uint32_t rhsShift;
+    int32_t outputScale;
+    uint32_t outputShift;
+    int32_t lhsZeroPoint;
+    int32_t rhsZeroPoint;
+    int32_t outputZeroPoint;
+    int32_t clampMin;
+    int32_t clampMax;
+    uint32_t doubleRoundShift;
+    uint32_t mode;
+};
+
+struct CommandAFUBinaryQuantV2
 {
     CommandHeaderV2 header;
     RefV1 lhs;
@@ -540,6 +565,7 @@ static_assert(sizeof(CommandDepthwiseC32V2) == 96);
 static_assert(sizeof(CommandAFULutV2) == 64);
 static_assert(sizeof(CommandAFUBinaryV2) == 64);
 static_assert(sizeof(CommandSpatzAddV2) == 96);
+static_assert(sizeof(CommandAFUBinaryQuantV2) == 96);
 static_assert(sizeof(CommandAFUGlobalAvgPoolV2) == 64);
 static_assert(sizeof(CommandUpsampleNearestV2) == 64);
 static_assert(sizeof(CommandMaxPoolV2) == 96);

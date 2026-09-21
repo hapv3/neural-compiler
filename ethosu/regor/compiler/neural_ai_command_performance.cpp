@@ -89,6 +89,7 @@ const char *CommandName(CommandType type)
         case CommandType::SystolicWait: return "SYSTOLIC_WAIT";
         case CommandType::LineBufferBinary: return "LINE_BUFFER_BINARY";
         case CommandType::LineBufferBinarySubmit: return "LINE_BUFFER_BINARY_SUBMIT";
+        case CommandType::AFUBinaryQuant: return "AFU_BINARY_QUANT";
         default: return "UNKNOWN";
     }
 }
@@ -359,15 +360,18 @@ NeuralAICommandPerformanceResult MeasureNeuralAICommandPerformance(
                 }
                 break;
             case CommandType::AFUBinary:
+            case CommandType::AFUBinaryQuant:
             case CommandType::SpatzAdd:
                 if ( (type == CommandType::AFUBinary && size >= sizeof(neuralai::CommandAFUBinaryV2)) ||
+                     (type == CommandType::AFUBinaryQuant &&
+                         size >= sizeof(neuralai::CommandAFUBinaryQuantV2)) ||
                      (type == CommandType::SpatzAdd && size >= sizeof(neuralai::CommandSpatzAddV2)) )
                 {
                     const int64_t length = Read32(command + 40);
                     measurement.AddAccess(ReadRef(command + 16), length, false, AccessType::FeatureMap);
                     measurement.AddAccess(ReadRef(command + 24), length, false, AccessType::FeatureMap);
                     measurement.AddAccess(ReadRef(command + 32), length, true, AccessType::FeatureMap);
-                    const int throughput = type == CommandType::AFUBinary ? 32 : 16;
+                    const int throughput = type == CommandType::SpatzAdd ? 16 : 32;
                     measurement.row.computeCycles = std::max<int64_t>(1, DivRoundUp64(length, throughput));
                 }
                 break;

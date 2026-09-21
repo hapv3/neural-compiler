@@ -218,7 +218,7 @@ TEST_CASE("Neural-AI command overlap crosses independent compute and stops at ha
         uint32_t(neuralai::DMADirection::ExternalToLocal));
 }
 
-TEST_CASE("Neural-AI command fusion replaces linebuffer output and general binary")
+TEST_CASE("Neural-AI leaves linebuffer output and AFU binary as separate commands")
 {
     neuralai::CommandLineBufferJobV2 first{};
     first.header.type = uint16_t(neuralai::CommandType::LineBufferJob);
@@ -273,24 +273,15 @@ TEST_CASE("Neural-AI command fusion replaces linebuffer output and general binar
     append(second);
     append(add);
 
-    REQUIRE(NeuralAICommandGenerator::FuseSystolicBinaryPostOps(commands) == 1);
-    REQUIRE(commands.size() == 2 * sizeof(neuralai::CommandLineBufferBinaryV2) + sizeof(rq));
-    const auto *fusedFirst = reinterpret_cast<const neuralai::CommandLineBufferBinaryV2 *>(commands.data());
-    const auto *fusedSecond = reinterpret_cast<const neuralai::CommandLineBufferBinaryV2 *>(
-        commands.data() + sizeof(*fusedFirst) + sizeof(rq));
-    REQUIRE(fusedFirst->header.type == uint16_t(neuralai::CommandType::LineBufferBinary));
-    REQUIRE(fusedFirst->header.sizeBytes == sizeof(*fusedFirst));
-    REQUIRE(fusedFirst->job.gemm.ofmAddr == 0x3000);
-    REQUIRE(fusedFirst->binary.rhsAddr == 0x2000);
-    REQUIRE(fusedFirst->binary.rhsRowStrideBytes == 64);
-    REQUIRE(fusedFirst->binary.rhsTileCols == 2);
-    REQUIRE(fusedFirst->binary.lhsMultiplier == 17);
-    REQUIRE(fusedFirst->binary.lhsShift == 8);
-    REQUIRE(fusedFirst->binary.mode == uint32_t(neuralai::SpatzBinaryMode::Subtract));
-    REQUIRE(fusedSecond->job.gemm.ofmAddr == 0x3040);
-    REQUIRE(fusedSecond->binary.rhsAddr == 0x2040);
+    const std::vector<uint8_t> original = commands;
+    REQUIRE(NeuralAICommandGenerator::FuseSystolicBinaryPostOps(commands) == 0);
+    REQUIRE(commands == original);
 
-    neuralai::CommandLineBufferBinaryV2 overlapCandidate = *fusedFirst;
+    neuralai::CommandLineBufferBinaryV2 overlapCandidate{};
+    overlapCandidate.header.type = uint16_t(neuralai::CommandType::LineBufferBinary);
+    overlapCandidate.header.sizeBytes = sizeof(overlapCandidate);
+    overlapCandidate.job = first.job;
+    overlapCandidate.binary.rhsAddr = 0x2000;
     neuralai::CommandAFUBinaryV2 independent{};
     independent.header.type = uint16_t(neuralai::CommandType::AFUBinary);
     independent.header.sizeBytes = sizeof(independent);
@@ -5119,9 +5110,9 @@ TEST_CASE("Neural-AI Depthwise Conv tiles spilled feature maps through TCDM stri
     REQUIRE(artifact.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);
 }
 
-TEST_CASE("Neural-AI compiler lowers quantized Add through Spatz")
+TEST_CASE("Neural-AI compiler lowers quantized Add through AFU")
 {
-    const auto lowersToSpatz = [](flatbuffers::DetachedBuffer model, uint32_t expectedBytes,
+    const auto lowersToAFU = [](flatbuffers::DetachedBuffer model, uint32_t expectedBytes,
                                    bool expectConstantStaging = false,
                                    neuralai::SpatzBinaryMode expectedMode =
                                        neuralai::SpatzBinaryMode::Add)
@@ -5140,16 +5131,16 @@ TEST_CASE("Neural-AI compiler lowers quantized Add through Spatz")
         const auto *data = static_cast<const uint8_t *>(blob->Map(size));
         const uint32_t commandBytes = Read32(data + 64 + 12);
         uint32_t offset = 224;
-        uint32_t spatzCommands = 0;
+        uint32_t afuCommands = 0;
         uint32_t constantStagingCommands = 0;
         while ( offset < 224 + commandBytes )
         {
             const uint16_t type = Read16(data + offset);
             const uint16_t commandSize = Read16(data + offset + 2);
             REQUIRE(commandSize >= 32);
-            if ( type == uint16_t(neuralai::CommandType::SpatzAdd) )
+            if ( type == uint16_t(neuralai::CommandType::AFUBinaryQuant) )
             {
-                REQUIRE(commandSize == sizeof(neuralai::CommandSpatzAddV2));
+                REQUIRE(commandSize == sizeof(neuralai::CommandAFUBinaryQuantV2));
                 REQUIRE(Read16(data + offset + 16) == uint16_t(neuralai::Region::TCDMScratch));
                 REQUIRE(Read16(data + offset + 24) == uint16_t(neuralai::Region::TCDMScratch));
                 REQUIRE(Read16(data + offset + 32) == uint16_t(neuralai::Region::TCDMScratch));
@@ -5159,7 +5150,7 @@ TEST_CASE("Neural-AI compiler lowers quantized Add through Spatz")
                 REQUIRE(int32_t(Read32(data + offset + 60)) > 0);
                 REQUIRE(Read32(data + offset + 88) == 20);
                 REQUIRE(Read32(data + offset + 92) == uint32_t(expectedMode));
-                ++spatzCommands;
+                ++afuCommands;
             }
             if ( IsDMA1DCommand(type) &&
                  Read16(data + offset + 16) == uint16_t(neuralai::Region::ModelConstants) &&
@@ -5174,18 +5165,18 @@ TEST_CASE("Neural-AI compiler lowers quantized Add through Spatz")
             offset += commandSize;
         }
         REQUIRE(offset == 224 + commandBytes);
-        REQUIRE(spatzCommands == 1);
+        REQUIRE(afuCommands == 1);
         REQUIRE(constantStagingCommands == uint32_t(expectConstantStaging));
         blob->Unmap(const_cast<uint8_t *>(data));
         blob->Release();
     };
 
-    lowersToSpatz(BuildAddModel(1.0f, 0.5f, 1.0f), 128);
-    lowersToSpatz(BuildAddModel(1.0f, 0.5f, 1.0f, 0,
+    lowersToAFU(BuildAddModel(1.0f, 0.5f, 1.0f), 128);
+    lowersToAFU(BuildAddModel(1.0f, 0.5f, 1.0f, 0,
         tflite::ActivationFunctionType::NONE, 37), 74);
-    lowersToSpatz(BuildAddModel(1.0f, 0.5f, 1.0f, 0,
+    lowersToAFU(BuildAddModel(1.0f, 0.5f, 1.0f, 0,
         tflite::ActivationFunctionType::NONE, 37, true), 74, true);
-    lowersToSpatz(BuildAddModel(1.0f, 0.5f, 1.0f, 0,
+    lowersToAFU(BuildAddModel(1.0f, 0.5f, 1.0f, 0,
         tflite::ActivationFunctionType::NONE, 37, false,
         tflite::BuiltinOperator::SUB), 74, false, neuralai::SpatzBinaryMode::Subtract);
 }
@@ -6809,7 +6800,7 @@ TEST_CASE("Neural-AI compiler fuses ReLU and ReLU6 into qparam clamps")
     checkClamp(tflite::ActivationFunctionType::RELU6, 0, 6);
 }
 
-TEST_CASE("Neural-AI compiler fuses a general Add into its K3 Conv producer")
+TEST_CASE("Neural-AI compiler keeps general Add on the AFU after K3 Conv")
 {
     std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
     Compiler compiler(architecture);
@@ -6849,12 +6840,12 @@ TEST_CASE("Neural-AI compiler fuses a general Add into its K3 Conv producer")
                 uint32_t(neuralai::SpatzBinaryMode::Add));
             ++fusedCommands;
         }
-        if ( type == uint16_t(neuralai::CommandType::SpatzAdd) ) ++generalAdds;
+        if ( type == uint16_t(neuralai::CommandType::AFUBinaryQuant) ) ++generalAdds;
         offset += commandSize;
     }
     REQUIRE(offset == 224 + commandBytes);
-    REQUIRE(fusedCommands == 1);
-    REQUIRE(generalAdds == 0);
+    REQUIRE(fusedCommands == 0);
+    REQUIRE(generalAdds == 1);
     blob->Unmap(const_cast<uint8_t *>(data));
     blob->Release();
 }

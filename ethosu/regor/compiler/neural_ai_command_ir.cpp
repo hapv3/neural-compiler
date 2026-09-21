@@ -167,6 +167,7 @@ uint16_t MinimumCommandSize(CommandType type)
         case CommandType::DepthwiseC32: return sizeof(CommandDepthwiseC32V2);
         case CommandType::AFULut: return sizeof(CommandAFULutV2);
         case CommandType::AFUBinary: return sizeof(CommandAFUBinaryV2);
+        case CommandType::AFUBinaryQuant: return sizeof(CommandAFUBinaryQuantV2);
         case CommandType::SpatzAdd: return sizeof(CommandSpatzAddV2);
         case CommandType::AFUGlobalAvgPool: return sizeof(CommandAFUGlobalAvgPoolV2);
         case CommandType::UpsampleNearest: return sizeof(CommandUpsampleNearestV2);
@@ -513,13 +514,18 @@ bool DecodeKnownCommand(SemanticCommand &command)
                    (reuse || AddAccess(command, encoded, 32, 256, SemanticAccessMode::Read));
         }
         case CommandType::AFUBinary:
+        case CommandType::AFUBinaryQuant:
         case CommandType::SpatzAdd:
         {
             const uint64_t bytes = Read32(encoded + 40);
-            const bool afu = command.type == CommandType::AFUBinary;
+            const bool afu = command.type != CommandType::SpatzAdd;
             AddResource(command, afu ? SemanticResource::AFU : SemanticResource::Spatz);
             AddReadWriteState(command, afu ? SemanticState::AFUEngine :
                 SemanticState::SpatzEngine, 0);
+            if ( command.type == CommandType::AFUBinaryQuant &&
+                 (command.flags & CommandFlagAFULutChain) != 0 )
+                AddState(command, SemanticState::AFULut, 0,
+                    SemanticAccessMode::Read);
             command.estimatedCycles = CycleCount(DivRoundUp(bytes, afu ? 32 : 16));
             return AddAccess(command, encoded, 16, bytes, SemanticAccessMode::Read) &&
                    AddAccess(command, encoded, 24, bytes, SemanticAccessMode::Read) &&
@@ -761,7 +767,7 @@ bool DecodeSemanticCommandStream(const std::vector<uint8_t> &bytes,
         }
         const uint8_t *encoded = bytes.data() + offset;
         const uint16_t rawType = Read16(encoded);
-        if ( rawType > uint16_t(CommandType::LineBufferBinarySubmit) )
+        if ( rawType > uint16_t(CommandType::AFUBinaryQuant) )
         {
             error = "Neural-AI semantic IR encountered an unknown command type";
             commands.clear();
