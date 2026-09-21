@@ -546,8 +546,10 @@ Only after correctness and SRAM feasibility:
   chain mode gathers eight four-byte LUT outputs into one 32-byte beat before
   combining them with the TCDM RHS, retaining the LUT's average four elements
   per cycle. RTL block tests cover Add/Sub/Mul, partial beats, and LUT chaining;
-  compiler/runtime cluster E2E covers command type 34 and exact Add output.
-  Regor no longer emits `SPATZ_ADD` or systolic binary-fusion commands.
+  compiler/runtime cluster E2E covers command type 34, a 512-byte Conv -> Add
+  chain, and a 73-byte partial-tail LUT -> Add chain. The latter completes two
+  AFU operations in 62 active cycles with zero output stalls. Regor no longer
+  emits `SPATZ_ADD` or systolic binary-fusion commands.
 - Remove avoidable boundary conversions, materializations, repeated qparam/LUT
   staging, one-byte commands, and scalar loops from selected hot paths.
 - Add layer/tile-to-command-byte debug mapping and L2-traffic/command-count
