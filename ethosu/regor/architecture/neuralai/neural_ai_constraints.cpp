@@ -637,6 +637,8 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
 bool NeuralAIConstraints::SupportedZeroPoint(int64_t zeroPoint, TensorUsage usage, DataType dataType, OpType opType)
 {
     if ( !IsSupportedOp(opType) || dataType != DataType::Int8 ) return false;
+    if ( (opType == OpType::Conv2D || opType == OpType::DepthwiseConv2D) && IsIFM(usage) )
+        return zeroPoint >= -128 && zeroPoint <= 127;
     if ( opType == OpType::LUT || opType == OpType::Sigmoid || opType == OpType::Resize ||
          opType == OpType::Concat ||
          IsClipping(opType) )

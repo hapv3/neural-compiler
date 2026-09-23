@@ -29,6 +29,7 @@ const std::set<OpType> s_supportedOpTypes = {
     OpType::LUT,
     OpType::MaxPool,
     OpType::Mul,
+    OpType::Relu6,
     OpType::Reshape,
     OpType::ResizeNearestNeighbor,
     OpType::Sigmoid,

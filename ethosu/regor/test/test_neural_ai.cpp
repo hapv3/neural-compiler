@@ -2895,6 +2895,22 @@ TEST_CASE("Neural-AI constraints enforce signed matrix zero points")
     REQUIRE_FALSE(constraints->SupportedZeroPoint(128, TensorUsage::OFM, DataType::Int8, OpType::MatMul));
 }
 
+TEST_CASE("Neural-AI constraints allow asymmetric convolution inputs")
+{
+    ArchNeuralAI arch;
+    auto *constraints = arch.Constraints();
+
+    for ( const OpType opType : {OpType::Conv2D, OpType::DepthwiseConv2D} )
+    {
+        REQUIRE(constraints->SupportedZeroPoint(-128, TensorUsage::IFM, DataType::Int8, opType));
+        REQUIRE(constraints->SupportedZeroPoint(127, TensorUsage::IFM, DataType::Int8, opType));
+        REQUIRE_FALSE(constraints->SupportedZeroPoint(-129, TensorUsage::IFM, DataType::Int8, opType));
+        REQUIRE_FALSE(constraints->SupportedZeroPoint(128, TensorUsage::IFM, DataType::Int8, opType));
+        REQUIRE(constraints->SupportedZeroPoint(0, TensorUsage::Weights, DataType::Int8, opType));
+        REQUIRE_FALSE(constraints->SupportedZeroPoint(1, TensorUsage::Weights, DataType::Int8, opType));
+    }
+}
+
 TEST_CASE("Neural-AI matrix op configuration exposes GEMM granules")
 {
     ArchNeuralAI arch;
