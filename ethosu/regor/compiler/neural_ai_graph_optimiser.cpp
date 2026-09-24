@@ -100,17 +100,19 @@ int32_t MultiplyByQuantizedMultiplier(int32_t value, const QuantizedScale &scale
 
 }  // namespace
 
-void NeuralAIGraphOptimiser::CanonicalizeAsymmetricConv(Graph *graph, Operation *operation)
+void NeuralAIGraphOptimiser::CanonicalizeAsymmetricMac(Graph *graph, Operation *operation)
 {
     const OpType opType = operation->Type();
-    if ( opType != OpType::Conv2D && opType != OpType::DepthwiseConv2D ) return;
+    if ( opType != OpType::FullyConnected && opType != OpType::Conv2D &&
+         opType != OpType::DepthwiseConv2D ) return;
 
     TensorConnection *ifm = operation->Input(TensorUsage::IFM0);
     TensorConnection *weights = operation->Input(TensorUsage::Weights);
     TensorConnection *bias = operation->Input(TensorUsage::Scales);
     TensorConnection *ofm = operation->Output(TensorUsage::OFM);
     const Kernel *kernel = operation->Kernel();
-    if ( ifm == nullptr || weights == nullptr || bias == nullptr || ofm == nullptr || kernel == nullptr ||
+    if ( ifm == nullptr || weights == nullptr || bias == nullptr || ofm == nullptr ||
+         (opType != OpType::FullyConnected && kernel == nullptr) ||
          ifm->tensor->Type() != DataType::Int8 || weights->tensor->Type() != DataType::Int8 ||
          bias->tensor->Type() != DataType::Int32 || ifm->quantization.zeroPoints.size() != 1 ||
          !weights->tensor->IsConstant() || !bias->tensor->IsConstant() )
@@ -133,9 +135,10 @@ void NeuralAIGraphOptimiser::CanonicalizeAsymmetricConv(Graph *graph, Operation 
     for ( int oc = 0; oc < outputChannels; ++oc )
     {
         int64_t weightSum = 0;
-        if ( opType == OpType::Conv2D )
+        if ( opType == OpType::Conv2D || opType == OpType::FullyConnected )
         {
-            if ( weightShape.Batch() != outputChannels ) return;
+            if ( weightShape.Batch() != outputChannels ||
+                 (opType == OpType::FullyConnected && weightShape.ElementsWH() != 1) ) return;
             for ( int ky = 0; ky < weightShape.Height(); ++ky )
                 for ( int kx = 0; kx < weightShape.Width(); ++kx )
                     for ( int ic = 0; ic < weightShape.Depth(); ++ic )
@@ -164,7 +167,7 @@ void NeuralAIGraphOptimiser::CanonicalizeAsymmetricConv(Graph *graph, Operation 
     }
 
     Operation *explicitPad = nullptr;
-    if ( kernel->Padding().IsZero() && ifm->tensor->Writers().size() == 1 )
+    if ( kernel != nullptr && kernel->Padding().IsZero() && ifm->tensor->Writers().size() == 1 )
     {
         Operation *producer = ifm->tensor->Writers().front().get();
         if ( producer->Type() == OpType::Pad && producer->Output(TensorUsage::OFM)->tensor == ifm->tensor &&
@@ -181,7 +184,14 @@ void NeuralAIGraphOptimiser::CanonicalizeAsymmetricConv(Graph *graph, Operation 
             std::make_shared<Buffer>(std::vector<int8_t>{int8_t(ifmZeroPoint)}), &scalarShape);
         operation->ConnectInput(TensorUsage::Params1, value).Set(Quantization::Unit());
     };
-    if ( !kernel->Padding().IsZero() )
+    if ( opType == OpType::FullyConnected )
+    {
+        // The systolic GEMM consumes the raw signed input. Fold the affine
+        // input zero-point into the constant bias so no extra INT32/Sub path
+        // is needed after FullyConnected.
+        ifm->Set(zeroPointQuantization);
+    }
+    else if ( !kernel->Padding().IsZero() )
     {
         if ( opType == OpType::DepthwiseConv2D )
         {
@@ -804,7 +814,7 @@ void NeuralAIGraphOptimiser::OptimiseGraph(Graph *graph)
     graph->GetAllOperations(operations);
     if ( _stage == NeuralAIGraphOptimiserStage::Prepare )
     {
-        for ( const auto &operation : operations ) CanonicalizeAsymmetricConv(graph, operation.get());
+        for ( const auto &operation : operations ) CanonicalizeAsymmetricMac(graph, operation.get());
         return;
     }
     for ( const auto &operation : operations ) CanonicalizeConvAdd(graph, operation.get());

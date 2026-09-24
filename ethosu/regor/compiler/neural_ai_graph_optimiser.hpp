@@ -31,7 +31,7 @@ public:
 private:
     NeuralAIGraphOptimiserStage _stage;
 
-    void CanonicalizeAsymmetricConv(Graph *graph, Operation *operation);
+    void CanonicalizeAsymmetricMac(Graph *graph, Operation *operation);
     void CanonicalizeConvAdd(Graph *graph, Operation *operation);
     void InsertInputConversion(Graph *graph, Operation *operation, TensorUsage usage);
     void InsertOutputConversion(Graph *graph, Operation *operation);

@@ -379,13 +379,15 @@ uint32_t DMACommandDirection(const std::vector<uint8_t> &data, size_t offset, ui
     return Read32(data, offset + 60);
 }
 
-flatbuffers::DetachedBuffer BuildFullyConnectedModel(int rows, int depthK, int depthN)
+flatbuffers::DetachedBuffer BuildFullyConnectedModel(
+    int rows, int depthK, int depthN, int64_t inputZeroPoint = 0)
 {
     flatbuffers::FlatBufferBuilder builder;
     const std::vector<float> scale = {1.0f};
     const std::vector<int64_t> zeroPoint = {0};
+    const std::vector<int64_t> inputZeroPoints = {inputZeroPoint};
     const auto inputQuant = tflite::CreateQuantizationParametersDirect(
-        builder, nullptr, nullptr, &scale, &zeroPoint);
+        builder, nullptr, nullptr, &scale, &inputZeroPoints);
     const auto weightQuant = tflite::CreateQuantizationParametersDirect(
         builder, nullptr, nullptr, &scale, &zeroPoint);
     const auto biasQuant = tflite::CreateQuantizationParametersDirect(
@@ -2907,6 +2909,61 @@ TEST_CASE("Neural-AI prepare optimiser compensates asymmetric Conv padding byte-
     }
 }
 
+TEST_CASE("Neural-AI prepare optimiser compensates asymmetric FullyConnected byte-exactly")
+{
+    constexpr int depthK = 4;
+    constexpr int depthN = 3;
+    constexpr int64_t inputZeroPoint = -7;
+    const std::vector<int8_t> inputValues{-8, -2, 4, 7};
+    const std::vector<int8_t> weightValues{
+        1, -2, 3, -4,
+        5, -6, 7, -8,
+        -9, 10, -11, 12,
+    };
+    const std::vector<int32_t> biasValues{17, -23, 31};
+
+    auto input = CreateTensor("input", Shape(1, 1, 1, depthK), DataType::Int8);
+    auto weights = CreateTensor("weights", Shape(depthN, 1, 1, depthK), DataType::Int8,
+        std::vector<int8_t>(weightValues));
+    auto bias = CreateTensor("bias", Shape(depthN), DataType::Int32,
+        std::vector<int32_t>(biasValues));
+    auto output = CreateTensor("output", Shape(1, 1, 1, depthN), DataType::Int8);
+    auto fullyConnected = CreateOperation(
+        OpType::FullyConnected, TensorUsage::IFM0, input, TensorUsage::OFM, output);
+    fullyConnected->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
+    fullyConnected->ConnectInput(TensorUsage::Scales, bias).Set(Quantization::Unit());
+    Quantization inputQuantization = Quantization::Unit();
+    inputQuantization.zeroPoints = {inputZeroPoint};
+    fullyConnected->Input(TensorUsage::IFM0)->Set(inputQuantization);
+    std::vector<std::shared_ptr<Operation>> operations{fullyConnected};
+    auto graph = CreateGraph(operations);
+
+    ArchNeuralAI architecture;
+    GraphOptimiserOptions options;
+    NeuralAIGraphOptimiser optimiser(
+        architecture.Constraints(), options, nullptr, NeuralAIGraphOptimiserStage::Prepare);
+    optimiser.OptimiseGraph(graph.get());
+
+    REQUIRE(fullyConnected->Input(TensorUsage::IFM0)->quantization.zeroPoints ==
+        std::vector<int64_t>{0});
+    REQUIRE(fullyConnected->Input(TensorUsage::Scales)->tensor != bias);
+    const auto compensatedBias =
+        fullyConnected->Input(TensorUsage::Scales)->tensor->View().Values<int32_t>();
+    for ( int oc = 0; oc < depthN; ++oc )
+    {
+        int32_t reference = biasValues[oc];
+        int32_t transformed = compensatedBias[oc];
+        for ( int ic = 0; ic < depthK; ++ic )
+        {
+            const int32_t inputValue = inputValues[ic];
+            const int32_t weight = weightValues[oc * depthK + ic];
+            reference += (inputValue - int32_t(inputZeroPoint)) * weight;
+            transformed += inputValue * weight;
+        }
+        REQUIRE(transformed == reference);
+    }
+}
+
 TEST_CASE("Neural-AI prepare optimiser rejects overflowing asymmetric Conv compensation")
 {
     auto input = CreateTensor("input", Shape(1, 1, 1, 1), DataType::Int8);
@@ -2932,6 +2989,35 @@ TEST_CASE("Neural-AI prepare optimiser rejects overflowing asymmetric Conv compe
 
     REQUIRE(conv->Input(TensorUsage::IFM0)->quantization.zeroPoints == std::vector<int64_t>{-1});
     REQUIRE(conv->Input(TensorUsage::Scales)->tensor == bias);
+}
+
+TEST_CASE("Neural-AI prepare optimiser rejects overflowing asymmetric FullyConnected compensation")
+{
+    auto input = CreateTensor("input", Shape(1, 1, 1, 1), DataType::Int8);
+    auto weights = CreateTensor(
+        "weights", Shape(1, 1, 1, 1), DataType::Int8, std::vector<int8_t>{1});
+    auto bias = CreateTensor(
+        "bias", Shape(1), DataType::Int32, std::vector<int32_t>{std::numeric_limits<int32_t>::max()});
+    auto output = CreateTensor("output", Shape(1, 1, 1, 1), DataType::Int8);
+    auto fullyConnected = CreateOperation(
+        OpType::FullyConnected, TensorUsage::IFM0, input, TensorUsage::OFM, output);
+    fullyConnected->ConnectInput(TensorUsage::Weights, weights).Set(Quantization::Unit());
+    fullyConnected->ConnectInput(TensorUsage::Scales, bias).Set(Quantization::Unit());
+    Quantization inputQuantization = Quantization::Unit();
+    inputQuantization.zeroPoints = {-1};
+    fullyConnected->Input(TensorUsage::IFM0)->Set(inputQuantization);
+    std::vector<std::shared_ptr<Operation>> operations{fullyConnected};
+    auto graph = CreateGraph(operations);
+
+    ArchNeuralAI architecture;
+    GraphOptimiserOptions options;
+    NeuralAIGraphOptimiser optimiser(
+        architecture.Constraints(), options, nullptr, NeuralAIGraphOptimiserStage::Prepare);
+    optimiser.OptimiseGraph(graph.get());
+
+    REQUIRE(fullyConnected->Input(TensorUsage::IFM0)->quantization.zeroPoints ==
+        std::vector<int64_t>{-1});
+    REQUIRE(fullyConnected->Input(TensorUsage::Scales)->tensor == bias);
 }
 
 TEST_CASE("Neural-AI constraints enforce signed matrix zero points")
@@ -2962,6 +3048,25 @@ TEST_CASE("Neural-AI constraints allow asymmetric convolution inputs")
         REQUIRE(constraints->SupportedZeroPoint(0, TensorUsage::Weights, DataType::Int8, opType));
         REQUIRE_FALSE(constraints->SupportedZeroPoint(1, TensorUsage::Weights, DataType::Int8, opType));
     }
+}
+
+TEST_CASE("Neural-AI constraints allow asymmetric FullyConnected inputs")
+{
+    ArchNeuralAI arch;
+    auto *constraints = arch.Constraints();
+
+    REQUIRE(constraints->SupportedZeroPoint(
+        -128, TensorUsage::IFM, DataType::Int8, OpType::FullyConnected));
+    REQUIRE(constraints->SupportedZeroPoint(
+        127, TensorUsage::IFM, DataType::Int8, OpType::FullyConnected));
+    REQUIRE_FALSE(constraints->SupportedZeroPoint(
+        -129, TensorUsage::IFM, DataType::Int8, OpType::FullyConnected));
+    REQUIRE_FALSE(constraints->SupportedZeroPoint(
+        128, TensorUsage::IFM, DataType::Int8, OpType::FullyConnected));
+    REQUIRE(constraints->SupportedZeroPoint(
+        0, TensorUsage::Weights, DataType::Int8, OpType::FullyConnected));
+    REQUIRE_FALSE(constraints->SupportedZeroPoint(
+        1, TensorUsage::Weights, DataType::Int8, OpType::FullyConnected));
 }
 
 TEST_CASE("Neural-AI matrix op configuration exposes GEMM granules")
@@ -3997,6 +4102,28 @@ TEST_CASE("Neural-AI compiler emits a native model package")
     REQUIRE(compiler.LoadTflite(model.data(), model.size()));
 
     REQUIRE(compiler.Compile());
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    REQUIRE(size > int64_t(sizeof(neuralai::ModelHeaderV1)));
+    REQUIRE(Read32(data) == neuralai::ModelMagic);
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
+}
+
+TEST_CASE("Neural-AI compiler emits an asymmetric FullyConnected model package")
+{
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildFullyConnectedModel(1, 4, 3, -7);
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+
+    const bool compiled = compiler.Compile();
+    INFO(compiler.LastError());
+    REQUIRE(compiled);
     IRegorBlob *blob = compiler.Output();
     REQUIRE(blob != nullptr);
     int64_t size = 0;

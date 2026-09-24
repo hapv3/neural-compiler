@@ -613,11 +613,16 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
     {
         return QueryResult::Unsupported;
     }
+    const ArchFM &weightFm = query->weights.type != DataType::None ? query->weights : query->ifm[1];
+    if ( (opType == OpType::FullyConnected || opType == OpType::MatMul) &&
+         (!HasSymmetricZeroPoint(query->ifm[0]) || !HasSymmetricZeroPoint(weightFm)) )
+    {
+        return QueryResult::Unsupported;
+    }
     if ( opType == OpType::Conv2D || opType == OpType::DepthwiseConv2D )
     {
         const Classification classification = Classify(opType, query->ifm[0].shape, weightsShape,
             query->ofm.shape, query->kernel);
-        const ArchFM &weightFm = query->weights.type != DataType::None ? query->weights : query->ifm[1];
         if ( !classification || !HasSymmetricZeroPoint(query->ifm[0]) ||
              !HasSymmetricZeroPoint(weightFm) ) return QueryResult::Unsupported;
         if ( req != nullptr )
@@ -638,7 +643,8 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
 bool NeuralAIConstraints::SupportedZeroPoint(int64_t zeroPoint, TensorUsage usage, DataType dataType, OpType opType)
 {
     if ( !IsSupportedOp(opType) || dataType != DataType::Int8 ) return false;
-    if ( (opType == OpType::Conv2D || opType == OpType::DepthwiseConv2D) && IsIFM(usage) )
+    if ( (opType == OpType::FullyConnected || opType == OpType::Conv2D ||
+             opType == OpType::DepthwiseConv2D) && IsIFM(usage) )
         return zeroPoint >= -128 && zeroPoint <= 127;
     if ( opType == OpType::LUT || opType == OpType::Sigmoid || opType == OpType::Resize ||
          opType == OpType::Concat ||
