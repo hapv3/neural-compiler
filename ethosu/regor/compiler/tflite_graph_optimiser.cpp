@@ -2151,6 +2151,43 @@ Operation *TFLiteGraphOptimiser::ConvertMeanOps(Graph *const, Operation *const o
         }
         intermediateShape = Shape::PadAxes(intermediateShape, 4, 1);
 
+        // A batch-one reduction over every non-unit spatial axis is a global
+        // average.  Let targets with a native fused-requant reduction consume
+        // it directly instead of materialising the generic Depthwise+Mul
+        // lowering.  Padding a [1,T,C] tensor to [1,1,T,C] also makes token
+        // mean use the same target path without moving data.
+        const bool reducesSpatial = !reduceAxis4D.Batch() && !reduceAxis4D.Depth() &&
+            (reduceAxis4D.Height() || reduceAxis4D.Width()) &&
+            (reduceAxis4D.Height() || ifmShape4D.Height() == 1) &&
+            (reduceAxis4D.Width() || ifmShape4D.Width() == 1) &&
+            ifmShape4D.Batch() == 1 &&
+            intermediateShape == Shape(1, 1, 1, ifmShape4D.Depth());
+        if ( reducesSpatial )
+        {
+            auto average = std::make_shared<Operation>(OpType::AvgPool);
+            average->CopyInput(TensorUsage::IFM0, *ifmConn);
+            average->Input(TensorUsage::IFM0)->Set(ifmShape4D);
+            average->ConnectOutput(TensorUsage::OFM, ofmConn->tensor)
+                .Set(intermediateShape)
+                .Set(ofmQuant)
+                .Set(RoundMode::DBL);
+            average->SetKernel(std::make_unique<Kernel>(
+                Point2i(ifmShape4D.Width(), ifmShape4D.Height()),
+                Point2i(1, 1), Point2i(1, 1)));
+
+            ArchOperatorQuery query{};
+            query.kernel = average->Kernel();
+            Set(query.ifm[0], average->Input(TensorUsage::IFM0));
+            Set(query.ofm, average->Output(TensorUsage::OFM));
+            if ( _constraints->OperatorQuery(OpType::AvgPool, &query, nullptr)
+                     .Any(QueryResult::Native) )
+            {
+                RecordOptimisation(*operation, average.get());
+                operation->Disconnect();
+                return average.get();
+            }
+        }
+
         // Support mean over depth-axis by left-shifting the C channel
         // From operator checks we can assume that one of H,W,C has shape 1
         if ( reduceAxis4D.Depth() && ifmShape4D.Depth() > 1 )
@@ -2984,7 +3021,19 @@ Operation *TFLiteGraphOptimiser::ConvertZeroPoint(Graph *const graph, Operation 
     }
 
     bool zeroPoint0ForType =
-        opType == OpType::AvgPool || opType == OpType::Resize || opType == OpType::CLZ || opType == OpType::SHL || opType == OpType::Div;
+        opType == OpType::Resize || opType == OpType::CLZ ||
+        opType == OpType::SHL || opType == OpType::Div;
+    if ( opType == OpType::AvgPool )
+    {
+        // A raw integer average preserves quantization only when input and
+        // output use the same affine mapping.  Keep asymmetric metadata for
+        // targets that fuse the zero-point correction into the reduction.
+        const TensorConnection *ifm = operation->Input(TensorUsage::IFM0);
+        const TensorConnection *ofm = operation->Output(TensorUsage::OFM);
+        zeroPoint0ForType = ifm != nullptr && ofm != nullptr &&
+            ifm->quantization.scales == ofm->quantization.scales &&
+            ifm->quantization.zeroPoints == ofm->quantization.zeroPoints;
+    }
     for ( auto [usage, ifmConn] : operation->Inputs().pairs() )
     {
         if ( IsIFM(usage) )

@@ -380,10 +380,15 @@ NeuralAICommandPerformanceResult MeasureNeuralAICommandPerformance(
                 {
                     const int64_t pixels = SaturatingMultiply(Read32(command + 32), Read32(command + 36));
                     const int64_t channels = Read32(command + 40);
-                    const int64_t bytes = SaturatingMultiply(pixels, channels);
+                    const int64_t groups = DivRoundUp64(channels, 32);
+                    const int64_t groupBytes = SaturatingMultiply(groups, 32);
+                    const int64_t bytes = SaturatingMultiply(pixels, groupBytes);
                     measurement.AddAccess(ReadRef(command + 16), bytes, false, AccessType::FeatureMap);
-                    measurement.AddAccess(ReadRef(command + 24), channels, true, AccessType::FeatureMap);
-                    measurement.row.computeCycles = std::max<int64_t>(1, pixels * DivRoundUp64(channels, 32));
+                    measurement.AddAccess(ReadRef(command + 24), groupBytes, true, AccessType::FeatureMap);
+                    const bool requant =
+                        (flags & neuralai::CommandFlagAFUGlobalAvgPoolRequant) != 0;
+                    measurement.row.computeCycles = std::max<int64_t>(1,
+                        SaturatingMultiply(pixels + (requant ? 5 : 3), groups));
                 }
                 break;
             case CommandType::CopyLayout:

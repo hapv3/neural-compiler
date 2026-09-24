@@ -28,6 +28,7 @@ const std::set<OpType> s_supportedOpTypes = {
     OpType::FullyConnected,
     OpType::LUT,
     OpType::MaxPool,
+    OpType::Mean,
     OpType::Mul,
     OpType::Relu6,
     OpType::Reshape,

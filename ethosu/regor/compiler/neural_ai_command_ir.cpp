@@ -535,13 +535,20 @@ bool DecodeKnownCommand(SemanticCommand &command)
         {
             const uint64_t pixels = SaturatingMultiply(Read32(encoded + 32), Read32(encoded + 36));
             const uint64_t channels = Read32(encoded + 40);
+            const uint64_t groups = DivRoundUp(channels, 32);
+            const uint64_t groupBytes = SaturatingMultiply(groups, 32);
+            const bool requant =
+                (command.flags & CommandFlagAFUGlobalAvgPoolRequant) != 0;
             AddResource(command, SemanticResource::AFU);
             AddReadWriteState(command, SemanticState::AFUEngine, 0);
-            AddState(command, SemanticState::AFULut, 0, SemanticAccessMode::Write);
-            command.estimatedCycles = CycleCount(SaturatingMultiply(pixels, DivRoundUp(channels, 32)));
-            return AddAccess(command, encoded, 16, SaturatingMultiply(pixels, channels),
+            if ( !requant )
+                AddState(command, SemanticState::AFULut, 0, SemanticAccessMode::Write);
+            const uint64_t reductionCycles = SaturatingMultiply(pixels, groups);
+            const uint64_t finaliseCycles = SaturatingMultiply(requant ? 5 : 3, groups);
+            command.estimatedCycles = CycleCount(SaturatingAdd(reductionCycles, finaliseCycles));
+            return AddAccess(command, encoded, 16, SaturatingMultiply(pixels, groupBytes),
                        SemanticAccessMode::Read) &&
-                   AddAccess(command, encoded, 24, channels, SemanticAccessMode::Write);
+                   AddAccess(command, encoded, 24, groupBytes, SemanticAccessMode::Write);
         }
         case CommandType::CopyLayout:
             AddResource(command, SemanticResource::Spatz);

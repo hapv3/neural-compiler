@@ -77,13 +77,14 @@ int64_t ScalarZeroPoint(const Quantization &quantization)
     return quantization.zeroPoints.empty() ? 0 : quantization.zeroPoints[0];
 }
 
-bool HasRawAverageQuantization(const ArchFM &ifm, const ArchFM &ofm)
+bool HasFusedAverageQuantization(const ArchFM &ifm, const ArchFM &ofm)
 {
-    if ( ifm.quantization == nullptr || ofm.quantization == nullptr ||
+    if ( !HasScalarSoftwareScale(ifm) || !HasScalarSoftwareScale(ofm) ||
          ifm.quantization->zeroPoints.size() > 1 || ofm.quantization->zeroPoints.size() > 1 ||
-         ScalarZeroPoint(*ifm.quantization) != ScalarZeroPoint(*ofm.quantization) ||
-         ofm.quantization->scales.size() != 1 ||
-         ofm.quantization->scales[0] != QuantizedScale(1.0) )
+         ScalarZeroPoint(*ifm.quantization) < -128 ||
+         ScalarZeroPoint(*ifm.quantization) > 127 ||
+         ScalarZeroPoint(*ofm.quantization) < -128 ||
+         ScalarZeroPoint(*ofm.quantization) > 127 )
         return false;
     return HasFullInt8Clamp(ofm);
 }
@@ -557,7 +558,7 @@ Flags<QueryResult> NeuralAIConstraints::OperatorQuery(
              kernel->Dilation() != Point2i(1, 1) || !kernel->Padding().IsZero() ||
              ofmShape.Height() != 1 || ofmShape.Width() != 1 ||
              ofmShape.Depth() != ifmShape.Depth() ||
-             !HasRawAverageQuantization(query->ifm[0], query->ofm) )
+             !HasFusedAverageQuantization(query->ifm[0], query->ofm) )
         {
             return QueryResult::Unsupported;
         }

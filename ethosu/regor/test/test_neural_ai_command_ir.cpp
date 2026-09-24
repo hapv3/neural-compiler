@@ -386,6 +386,18 @@ TEST_CASE("Neural-AI AFU LUT residency survives unrelated work and invalidates o
     unrelated.ofm = {uint16_t(Region::TCDMScratch), 0, 1280};
     unrelated.length = 64;
 
+    CommandAFUGlobalAvgPoolV2 fusedAverage{};
+    fusedAverage.header.type = uint16_t(CommandType::AFUGlobalAvgPool);
+    fusedAverage.header.sizeBytes = sizeof(fusedAverage);
+    fusedAverage.header.flags = CommandFlagAFUGlobalAvgPoolRequant;
+    fusedAverage.ifm = {uint16_t(Region::TCDMScratch), 0, 2112};
+    fusedAverage.ofm = {uint16_t(Region::TCDMScratch), 0, 2368};
+    fusedAverage.inputH = 2;
+    fusedAverage.inputW = 2;
+    fusedAverage.channels = 32;
+    fusedAverage.outputMultiplier = 0x40000000;
+    fusedAverage.outputShift = 31;
+
     CommandAFULutV2 resident = first;
     resident.header.layerId = 2;
     resident.ifm.offset = 1536;
@@ -423,6 +435,7 @@ TEST_CASE("Neural-AI AFU LUT residency survives unrelated work and invalidates o
     std::vector<uint8_t> bytes;
     Append(bytes, first);
     Append(bytes, unrelated);
+    Append(bytes, fusedAverage);
     Append(bytes, resident);
     Append(bytes, invalidator);
     Append(bytes, reload);
@@ -439,23 +452,23 @@ TEST_CASE("Neural-AI AFU LUT residency survives unrelated work and invalidates o
     CHECK(stats.reused == 1);
     CHECK(stats.invalidations == 2);
     CHECK((commands[0].flags & CommandFlagAFULutReuse) == 0);
-    CHECK((commands[2].flags & CommandFlagAFULutReuse) != 0);
-    CHECK(commands[2].memoryAccesses.size() == 2);
-    CHECK(commands[2].stateAccesses.back().mode == SemanticAccessMode::Read);
-    CHECK((commands[4].flags & CommandFlagAFULutReuse) == 0);
-    CHECK(commands[4].memoryAccesses.size() == 3);
-    CHECK((commands[6].flags & CommandFlagAFULutReuse) == 0);
-    CHECK(commands[6].memoryAccesses.size() == 3);
+    CHECK((commands[3].flags & CommandFlagAFULutReuse) != 0);
+    CHECK(commands[3].memoryAccesses.size() == 2);
+    CHECK(commands[3].stateAccesses.back().mode == SemanticAccessMode::Read);
+    CHECK((commands[5].flags & CommandFlagAFULutReuse) == 0);
+    CHECK(commands[5].memoryAccesses.size() == 3);
+    CHECK((commands[7].flags & CommandFlagAFULutReuse) == 0);
+    CHECK(commands[7].memoryAccesses.size() == 3);
 
     CommandDependencyGraph dependencies;
     REQUIRE(BuildCommandDependencyGraph(commands, dependencies, error));
-    CHECK(HasEdge(dependencies, 0, 2, DependencyKind::StateRAW));
+    CHECK(HasEdge(dependencies, 0, 3, DependencyKind::StateRAW));
 
     std::vector<SemanticCommand> roundTrip;
     REQUIRE(DecodeSemanticCommandStream(
         SerializeSemanticCommandStream(commands), roundTrip, error));
-    CHECK(roundTrip[2].memoryAccesses.size() == 2);
-    CHECK(roundTrip[2].stateAccesses.back().mode == SemanticAccessMode::Read);
+    CHECK(roundTrip[3].memoryAccesses.size() == 2);
+    CHECK(roundTrip[3].stateAccesses.back().mode == SemanticAccessMode::Read);
 }
 
 TEST_CASE("Neural-AI DMA residency removes exact weight and halo reloads until either range changes")

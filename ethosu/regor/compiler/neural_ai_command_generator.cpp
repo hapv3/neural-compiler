@@ -315,11 +315,11 @@ void AppendRef(std::vector<uint8_t> &output, const RefV1 &reference)
 }
 
 void AppendHeader(std::vector<uint8_t> &output, CommandType type, uint16_t size,
-    uint32_t layerId, uint32_t tileId)
+    uint32_t layerId, uint32_t tileId, uint32_t flags = 0)
 {
     Append16(output, uint16_t(type));
     Append16(output, size);
-    Append32(output, 0);
+    Append32(output, flags);
     Append32(output, layerId);
     Append32(output, tileId);
 }
@@ -2831,6 +2831,37 @@ struct GeneratorContext
              kernel->Stride() != Point2i(1, 1) || kernel->Dilation() != Point2i(1, 1) ||
              !kernel->Padding().IsZero() )
             return SetError(error, "Neural-AI AFU AvgPool requires a full-spatial 1x1 reduction");
+        if ( ifm->quantization.scales.size() != 1 || ofm->quantization.scales.size() != 1 ||
+             ifm->quantization.zeroPoints.size() > 1 || ofm->quantization.zeroPoints.size() > 1 )
+            return SetError(error, "Neural-AI AFU AvgPool requires scalar INT8 quantization");
+        const int64_t spatial = int64_t(inputShape.Height()) * inputShape.Width();
+        const int64_t inputZeroPoint = ifm->quantization.zeroPoints.empty() ? 0 :
+            ifm->quantization.zeroPoints[0];
+        const int64_t outputZeroPoint = ofm->quantization.zeroPoints.empty() ? 0 :
+            ofm->quantization.zeroPoints[0];
+        const QuantizedScale ratio = ofm->quantization.scales[0];
+        if ( ratio.scale <= 0 || ratio.shift < 0 || ratio.shift > 62 )
+            return SetError(error, "Neural-AI AFU AvgPool scale is outside the fused requant contract");
+        int divisorShift = IntLog2(spatial);
+        const int outputLeftShift = 31 - ratio.shift;
+        divisorShift = std::min(divisorShift, 32);
+        divisorShift = std::min(divisorShift, 31 + outputLeftShift);
+        const int64_t scaledMultiplier = int64_t(ratio.scale) << divisorShift;
+        const int64_t outputMultiplier = scaledMultiplier / spatial;
+        const int outputShift = ratio.shift + divisorShift;
+        const int64_t inputOffset = -inputZeroPoint * spatial;
+        const int64_t minimumAccumulator = inputOffset - 128 * spatial;
+        const int64_t maximumAccumulator = inputOffset + 127 * spatial;
+        if ( spatial <= 0 || inputZeroPoint < -128 || inputZeroPoint > 127 ||
+             outputZeroPoint < -128 || outputZeroPoint > 127 ||
+             divisorShift < 0 || outputMultiplier <= 0 ||
+             outputMultiplier > std::numeric_limits<int32_t>::max() ||
+             outputShift < 0 || outputShift > 63 ||
+             inputOffset < std::numeric_limits<int32_t>::min() ||
+             inputOffset > std::numeric_limits<int32_t>::max() ||
+             minimumAccumulator < std::numeric_limits<int32_t>::min() ||
+             maximumAccumulator > std::numeric_limits<int32_t>::max() )
+            return SetError(error, "Neural-AI AFU AvgPool requantization is outside the INT8 contract");
         RefV1 ifmRef = TensorRef(ifm->tensor.get(), 0, error);
         if ( !error.empty() ) return false;
         RefV1 ofmRef = TensorRef(ofm->tensor.get(), 0, error);
@@ -2840,13 +2871,18 @@ struct GeneratorContext
             return SetError(error, "Neural-AI AFU AvgPool requires internal TCDM tensors");
 
         AppendHeader(artifact->commands, CommandType::AFUGlobalAvgPool, 64,
-            uint32_t(operation->Index()), 0);
+            uint32_t(operation->Index()), 0,
+            neuralai::CommandFlagAFUGlobalAvgPoolRequant);
         AppendRef(artifact->commands, ifmRef);
         AppendRef(artifact->commands, ofmRef);
         Append32(artifact->commands, uint32_t(inputShape.Height()));
         Append32(artifact->commands, uint32_t(inputShape.Width()));
         Append32(artifact->commands, uint32_t(inputShape.Depth()));
-        AppendZeros(artifact->commands, 5);
+        Append32(artifact->commands, uint32_t(outputMultiplier));
+        Append32(artifact->commands, uint32_t(outputShift));
+        Append32(artifact->commands, uint32_t(inputOffset));
+        Append32(artifact->commands, uint32_t(outputZeroPoint));
+        Append32(artifact->commands, 0);
         ++artifact->commandCount;
         return true;
     }

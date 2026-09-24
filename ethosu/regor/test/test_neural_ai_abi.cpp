@@ -33,7 +33,7 @@ TEST_CASE("neural_ai_abi model header has deterministic little-endian bytes")
 
     const auto bytes = Serialize(header);
     const SerializedModelHeaderV1 expected = {
-        0x4E, 0x41, 0x49, 0x4D, 0x01, 0x00, 0x05, 0x00,
+        0x4E, 0x41, 0x49, 0x4D, 0x01, 0x00, 0x06, 0x00,
         0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x04, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00,
         0x40, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
@@ -167,6 +167,12 @@ TEST_CASE("neural_ai_abi freezes AFU global AvgPool command layout")
     command.inputH = 24;
     command.inputW = 24;
     command.channels = 64;
+    command.outputMultiplier = 0x40000000;
+    command.outputShift = 31;
+    command.inputOffset = 1728;
+    command.outputZeroPoint = -7;
+    command.doubleRoundShift = 20;
+    command.header.flags = CommandFlagAFUGlobalAvgPoolRequant;
 
     REQUIRE(command.header.type == 14);
     REQUIRE(command.header.sizeBytes == 64);
@@ -175,6 +181,12 @@ TEST_CASE("neural_ai_abi freezes AFU global AvgPool command layout")
     REQUIRE(command.inputH == 24);
     REQUIRE(command.inputW == 24);
     REQUIRE(command.channels == 64);
+    REQUIRE(command.outputMultiplier == 0x40000000);
+    REQUIRE(command.outputShift == 31);
+    REQUIRE(command.inputOffset == 1728);
+    REQUIRE(command.outputZeroPoint == -7);
+    REQUIRE(command.doubleRoundShift == 20);
+    REQUIRE(command.header.flags == 16);
 }
 
 TEST_CASE("neural_ai_abi freezes nearest upsample command layout")

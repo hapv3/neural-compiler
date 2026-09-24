@@ -127,6 +127,33 @@ TEST_CASE("neural_ai command performance omits a resident AFU LUT reload")
     CHECK(result.commands[0].computeCycles == 10);
 }
 
+TEST_CASE("neural_ai command performance models fused global average requant")
+{
+    ArchNeuralAI architecture;
+    neuralai::CommandAFUGlobalAvgPoolV2 command{};
+    command.header.type = uint16_t(neuralai::CommandType::AFUGlobalAvgPool);
+    command.header.sizeBytes = sizeof(command);
+    command.header.flags = neuralai::CommandFlagAFUGlobalAvgPoolRequant;
+    command.ifm = {uint16_t(neuralai::Region::TCDMScratch), 0, 0};
+    command.ofm = {uint16_t(neuralai::Region::TCDMScratch), 0, 4096};
+    command.inputH = 7;
+    command.inputW = 7;
+    command.channels = 33;
+    command.outputMultiplier = 0x40000000;
+    command.outputShift = 31;
+
+    CompiledNeuralAIArtifact artifact;
+    AppendCommand(artifact, command);
+    const auto result = MeasureNeuralAICommandPerformance(artifact, &architecture);
+
+    REQUIRE(result.commands.size() == 1);
+    CHECK(result.commands[0].tcdmReadBytes == 49 * 64);
+    CHECK(result.commands[0].tcdmWriteBytes == 64);
+    CHECK(result.commands[0].computeCycles == 108);
+    CHECK(result.commands[0].memoryCycles == 100);
+    CHECK(result.commands[0].totalCycles == 108);
+}
+
 TEST_CASE("neural_ai command performance accumulates queued asynchronous DMA cycles")
 {
     ArchNeuralAI architecture;

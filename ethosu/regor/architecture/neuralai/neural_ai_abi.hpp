@@ -19,7 +19,7 @@ namespace regor::neuralai
 constexpr uint32_t ModelMagic = 0x4D49414EU;       // "NAIM" in little-endian storage
 constexpr uint32_t InvocationMagic = 0x5649414EU;  // "NAIV" in little-endian storage
 constexpr uint16_t AbiMajor = 1;
-constexpr uint16_t AbiMinor = 5;
+constexpr uint16_t AbiMinor = 6;
 constexpr uint32_t TargetId = 1;
 constexpr uint32_t Alignment = 32;
 
@@ -119,6 +119,7 @@ enum CommandFlags : uint32_t
     // CommandAFULutV2::lut. Firmware may skip staging and programming it.
     CommandFlagAFULutReuse = 1U << 2,
     CommandFlagAFULutChain = 1U << 3,
+    CommandFlagAFUGlobalAvgPoolRequant = 1U << 4,
 };
 
 struct ModelHeaderV1
@@ -442,7 +443,11 @@ struct CommandAFUGlobalAvgPoolV2
     uint32_t inputH;
     uint32_t inputW;
     uint32_t channels;
-    uint32_t reserved[5];
+    int32_t outputMultiplier;
+    uint32_t outputShift;
+    int32_t inputOffset;
+    int32_t outputZeroPoint;
+    uint32_t doubleRoundShift;
 };
 
 struct CommandUpsampleNearestV2
