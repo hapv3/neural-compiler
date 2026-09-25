@@ -21,12 +21,18 @@ namespace regor
 namespace
 {
 
-bool IsC32FeatureMap(const SchedulerConnection *connection)
+bool IsC32StoredFeatureMap(const SchedulerConnection *connection)
 {
     return connection != nullptr && connection->tensor != nullptr &&
            connection->tensor->format == TensorFormat::C32Blocked &&
+           connection->Type() == DataType::Int8 &&
            connection->SliceShape().Size() == 4 && connection->SliceShape().Batch() == 1 &&
-           connection->SliceShape().Depth() > 0 && connection->SliceShape().Depth() % 32 == 0;
+           connection->SliceShape().Depth() > 0;
+}
+
+bool IsC32FeatureMap(const SchedulerConnection *connection)
+{
+    return IsC32StoredFeatureMap(connection) && connection->SliceShape().Depth() % 32 == 0;
 }
 
 bool IsCompactC16FeatureMap(const SchedulerConnection *connection)
@@ -57,15 +63,15 @@ bool IsReviewedConv(const SchedulerOperation *operation)
 {
     const Point2i size = operation->Kernel()->Size();
     const bool reviewedKernel = size == Point2i(1, 1) || size == Point2i(3, 3);
-    return reviewedKernel && IsC32FeatureMap(operation->TryIFM(0)) &&
-           IsC32FeatureMap(operation->outputs.try_ref(TensorUsage::OFM));
+    return reviewedKernel && IsC32StoredFeatureMap(operation->TryIFM(0)) &&
+           IsC32StoredFeatureMap(operation->outputs.try_ref(TensorUsage::OFM));
 }
 
 bool IsReviewedDepthwise(const SchedulerOperation *operation)
 {
     return operation->Kernel()->Size() == Point2i(3, 3) &&
-           IsC32FeatureMap(operation->TryIFM(0)) &&
-           IsC32FeatureMap(operation->outputs.try_ref(TensorUsage::OFM));
+           IsC32StoredFeatureMap(operation->TryIFM(0)) &&
+           IsC32StoredFeatureMap(operation->outputs.try_ref(TensorUsage::OFM));
 }
 
 bool IsReviewedConcatInput(const SchedulerOperation *operation)
@@ -110,6 +116,63 @@ bool IsReviewedCompactLinebufferInput(
            ofm->shape.Height() > 0 && ofm->shape.Width() > 0 && ofm->shape.Depth() == 16;
 }
 
+bool IsK3Convolution(const SchedulerOperation *operation)
+{
+    const Kernel *kernel = operation != nullptr ? operation->Kernel() : nullptr;
+    return operation != nullptr &&
+           (operation->Type() == OpType::Conv2D ||
+               operation->Type() == OpType::DepthwiseConv2D) &&
+           kernel != nullptr && kernel->Size() == Point2i(3, 3);
+}
+
+bool IsDirectRgbStem(const SchedulerOperation *operation)
+{
+    if ( !IsK3Convolution(operation) || operation->Type() != OpType::Conv2D )
+        return false;
+    const SchedulerConnection *ifm = operation->TryIFM(0);
+    return ifm != nullptr && ifm->tensor->format == TensorFormat::NHWC &&
+           ifm->shape.Size() == 4 && ifm->shape.Batch() == 1 &&
+           ifm->shape.Depth() == 3 &&
+           operation->Kernel()->Stride() == Point2i(2, 2);
+}
+
+bool HasK3Consumer(const SchedulerTensor *tensor)
+{
+    return tensor != nullptr &&
+           std::any_of(tensor->consumers.begin(), tensor->consumers.end(),
+               [](const SchedulerOperation *operation)
+               {
+                   return IsK3Convolution(operation);
+               });
+}
+
+bool IsDirectRgbRollingTensor(const SchedulerTensor *tensor)
+{
+    for ( const SchedulerOperation *producer : tensor->producers )
+    {
+        if ( IsDirectRgbStem(producer) )
+        {
+            for ( const SchedulerOperation *consumer : tensor->consumers )
+            {
+                if ( consumer->Type() != OpType::LUT ) continue;
+                const SchedulerConnection *lutOfm =
+                    consumer->outputs.try_ref(TensorUsage::OFM);
+                if ( lutOfm != nullptr && HasK3Consumer(lutOfm->tensor.get()) )
+                    return true;
+            }
+        }
+        if ( producer->Type() == OpType::LUT && HasK3Consumer(tensor) )
+        {
+            const SchedulerConnection *lutIfm = producer->TryIFM(0);
+            if ( lutIfm == nullptr ) continue;
+            if ( std::any_of(lutIfm->tensor->producers.begin(),
+                    lutIfm->tensor->producers.end(), IsDirectRgbStem) )
+                return true;
+        }
+    }
+    return false;
+}
+
 int64_t SaturatingAdd(int64_t lhs, int64_t rhs)
 {
     if ( rhs > std::numeric_limits<int64_t>::max() - lhs )
@@ -141,6 +204,10 @@ bool SupportsL2Output(const SchedulerOperation *operation, const SchedulerTensor
         return IsAlignedBinary(operation) || IsReviewedCompactBinary(operation);
     case OpType::Conv2D: return IsReviewedConv(operation);
     case OpType::DepthwiseConv2D: return IsReviewedDepthwise(operation);
+    case OpType::LUT:
+        return IsC32StoredFeatureMap(operation->TryIFM(0)) &&
+               IsC32StoredFeatureMap(operation->outputs.try_ref(TensorUsage::OFM)) &&
+               operation->IFM(0)->shape == operation->OFM()->shape;
     case OpType::MemoryCopy: return IsReviewedCompactCopyOutput(operation);
     default: return false;
     }
@@ -164,6 +231,11 @@ bool SupportsL2Input(const SchedulerOperation *operation, const SchedulerTensor 
     case OpType::Conv2D:
         return IsReviewedConv(operation) || IsReviewedCompactLinebufferInput(operation, tensor);
     case OpType::DepthwiseConv2D: return IsReviewedDepthwise(operation);
+    case OpType::LUT:
+        return operation->IFM(0)->tensor.get() == tensor &&
+               IsC32StoredFeatureMap(operation->TryIFM(0)) &&
+               IsC32StoredFeatureMap(operation->outputs.try_ref(TensorUsage::OFM)) &&
+               operation->IFM(0)->shape == operation->OFM()->shape;
     case OpType::Concat:
         return IsReviewedConcatInput(operation) || IsReviewedCompactCspConcatInput(operation);
     default: return false;
@@ -179,7 +251,8 @@ bool IsNeuralAIL2SpillCandidate(const SchedulerTensor *tensor)
              tensor->format != TensorFormat::CompactNHWC) ||
          tensor->isGraphInput || tensor->isGraphOutput || tensor->isPersistent ||
          tensor->hasCPUReaders || tensor->hasCPUWriters ||
-         tensor->producers.empty() || tensor->consumers.empty() )
+         tensor->producers.empty() || tensor->consumers.empty() ||
+         IsDirectRgbRollingTensor(tensor) )
         return false;
 
     return std::all_of(tensor->producers.begin(), tensor->producers.end(),

@@ -31,6 +31,7 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <set>
 
 #include "regor.h"
 
@@ -3396,6 +3397,73 @@ TEST_CASE("Neural-AI compiler streams a structural RGB stem from its binding")
     REQUIRE(artifact.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);
 }
 
+TEST_CASE("Neural-AI graph optimiser streams an RGB LUT stem into depthwise convolution")
+{
+    ArchNeuralAI arch;
+    auto input = CreateTensor("input", Shape(1, 224, 224, 3), DataType::Int8);
+    auto stem = CreateTensor("stem", Shape(1, 112, 112, 32), DataType::Int8);
+    auto activated = CreateTensor("activated", Shape(1, 112, 112, 32), DataType::Int8);
+    auto output = CreateTensor("output", Shape(1, 112, 112, 32), DataType::Int8);
+    auto finalOutput = CreateTensor("final_output", Shape(1, 112, 112, 32), DataType::Int8);
+    auto stemWeights = CreateTensor("stem_weights", Shape(32, 3, 3, 3), DataType::Int8,
+        std::vector<int8_t>(32 * 3 * 3 * 3, 1));
+    auto stemScales = CreateTensor(
+        "stem_scales", Shape(32), DataType::Int32, std::vector<int32_t>(32, 0));
+    auto depthwiseWeights = CreateTensor("depthwise_weights", Shape(1, 3, 3, 32),
+        DataType::Int8, std::vector<int8_t>(3 * 3 * 32, 1));
+    auto depthwiseScales = CreateTensor(
+        "depthwise_scales", Shape(32), DataType::Int32, std::vector<int32_t>(32, 0));
+    auto nextWeights = CreateTensor("next_weights", Shape(32, 1, 1, 32),
+        DataType::Int8, std::vector<int8_t>(32 * 32, 1));
+    auto nextScales = CreateTensor(
+        "next_scales", Shape(32), DataType::Int32, std::vector<int32_t>(32, 0));
+    std::vector<int8_t> lutValues(256);
+    for ( int index = 0; index < 256; ++index ) lutValues[index] = int8_t(index - 128);
+    auto lut = CreateTensor("lut", Shape(256), DataType::Int8, std::move(lutValues));
+
+    auto stemConv = CreateOperation(
+        OpType::Conv2D, TensorUsage::IFM0, input, TensorUsage::OFM, stem);
+    stemConv->Input(TensorUsage::IFM0)->Set(Quantization::Unit());
+    stemConv->Output(TensorUsage::OFM)->Set(Quantization::Unit());
+    stemConv->ConnectInput(TensorUsage::Weights, stemWeights).Set(Quantization::Unit());
+    stemConv->ConnectInput(TensorUsage::Scales, stemScales).Set(Quantization::Unit());
+    stemConv->SetKernel(std::make_unique<Kernel>(
+        Point2i(3, 3), Point2i(2, 2), Point2i(1, 1), Margin(1, 1, 0, 0)));
+    auto activation = CreateOperation(
+        OpType::LUT, TensorUsage::IFM0, stem, TensorUsage::OFM, activated);
+    activation->Input(TensorUsage::IFM0)->Set(Quantization::Unit());
+    activation->Output(TensorUsage::OFM)->Set(Quantization::Unit());
+    activation->ConnectInput(TensorUsage::LUT, lut);
+    auto depthwise = CreateOperation(
+        OpType::DepthwiseConv2D, TensorUsage::IFM0, activated, TensorUsage::OFM, output);
+    depthwise->Input(TensorUsage::IFM0)->Set(Quantization::Unit());
+    depthwise->Output(TensorUsage::OFM)->Set(Quantization::Unit());
+    depthwise->ConnectInput(TensorUsage::Weights, depthwiseWeights).Set(Quantization::Unit());
+    depthwise->ConnectInput(TensorUsage::Scales, depthwiseScales).Set(Quantization::Unit());
+    depthwise->SetKernel(std::make_unique<Kernel>(
+        Point2i(3, 3), Point2i(1, 1), Point2i(1, 1), Margin(1, 1, 1, 1)));
+    auto nextConv = CreateOperation(
+        OpType::Conv2D, TensorUsage::IFM0, output, TensorUsage::OFM, finalOutput);
+    nextConv->Input(TensorUsage::IFM0)->Set(Quantization::Unit());
+    nextConv->Output(TensorUsage::OFM)->Set(Quantization::Unit());
+    nextConv->ConnectInput(TensorUsage::Weights, nextWeights).Set(Quantization::Unit());
+    nextConv->ConnectInput(TensorUsage::Scales, nextScales).Set(Quantization::Unit());
+    nextConv->SetKernel(std::make_unique<Kernel>(
+        Point2i(1, 1), Point2i(1, 1), Point2i(1, 1)));
+    std::vector<std::shared_ptr<Operation>> sourceOps = {stemConv, activation, depthwise, nextConv};
+    auto graph = CreateGraph(sourceOps);
+
+    GraphOptimiserOptions options;
+    NeuralAIGraphOptimiser optimiser(arch.Constraints(), options, nullptr);
+    optimiser.Process(graph.get());
+
+    REQUIRE(stemConv->Input(TensorUsage::IFM0)->tensor == input);
+    std::vector<std::shared_ptr<Operation>> rewritten;
+    graph->GetAllOperations(rewritten);
+    REQUIRE(std::count_if(rewritten.begin(), rewritten.end(), [](const auto &operation)
+        { return operation->Type() == OpType::MemoryCopy; }) == 1);
+}
+
 TEST_CASE("Neural-AI scheduler gathers native Concat stripes with DMA3D")
 {
     constexpr int height = 40;
@@ -6594,13 +6662,25 @@ TEST_CASE("Neural-AI compiler lowers the complete Micro-MobileNet topology")
     uint32_t addCommands = 0;
     uint32_t averageCommands = 0;
     uint32_t convCommands = 0;
+    uint32_t lutCommands = 0;
+    std::set<uint32_t> addLayers;
+    std::set<uint32_t> lutLayers;
     while ( offset < 224 + commandBytes )
     {
         const auto type = neuralai::CommandType(Read16(data + offset));
         const uint16_t commandSize = Read16(data + offset + 2);
         REQUIRE(commandSize >= sizeof(neuralai::CommandHeaderV2));
-        REQUIRE(type != neuralai::CommandType::AFULut);
-        if ( type == neuralai::CommandType::AFUBinary ) ++addCommands;
+        const uint32_t layer = Read32(data + offset + 8);
+        if ( type == neuralai::CommandType::AFULut )
+        {
+            ++lutCommands;
+            lutLayers.insert(layer);
+        }
+        if ( type == neuralai::CommandType::AFUBinary )
+        {
+            ++addCommands;
+            addLayers.insert(layer);
+        }
         if ( type == neuralai::CommandType::AFUGlobalAvgPool ) ++averageCommands;
         if ( type == neuralai::CommandType::PointwiseC32 ||
              type == neuralai::CommandType::DepthwiseC32 ||
@@ -6609,9 +6689,13 @@ TEST_CASE("Neural-AI compiler lowers the complete Micro-MobileNet topology")
         offset += commandSize;
     }
     REQUIRE(offset == 224 + commandBytes);
-    REQUIRE(addCommands == 2);
+    CAPTURE(addCommands, averageCommands, convCommands, lutCommands);
+    REQUIRE(addCommands >= 2);
+    REQUIRE(addLayers.size() == 2);
     REQUIRE(averageCommands == 1);
     REQUIRE(convCommands > 10);
+    REQUIRE(lutCommands >= 3);
+    REQUIRE(lutLayers.size() == 3);
     blob->Unmap(const_cast<uint8_t *>(data));
     blob->Release();
 }
@@ -7640,7 +7724,7 @@ TEST_CASE("Neural-AI compiler emits group-scoped depthwise C32 commands")
     blob->Release();
 }
 
-TEST_CASE("Neural-AI compiler copies an asymmetric public C32 group into padded depthwise storage")
+TEST_CASE("Neural-AI compiler stages asymmetric depthwise padding by stripe")
 {
     std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
     Compiler compiler(architecture);
@@ -7656,26 +7740,61 @@ TEST_CASE("Neural-AI compiler copies an asymmetric public C32 group into padded 
     REQUIRE(blob != nullptr);
     int64_t size = 0;
     const auto *data = static_cast<const uint8_t *>(blob->Map(size));
-    const uint32_t commandBytes = Read32(data + 64 + 12);
-    uint32_t offset = 224;
-    bool sawInputRectangle = false;
-    while ( offset < 224 + commandBytes )
+    const uint32_t sectionCount = Read32(data + 20);
+    const uint32_t sectionTable = Read32(data + 24);
+    uint32_t commandOffset = 0;
+    uint32_t commandBytes = 0;
+    uint32_t constantOffset = 0;
+    uint32_t constantBytes = 0;
+    for ( uint32_t section = 0; section < sectionCount; ++section )
+    {
+        const uint32_t sectionOffset = sectionTable + section * sizeof(neuralai::SectionV1);
+        const uint32_t type = Read32(data + sectionOffset);
+        if ( type == uint32_t(neuralai::SectionType::Commands) )
+        {
+            commandOffset = Read32(data + sectionOffset + 8);
+            commandBytes = Read32(data + sectionOffset + 12);
+        }
+        else if ( type == uint32_t(neuralai::SectionType::Constants) )
+        {
+            constantOffset = Read32(data + sectionOffset + 8);
+            constantBytes = Read32(data + sectionOffset + 12);
+        }
+    }
+    REQUIRE(commandOffset != 0);
+    REQUIRE(constantOffset != 0);
+
+    uint32_t paddingSeeds = 0;
+    uint32_t paddingFills = 0;
+    uint32_t depthwiseCommands = 0;
+    uint32_t offset = commandOffset;
+    while ( offset < commandOffset + commandBytes )
     {
         const uint16_t type = Read16(data + offset);
         const uint16_t commandSize = Read16(data + offset + 2);
-        if ( IsDMA2DCommand(type) &&
-             Read16(data + offset + 16) == uint16_t(neuralai::Region::InputBinding) )
+        if ( IsDMA1DCommand(type) &&
+             Read16(data + offset + 16) == uint16_t(neuralai::Region::ModelConstants) &&
+             Read32(data + offset + 32) == 32 )
         {
-            REQUIRE(Read32(data + offset + 32) == 8 * 32);
-            REQUIRE(Read32(data + offset + 36) == 8 * 32);
-            REQUIRE(Read32(data + offset + 40) == 10 * 32);
-            REQUIRE(Read32(data + offset + 44) == 8);
-            sawInputRectangle = true;
+            const uint32_t sourceOffset = Read32(data + offset + 20);
+            REQUIRE(sourceOffset + 32 <= constantBytes);
+            bool paddingPattern = true;
+            for ( uint32_t index = 0; index < 32; ++index )
+                paddingPattern &= int8_t(data[constantOffset + sourceOffset + index]) == -128;
+            paddingSeeds += paddingPattern;
         }
+        if ( IsDMA2DCommand(type) &&
+             Read16(data + offset + 16) == uint16_t(neuralai::Region::TCDMScratch) &&
+             Read32(data + offset + 32) == 32 && Read32(data + offset + 36) == 0 &&
+             Read32(data + offset + 48) == uint32_t(neuralai::DMADirection::LocalToLocal) )
+            ++paddingFills;
+        if ( type == uint16_t(neuralai::CommandType::DepthwiseC32) ) ++depthwiseCommands;
         offset += commandSize;
     }
-    REQUIRE(offset == 224 + commandBytes);
-    REQUIRE(sawInputRectangle);
+    REQUIRE(offset == commandOffset + commandBytes);
+    REQUIRE(paddingSeeds == 1);
+    REQUIRE(paddingFills > 0);
+    REQUIRE(depthwiseCommands == 1);
     blob->Unmap(const_cast<uint8_t *>(data));
     blob->Release();
 }

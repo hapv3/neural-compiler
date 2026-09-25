@@ -5,6 +5,7 @@
 //
 
 #include "neural_ai_graph_optimiser.hpp"
+#include "architecture/neuralai/neural_ai.hpp"
 
 #include "common/buffer_view.hpp"
 #include "kernel.hpp"
@@ -195,24 +196,11 @@ void NeuralAIGraphOptimiser::CanonicalizeAsymmetricMac(Graph *graph, Operation *
     {
         if ( opType == OpType::DepthwiseConv2D )
         {
-            const Margin padding = kernel->Padding();
-            const std::vector<int32_t> paddingValues{
-                0, 0, padding.Top(), padding.Bottom(), padding.Left(), padding.Right(), 0, 0};
-            const Shape paddingShape(int(paddingValues.size()));
-            auto paddingTensor = CreateConstTensor("neural_ai_asymmetric_padding", DataType::Int32,
-                std::make_shared<Buffer>(std::vector<int32_t>(paddingValues)), &paddingShape);
-            const Shape inputShape = ifm->shape.IsEmpty() ? ifm->tensor->StorageShape() : ifm->shape;
-            const Shape paddedShape = inputShape.WithHW(inputShape.WH() + padding.TL() + padding.BR());
-            auto paddedTensor = std::make_shared<Tensor>(
-                ifm->tensor->Name() + "/zero_point_padding", ifm->tensor->Type(), paddedShape);
-            auto pad = std::make_shared<Operation>(OpType::Pad);
-            pad->CopyInput(TensorUsage::IFM0, *ifm);
-            pad->ConnectInput(TensorUsage::Params, paddingTensor);
-            pad->ConnectOutput(TensorUsage::OFM, paddedTensor).Set(paddedShape).Set(zeroPointQuantization);
-            pad->Attribute<pad_attr_t>()->pad_const = ifmZeroPoint;
-            operation->ConnectInput(TensorUsage::IFM0, paddedTensor).Set(paddedShape).Set(zeroPointQuantization);
-            operation->SetKernel(std::make_unique<Kernel>(kernel->WithPadding({})));
-            RecordOptimisation(*operation, pad.get());
+            // Preserve logical padding and carry its raw byte separately. The
+            // command generator stages padded depthwise stripes on demand,
+            // avoiding a full padded feature map in TCDM.
+            ifm->Set(zeroPointQuantization);
+            connectPaddingValue();
         }
         else
         {
@@ -352,22 +340,42 @@ void NeuralAIGraphOptimiser::InsertInputConversion(Graph *graph, Operation *oper
         stemOutput->tensor->Readers().size() == 1;
     if ( rgbStemCandidate )
     {
-        Operation *activation = stemOutput->tensor->Readers().front().get();
-        TensorConnection *activationOutput = activation->Output(TensorUsage::OFM);
-        if ( activation->Type() == OpType::LUT && activationOutput != nullptr &&
-             activationOutput->tensor->Readers().size() == 1 )
+        Operation *consumer = stemOutput->tensor->Readers().front().get();
+        bool hasActivationLut = false;
+        if ( consumer->Type() == OpType::LUT )
         {
-            Operation *consumer = activationOutput->tensor->Readers().front().get();
-            const Kernel *consumerKernel = consumer->Kernel();
-            if ( consumer->Type() == OpType::Conv2D && consumerKernel != nullptr &&
-                 consumerKernel->Size() == Point2i(3, 3) &&
-                 consumerKernel->Stride() == Point2i(2, 2) &&
-                 consumerKernel->Dilation() == Point2i(1, 1) )
-            {
-                // This structural stem is scheduled as RGB Conv -> LUT -> Conv.
-                // The striped RGB command stages its rows from the public binding.
-                return;
-            }
+            hasActivationLut = true;
+            TensorConnection *activationOutput = consumer->Output(TensorUsage::OFM);
+            consumer = activationOutput != nullptr && activationOutput->tensor->Readers().size() == 1 ?
+                activationOutput->tensor->Readers().front().get() : nullptr;
+        }
+        if ( consumer != nullptr &&
+             (consumer->Type() == OpType::Pad || consumer->Type() == OpType::MemoryCopy) )
+        {
+            TensorConnection *paddingOutput = consumer->Output(TensorUsage::OFM);
+            consumer = paddingOutput != nullptr && paddingOutput->tensor->Readers().size() == 1 ?
+                paddingOutput->tensor->Readers().front().get() : nullptr;
+        }
+        const Kernel *consumerKernel = consumer == nullptr ? nullptr : consumer->Kernel();
+        const bool rollingConvolution = consumer != nullptr &&
+            (consumer->Type() == OpType::Conv2D || consumer->Type() == OpType::DepthwiseConv2D);
+        const int64_t inputBytes = DataTypeStorageSizeBytes(
+            original.tensor->Type(), original.SliceShape().Elements64());
+        const int64_t stemBytes = DataTypeStorageSizeBytes(
+            stemOutput->tensor->Type(), stemOutput->SliceShape().Elements64());
+        const bool stemExceedsTcdm = inputBytes + stemBytes > ArchNeuralAI::AllocatableTCDMBytes;
+        const bool supportedConsumer = consumer != nullptr &&
+            (consumer->Type() == OpType::Conv2D ||
+             (consumer->Type() == OpType::DepthwiseConv2D && stemExceedsTcdm));
+        if ( hasActivationLut && rollingConvolution && supportedConsumer && consumerKernel != nullptr &&
+             consumerKernel->Size() == Point2i(3, 3) &&
+             (consumerKernel->Stride() == Point2i(1, 1) ||
+              consumerKernel->Stride() == Point2i(2, 2)) &&
+             consumerKernel->Dilation() == Point2i(1, 1) )
+        {
+            // This structural stem is scheduled as RGB Conv -> LUT -> [staging] -> K3 convolution.
+            // The striped RGB command stages its rows from the public binding.
+            return;
         }
     }
 

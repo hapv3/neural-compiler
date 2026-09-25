@@ -330,8 +330,12 @@ void CascadeBuilder::BuildCascades(Schedule *refSchedule, Schedule *fallbackSche
             else
             {
                 int uncascadedStagingUsage = EstimateUncascadedBufferUsage(currentOp, fallbackSchedule->Cost(currentOp));
-                // Calculate the total size of the current cascade
-                int cascadeLocalSize = ifmStoredSize + cascadeBuffersSize + opFullOfmSize;
+                // Count the terminal OFM only when it remains physically in
+                // staging; a selectively spilled OFM is written out by tiles.
+                const int ofmStoredSize =
+                    currentOfm->tensor->memArea == _arch->StagingMemory() ?
+                    opFullOfmSize : 0;
+                int cascadeLocalSize = ifmStoredSize + cascadeBuffersSize + ofmStoredSize;
                 int cascadeSize = cascadeLocalSize + segmentNonLocalMax;
 
                 // Determine if current cascade is the best so far
@@ -419,6 +423,24 @@ bool CascadeBuilder::IsCascadable(const SchedulerOperation *op, SchedulerConnect
          op->Kernel()->Size() == Point2i(3, 3) && op->OFM()->shape.Depth() > 32 )
     {
         return false;
+    }
+
+    // An oversized external IFM needs an L2 boundary before this op.
+    // A LUT may keep an oversized OFM in the cascade because its striped path
+    // writes each tile to L2; other operators still require a resident OFM.
+    if ( _arch->UsesSelectiveSpilling() )
+    {
+        const int64_t ifmBytes = ifm->AllocationSizeBytes();
+        const int64_t ofmBytes = op->OFM()->tensor->AllocationSizeBytes();
+        const int64_t stagingBytes = _arch->StagingMemory().memory->SizeBytes();
+        const bool externalIfm = ifm->memArea != _arch->StagingMemory();
+        const bool externalOfm =
+            op->OFM()->tensor->memArea != _arch->StagingMemory();
+        if ( (externalIfm && ifmBytes >= stagingBytes) ||
+             (type != OpType::LUT && externalOfm && ofmBytes >= stagingBytes) ||
+             (type == OpType::Conv2D && op->Kernel()->Size() == Point2i(1, 1) &&
+                 ifmBytes + ofmBytes >= stagingBytes) )
+            return false;
     }
 
     if ( ifm->IsConstant() )

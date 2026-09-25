@@ -46,6 +46,7 @@ constexpr int MaxDirectLinebufferM = 1024;
 constexpr int MaxExternalPsumLinebufferM = 256;
 constexpr uint32_t MaxPointwiseSpillRows = 256;
 constexpr uint32_t PaddingSeedBytes = 32;
+constexpr uint32_t LutSpillTileBytes = 4096;
 
 bool IsLinebufferConvMode(NeuralAIOpMode mode)
 {
@@ -2109,7 +2110,9 @@ struct GeneratorContext
         if ( !error.empty() ) return false;
         const bool spillIfm = ifmBase.region == uint16_t(Region::L2TemporaryBinding);
         const bool spillOfm = ofmBase.region == uint16_t(Region::L2TemporaryBinding);
-        if ( spillIfm || spillOfm )
+        const SchedulerConnection *paddingValue = operation->TryInput(TensorUsage::Params1);
+        const bool stagePadding = paddingValue != nullptr;
+        if ( spillIfm || spillOfm || stagePadding )
         {
             if ( ifm->tensor->format != TensorFormat::C32Blocked ||
                  ofm->tensor->format != TensorFormat::C32Blocked ||
@@ -2120,8 +2123,17 @@ struct GeneratorContext
             const Shape ifmShape = ReshapeToNHWC(ifm->shape);
             const Shape ofmShape = ReshapeToNHWC(ofm->shape);
             const uint32_t stripeRows = LinebufferSpillStripeRows(ofmShape);
-            const int64_t zeroPoint = ifm->quantization.zeroPoints.empty() ? 0 :
+            int64_t zeroPoint = ifm->quantization.zeroPoints.empty() ? 0 :
                 ifm->quantization.zeroPoints[0];
+            if ( stagePadding )
+            {
+                if ( !paddingValue->tensor->IsConstant() ||
+                     paddingValue->Type() != regor::DataType::Int8 ||
+                     paddingValue->tensor->bufferView.Elements() != 1 )
+                    return SetError(error,
+                        "Neural-AI Depthwise Conv padding byte must be a constant INT8 scalar");
+                zeroPoint = paddingValue->tensor->bufferView.Values<int8_t>()[0];
+            }
             if ( zeroPoint < -128 || zeroPoint > 127 )
                 return SetError(error, "Neural-AI Depthwise Conv padding byte is invalid");
             uint32_t tileId = 0;
@@ -2668,14 +2680,60 @@ struct GeneratorContext
         if ( !error.empty() ) return false;
         RefV1 ofmRef = TensorRef(ofm->tensor.get(), 0, error);
         if ( !error.empty() ) return false;
+        const RefV1 lutRef = LutRef(lut);
+        const bool l2Input = ifmRef.region == uint16_t(Region::L2TemporaryBinding);
+        const bool l2Output = ofmRef.region == uint16_t(Region::L2TemporaryBinding);
+        if ( (l2Input || l2Output) && c32 )
+        {
+            if ( (!l2Input && ifmRef.region != uint16_t(Region::TCDMScratch)) ||
+                 (!l2Output && ofmRef.region != uint16_t(Region::TCDMScratch)) )
+                return SetError(error, "Neural-AI LUT spill requires L2 or TCDM tensors");
+            const uint32_t tileBytes = std::min(LutSpillTileBytes, uint32_t(bytes));
+            const uint32_t stagingBytes = tileBytes * (uint32_t(l2Input) + uint32_t(l2Output));
+            if ( workspaceSizes[operation->Uid()].stage < stagingBytes )
+                return SetError(error, "Neural-AI LUT spill has insufficient staging workspace");
+            RefV1 localInput{};
+            localInput.region = uint16_t(Region::TCDMScratch);
+            localInput.offset = stageOffset;
+            RefV1 localOutput = localInput;
+            localOutput.offset += l2Input ? tileBytes : 0;
+            uint32_t tileId = 0;
+            for ( uint32_t offset = 0; offset < uint32_t(bytes); offset += tileBytes )
+            {
+                const uint32_t length = std::min(tileBytes, uint32_t(bytes) - offset);
+                RefV1 source = TensorRef(ifm->tensor.get(), offset, error);
+                if ( !error.empty() ) return false;
+                RefV1 destination = TensorRef(ofm->tensor.get(), offset, error);
+                if ( !error.empty() ) return false;
+                if ( l2Input )
+                {
+                    if ( !AppendDMA1D(source, localInput, length,
+                             uint32_t(operation->Index()), tileId++, error) )
+                        return false;
+                    source = localInput;
+                }
+                RefV1 output = l2Output ? localOutput : destination;
+                AppendHeader(artifact->commands, CommandType::AFULut, 64,
+                    uint32_t(operation->Index()), tileId++);
+                AppendRef(artifact->commands, source);
+                AppendRef(artifact->commands, output);
+                AppendRef(artifact->commands, lutRef);
+                Append32(artifact->commands, length);
+                AppendZeros(artifact->commands, 5);
+                ++artifact->commandCount;
+                if ( l2Output &&
+                     !AppendDMA1D(localOutput, destination, length,
+                         uint32_t(operation->Index()), tileId++, error) )
+                    return false;
+            }
+            return true;
+        }
         if ( ifmRef.region != uint16_t(Region::TCDMScratch) ||
              ofmRef.region != uint16_t(Region::TCDMScratch) )
             return SetError(error, "Neural-AI AFU LUT requires internal TCDM tensors");
         if ( ifmRef.offset < ofmRef.offset + uint32_t(bytes) &&
              ofmRef.offset < ifmRef.offset + uint32_t(bytes) )
             return SetError(error, "Neural-AI AFU LUT requires out-of-place output storage");
-
-        const RefV1 lutRef = LutRef(lut);
 
         AppendHeader(artifact->commands, CommandType::AFULut, 64,
             uint32_t(operation->Index()), 0);
@@ -2731,12 +2789,16 @@ struct GeneratorContext
         if ( !error.empty() ) return false;
         RefV1 ofmBase = TensorRef(ofm->tensor.get(), 0, error);
         if ( !error.empty() ) return false;
+        const bool spillOutput =
+            ofmBase.region == uint16_t(Region::L2TemporaryBinding);
         if ( ifmBase.region != uint16_t(Region::TCDMScratch) ||
-             ofmBase.region != uint16_t(Region::TCDMScratch) )
-            return SetError(error, "Neural-AI striped AFU LUT requires internal TCDM tensors");
+             (ofmBase.region != uint16_t(Region::TCDMScratch) && !spillOutput) )
+            return SetError(error,
+                "Neural-AI striped AFU LUT requires a TCDM input and TCDM/L2 output");
         const uint32_t ifmBytes = uint32_t(TensorStorageBytes(ifm->tensor.get()));
         const uint32_t ofmBytes = uint32_t(TensorStorageBytes(ofm->tensor.get()));
-        const bool buffersOverlap = ifmBase.offset < ofmBase.offset + ofmBytes &&
+        const bool buffersOverlap = !spillOutput &&
+            ifmBase.offset < ofmBase.offset + ofmBytes &&
             ofmBase.offset < ifmBase.offset + ifmBytes;
         if ( buffersOverlap && (!c32ToCompactC16 || ifmBase.offset != ofmBase.offset) )
             return SetError(error, fmt::format(
@@ -2787,20 +2849,40 @@ struct GeneratorContext
                 const int logicalY = start.Height() + rowsDone;
                 const int ifmY = logicalY % ifmStorage.Height();
                 const int ofmY = logicalY % ofmStorage.Height();
-                const int rows = std::min({shape.Height() - rowsDone,
+                int rows = std::min({shape.Height() - rowsDone,
                     ifmStorage.Height() - ifmY, ofmStorage.Height() - ofmY});
+                if ( spillOutput )
+                {
+                    const uint32_t stagedRows =
+                        workspaceSizes[operation->Uid()].stage / rowBytes;
+                    if ( stagedRows == 0 )
+                        return SetError(error,
+                            "Neural-AI striped LUT row exceeds its staging workspace");
+                    rows = std::min(rows, int(stagedRows));
+                }
                 RefV1 ifmRef = ifmBase;
                 RefV1 ofmRef = ofmBase;
                 ifmRef.offset += uint32_t(group) * ifmPlaneBytes + uint32_t(ifmY) * rowBytes;
                 ofmRef.offset += uint32_t(group) * ofmPlaneBytes + uint32_t(ofmY) * rowBytes;
+                const uint32_t length = uint32_t(rows) * rowBytes;
+                RefV1 output = ofmRef;
+                if ( spillOutput )
+                {
+                    output.region = uint16_t(Region::TCDMScratch);
+                    output.offset = stageOffset;
+                }
                 AppendHeader(artifact->commands, CommandType::AFULut, 64,
                     uint32_t(operation->Index()), tileId++);
                 AppendRef(artifact->commands, ifmRef);
-                AppendRef(artifact->commands, ofmRef);
+                AppendRef(artifact->commands, output);
                 AppendRef(artifact->commands, lutRef);
-                Append32(artifact->commands, uint32_t(rows) * rowBytes);
+                Append32(artifact->commands, length);
                 AppendZeros(artifact->commands, 5);
                 ++artifact->commandCount;
+                if ( spillOutput &&
+                     !AppendDMA1D(output, ofmRef, length,
+                         uint32_t(operation->Index()), tileId++, error) )
+                    return false;
                 rowsDone += rows;
             }
         }
@@ -5060,6 +5142,20 @@ MemorySnapshot NeuralAICommandGenerator::WorkspaceReservation(
                 throw std::runtime_error("Neural-AI binary spill tensor size is invalid");
             workspace.stage = std::min(spillTileBytes, uint32_t(tensorBytes)) * 3u;
         }
+        if ( operation->Type() == OpType::LUT )
+        {
+            const bool spillInput = IsL2ArenaTensor(operation->IFM(0)->tensor.get());
+            const bool spillOutput = IsL2ArenaTensor(operation->OFM()->tensor.get());
+            if ( spillInput || spillOutput )
+            {
+                const int64_t bytes = TensorStorageBytes(operation->IFM(0)->tensor.get());
+                if ( bytes <= 0 || bytes > std::numeric_limits<uint32_t>::max() )
+                    throw std::runtime_error("Neural-AI LUT spill tensor size is invalid");
+                const uint32_t tileBytes = std::min(LutSpillTileBytes, uint32_t(bytes));
+                workspace.stage = std::max(workspace.stage,
+                    tileBytes * (uint32_t(spillInput) + uint32_t(spillOutput)));
+            }
+        }
         if ( operation->Type() == OpType::MemoryCopy &&
              operation->IFM(0)->tensor->format == TensorFormat::NHWC &&
              operation->OFM()->tensor->format == TensorFormat::NHWC )
@@ -5147,7 +5243,8 @@ MemorySnapshot NeuralAICommandGenerator::WorkspaceReservation(
         const bool spilledOperation = (linebuffer || IsDepthwiseMode(mode)) &&
             (IsL2ArenaTensor(operation->IFM(0)->tensor.get()) ||
                 IsL2ArenaTensor(operation->OFM()->tensor.get()) ||
-                (linebuffer && (ifmShape.Depth() > 32 || ofmShape.Depth() > 32)));
+                (linebuffer && (ifmShape.Depth() > 32 || ofmShape.Depth() > 32)) ||
+                (IsDepthwiseMode(mode) && operation->TryInput(TensorUsage::Params1) != nullptr));
         if ( spilledOperation )
         {
             const Shape logicalIfm = ReshapeToNHWC(ifmShape);
@@ -5327,6 +5424,24 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
             workspace.stage = std::max(workspace.stage, tileBytes * 3u);
             context.stageBytes = std::max(context.stageBytes, tileBytes * 3u);
         }
+        if ( operation->Type() == OpType::LUT )
+        {
+            const bool spillInput = IsL2ArenaTensor(operation->IFM(0)->tensor.get());
+            const bool spillOutput = IsL2ArenaTensor(operation->OFM()->tensor.get());
+            if ( spillInput || spillOutput )
+            {
+                const int64_t bytes = TensorStorageBytes(operation->IFM(0)->tensor.get());
+                if ( bytes <= 0 || bytes > std::numeric_limits<uint32_t>::max() )
+                {
+                    error = "Neural-AI LUT spill tensor size is invalid";
+                    return false;
+                }
+                const uint32_t tileBytes = std::min(LutSpillTileBytes, uint32_t(bytes));
+                const uint32_t stagingBytes = tileBytes * (uint32_t(spillInput) + uint32_t(spillOutput));
+                workspace.stage = std::max(workspace.stage, stagingBytes);
+                context.stageBytes = std::max(context.stageBytes, stagingBytes);
+            }
+        }
         if ( operation->Type() == OpType::MemoryCopy &&
              operation->IFM(0)->tensor->format == TensorFormat::NHWC &&
              operation->OFM()->tensor->format == TensorFormat::NHWC )
@@ -5387,7 +5502,8 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
             stripeRows = scheduledRows * 2u;
         if ( operation->Type() == OpType::DepthwiseConv2D &&
              (IsL2ArenaTensor(operation->IFM(0)->tensor.get()) ||
-                 IsL2ArenaTensor(operation->OFM()->tensor.get())) )
+                 IsL2ArenaTensor(operation->OFM()->tensor.get()) ||
+                 operation->TryInput(TensorUsage::Params1) != nullptr) )
         {
             const Shape logicalIfm = ReshapeToNHWC(ifmShape);
             const Shape logicalOfm = ReshapeToNHWC(ofmShape);
