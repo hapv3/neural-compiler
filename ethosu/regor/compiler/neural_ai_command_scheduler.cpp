@@ -37,6 +37,11 @@ bool IsSystolic(const SemanticCommand &command)
     return UsesResource(command, SemanticResource::Systolic);
 }
 
+bool IsSpatz(const SemanticCommand &command)
+{
+    return UsesResource(command, SemanticResource::Spatz);
+}
+
 bool QueueOrders(const SemanticCommand &predecessor, const SemanticCommand &successor)
 {
     return predecessor.asyncCapable && successor.asyncCapable && IsDMA(predecessor) &&
@@ -403,6 +408,13 @@ bool ScheduleGlobalCommandStream(const std::vector<SemanticCommand> &commands,
         }
         if ( IsSystolic(candidate) && !pending[SystolicQueue].empty() )
             blocked[SystolicQueue] = true;
+        // Spatz vector loads/stores and the linebuffer are independent command
+        // engines, but they cannot safely make forward progress concurrently
+        // through the current TCDM interconnect. A local-to-local DMA is a
+        // synchronous Spatz copy, so wait for an outstanding linebuffer job
+        // even when their semantic memory accesses are read/read independent.
+        if ( IsSpatz(candidate) && !pending[SystolicQueue].empty() )
+            blocked[SystolicQueue] = true;
         const int queue = AsyncQueue(candidate);
         if ( queue >= 0 && int(pending[queue].size()) >= int(candidate.queueCapacity) )
             blocked[queue] = true;
@@ -442,6 +454,7 @@ bool ScheduleGlobalCommandStream(const std::vector<SemanticCommand> &commands,
     {
         if ( commands[candidate].controlFence ) return false;
         if ( IsSystolic(commands[asynchronous]) && IsSystolic(commands[candidate]) ) return false;
+        if ( IsSystolic(commands[asynchronous]) && IsSpatz(commands[candidate]) ) return false;
         if ( std::find(completionPredecessors[candidate].begin(),
                  completionPredecessors[candidate].end(), asynchronous) !=
              completionPredecessors[candidate].end() ) return false;

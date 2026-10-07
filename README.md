@@ -4,6 +4,12 @@ This repository contains the **Neural-AI Compiler** (`neural-compiler`), a speci
 
 The compiler converts neural networks defined in standard formats—specifically **TOSA** and **TensorFlow Lite (TFLite)**—into optimized binaries, memory tiling plans, and instruction streams tailored to the Neural-AI NPU Cluster.
 
+## Commercial Development
+
+A commercial edition of the Neural-AI Compiler is currently under development.
+If you are interested in commercial use, integration, or support, please contact
+the project maintainers directly.
+
 ---
 
 ## Architectural Mapping: From Vela to Neural-AI
@@ -71,6 +77,7 @@ cmake --build build-unit-tests -t check
 ---
 
 ## References & Documentation
+* [Full YOLO320 / MobileNet224 execution checkpoint and known failures](docs/neural_ai_full_graph_checkpoint.md)
 * [Vela Original README](docs/vela/README.vela.md)
 * **Neural-AI NPU Cluster Architecture** (refer to sibling `neural-ai` workspace repository)
 * [CLI Options & Setup](docs/vela/OPTIONS.md)

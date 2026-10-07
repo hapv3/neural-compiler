@@ -5608,8 +5608,13 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         const SchedulerOpInfo *cost = schedule->Cost(operation);
         const auto *config = cost != nullptr && cost->Config() != nullptr ?
             static_cast<const NeuralAIOpConfig *>(cost->Config()) : nullptr;
+        const bool spilledLinebuffer =
+            IsL2ArenaTensor(operation->IFM(0)->tensor.get()) ||
+            IsL2ArenaTensor(operation->OFM()->tensor.get()) ||
+            operation->IFM(0)->SliceShape().Depth() > 32 ||
+            operation->OFM()->SliceShape().Depth() > 32;
         if ( cost == nullptr || cost->cascade == 0 || operation->Type() != OpType::Conv2D ||
-             config == nullptr || !IsLinebufferConvMode(config->Mode()) || operation->IFM(0)->shape.Depth() > 32 )
+             config == nullptr || !IsLinebufferConvMode(config->Mode()) || spilledLinebuffer )
             continue;
         const StripeArea &area = stripe->stripeAreas.front();
         neuralai::StripeStagingInput stagingInput{};

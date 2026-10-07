@@ -219,6 +219,96 @@ TEST_CASE("Neural-AI command overlap crosses independent compute and stops at ha
         uint32_t(neuralai::DMADirection::ExternalToLocal));
 }
 
+TEST_CASE("Neural-AI command overlap serializes Spatz after an asynchronous linebuffer")
+{
+    neuralai::CommandLineBufferJobV2 linebuffer{};
+    linebuffer.header.type = uint16_t(neuralai::CommandType::LineBufferJob);
+    linebuffer.header.sizeBytes = sizeof(linebuffer);
+    linebuffer.job.linebuf.inputBase = 0x4000;
+    linebuffer.job.linebuf.inputH = 4;
+    linebuffer.job.linebuf.rowStrideBytes = 256;
+    linebuffer.job.gemm.weightAddr = 0x5000;
+    linebuffer.job.gemm.ofmAddr = 0x8000;
+    linebuffer.job.gemm.dimM = 4;
+    linebuffer.job.rows = 4;
+    linebuffer.job.kTiles = 9;
+
+    neuralai::CommandAFUBinaryV2 independent{};
+    independent.header.type = uint16_t(neuralai::CommandType::AFUBinary);
+    independent.header.sizeBytes = sizeof(independent);
+    independent.lhs = {uint16_t(neuralai::Region::TCDMScratch), 0, 0x9000};
+    independent.rhs = {uint16_t(neuralai::Region::TCDMScratch), 0, 0x9200};
+    independent.ofm = {uint16_t(neuralai::Region::TCDMScratch), 0, 0x9400};
+    independent.length = 256;
+
+    neuralai::CommandDMA2DV2 localCopy{};
+    localCopy.header.type = uint16_t(neuralai::CommandType::DMA2D);
+    localCopy.header.sizeBytes = sizeof(localCopy);
+    localCopy.source = {uint16_t(neuralai::Region::TCDMScratch), 0, 0x4200};
+    localCopy.destination = {uint16_t(neuralai::Region::TCDMScratch), 0, 0xa000};
+    localCopy.length = 256;
+    localCopy.sourceStride2 = 256;
+    localCopy.destinationStride2 = 256;
+    localCopy.repetitions2 = 1;
+    localCopy.direction = uint32_t(neuralai::DMADirection::LocalToLocal);
+
+    std::vector<uint8_t> commands;
+    const auto append = [&](const auto &command)
+    {
+        const auto *bytes = reinterpret_cast<const uint8_t *>(&command);
+        commands.insert(commands.end(), bytes, bytes + sizeof(command));
+    };
+    append(linebuffer);
+    append(independent);
+    append(localCopy);
+
+    REQUIRE(NeuralAICommandGenerator::OptimizeCommandOverlap(commands) == 1);
+    const auto read16 = [&](size_t offset)
+    {
+        return uint16_t(commands[offset]) |
+            uint16_t(uint16_t(commands[offset + 1]) << 8);
+    };
+    const auto read32 = [&](size_t offset)
+    {
+        return uint32_t(commands[offset]) | (uint32_t(commands[offset + 1]) << 8) |
+               (uint32_t(commands[offset + 2]) << 16) |
+               (uint32_t(commands[offset + 3]) << 24);
+    };
+    size_t offset = 0;
+    bool pendingSystolic = false;
+    bool sawSubmit = false;
+    bool sawSpatz = false;
+    while ( offset < commands.size() )
+    {
+        const uint16_t type = read16(offset);
+        const uint16_t bytes = read16(offset + 2);
+        REQUIRE(bytes >= sizeof(neuralai::CommandHeaderV2));
+        if ( type == uint16_t(neuralai::CommandType::LineBufferSubmit) )
+        {
+            REQUIRE_FALSE(pendingSystolic);
+            pendingSystolic = true;
+            sawSubmit = true;
+        }
+        else if ( type == uint16_t(neuralai::CommandType::SystolicWait) )
+        {
+            REQUIRE(pendingSystolic);
+            pendingSystolic = false;
+        }
+        else if ( type == uint16_t(neuralai::CommandType::DMA2D) )
+        {
+            REQUIRE(read32(offset + 48) ==
+                uint32_t(neuralai::DMADirection::LocalToLocal));
+            REQUIRE_FALSE(pendingSystolic);
+            sawSpatz = true;
+        }
+        offset += bytes;
+    }
+    REQUIRE(offset == commands.size());
+    REQUIRE(sawSubmit);
+    REQUIRE(sawSpatz);
+    REQUIRE_FALSE(pendingSystolic);
+}
+
 TEST_CASE("Neural-AI leaves linebuffer output and AFU binary as separate commands")
 {
     neuralai::CommandLineBufferJobV2 first{};
