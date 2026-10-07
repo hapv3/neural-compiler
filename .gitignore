@@ -7,4 +7,14 @@ output/
 __pycache__
 *.pyc
 *.pyd
+*.log
 build-unit-tests/
+agent_docs/
+AGENTS.md
+build-python/
+.agents/
+out/
+
+# Local planning documents (intentionally not published)
+/docs/neural_ai_compiler_optimization_roadmap.md
+/docs/neural_compiler_optimization_analysis_vi.md
