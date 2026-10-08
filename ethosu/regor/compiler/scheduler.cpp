@@ -53,6 +53,17 @@ namespace regor
 
 constexpr int DefaultAllocationQuantum = 16;
 
+Address TightenWorkspaceStagingLimit(Address currentLimit, Address physicalLimit,
+    Address tensorBytes, Address workspaceBytes)
+{
+    if ( workspaceBytes > physicalLimit ) return 0;
+    const Address available = physicalLimit - workspaceBytes;
+    if ( tensorBytes <= available ) return currentLimit;
+    const Address overflow = tensorBytes - available;
+    if ( overflow >= currentLimit ) return 0;
+    return std::min(available, currentLimit - overflow);
+}
+
 static Shape GetShapeForFormat(const Shape &shape, TensorFormat format)
 {
     if ( format == TensorFormat::NHCWB16 )
@@ -177,7 +188,18 @@ std::shared_ptr<Schedule> Scheduler::Process()
                         "Command workspace reservation {} exceeds staging memory {} at time {}",
                         workspaceBytes, physicalLimit, time));
                 }
-                tighterLimit = std::min(tighterLimit, physicalLimit - workspaceBytes);
+                // A new proposal can still exceed capacity even when an earlier
+                // iteration already reduced the limit below physical-workspace.
+                // Do not interpret that plateau as a feasible fixed point.
+                tighterLimit = std::min(tighterLimit, TightenWorkspaceStagingLimit(
+                    workspaceAwareLimit, physicalLimit, tensorBytes, workspaceBytes));
+                if ( tighterLimit <= 0 )
+                {
+                    throw std::runtime_error(fmt::format(
+                        "Cannot fit {} tensor bytes plus {} command workspace bytes into {} staging bytes "
+                        "at time {} after reducing the schedule limit to {}",
+                        tensorBytes, workspaceBytes, physicalLimit, time, workspaceAwareLimit));
+                }
             }
             if ( tighterLimit >= workspaceAwareLimit ) break;
             workspaceAwareLimit = tighterLimit;

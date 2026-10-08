@@ -2791,13 +2791,15 @@ struct GeneratorContext
         if ( !error.empty() ) return false;
         const bool spillOutput =
             ofmBase.region == uint16_t(Region::L2TemporaryBinding);
-        if ( ifmBase.region != uint16_t(Region::TCDMScratch) ||
+        const bool spillInput =
+            ifmBase.region == uint16_t(Region::L2TemporaryBinding);
+        if ( (ifmBase.region != uint16_t(Region::TCDMScratch) && !spillInput) ||
              (ofmBase.region != uint16_t(Region::TCDMScratch) && !spillOutput) )
             return SetError(error,
-                "Neural-AI striped AFU LUT requires a TCDM input and TCDM/L2 output");
+                "Neural-AI striped AFU LUT requires TCDM/L2 feature maps");
         const uint32_t ifmBytes = uint32_t(TensorStorageBytes(ifm->tensor.get()));
         const uint32_t ofmBytes = uint32_t(TensorStorageBytes(ofm->tensor.get()));
-        const bool buffersOverlap = !spillOutput &&
+        const bool buffersOverlap = !spillInput && !spillOutput &&
             ifmBase.offset < ofmBase.offset + ofmBytes &&
             ofmBase.offset < ifmBase.offset + ifmBytes;
         if ( buffersOverlap && (!c32ToCompactC16 || ifmBase.offset != ofmBase.offset) )
@@ -2813,6 +2815,8 @@ struct GeneratorContext
         const uint32_t ofmPlaneBytes = uint32_t(ofmStorage.Height()) * ofmRowBytes;
         if ( c32ToCompactC16 )
         {
+            if ( spillOutput )
+                return SetError(error, "Neural-AI striped C16 compaction requires a TCDM output");
             int rowsDone = 0;
             while ( rowsDone < shape.Height() )
             {
@@ -2851,38 +2855,48 @@ struct GeneratorContext
                 const int ofmY = logicalY % ofmStorage.Height();
                 int rows = std::min({shape.Height() - rowsDone,
                     ifmStorage.Height() - ifmY, ofmStorage.Height() - ofmY});
-                if ( spillOutput )
-                {
-                    const uint32_t stagedRows =
-                        workspaceSizes[operation->Uid()].stage / rowBytes;
-                    if ( stagedRows == 0 )
-                        return SetError(error,
-                            "Neural-AI striped LUT row exceeds its staging workspace");
-                    rows = std::min(rows, int(stagedRows));
-                }
                 RefV1 ifmRef = ifmBase;
                 RefV1 ofmRef = ofmBase;
                 ifmRef.offset += uint32_t(group) * ifmPlaneBytes + uint32_t(ifmY) * rowBytes;
                 ofmRef.offset += uint32_t(group) * ofmPlaneBytes + uint32_t(ofmY) * rowBytes;
                 const uint32_t length = uint32_t(rows) * rowBytes;
-                RefV1 output = ofmRef;
-                if ( spillOutput )
+                const uint32_t stagedBuffers = uint32_t(spillInput) + uint32_t(spillOutput);
+                const uint32_t tileBytes = stagedBuffers ?
+                    std::min(LutSpillTileBytes, workspaceSizes[operation->Uid()].stage / stagedBuffers) : length;
+                if ( tileBytes == 0 || (stagedBuffers && tileBytes % 32 != 0) )
+                    return SetError(error, "Neural-AI striped LUT has invalid staging capacity");
+                for ( uint32_t offset = 0; offset < length; offset += tileBytes )
                 {
-                    output.region = uint16_t(Region::TCDMScratch);
-                    output.offset = stageOffset;
+                    const uint32_t tileLength = std::min(tileBytes, length - offset);
+                    RefV1 input = ifmRef;
+                    RefV1 destination = ofmRef;
+                    input.offset += offset;
+                    destination.offset += offset;
+                    if ( spillInput )
+                    {
+                        const RefV1 stagedInput{uint16_t(Region::TCDMScratch), 0, stageOffset};
+                        if ( !AppendDMA1D(input, stagedInput, tileLength,
+                                 uint32_t(operation->Index()), tileId++, error) ) return false;
+                        input = stagedInput;
+                    }
+                    RefV1 output = destination;
+                    if ( spillOutput )
+                    {
+                        output.region = uint16_t(Region::TCDMScratch);
+                        output.offset = stageOffset + (spillInput ? tileBytes : 0u);
+                    }
+                    AppendHeader(artifact->commands, CommandType::AFULut, 64,
+                        uint32_t(operation->Index()), tileId++);
+                    AppendRef(artifact->commands, input);
+                    AppendRef(artifact->commands, output);
+                    AppendRef(artifact->commands, lutRef);
+                    Append32(artifact->commands, tileLength);
+                    AppendZeros(artifact->commands, 5);
+                    ++artifact->commandCount;
+                    if ( spillOutput &&
+                         !AppendDMA1D(output, destination, tileLength,
+                             uint32_t(operation->Index()), tileId++, error) ) return false;
                 }
-                AppendHeader(artifact->commands, CommandType::AFULut, 64,
-                    uint32_t(operation->Index()), tileId++);
-                AppendRef(artifact->commands, ifmRef);
-                AppendRef(artifact->commands, output);
-                AppendRef(artifact->commands, lutRef);
-                Append32(artifact->commands, length);
-                AppendZeros(artifact->commands, 5);
-                ++artifact->commandCount;
-                if ( spillOutput &&
-                     !AppendDMA1D(output, ofmRef, length,
-                         uint32_t(operation->Index()), tileId++, error) )
-                    return false;
                 rowsDone += rows;
             }
         }

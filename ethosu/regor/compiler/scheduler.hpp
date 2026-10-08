@@ -42,6 +42,11 @@ namespace regor
 class IncrementalLinearAllocator;
 class Schedule;
 
+// Keep a fitting proposal's limit, otherwise lower it strictly using the
+// observed overflow. Zero means there is no positive budget left to retry.
+Address TightenWorkspaceStagingLimit(Address currentLimit, Address physicalLimit,
+    Address tensorBytes, Address workspaceBytes);
+
 enum class OptimizationStrategy
 {
     Size,

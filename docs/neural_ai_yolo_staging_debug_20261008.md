@@ -71,15 +71,49 @@ checkpoint). This is not an all-tests-green statement.
 The five stripe-staging planner cases also pass (90 assertions), as do four
 Python unit tests for the offline ABI replay helper.
 
-**Full YOLO compilation is not yet restored.** Correct accounting now exposes
+At that checkpoint, **full YOLO compilation was not yet restored**. Correct accounting exposed
 a later schedule/fast-storage overflow: 552960 tensor bytes plus 4096 workspace
 bytes versus 520192 available, at schedule time 2. Do not bypass this guard or
 resume the old corrupted model as a correctness run. An exploratory shared
 live-range change did not resolve the overflow and was removed.
 
-Next: reconcile the selected schedule with the storage actually assigned after
-`ApplySchedule`/fast-storage allocation; add a reproducer for that mismatch;
-recompile full YOLO and MobileNet. Only after compile-time memory checks pass,
-run a fresh initial-cascade simulation against Neural-AI reference. A changed
-NAI invalidates the existing command-23/75 snapshots; retain them only as old-model
-diagnostic evidence. No new simulation was started during this investigation.
+## Scheduler feedback correction and fresh replay
+
+Instrumentation localized the overflow to the workspace feedback loop, before
+`ApplySchedule` or fast-storage allocation. At a reduced limit of 350400 bytes,
+the proposal still used 552960 tensor bytes plus 12288 workspace bytes. The old
+update took `min(current_limit, physical_limit - workspace)`, leaving the limit
+unchanged and incorrectly treating this over-budget plateau as convergence.
+The measured tensor peak did not grow during the subsequent allocation phases.
+
+The update now subtracts the observed overflow from the current limit, bounded
+by physical capacity minus workspace. The measured case retries at 305344 bytes.
+An exhausted positive budget fails explicitly; capacity checks are not bypassed.
+The new schedule also needs striped AFU LUT input from L2. It now uses ordinary
+DMA/AFU commands with at most 4 KiB per staging buffer, allowing tiles to split
+wide spatial rows. Simultaneous input/output staging uses disjoint buffers.
+No RTL or firmware change is involved.
+
+Verification:
+
+- Budget-feedback regression: 22 assertions.
+- Feedback, stripe-planner and structural RGB regression selection: 7 cases,
+  1404 assertions. Separately, 6 LUT cases pass 1957 assertions.
+- Replay/snapshot offline helpers: 15 tests.
+- Full YOLO320 and MobileNet224 compile successfully with TCDM guards enabled.
+
+New artifacts under `out/{yolo,mobilenet}_scheduler_debug_20261008/`:
+
+| Model | Logical commands (excluding END) | NAI SHA-256 |
+| --- | ---: | --- |
+| YOLO320 | 4976 | `5158f0d25da621a8606e2d82f83ba0216bb0871a56830b1a46a62e32ce252b0a` |
+| MobileNet224 | 12783 | `44c05e1525ce74e2cc641a5f371d9f93d66e0d9b9c7c1931a27e48cefb8f0d78` |
+
+These are correctness-driven schedules, not a demonstrated performance gain.
+The changed NAI invalidates old snapshots. The new bounded diagnostic starts
+from reset using the unchanged firmware (`5003c93460c376b5b8c32c18cf2053168eaf1aa980bbbfc4f947d7f437976035`).
+Prepared case: `neural-ai/hw/rtl/cluster/tb/sim/test_yolo_neural_reference_fresh_20261008/run/case.json`.
+It executes commands 1–56 and compares commands 15/25 (35840 active SiLU bytes
+each) and 56 (17920 active consumer Conv bytes) against Neural-AI reference.
+Numerical simulation confirmation remains pending; compiling successfully or
+passing helper tests is not byte-exact PASS.

@@ -40,6 +40,28 @@ using namespace regor;
 namespace
 {
 
+TEST_CASE("Neural-AI workspace feedback cannot accept an over-budget plateau")
+{
+    // Observed YOLO proposal: the existing 350400-byte search limit was already
+    // below physical-workspace, so the previous feedback incorrectly stopped.
+    REQUIRE(TightenWorkspaceStagingLimit(350400, 520192, 552960, 12288) == 305344);
+    REQUIRE(TightenWorkspaceStagingLimit(350400, 520192, 552960, 4096) == 313536);
+    REQUIRE(TightenWorkspaceStagingLimit(350400, 520192, 400000, 120192) == 350400);
+    REQUIRE(TightenWorkspaceStagingLimit(520192, 520192, 500000, 100000) == 420192);
+    REQUIRE(TightenWorkspaceStagingLimit(1024, 520192, 552960, 4096) == 0);
+    REQUIRE(TightenWorkspaceStagingLimit(520192, 520192, 1, 520193) == 0);
+
+    Address limit = 350400;
+    int attempts = 0;
+    while ( limit > 0 )
+    {
+        const Address next = TightenWorkspaceStagingLimit(limit, 520192, 552960, 12288);
+        REQUIRE(next < limit);
+        limit = next;
+        REQUIRE(++attempts <= 8);
+    }
+}
+
 TEST_CASE("Neural-AI command memory state tracks content and invalidation")
 {
     neuralai::CommandMemoryState state;
