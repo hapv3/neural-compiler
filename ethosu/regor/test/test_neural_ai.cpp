@@ -3438,53 +3438,103 @@ TEST_CASE("Neural-AI compiler streams a structural RGB stem from its binding")
         graph.get(), scheduleOps, schedule.get(), artifact, error);
     INFO(error);
     REQUIRE(generated);
-    uint32_t bindingCopies = 0;
-    uint32_t bindingRows = 0;
-    uint32_t bindingBytes = 0;
-    uint32_t paddingSeeds = 0;
-    uint32_t rollingCopies = 0;
-    size_t offset = 0;
-    while ( offset < artifact.commands.size() )
+    SECTION("Cascade staging is disjoint from resident feature maps")
     {
-        const uint16_t type = Read16(artifact.commands, offset);
-        const uint16_t bytes = Read16(artifact.commands, offset + 2);
-        REQUIRE(bytes >= 32);
-        if ( IsDMA2DCommand(type) &&
-             Read16(artifact.commands, offset + 16) == uint16_t(neuralai::Region::InputBinding) &&
-             Read16(artifact.commands, offset + 24) == uint16_t(neuralai::Region::TCDMScratch) )
+        std::vector<std::pair<uint64_t, uint64_t>> features;
+        for ( const auto &operation : scheduleOps )
         {
-            ++bindingCopies;
-            bindingRows += Read32(artifact.commands, offset + 44);
-            bindingBytes += Read32(artifact.commands, offset + 32) *
-                Read32(artifact.commands, offset + 44);
+            const auto addFeature = [&](const SchedulerConnection &connection)
+            {
+                const auto &tensor = connection.tensor;
+                if ( tensor->isGraphInput || tensor->isGraphOutput || tensor->IsConstant() ||
+                     tensor->AllocatedAddress() < 0 ||
+                     (tensor->memArea.memory && tensor->memArea.memory->Name() == "l2") ) return;
+                const uint64_t base = uint64_t(tensor->AllocatedAddress());
+                const uint64_t size = arch.StorageBytes(tensor->storageShape, tensor->format, tensor->dataType);
+                features.emplace_back(base, base + size);
+            };
+            for ( const auto &[usage, connection] : operation->inputs.pairs() ) addFeature(connection);
+            for ( const auto &[usage, connection] : operation->outputs.pairs() ) addFeature(connection);
         }
-        if ( IsDMA1DCommand(type) &&
-             Read16(artifact.commands, offset + 16) ==
-                 uint16_t(neuralai::Region::ModelConstants) &&
-             Read16(artifact.commands, offset + 24) ==
-                 uint16_t(neuralai::Region::TCDMScratch) &&
-             Read32(artifact.commands, offset + 32) == 32 )
-            ++paddingSeeds;
-        if ( type == uint16_t(neuralai::CommandType::DMA2D) &&
-             Read16(artifact.commands, offset + 16) ==
-                 uint16_t(neuralai::Region::TCDMScratch) &&
-             Read16(artifact.commands, offset + 24) ==
-                 uint16_t(neuralai::Region::TCDMScratch) &&
-             Read32(artifact.commands, offset + 32) < inputWidth * 3 &&
-             Read32(artifact.commands, offset + 48) ==
-                 uint32_t(neuralai::DMADirection::LocalToLocal) )
-            ++rollingCopies;
-        offset += bytes;
+        REQUIRE_FALSE(features.empty());
+        int checked = 0;
+        for ( size_t offset = 0; offset < artifact.commands.size(); )
+        {
+            const uint16_t type = Read16(artifact.commands, offset);
+            const uint16_t bytes = Read16(artifact.commands, offset + 2);
+            REQUIRE(bytes >= 32);
+            if ( type == uint16_t(neuralai::CommandType::LineBufferJob) ||
+                 type == uint16_t(neuralai::CommandType::LineBufferSubmit) )
+            {
+                const uint64_t base = Read32(artifact.commands, offset + 16);
+                const uint64_t height = Read16(artifact.commands, offset + 20);
+                const uint64_t width = Read16(artifact.commands, offset + 22);
+                const uint64_t pitch = Read32(artifact.commands, offset + 36);
+                const uint64_t pixel = Read32(artifact.commands, offset + 40);
+                REQUIRE(height > 0);
+                const uint64_t end = base + (height - 1) * pitch + width * pixel;
+                CAPTURE(offset, base, end);
+                for ( const auto &[begin, limit] : features )
+                {
+                    CAPTURE(begin, limit);
+                    REQUIRE((end <= begin || base >= limit));
+                }
+                ++checked;
+            }
+            offset += bytes;
+        }
+        REQUIRE(checked > 1);
     }
-    REQUIRE(offset == artifact.commands.size());
-    CAPTURE(bindingCopies, bindingRows, bindingBytes, rollingCopies);
-    REQUIRE(bindingCopies > 1);
-    REQUIRE(rollingCopies > 0);
-    REQUIRE(bindingBytes >= inputHeight * inputWidth * 3);
-    REQUIRE(bindingBytes < (inputHeight + 15) * inputWidth * 3);
-    REQUIRE(paddingSeeds > 0);
-    REQUIRE(paddingSeeds < bindingCopies);
-    REQUIRE(artifact.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);
+    SECTION("DMA reuse counters")
+    {
+        uint32_t bindingCopies = 0;
+        uint32_t bindingRows = 0;
+        uint32_t bindingBytes = 0;
+        uint32_t paddingSeeds = 0;
+        uint32_t rollingCopies = 0;
+        size_t offset = 0;
+        while ( offset < artifact.commands.size() )
+        {
+            const uint16_t type = Read16(artifact.commands, offset);
+            const uint16_t bytes = Read16(artifact.commands, offset + 2);
+            REQUIRE(bytes >= 32);
+            if ( IsDMA2DCommand(type) &&
+                 Read16(artifact.commands, offset + 16) == uint16_t(neuralai::Region::InputBinding) &&
+                 Read16(artifact.commands, offset + 24) == uint16_t(neuralai::Region::TCDMScratch) )
+            {
+                ++bindingCopies;
+                bindingRows += Read32(artifact.commands, offset + 44);
+                bindingBytes += Read32(artifact.commands, offset + 32) *
+                    Read32(artifact.commands, offset + 44);
+            }
+            if ( IsDMA1DCommand(type) &&
+                 Read16(artifact.commands, offset + 16) ==
+                     uint16_t(neuralai::Region::ModelConstants) &&
+                 Read16(artifact.commands, offset + 24) ==
+                     uint16_t(neuralai::Region::TCDMScratch) &&
+                 Read32(artifact.commands, offset + 32) == 32 )
+                ++paddingSeeds;
+            if ( type == uint16_t(neuralai::CommandType::DMA2D) &&
+                 Read16(artifact.commands, offset + 16) ==
+                     uint16_t(neuralai::Region::TCDMScratch) &&
+                 Read16(artifact.commands, offset + 24) ==
+                     uint16_t(neuralai::Region::TCDMScratch) &&
+                 Read32(artifact.commands, offset + 32) < inputWidth * 3 &&
+                 Read32(artifact.commands, offset + 48) ==
+                     uint32_t(neuralai::DMADirection::LocalToLocal) )
+                ++rollingCopies;
+            offset += bytes;
+        }
+        REQUIRE(offset == artifact.commands.size());
+        CAPTURE(bindingCopies, bindingRows, bindingBytes, rollingCopies);
+        REQUIRE(bindingCopies > 1);
+        REQUIRE(rollingCopies > 0);
+        REQUIRE(bindingBytes >= inputHeight * inputWidth * 3);
+        REQUIRE(bindingBytes < (inputHeight + 15) * inputWidth * 3);
+        REQUIRE(paddingSeeds > 0);
+        REQUIRE(paddingSeeds < bindingCopies);
+        REQUIRE(artifact.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);
+    }
 }
 
 TEST_CASE("Neural-AI graph optimiser streams an RGB LUT stem into depthwise convolution")

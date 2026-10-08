@@ -4259,8 +4259,13 @@ struct GeneratorContext
         stagingInput.compactNhwc = !stagingInput.directNhwc &&
             IsCompactNHWC(ifm->tensor->format);
         const auto staging = neuralai::LinebufferPlanner().PlanStripeStaging(stagingInput);
-        if ( staging.bytes > stripeStageBytes )
-            return SetError(error, "Neural-AI Conv stripe exceeds its planned staging workspace");
+        if ( WithPaddingSeed(staging.bytes) > workspaceSizes[operation->Uid()].stripe )
+            return SetError(error, fmt::format(
+                "Neural-AI Conv operation {} stripe needs {} staging bytes including padding seed, "
+                "but its workspace reserves {} bytes (IFM L2 {}, OFM L2 {}, IFM/OFM depths {}/{})",
+                operation->Index(), WithPaddingSeed(staging.bytes), workspaceSizes[operation->Uid()].stripe,
+                IsL2ArenaTensor(ifm->tensor.get()), IsL2ArenaTensor(ofm->tensor.get()),
+                ifm->SliceShape().Depth(), ofm->SliceShape().Depth()));
         const bool channelTail = !config->DirectNhwcInput() && channelK % 32 != 0;
         const bool needsFill = channelTail || stripe->padding.top != 0 || stripe->padding.left != 0 ||
             stripe->padding.bottom != 0 || stripe->padding.right != 0;
@@ -5245,7 +5250,28 @@ MemorySnapshot NeuralAICommandGenerator::WorkspaceReservation(
                 IsL2ArenaTensor(operation->OFM()->tensor.get()) ||
                 (linebuffer && (ifmShape.Depth() > 32 || ofmShape.Depth() > 32)) ||
                 (IsDepthwiseMode(mode) && operation->TryInput(TensorUsage::Params1) != nullptr));
-        if ( spilledOperation )
+        if ( linebuffer && cost->cascade != 0 )
+        {
+            // Cascade emission uses the scheduled output stripe, not the
+            // standalone spill tile selected below. Budget the same staged
+            // layout before the scheduler chooses its rolling-buffer sizes.
+            const Shape logicalIfm = ReshapeToNHWC(ifmShape);
+            const Shape logicalOfm = ReshapeToNHWC(ofmShape);
+            const uint32_t stripeRows = std::max(1, cost->stripe.Height());
+            for ( uint32_t outputY = 0; outputY < uint32_t(logicalOfm.Height()); outputY += stripeRows )
+            {
+                const uint32_t outputRows = std::min(stripeRows, uint32_t(logicalOfm.Height()) - outputY);
+                auto stagingInput = MakeLinebufferSpillStaging(logicalIfm,
+                    operation->IFM(0)->tensor->storageShape, logicalOfm,
+                    operation->Kernel(), int(outputY), int(outputRows), 0, 0);
+                stagingInput.directNhwc = config->DirectNhwcInput();
+                stagingInput.compactNhwc = !stagingInput.directNhwc &&
+                    IsCompactNHWC(operation->IFM(0)->tensor->format);
+                workspace.stripe = std::max(workspace.stripe, WithPaddingSeed(
+                    neuralai::LinebufferPlanner().PlanStripeStaging(stagingInput).bytes));
+            }
+        }
+        else if ( spilledOperation )
         {
             const Shape logicalIfm = ReshapeToNHWC(ifmShape);
             const Shape logicalOfm = ReshapeToNHWC(ofmShape);
@@ -5608,13 +5634,14 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         const SchedulerOpInfo *cost = schedule->Cost(operation);
         const auto *config = cost != nullptr && cost->Config() != nullptr ?
             static_cast<const NeuralAIOpConfig *>(cost->Config()) : nullptr;
-        const bool spilledLinebuffer =
-            IsL2ArenaTensor(operation->IFM(0)->tensor.get()) ||
-            IsL2ArenaTensor(operation->OFM()->tensor.get()) ||
+        // Cascade stripes materialize their input through AppendStripeStaging,
+        // including graph inputs and L2-backed inputs. Their memory area must
+        // not suppress the workspace used by AppendC32MatrixStripe.
+        const bool multiGroupLinebuffer =
             operation->IFM(0)->SliceShape().Depth() > 32 ||
             operation->OFM()->SliceShape().Depth() > 32;
         if ( cost == nullptr || cost->cascade == 0 || operation->Type() != OpType::Conv2D ||
-             config == nullptr || !IsLinebufferConvMode(config->Mode()) || spilledLinebuffer )
+             config == nullptr || !IsLinebufferConvMode(config->Mode()) || multiGroupLinebuffer )
             continue;
         const StripeArea &area = stripe->stripeAreas.front();
         neuralai::StripeStagingInput stagingInput{};
