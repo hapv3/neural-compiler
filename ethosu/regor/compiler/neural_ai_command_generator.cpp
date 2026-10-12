@@ -544,8 +544,12 @@ bool DecodeIndependentCommandAccesses(const uint8_t *command, CommandType type,
                 offsetof(neuralai::SystolicGemm32Req, psumAddr));
             const uint64_t outputAddress = Read32(command + gemm +
                 offsetof(neuralai::SystolicGemm32Req, ofmAddr));
-            if ( (accum == 2 || accum == 3) &&
+            const bool automaticPsum = rows > 256 && kTiles > 1 &&
+                Read16(command + cfg + offsetof(neuralai::SystolicLinebufCfg, c32GroupStationary)) != 0;
+            if ( (accum == 2 || accum == 3 || automaticPsum) &&
                  !AddLocalCommandAccess(accesses, psumAddress, psumBytes, false) ) return false;
+            if ( automaticPsum && accum != 1 && accum != 3 &&
+                 !AddLocalCommandAccess(accesses, psumAddress, psumBytes, true) ) return false;
             if ( accum == 1 || accum == 3 )
                 return AddLocalCommandAccess(accesses, psumAddress, psumBytes, true);
             if ( !AddLocalCommandAccess(accesses, outputAddress, outputBytes, true) ) return false;
@@ -1189,6 +1193,7 @@ struct GeneratorContext
     UniqueId contentOperation = INVALID_UID;
     uint32_t stageBytes = 0;
     uint32_t partialBytes = 0;
+    uint32_t activePartialBytes = 0;
     uint32_t stripeStageBytes = 0;
     uint32_t workspaceEnd = 0;
 
@@ -1213,6 +1218,7 @@ struct GeneratorContext
             uint32_t(RoundAway(int(size.halo), ArchNeuralAI::DMAAlignment));
         const uint32_t selectedPartialBytes =
             uint32_t(RoundAway(int(size.partial), ArchNeuralAI::DMAAlignment));
+        activePartialBytes = selectedPartialBytes;
         const uint32_t selectedStripeBytes =
             uint32_t(RoundAway(int(size.stripe), ArchNeuralAI::DMAAlignment));
         const uint32_t total = selectedStageBytes + selectedHaloBytes +
@@ -1314,12 +1320,20 @@ struct GeneratorContext
             }
             base = uint32_t(RoundAway(int(base), ArchNeuralAI::DMAAlignment));
             if ( uint64_t(base) + bytes > ArchNeuralAI::AllocatableTCDMBytes )
+            {
+                std::string spans;
+                for ( const auto &[begin, end] : occupied )
+                    spans += fmt::format(" [{},{})", begin, end);
                 return SetError(error, fmt::format(
                     "Neural-AI operation {} needs {} {} workspace bytes at schedule time {}-{} "
-                    "(temporal tensors {}, stage {}, partial {}, stripe {}, prior workspaces {})",
+                    "(temporal tensors {}, stage {}, partial {}, stripe {}, prior workspaces {}, "
+                    "IFM {}, OFM {}, cascade {}, scheduled stripe {}); occupied:{}",
                     operation->Index(), bytes, name, startTime, endTime,
                     schedule->MemoryUsageAt(startTime), selectedStageBytes,
-                    selectedPartialBytes, selectedStripeBytes, workspaceAllocations.size()));
+                    selectedPartialBytes, selectedStripeBytes, workspaceAllocations.size(),
+                    operation->IFM(0)->SliceShape().ToString(), operation->OFM()->SliceShape().ToString(),
+                    cost->cascade, cost->stripe.ToString(), spans));
+            }
             result = base;
             occupied.emplace_back(base, base + bytes);
             if ( persistent )
@@ -1548,8 +1562,14 @@ struct GeneratorContext
         ++artifact->commandCount;
     }
 
-    void AppendLineBufferJob(const neuralai::LinebufferJob &job, uint32_t layerId, uint32_t tileId)
+    bool AppendLineBufferJob(const neuralai::LinebufferJob &job, uint32_t layerId, uint32_t tileId,
+        std::string &error)
     {
+        const uint32_t requiredPartial = neuralai::LinebufferExternalPsumBytes(job);
+        if ( requiredPartial > activePartialBytes )
+            return SetError(error, fmt::format(
+                "Neural-AI linebuffer operation {} needs {} PSUM bytes but reserves {}",
+                layerId, requiredPartial, activePartialBytes));
         const auto &cfg = job.linebuf;
         const auto &gemm = job.gemm;
         AppendHeader(artifact->commands, CommandType::LineBufferJob, 160, layerId, tileId);
@@ -1597,6 +1617,7 @@ struct GeneratorContext
         Append32(artifact->commands, job.kTiles);
         AppendZeros(artifact->commands, 5);
         ++artifact->commandCount;
+        return true;
     }
 
     bool AppendSlicedNHWCCopy(const SchedulerOperation *operation, std::string &error)
@@ -4341,7 +4362,7 @@ struct GeneratorContext
         plannerInput.maxM = MaxDirectLinebufferM;
         plannerInput.tcdmBudget = ArchNeuralAI::AllocatableTCDMBytes;
         for ( const auto &job : neuralai::LinebufferPlanner().Plan(plannerInput) )
-            AppendLineBufferJob(job, uint32_t(operation->Index()), tileId++);
+            if ( !AppendLineBufferJob(job, uint32_t(operation->Index()), tileId++, error) ) return false;
         return true;
     }
 
@@ -4517,8 +4538,8 @@ struct GeneratorContext
                             (inputGroup + 1u == inputGroups ? 2 : 3));
                     const auto jobs = neuralai::LinebufferPlanner().Plan(plannerInput);
                     for ( const auto &job : jobs )
-                        AppendLineBufferJob(
-                            job, uint32_t(operation->Index()), tileId++);
+                        if ( !AppendLineBufferJob(
+                                 job, uint32_t(operation->Index()), tileId++, error) ) return false;
                 }
 
                 if ( spillOfm )
@@ -4623,6 +4644,7 @@ struct GeneratorContext
                 stagingInput.logicalIfm = logicalIfm;
                 stagingInput.storageIfm = ReshapeToNHWC(ifm->tensor->storageShape);
                 stagingInput.validArea = Box(logicalIfm);
+                stagingInput.sourceBase = ifmSliceOffset;
                 stagingInput.stagingBase = stripeStageOffset;
                 stagingInput.padTop = linebufferPadding.Top();
                 stagingInput.padLeft = linebufferPadding.Left();
@@ -4763,13 +4785,13 @@ struct GeneratorContext
                         if ( decomposeTail[inputGroup] )
                         {
                             for ( const auto &jobs : tailTapJobs[inputGroup] )
-                                AppendLineBufferJob(jobs[jobIndex],
-                                    uint32_t(operation->Index()), tileId++);
+                                if ( !AppendLineBufferJob(jobs[jobIndex],
+                                         uint32_t(operation->Index()), tileId++, error) ) return false;
                         }
                         else
                         {
-                            AppendLineBufferJob(groupJobs[inputGroup][jobIndex],
-                                uint32_t(operation->Index()), tileId++);
+                            if ( !AppendLineBufferJob(groupJobs[inputGroup][jobIndex],
+                                     uint32_t(operation->Index()), tileId++, error) ) return false;
                         }
                     }
                 }
@@ -5206,12 +5228,20 @@ MemorySnapshot NeuralAICommandGenerator::WorkspaceReservation(
         const uint32_t paddedK = uint32_t(RoundAway(int(logicalK), 32));
         const uint32_t scheduledRows = cost->cascade != 0 ?
             uint32_t(cost->stripe.Elements64() / ofmShape.Depth()) : rows;
-        uint32_t matrixRows = std::min<uint32_t>(scheduledRows, 256);
+        // Match emission: spilled/multi-group jobs are capped at 256; only
+        // direct single-group jobs (including cascade stripes) can reach 1024.
+        const bool largeLinebufferJob = linebuffer && !config->DirectNhwcInput() &&
+            ifmShape.Depth() <= 32 && ofmShape.Depth() <= 32 &&
+            (cost->cascade != 0 || (!IsL2ArenaTensor(operation->IFM(0)->tensor.get()) &&
+                !IsL2ArenaTensor(operation->OFM()->tensor.get())));
+        const uint32_t maxMatrixRows = largeLinebufferJob ?
+            MaxDirectLinebufferM : 256;
+        uint32_t matrixRows = std::min(scheduledRows, maxMatrixRows);
         const bool spilledLinebuffer = linebuffer &&
             (IsL2ArenaTensor(operation->IFM(0)->tensor.get()) ||
                 IsL2ArenaTensor(operation->OFM()->tensor.get()) ||
                 ifmShape.Depth() > 32 || ofmShape.Depth() > 32);
-        if ( spilledLinebuffer )
+        if ( spilledLinebuffer && cost->cascade == 0 )
         {
             const uint32_t inputGroups =
                 uint32_t(RoundAway(ifmShape.Depth(), 32)) / 32u;
@@ -5245,7 +5275,7 @@ MemorySnapshot NeuralAICommandGenerator::WorkspaceReservation(
                 throw std::runtime_error("Neural-AI pointwise Conv spill workspace is invalid");
             workspace.stage = std::max(workspace.stage, uint32_t(bytes));
         }
-        if ( paddedK != 32 ) workspace.stage = std::max(workspace.stage, matrixRows * 32u);
+        if ( paddedK != 32 ) workspace.stage = std::max(workspace.stage, std::min(matrixRows, 256u) * 32u);
         if ( paddedK > 32 ) workspace.partial = std::max(workspace.partial, matrixRows * 32u * 4u);
         const bool tiledLinebuffer = linebuffer && cost->cascade == 0 &&
             (IsL2ArenaTensor(operation->IFM(0)->tensor.get()) ||
@@ -5330,20 +5360,21 @@ MemorySnapshot NeuralAICommandGenerator::WorkspaceReservation(
         }
         else if ( linebuffer && operation->TryInput(TensorUsage::Params1) != nullptr )
         {
-            const Shape logicalIfm = ReshapeToNHWC(ifmShape);
-            const Shape logicalOfm = ReshapeToNHWC(ofmShape);
-            const uint32_t outputStripeRows = std::max(1, cost->stripe.Height());
-            for ( uint32_t outputY = 0; outputY < uint32_t(logicalOfm.Height());
-                  outputY += outputStripeRows )
-            {
-                const uint32_t outputRows = std::min(
-                    outputStripeRows, uint32_t(logicalOfm.Height()) - outputY);
-                const auto stagingInput = MakeLinebufferSpillStaging(logicalIfm,
-                    operation->IFM(0)->tensor->storageShape, logicalOfm,
-                    operation->Kernel(), int(outputY), int(outputRows), 0, 0);
-                workspace.stripe = std::max(workspace.stripe, WithPaddingSeed(
-                    neuralai::LinebufferPlanner().PlanStripeStaging(stagingInput).bytes));
-            }
+            // AppendC32Matrix stages the whole padded input for a resident,
+            // standalone Conv, irrespective of the HLC stripe height.
+            const Margin &padding = operation->Kernel()->Padding();
+            neuralai::StripeStagingInput stagingInput{};
+            stagingInput.logicalIfm = ReshapeToNHWC(ifmShape);
+            stagingInput.storageIfm = ReshapeToNHWC(operation->IFM(0)->tensor->storageShape);
+            stagingInput.validArea = Box(stagingInput.logicalIfm);
+            stagingInput.padTop = padding.Top();
+            stagingInput.padLeft = padding.Left();
+            stagingInput.padBottom = padding.Bottom();
+            stagingInput.padRight = padding.Right();
+            stagingInput.channels = ifmShape.Depth();
+            stagingInput.directNhwc = config->DirectNhwcInput();
+            workspace.stripe = std::max(workspace.stripe, WithPaddingSeed(
+                neuralai::LinebufferPlanner().PlanStripeStaging(stagingInput).bytes));
         }
     }
 
@@ -5518,12 +5549,18 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         const uint32_t paddedK = uint32_t(RoundAway(int(logicalK), 32));
         const uint32_t scheduledRows = cost->cascade != 0 ?
             uint32_t(cost->stripe.Elements64() / ofmShape.Depth()) : rows;
-        uint32_t stripeRows = std::min<uint32_t>(scheduledRows, 256);
+        const bool largeLinebufferJob = isK3Conv && !config->DirectNhwcInput() &&
+            ifmShape.Depth() <= 32 && ofmShape.Depth() <= 32 &&
+            (cost->cascade != 0 || (!IsL2ArenaTensor(operation->IFM(0)->tensor.get()) &&
+                !IsL2ArenaTensor(operation->OFM()->tensor.get())));
+        const uint32_t maxMatrixRows = largeLinebufferJob ?
+            MaxDirectLinebufferM : 256;
+        uint32_t stripeRows = std::min(scheduledRows, maxMatrixRows);
         const bool spilledLinebuffer = isK3Conv &&
             (IsL2ArenaTensor(operation->IFM(0)->tensor.get()) ||
                 IsL2ArenaTensor(operation->OFM()->tensor.get()) ||
                 ifmShape.Depth() > 32 || ofmShape.Depth() > 32);
-        if ( spilledLinebuffer )
+        if ( spilledLinebuffer && cost->cascade == 0 )
         {
             const uint32_t inputGroups =
                 uint32_t(RoundAway(ifmShape.Depth(), 32)) / 32u;
@@ -5601,8 +5638,8 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         }
         if ( paddedK != 32 )
         {
-            context.stageBytes = std::max(context.stageBytes, stripeRows * 32);
-            workspace.stage = std::max(workspace.stage, stripeRows * 32);
+            context.stageBytes = std::max(context.stageBytes, std::min(stripeRows, 256u) * 32);
+            workspace.stage = std::max(workspace.stage, std::min(stripeRows, 256u) * 32);
         }
         if ( paddedK > 32 )
         {
@@ -5740,14 +5777,16 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         if ( operation->TryInput(TensorUsage::Params1) == nullptr ) continue;
         const Margin &padding = operation->Kernel()->Padding();
         neuralai::StripeStagingInput stagingInput{};
-        stagingInput.logicalIfm = logicalIfm;
+        // Match the standalone emitter's connection slice. A C32 view of a
+        // larger tensor must not reserve staging for the unused channel groups.
+        stagingInput.logicalIfm = ReshapeToNHWC(ifm->SliceShape());
         stagingInput.storageIfm = ReshapeToNHWC(ifm->tensor->storageShape);
-        stagingInput.validArea = Box(logicalIfm);
+        stagingInput.validArea = Box(stagingInput.logicalIfm);
         stagingInput.padTop = padding.Top();
         stagingInput.padLeft = padding.Left();
         stagingInput.padBottom = padding.Bottom();
         stagingInput.padRight = padding.Right();
-        stagingInput.channels = logicalIfm.Depth();
+        stagingInput.channels = stagingInput.logicalIfm.Depth();
         stagingInput.directNhwc = config->DirectNhwcInput();
         stagingInput.compactNhwc = !stagingInput.directNhwc &&
             IsCompactNHWC(ifm->tensor->format);

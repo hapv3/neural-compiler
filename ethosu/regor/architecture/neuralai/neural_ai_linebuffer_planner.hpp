@@ -96,6 +96,9 @@ struct LinebufferJob
     uint32_t kTiles = 0;
 };
 
+// Includes automatic multi-K spill beyond the RTL's 256-row internal PSUM.
+uint32_t LinebufferExternalPsumBytes(const LinebufferJob &job);
+
 struct LinebufferPlannerInput
 {
     Shape logicalIfm;

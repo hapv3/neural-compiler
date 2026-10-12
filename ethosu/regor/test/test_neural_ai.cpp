@@ -14,6 +14,7 @@
 #include "compiler/high_level_command_stream_generator.hpp"
 #include "compiler/neural_ai_command_generator.hpp"
 #include "compiler/neural_ai_command_compactor.hpp"
+#include "compiler/neural_ai_command_ir.hpp"
 #include "compiler/neural_ai_graph_optimiser.hpp"
 #include "compiler/neural_ai_memory_state.hpp"
 #include "compiler/neural_ai_memory_placement.hpp"
@@ -59,6 +60,46 @@ TEST_CASE("Neural-AI workspace feedback cannot accept an over-budget plateau")
         REQUIRE(next < limit);
         limit = next;
         REQUIRE(++attempts <= 8);
+    }
+}
+
+TEST_CASE("Neural-AI command IR tracks automatic external PSUM hazards")
+{
+    neuralai::CommandLineBufferJobV2 job{};
+    job.header.type = uint16_t(neuralai::CommandType::LineBufferJob);
+    job.header.sizeBytes = sizeof(job);
+    job.job.linebuf.inputBase = 0x10000;
+    job.job.linebuf.inputH = 15;
+    job.job.linebuf.rowStrideBytes = 161 * 32;
+    job.job.linebuf.c32GroupStationary = neuralai::KGEN_SCHEDULE_GENERIC_LINEAR_K32;
+    job.job.gemm.weightAddr = 0x1000;
+    job.job.gemm.ofmAddr = 0x30000;
+    job.job.gemm.psumAddr = 0x50000;
+    job.job.gemm.dimM = job.job.rows = 560;
+    job.job.gemm.ofmTileCols = 80;
+    job.job.gemm.ofmRowStrideBytes = 80 * 32;
+    job.job.gemm.psumRowStrideBytes = 80 * 128;
+    job.job.kTiles = 9;
+    for ( uint32_t rows : {256u, 560u} )
+    {
+        job.job.gemm.dimM = job.job.rows = rows;
+        const auto *data = reinterpret_cast<const uint8_t *>(&job);
+        std::vector<uint8_t> encoded(data, data + sizeof(job));
+        std::vector<neuralai::SemanticCommand> decoded;
+        std::string error;
+        REQUIRE(neuralai::DecodeSemanticCommandStream(encoded, decoded, error));
+        REQUIRE(decoded.size() == 1);
+        int reads = 0;
+        int writes = 0;
+        for ( const auto &access : decoded[0].memoryAccesses )
+        {
+            if ( access.begin != job.job.gemm.psumAddr ) continue;
+            REQUIRE(access.end == job.job.gemm.psumAddr + rows * 128);
+            if ( access.mode == neuralai::SemanticAccessMode::Read ) ++reads;
+            if ( access.mode == neuralai::SemanticAccessMode::Write ) ++writes;
+        }
+        REQUIRE(reads == (rows > 256 ? 1 : 0));
+        REQUIRE(writes == reads);
     }
 }
 
@@ -1605,13 +1646,14 @@ flatbuffers::DetachedBuffer BuildK3ConvBinaryPostOpModel()
 
 flatbuffers::DetachedBuffer BuildC32SliceConvModel(
     int height, int width, int inputDepth, int sliceBegin, int sliceDepth, int outputDepth,
-    int consumerKernel = 1, bool sliceIsGraphOutput = false)
+    int consumerKernel = 1, bool sliceIsGraphOutput = false, int64_t featureZeroPoint = 0)
 {
     flatbuffers::FlatBufferBuilder builder;
     const std::vector<float> scale = {1.0f};
     const std::vector<int64_t> zeroPoint = {0};
+    const std::vector<int64_t> featureZeroPoints = {featureZeroPoint};
     const auto inputQuant = tflite::CreateQuantizationParametersDirect(
-        builder, nullptr, nullptr, &scale, &zeroPoint);
+        builder, nullptr, nullptr, &scale, &featureZeroPoints);
     const auto weightQuant = tflite::CreateQuantizationParametersDirect(
         builder, nullptr, nullptr, &scale, &zeroPoint);
     const auto biasQuant = tflite::CreateQuantizationParametersDirect(
@@ -3460,6 +3502,29 @@ TEST_CASE("Neural-AI compiler streams a structural RGB stem from its binding")
         graph.get(), scheduleOps, schedule.get(), artifact, error);
     INFO(error);
     REQUIRE(generated);
+    SECTION("Standalone padded linebuffer reserves its full input regardless of HLC stripe height")
+    {
+        SchedulerOperation *consumer = nullptr;
+        for ( const auto &operation : scheduleOps )
+            if ( operation->Type() == OpType::Conv2D && operation->IFM(0)->SliceShape().Depth() == 16 )
+                consumer = operation.get();
+        REQUIRE(consumer != nullptr);
+        consumer->ConnectInput(TensorUsage::Params1,
+            std::make_shared<SchedulerTensor>(DataType::Int8, Shape(1), TensorFormat::NHWC));
+        consumer->IFM(0)->tensor->memArea = arch.StagingMemory();
+        consumer->OFM()->tensor->memArea = arch.StagingMemory();
+        SchedulerOpInfo *cost = schedule->Cost(consumer);
+        cost->cascade = 0;
+        cost->stripe = cost->stripe.WithHeight(1);
+        const MemorySnapshot first = NeuralAICommandGenerator::WorkspaceReservation(scheduleOps, schedule.get());
+        // The input is staged in C32 storage, plus up to 1024 INT32 PSUM rows
+        // and nine 32x32 weight tiles. Padding and its seed need extra space.
+        constexpr int minimumBytes = stemHeight * stemWidth * 32 + 1024 * 128 + 9 * 1024;
+        REQUIRE(first[cost->timeIndex].Used() > minimumBytes);
+        cost->stripe = cost->stripe.WithHeight(2);
+        const MemorySnapshot second = NeuralAICommandGenerator::WorkspaceReservation(scheduleOps, schedule.get());
+        REQUIRE(second[cost->timeIndex].Used() == first[cost->timeIndex].Used());
+    }
     SECTION("Cascade staging is disjoint from resident feature maps")
     {
         std::vector<std::pair<uint64_t, uint64_t>> features;
@@ -3496,6 +3561,17 @@ TEST_CASE("Neural-AI compiler streams a structural RGB stem from its binding")
                 REQUIRE(height > 0);
                 const uint64_t end = base + (height - 1) * pitch + width * pixel;
                 CAPTURE(offset, base, end);
+                const uint64_t rows = Read32(artifact.commands, offset + 112);
+                const uint64_t kTiles = Read32(artifact.commands, offset + 136);
+                if ( rows > 256 && kTiles > 1 )
+                {
+                    const uint64_t psum = Read32(artifact.commands, offset + 104);
+                    const uint64_t psumEnd = psum + rows * 128;
+                    REQUIRE(psumEnd <= ArchNeuralAI::AllocatableTCDMBytes);
+                    REQUIRE((psumEnd <= base || psum >= end));
+                    for ( const auto &[begin, limit] : features )
+                        REQUIRE((psumEnd <= begin || psum >= limit));
+                }
                 for ( const auto &[begin, limit] : features )
                 {
                     CAPTURE(begin, limit);
@@ -7022,6 +7098,63 @@ TEST_CASE("Neural-AI compiler aliases C32-aligned YOLO depth slices into linebuf
     REQUIRE(pointwiseCommands == 2);
     REQUIRE(linebufferCommands > 0);
     REQUIRE(linebufferInputOffset == producerOutputOffset);
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
+}
+
+TEST_CASE("Neural-AI compiler budgets padded C32 slices above the internal PSUM capacity")
+{
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildC32SliceConvModel(40, 40, 64, 32, 32, 32, 3, false, -126);
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+    const bool compiled = compiler.Compile();
+    INFO(compiler.LastError());
+    REQUIRE(compiled);
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    REQUIRE(Read32(data + 36) <= ArchNeuralAI::AllocatableTCDMBytes);
+    const uint32_t commandBytes = Read32(data + 64 + 12);
+    uint32_t offset = 224;
+    int externalJobs = 0;
+    int paddedCopies = 0;
+    uint32_t highGroupOutput = 0;
+    while ( offset < 224 + commandBytes )
+    {
+        const auto type = neuralai::CommandType(Read16(data + offset));
+        const uint16_t bytes = Read16(data + offset + 2);
+        REQUIRE(bytes >= sizeof(neuralai::CommandHeaderV2));
+        if ( type == neuralai::CommandType::PointwiseC32 )
+            highGroupOutput = Read32(data + offset + 44);
+        if ( IsDMA2DCommand(uint16_t(type)) &&
+             Read16(data + offset + 16) == uint16_t(neuralai::Region::TCDMScratch) &&
+             Read16(data + offset + 24) == uint16_t(neuralai::Region::TCDMScratch) &&
+             Read32(data + offset + 32) == 40 * 32 && Read32(data + offset + 44) == 40 )
+        {
+            // Padding must copy the selected high C32 plane, not group zero.
+            REQUIRE(Read32(data + offset + 20) == highGroupOutput);
+            ++paddedCopies;
+        }
+        if ( type == neuralai::CommandType::LineBufferJob ||
+             type == neuralai::CommandType::LineBufferSubmit )
+        {
+            const uint32_t rows = Read32(data + offset + 112);
+            if ( rows > 256 && Read32(data + offset + 136) > 1 )
+            {
+                REQUIRE(uint64_t(Read32(data + offset + 104)) + uint64_t(rows) * 128u <=
+                    ArchNeuralAI::AllocatableTCDMBytes);
+                ++externalJobs;
+            }
+        }
+        offset += bytes;
+    }
+    REQUIRE(offset == 224 + commandBytes);
+    REQUIRE(externalJobs > 0);
+    REQUIRE(paddedCopies > 0);
     blob->Unmap(const_cast<uint8_t *>(data));
     blob->Release();
 }

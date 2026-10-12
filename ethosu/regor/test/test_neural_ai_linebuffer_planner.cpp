@@ -47,6 +47,59 @@ LinebufferPlannerInput GoldenInput()
 
 }  // namespace
 
+TEST_CASE("Neural-AI linebuffer external PSUM accounts for automatic multi-K")
+{
+    LinebufferJob job{};
+    job.linebuf.coalesce = 1;
+    job.linebuf.kgen = 1;
+    job.linebuf.c32GroupStationary = KGEN_SCHEDULE_GENERIC_LINEAR_K32;
+    job.linebuf.kTiles = 9;
+    for ( uint32_t rows : {255u, 256u, 257u, 560u, 1024u} )
+    {
+        job.gemm.dimM = rows;
+        REQUIRE(LinebufferExternalPsumBytes(job) == (rows > 256 ? rows * 128u : 0u));
+    }
+    job.gemm.dimM = 560;
+    job.gemm.ofmTileCols = 80;
+    job.gemm.psumRowStrideBytes = 80 * 128;
+    REQUIRE(LinebufferExternalPsumBytes(job) == 71680);
+    job.gemm.psumRowStrideBytes += 32;
+    REQUIRE(LinebufferExternalPsumBytes(job) == 71680 + 6 * 32);
+    job.gemm.psumRowStrideBytes = 80 * 32;
+    REQUIRE_THROWS(LinebufferExternalPsumBytes(job));
+    job.linebuf.kTiles = 1;
+    REQUIRE(LinebufferExternalPsumBytes(job) == 0);
+    job.gemm.accumEn = 2;
+    REQUIRE_THROWS(LinebufferExternalPsumBytes(job));
+    job.gemm.psumRowStrideBytes = 80 * 128;
+    REQUIRE(LinebufferExternalPsumBytes(job) == 71680);
+}
+
+TEST_CASE("Neural-AI linebuffer planner budgets M560 external PSUM")
+{
+    auto input = GoldenInput();
+    input.logicalIfm = Shape(1, 15, 161, 32);
+    input.logicalOfm = Shape(1, 7, 80, 32);
+    input.strideH = input.strideW = 2;
+    input.padTop = input.padBottom = input.padLeft = input.padRight = 0;
+    input.validLaneCount = 16;
+    input.maxM = 1024;
+    auto jobs = LinebufferPlanner().Plan(input);
+    REQUIRE(jobs.size() == 1);
+    REQUIRE(jobs[0].gemm.dimM == 560);
+    auto footprint = LinebufferPlanner().RollingFootprint(input, jobs[0]);
+    REQUIRE(footprint.psumBytes == 71680);
+    REQUIRE(footprint.totalBytes == 15 * 161 * 32 + 560 * 32 + 9 * 1024 + 71680);
+    for ( bool rolling : {false, true} )
+    {
+        input.rollingBuffers = rolling;
+        input.tcdmBudget = int(footprint.totalBytes);
+        REQUIRE_NOTHROW(LinebufferPlanner().Plan(input));
+        --input.tcdmBudget;
+        REQUIRE_THROWS(LinebufferPlanner().Plan(input));
+    }
+}
+
 namespace
 {
 

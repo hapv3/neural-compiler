@@ -376,8 +376,13 @@ bool DecodeLineBuffer(SemanticCommand &command, const uint8_t *encoded)
     const uint64_t outputBytes = StridedSpan(rows, 32, outputStride, tileColumns);
     const uint64_t psumAddress = Read32(encoded + gemm + offsetof(SystolicGemm32Req, psumAddr));
     const uint64_t outputAddress = Read32(encoded + gemm + offsetof(SystolicGemm32Req, ofmAddr));
-    if ( (accum == 2 || accum == 3) &&
+    const bool automaticPsum = rows > 256 && kTiles > 1 &&
+        Read16(encoded + cfg + offsetof(SystolicLinebufCfg, c32GroupStationary)) != 0;
+    if ( (accum == 2 || accum == 3 || automaticPsum) &&
          !AddLocalAccess(command, psumAddress, psumBytes, SemanticAccessMode::Read) )
+        return false;
+    if ( automaticPsum && accum != 1 && accum != 3 &&
+         !AddLocalAccess(command, psumAddress, psumBytes, SemanticAccessMode::Write) )
         return false;
     if ( command.type == CommandType::LineBufferBinary ||
          command.type == CommandType::LineBufferBinarySubmit )

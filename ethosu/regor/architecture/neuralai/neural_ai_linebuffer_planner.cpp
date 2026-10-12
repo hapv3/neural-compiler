@@ -142,6 +142,23 @@ LinebufferJob MakeJob(const LinebufferPlannerInput &input, int ohBase, int owBas
 
 }  // namespace
 
+uint32_t LinebufferExternalPsumBytes(const LinebufferJob &job)
+{
+    const bool automaticSpill = job.linebuf.coalesce && job.linebuf.kgen &&
+        job.linebuf.c32GroupStationary != KGEN_SCHEDULE_NONE &&
+        job.linebuf.kTiles > 1 && job.gemm.dimM > 256;
+    if ( job.gemm.accumEn == 0 && !automaticSpill ) return 0;
+    const uint64_t rows = job.gemm.dimM;
+    if ( rows == 0 ) return 0;
+    const uint64_t cols = job.gemm.ofmTileCols;
+    const uint64_t stride = job.gemm.psumRowStrideBytes;
+    if ( cols == 0 || stride == 0 ) return CheckedU32(rows * 128u, "PSUM footprint");
+    if ( stride < cols * 128u )
+        throw std::runtime_error("Neural-AI linebuffer PSUM row stride overlaps rows");
+    return CheckedU32(((rows - 1) / cols) * stride + ((rows - 1) % cols + 1) * 128u,
+        "PSUM footprint");
+}
+
 std::vector<LinebufferJob> LinebufferPlanner::Plan(const LinebufferPlannerInput &input) const
 {
     if ( input.logicalIfm.Batch() != 1 || input.logicalOfm.Batch() != 1 || input.kernelH <= 0 ||
@@ -189,7 +206,9 @@ std::vector<LinebufferJob> LinebufferPlanner::Plan(const LinebufferPlannerInput 
            that overflowed TCDM once the encoded tile was loaded. */
         const uint64_t weightBytes = uint64_t(input.kernelH) * uint64_t(input.kernelW) *
             uint64_t(input.isDepthwise ? C32 : C32 * C32);
-        const uint64_t psumBytes = input.accumMode != 0 ? ofmBytes * sizeof(int32_t) : 0u;
+        uint64_t psumBytes = 0;
+        for ( const auto &job : jobs )
+            psumBytes = std::max(psumBytes, uint64_t(LinebufferExternalPsumBytes(job)));
         required = uint64_t(std::max(0, input.alreadyLiveBytes)) + ifmBytes +
             ofmBytes + weightBytes + psumBytes;
     }
@@ -211,7 +230,7 @@ LinebufferTileFootprint LinebufferPlanner::RollingFootprint(
     const uint64_t ofmBytes = outputRows * outputRowBytes;
     const uint64_t weightBytes = uint64_t(input.kernelH) * uint64_t(input.kernelW) *
         uint64_t(input.isDepthwise ? C32 : C32 * C32);
-    const uint64_t psumBytes = input.accumMode != 0 ? uint64_t(job.rows) * C32 * sizeof(int32_t) : 0u;
+    const uint64_t psumBytes = LinebufferExternalPsumBytes(job);
     const uint64_t totalBytes = uint64_t(std::max(0, input.alreadyLiveBytes)) + ifmBytes +
         ofmBytes + weightBytes + psumBytes;
 
