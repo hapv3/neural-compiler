@@ -133,9 +133,56 @@ The current restore helper supports only a narrowly verified idempotent LUT
 preamble, not arbitrary register restoration. Reset replay avoids relying on
 unrestored hardware state. Derive checkpoint numbers from the ABI each time.
 
-## Next integration gate: full YOLO output
+## Checkpoint-first YOLO verification
 
-Run all 5,008 logical commands from reset using the **original pinned NAI**,
+Full regression is deferred until the bounded numerical gates pass. A firmware
+PASS or a completed command is not a byte-exact checkpoint. Each gate compares
+its live output bytes with the pinned Neural-AI hybrid reference, before rolling
+storage is reused, and stops on the first mismatch. Keep the original input,
+model, firmware and reference identities across gates; any identity change
+invalidates the previous coverage claim.
+
+| Gate | Compared data | Status |
+| --- | --- | --- |
+| Through command 50 | Two stem SiLU stripes and first consumer Conv tile | PASS, 76,800 bytes |
+| Through command 107 | Nine checks, including four consumer tiles | PASS, 184,320 bytes |
+| Through command 157 | Previous nine plus commands 118, 121, 127 and 157 | Prepared; simulation pending |
+| Remaining cascade and later layers | Completion-aware tiles/groups and operator boundaries | Not yet verified |
+| Full YOLO and MobileNet regression | Complete output bindings | Deferred |
+
+The next bounded gate checks another 61,440 producer SiLU bytes and 15,360
+consumer Conv bytes. All 13 checks total 261,120 bytes. The replay ends at
+command 157, with a 2,000,000-cycle timeout, and records command PMU as before.
+It starts from reset: snapshot 107 lacks AFU LUT SRAM, and subsequent commands
+reuse that LUT. Do not treat a memory-only restart as restored hardware state.
+
+```sh
+cd /home/dev01/neural-ai
+PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay.py \
+  --compiler-root /home/dev01/neural-compiler \
+  --manifest hw/rtl/cluster/tb/sim/test_yolo_external_psum_20261012/artifacts/dma_events.json \
+  --from-reset --consumer-tiles 5 --fail-fast --timeout-cycles 2000000 \
+  --output hw/rtl/cluster/tb/sim/test_yolo_external_psum_20261012/run-157
+```
+
+Advance only after zero mismatches at every listed checkpoint and successful
+firmware completion. For later layers, derive tensor/group/row mappings from
+the current ABI and source graph; extend the mapper before testing unsupported
+async consumers or multiple channel groups, rather than silently skipping them.
+Cover remaining cascade tiles, later Conv/SiLU, residual and layout/pooling
+paths, then detection heads/DFL and final output. A snapshot is reusable only
+with matching artifacts, verified data and a supported register restore path.
+
+The stopped full YOLO run reached roughly command 2500 but compared only the
+same nine early checkpoints. Its report may retain `running` after process
+termination; neither command progress nor that report certifies later bytes.
+The 37 offline helper/snapshot/numerical tests pass, including fail-fast evidence
+retention and rejection of malformed flags. No RTL or firmware changes are
+part of this verification-policy update.
+
+## Deferred regression: full YOLO output
+
+After the bounded gates pass, run all 5,008 logical commands from reset using the **original pinned NAI**,
 including its encoded affine loops, rather than a flattened replacement stream.
 Retain the nine verified early checkpoints, require all 176,400 final output
 bytes to equal the pinned Neural-AI hybrid reference, and collect PMU for every
