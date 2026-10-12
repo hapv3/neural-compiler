@@ -146,11 +146,12 @@ invalidates the previous coverage claim.
 | --- | --- | --- |
 | Through command 50 | Two stem SiLU stripes and first consumer Conv tile | PASS, 76,800 bytes |
 | Through command 107 | Nine checks, including four consumer tiles | PASS, 184,320 bytes |
-| Through command 157 | Previous nine plus commands 118, 121, 127 and 157 | Prepared; simulation pending |
+| Through command 157 | Previous nine plus commands 118, 121, 127 and 157 | PASS, 261,120 bytes |
+| Through command 211 | Previous thirteen plus 159, 170, 173, 179, 209 and 211 | Prepared; simulation pending |
 | Remaining cascade and later layers | Completion-aware tiles/groups and operator boundaries | Not yet verified |
 | Full YOLO and MobileNet regression | Complete output bindings | Deferred |
 
-The next bounded gate checks another 61,440 producer SiLU bytes and 15,360
+The gate through command 157 checks another 61,440 producer SiLU bytes and 15,360
 consumer Conv bytes. All 13 checks total 261,120 bytes. The replay ends at
 command 157, with a 2,000,000-cycle timeout, and records command PMU as before.
 It starts from reset: snapshot 107 lacks AFU LUT SRAM, and subsequent commands
@@ -164,6 +165,22 @@ PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay
   --from-reset --consumer-tiles 5 --fail-fast --timeout-cycles 2000000 \
   --output hw/rtl/cluster/tb/sim/test_yolo_external_psum_20261012/run-157
 ```
+
+On 2026-10-12 gate 157 passed all 13 checkpoints: **261,120 / 261,120 bytes
+exact**. Actual byte files and hashes were independently rechecked against the
+pinned expected files. Cocotb reports PASS, the complete memory snapshot at 157
+passes integrity/provenance checks, and CSV contains commands 1–157 with 169
+columns. Command cycles sum to 1,017,614, matching command-active PMU;
+whole-run PMU is 1,155,301 cycles. Simulation wall time was 2,107.99 seconds.
+Evidence remains in `run-157/` under the pinned YOLO evidence root.
+
+The next gate ends at **211**, adding six comparisons (107,520 bytes): consumer
+Conv at 159/209/211 and rolling producer SiLU at 170/173/179. Its 19 checks total
+368,640 bytes and cover eight consumer tiles. It still starts from reset because
+the resident LUT is not part of the memory snapshot; no unverified register
+restore is assumed. Prepare with the same command above, changing to
+`--consumer-tiles 8 --timeout-cycles 2500000` and a fresh `run-211` output directory.
+Retain `--fail-fast`; no full-model regression is scheduled by this gate.
 
 Advance only after zero mismatches at every listed checkpoint and successful
 firmware completion. For later layers, derive tensor/group/row mappings from
