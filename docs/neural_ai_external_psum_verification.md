@@ -138,7 +138,8 @@ unrestored hardware state. Derive checkpoint numbers from the ABI each time.
 Full regression is deferred until the bounded numerical gates pass. A firmware
 PASS or a completed command is not a byte-exact checkpoint. Each gate compares
 its live output bytes with the pinned Neural-AI hybrid reference, before rolling
-storage is reused, and stops on the first mismatch. Keep the original input,
+storage is reused. Diagnostic runs can stop on the first mismatch; checkpoint
+batches collect all comparisons and conclude at the end. Keep the original input,
 model, firmware and reference identities across gates; any identity change
 invalidates the previous coverage claim.
 
@@ -147,7 +148,8 @@ invalidates the previous coverage claim.
 | Through command 50 | Two stem SiLU stripes and first consumer Conv tile | PASS, 76,800 bytes |
 | Through command 107 | Nine checks, including four consumer tiles | PASS, 184,320 bytes |
 | Through command 157 | Previous nine plus commands 118, 121, 127 and 157 | PASS, 261,120 bytes |
-| Through command 211 | Previous thirteen plus 159, 170, 173, 179, 209 and 211 | Prepared; simulation pending |
+| Through command 211 | Previous thirteen plus 159, 170, 173, 179, 209 and 211 | Prepared, superseded by the complete-cascade batch |
+| Complete initial cascade, through 399 | All 33 checkpoints, both complete logical tensors | Prepared; simulation pending |
 | Remaining cascade and later layers | Completion-aware tiles/groups and operator boundaries | Not yet verified |
 | Full YOLO and MobileNet regression | Complete output bindings | Deferred |
 
@@ -174,13 +176,49 @@ columns. Command cycles sum to 1,017,614, matching command-active PMU;
 whole-run PMU is 1,155,301 cycles. Simulation wall time was 2,107.99 seconds.
 Evidence remains in `run-157/` under the pinned YOLO evidence root.
 
-The next gate ends at **211**, adding six comparisons (107,520 bytes): consumer
+The intermediate gate at **211** adds six comparisons (107,520 bytes): consumer
 Conv at 159/209/211 and rolling producer SiLU at 170/173/179. Its 19 checks total
 368,640 bytes and cover eight consumer tiles. It still starts from reset because
 the resident LUT is not part of the memory snapshot; no unverified register
 restore is assumed. Prepare with the same command above, changing to
 `--consumer-tiles 8 --timeout-cycles 2500000` and a fresh `run-211` output directory.
-Retain `--fail-fast`; no full-model regression is scheduled by this gate.
+This gate was prepared but not launched; the complete-cascade batch below
+supersedes repeated smaller prefix runs. No full-model regression is scheduled.
+
+### Complete supported checkpoint list, one run
+
+The requested batch derives all initial-cascade tiles from tensor extents rather
+than a fixed tile count. It runs **33 checkpoints through command 399**, comparing
+all 25,600 stem SiLU rows (409,600 bytes) and all 6,400 consumer Conv rows
+(204,800 bytes): **614,400 bytes** total. Missing, overlapping or duplicate
+logical rows are rejected during preparation and case loading.
+
+The last consumer submits asynchronously at command 363. Its 5,120 output bytes
+are captured after WAIT 399, not at submission. Intervening later-layer LUT/DMA
+work must be disjoint from the pending output; that work is not counted as a
+verified tensor. The pre-compute dump is taken before submit 363. This supports
+the actual compiler schedule without modifying RTL, firmware or command payloads.
+
+```sh
+cd /home/dev01/neural-ai
+PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay.py \
+  --compiler-root /home/dev01/neural-compiler \
+  --manifest hw/rtl/cluster/tb/sim/test_yolo_external_psum_20261012/artifacts/dma_events.json \
+  --from-reset --all-cascade-checkpoints --timeout-cycles 4000000 \
+  --output hw/rtl/cluster/tb/sim/test_yolo_external_psum_20261012/run-all-cascade
+```
+
+`--fail-fast` is intentionally omitted: collect every listed comparison, keep
+the live per-command CSV, and inspect the final report afterward. Any numerical
+mismatch makes the final result FAIL; timeout/firmware failure remains ERROR.
+There is one reset replay and one final memory snapshot, not a separate replay
+for every prefix. Actual/expected data remains available for each checkpoint.
+The 44 offline tests pass, including async completion, missing-wait rejection,
+pending-output read/write hazards and complete row-coverage validation.
+
+This is the full list of currently supported **initial-cascade** checkpoints,
+not a claim that all YOLO layers have numerical mappings. Later operators and
+full-output regression remain pending. Evidence is in `run-all-cascade/`.
 
 Advance only after zero mismatches at every listed checkpoint and successful
 firmware completion. For later layers, derive tensor/group/row mappings from
