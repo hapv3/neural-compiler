@@ -75,20 +75,58 @@ New MobileNet NAI SHA256:
 Compiler build, tests and compile logs are under
 `out/psum_external_20261012/` (local).
 
-## Remaining integration gate
+## Verified bounded cluster gate
 
 The new YOLO NAI and unchanged firmware have been frozen; the bounded
 first-cascade reference case starts from reset and ends at command 50, with
 checkpoints at commands 14, 23 and 50. The cluster simulator has been rebuilt.
 The new consumer tile has M=480 and nine K tiles. Its 61,440-byte PSUM span
 is `[267200,328640)`; input staging starts at 328,640, with no overlap.
-Run this case and require zero
-byte differences at every checkpoint; retain per-command PMU and complete
-memory snapshots. Derive checkpoint numbers from the new ABI command list.
+On 2026-10-12 this replay passed all 50 commands and every byte comparison:
+
+| Command | Reference tensor | Checked bytes | Mismatches |
+| --- | --- | ---: | ---: |
+| 14 | 159, stem SiLU | 30,720 | 0 |
+| 23 | 159, stem SiLU | 30,720 | 0 |
+| 50 | 161, second Conv | 15,360 | 0 |
+
+The command PMU reports 341,489 cycles. Per-command CSV, actual/expected bytes,
+`byte_exact.json` and the complete `command-50.snapshot` are retained in `run/`
+under the evidence root below. This proves the first external-PSUM consumer
+tile, not the rest of the graph.
 
 Local cluster evidence root:
 `neural-ai/hw/rtl/cluster/tb/sim/test_yolo_external_psum_20261012/`.
 
-Unit/block results do not yet establish cluster or full-model byte-exactness.
+## Next integration gate
+
+Extend the pinned reset replay to four consumer tiles (command 107 in this NAI),
+checking commands 14, 23, 50, 55, 66, 69, 75, 105 and 107. This covers consecutive
+M=480/nine-K jobs, reused producer storage and a split SiLU activation around
+an asynchronous producer's completion. The reference mapper tracks completed
+physical C32 rows separately from pending producer output; it rejects LUT
+access to pending or stale/noncontiguous rows.
+
+Preparation completed with 14 offline helper tests passing. The nine expected
+checkpoints contain 184,320 bytes in total; this is planned comparison coverage,
+not a simulation PASS. The prepared case is `run-107/case.json` under the same
+evidence root. Reproduce preparation with a fresh output directory:
+
+```sh
+cd /home/dev01/neural-ai
+PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay.py \
+  --compiler-root /home/dev01/neural-compiler \
+  --manifest hw/rtl/cluster/tb/sim/test_yolo_external_psum_20261012/artifacts/dma_events.json \
+  --from-reset --consumer-tiles 4 \
+  --output hw/rtl/cluster/tb/sim/test_yolo_external_psum_20261012/run-107
+```
+
+Do not resume directly from snapshot 50: memory snapshots omit the resident
+requant registers and AFU LUT SRAM, and command 55 reuses requant configuration.
+The current restore helper supports only a narrowly verified idempotent LUT
+preamble, not arbitrary register restoration. Reset replay avoids relying on
+unrestored hardware state. Derive checkpoint numbers from the ABI each time.
+
+Full-model byte-exactness remains unverified.
 The old replay's 391,869 cycles are evidence of the faulty execution, not a
 valid performance baseline for the repaired inference.
