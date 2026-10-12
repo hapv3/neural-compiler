@@ -168,3 +168,36 @@ dispatch errors/timeouts record `ERROR` and `failure-tcdm.bin`, not a data PASS.
 Full-model byte-exactness remains unverified.
 The old replay's 391,869 cycles are evidence of the faulty execution, not a
 valid performance baseline for the repaired inference.
+
+## MobileNet224 full-output gate
+
+The same verified RTL binary and firmware also support a separate MobileNet224
+reset run: 12,789 logical commands, a 50,000,000-cycle timeout and strict
+comparison of all 1,000 final INT8 output bytes (source tensor 176). No YOLO
+stem checkpoints are imposed. The original encoded NAI is preserved, with
+SHA256 `4fd5d48405f972f552fc930981e6a00dd9ff91da8b166adbd65bb60738308024`.
+
+The generic runner uses `MODEL_REFERENCE_CASE` and
+`COCOTB_TEST_MODULES=test_model_reference_replay`. Its preparation command is:
+
+```sh
+cd /home/dev01/neural-ai
+PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay.py \
+  --compiler-root /home/dev01/neural-compiler \
+  --source /home/dev01/neural-compiler/test/model/mobilenet_v2_224_int8.tflite \
+  --manifest hw/rtl/cluster/tb/sim/test_mobilenet224_reference_20261012/artifacts/dma_events.json \
+  --from-reset --consumer-tiles 0 --full-graph --timeout-cycles 50000000 \
+  --output hw/rtl/cluster/tb/sim/test_mobilenet224_reference_20261012/run-full
+```
+
+Preparation passed 27 helper tests and verified complete hybrid-reference MAC
+coverage. The 4,224,864-byte model requires control data at `0x81800000`, above
+its encoded bytes; its 2,408,448-byte temporary binding fits between
+`0x80200000` and the model at `0x81000000`. The tests cover both address limits
+and preserve compatibility with the prepared full YOLO case.
+
+Evidence is under the MobileNet run directory above: `sim.log`, continuously
+appended `command_pmu.csv`, final `output-actual.bin`, `byte_exact.json` and
+`command-12789.snapshot`. A separate copy of the verified simulator avoids
+changing the binary used by the concurrent YOLO run. Simulation and full-output
+correctness are pending; offline preparation alone is not an inference PASS.
