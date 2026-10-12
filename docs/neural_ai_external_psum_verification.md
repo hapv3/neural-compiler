@@ -98,19 +98,25 @@ tile, not the rest of the graph.
 Local cluster evidence root:
 `neural-ai/hw/rtl/cluster/tb/sim/test_yolo_external_psum_20261012/`.
 
-## Next integration gate
+## Verified rolling-cascade cluster gate
 
-Extend the pinned reset replay to four consumer tiles (command 107 in this NAI),
-checking commands 14, 23, 50, 55, 66, 69, 75, 105 and 107. This covers consecutive
+The pinned reset replay completed all 107 commands and checked commands
+14, 23, 50, 55, 66, 69, 75, 105 and 107. This covers consecutive
 M=480/nine-K jobs, reused producer storage and a split SiLU activation around
 an asynchronous producer's completion. The reference mapper tracks completed
 physical C32 rows separately from pending producer output; it rejects LUT
 access to pending or stale/noncontiguous rows.
 
-Preparation completed with 14 offline helper tests passing. The nine expected
-checkpoints contain 184,320 bytes in total; this is planned comparison coverage,
-not a simulation PASS. The prepared case is `run-107/case.json` under the same
-evidence root. Reproduce preparation with a fresh output directory:
+All nine checkpoints passed: **184,320 / 184,320 bytes exact, zero mismatches**.
+PMU reports **859,303 cycles**; the simulation took 1,427.48 wall-clock seconds.
+The four consumer tiles cover 1,920 spatial rows of tensor 161 (61,440 bytes),
+while producer SiLU checkpoints cover 122,880 bytes. These checks occur at
+command completion, before rolling storage may overwrite the bytes.
+
+Preparation had 14 offline helper tests passing. The case, per-command CSV,
+actual/expected byte files, result JSON and `command-107.snapshot` are retained
+in `run-107/` under the same evidence root. Reproduce preparation with a fresh
+output directory:
 
 ```sh
 cd /home/dev01/neural-ai
@@ -126,6 +132,38 @@ requant registers and AFU LUT SRAM, and command 55 reuses requant configuration.
 The current restore helper supports only a narrowly verified idempotent LUT
 preamble, not arbitrary register restoration. Reset replay avoids relying on
 unrestored hardware state. Derive checkpoint numbers from the ABI each time.
+
+## Next integration gate: full YOLO output
+
+Run all 5,008 logical commands from reset using the **original pinned NAI**,
+including its encoded affine loops, rather than a flattened replacement stream.
+Retain the nine verified early checkpoints, require all 176,400 final output
+bytes to equal the pinned Neural-AI hybrid reference, and collect PMU for every
+command. Use a 50,000,000-cycle execution timeout and the existing 100,000-cycle
+progress log. No RTL, firmware or compiled-model change is needed for this gate.
+
+The reference still delegates only Conv/Depthwise/FC; other operators use
+TFLite reference kernels. A full-output discrepancy is evidence to diagnose,
+not permission to weaken the comparison or automatically classify AFU/DFL as
+faulty. Agreement would establish the measured input's output, not dataset
+accuracy or every intermediate tensor.
+
+The helper's full-graph mode has 21 passing offline tests, including rejection
+of partial execution/missing or truncated output oracles, strict one-byte
+mismatch detection and preservation of encoded affine loops. Preparation:
+
+```sh
+cd /home/dev01/neural-ai
+PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay.py \
+  --compiler-root /home/dev01/neural-compiler \
+  --manifest hw/rtl/cluster/tb/sim/test_yolo_external_psum_20261012/artifacts/dma_events.json \
+  --from-reset --consumer-tiles 4 --full-graph --timeout-cycles 50000000 \
+  --output hw/rtl/cluster/tb/sim/test_yolo_external_psum_20261012/run-full
+```
+
+Result scope and artifact hashes are explicit in `byte_exact.json`.
+`output-actual.bin` and `output-expected.bin` retain the complete output;
+dispatch errors/timeouts record `ERROR` and `failure-tcdm.bin`, not a data PASS.
 
 Full-model byte-exactness remains unverified.
 The old replay's 391,869 cycles are evidence of the faulty execution, not a
