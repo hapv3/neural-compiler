@@ -150,7 +150,9 @@ invalidates the previous coverage claim.
 | Through command 157 | Previous nine plus commands 118, 121, 127 and 157 | PASS, 261,120 bytes |
 | Through command 211 | Previous thirteen plus 159, 170, 173, 179, 209 and 211 | Prepared, superseded by the complete-cascade batch |
 | Complete initial cascade, old NAI through 399 | All 33 planned checkpoints, both complete logical tensors | Stopped; command 159 byte-exact FAIL, diagnosed below |
-| Remaining cascade and later layers | Completion-aware tiles/groups and operator boundaries | Not yet verified |
+| Complete initial cascade, corrected NAI through 525 | 38 live checks and complete retained consumer L2 output | PASS, 614,400 live bytes + 204,800 L2 bytes |
+| Next SiLU / pointwise Conv / SiLU through 587 | All initial checks plus 59 completion-aware checks | Prepared; cluster verification pending |
+| Remaining later layers | Completion-aware tiles/groups and operator boundaries | Not yet verified |
 | Full YOLO and MobileNet regression | Complete output bindings | Deferred |
 
 The gate through command 157 checks another 61,440 producer SiLU bytes and 15,360
@@ -288,13 +290,22 @@ completion waits are rejected. A bounded replay extends to the first globally
 drained boundary; the complete batch additionally compares the retained L2 tensor
 after all stores finish. The 49 offline reference/snapshot/numerical tests pass.
 
-The new reset batch is **prepared, not yet numerically verified**: 38 live
-checkpoints compare 614,400 bytes, followed by a 204,800-byte L2 output comparison.
+The new reset batch **passed on 2026-10-13**: all 38 live checkpoints match
+614,400 bytes, followed by an exact 204,800-byte L2 output comparison.
 All 16 consumer tiles complete locally by command 443, but the last queued store
 is joined at 523 and the other DMA queue drains at **525**. Commands between these
 boundaries include later-layer work that is not numerically covered by this gate.
 The timeout is 4,000,000 cycles and per-command PMU CSV remains enabled.
 Do not reuse old-model snapshots or hardcode old checkpoint IDs.
+
+Whole-run PMU reports **2,917,285 cycles**; the 525 command rows sum to
+**2,565,010 command-active cycles**. Cocotb reports PASS in 6,337.91 wall-clock
+seconds. An independent artifact recheck compared all 38 saved actual files
+with their pinned expected files, compared the final L2 bytes, verified the
+snapshot's model/boundary/integrity, and checked unique CSV commands 1–525
+with all 169 columns. Both command-begin and command-end counters equal 525.
+There were zero mismatches, including the previously failing consumer stripes.
+This does not establish correctness of later work interleaved before 525.
 
 Local evidence:
 
@@ -303,6 +314,47 @@ Local evidence:
 - Corrected models: `out/cascade_l2_20261013/{yolo320,mobilenet224}/`.
 - Prepared cluster case and pinned artifacts:
   `neural-ai/hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/`.
+
+### Next bounded gate: complete SiLU / pointwise Conv / SiLU
+
+The mapper now follows each completed consumer L2 store through DMA1D loads
+and their explicit waits, the second Conv's SiLU, the next single-C32-group
+pointwise Conv, and its SiLU. Logical row identities follow the input data,
+not local output addresses that the schedule reuses. Missing/incomplete loads
+or stores, overwritten/stale sources, duplicate rows, partial/multi-group
+pointwise jobs and unsupported layouts are rejected. Source tensor IDs are
+resolved through actual Conv → Logistic/Mul edges in the TFLite graph.
+
+The prepared reset replay retains all 38 initial checks and adds **59 checks**:
+51 for tensor 163 (second SiLU), four for tensor 164 (pointwise Conv), and four
+for tensor 166 (its SiLU). Each new tensor is checked completely: 6,400 rows ×
+32 channels = 204,800 bytes. The **97 live comparisons total 1,228,800 bytes**;
+the original retained L2 consumer is also compared again at completion.
+Pointwise checkpoints are 524, 529, 560 and 579; their activation checkpoints
+are 528, 530, 581 and 582. DMA loads pending at 582 drain at **587**, which is
+the first safe final boundary. The timeout is 8,000,000 cycles; this is a bound,
+not a performance estimate. Per-command PMU remains enabled.
+
+Before launching, additional snapshot-525 comparisons matched the 109,568
+retained bytes of tensor 163 and the first 56,320 bytes of tensor 164. These
+checks do not cover their remaining tiles or tensor 166. Memory-only snapshot
+525 still lacks LUT/requant state; this gate deliberately starts from reset.
+The expanded offline helper/snapshot/numerical suite passes **55 tests**.
+No RTL, firmware, or compiled NAI changes are involved.
+
+```sh
+cd /home/dev01/neural-ai
+PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay.py \
+  --compiler-root /home/dev01/neural-compiler \
+  --manifest hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/artifacts/dma_events.json \
+  --from-reset --post-cascade-checkpoints --timeout-cycles 8000000 \
+  --output hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/run-post-cascade
+```
+
+Use a fresh output directory when repeating preparation. Current case, oracles,
+subsequent actual bytes, PMU and results are kept in `run-post-cascade/` under
+that evidence root. **Preparation is not a cluster/data PASS**; full-model
+regression remains deferred until the required bounded checkpoints pass.
 
 ## Deferred regression: full YOLO output
 
