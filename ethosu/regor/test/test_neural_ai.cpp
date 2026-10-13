@@ -3502,6 +3502,84 @@ TEST_CASE("Neural-AI compiler streams a structural RGB stem from its binding")
         graph.get(), scheduleOps, schedule.get(), artifact, error);
     INFO(error);
     REQUIRE(generated);
+    SECTION("Cascade L2 output never aliases resident rolling input")
+    {
+        const uint32_t arenaOffset = GENERATE(0u, 0x100000u);
+        SchedulerOperation *consumer = nullptr;
+        for ( const auto &operation : scheduleOps )
+            if ( operation->Type() == OpType::Conv2D && operation->IFM(0)->SliceShape().Depth() == 16 )
+                consumer = operation.get();
+        REQUIRE(consumer != nullptr);
+        auto *tensor = consumer->OFM()->tensor.get();
+        REQUIRE_FALSE(tensor->isGraphOutput);
+        tensor->memArea = MemArea(arch.L2Memory(), MemUsage::FeatureMap);
+        tensor->SetAddress(arenaOffset);
+
+        CompiledNeuralAIArtifact spilled;
+        const bool spilledGenerated = commandGenerator.Generate(graph.get(), scheduleOps, schedule.get(), spilled, error);
+        INFO(error);
+        REQUIRE(spilledGenerated);
+        const uint32_t outputBytes = outputHeight * outputWidth * 32u;
+        std::vector<int> stored(outputBytes, 0);
+        int stores = 0;
+        uint32_t computedBytes = 0;
+        for ( const auto &command : spilled.semanticCommands )
+        {
+            if ( command.layerId != uint32_t(consumer->Index()) ) continue;
+            const auto &encoded = command.encoding;
+            if ( command.type == neuralai::CommandType::LineBufferJob ||
+                 command.type == neuralai::CommandType::LineBufferSubmit )
+            {
+                const uint64_t begin = Read32(encoded, 108);
+                const uint64_t bytes = uint64_t(Read32(encoded, 112)) * 32u;
+                const uint64_t end = begin + bytes;
+                REQUIRE(end <= ArchNeuralAI::AllocatableTCDMBytes);
+                computedBytes += uint32_t(bytes);
+                // All consumer outputs belong to workspace, not another live
+                // tensor, even when an unrelated L2 allocation also starts at 0.
+                for ( const auto &operation : scheduleOps )
+                {
+                    for ( const auto &[usage, connection] : operation->inputs.pairs() )
+                    {
+                        UNUSED(usage);
+                        const auto &inputTensor = connection.tensor;
+                        if ( inputTensor->isGraphInput || inputTensor->isGraphOutput ||
+                             inputTensor->IsConstant() || inputTensor->AllocatedAddress() < 0 ||
+                             inputTensor->memArea.memory == arch.L2Memory() ) continue;
+                        const uint64_t inputBegin = uint64_t(inputTensor->AllocatedAddress());
+                        const uint64_t inputEnd = inputBegin + arch.StorageBytes(
+                            inputTensor->storageShape, inputTensor->format, inputTensor->dataType);
+                        CAPTURE(arenaOffset, begin, end, inputBegin, inputEnd);
+                        REQUIRE((end <= inputBegin || begin >= inputEnd));
+                    }
+                }
+                for ( const auto &access : command.memoryAccesses )
+                {
+                    if ( access.mode == neuralai::SemanticAccessMode::Read &&
+                         access.region == uint16_t(neuralai::Region::TCDMScratch) )
+                        REQUIRE((end <= access.begin || begin >= access.end));
+                }
+            }
+            if ( IsDMA1DCommand(uint16_t(command.type)) &&
+                 Read16(encoded, 24) == uint16_t(neuralai::Region::L2TemporaryBinding) )
+            {
+                REQUIRE(Read16(encoded, 16) == uint16_t(neuralai::Region::TCDMScratch));
+                REQUIRE(Read16(encoded, 26) == 0);
+                REQUIRE(Read32(encoded, 36) == uint32_t(neuralai::DMADirection::LocalToExternal));
+                const uint32_t destination = Read32(encoded, 28);
+                const uint32_t length = Read32(encoded, 32);
+                REQUIRE(destination >= arenaOffset);
+                REQUIRE(uint64_t(destination) + length <= uint64_t(arenaOffset) + outputBytes);
+                for ( int byte = int(destination - arenaOffset);
+                      byte < int(destination - arenaOffset + length); ++byte ) ++stored[byte];
+                ++stores;
+            }
+        }
+        REQUIRE(computedBytes == outputBytes);
+        REQUIRE(stores > 1);
+        REQUIRE(std::all_of(stored.begin(), stored.end(), [](int writes) { return writes == 1; }));
+        REQUIRE(spilled.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);
+    }
     SECTION("Standalone padded linebuffer reserves its full input regardless of HLC stripe height")
     {
         SchedulerOperation *consumer = nullptr;

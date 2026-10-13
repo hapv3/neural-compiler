@@ -149,7 +149,7 @@ invalidates the previous coverage claim.
 | Through command 107 | Nine checks, including four consumer tiles | PASS, 184,320 bytes |
 | Through command 157 | Previous nine plus commands 118, 121, 127 and 157 | PASS, 261,120 bytes |
 | Through command 211 | Previous thirteen plus 159, 170, 173, 179, 209 and 211 | Prepared, superseded by the complete-cascade batch |
-| Complete initial cascade, through 399 | All 33 checkpoints, both complete logical tensors | Prepared; simulation pending |
+| Complete initial cascade, old NAI through 399 | All 33 planned checkpoints, both complete logical tensors | Stopped; command 159 byte-exact FAIL, diagnosed below |
 | Remaining cascade and later layers | Completion-aware tiles/groups and operator boundaries | Not yet verified |
 | Full YOLO and MobileNet regression | Complete output bindings | Deferred |
 
@@ -235,14 +235,83 @@ The 37 offline helper/snapshot/numerical tests pass, including fail-fast evidenc
 retention and rejection of malformed flags. No RTL or firmware changes are
 part of this verification-policy update.
 
+## Cascade L2 output alias: diagnosis and correction, 2026-10-13
+
+The old complete-cascade batch was stopped after 30 comparisons through command
+326: 29 matched, but command 159 differed in 5,039 of 15,360 bytes (first offset
+5,120; maximum absolute difference 129). This is not a complete batch PASS.
+The raw interrupted report retains `running`; do not interpret it as completion.
+
+Command 157 writes its INT8 output to TCDM `[61440,76800)`. DMA 158 subsequently
+reads live stem activation from `[35840,102384)` into staging for Conv 159.
+The earlier output destroys 7,680 active input bytes in three source image rows;
+two output image rows then differ. Independently replaying DMA 158 after
+injecting command 157's verified output reproduces all 66,976 staged input bytes.
+Offline convolution from that corrupted staging matches all 15,360 simulator
+output bytes; retaining the live input instead matches all reference bytes.
+
+Recompilation with allocation logging reproduces the pinned old NAI hash.
+Tensor 161 is allocated at offset 0 **in L2**, whereas the producer's rolling
+activation starts at offset 0 **in TCDM**. The striped linebuffer emitter discarded
+the region and used `AllocatedAddress()` directly as an RTL-local OFM address.
+This is a compiler lowering bug, not a PSUM or rounding RTL failure.
+
+The correction resolves a typed output reference, reserves a separate C32 output
+stripe after aligned input staging, and emits a TCDM-to-L2 DMA store to the actual
+tensor offset. Workspace reservation and HLC emission share the output-stripe
+size calculation, including a separate padding seed. Local output remains direct.
+Global scheduling retains the output write/store/read hazards and inserts waits
+before that staging can be reused. No RTL, firmware, or ABI changes are involved.
+
+The new ASan regression covers L2 offsets 0 and 1 MiB, rolling input protection,
+input/weight/PSUM separation, and exactly-once stores of all consumer output
+bytes. It fails with the baseline generator and passes with the correction.
+The broader baseline has four independent failures: stale LUT placement
+expectations, ReLU/pointwise layout, staging diagnostic text, and compact
+depthwise input-DMA expectations. All four were reproduced with the baseline
+generator; they are not silently counted as passing or changed here.
+With those four explicitly excluded, **182 tests / 43,978 assertions pass** on
+the final corrected sources. Firmware host/ABI checks also pass. Leak detection
+is disabled because it cannot run under the sandbox's tracing environment;
+AddressSanitizer remains enabled.
+
+The corrected YOLO NAI has **5,254 commands** (previously 5,008), still with zero
+CPU operators and 512,000 TCDM bytes. Workspace feedback changes stripe geometry
+when output staging is budgeted, so the difference includes more than the L2
+stores themselves. Performance must be measured again, not inferred from count.
+SHA256: `937ac5fbf64d317e29f5eec2983c29789d10dc53e63143dd0e10ec4e31c95890`.
+MobileNet recompilation is byte-identical to its earlier pinned NAI.
+
+The updated checkpoint mapper follows each reused local output stripe to its
+contiguous L2 store. Missing stores, overwrites, stale mappings, or missing async
+completion waits are rejected. A bounded replay extends to the first globally
+drained boundary; the complete batch additionally compares the retained L2 tensor
+after all stores finish. The 49 offline reference/snapshot/numerical tests pass.
+
+The new reset batch is **prepared, not yet numerically verified**: 38 live
+checkpoints compare 614,400 bytes, followed by a 204,800-byte L2 output comparison.
+All 16 consumer tiles complete locally by command 443, but the last queued store
+is joined at 523 and the other DMA queue drains at **525**. Commands between these
+boundaries include later-layer work that is not numerically covered by this gate.
+The timeout is 4,000,000 cycles and per-command PMU CSV remains enabled.
+Do not reuse old-model snapshots or hardcode old checkpoint IDs.
+
+Local evidence:
+
+- Compiler diagnostics, baseline failures, ASan results and host tests:
+  `out/psum_external_20261012/alias_*.log`.
+- Corrected models: `out/cascade_l2_20261013/{yolo320,mobilenet224}/`.
+- Prepared cluster case and pinned artifacts:
+  `neural-ai/hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/`.
+
 ## Deferred regression: full YOLO output
 
-After the bounded gates pass, run all 5,008 logical commands from reset using the **original pinned NAI**,
+After the bounded gates pass, run every logical command from reset using the **newly verified pinned NAI**,
 including its encoded affine loops, rather than a flattened replacement stream.
-Retain the nine verified early checkpoints, require all 176,400 final output
+Retain the verified early checkpoints, require all 176,400 final output
 bytes to equal the pinned Neural-AI hybrid reference, and collect PMU for every
 command. Use a 50,000,000-cycle execution timeout and the existing 100,000-cycle
-progress log. No RTL, firmware or compiled-model change is needed for this gate.
+progress log. No further RTL, firmware or compiled-model change is needed for this gate.
 
 The reference still delegates only Conv/Depthwise/FC; other operators use
 TFLite reference kernels. A full-output discrepancy is evidence to diagnose,

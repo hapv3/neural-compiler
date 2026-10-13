@@ -938,6 +938,19 @@ uint32_t WithPaddingSeed(uint32_t bytes)
     return bytes + PaddingSeedBytes;
 }
 
+uint32_t CascadeLinebufferStripeBytes(uint32_t inputBytes, const Shape &ofm, bool spillOutput)
+{
+    // Linebuffer addresses are always local. An L2-backed OFM needs its own
+    // contiguous output stripe after the input, with the padding seed last.
+    const uint64_t outputOffset = (uint64_t(inputBytes) + ArchNeuralAI::DMAAlignment - 1u) /
+        ArchNeuralAI::DMAAlignment * ArchNeuralAI::DMAAlignment;
+    const uint64_t bytes = spillOutput ? outputOffset +
+        uint64_t(ofm.Height()) * uint64_t(ofm.Width()) * 32u : inputBytes;
+    if ( bytes > std::numeric_limits<uint32_t>::max() )
+        throw std::runtime_error("Neural-AI cascade linebuffer stripe workspace overflows");
+    return WithPaddingSeed(uint32_t(bytes));
+}
+
 uint32_t PointwiseSpillTileRows(uint32_t rows, uint32_t paddedK, uint32_t stagedGroups,
     const Schedule *schedule, const SchedulerOpInfo *cost)
 {
@@ -4258,7 +4271,8 @@ struct GeneratorContext
         const Shape ofmStorage = ReshapeToNHWC(ofm->tensor->storageShape);
         const uint32_t channelK = uint32_t(ifmShape.Depth());
         const uint32_t depthN = uint32_t(ofmAreaShape.Depth());
-        if ( channelK == 0 || channelK > 32 || depthN <= 0 || depthN > 32 || ofmAreaStart.Width() != 0 ||
+        if ( channelK == 0 || channelK > 32 || depthN <= 0 || depthN > 32 ||
+             ofmAreaShape.Batch() != 1 || ofmAreaStart.Batch() != 0 || ofmAreaStart.Width() != 0 ||
              ofmAreaStart.Depth() != 0 || ofmAreaShape.Width() != ofm->shape.Width() ||
              ofmStorage.Width() != ofmAreaShape.Width() || ofmStorage.Height() <= 0 ||
              ofmAreaShape.Height() > ofmStorage.Height() ||
@@ -4294,13 +4308,33 @@ struct GeneratorContext
         stagingInput.compactNhwc = !stagingInput.directNhwc &&
             IsCompactNHWC(ifm->tensor->format);
         const auto staging = neuralai::LinebufferPlanner().PlanStripeStaging(stagingInput);
-        if ( WithPaddingSeed(staging.bytes) > workspaceSizes[operation->Uid()].stripe )
+        const uint64_t outputOffset = uint64_t(ofmAreaStart.Height() % ofmStorage.Height()) *
+            uint32_t(ofmStorage.Width()) * 32u;
+        if ( outputOffset > std::numeric_limits<uint32_t>::max() )
+            return SetError(error, "Neural-AI Conv stripe output offset overflows the ABI");
+        const RefV1 output = TensorRef(ofm->tensor.get(), uint32_t(outputOffset), error);
+        if ( !error.empty() ) return false;
+        const bool spillOutput = output.region == uint16_t(Region::L2TemporaryBinding);
+        if ( output.region != uint16_t(Region::TCDMScratch) && !spillOutput )
+            return SetError(error, "Neural-AI Conv stripe output requires TCDM or the L2 temporary arena");
+        const uint32_t requiredBytes = CascadeLinebufferStripeBytes(
+            staging.bytes, ofmAreaShape, spillOutput);
+        if ( requiredBytes > workspaceSizes[operation->Uid()].stripe )
             return SetError(error, fmt::format(
                 "Neural-AI Conv operation {} stripe needs {} staging bytes including padding seed, "
                 "but its workspace reserves {} bytes (IFM L2 {}, OFM L2 {}, IFM/OFM depths {}/{})",
-                operation->Index(), WithPaddingSeed(staging.bytes), workspaceSizes[operation->Uid()].stripe,
+                operation->Index(), requiredBytes, workspaceSizes[operation->Uid()].stripe,
                 IsL2ArenaTensor(ifm->tensor.get()), IsL2ArenaTensor(ofm->tensor.get()),
                 ifm->SliceShape().Depth(), ofm->SliceShape().Depth()));
+        RefV1 localOutput = output;
+        const uint32_t outputBytes = uint32_t(uint64_t(ofmAreaShape.Height()) *
+            uint32_t(ofmAreaShape.Width()) * 32u);
+        if ( spillOutput )
+        {
+            localOutput.region = uint16_t(Region::TCDMScratch);
+            localOutput.index = 0;
+            localOutput.offset = stripeStageOffset + requiredBytes - PaddingSeedBytes - outputBytes;
+        }
         const bool channelTail = !config->DirectNhwcInput() && channelK % 32 != 0;
         const bool needsFill = channelTail || stripe->padding.top != 0 || stripe->padding.left != 0 ||
             stripe->padding.bottom != 0 || stripe->padding.right != 0;
@@ -4346,9 +4380,7 @@ struct GeneratorContext
         plannerInput.logicalIfm = staging.stagedIfm;
         plannerInput.logicalOfm = ofmAreaShape;
         plannerInput.ifmBase = stripeStageOffset;
-        plannerInput.ofmBase = uint32_t(ofm->tensor->AllocatedAddress()) +
-            uint32_t(ofmAreaStart.Height() % ofmStorage.Height()) *
-                uint32_t(ofmStorage.Width()) * 32u;
+        plannerInput.ofmBase = localOutput.offset;
         plannerInput.weightBase = weightStageOffset;
         plannerInput.psumBase = partialOffset;
         plannerInput.kernelH = operation->Kernel()->Size().y;
@@ -4363,6 +4395,10 @@ struct GeneratorContext
         plannerInput.tcdmBudget = ArchNeuralAI::AllocatableTCDMBytes;
         for ( const auto &job : neuralai::LinebufferPlanner().Plan(plannerInput) )
             if ( !AppendLineBufferJob(job, uint32_t(operation->Index()), tileId++, error) ) return false;
+        tcdmContent.Invalidate(localOutput.offset, outputBytes);
+        if ( spillOutput && !AppendDMA1D(localOutput, output, outputBytes,
+                 uint32_t(operation->Index()), tileId++, error) )
+            return false;
         return true;
     }
 
@@ -5311,8 +5347,10 @@ MemorySnapshot NeuralAICommandGenerator::WorkspaceReservation(
                 stagingInput.directNhwc = config->DirectNhwcInput();
                 stagingInput.compactNhwc = !stagingInput.directNhwc &&
                     IsCompactNHWC(operation->IFM(0)->tensor->format);
-                workspace.stripe = std::max(workspace.stripe, WithPaddingSeed(
-                    neuralai::LinebufferPlanner().PlanStripeStaging(stagingInput).bytes));
+                workspace.stripe = std::max(workspace.stripe, CascadeLinebufferStripeBytes(
+                    neuralai::LinebufferPlanner().PlanStripeStaging(stagingInput).bytes,
+                    logicalOfm.WithHeight(int(outputRows)),
+                    IsL2ArenaTensor(operation->OFM()->tensor.get())));
             }
         }
         else if ( spilledOperation )
@@ -5708,7 +5746,8 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
         stagingInput.compactNhwc = !stagingInput.directNhwc &&
             IsCompactNHWC(operation->IFM(0)->tensor->format);
         const auto staging = neuralai::LinebufferPlanner().PlanStripeStaging(stagingInput);
-        const uint32_t stagingBytes = WithPaddingSeed(staging.bytes);
+        const uint32_t stagingBytes = CascadeLinebufferStripeBytes(staging.bytes,
+            ReshapeToNHWC(area.ofmArea.SizeShape()), IsL2ArenaTensor(operation->OFM()->tensor.get()));
         context.stripeStageBytes = std::max(context.stripeStageBytes, stagingBytes);
         context.workspaceSizes[operation->Uid()].stripe = std::max(
             context.workspaceSizes[operation->Uid()].stripe, stagingBytes);
