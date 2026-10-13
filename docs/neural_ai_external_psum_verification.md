@@ -151,7 +151,8 @@ invalidates the previous coverage claim.
 | Through command 211 | Previous thirteen plus 159, 170, 173, 179, 209 and 211 | Prepared, superseded by the complete-cascade batch |
 | Complete initial cascade, old NAI through 399 | All 33 planned checkpoints, both complete logical tensors | Stopped; command 159 byte-exact FAIL, diagnosed below |
 | Complete initial cascade, corrected NAI through 525 | 38 live checks and complete retained consumer L2 output | PASS, 614,400 live bytes + 204,800 L2 bytes |
-| Next SiLU / pointwise Conv / SiLU through 587 | All initial checks plus 59 completion-aware checks | Prepared; cluster verification pending |
+| Next SiLU / pointwise Conv / SiLU through 587 | All initial checks plus 59 completion-aware checks | PASS, 1,228,800 live bytes + 204,800 L2 bytes |
+| First C2f residual/concat through 1817 | Previous checks plus complete branch, two Conv/SiLU stages, residual and concat | Prepared; cluster verification pending |
 | Remaining later layers | Completion-aware tiles/groups and operator boundaries | Not yet verified |
 | Full YOLO and MobileNet regression | Complete output bindings | Deferred |
 
@@ -325,7 +326,7 @@ or stores, overwritten/stale sources, duplicate rows, partial/multi-group
 pointwise jobs and unsupported layouts are rejected. Source tensor IDs are
 resolved through actual Conv → Logistic/Mul edges in the TFLite graph.
 
-The prepared reset replay retains all 38 initial checks and adds **59 checks**:
+The reset replay retains all 38 initial checks and adds **59 checks**:
 51 for tensor 163 (second SiLU), four for tensor 164 (pointwise Conv), and four
 for tensor 166 (its SiLU). Each new tensor is checked completely: 6,400 rows ×
 32 channels = 204,800 bytes. The **97 live comparisons total 1,228,800 bytes**;
@@ -351,10 +352,68 @@ PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay
   --output hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/run-post-cascade
 ```
 
-Use a fresh output directory when repeating preparation. Current case, oracles,
-subsequent actual bytes, PMU and results are kept in `run-post-cascade/` under
-that evidence root. **Preparation is not a cluster/data PASS**; full-model
-regression remains deferred until the required bounded checkpoints pass.
+On 2026-10-13 this gate **passed all 97 checks**, with **zero mismatches** in
+1,228,800 live bytes and all 204,800 retained L2 bytes. PMU reports **3,312,759
+whole-run cycles** and **2,925,624 command-active cycles**, with 587 begin/end
+events, 587 unique CSV commands, 169 columns and no counter overflow. Cocotb
+reports PASS in **6,247.63 wall-clock seconds**. An independent recheck compared
+every actual/expected file and the retained L2 bytes, verified snapshot 587,
+and reconciled the CSV cycle sum with command-active PMU.
+
+Use a fresh output directory when repeating preparation. Case, actual/expected
+bytes, PMU and results are kept in `run-post-cascade/` under that evidence root.
+This proves complete tensors 163, 164 and 166 in addition to the initial
+cascade, not the remaining graph. Full-model regression remains deferred.
+
+### Next bounded gate: first C2f residual/concat block
+
+The next mapper resolves the source graph's channel slices and concat order,
+then propagates byte identities through the actual DMA1D/2D/3D strides. It
+supports compact C16 and C32 storage without treating padding as active data.
+Async Conv outputs become readable only at SYSTOLIC_WAIT; queued DMA data
+becomes readable only at the matching queue wait. Stale/misaligned residual
+inputs, missing/duplicate rows and incomplete concat materialization are errors.
+The mapper assigns logical Conv rows in verified raster tile order and checks
+every output byte against the independently computed hybrid reference; it is
+not a general numerical execution model for arbitrary graphs.
+
+| New tensor/check | Source tensor | Live checks | Active bytes |
+| --- | ---: | ---: | ---: |
+| Compact branch slice | 167 | 1 | 102,400 |
+| First block Conv / SiLU | 168 / 170 | 20 / 60 | 204,800 |
+| Second block Conv / SiLU | 171 / 173 | 80 / 80 | 204,800 |
+| AFU biased residual Add | 174 | 25 | 102,400 |
+| Two-group C32 concat, 48 channels | 176 | 1 | 307,200 |
+
+All previous 97 checks are retained: **364 live checks / 2,150,400 bytes** total.
+The initial consumer L2 output is compared at **587**, before block activation
+stores reuse its allocation; it is not incorrectly compared at the final
+snapshot. The Python PMU monitor supports short async callbacks for this
+existing backdoor read, while retaining strict context-sequence checks. Only
+the 204,800-byte oracle range is read (about 6.4 ns of simulation time), not
+the entire L2 binding. RTL, firmware and the pinned compiled NAI are unchanged.
+
+The final checkpoint is concat materialization at **1817**, a drained boundary
+before the next multi-input-group pointwise Conv. The timeout is 12,000,000
+cycles, a conservative bound rather than a performance estimate. Before launch,
+snapshot 587 also matched all 102,400 bytes of branch tensor 167. The expanded
+offline helper/snapshot/numerical suite passes **64 tests**; the prepared real
+case additionally rejects missing checks, stale compact layout, a wrong live-L2
+boundary, wrong concat channel order and stale coverage, and still loads both
+earlier gate cases. This preparation does not establish a C2f cluster PASS.
+
+```sh
+cd /home/dev01/neural-ai
+PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay.py \
+  --compiler-root /home/dev01/neural-compiler \
+  --manifest hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/artifacts/dma_events.json \
+  --from-reset --c2f-checkpoints --timeout-cycles 12000000 \
+  --output hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/run-c2f
+```
+
+Use a fresh output directory for a rerun. Evidence stays in `run-c2f/`, including
+actual/expected bytes, per-command PMU and the final memory snapshot. Gate 1817
+and full-model numerical correctness remain pending.
 
 ## Deferred regression: full YOLO output
 
