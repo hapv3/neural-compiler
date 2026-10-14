@@ -152,7 +152,8 @@ invalidates the previous coverage claim.
 | Complete initial cascade, old NAI through 399 | All 33 planned checkpoints, both complete logical tensors | Stopped; command 159 byte-exact FAIL, diagnosed below |
 | Complete initial cascade, corrected NAI through 525 | 38 live checks and complete retained consumer L2 output | PASS, 614,400 live bytes + 204,800 L2 bytes |
 | Next SiLU / pointwise Conv / SiLU through 587 | All initial checks plus 59 completion-aware checks | PASS, 1,228,800 live bytes + 204,800 L2 bytes |
-| First C2f residual/concat through 1817 | Previous checks plus complete branch, two Conv/SiLU stages, residual and concat | Prepared; cluster verification pending |
+| First C2f residual/concat through 1817 | Previous checks plus complete branch, two Conv/SiLU stages, residual and concat | PASS, 2,150,400 live bytes + 204,800 early L2 bytes |
+| Complete first C2f output through 2020 | Previous checks plus closing two-input-group pointwise Conv and SiLU | Prepared; cluster verification pending |
 | Remaining later layers | Completion-aware tiles/groups and operator boundaries | Not yet verified |
 | Full YOLO and MobileNet regression | Complete output bindings | Deferred |
 
@@ -400,7 +401,8 @@ snapshot 587 also matched all 102,400 bytes of branch tensor 167. The expanded
 offline helper/snapshot/numerical suite passes **64 tests**; the prepared real
 case additionally rejects missing checks, stale compact layout, a wrong live-L2
 boundary, wrong concat channel order and stale coverage, and still loads both
-earlier gate cases. This preparation does not establish a C2f cluster PASS.
+earlier gate cases. These preparation checks did not establish a C2f cluster
+PASS on their own.
 
 ```sh
 cd /home/dev01/neural-ai
@@ -412,8 +414,51 @@ PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay
 ```
 
 Use a fresh output directory for a rerun. Evidence stays in `run-c2f/`, including
-actual/expected bytes, per-command PMU and the final memory snapshot. Gate 1817
-and full-model numerical correctness remain pending.
+actual/expected bytes, per-command PMU and the final memory snapshot.
+
+Verified on **2026-10-14**: gate 1817 **passed all 364 checkpoints**, with zero
+mismatches in **2,150,400 bytes**. The live L2 comparison at command 587 also
+matched all 204,800 bytes. PMU reports **6,904,735 whole-run cycles** and
+**5,794,818 command-active cycles**, with 1,817 command begin/end events, no
+counter overflow, and all 1,817 CSV rows/169 columns. Cocotb reports PASS in
+**11,923.34 wall-clock seconds**. Independent saved-file comparisons, snapshot
+integrity/provenance, XML status and CSV cycle reconciliation also passed.
+This covers the first C2f through concat, not its following pointwise Conv or
+the rest of YOLO. Full-model numerical correctness remains pending.
+
+### Next bounded gate: closing C2f pointwise Conv and SiLU
+
+The next gate follows tensor 176's 48 active channels across two resident C32
+input groups into the closing 1×1 Conv (tensor 177), its reused local output
+staging and L2 stores, then DMA loads and SiLU (tensor 179). Physical group
+strides, output rows and completion points come from ABI commands; source
+tensor identities come from the actual concat → Conv → Logistic/Mul edges.
+The mapper rejects stale/missing input-group data, mismatched group strides,
+duplicate or missing rows, missing DMA waits, and partial/OFM workspace
+overlap with each other or with the resident concat. It does not perform the
+numerical Conv itself: output oracles remain the independent hybrid reference.
+
+The prepared reset gate retains all 364 checks and adds **75**: 25 Conv tiles
+and 50 SiLU tiles, each new tensor covering 6,400 × 32 = 204,800 active bytes.
+Total coverage is **439 checkpoints / 2,560,000 live bytes**, plus the retained
+204,800-byte early L2 comparison at 587. It ends at the first drained boundary,
+**2020**, before the next downsampling Conv; timeout remains 12,000,000 cycles.
+Per-command PMU is enabled. The new offline suite passes **68 tests**. No RTL,
+firmware or compiled-model changes are involved, and memory-only snapshot
+1817 is not assumed to restore the requant registers loaded earlier.
+
+```sh
+cd /home/dev01/neural-ai
+PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay.py \
+  --compiler-root /home/dev01/neural-compiler \
+  --manifest hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/artifacts/dma_events.json \
+  --from-reset --c2f-output-checkpoints --timeout-cycles 12000000 \
+  --output hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/run-c2f-output
+```
+
+Choose a fresh output directory for a rerun. Artifacts, expected/actual bytes,
+PMU and the final snapshot stay in `run-c2f-output/`. Gate 2020's cluster
+byte-exact result and full-model correctness remain pending.
 
 ## Deferred regression: full YOLO output
 
