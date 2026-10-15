@@ -154,7 +154,8 @@ invalidates the previous coverage claim.
 | Next SiLU / pointwise Conv / SiLU through 587 | All initial checks plus 59 completion-aware checks | PASS, 1,228,800 live bytes + 204,800 L2 bytes |
 | First C2f residual/concat through 1817 | Previous checks plus complete branch, two Conv/SiLU stages, residual and concat | PASS, 2,150,400 live bytes + 204,800 early L2 bytes |
 | Complete first C2f output through 2020 | Previous checks plus closing two-input-group pointwise Conv and SiLU | PASS, 2,560,000 live bytes + 204,800 early L2 bytes |
-| Next K3/S2 Conv and SiLU through 2057 | Previous checks plus both C32 output groups of C64 tensors | Prepared; cluster verification pending |
+| Next K3/S2 Conv and SiLU through 2057 | Previous checks plus both C32 output groups of C64 tensors | PASS, 2,764,800 live bytes + 204,800 early L2 bytes |
+| Snapshot-2057 continuation through 2067 | Retained parent + next two-group pointwise Conv / SiLU | Prepared; cluster verification pending |
 | Remaining later layers | Completion-aware tiles/groups and operator boundaries | Not yet verified |
 | Full YOLO and MobileNet regression | Complete output bindings | Deferred |
 
@@ -503,8 +504,64 @@ PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay
 ```
 
 Use a fresh output directory for reruns. Byte oracles, actual outputs, per-command
-PMU and the final snapshot stay in `run-downsample/`. Gate 2057's cluster
-byte-exact result and full-model correctness remain pending.
+PMU and the final snapshot stay in `run-downsample/`.
+
+Verified on **2026-10-15**: all **454 checkpoints / 2,764,800 live bytes passed**,
+with zero mismatches; early L2 comparison also matched 204,800 bytes. PMU
+reports **7,754,503 whole-run cycles**, **6,501,144 command-active cycles**,
+2,057 command begin/end events, 2,057 CSV rows/169 columns and no overflow.
+Cocotb reports PASS in **18,708.93 wall-clock seconds**. Independent saved-byte,
+snapshot integrity/provenance, XML and CSV-cycle reconciliation checks passed.
+This establishes tensors 181/183 in addition to preceding gates, not full YOLO.
+
+### Verified-parent continuation: grouped pointwise from snapshot 2057
+
+This suffix explicitly configures RQ at 2058/2060 and loads a fresh LUT at
+2063; no old RQ or LUT state is required. The replay resets the hardware,
+restores the complete memory snapshot, and executes **2058–2067 only**, not
+the already verified prefix. Its three new checks are Conv tensor 184's two
+output groups at 2059/2061 and full C64 SiLU tensor 186 at 2063:
+**204,800 new live bytes**. Pending constant/weight DMA loads require the final
+join at **2067**, the first globally drained boundary; that later-layer setup
+is not counted as numerically verified work. Timeout is 1,000,000 cycles.
+
+Continuation is accepted only when all of the following hold:
+
+- The preceding case/report is PASS at the exact snapshot boundary, with
+  matching model, source, firmware, input and reference-build identities.
+- Snapshot model/boundary/integrity and binding sizes match. The retained
+  parent tensor 183 is re-compared in full: **102,400 bytes** against both the
+  pinned oracle and the current independent reference before launching.
+- The prepared case pins the snapshot, previous case and PASS report hashes.
+  Runtime case loading repeats the parent comparison before memory restore.
+- Every pointwise output group has an explicit matching RQ load; its source
+  groups and partial/OFM workspaces pass provenance and overlap checks. The
+  first LUT must load its configuration itself, rather than reuse missing SRAM.
+
+The **81 offline tests** include rejected running/failed evidence, wrong
+identity/boundary/reference build, corrupt or partial parent data, missing RQ
+loads, missing output groups, stale input and LUT-reuse rejection. Historical
+non-LUT AFU work no longer prevents a suffix whose first LUT explicitly loads
+new constants; suffixes that need historical LUT residency retain the existing
+strict restore checks. Earlier reset gate cases remain supported.
+
+```sh
+cd /home/dev01/neural-ai
+PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay.py \
+  --compiler-root /home/dev01/neural-compiler \
+  --manifest hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/artifacts/dma_events.json \
+  --snapshot hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/run-downsample/command-2057.snapshot \
+  --resume-grouped-pointwise-checkpoints --timeout-cycles 1000000 \
+  --output hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/run-resume-pointwise
+```
+
+Evidence stays in `run-resume-pointwise/`, with original command numbers
+2058–2067 in the ten PMU rows, initial-parent statistics, new actual/expected
+bytes and snapshot 2067. This is a narrowly verified self-configuring restart,
+not arbitrary register restoration. Other boundaries still require an explicit
+safe restore plan or replay from a supported start. Gate 2067's cluster result
+and full-model byte-exactness remain pending; no RTL, firmware or NAI changes
+are involved.
 
 ## Deferred regression: full YOLO output
 
