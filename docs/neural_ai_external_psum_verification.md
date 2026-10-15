@@ -153,7 +153,8 @@ invalidates the previous coverage claim.
 | Complete initial cascade, corrected NAI through 525 | 38 live checks and complete retained consumer L2 output | PASS, 614,400 live bytes + 204,800 L2 bytes |
 | Next SiLU / pointwise Conv / SiLU through 587 | All initial checks plus 59 completion-aware checks | PASS, 1,228,800 live bytes + 204,800 L2 bytes |
 | First C2f residual/concat through 1817 | Previous checks plus complete branch, two Conv/SiLU stages, residual and concat | PASS, 2,150,400 live bytes + 204,800 early L2 bytes |
-| Complete first C2f output through 2020 | Previous checks plus closing two-input-group pointwise Conv and SiLU | Prepared; cluster verification pending |
+| Complete first C2f output through 2020 | Previous checks plus closing two-input-group pointwise Conv and SiLU | PASS, 2,560,000 live bytes + 204,800 early L2 bytes |
+| Next K3/S2 Conv and SiLU through 2057 | Previous checks plus both C32 output groups of C64 tensors | Prepared; cluster verification pending |
 | Remaining later layers | Completion-aware tiles/groups and operator boundaries | Not yet verified |
 | Full YOLO and MobileNet regression | Complete output bindings | Deferred |
 
@@ -457,7 +458,52 @@ PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay
 ```
 
 Choose a fresh output directory for a rerun. Artifacts, expected/actual bytes,
-PMU and the final snapshot stay in `run-c2f-output/`. Gate 2020's cluster
+PMU and the final snapshot stay in `run-c2f-output/`.
+
+Verified on **2026-10-15**: gate 2020 **passed all 439 checkpoints**, with zero
+mismatches in **2,560,000 live bytes** and the 204,800-byte L2 comparison at
+587. PMU reports **7,205,685 whole-run cycles** and **5,979,252 command-active
+cycles**; all 2,020 command begin/end events and CSV rows are present, with
+169 columns and no overflow. Cocotb reports PASS in **16,022.83 wall-clock
+seconds**. Independent actual/expected file comparison, snapshot provenance,
+XML status and CSV-cycle reconciliation also passed. This establishes complete
+first-C2f output tensors 177/179 for the pinned input, not full-model correctness.
+
+### Next bounded gate: grouped K3/S2 downsample Conv and SiLU
+
+The mapper follows the next source Conv through its optional PAD edge from
+tensor 179. Tensor 181 is a 40×40×64 Conv output, stored as two C32 groups;
+tensor 183 is its SiLU output. Each group has independent raster rows selected
+by the explicit LOAD_QPARAMS group selector. Stale selectors, noncontiguous
+destinations and reads of pending async results are rejected. The whole-tensor
+LUT requires every output group to have completed.
+
+The oracle now slices both spatial rows and channels from the original NHWC
+tensor. Flattening a C64 tensor into C32 rows would interleave channel groups
+incorrectly; a dedicated regression distinguishes these two interpretations.
+Coverage proves every `(row, channel)` cell is checked exactly once, rather
+than counting both groups as duplicate spatial rows. All **439 preceding
+expected byte files remain unchanged**.
+
+The prepared reset gate adds **15 checks** (14 Conv tiles + one C64 SiLU),
+covering both complete tensors: **454 checkpoints / 2,764,800 live bytes** total,
+plus the early 204,800-byte L2 comparison at 587. It ends at the drained boundary
+**2057**, before the next pointwise Conv. Timeout remains 12,000,000 cycles and
+per-command PMU is enabled. The offline helper/snapshot/numerical suite passes
+**73 tests**. RTL, firmware and the compiled NAI are unchanged; snapshot 2020
+is not assumed to restore the requant configuration loaded at 1869.
+
+```sh
+cd /home/dev01/neural-ai
+PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay.py \
+  --compiler-root /home/dev01/neural-compiler \
+  --manifest hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/artifacts/dma_events.json \
+  --from-reset --downsample-checkpoints --timeout-cycles 12000000 \
+  --output hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/run-downsample
+```
+
+Use a fresh output directory for reruns. Byte oracles, actual outputs, per-command
+PMU and the final snapshot stay in `run-downsample/`. Gate 2057's cluster
 byte-exact result and full-model correctness remain pending.
 
 ## Deferred regression: full YOLO output
