@@ -162,7 +162,8 @@ invalidates the previous coverage claim.
 | Snapshot-2405 continuation through 2418 | Four-group C128 pointwise Conv and whole-tensor SiLU | PASS, 102,400 live bytes |
 | Snapshot-2405 continuation through 2604 | Previous five checks plus complete C64-branch C2f, both residual Adds and C256 concat | PASS, 460,800 live bytes |
 | Snapshot-2604 continuation through 2640 | Closing C256-to-C128 pointwise Conv, streamed SiLU and retained L2 | PASS, 102,400 live bytes + 51,200 L2 bytes |
-| Snapshot-2604 continuation through 2731 | Previous output checks plus L2-fed K3/S2 Conv and C256 SiLU | Prepared; cluster verification pending |
+| Snapshot-2604 continuation through 2731 | Previous output checks plus L2-fed K3/S2 Conv and C256 SiLU | PASS, 153,600 live bytes + 51,200 L2 bytes |
+| Snapshot-2731 continuation through 5254 | All 2,523 remaining commands, nine self-configuring prefix checks and complete final output | Prepared; simulation/output verification pending |
 | Remaining later layers | Completion-aware tiles/groups and operator boundaries | Not yet verified |
 | Full YOLO and MobileNet regression | Complete output bindings | Deferred |
 
@@ -1017,10 +1018,69 @@ PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay
 ```
 
 Evidence stays in `run-l2-c256-downsample/`: expected/actual checkpoint and L2
-bytes, `command_pmu.csv` (127 rows expected), `byte_exact.json`, `sim.log`,
-`results.xml` and, after successful completion, `command-2731.snapshot`.
-Cluster verification and full-model byte-exactness remain pending. No RTL,
-firmware, compiled NAI or numerical-reference changes are involved.
+bytes, `command_pmu.csv`, `byte_exact.json`, `sim.log`, `results.xml` and
+`command-2731.snapshot`.
+
+Verified on **2026-10-16**: all **26 checkpoints / 153,600 live bytes passed**,
+with zero mismatches; retained L2 matched all **51,200 bytes**. PMU reports
+**569,501 whole-run cycles**, **445,834 command-active cycles**, 127 command
+begin/end events, 127 CSV rows/169 columns and no overflow. Cocotb reports PASS
+in **1,242.25 wall-clock seconds**. Independent actual/oracle files, XML,
+snapshot integrity/model identity, retained L2 and CSV-cycle reconciliation
+passed. All **25,600 bytes of the retained C256 SiLU 237** in snapshot 2731
+were also rechecked against the pinned oracle. RTL, firmware, compiled NAI
+and numerical reference are unchanged.
+
+### Single continuation for all remaining commands
+
+At the user's request, run **2732–5254 in one invocation**, not further small
+gates. `--remaining-graph` starts from the verified snapshot 2731, executes all
+**2,523 remaining logical commands**, and compares all **176,400 final INT8
+output bytes** (`[1,84,2100]`) with the pinned Neural-AI hybrid reference.
+Timeout is **50,000,000 cycles**; per-command PMU covers the entire suffix.
+
+The mode retains strict snapshot/PASS/artifact/reference-build provenance and
+rechecks the complete retained parent against both its saved oracle and the
+current reference. It also requires a self-configuring pointwise/SiLU prefix:
+fresh RQ begins at 2732 and the first LUT at 2748 loads its constants itself.
+No unsaved hardware register or LUT contents are assumed. Eight Conv output
+groups at 2733/2735/2737/2739/2741/2743/2745/2747 and whole C256 SiLU at 2748
+remain live byte-exact checkpoints (**51,200 bytes**), with fail-fast enabled.
+The remaining later intermediates are not individually compared by this run.
+
+`remaining_graph=true` and `full_graph=false` distinguish this continuation
+from the reset regression below. The suffix uses the existing expanded
+logical-command range extractor; all original commands/operands and their
+order are checked unchanged, but affine-loop encoding is not retained.
+Therefore its PMU is suffix-replay evidence, not a measurement of the original
+compacted full stream from reset. Final output PASS requires both successful
+command execution and zero byte mismatches, never command completion alone.
+
+All **136 offline tests** pass. Scope tests reject partial execution, missing
+snapshot/prefix metadata, ambiguous reset/continuation claims, incomplete
+output oracles and a single-byte output error. All thirteen earlier cases
+still load; eight real-case mutations (missing final command, stale prefix
+boundary, bad evidence hash, missing parent check/oracle/output group, partial
+oracle and reset claim) are rejected. Preparation independently checks the
+entire 2,523-command suffix against the pinned logical stream. Logs are
+`remaining-2732-5254-helper-tests.log` and `prepare-remaining-2732-5254.log`.
+
+```sh
+cd /home/dev01/neural-ai
+PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay.py \
+  --compiler-root /home/dev01/neural-compiler \
+  --manifest hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/artifacts/dma_events.json \
+  --snapshot hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/run-l2-c256-downsample/command-2731.snapshot \
+  --remaining-graph --timeout-cycles 50000000 --fail-fast \
+  --output hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/run-remaining-2732-5254
+```
+
+Evidence stays in `run-remaining-2732-5254/`: prefix actual/expected files,
+`output-actual.bin`, `output-expected.bin`, `command_pmu.csv` (2,523 rows
+expected), `byte_exact.json`, `sim.log`, `results.xml` and, after completed
+execution, `command-5254.snapshot`. Simulation and final-output byte-exactness
+remain pending. No RTL, firmware, compiled NAI or numerical-reference changes
+are involved.
 
 ## Deferred regression: full YOLO output
 
