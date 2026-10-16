@@ -156,7 +156,8 @@ invalidates the previous coverage claim.
 | Complete first C2f output through 2020 | Previous checks plus closing two-input-group pointwise Conv and SiLU | PASS, 2,560,000 live bytes + 204,800 early L2 bytes |
 | Next K3/S2 Conv and SiLU through 2057 | Previous checks plus both C32 output groups of C64 tensors | PASS, 2,764,800 live bytes + 204,800 early L2 bytes |
 | Snapshot-2057 continuation through 2067 | Retained parent + next two-group pointwise Conv / SiLU | PASS, 204,800 new live bytes + 102,400 retained parent bytes |
-| Snapshot-2057 continuation through 2266 | Next complete two-bottleneck C2f, both AFU Add paths and C128 concat | Prepared; cluster verification pending |
+| Snapshot-2057 continuation through 2266 | Next complete two-bottleneck C2f, both AFU Add paths and C128 concat | PASS, 921,600 live bytes |
+| Snapshot-2266 continuation through 2346 | Closing C128-to-C64 pointwise Conv, streamed SiLU and retained L2 | Prepared; cluster verification pending |
 | Remaining later layers | Completion-aware tiles/groups and operator boundaries | Not yet verified |
 | Full YOLO and MobileNet regression | Complete output bindings | Deferred |
 
@@ -626,8 +627,80 @@ PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay
 Simulation evidence stays in `run-resume-c2f/`: original-numbered
 `command_pmu.csv` (209 rows expected), live actual/expected bytes,
 `byte_exact.json`, `sim.log`, `results.xml` and, on completed execution,
-`command-2266.snapshot`. Cluster byte-exactness of this gate remains pending;
-no RTL, firmware or compiled NAI changes are needed to prepare it.
+`command-2266.snapshot`.
+
+Verified on **2026-10-16**: all **18 checkpoints / 921,600 live bytes passed**,
+with zero mismatches. PMU reports **871,693 whole-run cycles**,
+**707,944 command-active cycles**, 209 command begin/end events, 209 CSV
+rows/169 columns and no overflow. Cocotb reports PASS in **1,491.79 wall-clock
+seconds**. Independent saved-byte, snapshot integrity/provenance, retained
+concat, XML and CSV-cycle reconciliation checks passed. This establishes the
+complete second C2f interior through tensor 203, not its closing Conv/SiLU or
+full-model output.
+
+Per-command measurements: general AFU Add 2163 took **6,788 cycles**
+(6,411 AFU-active); biased AFU Add 2260 took **6,704 cycles** (6,403 AFU-active).
+Each compared 51,200 bytes with zero mismatches and no Spatz-active cycles.
+The six local concat-copy commands 2261–2266 each took **33,022 cycles**:
+**198,132 cycles total**, approximately 28.0% of command-active time. Keep
+these as measured tuning evidence, not a full-inference estimate or permission
+to change the implementation. The auxiliary DMA event trace reached its
+1,000-row cap; the 209-row per-command PMU CSV and all numerical checks are
+complete and unaffected. No RTL, firmware or NAI changes were involved.
+
+### Closing pointwise, streamed SiLU and retained L2 from snapshot 2266
+
+`--resume-c2f-output-checkpoints` restores snapshot **2266** only after its
+PASS case/report identities and all **204,800 retained concat bytes** have
+been independently rechecked. It executes **2267–2346**, 80 original commands,
+without replaying earlier work. Explicit RQ loads 2267/2269 configure the two
+pointwise output groups; LUT 2271 loads fresh constants. No old hardware
+register state is assumed. Timeout is 2,000,000 cycles, with fail-fast enabled.
+
+The **27 checkpoints / 204,800 live bytes** cover:
+
+- Tensor 204, closing Conv: four C32 input groups, two C32 output groups at
+  2268/2270, all 102,400 output bytes.
+- Tensor 206, SiLU: 25 physical 4 KiB LUT tiles, all 102,400 bytes. At 2307,
+  one tile contains rows 1536–1599 of channels 0–31 followed by rows 0–63 of
+  channels 32–63. `reference_spans` describes that physical order explicitly;
+  neither NHWC flattening nor a single rectangular slice is correct there.
+- After store/load queues join at 2346, an additional full **102,400-byte L2
+  comparison** verifies the assembled tensor 206, including every stored
+  channel group, against its independently pinned reference.
+
+The mapper tracks source/output byte identities, current RQ selectors and LUT
+residency across DMA and staging reuse. It requires complete, non-overlapping
+cell coverage and locates the retained L2 tensor by provenance rather than a
+hardcoded address. Partial workspace is **min(M, 256) × 128 bytes**: runtime
+`runtime_pointwise_c32` reuses it for each row stripe. Treating it as M × 128
+would falsely report overlap for this command. No firmware change is needed.
+
+The **100 offline tests** pass, including a 257-row workspace-boundary case,
+cross-group oracle ordering, corrupt fourth-group snapshot data, missing RQ,
+stale LUT/input data and missing store completion. All seven earlier cases
+still load. Seven real-case mutations (missing tile, wrong L2 location,
+coverage, parent check, incomplete DMA join and wrong/unexpected spans) were
+rejected. Logs: `resume-output-helper-tests.log` and `prepare-resume-output.log`.
+
+```sh
+cd /home/dev01/neural-ai
+PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay.py \
+  --compiler-root /home/dev01/neural-compiler \
+  --manifest hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/artifacts/dma_events.json \
+  --snapshot hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/run-resume-c2f/command-2266.snapshot \
+  --resume-c2f-output-checkpoints --timeout-cycles 2000000 --fail-fast \
+  --output hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/run-resume-output
+```
+
+Evidence stays in `run-resume-output/`: `command_pmu.csv` (80 rows expected),
+live actual/expected tiles, `resident-l2-actual.bin`, `resident-l2-expected.bin`,
+`byte_exact.json`, `results.xml`, `sim.log` and `command-2346.snapshot` on
+completed execution. The local launcher raises the auxiliary DMA trace cap to
+50,000 rows; per-command PMU remains unfiltered. Gate 2346's cluster result and
+full-model byte-exactness remain pending. A later restart after 2346 still
+needs RQ restoration or replay from a self-configuring boundary: its next Conv
+would otherwise reuse the omitted hardware state loaded at 2273.
 
 ## Deferred regression: full YOLO output
 
@@ -652,9 +725,9 @@ mismatch detection and preservation of encoded affine loops. Preparation:
 cd /home/dev01/neural-ai
 PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay.py \
   --compiler-root /home/dev01/neural-compiler \
-  --manifest hw/rtl/cluster/tb/sim/test_yolo_external_psum_20261012/artifacts/dma_events.json \
+  --manifest hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/artifacts/dma_events.json \
   --from-reset --consumer-tiles 4 --full-graph --timeout-cycles 50000000 \
-  --output hw/rtl/cluster/tb/sim/test_yolo_external_psum_20261012/run-full
+  --output hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/run-full-byte-exact
 ```
 
 Result scope and artifact hashes are explicit in `byte_exact.json`.
