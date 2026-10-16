@@ -159,7 +159,8 @@ invalidates the previous coverage claim.
 | Snapshot-2057 continuation through 2266 | Next complete two-bottleneck C2f, both AFU Add paths and C128 concat | PASS, 921,600 live bytes |
 | Snapshot-2266 continuation through 2346 | Closing C128-to-C64 pointwise Conv, streamed SiLU and retained L2 | PASS, 204,800 live bytes + 102,400 L2 bytes |
 | Snapshot-2266 continuation through 2405 | Previous output checks plus L2-fed K3/S2 Conv and C128 SiLU | PASS, 307,200 live bytes + 102,400 L2 bytes |
-| Snapshot-2405 continuation through 2418 | Four-group C128 pointwise Conv and whole-tensor SiLU | Prepared; cluster verification pending |
+| Snapshot-2405 continuation through 2418 | Four-group C128 pointwise Conv and whole-tensor SiLU | PASS, 102,400 live bytes |
+| Snapshot-2405 continuation through 2604 | Previous five checks plus complete C64-branch C2f, both residual Adds and C256 concat | Prepared; cluster verification pending |
 | Remaining later layers | Completion-aware tiles/groups and operator boundaries | Not yet verified |
 | Full YOLO and MobileNet regression | Complete output bindings | Deferred |
 
@@ -829,10 +830,82 @@ PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay
 ```
 
 Evidence stays in `run-resume-c128-pointwise/`: actual/expected checkpoint
-bytes, original-numbered `command_pmu.csv` (13 rows expected), `byte_exact.json`,
-`sim.log`, `results.xml` and, on completed execution, `command-2418.snapshot`.
-Cluster verification of this gate and full-model byte-exactness remain pending.
+bytes, original-numbered `command_pmu.csv`, `byte_exact.json`, `sim.log`,
+`results.xml` and `command-2418.snapshot`.
+
+Verified on **2026-10-16**: all **five checkpoints / 102,400 live bytes passed**,
+with zero mismatches. The retained parent also matched all **51,200 bytes**.
+PMU reports **105,217 whole-run cycles**, **55,562 command-active cycles**,
+13 command begin/end events, 13 CSV rows/169 columns and no overflow.
+Cocotb reports PASS in **293.13 wall-clock seconds**. Independent saved-byte,
+XML, snapshot integrity/provenance and CSV-cycle reconciliation checks passed.
+This establishes Conv 211 and SiLU 213, not subsequent C2f or full-model output.
 No RTL, firmware, compiled NAI or numerical-reference changes are involved.
+
+### Complete multi-input-group C2f from snapshot 2405
+
+The existing `--resume-c2f-chain-checkpoints` mode now also maps branches with
+two or four C32 input/output groups. Source edges determine the two slices,
+bottleneck count, residual operands and concat order; shapes and ABI determine
+the spatial stripes and group strides. The already verified single-input-group
+mapper, including its asynchronous compute handling, is unchanged. The new
+multi-input-group mapper requires synchronous Conv commands and rejects
+unsupported asynchronous compute rather than assuming completion.
+
+For the third C2f, use **snapshot 2405**, not 2418: the latter omits RQ register
+state from command 2417. Replay **2406–2604**, 199 original commands, including
+the five verified head checks above. The complete gate contains **28
+checkpoints / 460,800 live bytes**:
+
+| Commands | Compared tensor | Bytes |
+| --- | --- | ---: |
+| 2407 / 2409 / 2411 / 2413 / 2415 | C128 pointwise Conv 211 and SiLU 213 | 102,400 |
+| 2436 / 2442 / 2451 / 2457 | Conv 216, both C32 output groups and both spatial stripes | 25,600 |
+| 2459 | Complete C64 SiLU 218 | 25,600 |
+| 2480 / 2486 / 2495 / 2501 | Conv 219, both groups and stripes | 25,600 |
+| 2502 / 2504 | Complete C64 SiLU 221 / general residual Add 222 | 51,200 |
+| 2525 / 2531 / 2540 / 2546 | Conv 223, both groups and stripes | 25,600 |
+| 2548 | Complete C64 SiLU 225 | 25,600 |
+| 2569 / 2575 / 2584 / 2590 | Conv 226, both groups and stripes | 25,600 |
+| 2591 / 2592 | Complete C64 SiLU 228 / biased residual Add 229 | 51,200 |
+| 2604 | Complete C256 concat 230 after all copies finish | 102,400 |
+
+For every K3/S1 stripe, staged pixels/channels must have provenance from the
+correct branch or preceding activation/residual. External pSUM must follow
+init/middle/final input-group order, retain the same stripe/output workspace
+and advance weight addresses consistently. Only the final input-group job
+creates an output checkpoint; partial sums are not presented as numerical
+output proof. Each output cell is covered exactly once, with current RQ setup
+and live workspace overlap checks. Whole-tensor LUT/Add and concat checks
+preserve native group-major C32 order, not flattened NHWC order. Queued DMA
+requires its matching completion before a consumer or final concat capture.
+
+The **126 offline tests** pass, including two/four-input-group accumulation,
+middle-partial corruption, staged channel corruption, missing final output,
+native residual/concat order, both DMA wait directions and unsupported async
+compute. All ten earlier cases still load. Six real-case mutations (missing
+stripe, wrong output group, swapped concat sources, stale coverage, missing
+parent verification and nonminimal boundary) are rejected. Preparation pins
+the same NAI, firmware, input and independent numerical reference; the five
+head oracles are unchanged. Logs are `resume-grouped-c2f-helper-tests.log`
+and `prepare-resume-grouped-c2f.log`.
+
+```sh
+cd /home/dev01/neural-ai
+PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay.py \
+  --compiler-root /home/dev01/neural-compiler \
+  --manifest hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/artifacts/dma_events.json \
+  --snapshot hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/run-l2-downsample/command-2405.snapshot \
+  --resume-c2f-chain-checkpoints --timeout-cycles 2000000 --fail-fast \
+  --output hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/run-resume-grouped-c2f
+```
+
+Evidence stays in `run-resume-grouped-c2f/`: expected/actual checkpoint bytes,
+original-numbered `command_pmu.csv` (199 rows expected), `byte_exact.json`,
+`sim.log`, `results.xml` and, after successful completion,
+`command-2604.snapshot`. Cluster verification and full-model byte-exactness
+remain pending. No RTL, firmware, compiled NAI or numerical-reference changes
+are involved.
 
 ## Deferred regression: full YOLO output
 
