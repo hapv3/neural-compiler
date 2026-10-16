@@ -160,7 +160,8 @@ invalidates the previous coverage claim.
 | Snapshot-2266 continuation through 2346 | Closing C128-to-C64 pointwise Conv, streamed SiLU and retained L2 | PASS, 204,800 live bytes + 102,400 L2 bytes |
 | Snapshot-2266 continuation through 2405 | Previous output checks plus L2-fed K3/S2 Conv and C128 SiLU | PASS, 307,200 live bytes + 102,400 L2 bytes |
 | Snapshot-2405 continuation through 2418 | Four-group C128 pointwise Conv and whole-tensor SiLU | PASS, 102,400 live bytes |
-| Snapshot-2405 continuation through 2604 | Previous five checks plus complete C64-branch C2f, both residual Adds and C256 concat | Prepared; cluster verification pending |
+| Snapshot-2405 continuation through 2604 | Previous five checks plus complete C64-branch C2f, both residual Adds and C256 concat | PASS, 460,800 live bytes |
+| Snapshot-2604 continuation through 2640 | Closing C256-to-C128 pointwise Conv, streamed SiLU and retained L2 | Prepared; cluster verification pending |
 | Remaining later layers | Completion-aware tiles/groups and operator boundaries | Not yet verified |
 | Full YOLO and MobileNet regression | Complete output bindings | Deferred |
 
@@ -901,11 +902,65 @@ PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay
 ```
 
 Evidence stays in `run-resume-grouped-c2f/`: expected/actual checkpoint bytes,
-original-numbered `command_pmu.csv` (199 rows expected), `byte_exact.json`,
-`sim.log`, `results.xml` and, after successful completion,
-`command-2604.snapshot`. Cluster verification and full-model byte-exactness
-remain pending. No RTL, firmware, compiled NAI or numerical-reference changes
-are involved.
+original-numbered `command_pmu.csv`, `byte_exact.json`, `sim.log`, `results.xml`
+and `command-2604.snapshot`.
+
+Verified on **2026-10-16**: all **28 checkpoints / 460,800 live bytes passed**,
+with zero mismatches. The final snapshot retains the complete **102,400-byte
+C256 concat**, independently rechecked against the pinned oracle. PMU reports
+**830,279 whole-run cycles**, **661,072 command-active cycles**, 199 command
+begin/end events, 199 CSV rows/169 columns and no overflow. Cocotb reports PASS
+in **1,667.46 wall-clock seconds**. Independent actual/expected files, XML,
+snapshot integrity/model identity and CSV-cycle reconciliation passed. This
+establishes both C64 bottlenecks, both residual Add paths and concat 230;
+it does not establish later layers or full-model output. RTL, firmware,
+compiled NAI and numerical reference are unchanged.
+
+### C256 concat output and streamed C128 SiLU from snapshot 2604
+
+The unchanged `--resume-c2f-output-checkpoints` mapper accepts this verified
+complete C256 parent. Preparation requires the prior PASS report and pinned
+artifact/reference identities, rechecks all **102,400 retained parent bytes**
+and compares them with the current independent reference. Replay begins with
+fresh RQ setup at 2605, so no unsaved configuration register is assumed.
+
+Execute **2605–2640 only**, 36 original commands, with a 2,000,000-cycle timeout
+and fail-fast. There are **17 checkpoints / 102,400 live bytes**:
+
+| Commands | Compared tensor | Bytes |
+| --- | --- | ---: |
+| 2606 / 2608 / 2610 / 2612 | Conv 231, all four C32 output groups after eight-input-group pointwise accumulation | 51,200 |
+| 2613 / 2617 / 2619 / 2621 / 2623 / 2625 / 2627 / 2629 / 2631 / 2633 / 2635 / 2637 / 2639 | Streamed SiLU 233, every output byte once | 51,200 |
+
+Also compare all **51,200 retained L2 bytes** at offset 102,400 after store
+completion. SiLU tiles 2621/2627/2633 cross C32-group boundaries; explicit
+reference spans preserve physical group-major order rather than NHWC flattening.
+The last tile contains 2,048 bytes, the preceding twelve contain 4,096 each.
+Boundary 2640 joins the final store before saving the next memory snapshot.
+
+All **129 offline tests** pass. Added tests cover eight input groups/four output
+groups, complete native L2 output, eighth-group parent corruption, missing
+fourth output and complete C256 snapshot-parent verification. All eleven
+earlier cases still load; five real-case mutations (missing output group,
+wrong cross-group span, missing parent check, wrong L2 group stride and
+nonminimal boundary) are rejected. Logs are `resume-c256-output-helper-tests.log`
+and `prepare-resume-c256-output.log`.
+
+```sh
+cd /home/dev01/neural-ai
+PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay.py \
+  --compiler-root /home/dev01/neural-compiler \
+  --manifest hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/artifacts/dma_events.json \
+  --snapshot hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/run-resume-grouped-c2f/command-2604.snapshot \
+  --resume-c2f-output-checkpoints --timeout-cycles 2000000 --fail-fast \
+  --output hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/run-resume-c256-output
+```
+
+Evidence stays in `run-resume-c256-output/`: expected/actual checkpoint and L2
+bytes, `command_pmu.csv` (36 rows expected), `byte_exact.json`, `sim.log`,
+`results.xml` and, after successful completion, `command-2640.snapshot`.
+Cluster verification and full-model byte-exactness remain pending. No RTL,
+firmware, compiled NAI or numerical-reference changes are involved.
 
 ## Deferred regression: full YOLO output
 
