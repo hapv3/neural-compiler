@@ -157,7 +157,8 @@ invalidates the previous coverage claim.
 | Next K3/S2 Conv and SiLU through 2057 | Previous checks plus both C32 output groups of C64 tensors | PASS, 2,764,800 live bytes + 204,800 early L2 bytes |
 | Snapshot-2057 continuation through 2067 | Retained parent + next two-group pointwise Conv / SiLU | PASS, 204,800 new live bytes + 102,400 retained parent bytes |
 | Snapshot-2057 continuation through 2266 | Next complete two-bottleneck C2f, both AFU Add paths and C128 concat | PASS, 921,600 live bytes |
-| Snapshot-2266 continuation through 2346 | Closing C128-to-C64 pointwise Conv, streamed SiLU and retained L2 | Prepared; cluster verification pending |
+| Snapshot-2266 continuation through 2346 | Closing C128-to-C64 pointwise Conv, streamed SiLU and retained L2 | PASS, 204,800 live bytes + 102,400 L2 bytes |
+| Snapshot-2266 continuation through 2405 | Previous output checks plus L2-fed K3/S2 Conv and C128 SiLU | Prepared; cluster verification pending |
 | Remaining later layers | Completion-aware tiles/groups and operator boundaries | Not yet verified |
 | Full YOLO and MobileNet regression | Complete output bindings | Deferred |
 
@@ -697,10 +698,76 @@ Evidence stays in `run-resume-output/`: `command_pmu.csv` (80 rows expected),
 live actual/expected tiles, `resident-l2-actual.bin`, `resident-l2-expected.bin`,
 `byte_exact.json`, `results.xml`, `sim.log` and `command-2346.snapshot` on
 completed execution. The local launcher raises the auxiliary DMA trace cap to
-50,000 rows; per-command PMU remains unfiltered. Gate 2346's cluster result and
-full-model byte-exactness remain pending. A later restart after 2346 still
+50,000 rows; per-command PMU remains unfiltered. A later restart after 2346 still
 needs RQ restoration or replay from a self-configuring boundary: its next Conv
 would otherwise reuse the omitted hardware state loaded at 2273.
+
+Verified on **2026-10-16**: all **27 checkpoints / 204,800 live bytes passed**,
+including the cross-group tile at 2307. The complete retained tensor 206 also
+matched all **102,400 L2 bytes**. PMU reports **189,129 whole-run cycles**,
+**102,858 command-active cycles**, 80 command begin/end events, 80 CSV
+rows/169 columns and no overflow. Cocotb reports PASS in **631.47 wall-clock
+seconds**. Independent saved-byte, XML, snapshot integrity/provenance,
+retained L2 and CSV-cycle reconciliation checks passed. This establishes
+tensors 204/206, not the following downsample or full-model output.
+
+### L2-fed grouped K3/S2 accumulation and C128 SiLU
+
+`--resume-l2-downsample-checkpoints` extends the preceding gate from snapshot
+**2266** through **2405**, 139 original commands. Replaying 2267–2346 keeps the
+required RQ load 2273 inside the executed stream; it does not restore arbitrary
+register state or rerun the large reset prefix. The new gate retains all 27
+output checks and adds nine checks: **36 checkpoints / 307,200 live bytes**,
+plus the complete **102,400-byte retained L2 comparison**. Timeout remains
+2,000,000 cycles with fail-fast enabled.
+
+| Finalized Conv commands | Tensor 208 channels | Compared bytes |
+| --- | --- | ---: |
+| 2352 / 2359 | 0–31 | 12,800 |
+| 2367 / 2374 | 32–63 | 12,800 |
+| 2382 / 2389 | 64–95 | 12,800 |
+| 2397 / 2404 | 96–127 | 12,800 |
+| 2405, SiLU tensor 210 | All 128 channels | 51,200 |
+
+Command numbers, stripe rows and addresses are derived from source graph and
+ABI geometry. Source PAD constants determine top/bottom/left/right padding;
+the mapper does not infer it from a generic SAME rule. Each output stripe
+requires both C32 input groups in order: initialize external pSUM, then
+accumulate and requantize. Middle accumulation is also modeled and tested for
+three input groups. Only finalized INT8 output becomes a numerical checkpoint;
+intermediate pSUM arithmetic is not claimed byte-exact independently.
+
+The mapper checks every staged non-padding pixel/channel against the retained
+L2 parent's byte provenance, requires current replayed RQ setup, checks pSUM
+continuity between input groups, excludes live workspace overlap, and requires
+all four completed output groups before a freshly configured LUT can read
+them. It also proves that the retained L2 input has not been overwritten.
+Numerical Conv/SiLU oracles are independently generated reference tensors.
+The current gate supports synchronous linebuffer jobs; async/unknown layouts
+are rejected rather than silently misinterpreted.
+
+The **110 offline tests** pass, including two/three-input-group chains,
+missing/reordered partials, corrupt staged channel/padding origin, absent DMA
+waits, overwritten pSUM, workspace alias, stale RQ/LUT state and clobbered L2.
+All eight earlier cases still load; prior output/L2 oracles are unchanged.
+Eight real-case mutations were rejected. Evidence logs are
+`l2-downsample-helper-tests.log` and `prepare-l2-downsample.log`.
+
+```sh
+cd /home/dev01/neural-ai
+PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay.py \
+  --compiler-root /home/dev01/neural-compiler \
+  --manifest hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/artifacts/dma_events.json \
+  --snapshot hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/run-resume-c2f/command-2266.snapshot \
+  --resume-l2-downsample-checkpoints --timeout-cycles 2000000 --fail-fast \
+  --output hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/run-l2-downsample
+```
+
+Evidence stays in `run-l2-downsample/`: original-numbered `command_pmu.csv`
+(139 rows expected), live actual/expected bytes, retained L2 actual/expected,
+`byte_exact.json`, `sim.log`, `results.xml` and, on completed execution,
+`command-2405.snapshot`. Cluster verification of this gate and full-model
+byte-exactness remain pending. RTL, firmware and the compiled NAI are unchanged.
 
 ## Deferred regression: full YOLO output
 
