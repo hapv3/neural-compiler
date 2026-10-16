@@ -158,7 +158,8 @@ invalidates the previous coverage claim.
 | Snapshot-2057 continuation through 2067 | Retained parent + next two-group pointwise Conv / SiLU | PASS, 204,800 new live bytes + 102,400 retained parent bytes |
 | Snapshot-2057 continuation through 2266 | Next complete two-bottleneck C2f, both AFU Add paths and C128 concat | PASS, 921,600 live bytes |
 | Snapshot-2266 continuation through 2346 | Closing C128-to-C64 pointwise Conv, streamed SiLU and retained L2 | PASS, 204,800 live bytes + 102,400 L2 bytes |
-| Snapshot-2266 continuation through 2405 | Previous output checks plus L2-fed K3/S2 Conv and C128 SiLU | Prepared; cluster verification pending |
+| Snapshot-2266 continuation through 2405 | Previous output checks plus L2-fed K3/S2 Conv and C128 SiLU | PASS, 307,200 live bytes + 102,400 L2 bytes |
+| Snapshot-2405 continuation through 2418 | Four-group C128 pointwise Conv and whole-tensor SiLU | Prepared; cluster verification pending |
 | Remaining later layers | Completion-aware tiles/groups and operator boundaries | Not yet verified |
 | Full YOLO and MobileNet regression | Complete output bindings | Deferred |
 
@@ -766,8 +767,72 @@ PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay
 Evidence stays in `run-l2-downsample/`: original-numbered `command_pmu.csv`
 (139 rows expected), live actual/expected bytes, retained L2 actual/expected,
 `byte_exact.json`, `sim.log`, `results.xml` and, on completed execution,
-`command-2405.snapshot`. Cluster verification of this gate and full-model
-byte-exactness remain pending. RTL, firmware and the compiled NAI are unchanged.
+`command-2405.snapshot`. RTL, firmware and the compiled NAI are unchanged.
+
+Verified on **2026-10-16**: all **36 checkpoints / 307,200 live bytes passed**,
+with zero mismatches. The retained L2 tensor matched all **102,400 bytes**.
+PMU reports **513,419 whole-run cycles**, **387,480 command-active cycles**,
+139 command begin/end events, 139 CSV rows/169 columns and no overflow.
+Cocotb reports PASS in **1,119.44 wall-clock seconds**. Independent saved-byte,
+XML, snapshot integrity/provenance, retained activation/L2 and CSV-cycle
+reconciliation checks passed. This establishes tensors 208/210, including all
+four output groups after two-input-group accumulation, not later C2f blocks
+or full-model output.
+
+### Four-group resident pointwise and SiLU from snapshot 2405
+
+The existing `--resume-grouped-pointwise-checkpoints` mode now accepts the
+verified C128 downsample activation. It selects exactly one supported parent
+role at the saved boundary, requires matching PASS evidence and artifact/
+reference-build identities, and rechecks all **51,200 retained parent bytes**
+against both the pinned oracle and the current independent reference. It does
+not permit an arbitrary tensor or memory snapshot to serve as numerical proof.
+
+This gate executes **2406–2418 only**, 13 original commands. Its **five
+checkpoints / 102,400 live bytes** are:
+
+| Commands | Compared tensor | Bytes |
+| --- | --- | ---: |
+| 2407 / 2409 / 2411 / 2413 | Conv 211, channels 0–31 / 32–63 / 64–95 / 96–127 | 51,200 |
+| 2415 | Complete C128 SiLU 213 | 51,200 |
+
+Every pointwise job has an explicit matching RQ load at 2406/2408/2410/2412;
+the first LUT at 2415 loads its constants itself. The helper derives C32 group
+counts, selectors, raster rows and storage strides from shapes/ABI, rather
+than constraining the gate to `[1,20,20,128]` or specific command numbers.
+Supported resident layouts extend to eight C32 groups. Parent layout, live
+input/OFM/pSUM overlap, stale input and complete per-cell coverage remain
+strict. pSUM extent uses **min(M,256) × 128 bytes**, matching firmware stripe
+reuse rather than conservatively treating every row as simultaneously live.
+
+Pending next-layer constant DMA loads require the join at **2418**, the first
+globally drained boundary. That setup is not numerically verified as next-layer
+compute. Timeout is 1,000,000 cycles with fail-fast enabled. Snapshot 2418 does
+not preserve the RQ state loaded at 2417; a later Conv restart must replay from
+a supported self-configuring start or explicitly restore that configuration.
+
+The **116 offline tests** pass. New tests cover four-group input/output and
+full C128 LUT, missing/corrupted fourth-group data, overwritten RQ setup,
+257-row pSUM bounds and unique supported parent selection. All nine earlier
+cases still load; six real-case metadata mutations were rejected. Offline and
+preparation logs are `resume-c128-pointwise-helper-tests.log` and
+`prepare-resume-c128-pointwise.log`.
+
+```sh
+cd /home/dev01/neural-ai
+PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay.py \
+  --compiler-root /home/dev01/neural-compiler \
+  --manifest hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/artifacts/dma_events.json \
+  --snapshot hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/run-l2-downsample/command-2405.snapshot \
+  --resume-grouped-pointwise-checkpoints --timeout-cycles 1000000 --fail-fast \
+  --output hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/run-resume-c128-pointwise
+```
+
+Evidence stays in `run-resume-c128-pointwise/`: actual/expected checkpoint
+bytes, original-numbered `command_pmu.csv` (13 rows expected), `byte_exact.json`,
+`sim.log`, `results.xml` and, on completed execution, `command-2418.snapshot`.
+Cluster verification of this gate and full-model byte-exactness remain pending.
+No RTL, firmware, compiled NAI or numerical-reference changes are involved.
 
 ## Deferred regression: full YOLO output
 
