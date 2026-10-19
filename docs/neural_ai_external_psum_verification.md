@@ -163,7 +163,8 @@ invalidates the previous coverage claim.
 | Snapshot-2405 continuation through 2604 | Previous five checks plus complete C64-branch C2f, both residual Adds and C256 concat | PASS, 460,800 live bytes |
 | Snapshot-2604 continuation through 2640 | Closing C256-to-C128 pointwise Conv, streamed SiLU and retained L2 | PASS, 102,400 live bytes + 51,200 L2 bytes |
 | Snapshot-2604 continuation through 2731 | Previous output checks plus L2-fed K3/S2 Conv and C256 SiLU | PASS, 153,600 live bytes + 51,200 L2 bytes |
-| Snapshot-2731 continuation through 5254 | All 2,523 remaining commands, nine self-configuring prefix checks and complete final output | Prepared; simulation/output verification pending |
+| Snapshot-2731 continuation through 5254 | All 2,523 remaining commands, nine prefix checks and final output | Commands complete; final output FAIL, 7,929 / 176,400 bytes differ |
+| Snapshot-2731 continuation with detection-head observations | Same complete suffix plus 115 diagnostic checks covering all 18 head Convs | Prepared; first-divergence replay pending |
 | Remaining later layers | Completion-aware tiles/groups and operator boundaries | Not yet verified |
 | Full YOLO and MobileNet regression | Complete output bindings | Deferred |
 
@@ -1077,10 +1078,100 @@ PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay
 
 Evidence stays in `run-remaining-2732-5254/`: prefix actual/expected files,
 `output-actual.bin`, `output-expected.bin`, `command_pmu.csv` (2,523 rows
-expected), `byte_exact.json`, `sim.log`, `results.xml` and, after completed
-execution, `command-5254.snapshot`. Simulation and final-output byte-exactness
-remain pending. No RTL, firmware, compiled NAI or numerical-reference changes
-are involved.
+expected), `byte_exact.json`, `sim.log`, `results.xml` and
+`command-5254.snapshot`. No RTL, firmware, compiled NAI or numerical-reference
+changes are involved.
+
+### Complete suffix result: command completion is not numerical PASS
+
+Reviewed on **2026-10-19**: firmware completed **2,523 / 2,523 commands**, and all
+nine prefix checks (**51,200 bytes**) passed. Nevertheless, the final comparison
+is **FAIL: 7,929 / 176,400 bytes differ**, 95.5051% exact, maximum absolute
+error 222. Preserve this failure; do not relabel it as inference PASS.
+
+| Output channels | Mismatches | Maximum absolute difference |
+| --- | ---: | ---: |
+| 0 / 1 / 2 / 3 (boxes) | 1,781 / 2,013 / 2,016 / 2,093 | 67 / 77 / 200 / 222 |
+| 4 / 10 / 11 / 63 (four class channels) | 10 / 7 / 1 / 8 | At most 2 |
+| Remaining 76 class channels | 0 | 0 |
+
+PMU reports **10,087,829 whole-run cycles**, **8,441,896 command-active cycles**,
+2,523 command begin/end events, 2,523 CSV rows/169 columns and no overflow.
+CSV cycle sums reconcile with command-active PMU. Cocotb correctly reports
+FAIL in **15,694.45 wall-clock seconds**. Final actual bytes agree with the
+saved snapshot output; the snapshot is intact, but numerical failure means it
+is not a verified restart parent.
+
+Offline analysis of the surviving TCDM bytes narrows the problem upstream:
+
+- For the 1,600-location box head, 48,674 / 51,200 surviving C32-group-1 logits
+  differ from source Conv tensor 378, maximum difference 47. The saved group-1
+  input of that pointwise Conv also differs from activation 377 in 47,568 /
+  51,200 bytes, maximum difference 237.
+- Applying the deployed exp/reciprocal LUT and requant arithmetic to those
+  actual saved logits reproduces **3,200 / 3,200** saved DFL output bytes for
+  sides 2/3 exactly. This is evidence against blaming the observed large error
+  on AFU DFL arithmetic; it does not certify overwritten inputs or other jobs.
+- Applying the compiled preceding SiLU LUT to reference Conv 375 matches all
+  **102,400** reference activation-377 bytes. The compiled three class LUTs
+  also reproduce all **168,000** reference class bytes. Thus the 26 class-output
+  differences are not explained by LUT-table generation alone.
+- Even with correct reference logits, fused AFU DFL arithmetic differs from
+  the hybrid reference's quantized Softmax/Conv/Mul sequence by up to 4 INT8
+  units in this input. This smaller independent numerical-contract issue must
+  not be hidden by relaxing byte-exact checks or replacing the pinned oracle.
+
+Evidence is `offline-dfl-lut-analysis.json` in the failed run and the local
+`offline-dfl-tail.log`. Analysis also found that exp-LUT entries 1–127 are
+generated as positive signed-byte deltas rather than wrapped deltas -255…-129;
+the reference head distributions in this input do not exercise those entries,
+so that latent compiler issue does not explain this failure. No compiler
+datapath, firmware or RTL fix has been applied on the basis of these findings.
+
+### Completion-aware detection-head diagnostic continuation
+
+Replay the same **2732–5254** suffix once with the existing nine validated
+prefix checks, final-output oracle and PMU, adding **115 diagnostic checkpoints
+/ 907,200 bytes** covering every output cell of all **18 detection-head Convs**.
+Their source mapping uses unique complete first-C32 adjusted-bias signatures
+from the independent reference and emitted qparams, not layer-number guesses.
+Output groups/stripes follow ABI geometry and exactly-once source coverage.
+
+The opt-in `--diagnostic-checkpoints` manifest pins model/source/input/reference
+identities, each command body, each oracle and its geometry. These observations
+are recorded separately in `diagnostic_checkpoints`; they do not replace the
+validated prefix or the final-output comparison and do not prove every other
+intermediate tensor. Partial sums are never treated as requantized output.
+Of three async jobs in the first head, two are partial accumulations; only
+finalized submit **4356** is observed, at matching wait **4357**. Early submit
+capture, ambiguous waits and changed command bodies are rejected.
+
+Run with fail-fast: the first bad observation saves its actual bytes,
+`failure-tcdm.bin`, command/layer/tensor identity and PMU through that command,
+then reports FAIL. This permits staged-input/Conv/RQ diagnosis at the first
+observed divergence. A passing head observation does not authorize an RTL edit.
+
+All **143 offline tests** pass. All fourteen earlier cases still load. Five
+real-case mutations (manifest hash, oracle hash, geometry, premature async
+capture and command hash) are rejected. Preparation uses the same pinned NAI,
+firmware, input, reference build and snapshot 2731; no numerical oracle is
+weakened. Logs are `remaining-head-debug-helper-tests.log` and
+`prepare-remaining-head-debug.log`.
+
+```sh
+cd /home/dev01/neural-ai
+PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay.py \
+  --compiler-root /home/dev01/neural-compiler \
+  --manifest hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/artifacts/dma_events.json \
+  --snapshot hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/run-l2-c256-downsample/command-2731.snapshot \
+  --remaining-graph \
+  --diagnostic-checkpoints hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/head-conv-diagnostic-oracles/observations.json \
+  --timeout-cycles 50000000 --fail-fast \
+  --output hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/run-remaining-head-debug
+```
+
+Evidence stays in `run-remaining-head-debug/`. The same all-command invocation
+may stop early on a numerical failure; completion/output correctness is pending.
 
 ## Deferred regression: full YOLO output
 
