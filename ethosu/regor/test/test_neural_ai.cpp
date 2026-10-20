@@ -3871,6 +3871,61 @@ TEST_CASE("Neural-AI scheduler gathers native Concat stripes with DMA3D")
     REQUIRE(commandOffset == artifact.commands.size());
     REQUIRE(gatherCommands > 2);
     REQUIRE(artifact.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);
+
+    SECTION("Cascade pointwise spills its output through a separate local stripe")
+    {
+        const bool spillInput = GENERATE(false, true);
+        constexpr uint32_t arenaOffset = 0x100000;
+        if ( spillInput )
+        {
+            auto *inputTensor = scheduledConv->IFM(0)->tensor.get();
+            inputTensor->memArea = MemArea(arch.L2Memory(), MemUsage::FeatureMap);
+            inputTensor->SetAddress(0);
+        }
+        auto *tensor = scheduledConv->OFM()->tensor.get();
+        REQUIRE_FALSE(tensor->isGraphOutput);
+        tensor->memArea = MemArea(arch.L2Memory(), MemUsage::FeatureMap);
+        tensor->SetAddress(arenaOffset);
+        CompiledNeuralAIArtifact spilled;
+        const bool spilledGenerated = commandGenerator.Generate(
+            graph.get(), scheduleOps, schedule.get(), spilled, error);
+        INFO(error);
+        REQUIRE(spilledGenerated);
+        uint32_t pointwiseCommands = 0;
+        uint32_t storedBytes = 0;
+        uint32_t loadedBytes = 0;
+        for ( const auto &command : spilled.semanticCommands )
+        {
+            if ( command.layerId != uint32_t(scheduledConv->Index()) ) continue;
+            if ( command.type == neuralai::CommandType::PointwiseC32 )
+            {
+                ++pointwiseCommands;
+                REQUIRE(Read16(command.encoding, 24) == uint16_t(neuralai::Region::TCDMScratch));
+                REQUIRE(Read16(command.encoding, 40) == uint16_t(neuralai::Region::TCDMScratch));
+                const uint32_t inputStart = Read32(command.encoding, 28);
+                const uint32_t outputStart = Read32(command.encoding, 44);
+                const uint32_t rows = Read32(command.encoding, 48);
+                const uint32_t inputStride = Read32(command.encoding, 64);
+                REQUIRE((outputStart + rows * 32u <= inputStart ||
+                    inputStart + (concatChannels / 32u - 1u) * inputStride + rows * 32u <= outputStart));
+            }
+            for ( const auto &access : command.memoryAccesses )
+            {
+                if ( access.mode == neuralai::SemanticAccessMode::Read &&
+                     access.region == uint16_t(neuralai::Region::L2TemporaryBinding) )
+                    loadedBytes += uint32_t(access.end - access.begin);
+                if ( access.mode != neuralai::SemanticAccessMode::Write ||
+                     access.region != uint16_t(neuralai::Region::L2TemporaryBinding) ) continue;
+                REQUIRE(access.begin >= arenaOffset);
+                REQUIRE(access.end <= arenaOffset + height * width * outputChannels);
+                storedBytes += uint32_t(access.end - access.begin);
+            }
+        }
+        REQUIRE(pointwiseCommands > 2);
+        REQUIRE(storedBytes == height * width * outputChannels);
+        REQUIRE(loadedBytes == (spillInput ? height * width * concatChannels : 0));
+        REQUIRE(spilled.requiredTCDMBytes <= ArchNeuralAI::AllocatableTCDMBytes);
+    }
 }
 
 TEST_CASE("Neural-AI compiler distributes DFL and class LUT across compact heads")

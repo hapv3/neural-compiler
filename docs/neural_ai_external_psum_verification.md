@@ -164,7 +164,8 @@ invalidates the previous coverage claim.
 | Snapshot-2604 continuation through 2640 | Closing C256-to-C128 pointwise Conv, streamed SiLU and retained L2 | PASS, 102,400 live bytes + 51,200 L2 bytes |
 | Snapshot-2604 continuation through 2731 | Previous output checks plus L2-fed K3/S2 Conv and C256 SiLU | PASS, 153,600 live bytes + 51,200 L2 bytes |
 | Snapshot-2731 continuation through 5254 | All 2,523 remaining commands, nine prefix checks and final output | Commands complete; final output FAIL, 7,929 / 176,400 bytes differ |
-| Snapshot-2731 continuation with detection-head observations | Same complete suffix plus 115 diagnostic checks covering all 18 head Convs | Prepared; first-divergence replay pending |
+| Snapshot-2731 continuation with detection-head observations | Same complete suffix plus 115 diagnostic checks covering all 18 head Convs | FAIL at command 4314: 2,909 / 3,200 bytes differ; Conv is exact on its incorrect input |
+| Repaired pointwise cascade, snapshot-2731 continuation through 5513 | Nine prefix checks, 313 extra Conv observations and final output | Prepared; numerical verification pending |
 | Remaining later layers | Completion-aware tiles/groups and operator boundaries | Not yet verified |
 | Full YOLO and MobileNet regression | Complete output bindings | Deferred |
 
@@ -1173,6 +1174,111 @@ PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay
 Evidence stays in `run-remaining-head-debug/`. The same all-command invocation
 may stop early on a numerical failure; completion/output correctness is pending.
 
+### Pointwise cascade L2 staging correction (2026-10-20)
+
+The detection-head replay stopped at **command 4314, tensor 345, source layer
+130**, with **2,909 / 3,200 mismatches**, maximum absolute difference 32.
+All nine prefix checks passed. Its PMU CSV contains **1,583 rows / 169 columns**
+for commands 2732–4314, summing to **4,594,768 command cycles**. Fail-fast
+preserved `failure-tcdm.bin`, actual output bytes and `byte_exact.json`; it did
+not reach a final aggregate PMU or create a passing end snapshot.
+
+Offline recomputation in `offline-first-head-analysis.json` establishes:
+
+- The complete input tensor 337 differs in **18,618 / 25,600 bytes**.
+- All **73,728 packed weight bytes** and adjusted biases match the source.
+- All **3,200 INT32 partial sums** match raw MACs over the actual input's first
+  seven C32 groups.
+- Full host Conv/requant on that actual input reproduces **all 3,200 RTL
+  output bytes**; the same calculation on reference input reproduces the oracle.
+
+Thus this particular Conv is not evidence for an RTL fix. Auditing its upstream
+commands found **108 PointwiseC32 jobs with direct L2 output references**,
+starting at command **2972**. Firmware programs local systolic ports; its
+trusted path does not repeat the host's region checks. The standalone compiler
+path staged L2 endpoints correctly, but `AppendC32MatrixStripe` did not.
+
+The correction stages each spilled full-width Y stripe in separate TCDM input
+and output ranges, uses typed DMA loads/stores and preserves rolling Y offsets,
+original C32 group strides and output groups. Both workspace sizing passes now
+reserve the same staging, including at least one full spatial row. Semantic IR
+rejects nonlocal IFM, OFM or used partial-sum references (including nonzero local
+binding indices), before trusted firmware can execute them. No RTL, firmware,
+ABI or reference-arithmetic change is made.
+
+Verification:
+
+- Focused ASan tests: **3 cases / 2,135 assertions PASS**, including output-only
+  and two-ended L2 cascade spills, non-aliasing local buffers and complete DMA
+  byte coverage. The broader `Neural-AI*` run reports **158 passing / 4 known
+  baseline failing cases**, 45,314 assertions; the baseline exclusions described
+  above are unchanged, not counted as new passes.
+- Offline replay/oracle tests: **156 PASS**, including changed command prefixes,
+  constants/bindings/qparams/layout, stale compatibility proofs, nonlocal compute
+  references and outstanding-DMA snapshot rejection.
+- New NAI SHA256:
+  `45b2c890185e06d414fe06c56392309e6f7292a6c5b972f09d50e5d3436fa972`;
+  **5,513 commands**, no CPU operators, **512,000 TCDM bytes**, no remaining
+  nonlocal pointwise jobs. The +259 commands are required DMA/wait work, not a
+  performance optimization. The old faulty suffix is not a valid timing baseline.
+
+The current compiler estimate is **9,125,722 cycles / 18.251444 ms at 500 MHz**,
+54.79 inferences/s; these are estimates, not verified RTL performance. The
+Micro-MobileNet plan's **347,992-cycle** figure is for its different 96×96 graph
+and remains reference-only; do not treat it as a 1:1 YOLO target.
+
+The first changed logical command is **2972**. Prefix **1–2731**, constants,
+qparams, binding descriptors, all other section payloads and memory requirements
+are byte-identical. `--allow-compatible-snapshot` proves these conditions on
+preparation and every case load, including both drained restart boundaries.
+The original snapshot CRC, parent case and PASS report remain untouched and are
+still verified against the **original** model; firmware/source/input/reference
+identities and the complete retained parent are checked normally. The new case
+and report explicitly carry `snapshot_prefix_compatibility`; this is not a new
+reset-regression claim or permission to relabel the failed final snapshot.
+
+`prepare_conv_diagnostics.py` derives unique adjusted-bias source mappings,
+finalized ABI output geometry and independent TensorFlow-derived oracles for all
+**42 remaining source Convs**. It validates exactly-once complete group coverage,
+omits eight already-proven prefix Conv checks only after comparing their oracle
+bytes, and prepares **313 extra observations / 1,726,400 bytes**. Pointwise
+outputs are observed locally before DMA reuse; asynchronous Conv outputs are
+observed only at their matching completion wait.
+
+The prepared all-command replay is **2732–5513**, timeout **50,000,000 cycles**,
+with nine existing prefix checks, all 313 extra observations, unchanged final
+176,400-byte oracle, fail-fast and per-command PMU. Artifacts are under
+`artifacts-pointwise-staging-20261020/`, oracles under
+`pointwise-staging-conv-oracles/`, and the prepared case/logs under
+`run-remaining-pointwise-staging/`, all below the existing evidence root.
+Preparation logs are `prepare-pointwise-staging-base.log`,
+`prepare-pointwise-staging-oracles.log` and `prepare-pointwise-staging-debug.log`.
+**No numerical PASS is claimed for the repaired suffix yet.** The independent
+DFL numerical-contract discrepancy described above is still unresolved.
+
+Reproduction after pinning the repaired NAI and unchanged ELF (choose fresh
+output directories for another run):
+
+```sh
+cd /home/dev01/neural-ai
+evidence_root=hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013
+PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay.py \
+  --manifest "$evidence_root/artifacts-pointwise-staging-20261020/dma_events.json" \
+  --snapshot "$evidence_root/run-l2-c256-downsample/command-2731.snapshot" \
+  --remaining-graph --allow-compatible-snapshot --fail-fast \
+  --timeout-cycles 50000000 --output "$evidence_root/run-remaining-pointwise-staging-base"
+PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/prepare_conv_diagnostics.py \
+  --compiler-root /home/dev01/neural-compiler \
+  --case "$evidence_root/run-remaining-pointwise-staging-base/case.json" \
+  --output "$evidence_root/pointwise-staging-conv-oracles"
+PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay.py \
+  --manifest "$evidence_root/artifacts-pointwise-staging-20261020/dma_events.json" \
+  --snapshot "$evidence_root/run-l2-c256-downsample/command-2731.snapshot" \
+  --remaining-graph --allow-compatible-snapshot --fail-fast --timeout-cycles 50000000 \
+  --diagnostic-checkpoints "$evidence_root/pointwise-staging-conv-oracles/observations.json" \
+  --output "$evidence_root/run-remaining-pointwise-staging"
+```
+
 ## Deferred regression: full YOLO output
 
 After the bounded gates pass, run every logical command from reset using the **newly verified pinned NAI**,
@@ -1180,7 +1286,8 @@ including its encoded affine loops, rather than a flattened replacement stream.
 Retain the verified early checkpoints, require all 176,400 final output
 bytes to equal the pinned Neural-AI hybrid reference, and collect PMU for every
 command. Use a 50,000,000-cycle execution timeout and the existing 100,000-cycle
-progress log. No further RTL, firmware or compiled-model change is needed for this gate.
+progress log. First resolve the diagnosed compiler/DFL discrepancies and verify
+the repaired suffix; do not reuse a faulty model just to complete this gate.
 
 The reference still delegates only Conv/Depthwise/FC; other operators use
 TFLite reference kernels. A full-output discrepancy is evidence to diagnose,

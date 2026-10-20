@@ -131,6 +131,14 @@ references; they do not define full feature coverage.
 
 ## 4. Current implementation status
 
+Latest correctness gate (2026-10-20): YOLO320 is verified through snapshot 2731,
+not through full inference. A later cascade pointwise path omitted L2 staging;
+the compiler correction removes 108 illegal compute references and emits 5,513
+commands at unchanged 512,000-byte TCDM usage. ASan/offline checks pass apart from
+four unchanged C++ baseline failures; repaired suffix simulation and final-output
+byte-exactness remain pending. See
+[checkpoint evidence](neural_ai_external_psum_verification.md#pointwise-cascade-l2-staging-correction-2026-10-20).
+
 Legend: **verified** means compiler tests, runtime/ABI host tests, cross-build,
 golden fixture, and focused Verilator E2E have passed where the feature crosses
 the runtime boundary. **Compiler verified** means lowering is committed but its

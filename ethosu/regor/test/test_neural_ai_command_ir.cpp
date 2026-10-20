@@ -666,6 +666,46 @@ TEST_CASE("Neural-AI scheduler completion-orders state overwrite after an asynch
     CHECK(scheduled[5].type == CommandType::LineBufferJob);
 }
 
+TEST_CASE("Neural-AI semantic IR requires local pointwise feature maps and partial sums")
+{
+    CommandPointwiseC32V2 pointwise{};
+    pointwise.header.type = uint16_t(CommandType::PointwiseC32);
+    pointwise.header.sizeBytes = sizeof(pointwise);
+    pointwise.weights = {uint16_t(Region::ModelConstants), 0, 0};
+    pointwise.ifm = {uint16_t(Region::TCDMScratch), 0, 1024};
+    pointwise.partialSums = {uint16_t(Region::TCDMScratch), 0, 8192};
+    pointwise.ofm = {uint16_t(Region::TCDMScratch), 0, 16384};
+    pointwise.rows = 40;
+    pointwise.inputC32Groups = GENERATE(1u, 3u);
+    pointwise.outputC32Groups = 1;
+    pointwise.inputGroupStrideBytes = 1280;
+    pointwise.outputGroupStrideBytes = 1280;
+    if ( pointwise.inputC32Groups == 1 ) pointwise.partialSums = {};
+
+    std::vector<SemanticCommand> commands;
+    std::string error;
+    std::vector<uint8_t> valid;
+    Append(valid, pointwise);
+    REQUIRE(DecodeSemanticCommandStream(valid, commands, error));
+
+    const int endpoint = GENERATE(0, 1, 2);
+    if ( endpoint == 2 && pointwise.inputC32Groups == 1 ) return;
+    RefV1 *reference = endpoint == 0 ? &pointwise.ifm :
+        (endpoint == 1 ? &pointwise.ofm : &pointwise.partialSums);
+    SECTION("Reject an external compute address")
+    {
+        reference->region = uint16_t(Region::L2TemporaryBinding);
+    }
+    SECTION("Reject a nonzero local binding index")
+    {
+        reference->index = 1;
+    }
+    std::vector<uint8_t> invalid;
+    Append(invalid, pointwise);
+    CHECK_FALSE(DecodeSemanticCommandStream(invalid, commands, error));
+    CHECK_FALSE(error.empty());
+}
+
 TEST_CASE("Neural-AI semantic IR rejects malformed commands")
 {
     std::vector<uint8_t> bytes(sizeof(CommandHeaderV2));

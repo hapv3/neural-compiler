@@ -330,6 +330,14 @@ bool DecodePointwise(SemanticCommand &command, const uint8_t *encoded)
     const uint64_t inputStride = Read32(encoded + 64);
     const uint64_t outputStride = Read32(encoded + 68);
     if ( rows == 0 || inputGroups == 0 || outputGroups == 0 ) return false;
+    // Pointwise firmware programs local systolic ports, not an AXI master.
+    // Keep this contract on the host even when firmware validation is trusted.
+    for ( const int offset : {24, 32, 40} )
+    {
+        if ( offset == 32 && inputGroups == 1 ) continue;
+        if ( Read16(encoded + offset) != uint16_t(Region::TCDMScratch) ||
+             Read16(encoded + offset + 2) != 0 ) return false;
+    }
     const uint64_t groups = SaturatingMultiply(inputGroups, outputGroups);
     const uint64_t weightBytes = SaturatingMultiply(groups, 32 * 32);
     const uint64_t inputBytes = SaturatingAdd(

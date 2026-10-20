@@ -4217,17 +4217,48 @@ struct GeneratorContext
             RefV1 ofmBase = TensorRef(ofm->tensor.get(), 0, error);
             if ( !error.empty() ) return false;
 
+            const bool spillIfm = ifmBase.region == uint16_t(Region::L2TemporaryBinding);
+            const bool spillOfm = ofmBase.region == uint16_t(Region::L2TemporaryBinding);
+            if ( (ifmBase.region != uint16_t(Region::TCDMScratch) && !spillIfm) ||
+                 (ofmBase.region != uint16_t(Region::TCDMScratch) && !spillOfm) )
+                return SetError(error,
+                    "Neural-AI striped pointwise Conv feature maps require TCDM or the L2 temporary arena");
+            const uint32_t stagedGroups = (spillIfm ? kGroups : 0u) + (spillOfm ? 1u : 0u);
+            const uint32_t width = uint32_t(ofmAreaShape.Width());
+            const uint64_t stagedRowBytes = uint64_t(stagedGroups) * width * 32u;
+            const uint32_t stageYCapacity = stagedGroups == 0 ? uint32_t(ofmAreaShape.Height()) :
+                uint32_t(workspaceSizes[operation->Uid()].stage / stagedRowBytes);
+            if ( stageYCapacity == 0 )
+                return SetError(error, "Neural-AI striped pointwise Conv cannot stage one full row");
+
             int rowsDone = 0;
             while ( rowsDone < ofmAreaShape.Height() )
             {
                 const int inputY = (ifmAreaStart.Height() + rowsDone) % ifmStorage.Height();
                 const int outputY = (ofmAreaStart.Height() + rowsDone) % ofmStorage.Height();
                 const int rows = std::min({ofmAreaShape.Height() - rowsDone,
-                    ifmStorage.Height() - inputY, ofmStorage.Height() - outputY});
+                    ifmStorage.Height() - inputY, ofmStorage.Height() - outputY, int(stageYCapacity)});
                 const uint32_t matrixRows = uint32_t(rows * ofmAreaShape.Width());
                 const uint32_t partialRows = std::min(matrixRows, MaxPointwiseSpillRows);
                 if ( kGroups > 1u && uint64_t(partialRows) * 32u * 4u > partialBytes )
                     return SetError(error, "Neural-AI striped pointwise Conv exceeds its partial buffer");
+                RefV1 input = ifmBase;
+                input.offset += uint32_t(inputY) * width * 32u;
+                uint32_t localInputGroupStride = inputGroupStride;
+                if ( spillIfm )
+                {
+                    input = {uint16_t(Region::TCDMScratch), 0, stageOffset};
+                    localInputGroupStride = matrixRows * 32u;
+                    for ( uint32_t kGroup = 0; kGroup < kGroups; ++kGroup )
+                    {
+                        RefV1 source = ifmBase;
+                        source.offset += kGroup * inputGroupStride + uint32_t(inputY) * width * 32u;
+                        RefV1 destination = input;
+                        destination.offset += kGroup * localInputGroupStride;
+                        if ( !AppendDMA1D(source, destination, matrixRows * 32u,
+                                 uint32_t(operation->Index()), tileId++, error) ) return false;
+                    }
+                }
                 for ( uint32_t nGroup = 0; nGroup < nGroups; ++nGroup )
                 {
                     AppendRQLoad(materialized.qparamBase + nGroup * 32u, nGroup,
@@ -4235,11 +4266,13 @@ struct GeneratorContext
                     RefV1 weights{};
                     weights.region = uint16_t(Region::ModelConstants);
                     weights.offset = materialized.weightBase + nGroup * kGroups * 32u * 32u;
-                    RefV1 input = ifmBase;
-                    input.offset += uint32_t(inputY * ifmStorage.Width()) * 32u;
                     RefV1 output = ofmBase;
                     output.offset += nGroup * outputGroupStride +
                         uint32_t(outputY * ofmStorage.Width()) * 32u;
+                    const RefV1 destination = output;
+                    if ( spillOfm )
+                        output = {uint16_t(Region::TCDMScratch), 0,
+                            stageOffset + (spillIfm ? matrixRows * kGroups * 32u : 0u)};
                     RefV1 partial{};
                     if ( kGroups > 1u )
                     {
@@ -4247,8 +4280,11 @@ struct GeneratorContext
                         partial.offset = partialOffset;
                     }
                     AppendPointwiseC32(weights, input, partial, output, matrixRows,
-                        kGroups, 1, nGroup, inputGroupStride, outputGroupStride,
+                        kGroups, 1, nGroup, localInputGroupStride,
+                        spillOfm ? matrixRows * 32u : outputGroupStride,
                         uint32_t(operation->Index()), tileId++);
+                    if ( spillOfm && !AppendDMA1D(output, destination, matrixRows * 32u,
+                             uint32_t(operation->Index()), tileId++, error) ) return false;
                 }
                 rowsDone += rows;
             }
@@ -5295,16 +5331,17 @@ MemorySnapshot NeuralAICommandGenerator::WorkspaceReservation(
              ofmShape.Depth() > 32 && scheduledRows <= 128 )
             matrixRows = scheduledRows * 2u;
         if ( mode == NeuralAIOpMode::Conv2DPointwiseC32Requant &&
-             cost->cascade == 0 &&
              (IsL2ArenaTensor(operation->IFM(0)->tensor.get()) ||
                  IsL2ArenaTensor(operation->OFM()->tensor.get())) )
         {
             const uint32_t stagedGroups =
                 (IsL2ArenaTensor(operation->IFM(0)->tensor.get()) ? paddedK / 32u : 0u) +
                 (IsL2ArenaTensor(operation->OFM()->tensor.get()) ? 1u : 0u);
-            const uint32_t tileRows = PointwiseSpillTileRows(
-                rows, paddedK, stagedGroups, schedule, cost);
-            matrixRows = tileRows;
+            // HLC stripes can roll only at Y boundaries: stage at least a full row.
+            const uint32_t tileRows = cost->cascade != 0 ?
+                std::max(uint32_t(ofmShape.Width()), matrixRows) :
+                PointwiseSpillTileRows(rows, paddedK, stagedGroups, schedule, cost);
+            if ( cost->cascade == 0 ) matrixRows = tileRows;
             const uint64_t bytes = uint64_t(tileRows) *
                 stagedGroups * 32u;
             if ( stagedGroups == 0 || bytes > std::numeric_limits<uint32_t>::max() )
@@ -5652,7 +5689,6 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
             workspace.stripe = std::max(workspace.stripe, requiredBytes);
         }
         if ( mode == NeuralAIOpMode::Conv2DPointwiseC32Requant &&
-             cost->cascade == 0 &&
              (IsL2ArenaTensor(operation->IFM(0)->tensor.get()) ||
                  IsL2ArenaTensor(operation->OFM()->tensor.get())) )
         {
@@ -5660,9 +5696,10 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
             const uint32_t stagedGroups =
                 (IsL2ArenaTensor(operation->IFM(0)->tensor.get()) ? kGroups : 0u) +
                 (IsL2ArenaTensor(operation->OFM()->tensor.get()) ? 1u : 0u);
-            const uint32_t tileRows = PointwiseSpillTileRows(
-                rows, paddedK, stagedGroups, schedule, cost);
-            stripeRows = tileRows;
+            const uint32_t tileRows = cost->cascade != 0 ?
+                std::max(uint32_t(ofmShape.Width()), stripeRows) :
+                PointwiseSpillTileRows(rows, paddedK, stagedGroups, schedule, cost);
+            if ( cost->cascade == 0 ) stripeRows = tileRows;
             const uint64_t spillStageBytes64 =
                 uint64_t(tileRows) * stagedGroups * 32u;
             if ( stagedGroups == 0 || spillStageBytes64 > std::numeric_limits<uint32_t>::max() )
