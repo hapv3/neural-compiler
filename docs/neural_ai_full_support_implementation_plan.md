@@ -151,6 +151,14 @@ All 16.8M paired class-score bytes remain exact. This host experiment is not a
 authorized. See [DFL accuracy evidence](../tools/neural_ai_tflite_reference/RESULTS.md#afu-dfl-only-accuracy-experiment--2026-10-21) and
 [checkpoint evidence](neural_ai_external_psum_verification.md#alignment-corrected-suffix-result-and-dfl-isolation-2026-10-21).
 
+MobileNet224: current compilation preserves the pinned 12,789-command NAI. A
+fresh full-reset replay is prepared with 100 layer-terminal TCDM compute captures
+(selected from 3,264 compute commands),
+all 68 source operator tensors, 61 intermediate TCDM/L2 snapshots and per-command
+PMU; 174 offline tests pass. Raw captures are explicitly not yet byte-compared;
+strict verification of the final 1,000 bytes and complete inference remain
+pending. See [MobileNet capture gate](neural_ai_external_psum_verification.md#bounded-one-run-mobilenet224-checkpoint-replay-2026-10-21).
+
 Legend: **verified** means compiler tests, runtime/ABI host tests, cross-build,
 golden fixture, and focused Verilator E2E have passed where the feature crosses
 the runtime boundary. **Compiler verified** means lowering is committed but its

@@ -1637,3 +1637,87 @@ appended `command_pmu.csv`, final `output-actual.bin`, `byte_exact.json` and
 `command-12789.snapshot`. A separate copy of the verified simulator avoids
 changing the binary used by the concurrent YOLO run. Simulation and full-output
 correctness are pending; offline preparation alone is not an inference PASS.
+
+### Bounded one-run MobileNet224 checkpoint replay (2026-10-21)
+
+The earlier `run-full` was manually stopped at about 4.9 million cycles, with
+progress near command 4311. It produced no final output/snapshot and is not a
+passing or resumable byte-exact gate. Recompilation with the current compiler
+produces the **same NAI SHA256** above; no compiler, firmware or RTL change is
+needed simply to retry the complete graph.
+
+The fresh `run-100-checkpoints-20261021/` case runs all **1–12,789 commands** from
+reset in one invocation, preserving encoded affine loops. Timeout is 50 million
+cycles, progress is logged every 100,000 cycles, and per-command PMU is always
+written to `command_pmu.csv`. Intermediate numerical mismatches do not request
+early termination: all evidence is collected before assessing the final output.
+The final **1,000 INT8 bytes** remain a strict comparison with the original
+MAC-only hybrid oracle; DFL mode does not apply to MobileNet.
+
+At the user's request, capture count is reduced from 3,264 to **100 compute
+checkpoints**, selecting the terminal compute command of **every one of the 100
+compiler layers**, not 100 arbitrary command IDs. The complete command stream
+still executes; this does not retain every tile or every FC partial accumulation.
+The full 68-source-operator reference archive and 61 drained memory snapshots
+are retained separately. Selected capture coverage is:
+
+| ABI type | Checkpoints |
+| --- | ---: |
+| LineBufferJob / PointwiseC32 / DepthwiseC32 | 1 / 34 / 17 |
+| AFULut / AFUBinaryQuant / AFUGlobalAvgPool | 35 / 10 / 1 |
+| Gemm32Requant (final FC tile) | 1 |
+| Final CopyLayout | 1 |
+| **Total** | **100** |
+
+`compute-checkpoints/command-N.tcdm.zlib` stores the complete instantaneous
+**524,288-byte TCDM** at each selected compute command's completion. No output
+address, source-layer correspondence or C32/ROW32 layout
+is guessed at capture time. The incremental `compute-checkpoints/checkpoints.jsonl`
+records original command/completion IDs, type/layer/tile, descriptor SHA256,
+compressed/raw SHA256 and sizes. Each persisted image is decompressed/read back.
+These captures do not advance the simulated clock; they add host IO/compression
+cost. The log reports capture progress every ten selected compute checkpoints.
+
+Separately, **61 intermediate full-memory snapshots** (first 90, last 12788)
+preserve TCDM, the **2,408,448-byte L2 temporary binding**, and output at drained
+layer-terminal boundaries. The final 12789 snapshot is saved automatically.
+As before, memory-only snapshots omit hardware registers and cannot be resumed
+arbitrarily without validated configuration restoration. Raw compute captures
+may have DMA outstanding and are **not** restart snapshots.
+
+`reference-tensors.npz` stores all **68 source operator outputs** from the
+independent hybrid interpreter on exactly the pinned input. `compute-reference.json`
+pins that archive, all source output IDs/shapes/dtypes/quantization, model/source/
+ELF/input/build identities and the exact selected compute capture plan. Final reference
+bytes are rechecked against the old oracle during preparation. All actual data,
+reference data, logs and PMU stay below the same MobileNet simulation directory.
+
+Integrity is not numerical equivalence: compute dumps explicitly record
+`numerical_status=NOT_COMPARED`, and their source-to-ABI comparisons are deferred
+until the run is available. The snapshot sidecars likewise do not turn captured
+data into a passing intermediate checkpoint. `byte_exact.json` verifies the final
+binding and records capture completeness separately; completion alone is not PASS.
+
+Prepare a fresh capture case from a validated reset case:
+
+```sh
+cd /home/dev01/neural-ai
+PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/prepare_model_checkpoints.py \
+  --case hw/rtl/cluster/tb/sim/test_mobilenet224_reference_20261012/run-full/case.json \
+  --compiler-root /home/dev01/neural-compiler \
+  --max-compute-checkpoints 100 \
+  --output hw/rtl/cluster/tb/sim/test_mobilenet224_reference_20261012/run-100-checkpoints-20261021
+```
+
+Preparation and **174 offline tests PASS**, including seven new tests for complete
+compute-type coverage, async wait matching, compressed memory readback, incomplete
+or duplicate captures, source/archive/descriptor identity, mandatory layer-terminal
+selection/exact budgets and safe layer boundaries.
+The verified simulator SHA256 remains
+`5176364efbd548d7cb22b4f7c114e171c942bcd7bf5098ff4278e12d964b6a21`;
+ELF SHA256 remains `5003c93460c376b5b8c32c18cf2053168eaf1aa980bbbfc4f947d7f437976035`.
+Invocation/control is at `0x81800000`; no live bounded-capture or inference
+PASS is claimed before this replay completes. The local-only launcher is
+`launch-100-checkpoints-20261021.sh` in the evidence root; it refuses another
+active simulator or overwriting an earlier result. It does not enable the large
+cycle-level DMA CSV trace; per-command PMU and all compute captures remain enabled.
