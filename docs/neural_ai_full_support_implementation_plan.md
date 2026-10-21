@@ -136,7 +136,10 @@ all 2,782 commands and passed 322 live checkpoints, but final output still fails
 in 7,047 box bytes; all 168,000 class bytes are exact. Offline replay reproduces
 the box error completely from one unaligned AFU binary input. The new compiler
 alignment correction emits 5,520 commands at unchanged 512,000-byte TCDM usage;
-unit checks pass, focused cluster confirmation is pending. DFL's separate
+unit checks and the focused cluster regression pass all 4,200 output bytes.
+Full corrected-suffix simulation is prepared with 56 intermediate full-memory
+snapshots, so subsequent debug need not always restart at 2731. Snapshot capture
+has 167 passing offline tests; live capture confirmation remains pending. DFL's separate
 numerical-contract difference remains unresolved; do not claim full byte-exactness.
 See [checkpoint evidence](neural_ai_external_psum_verification.md#afu-binary-compact-slice-alignment-correction-2026-10-21).
 

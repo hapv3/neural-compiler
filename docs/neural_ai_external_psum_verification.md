@@ -166,7 +166,8 @@ invalidates the previous coverage claim.
 | Snapshot-2731 continuation through 5254 | All 2,523 remaining commands, nine prefix checks and final output | Commands complete; final output FAIL, 7,929 / 176,400 bytes differ |
 | Snapshot-2731 continuation with detection-head observations | Same complete suffix plus 115 diagnostic checks covering all 18 head Convs | FAIL at command 4314: 2,909 / 3,200 bytes differ; Conv is exact on its incorrect input |
 | Repaired pointwise cascade, snapshot-2731 continuation through 5513 | Nine prefix checks, 313 extra Conv observations and final output | All 322 live checks PASS; final FAIL in 7,047 box bytes, class bytes all exact |
-| Compact plane alignment regression | Compiler-generated Add / slice / general Add, 4,200 output bytes | Unit checks PASS; focused 14-command cluster case prepared |
+| Compact plane alignment regression | Compiler-generated Add / slice / general Add, 4,200 output bytes | PASS: 14/14 commands, all 4,200 bytes exact |
+| Alignment-corrected snapshot-2731 continuation through 5520 | Same 322 live checks, strict final output and command PMU | Prepared; full suffix confirmation and DFL mismatch assessment pending |
 | Remaining later layers | Completion-aware tiles/groups and operator boundaries | Not yet verified |
 | Full YOLO and MobileNet regression | Complete output bindings | Deferred |
 
@@ -1371,9 +1372,83 @@ PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay
 ```
 
 The local launcher is `launch-general.sh`; it refuses an overlapping Vtop or
-overwriting existing evidence. Focused cluster PASS remains pending. Even after
-that passes, full YOLO byte-exactness still requires resolving the documented
-DFL numerical-contract difference; no tolerance or oracle replacement is approved.
+overwriting existing evidence.
+
+Focused cluster result, reviewed **2026-10-21**: **PASS, 14/14 commands,
+0/4,200 output mismatches**. `results.xml` also reports PASS, and the saved
+`command-14.snapshot` output matches both the actual file and pinned reference
+with SHA256 `dec4707eb626fc403746f79d66ffb036715b141cb2c16e2a3d8e39c46b252986`.
+Simulation time is **98,661 ns**, wall time **151.89 s**. PMU records
+**63,335 whole-run cycles**, **13,468 command-active cycles**, 14 begin/end
+events and no overflow. The 14-row/169-column `command_pmu.csv` reconciles with
+the active PMU total. General AFU commands 8 and 12 take **902 and 416 command
+cycles**, respectively, including firmware configuration; they are not pure
+arithmetic latencies. The other six local staging commands take **9,414 command
+cycles** combined. Do not compare this small reset test directly to full YOLO or
+Micro-MobileNet inference performance.
+
+Next gate: use `artifacts-binary-alignment-20261021/` and continue original
+snapshot 2731 through corrected command **5520**. The unchanged-prefix proof,
+all noncommand section payloads, memory requirements, firmware and original
+parent-byte evidence remain mandatory; do not use failed snapshot 5513. Fresh
+oracles are stored in `binary-alignment-conv-oracles/`, with the prepared case
+and all runtime evidence in `run-remaining-binary-alignment/` below the existing
+YOLO evidence root. This gate retains the nine prefix checks, all 313 additional
+Conv observations, the original final-output oracle, per-command PMU and a
+50,000,000-cycle timeout. A final DFL discrepancy must still report FAIL rather
+than accepting a tolerance or replacing that oracle. This remains a suffix
+continuation, not a full reset regression.
+
+### Intermediate full-memory snapshots (2026-10-21)
+
+Previously, the 322 live observations saved only each tensor's output bytes;
+the runner saved a complete memory snapshot only at the run's end. That caused
+the avoidable return to snapshot 2731 after a later failure. The corrected replay
+now requests **56 intermediate full-memory snapshots**, beginning at **2733**.
+Other selected boundaries follow completed Convs/queue drains and surround
+DFL at **4743/4744, 5035/5036, 5492/5493**, then the box arithmetic at
+**5505, 5506, 5507, 5508, 5511, 5512, 5513, 5514, 5515**. No snapshot is taken
+while an ABI DMA/systolic submission is outstanding. The end boundary 5520 is
+still saved automatically by the existing final-output path.
+
+The opt-in CLI is `--snapshot-boundaries 2733,2748,...,5515`. The complete list
+is pinned in `run-remaining-binary-alignment/case.json`; omission preserves the
+previous runner behavior. Boundaries must be unique, ascending and strictly
+inside the requested range. Both preparation and case loading validate them.
+
+For each requested boundary, the exact command-end PMU callback pauses the
+testbench clock, reads **524,288 TCDM bytes + 204,800 L2 temporary bytes + 176,400
+output bytes**, writes the standard compressed `command-N.snapshot`, verifies
+its CRC/model identity and all three memory images, then resumes at the held
+clock level. Capture asserts that neither the PMU cycle counter nor TCDM changed
+during the L2 reads. This changes no RTL/firmware and adds no clock cycles to
+the measured commands; simulation time and wall time can include capture cost.
+
+Each `command-N.snapshot.json` sidecar pins the snapshot and originating case
+hashes, model/source/ELF/input/reference identities, memory sizes and the
+comparison descriptors/hashes available at that boundary. The main report's
+`intermediate_snapshots` list references each sidecar. Logs contain
+`NEURAL-AI SNAPSHOT command N: integrity=... comparisons=... path=...`.
+Files are not overwritten. An error reports ERROR rather than publishing a
+passing comparison verdict, and a completed run requires every requested file.
+
+Memory integrity and numerical scope are deliberately separate:
+
+- `integrity=VERIFIED` means model/CRC/full-memory readback checks passed.
+- `PASS_LISTED_CHECKS` means only the listed reference observations passed;
+  `FAIL_LISTED_CHECKS` and `UNVERIFIED` remain explicit alternatives. It does
+  **not** establish every memory byte or final inference output.
+- Earlier immutable evidence survives a later final-output FAIL. Hardware
+  registers are **not** saved: reuse still needs a self-configuring suffix or
+  validated configuration restoration, not just a drained async queue. Do not
+  forge a parent PASS report or edit its command boundary to bypass that check.
+
+Offline verification: **167 tests PASS**, including ten new tests for invalid
+lists/ranges, outstanding DMA/systolic jobs, missing/duplicate byte checks,
+memory sizes, model/case identity, no-overwrite policy, snapshot encode/readback,
+preserved prefix evidence after final failure, and clock pause/resume/error paths.
+The first live integration check occurs early at command 2733 in the rerun;
+no live snapshot-capture or corrected full-output PASS is claimed in advance.
 
 ## Deferred regression: full YOLO output
 
