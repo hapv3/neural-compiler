@@ -131,17 +131,21 @@ references; they do not define full feature coverage.
 
 ## 4. Current implementation status
 
-Latest correctness gate (2026-10-21): the pointwise-repaired YOLO suffix completed
-all 2,782 commands and passed 322 live checkpoints, but final output still fails
-in 7,047 box bytes; all 168,000 class bytes are exact. Offline replay reproduces
-the box error completely from one unaligned AFU binary input. The new compiler
-alignment correction emits 5,520 commands at unchanged 512,000-byte TCDM usage;
-unit checks and the focused cluster regression pass all 4,200 output bytes.
-Full corrected-suffix simulation is prepared with 56 intermediate full-memory
-snapshots, so subsequent debug need not always restart at 2731. Snapshot capture
-has 167 passing offline tests; live capture confirmation remains pending. DFL's separate
-numerical-contract difference remains unresolved; do not claim full byte-exactness.
-See [checkpoint evidence](neural_ai_external_psum_verification.md#afu-binary-compact-slice-alignment-correction-2026-10-21).
+Latest correctness gate (2026-10-21): the alignment-corrected YOLO suffix completed
+all 2,789 commands (2732–5520); all 322 live checkpoints / 1,777,600 bytes pass.
+All 56 intermediate full-memory snapshots were captured and independently
+verified; per-command CSV has 2,789 rows / 169 columns and reconciles with PMU
+(10,263,621 whole cycles; 8,497,586 command-active cycles; no overflow).
+Final output remains FAIL: 3,465 / 176,400 bytes differ, maximum 7, confined to
+boxes; all 168,000 class bytes are exact. Snapshot analysis verifies all 134,400
+DFL input bytes, all 8,400 fused DFL output bytes against deployed arithmetic,
+and all five downstream binary jobs. The remaining discrepancy is between fused
+DFL and the reference's quantized Softmax / projection Conv / Mul sequence,
+including approximate quantized projection weights and intermediate rounding.
+Do not replace the pinned oracle or claim full byte-exactness. A numerical-contract
+decision is required before changing reference semantics or pursuing an exact
+unfused lowering; no new RTL change is authorized. See
+[checkpoint evidence](neural_ai_external_psum_verification.md#alignment-corrected-suffix-result-and-dfl-isolation-2026-10-21).
 
 Legend: **verified** means compiler tests, runtime/ABI host tests, cross-build,
 golden fixture, and focused Verilator E2E have passed where the feature crosses
@@ -171,9 +175,9 @@ new runtime path has not yet passed E2E.
 | StridedSlice | Verified | C32-aligned aliases; multi-group C32 DMA materialization; C32-to-C16 materialization; contiguous compact plane aliases |
 | Concat | Compiler verified | striped/tail gathers; final compact plane-axis output DMA; native two-input C32 inputs may reload from L2 into a TCDM output |
 | YOLO C144 head transpose | Verified fallback | standalone heads retain vectorized C32-to-CHW materialization |
-| DFL16 projection | Verified | selected heads feed C64/C80 C32 directly; box-scale requant is folded into each DFL command |
+| DFL16 projection | Execution verified; numerical contract pending | selected heads feed C64/C80 C32 directly; fused box-scale arithmetic matches RTL but differs from the original quantized Softmax/Conv/Mul sequence |
 | Async DMA and overlap | Verified foundation | dependency-aware submit/wait commands, systolic submit/wait, and the 16-entry iDMA job queue are active; cross-command ping-pong and broader engine overlap remain P3 work |
-| Full selected graphs | Compiler verified | current selected YOLO320 emits 4,281 executable commands, requires 514,560 bytes of TCDM, and reports 3,740.88 KiB total DRAM/L2-backed memory; focused prefixes pass, but the current full command stream still needs cluster E2E |
+| Full selected graphs | Compiler verified; full byte-exact pending | current selected YOLO320 emits 5,520 executable commands and requires 512,000 bytes of TCDM; repaired suffix completes with exact Conv observations/class output, but DFL prevents a full-output PASS; reset regression and MobileNet byte-exact remain deferred |
 
 The current focused Regor gate passes 148 cases and 42,476 assertions. The
 complete suite remains the release gate; assertion totals from randomized cases

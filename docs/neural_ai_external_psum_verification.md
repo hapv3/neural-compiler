@@ -167,8 +167,8 @@ invalidates the previous coverage claim.
 | Snapshot-2731 continuation with detection-head observations | Same complete suffix plus 115 diagnostic checks covering all 18 head Convs | FAIL at command 4314: 2,909 / 3,200 bytes differ; Conv is exact on its incorrect input |
 | Repaired pointwise cascade, snapshot-2731 continuation through 5513 | Nine prefix checks, 313 extra Conv observations and final output | All 322 live checks PASS; final FAIL in 7,047 box bytes, class bytes all exact |
 | Compact plane alignment regression | Compiler-generated Add / slice / general Add, 4,200 output bytes | PASS: 14/14 commands, all 4,200 bytes exact |
-| Alignment-corrected snapshot-2731 continuation through 5520 | Same 322 live checks, strict final output and command PMU | Prepared; full suffix confirmation and DFL mismatch assessment pending |
-| Remaining later layers | Completion-aware tiles/groups and operator boundaries | Not yet verified |
+| Alignment-corrected snapshot-2731 continuation through 5520 | Same 322 live checks, strict final output and command PMU | All 322 checks PASS; 56 intermediate snapshots verified; final FAIL in 3,465 box bytes, maximum 7 |
+| Fused DFL numerical equivalence | Three DFL heads and all downstream binary steps from retained snapshots | Deployed arithmetic matches RTL; differs from the unchanged hybrid reference |
 | Full YOLO and MobileNet regression | Complete output bindings | Deferred |
 
 The gate through command 157 checks another 61,440 producer SiLU bytes and 15,360
@@ -1447,8 +1447,89 @@ Offline verification: **167 tests PASS**, including ten new tests for invalid
 lists/ranges, outstanding DMA/systolic jobs, missing/duplicate byte checks,
 memory sizes, model/case identity, no-overwrite policy, snapshot encode/readback,
 preserved prefix evidence after final failure, and clock pause/resume/error paths.
-The first live integration check occurs early at command 2733 in the rerun;
-no live snapshot-capture or corrected full-output PASS is claimed in advance.
+Live integration subsequently captured all 56 requested boundaries, with no
+clock-advance/TCDM-coherence assertion failures. Independent post-run verification
+checked snapshot CRC/model identity, safe boundaries, all memory sizes, sidecar
+hashes and observation scope. Total compressed snapshot size is **18,443,037
+bytes**, excluding sidecars and the final command-5520 snapshot. These files
+permit offline comparison at the saved boundaries even though final inference
+fails; they do not imply arbitrary register-state restoration is supported.
+
+### Alignment-corrected suffix result and DFL isolation (2026-10-21)
+
+The corrected run in `run-remaining-binary-alignment/` completed original
+commands **2732–5520**, **2,789 / 2,789**, from the verified 2731 parent. All nine
+prefix checks / 51,200 bytes and all 313 additional Conv observations /
+1,726,400 bytes pass. Independent comparison of the saved actual/oracle files
+confirms all **1,777,600 observed bytes**. The original final oracle remains
+unchanged (SHA256 `351f47bbfeb19ff821535f6895106f94870ffbdd5bcfd5f4da32fda362e28fe7`).
+
+Final output correctly reports **FAIL: 3,465 / 176,400 mismatches**, 98.0357%
+exact, maximum absolute error 7. Every mismatch is in the 8,400 box bytes;
+all **168,000 class bytes** are exact. Box channel mismatch counts are
+545 / 593 / 1,291 / 1,036, with maximum differences 3 / 2 / 7 / 6. This agrees
+with the prediction made before the alignment correction was simulated; the
+previous additional address-alignment error no longer explains any output byte.
+
+PMU reports **10,263,621 whole-run cycles**, **8,497,586 command-active cycles**,
+2,789 begin/end events and no overflow. `command_pmu.csv` has exactly 2,789
+consecutive command rows and 169 columns; cycle sums equal command-active PMU.
+Cocotb reports FAIL in **17,884.48 wall-clock seconds** (10,299,775.18 ns simulated).
+The final snapshot output equals `output-actual.bin`, SHA256
+`0d3063a0062f245cd95e2b172c5c166b8112f0a912d3e67949ae1818996366b3`.
+
+Offline analysis uses snapshots immediately before and after each DFL command,
+not logits inferred from overwritten final memory:
+
+| DFL command | Locations | Input vs reference | Fused arithmetic vs RTL output | RTL output vs unchanged hybrid reference |
+| --- | ---: | --- | --- | --- |
+| 4744 | 100 | 6,400 / 6,400 exact | 400 / 400 exact | 333 mismatches, maximum 4 |
+| 5036 | 400 | 25,600 / 25,600 exact | 1,600 / 1,600 exact | 1,042 mismatches, maximum 2 |
+| 5493 | 1,600 | 102,400 / 102,400 exact | 6,400 / 6,400 exact | 2,489 mismatches, maximum 2 |
+
+The independent host calculation reads the deployed exp/reciprocal tables and
+requant parameters. All **8,400 DFL output bytes** agree, and their concatenation
+matches the tensor saved at command 5505. The five binary jobs **5506, 5508,
+5512, 5514, 5515** then match their respective snapshots exactly, including the
+4,096-element tile and 104-element tail of the staged Add. Their command costs
+are 794 / 902 / 416 / 794 / 794 cycles. Replaying the full box tail from these
+actual DFL distances reproduces every final RTL box byte. In the counterfactual
+with reference DFL distances, reconstructing the already-copied staging view as
+well as later copies reproduces all **8,400 original oracle box bytes**. This
+isolates the observed discrepancy upstream of the final Add/Sub and LUT chain.
+
+The arithmetic contracts are not identical:
+
+- The source graph quantizes Softmax probabilities to INT8, projects them with
+  quantized Conv weights, requantizes that Conv output, then performs a separate
+  quantized per-head Mul. The projection's raw weights are
+  `[0,8,17,25,34,42,51,59,68,76,85,93,102,110,119,127]`, scale approximately
+  0.11811024, zero point 0: they approximate bins 0–15 rather than represent all
+  bin indices exactly. For example, bin 1 dequantizes to approximately 0.94488.
+- `RewriteYoloDfl16` accepts weights within half a weight-quantization step of
+  the ideal bins and replaces the projection with ideal integer-bin weights.
+  `FuseDistributedDflBoxScale` folds the later Mul into DFL output quantization.
+  The AFU computes a Q8 expectation using exp/reciprocal LUTs, followed by one
+  output requantization; it does not materialize the original Softmax and Conv
+  INT8 rounding boundaries. Better reciprocal precision alone would not restore
+  those omitted boundaries or the original projection weights.
+- The latent wrapped-delta LUT issue remains separate: minimum logits-minus-max
+  are -44 / -43 / -48 here; no delta below -128 is exercised by these three heads.
+
+Evidence is `offline-dfl-snapshot-analysis.json` in the run directory, with the
+offline invocation log at `offline-binary-alignment-analysis.log` in its parent.
+The local, uncommitted analysis script is
+`neural-compiler/output/yolo320-binary-alignment-20261021/analyze_completed_replay.py`.
+It validates snapshot/sidecar identities, all saved comparisons, PMU reconciliation,
+DFL input placement, every DFL output and the downstream binary steps; it neither
+starts a simulator nor modifies the pinned reference runtime or output oracle.
+
+Next requires an explicit numerical-contract decision: retain fused DFL and add
+an independently tested, separately identified AFU DFL reference while preserving
+the TFLite/hybrid baseline, or preserve the original quantized operator sequence
+and investigate an exact lowering. Neither oracle replacement nor a new RTL
+change is authorized by the observed arithmetic agreement. No further simulation
+is needed just to repeat this unchanged failure.
 
 ## Deferred regression: full YOLO output
 
