@@ -1400,7 +1400,8 @@ flatbuffers::DetachedBuffer BuildViewModel(
     return builder.Release();
 }
 
-flatbuffers::DetachedBuffer BuildCompactPlaneSliceModel(int planeBegin)
+flatbuffers::DetachedBuffer BuildCompactPlaneSliceModel(int planeBegin, int planeWidth = 32,
+    bool consumeSlice = false)
 {
     flatbuffers::FlatBufferBuilder builder;
     const std::vector<int64_t> zeroPoints = {0};
@@ -1429,8 +1430,8 @@ flatbuffers::DetachedBuffer BuildCompactPlaneSliceModel(int planeBegin)
         tflite::CreateBufferDirect(builder, &endData),
         tflite::CreateBufferDirect(builder, &stridesData),
     };
-    const std::vector<int32_t> sourceShape = {1, 4, 32};
-    const std::vector<int32_t> outputShape = {1, 2, 32};
+    const std::vector<int32_t> sourceShape = {1, 4, planeWidth};
+    const std::vector<int32_t> outputShape = {1, 2, planeWidth};
     const std::vector<int32_t> parameterShape = {3};
     std::vector<flatbuffers::Offset<tflite::Tensor>> tensors = {
         tflite::CreateTensorDirect(builder, &sourceShape, tflite::TensorType::INT8, 0,
@@ -1448,6 +1449,18 @@ flatbuffers::DetachedBuffer BuildCompactPlaneSliceModel(int planeBegin)
         tflite::CreateTensorDirect(builder, &outputShape, tflite::TensorType::INT8, 0,
             "slice", sliceQuant),
     };
+    if ( consumeSlice )
+    {
+        const std::vector<uint8_t> constant(2 * planeWidth, 3);
+        const std::vector<float> outputScales = {2.0f};
+        const auto outputQuant = tflite::CreateQuantizationParametersDirect(
+            builder, nullptr, nullptr, &outputScales, &zeroPoints);
+        buffers.push_back(tflite::CreateBufferDirect(builder, &constant));
+        tensors.push_back(tflite::CreateTensorDirect(builder, &outputShape,
+            tflite::TensorType::INT8, 4, "constant", inputQuant));
+        tensors.push_back(tflite::CreateTensorDirect(builder, &outputShape,
+            tflite::TensorType::INT8, 0, "output", outputQuant));
+    }
     const auto sliceOptions = tflite::CreateStridedSliceOptions(
         builder, planeBegin == 0 ? 7 : 5, 5, 0, 0, 0);
     const auto addOptions = tflite::CreateAddOptions(
@@ -1456,14 +1469,21 @@ flatbuffers::DetachedBuffer BuildCompactPlaneSliceModel(int planeBegin)
     const std::vector<int32_t> addOutputs = {5};
     const std::vector<int32_t> sliceInputs = {5, 2, 3, 4};
     const std::vector<int32_t> sliceOutputs = {6};
-    const std::vector<flatbuffers::Offset<tflite::Operator>> operations = {
+    std::vector<flatbuffers::Offset<tflite::Operator>> operations = {
         tflite::CreateOperatorDirect(builder, 0, &addInputs, &addOutputs,
             tflite::BuiltinOptions::AddOptions, addOptions.Union()),
         tflite::CreateOperatorDirect(builder, 1, &sliceInputs, &sliceOutputs,
             tflite::BuiltinOptions::StridedSliceOptions, sliceOptions.Union()),
     };
+    if ( consumeSlice )
+    {
+        const std::vector<int32_t> inputs = {6, 7};
+        const std::vector<int32_t> outputs = {8};
+        operations.push_back(tflite::CreateOperatorDirect(builder, 0, &inputs, &outputs,
+            tflite::BuiltinOptions::AddOptions, addOptions.Union()));
+    }
     const std::vector<int32_t> graphInputs = {0, 1};
-    const std::vector<int32_t> graphOutputs = {6};
+    const std::vector<int32_t> graphOutputs = {consumeSlice ? 8 : 6};
     const std::vector<flatbuffers::Offset<tflite::SubGraph>> subgraphs = {
         tflite::CreateSubGraphDirect(
             builder, &tensors, &graphInputs, &graphOutputs, &operations, "main"),
@@ -7136,6 +7156,63 @@ TEST_CASE("Neural-AI compiler aliases contiguous compact plane slices")
         INFO(compiler.LastError());
         REQUIRE(compiled);
     }
+}
+
+TEST_CASE("Neural-AI compiler stages unaligned compact slices before AFU binary")
+{
+    const int width = GENERATE(3, 16, 17, 32, 2100);
+    const int firstPlane = GENERATE(0, 2);
+    const bool unaligned = (firstPlane * width) % 32 != 0;
+    std::unique_ptr<Architecture> architecture = std::make_unique<ArchNeuralAI>();
+    Compiler compiler(architecture);
+    const std::string options = "[scheduler]\ncpu_tensor_alignment=32\n";
+    REQUIRE(compiler.ParseOptions(options.c_str(), options.size()));
+    const auto model = BuildCompactPlaneSliceModel(firstPlane, width, true);
+    REQUIRE(compiler.LoadTflite(model.data(), model.size()));
+    const bool compiled = compiler.Compile();
+    INFO(compiler.LastError());
+    REQUIRE(compiled);
+    IRegorBlob *blob = compiler.Output();
+    REQUIRE(blob != nullptr);
+    int64_t size = 0;
+    const auto *data = static_cast<const uint8_t *>(blob->Map(size));
+    REQUIRE(Read32(data) == neuralai::ModelMagic);
+    const uint32_t commandBytes = Read32(data + 64 + 12);
+    uint32_t cursor = 224;
+    uint32_t binaryBytes = 0;
+    uint32_t generalBytes = 0;
+    uint32_t unalignedLoads = 0;
+    while ( cursor < 224 + commandBytes )
+    {
+        const auto type = neuralai::CommandType(Read16(data + cursor));
+        const uint16_t bytes = Read16(data + cursor + 2);
+        REQUIRE(bytes >= sizeof(neuralai::CommandHeaderV2));
+        if ( type == neuralai::CommandType::AFUBinaryQuant || type == neuralai::CommandType::AFUBinary )
+        {
+            for ( const int offset : {16, 24, 32} )
+            {
+                REQUIRE(Read16(data + cursor + offset) == uint16_t(neuralai::Region::TCDMScratch));
+                REQUIRE(Read32(data + cursor + offset + 4) % 32 == 0);
+            }
+            binaryBytes += Read32(data + cursor + 40);
+            if ( type == neuralai::CommandType::AFUBinaryQuant ) generalBytes += Read32(data + cursor + 40);
+        }
+        if ( type == neuralai::CommandType::DMA1D &&
+             Read16(data + cursor + 16) == uint16_t(neuralai::Region::TCDMScratch) &&
+             Read16(data + cursor + 24) == uint16_t(neuralai::Region::TCDMScratch) &&
+             Read32(data + cursor + 20) % 32 != 0 )
+        {
+            REQUIRE(Read32(data + cursor + 28) % 32 == 0);
+            unalignedLoads += Read32(data + cursor + 32);
+        }
+        cursor += bytes;
+    }
+    REQUIRE(cursor == 224 + commandBytes);
+    REQUIRE(binaryBytes == uint32_t(6 * width));
+    REQUIRE(generalBytes == uint32_t(2 * width));
+    REQUIRE(unalignedLoads == (unaligned ? uint32_t(2 * width) : 0u));
+    blob->Unmap(const_cast<uint8_t *>(data));
+    blob->Release();
 }
 
 TEST_CASE("Neural-AI compiler aliases C32-aligned YOLO depth slices into pointwise Conv")

@@ -165,7 +165,8 @@ invalidates the previous coverage claim.
 | Snapshot-2604 continuation through 2731 | Previous output checks plus L2-fed K3/S2 Conv and C256 SiLU | PASS, 153,600 live bytes + 51,200 L2 bytes |
 | Snapshot-2731 continuation through 5254 | All 2,523 remaining commands, nine prefix checks and final output | Commands complete; final output FAIL, 7,929 / 176,400 bytes differ |
 | Snapshot-2731 continuation with detection-head observations | Same complete suffix plus 115 diagnostic checks covering all 18 head Convs | FAIL at command 4314: 2,909 / 3,200 bytes differ; Conv is exact on its incorrect input |
-| Repaired pointwise cascade, snapshot-2731 continuation through 5513 | Nine prefix checks, 313 extra Conv observations and final output | Prepared; numerical verification pending |
+| Repaired pointwise cascade, snapshot-2731 continuation through 5513 | Nine prefix checks, 313 extra Conv observations and final output | All 322 live checks PASS; final FAIL in 7,047 box bytes, class bytes all exact |
+| Compact plane alignment regression | Compiler-generated Add / slice / general Add, 4,200 output bytes | Unit checks PASS; focused 14-command cluster case prepared |
 | Remaining later layers | Completion-aware tiles/groups and operator boundaries | Not yet verified |
 | Full YOLO and MobileNet regression | Complete output bindings | Deferred |
 
@@ -1278,6 +1279,101 @@ PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay
   --diagnostic-checkpoints "$evidence_root/pointwise-staging-conv-oracles/observations.json" \
   --output "$evidence_root/run-remaining-pointwise-staging"
 ```
+
+### AFU binary compact-slice alignment correction (2026-10-21)
+
+The pointwise-staging replay **completed commands 2732–5513**. All **322 live
+checks / 1,777,600 compared bytes PASS**, including all 42 observed remaining
+source Convs. The final **168,000 class bytes are exact**, but **7,047 / 8,400
+box bytes differ** (maximum absolute difference 137). Do not treat command
+completion or passing Convs as full inference PASS.
+
+Evidence: `run-remaining-pointwise-staging/byte_exact.json`, `results.xml`,
+`output-actual.bin`, `output-expected.bin` and `command-5513.snapshot` under the
+existing evidence root. The snapshot integrity is valid, but the final numerical
+FAIL means it is **not** an accepted restart parent. Simulation time was
+10,279,178 ns, wall time 16,911.29 s. PMU reports **10,243,691 whole-run cycles**,
+**8,481,630 command-active cycles**, no overflow and 2,782 begin/end events.
+`command_pmu.csv` contains **2,782 rows / 169 columns**, commands 2732–5513;
+both its `cycle` and `command_active_cycles` sums equal the active PMU total.
+These are suffix measurements on the still-faulty tail, not corrected full-model
+performance or a direct Micro-MobileNet comparison.
+
+Offline analysis (`offline-box-tail-analysis.json`, produced by the local
+`analyze-pointwise-staging-tail.py`, with log `offline-pointwise-staging-tail.log`)
+separates the remaining problems:
+
+- The last AFU DFL command **5493** matches all **6,400 surviving RTL bytes**
+  when evaluated on the verified logits using its emitted exp/reciprocal tables
+  and requant. Differences from the unchanged hybrid reference are 333/400,
+  1,042/1,600 and 2,489/6,400 bytes across the three heads, maximum 4/2/2.
+- The emitted coordinate constants match all **4,200 TFLite bytes**, and the
+  four emitted binary quantizations plus final LUT, when fed reference DFL
+  distances, reproduce **all 8,400 reference box bytes** on the host.
+- Command **5506**, layer 168, reads the right/bottom DFL slice at TCDM offset
+  **14,216**, whose low five bits equal **8**. The standalone AFU binary backend
+  reads aligned 32-byte beats: it starts at **14,208**, not at that slice.
+  This is a missing compiler alignment/staging contract, not authorization to
+  change the RTL interface.
+- Replaying the emitted arithmetic with the backend's aligned addresses and
+  fused AFU DFL distances reproduces **all 8,400 actual RTL box bytes**, and
+  every surviving right/bottom, width/height, center and final-LUT buffer.
+  With the correct byte address, the predicted residual is only **3,465 box
+  mismatches, maximum 7**, attributable to DFL's separate quantization contract.
+  This last figure is a host prediction, not a repaired RTL simulation result.
+
+The compiler now stages unaligned compact-plane Add/Sub views through aligned
+TCDM buffers, using the existing tiled DMA path. Each LHS/RHS/output slot has a
+separately **32-byte-rounded stride**, including short tiles; aligned local
+views remain direct. A shared sizing helper is used in scheduler reservation and
+emission, and generation checks the reserved span. Semantic IR rejects nonlocal,
+nonzero-index or unaligned native `AFUBinaryQuant` references. No RTL, firmware,
+ABI or numerical oracle is changed.
+
+Verification so far:
+
+- Focused ASan: **4 cases / 500 assertions PASS**. The new compiler test covers
+  widths **3, 16, 17, 32, 2100**, plane starts **0 and 2**, aligned controls,
+  complete staged byte coverage, short-slot padding and the 4,096+104 split.
+  Semantic tests reject invalid LHS, RHS and output ports for lengths 6/34/4200.
+- Broad `Neural-AI*`: **160 cases PASS / 4 unchanged baseline failures**,
+  **45,708 assertions**. The known four failures remain recorded above.
+- Offline replay suite: **157 PASS**. The generic reset runner now permits an
+  absent, unused L2 temporary binding and constructs exactly the declared binding
+  table, without adding a fake binding to the compiled model. Missing input or
+  output, duplicate descriptors and nonzero indices remain rejected.
+- Recompiled YOLO: **5,520 commands**, zero CPU ops, **512,000 TCDM bytes**;
+  SHA256 `ac9a410bd25221e1d8362211e1f30c8baae7a7b783756d9cc17bb87eeeeb464d`.
+  The first changed command is 5504; all emitted native binary addresses are
+  aligned. This artifact has not yet passed full numerical simulation.
+
+First run the focused cluster regression, then return to the full YOLO suffix.
+Its local directory is
+`hw/rtl/cluster/tb/sim/test_afu_compact_slice_20261021/`: `build_fixture.py` creates
+a single-input INT8 `Add -> plane slice -> general Add` TFLite graph. The slice
+starts at byte 4,200 within its compact parent; output is 4,200 bytes. Different
+consumer output scale forces general AFU quantization, not equal-scale fast Add.
+The compiler emits **14 commands**, including two general jobs of **4,096 and
+104 bytes**, with **29,472 TCDM bytes**, zero CPU ops, NAI SHA256
+`ae5fffccd9c19ebf115dd2febfc386ac92d61fb15f429a90741fdcb92d9105d7`.
+The unchanged firmware and Vtop are pinned. `run-general/case.json` starts from
+reset, requires all 4,200 final bytes to match the independent reference, records
+per-command PMU and has a **1,000,000-cycle timeout**. Preparation:
+
+```sh
+cd /home/dev01/neural-ai
+test_root=hw/rtl/cluster/tb/sim/test_afu_compact_slice_20261021
+PYTHONDONTWRITEBYTECODE=1 python3 sw/test/compiler_runtime/yolo_reference_replay.py \
+  --source "$test_root/compact_slice_general_2100.tflite" \
+  --manifest "$test_root/artifacts/dma_events.json" \
+  --from-reset --full-graph --consumer-tiles 0 --timeout-cycles 1000000 \
+  --output "$test_root/run-general"
+```
+
+The local launcher is `launch-general.sh`; it refuses an overlapping Vtop or
+overwriting existing evidence. Focused cluster PASS remains pending. Even after
+that passes, full YOLO byte-exactness still requires resolving the documented
+DFL numerical-contract difference; no tolerance or oracle replacement is approved.
 
 ## Deferred regression: full YOLO output
 

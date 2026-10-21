@@ -131,13 +131,14 @@ references; they do not define full feature coverage.
 
 ## 4. Current implementation status
 
-Latest correctness gate (2026-10-20): YOLO320 is verified through snapshot 2731,
-not through full inference. A later cascade pointwise path omitted L2 staging;
-the compiler correction removes 108 illegal compute references and emits 5,513
-commands at unchanged 512,000-byte TCDM usage. ASan/offline checks pass apart from
-four unchanged C++ baseline failures; repaired suffix simulation and final-output
-byte-exactness remain pending. See
-[checkpoint evidence](neural_ai_external_psum_verification.md#pointwise-cascade-l2-staging-correction-2026-10-20).
+Latest correctness gate (2026-10-21): the pointwise-repaired YOLO suffix completed
+all 2,782 commands and passed 322 live checkpoints, but final output still fails
+in 7,047 box bytes; all 168,000 class bytes are exact. Offline replay reproduces
+the box error completely from one unaligned AFU binary input. The new compiler
+alignment correction emits 5,520 commands at unchanged 512,000-byte TCDM usage;
+unit checks pass, focused cluster confirmation is pending. DFL's separate
+numerical-contract difference remains unresolved; do not claim full byte-exactness.
+See [checkpoint evidence](neural_ai_external_psum_verification.md#afu-binary-compact-slice-alignment-correction-2026-10-21).
 
 Legend: **verified** means compiler tests, runtime/ABI host tests, cross-build,
 golden fixture, and focused Verilator E2E have passed where the feature crosses

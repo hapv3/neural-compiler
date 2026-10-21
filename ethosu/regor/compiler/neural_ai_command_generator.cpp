@@ -165,6 +165,32 @@ bool IsL2ArenaTensor(const SchedulerTensor *tensor)
            tensor->memArea.memory->Name() == "l2";
 }
 
+uint32_t BinaryStagingBytes(const SchedulerOperation *operation)
+{
+    // Contiguous compact views can still start within a native AFU beat.
+    // Reserve staging before allocation, using the slice-relative byte offset.
+    bool stage = false;
+    for ( const SchedulerConnection *connection :
+            {operation->IFM(0), operation->IFM(1), operation->OFM()} )
+    {
+        stage |= IsL2ArenaTensor(connection->tensor.get());
+        if ( IsCompactNHWC(connection->tensor->format) && !IsFullTensorConnection(connection) )
+        {
+            uint32_t offset = 0;
+            std::string error;
+            if ( !CompactPlaneSliceByteOffset(connection, offset, error) )
+                throw std::runtime_error(error);
+            stage |= offset % ArchNeuralAI::DMAAlignment != 0;
+        }
+    }
+    if ( !stage ) return 0;
+    const int64_t bytes = TensorStorageBytes(operation->OFM()->tensor.get());
+    if ( bytes <= 0 || bytes > std::numeric_limits<uint32_t>::max() )
+        throw std::runtime_error("Neural-AI binary staging tensor size is invalid");
+    const uint32_t tileBytes = std::min(4096u, uint32_t(bytes));
+    return uint32_t(RoundAway(int(tileBytes), ArchNeuralAI::DMAAlignment)) * 3u;
+}
+
 struct HaloWorkspace
 {
     uint32_t bytes = 0;
@@ -2446,13 +2472,19 @@ struct GeneratorContext
             ++artifact->commandCount;
             return true;
         };
-        if ( directLocal ) return appendBinary(lhsRef, rhsRef, ofmRef, uint32_t(lhsBytes), 0);
+        const bool aligned = lhsRef.offset % ArchNeuralAI::DMAAlignment == 0 &&
+                             rhsRef.offset % ArchNeuralAI::DMAAlignment == 0 &&
+                             ofmRef.offset % ArchNeuralAI::DMAAlignment == 0;
+        if ( directLocal && aligned ) return appendBinary(lhsRef, rhsRef, ofmRef, uint32_t(lhsBytes), 0);
 
         constexpr uint32_t spillTileBytes = 4096;
         const uint32_t tileCapacity = std::min(spillTileBytes, uint32_t(lhsBytes));
+        const uint32_t tileStride = uint32_t(RoundAway(int(tileCapacity), ArchNeuralAI::DMAAlignment));
+        if ( workspaceSizes[operation->Uid()].stage < tileStride * 3u )
+            return SetError(error, "Neural-AI binary staging workspace is too small");
         RefV1 localLhs{uint16_t(Region::TCDMScratch), 0, stageOffset};
-        RefV1 localRhs{uint16_t(Region::TCDMScratch), 0, stageOffset + tileCapacity};
-        RefV1 localOfm{uint16_t(Region::TCDMScratch), 0, stageOffset + tileCapacity * 2u};
+        RefV1 localRhs{uint16_t(Region::TCDMScratch), 0, stageOffset + tileStride};
+        RefV1 localOfm{uint16_t(Region::TCDMScratch), 0, stageOffset + tileStride * 2u};
         uint32_t tileId = 0;
         for ( uint32_t base = 0; base < uint32_t(lhsBytes); base += tileCapacity )
         {
@@ -5244,17 +5276,8 @@ MemorySnapshot NeuralAICommandGenerator::WorkspaceReservation(
             "Neural-AI workspace reservation operation has no schedule time");
         maxTime = std::max(maxTime, cost->timeIndex);
         WorkspaceSize &workspace = sizes[operation->Uid()];
-        if ( (operation->Type() == OpType::Add || operation->Type() == OpType::Sub) &&
-             (IsL2ArenaTensor(operation->IFM(0)->tensor.get()) ||
-                 IsL2ArenaTensor(operation->IFM(1)->tensor.get()) ||
-                 IsL2ArenaTensor(operation->OFM()->tensor.get())) )
-        {
-            constexpr uint32_t spillTileBytes = 4096;
-            const int64_t tensorBytes = TensorStorageBytes(operation->OFM()->tensor.get());
-            if ( tensorBytes <= 0 || tensorBytes > std::numeric_limits<uint32_t>::max() )
-                throw std::runtime_error("Neural-AI binary spill tensor size is invalid");
-            workspace.stage = std::min(spillTileBytes, uint32_t(tensorBytes)) * 3u;
-        }
+        if ( operation->Type() == OpType::Add || operation->Type() == OpType::Sub )
+            workspace.stage = BinaryStagingBytes(operation.get());
         if ( operation->Type() == OpType::LUT )
         {
             const bool spillInput = IsL2ArenaTensor(operation->IFM(0)->tensor.get());
@@ -5554,21 +5577,11 @@ bool NeuralAICommandGenerator::Generate(const Graph *graph,
     for ( const auto &operation : operations )
     {
         GeneratorContext::WorkspaceSize &workspace = context.workspaceSizes[operation->Uid()];
-        if ( (operation->Type() == OpType::Add || operation->Type() == OpType::Sub) &&
-             (IsL2ArenaTensor(operation->IFM(0)->tensor.get()) ||
-                 IsL2ArenaTensor(operation->IFM(1)->tensor.get()) ||
-                 IsL2ArenaTensor(operation->OFM()->tensor.get())) )
+        if ( operation->Type() == OpType::Add || operation->Type() == OpType::Sub )
         {
-            constexpr uint32_t spillTileBytes = 4096;
-            const int64_t tensorBytes = TensorStorageBytes(operation->OFM()->tensor.get());
-            if ( tensorBytes <= 0 || tensorBytes > std::numeric_limits<uint32_t>::max() )
-            {
-                error = "Neural-AI binary spill tensor size is invalid";
-                return false;
-            }
-            const uint32_t tileBytes = std::min(spillTileBytes, uint32_t(tensorBytes));
-            workspace.stage = std::max(workspace.stage, tileBytes * 3u);
-            context.stageBytes = std::max(context.stageBytes, tileBytes * 3u);
+            const uint32_t bytes = BinaryStagingBytes(operation.get());
+            workspace.stage = std::max(workspace.stage, bytes);
+            context.stageBytes = std::max(context.stageBytes, bytes);
         }
         if ( operation->Type() == OpType::LUT )
         {

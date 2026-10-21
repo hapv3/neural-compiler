@@ -706,6 +706,31 @@ TEST_CASE("Neural-AI semantic IR requires local pointwise feature maps and parti
     CHECK_FALSE(error.empty());
 }
 
+TEST_CASE("Neural-AI semantic IR requires aligned local AFU binary references")
+{
+    CommandAFUBinaryQuantV2 add{};
+    add.header.type = uint16_t(CommandType::AFUBinaryQuant);
+    add.header.sizeBytes = sizeof(add);
+    add.lhs = {uint16_t(Region::TCDMScratch), 0, 64};
+    add.rhs = {uint16_t(Region::TCDMScratch), 0, 128};
+    add.ofm = {uint16_t(Region::TCDMScratch), 0, 192};
+    add.length = GENERATE(6u, 34u, 4200u);
+    std::vector<uint8_t> valid;
+    Append(valid, add);
+    std::vector<SemanticCommand> commands;
+    std::string error;
+    REQUIRE(DecodeSemanticCommandStream(valid, commands, error));
+    const int endpoint = GENERATE(0, 1, 2);
+    RefV1 *reference = endpoint == 0 ? &add.lhs : (endpoint == 1 ? &add.rhs : &add.ofm);
+    SECTION("Reject a byte-offset native port") { reference->offset += 8; }
+    SECTION("Reject an external native port") { reference->region = uint16_t(Region::L2TemporaryBinding); }
+    SECTION("Reject a nonzero local binding index") { reference->index = 1; }
+    std::vector<uint8_t> invalid;
+    Append(invalid, add);
+    CHECK_FALSE(DecodeSemanticCommandStream(invalid, commands, error));
+    CHECK_FALSE(error.empty());
+}
+
 TEST_CASE("Neural-AI semantic IR rejects malformed commands")
 {
     std::vector<uint8_t> bytes(sizeof(CommandHeaderV2));

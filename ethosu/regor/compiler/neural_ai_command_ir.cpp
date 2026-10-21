@@ -532,6 +532,14 @@ bool DecodeKnownCommand(SemanticCommand &command)
         {
             const uint64_t bytes = Read32(encoded + 40);
             const bool afu = command.type != CommandType::SpatzAdd;
+            if ( command.type == CommandType::AFUBinaryQuant )
+            {
+                // The standalone binary backend consumes aligned 32-byte beats.
+                for ( const int offset : {16, 24, 32} )
+                    if ( Read16(encoded + offset) != uint16_t(Region::TCDMScratch) ||
+                         Read16(encoded + offset + 2) != 0 ||
+                         Read32(encoded + offset + 4) % TCDMWordBytes != 0 ) return false;
+            }
             AddResource(command, afu ? SemanticResource::AFU : SemanticResource::Spatz);
             AddReadWriteState(command, afu ? SemanticState::AFUEngine :
                 SemanticState::SpatzEngine, 0);
