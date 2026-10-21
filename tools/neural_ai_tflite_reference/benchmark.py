@@ -74,7 +74,7 @@ def box_iou(box, boxes):
     return intersection / np.maximum(area + areas - intersection, 1e-12)
 
 
-def decode_yolo(output, detail, transform, image_id, confidence=0.001, nms_iou=0.7):
+def decode_yolo(output, detail, transform, image_id, confidence=0.001, nms_iou=0.7, include_anchor=False):
     """Adapter for this exported YOLOv8: [1,84,N], normalized xywh + 80 scores."""
     if output.ndim != 3 or output.shape[0] != 1 or output.shape[1] != 84:
         raise ValueError("Expected YOLOv8 [1,84,N] output, without embedded NMS")
@@ -101,10 +101,12 @@ def decode_yolo(output, detail, transform, image_id, confidence=0.001, nms_iou=0
             detections.append({"image_id": image_id, "category_id": int(category[index]),
                                "bbox": [float(x1), float(y1), float(x2 - x1), float(y2 - y1)],
                                "score": float(scores[index])})
+            if include_anchor:
+                detections[-1]['anchor_index'] = int(anchor[index])
     return detections
 
 
-def evaluate_coco(manifest, samples, predictions, output):
+def evaluate_coco(manifest, samples, predictions, output, detailed=False):
     sys.path.insert(0, str(ROOT / "build/python-deps"))
     from pycocotools.coco import COCO
     from pycocotools.cocoeval import COCOeval
@@ -139,6 +141,18 @@ def evaluate_coco(manifest, samples, predictions, output):
             metrics[kind] = {"AP_50_95": float(evaluator.stats[0]), "AP_50": float(evaluator.stats[1]),
                              "AP_75": float(evaluator.stats[2]), "AR_max100": float(evaluator.stats[8]),
                              "detections": len(detections)}
+            if detailed:
+                metrics[kind].update(AP_small=float(evaluator.stats[3]), AP_medium=float(evaluator.stats[4]),
+                                     AP_large=float(evaluator.stats[5]), per_category={})
+                for index, name in enumerate(manifest['classes']):
+                    precision = evaluator.eval['precision'][:, :, index, 0, -1]
+                    valid = precision[precision >= 0]
+                    p50 = precision[0]
+                    p75 = precision[5]
+                    metrics[kind]['per_category'][name] = {
+                        'AP_50_95': float(valid.mean()) if valid.size else None,
+                        'AP_50': float(p50[p50 >= 0].mean()) if np.any(p50 >= 0) else None,
+                        'AP_75': float(p75[p75 >= 0].mean()) if np.any(p75 >= 0) else None}
     (output / "coco_eval.log").write_text(log.getvalue())
     return metrics
 

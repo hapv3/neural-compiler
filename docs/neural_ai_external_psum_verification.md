@@ -1531,6 +1531,43 @@ and investigate an exact lowering. Neither oracle replacement nor a new RTL
 change is authorized by the observed arithmetic agreement. No further simulation
 is needed just to repeat this unchanged failure.
 
+### Approved AFU DFL reference and 100-image accuracy check (2026-10-21)
+
+Following explicit approval, `tools/neural_ai_tflite_reference/afu_dfl.py` adds
+the opt-in `neural_ai_afu_dfl_reference` mode. The default MAC-only hybrid mode,
+its delegate build, the source TFLite and every old oracle/report remain unchanged.
+The new mode identifies the source graph's private Softmax/projection/Mul chain
+by graph edges, constructs reference-only graph slices in memory, and generates
+exp/reciprocal LUTs and output qparams independently from source quantization.
+It does not read the NAI or RTL output to generate expected bytes.
+
+`verify_afu_dfl.py` checks all three DFL pre/post snapshots, independently
+generated tables/qparams and the complete retained output. It reports **PASS:
+0 / 176,400 final byte mismatches** against this recorded RTL run. The source-DFL
+control still equals the old pinned oracle exactly, and the old 3,465-byte FAIL
+is not relabeled. Contract `afu_dfl16_deployed_signed_delta_v1` explicitly models
+the deployed exp-table alias below -128; it does not silently fix that latent issue.
+
+On the pinned 100-image / 714-annotation COCO demo, every freshly recomputed
+split-graph control equals its cached ordinary hybrid output. The paired paths
+share the same MAC prefix and TFLite tail; all **16,800,000 class-score bytes**
+remain exact. DFL alone changes AP50–95 **35.1838% -> 35.1726% (-0.0111 pp)**,
+AP75 by **-0.2601 pp**, and small-object AP by **-0.7277 pp**. Larger raw box
+outliers occur than in the fixed simulation input: maximum 23 LSB overall,
+5 LSB at confidence >=0.25. None of the 840,000 DFL distributions exercises
+the wrapped-delta issue. This is a host accuracy experiment, not 100 RTL
+inferences, a full-COCO result, or a claim of statistical equivalence.
+
+See [complete metrics, limitations and artifact locations](../tools/neural_ai_tflite_reference/RESULTS.md#afu-dfl-only-accuracy-experiment--2026-10-21)
+and [reference commands/contract](../tools/neural_ai_tflite_reference/README.md#deployed-afu-dfl-contract-and-accuracy-isolation).
+Snapshot-check provenance is in
+`tools/neural_ai_tflite_reference/results/afu_dfl_snapshot_check_provenance_20261021.json`;
+the accuracy report is in `results/yolo320_afu_dfl_val100_20261021/` under the same
+reference-tool directory. No new simulator, RTL, firmware or compiler-lowering
+change is involved. Next release gates remain representative-data acceptance,
+an explicitly versioned reference selection for future replay preparation, and
+a reset regression after any future numerical-contract/compiler changes.
+
 ## Deferred regression: full YOLO output
 
 After the bounded gates pass, run every logical command from reset using the **newly verified pinned NAI**,

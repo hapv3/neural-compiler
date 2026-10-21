@@ -1,6 +1,7 @@
 # Neural-AI TFLite reference runtime
 
-An independent **host-side, hybrid numerical reference**, loaded as a TFLite external delegate.
+An independent **host-side, hybrid numerical reference**. MAC kernels use a TFLite external delegate;
+an optional graph adapter models fused AFU DFL16 without changing the default runtime.
 It does not modify the model, installed TensorFlow, compiler, firmware, or RTL.
 
 ## Numerical scope
@@ -9,6 +10,16 @@ It does not modify the model, installed TensorFlow, compiler, firmware, or RTL.
 | --- | --- |
 | INT8 Conv2D, DepthwiseConv2D, FullyConnected | Independent scalar C++ accumulation + Neural-AI multiplier/shift + single rounding, ties away from zero |
 | Other operators | Unmodified TFLite `BUILTIN_REF` kernels |
+
+The default `neural_ai_reference` remains the original MAC-only hybrid baseline.
+Opt-in `neural_ai_afu_dfl_reference` additionally replaces one recognized private
+`Softmax -> 16-bin projection Conv -> views -> constant box-scale Mul -> view`
+chain with independent deployed AFU arithmetic. `tflite_afu_dfl_reference` applies
+the same DFL arithmetic with original TFLite MACs. Unsupported DFL graphs raise an
+error; they do not silently fall back. No fixed tensor IDs or 2,100-location constraint
+is used. Current recognition requires static INT8 `[1,4,L,16]` logits, beta 1,
+projection weights approximating bins 0–15, zero projection bias, private
+quantization-preserving views, and positive box scales equal across the four sides.
 
 MAC kernels support per-tensor/per-channel symmetric INT8 weights, INT32 bias, input/output zero points,
 SAME/VALID padding, stride/dilation, depth multiplier, and None/Relu/Relu6/ReluN1To1 activation clamps.
@@ -25,9 +36,10 @@ without calling compiler code. Accumulation uses int64 and rejects a biased resu
 range. **Intermediate systolic overflow/wrap behavior is not modeled**; this reference is for non-overflowing
 MACs. It does not model TCDM layouts, DMA, tiling, scheduling, or cycles.
 
-In particular, AFU LUT fusion, hardware Mean, binary requant, and DFL have not been replaced by hardware
-reference kernels. Therefore **a full-graph result is not yet a byte-exact RTL golden output**.
-Agreement at saved stem checkpoints does not extend that claim to the rest of the graph.
+AFU LUT fusion, hardware Mean and general binary requant are not independently modeled here.
+DFL is hardware-modeled only in the explicitly selected AFU mode. Therefore **this
+is not an unrestricted, full-graph RTL golden runtime**. Agreement on a retained
+input does not establish dataset-wide RTL byte-exactness or hardware timing.
 
 ## Build and tests
 
@@ -36,6 +48,7 @@ From the compiler repository root (Python with TensorFlow, NumPy, FlatBuffers, P
 ```bash
 python3 tools/neural_ai_tflite_reference/build.py --sanitize
 python3 tools/neural_ai_tflite_reference/test_runtime.py -v
+PYTHONPATH=tools/neural_ai_tflite_reference python3 -m unittest test_afu_dfl test_runtime test_benchmark -v
 
 # COCO evaluator is isolated; do not replace system packages.
 python3 -m pip install --no-deps \
@@ -67,6 +80,64 @@ output = runtime.get_tensor(runtime.get_output_details()[0]["index"])
 Use `kind="tflite_reference"` for the original reference interpreter, or `kind="tflite_optimized"`
 for original default CPU kernels/delegates (XNNPACK in this environment). Keep a runtime alive only while
 needed; explicitly delete interpreter references before Python shutdown when embedding it in scripts.
+
+## Deployed AFU DFL contract and accuracy isolation
+
+```python
+runtime = make_interpreter("model.tflite", kind="neural_ai_afu_dfl_reference", preserve=True)
+runtime.set_tensor(runtime.get_input_details()[0]["index"], input_int8)
+runtime.invoke()
+output = runtime.get_tensor(runtime.get_output_details()[0]["index"])
+
+# Accuracy control: execute one shared prefix, source DFL and AFU DFL, then the
+# same tail twice. The returned baseline must match an unchanged hybrid run.
+baseline, afu_output, source_distances = runtime.invoke_comparison()
+print(runtime.last_dfl_stats)  # Includes use of deltas below -128.
+```
+
+The wrapper constructs prefix/middle/tail graphs **in memory** from the original
+TFLite edges; it never edits the source file. Prefix MACs and class scores stay
+identical between the paired paths. The AFU reference independently generates
+exp/reciprocal tables and 16-bit multiplier/right-shift parameters from source
+quantization, computes the unsigned Q8 expectation with integer rounding, and
+applies the folded box-scale requantization. It reads no compiler-generated LUT
+or RTL output to produce a prediction. Removed Softmax/projection intermediates
+are explicitly unavailable through `get_tensor()` rather than fabricated.
+
+Contract ID **`afu_dfl16_deployed_signed_delta_v1`** deliberately includes the
+current compiler's signed-byte exp-index behavior: wrapped differences -255…-129
+alias indices 1…127 whose entries are 32768. This is a known latent LUT-generation
+issue, not an ideal Softmax definition. It must not be silently corrected inside
+the reference. Counters expose whether an input exercises it; a future compiler
+fix requires a separately identified contract and regenerated verification cases.
+
+Check the new reference against the already-retained three DFL snapshots and full
+output without starting a simulator:
+
+```bash
+python3 tools/neural_ai_tflite_reference/verify_afu_dfl.py \
+  --case /home/dev01/neural-ai/hw/rtl/cluster/tb/sim/test_yolo_cascade_l2_20261013/run-remaining-binary-alignment/case.json \
+  --neural-ai-root /home/dev01/neural-ai \
+  --output tools/neural_ai_tflite_reference/results/afu_dfl_check.json
+```
+
+Evaluate the isolated DFL effect on the pinned 100-image set:
+
+```bash
+python3 tools/neural_ai_tflite_reference/benchmark_dfl.py \
+  --model test/model/yolov8n_320_int8.tflite \
+  --baseline tools/neural_ai_tflite_reference/results/yolo320_val100 \
+  --output tools/neural_ai_tflite_reference/results/yolo320_afu_dfl_val100
+```
+
+This accuracy-only benchmark validates model/dataset/MAC-build identities, input
+hashes and cached output hashes. Every freshly recomputed split control must be
+byte-exact with the original hybrid output. It reports original TFLite, unchanged
+hybrid and hybrid-plus-AFU-DFL AP/AR, per-class AP, small/medium/large AP, raw score
+invariance, NMS anchor changes, high-confidence aligned box IoU, and wrapped-delta
+counts. Outputs, per-image CSV, detections, provenance and full evaluator logs are
+saved in a new directory; previous evidence is never overwritten. This is not a
+benchmark of 100 RTL inferences or NPU performance.
 
 ## Download the requested 100-image set
 

@@ -142,9 +142,13 @@ DFL input bytes, all 8,400 fused DFL output bytes against deployed arithmetic,
 and all five downstream binary jobs. The remaining discrepancy is between fused
 DFL and the reference's quantized Softmax / projection Conv / Mul sequence,
 including approximate quantized projection weights and intermediate rounding.
-Do not replace the pinned oracle or claim full byte-exactness. A numerical-contract
-decision is required before changing reference semantics or pursuing an exact
-unfused lowering; no new RTL change is authorized. See
+The separately approved opt-in AFU DFL reference now matches all 176,400 retained
+RTL output bytes, while its control preserves the original hybrid oracle/FAIL.
+On 100 pinned COCO images, DFL alone changes AP50–95 by -0.0111 percentage points
+(35.1838% -> 35.1726%); AP75 changes by -0.2601 pp and small-object AP by -0.7277 pp.
+All 16.8M paired class-score bytes remain exact. This host experiment is not a
+100-image RTL regression or a full-COCO accuracy guarantee. No new RTL change is
+authorized. See [DFL accuracy evidence](../tools/neural_ai_tflite_reference/RESULTS.md#afu-dfl-only-accuracy-experiment--2026-10-21) and
 [checkpoint evidence](neural_ai_external_psum_verification.md#alignment-corrected-suffix-result-and-dfl-isolation-2026-10-21).
 
 Legend: **verified** means compiler tests, runtime/ABI host tests, cross-build,
@@ -175,7 +179,7 @@ new runtime path has not yet passed E2E.
 | StridedSlice | Verified | C32-aligned aliases; multi-group C32 DMA materialization; C32-to-C16 materialization; contiguous compact plane aliases |
 | Concat | Compiler verified | striped/tail gathers; final compact plane-axis output DMA; native two-input C32 inputs may reload from L2 into a TCDM output |
 | YOLO C144 head transpose | Verified fallback | standalone heads retain vectorized C32-to-CHW materialization |
-| DFL16 projection | Execution verified; numerical contract pending | selected heads feed C64/C80 C32 directly; fused box-scale arithmetic matches RTL but differs from the original quantized Softmax/Conv/Mul sequence |
+| DFL16 projection | Execution and opt-in AFU reference verified | selected heads feed C64/C80 C32 directly; AFU DFL reference matches retained RTL output; original quantized Softmax/Conv/Mul baseline remains separate |
 | Async DMA and overlap | Verified foundation | dependency-aware submit/wait commands, systolic submit/wait, and the 16-entry iDMA job queue are active; cross-command ping-pong and broader engine overlap remain P3 work |
 | Full selected graphs | Compiler verified; full byte-exact pending | current selected YOLO320 emits 5,520 executable commands and requires 512,000 bytes of TCDM; repaired suffix completes with exact Conv observations/class output, but DFL prevents a full-output PASS; reset regression and MobileNet byte-exact remain deferred |
 

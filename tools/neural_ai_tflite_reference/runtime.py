@@ -12,6 +12,10 @@ MAC_OPS = {"CONV_2D", "DEPTHWISE_CONV_2D", "FULLY_CONNECTED"}
 
 
 def make_interpreter(model, kind="neural_ai_reference", preserve=False, threads=1):
+    if kind in ("neural_ai_afu_dfl_reference", "tflite_afu_dfl_reference"):
+        from afu_dfl import AFUDFLInterpreter
+        base = "neural_ai_reference" if kind.startswith("neural_ai_") else "tflite_reference"
+        return AFUDFLInterpreter(model, base, preserve, threads, make_interpreter)
     options = {"num_threads": threads, "experimental_preserve_all_tensors": preserve}
     options["model_content" if isinstance(model, bytes) else "model_path"] = model if isinstance(model, bytes) else str(model)
     if kind in ("neural_ai_reference", "tflite_reference"):
@@ -35,6 +39,8 @@ def make_interpreter(model, kind="neural_ai_reference", preserve=False, threads=
 
 def coverage(interpreter):
     """Use actual delegated outputs, not assumptions about supported op names."""
+    if hasattr(interpreter, "reference_coverage"):
+        return interpreter.reference_coverage()
     ops = interpreter._get_ops_details()
     delegated = {int(t) for op in ops if op["op_name"] == "DELEGATE" for t in op["outputs"]}
     nodes = [{"index": int(op["index"]), "operator": op["op_name"],

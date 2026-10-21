@@ -82,9 +82,99 @@ No Vtop process was active when timing started.
   differs by at most 1 LSB (YOLO: 262/409,600 elements; MobileNet: 13,078/401,408). Subsequent differences
   include propagation through nonlinear operations and cannot be attributed solely to the local operator.
 
-This validates the implemented MAC/requant reference and the saved stem only. **The hybrid runtime is
-not yet an end-to-end RTL golden model**: AFU LUT/Mean/binary/DFL numerical contracts still need independent
-reference implementations and further hardware checkpoint checks.
+The original experiment above validates the MAC/requant reference and saved stem only.
+**The default hybrid runtime is not an end-to-end RTL golden model**. The following
+experiment adds an optional AFU DFL contract; AFU LUT/Mean/binary semantics still
+need further independent modeling and hardware checkpoint checks.
+
+## AFU DFL-only accuracy experiment — 2026-10-21
+
+The new opt-in `neural_ai_afu_dfl_reference` models deployed AFU DFL16 arithmetic.
+The default hybrid runtime, original TFLite file, delegate library, cached baseline
+outputs and previous failing RTL comparison are unchanged. Contract ID is
+`afu_dfl16_deployed_signed_delta_v1`; see [the contract and commands](README.md#deployed-afu-dfl-contract-and-accuracy-isolation).
+
+### Hardware checkpoint validation
+
+Using the retained corrected YOLO suffix and its intermediate snapshots, independently
+generated LUTs and requant parameters match the deployed model. Inputs of all three
+DFL jobs (134,400 logits bytes), all 8,400 DFL output bytes, and **all 176,400 final
+RTL output bytes** match the new reference. The split source-DFL control still equals
+the original pinned hybrid oracle; that oracle differs from the new reference in
+3,465 box bytes, maximum 7. The old FAIL report is preserved, not relabeled.
+This is an offline check of a retained input, **not a new reset simulation or proof
+of RTL equality on the following 100 images**.
+
+### Paired accuracy: same MAC prefix, only DFL changes
+
+All 100 original images and 714 supplied boxes are reused. Each newly recomputed
+split-graph source-DFL control matches its cached unchanged hybrid output byte-for-byte.
+Every AFU-DFL image uses the identical Conv prefix and original TFLite tail. All
+**16,800,000 raw class-score bytes remain exact** between these paired paths.
+Cached TFLite/hybrid model, build, image/input/output identities are checked.
+
+| Runtime | AP50–95 | AP50 | AP75 | AR@100 |
+| --- | ---: | ---: | ---: | ---: |
+| Original TFLite reference | 36.1950% | 50.0923% | 37.5486% | 51.1212% |
+| Unchanged Neural-AI hybrid | 35.1838% | 48.8316% | 37.9213% | 50.8868% |
+| Hybrid + deployed AFU DFL | 35.1726% | 48.6777% | 37.6612% | 50.9974% |
+| **DFL-only change (percentage points)** | **−0.0111** | **−0.1538** | **−0.2601** | **+0.1106** |
+
+The complete hybrid-plus-DFL change versus original TFLite is **−1.0224 pp
+AP50–95**, of which only **−0.0111 pp** is added by DFL on this sample. It would
+be incorrect to attribute the full −1.0224 pp to DFL: the earlier MAC/reference
+differences already account for −1.0112 pp.
+
+| Object area | Unchanged hybrid AP | Hybrid + AFU DFL AP | DFL-only change |
+| --- | ---: | ---: | ---: |
+| Small | 12.3347% | 11.6070% | −0.7277 pp |
+| Medium | 31.3196% | 31.4319% | +0.1123 pp |
+| Large | 64.7933% | 65.1133% | +0.3200 pp |
+
+Overall AP is nearly unchanged on this demo, but small-object AP and AP75 show a
+larger decrease. No statistical significance or general equivalence is claimed.
+This is a deployment-validation question, not evidence that all quantization
+differences are harmless.
+
+### Box and detection behavior
+
+- Of 840,000 raw box elements, 318,771 differ; mean absolute error is **0.4916
+  LSB** and maximum **23 LSB**, not a global bound of 7 from the synthetic test.
+  Per-channel maxima for normalized x/y/w/h are 14 / 7 / 23 / 11 LSB. At 320×320,
+  one LSB is approximately 1.342 pixels; the largest width difference is about
+  30.87 pixels, including low-confidence candidates.
+- At the **2,718 anchors with confidence ≥0.25**, coordinate MAE is **0.5556 LSB**
+  and maximum **5 LSB** (about 6.71 pixels). Aligned pre-NMS box IoU has median
+  **0.9722**, fifth percentile **0.8947**, and minimum **0.5294**. These are
+  comparisons at corresponding anchors, not matched ground-truth detections.
+- With the unchanged evaluation postprocess (multilabel confidence ≥0.001,
+  class-aware NMS IoU=0.7, max300), detection count changes from **12,250 to
+  12,182**. Relative to the original hybrid anchor/class selections, **786 are
+  removed and 718 added**, over 94 images. These are selection changes, not
+  counts of missed or newly recognized ground-truth objects.
+- Raw class scores and per-anchor class choices are unchanged. DFL does not
+  directly swap cat/dog scores; changed localization can still affect NMS,
+  matching against ground truth, and final detection metrics.
+- None of **840,000 DFL distributions** exercises a logits-minus-max delta below
+  −128 in these 100 images. The known wrapped-index LUT issue is modeled but its
+  accuracy impact is **not** covered by this dataset result.
+
+Reproduction artifacts (local, ignored):
+
+- `results/afu_dfl_snapshot_check_provenance_20261021.json` and `.log`: retained-RTL
+  checks with reference-source hashes (`afu_dfl_snapshot_check_20261021.*` is the
+  initial identical numerical check).
+- `results/yolo320_afu_dfl_val100_20261021/report.json`: metrics, per-class AP,
+  exact contract, source/build/model/dataset hashes and limitations.
+- The same directory contains `per_image.csv`, three detection JSONs, original
+  and AFU outputs for every image, `ground_truth.json` and `coco_eval.log`.
+- `results/yolo320_afu_dfl_val100_20261021.log`: benchmark progress/results.
+
+The accuracy run took 66.86 seconds including paired source/AFU evaluation and
+file output; this is **not** an inference-latency or NPU-performance measurement.
+All 21 host regression tests pass (arithmetic, graph-control, MAC, evaluator and
+staging helpers). No RTL,
+firmware, compiler-lowering or installed TensorFlow changes are involved.
 
 ## Reproduction artifacts
 
