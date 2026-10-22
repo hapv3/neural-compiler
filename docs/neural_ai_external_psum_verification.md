@@ -1721,3 +1721,72 @@ PASS is claimed before this replay completes. The local-only launcher is
 `launch-100-checkpoints-20261021.sh` in the evidence root; it refuses another
 active simulator or overwriting an earlier result. It does not enable the large
 cycle-level DMA CSV trace; per-command PMU and all compute captures remain enabled.
+
+### MobileNet224 result and AFU Mean isolation (2026-10-22)
+
+The bounded full-reset run above is complete: **12,789/12,789 commands**, no
+timeout or PMU overflow. All **100 selected compute dumps** and **61 intermediate
+memory snapshots** were captured and independently integrity-verified; the final
+12789 snapshot and output are intact. Compressed compute evidence totals
+14,469,162 bytes. Per-command CSV has **12,789 rows / 169 columns**; command IDs,
+descriptor fields and the cycle sum **13,747,900** match command-active PMU.
+Whole invocation PMU is **17,044,483 cycles**. Do not sum overlapping engine
+active counters to derive total inference time.
+
+The original strict hybrid comparison remains **FAIL: 47/1,000 bytes, maximum
+1 LSB**. First mismatch is output index 17: actual -83, expected -82. The failure
+was isolated without another simulation:
+
+1. Decode the full pre-Mean tensor from command **10195**'s raw TCDM capture,
+   using the IFM reference in command 10196: offset **62,720**, C32 physical
+   `(40,49,32)` -> logical `[1,7,7,1280]`. All **62,720 bytes** match source
+   tensor 174 from the independent hybrid reference.
+2. Read command **10196**'s output at TCDM offset **0**, source tensor 175
+   `[1,1280]`. There are **17 mismatches**, each actual = source-Mean reference -1.
+3. Independently derive fused Mean parameters from source scales
+   `0.0235294122248888 / 0.018716562539339066`, spatial size 49 and zero points
+   -128: multiplier **881,533,370**, right shift **35**, input offset **6,272**,
+   output zero point **-128**, double-round shift **0**. These match the compiled
+   descriptor but are not read from it to generate the prediction.
+4. Apply signed sum/correction, wide multiplication, one positive half-unit
+   and arithmetic shift, then zero-point/clamp. All **1,280 Mean bytes match RTL**.
+   The source TFLite Mean path rounds in two stages; the local contract differs.
+   Negative ties in AFU's single round go toward +infinity; do not substitute the
+   MAC reference's ties-away-from-zero. See [versioned contract](../tools/neural_ai_tflite_reference/README.md#deployed-afu-mean-contract-and-retained-mobilenet-verification).
+5. Feed each Mean variant through the unchanged independent FC tail. Source Mean
+   reproduces the pinned old oracle exactly; deployed Mean reproduces all **1,000
+   retained final output bytes** exactly. The final ROW32 tensor at offset
+   **1,280**, observed at commands **12788 and 12789**, also matches completely.
+   Thus all 47 final differences are explained by Mean propagation, not a new FC
+   arithmetic or external-pSUM fault on this input.
+
+`neural_ai_afu_mean_reference` is an explicit independent host adapter for the
+deployed Mean contract; default `neural_ai_reference` stays MAC-only and unchanged.
+It supports exactly one static batch-one spatial/token Mean with scalar INT8
+quantization, and fails closed on unsupported reductions. It does not modify
+the TFLite file, existing oracle, compiler, firmware or RTL. The source-Mean
+paired control must remain byte-exact with the old oracle; all 66 prefix source
+tensors / 8,879,248 bytes also remain identical to the pinned host archive. Those
+66 comparisons validate host-control preservation, not 66 RTL checkpoints.
+
+Run the offline verification command in the [reference README](../tools/neural_ai_tflite_reference/README.md#deployed-afu-mean-contract-and-retained-mobilenet-verification),
+choosing a new output filename. The verified report is alongside the simulation:
+`run-100-checkpoints-20261021/afu-mean-reference-verified-20261022.json`.
+It records reference-source/MAC-build hashes, original case/report identities,
+compute/snapshot integrity, PMU reconciliation and the exact numerical scope.
+The original `byte_exact.json` and all old captures remain unchanged, not relabeled.
+
+```text
+NAI:                4fd5d48405f972f552fc930981e6a00dd9ff91da8b166adbd65bb60738308024
+Original hybrid:    fe9be81543f707b82e000668487a3747ed556b56be623cd3745925911f868917
+AFU Mean / RTL:     17f6e3134d74868b30516f44c352b83c847714216896256a685d42c3679ab20e
+Verification report:695bff835a00fe7b36c2209f35449c057c37ef090d68a59795fd79f3fe8a063d
+```
+
+**Scope:** four selected capture locations and the full final binding are
+numerically verified for this one input. The other **96 compute captures remain
+NOT_COMPARED**; snapshot integrity is not a numerical PASS. Both variants select
+top-1 index 904 here, which establishes neither ImageNet accuracy nor agreement
+on the 100-image demo. No additional Verilator run is needed to compare retained
+data; future replay preparation must explicitly pin the selected AFU reference
+contract instead of replacing the old hybrid oracle in place.

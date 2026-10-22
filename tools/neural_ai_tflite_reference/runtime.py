@@ -12,6 +12,10 @@ MAC_OPS = {"CONV_2D", "DEPTHWISE_CONV_2D", "FULLY_CONNECTED"}
 
 
 def make_interpreter(model, kind="neural_ai_reference", preserve=False, threads=1):
+    if kind in ("neural_ai_afu_mean_reference", "tflite_afu_mean_reference"):
+        from afu_mean import AFUMeanInterpreter
+        base = "neural_ai_reference" if kind.startswith("neural_ai_") else "tflite_reference"
+        return AFUMeanInterpreter(model, base, preserve, threads, make_interpreter)
     if kind in ("neural_ai_afu_dfl_reference", "tflite_afu_dfl_reference"):
         from afu_dfl import AFUDFLInterpreter
         base = "neural_ai_reference" if kind.startswith("neural_ai_") else "tflite_reference"

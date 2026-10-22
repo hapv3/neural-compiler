@@ -84,7 +84,8 @@ No Vtop process was active when timing started.
 
 The original experiment above validates the MAC/requant reference and saved stem only.
 **The default hybrid runtime is not an end-to-end RTL golden model**. The following
-experiment adds an optional AFU DFL contract; AFU LUT/Mean/binary semantics still
+experiment adds an optional AFU DFL contract. A later, separate Mean mode is
+validated below against retained MobileNet RTL; AFU LUT/binary semantics still
 need further independent modeling and hardware checkpoint checks.
 
 ## AFU DFL-only accuracy experiment — 2026-10-21
@@ -176,9 +177,56 @@ All 21 host regression tests pass (arithmetic, graph-control, MAC, evaluator and
 staging helpers). No RTL,
 firmware, compiler-lowering or installed TensorFlow changes are involved.
 
+## MobileNet retained RTL with AFU Mean — 2026-10-22
+
+The full-reset MobileNet224 run completed **12,789/12,789 commands**, preserving
+the original NAI, firmware and simulator. Original `byte_exact.json` remains
+**FAIL: 47/1,000 output bytes differ, max 1 LSB**, against the unchanged MAC-only
+hybrid oracle. This is not a comparison against an entirely original TFLite graph.
+
+The discrepancy is isolated to the deployed Mean rounding contract, not an FC
+fault: all **62,720 pre-Mean bytes** match the independent source reference.
+AFU Mean differs in **17/1,280 bytes** (each -1 LSB); feeding these actual values
+through the unchanged independent FC reproduces all 47 final differences exactly.
+
+The new opt-in `neural_ai_afu_mean_reference` independently models the deployed
+single-round Mean without reading compiled qparams or RTL results to generate
+predictions. Its paired source-Mean control equals the old oracle. All **1,280
+Mean output bytes and 1,000 final output bytes match retained RTL exactly**.
+The materialized final ROW32 tensor also matches at commands 12788 and 12789.
+All 66 prefix source-operator tensors (8,879,248 bytes) remain identical to the
+old host reference archive; those are host-reference checks, not RTL observations.
+
+Both old and AFU-Mean outputs choose top-1 index **904** on this synthetic input.
+This is not dataset-wide top-1 agreement, ImageNet accuracy, or a new 100-image
+accuracy benchmark. The earlier MobileNet demo metrics above are unchanged.
+
+Integrity audit verifies **100/100 compute dumps** (14,469,162 compressed bytes),
+**61/61 intermediate snapshots**, and the final snapshot. Numerical checks cover
+four selected capture locations only; the other 96 are still `NOT_COMPARED`.
+Per-command PMU has **12,789 rows / 169 columns**; descriptor identities and cycle
+sum **13,747,900** reconcile with command-active cycles. Whole invocation PMU is
+**17,044,483 cycles**, with zero overflow. This is measured hardware simulation,
+unlike the host timing table above; no new Verilator run was needed for this check.
+
+Artifacts remain alongside the simulation under
+`/home/dev01/neural-ai/hw/rtl/cluster/tb/sim/test_mobilenet224_reference_20261012/run-100-checkpoints-20261021/`:
+`afu-mean-reference-verified-20261022.json`, original `byte_exact.json`,
+`command_pmu.csv`, `compute-checkpoints/`, all snapshots and actual output.
+The reference report SHA256 is
+`695bff835a00fe7b36c2209f35449c057c37ef090d68a59795fd79f3fe8a063d`.
+Original output SHA256 remains `fe9be81543f707b82e000668487a3747ed556b56be623cd3745925911f868917`;
+AFU-Mean reference and retained RTL both hash to
+`17f6e3134d74868b30516f44c352b83c847714216896256a685d42c3679ab20e`.
+Reproduction and contract limits are in [README.md](README.md#deployed-afu-mean-contract-and-retained-mobilenet-verification).
+All **35 host regression tests pass**, including 14 new Mean arithmetic, graph
+control, capture integrity/layout and PMU-accounting tests. No compiler-lowering,
+firmware or RTL changes are involved.
+
 ## Reproduction artifacts
 
-All generated artifacts are local under `tools/neural_ai_tflite_reference/`:
+The original host experiment artifacts are local under `tools/neural_ai_tflite_reference/`;
+the retained-RTL Mean report stays in the simulation directory listed above:
 
 - `data/coco_val100/manifest.json`: pinned images, IDs, classes, boxes, dimensions and hashes.
 - `results/yolo320_val100/`, `results/mobilenet224_val100/`: report JSON, per-image CSV, raw NPZ outputs,

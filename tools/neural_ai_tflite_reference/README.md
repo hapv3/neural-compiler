@@ -1,7 +1,7 @@
 # Neural-AI TFLite reference runtime
 
 An independent **host-side, hybrid numerical reference**. MAC kernels use a TFLite external delegate;
-an optional graph adapter models fused AFU DFL16 without changing the default runtime.
+opt-in graph adapters model fused AFU DFL16 or Mean without changing the default runtime.
 It does not modify the model, installed TensorFlow, compiler, firmware, or RTL.
 
 ## Numerical scope
@@ -9,6 +9,7 @@ It does not modify the model, installed TensorFlow, compiler, firmware, or RTL.
 | Operation | Runtime implementation |
 | --- | --- |
 | INT8 Conv2D, DepthwiseConv2D, FullyConnected | Independent scalar C++ accumulation + Neural-AI multiplier/shift + single rounding, ties away from zero |
+| Supported INT8 spatial/token Mean, only in explicit AFU Mean mode | Independent sum, divisor-folded Q31 scale and AFU fused single-round requant |
 | Other operators | Unmodified TFLite `BUILTIN_REF` kernels |
 
 The default `neural_ai_reference` remains the original MAC-only hybrid baseline.
@@ -36,8 +37,8 @@ without calling compiler code. Accumulation uses int64 and rejects a biased resu
 range. **Intermediate systolic overflow/wrap behavior is not modeled**; this reference is for non-overflowing
 MACs. It does not model TCDM layouts, DMA, tiling, scheduling, or cycles.
 
-AFU LUT fusion, hardware Mean and general binary requant are not independently modeled here.
-DFL is hardware-modeled only in the explicitly selected AFU mode. Therefore **this
+AFU LUT fusion and general binary requant are not independently modeled here.
+DFL and Mean are hardware-modeled only in their separately selected AFU modes, not combined. Therefore **this
 is not an unrestricted, full-graph RTL golden runtime**. Agreement on a retained
 input does not establish dataset-wide RTL byte-exactness or hardware timing.
 
@@ -49,6 +50,8 @@ From the compiler repository root (Python with TensorFlow, NumPy, FlatBuffers, P
 python3 tools/neural_ai_tflite_reference/build.py --sanitize
 python3 tools/neural_ai_tflite_reference/test_runtime.py -v
 PYTHONPATH=tools/neural_ai_tflite_reference python3 -m unittest test_afu_dfl test_runtime test_benchmark -v
+PYTHONPATH=tools/neural_ai_tflite_reference python3 -m unittest discover \
+  -s tools/neural_ai_tflite_reference -p 'test_*.py' -v
 
 # COCO evaluator is isolated; do not replace system packages.
 python3 -m pip install --no-deps \
@@ -138,6 +141,54 @@ invariance, NMS anchor changes, high-confidence aligned box IoU, and wrapped-del
 counts. Outputs, per-image CSV, detections, provenance and full evaluator logs are
 saved in a new directory; previous evidence is never overwritten. This is not a
 benchmark of 100 RTL inferences or NPU performance.
+
+## Deployed AFU Mean contract and retained MobileNet verification
+
+Select `kind="neural_ai_afu_mean_reference"` to use Neural-AI MACs and deployed
+AFU Mean, or `kind="tflite_afu_mean_reference"` to retain TFLite MACs. Neither
+changes the default MAC-only interpreter or the original FlatBuffer. Like the
+DFL adapter, `invoke_comparison()` executes one shared prefix, source versus AFU
+reduction, and identical tails; the source control must reproduce the old oracle.
+
+Contract **`afu_mean_int8_fused_single_round_v1`** accepts exactly one supported
+Mean node, found by graph edges rather than tensor IDs: batch-one INT8 NHWC H,W
+reduction to one value per channel, or `[1,T,C]` token reduction. Constant INT32
+axes, scalar input/output quantization, `keep_dims` on/off, channel tails and
+bypass edges are supported. A symbolic batch resolved to one is accepted, but no
+resize API is exposed. Partial non-unit spatial reductions, channel/batch Mean,
+dynamic spatial shapes, multiple Mean nodes and per-channel quantization raise
+errors instead of silently using source Mean.
+
+The model independently selects the Q31 ratio from source scales, folds the
+spatial divisor using integer division, corrects the signed sum for input zero
+point, multiplies and adds one positive half-unit before arithmetic right shift,
+then adds output zero point and clamps. Negative half ties go toward +infinity,
+not the MAC reference's ties-away-from-zero. This models compiler-emitted
+`doubleRoundShift=0`; other encodings and accumulator overflow are rejected.
+It does not claim equivalence to TFLite's two-stage integer Mean rounding
+([TensorFlow reference implementation](https://github.com/tensorflow/tensorflow/blob/v2.21.0/tensorflow/lite/kernels/internal/reference/reduce.h)).
+
+Verify the retained full-reset MobileNet run without simulation (choose a fresh
+output filename; old reports are never overwritten):
+
+```bash
+python3 tools/neural_ai_tflite_reference/verify_afu_mean.py \
+  --case /home/dev01/neural-ai/hw/rtl/cluster/tb/sim/test_mobilenet224_reference_20261012/run-100-checkpoints-20261021/case.json \
+  --neural-ai-root /home/dev01/neural-ai \
+  --output /home/dev01/neural-ai/hw/rtl/cluster/tb/sim/test_mobilenet224_reference_20261012/run-100-checkpoints-20261021/afu-mean-reference-new.json
+```
+
+The verifier checks model/source/ELF/input/MAC-build identities, every compute
+capture's command/hash/size, snapshot provenance/CRC, and PMU row descriptors and
+cycle totals. It independently predicts all 62,720 pre-Mean input bytes, 1,280 Mean
+output bytes, materialized FC output and all 1,000 final bytes; deployed qparams
+are compared with source-derived predictions, never used to generate them.
+All 66 prefix source tensors are additionally checked against the old host
+archive, not mislabeled as 66 RTL comparisons. The pinned old oracle/report
+remains FAIL (47 final bytes, max 1); the explicit AFU Mean comparison is exact.
+Only four of the 100 captures have numerical observations in this report; the
+remaining 96 retain `NOT_COMPARED`. This is one retained input, not ImageNet
+accuracy or a full layer-by-layer RTL regression. See [results](RESULTS.md#mobilenet-retained-rtl-with-afu-mean--2026-10-22).
 
 ## Download the requested 100-image set
 

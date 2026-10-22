@@ -151,13 +151,18 @@ All 16.8M paired class-score bytes remain exact. This host experiment is not a
 authorized. See [DFL accuracy evidence](../tools/neural_ai_tflite_reference/RESULTS.md#afu-dfl-only-accuracy-experiment--2026-10-21) and
 [checkpoint evidence](neural_ai_external_psum_verification.md#alignment-corrected-suffix-result-and-dfl-isolation-2026-10-21).
 
-MobileNet224: current compilation preserves the pinned 12,789-command NAI. A
-fresh full-reset replay is prepared with 100 layer-terminal TCDM compute captures
-(selected from 3,264 compute commands),
-all 68 source operator tensors, 61 intermediate TCDM/L2 snapshots and per-command
-PMU; 174 offline tests pass. Raw captures are explicitly not yet byte-compared;
-strict verification of the final 1,000 bytes and complete inference remain
-pending. See [MobileNet capture gate](neural_ai_external_psum_verification.md#bounded-one-run-mobilenet224-checkpoint-replay-2026-10-21).
+MobileNet224 (2026-10-22): the pinned full-reset replay completed all 12,789
+commands, with 100 layer-terminal TCDM captures and 61 intermediate TCDM/L2
+snapshots integrity-verified. PMU CSV has 12,789 rows / 169 columns; 13,747,900
+command-active cycles reconcile with the invocation's 17,044,483 cycles.
+The old hybrid oracle remains FAIL (47/1,000 bytes, max 1), isolated to Mean:
+62,720 pre-Mean bytes match, while Mean's single-round contract changes 17 bytes.
+The new explicit AFU Mean reference preserves the old source-Mean control and
+matches all 1,000 retained final RTL bytes, without RTL/compiler/firmware changes.
+Only four capture locations are numerically compared; the remaining 96 are not
+declared PASS. Next gates are full selected intermediate coverage and explicit
+AFU-contract selection/provenance in future replay preparation, not an automatic
+rerun or replacement of the old oracle. See [MobileNet result](neural_ai_external_psum_verification.md#mobilenet224-result-and-afu-mean-isolation-2026-10-22).
 
 Legend: **verified** means compiler tests, runtime/ABI host tests, cross-build,
 golden fixture, and focused Verilator E2E have passed where the feature crosses
@@ -189,7 +194,7 @@ new runtime path has not yet passed E2E.
 | YOLO C144 head transpose | Verified fallback | standalone heads retain vectorized C32-to-CHW materialization |
 | DFL16 projection | Execution and opt-in AFU reference verified | selected heads feed C64/C80 C32 directly; AFU DFL reference matches retained RTL output; original quantized Softmax/Conv/Mul baseline remains separate |
 | Async DMA and overlap | Verified foundation | dependency-aware submit/wait commands, systolic submit/wait, and the 16-entry iDMA job queue are active; cross-command ping-pong and broader engine overlap remain P3 work |
-| Full selected graphs | Compiler verified; full byte-exact pending | current selected YOLO320 emits 5,520 executable commands and requires 512,000 bytes of TCDM; repaired suffix completes with exact Conv observations/class output, but DFL prevents a full-output PASS; reset regression and MobileNet byte-exact remain deferred |
+| Full selected graphs | Explicit AFU references match retained outputs; broader gates pending | YOLO320: 5,520 commands / 512,000-byte TCDM, repaired suffix matches opt-in AFU DFL reference; fresh reset deferred. MobileNet224: full reset 12,789 commands, final 1,000 bytes match opt-in AFU Mean reference; other 96 intermediate captures remain un-compared. Old hybrid FAILs are preserved |
 
 The current focused Regor gate passes 148 cases and 42,476 assertions. The
 complete suite remains the release gate; assertion totals from randomized cases
